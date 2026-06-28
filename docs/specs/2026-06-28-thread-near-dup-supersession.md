@@ -139,7 +139,22 @@ demotion preserves 78% of active rows.
   observed near-dup pair members are `source_type='thread_detection'`;
   only 9% are per-item. Per-item duplicates are a separate, smaller
   issue and out of scope here.
-- **Resolver in `storage/sqlite_queue.py`.** Unchanged.
+
+  **Update (2026-06-28, follow-up):** the per-item case landed via a
+  resolver-side branch in
+  [`storage/sqlite_queue.py`](../../storage/sqlite_queue.py) —
+  `_SIMILARITY_ELIGIBLE_TYPES = {"decision", "investigation_outcome"}`
+  with `_CONTAINER_SCOPED_SIMILARITY_THRESHOLD = 0.85`. The per-item
+  writer was already emitting container-scoped hints via
+  `build_supersession_hints` in
+  [`semantic/agent_conversation_memory_memory.py`](../../semantic/agent_conversation_memory_memory.py);
+  it now triggers the resolver's similarity branch after the existing
+  exact-equality and constraint-Jaccard branches miss. Same threshold
+  as the thread writer (0.85). Tests:
+  [`tests/test_resolver_similarity_branch.py`](../../tests/test_resolver_similarity_branch.py).
+- **Resolver in `storage/sqlite_queue.py`.** ~~Unchanged.~~
+  **Updated 2026-06-28 follow-up** to add the similarity branch
+  described above.
 - **`canonical_key` of any existing record.** The backfill uses the
   existing `canonical_key` field as-is and only flips lifecycle.
 - **`core/contracts.py::SupersessionHint`.** The hint carries `old_ck`
@@ -169,17 +184,45 @@ python -m evals.injection_policy_2026_06.near_dup_measure --output after.json
 
 ## Future work (NOT in scope here)
 
-- Per-item paraphrase supersession (~9% of the active near-dup
+- ~~Per-item paraphrase supersession (~9% of the active near-dup
   population). Requires a different mechanism since per-item hints
   emit at write time without seeing prior conclusions; would need
   either a read-back step or a queue-side similarity probe. Track
-  separately.
+  separately.~~ **Landed 2026-06-28 (resolver similarity branch).**
 - Cross-thread (cross-`source_id`) paraphrase collapse. The 9 / ~13
   active pairs with exact canonical_key match seen pre-fix already
   belong to f9af592's container-scoped Jaccard branch (constraints
   only); broadening to decisions/investigations would risk merging
   unrelated decisions that share nouns and was explicitly rejected in
   f9af592.
+
+  **2026-06-28 note:** the resolver similarity branch is
+  character-similarity, not noun-overlap. SequenceMatcher.ratio is
+  much stricter than Jaccard for short token sets (sim>=0.85 over
+  100-char canonical_keys means the texts are near-identical, not
+  just topical neighbours). The branch operates at container scope
+  but in practice paraphrases concentrate within the same source_id
+  (live-DB measurement: 99.93% of sim>=0.85 pairs share source_id).
+  Cross-thread paraphrase collapse is thus a real but tightly-bounded
+  consequence of the per-item fix.
+
+## Code-review follow-ups (2026-06-28)
+
+Two findings from external code review on the initial spec, both fixed
+in the per-item follow-up:
+
+- **P1 — backfill bucket missing `container_ref`.** Original
+  [`scripts/backfill_thread_near_dups.py`](../../scripts/backfill_thread_near_dups.py)
+  grouped candidates by `(source_id, type)`. If two containers reused
+  the same source_id (rare in production, possible with synthetic test
+  sources), the backfill could plan cross-container supersessions.
+  Bucket key now `(container_ref, source_id, type)`. Regression:
+  [`tests/test_resolver_similarity_branch.py::TestBackfillBucketIncludesContainer`](../../tests/test_resolver_similarity_branch.py).
+- **P2 — eval measurement mirror.** Same issue in
+  [`evals/injection_policy_2026_06/near_dup_measure.py`](../../evals/injection_policy_2026_06/near_dup_measure.py)
+  `_simulate_fix_c` and `_per_source_top_noise`. Fixed to the same
+  bucket shape. Regression:
+  [`tests/test_resolver_similarity_branch.py::TestEvalBucketIncludesContainer`](../../tests/test_resolver_similarity_branch.py).
 
 ## Reference
 

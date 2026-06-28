@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -45,6 +46,21 @@ _CONTAINER_SCOPED_SUPERSESSION_TYPES = frozenset({
 # exact-equality only.
 _JACCARD_ELIGIBLE_TYPES = frozenset({"constraint_memory"})
 _CONTAINER_SCOPED_JACCARD_THRESHOLD = 0.5
+
+# Types eligible for container-scoped near-duplicate supersession via
+# SequenceMatcher.ratio over canonical_key. Mirrors the per-thread
+# similarity logic in semantic/agent_conversation_memory_threads.py
+# (build_thread_summary's hint emission). Used when the exact-equality
+# and Jaccard branches above don't match — catches LLM paraphrases that
+# byte-differ in canonical_key but describe the same finding.
+#
+# Threshold 0.85 measured against live data
+# (evals/injection_policy_2026_06/near_dup_measure.py): high enough that
+# legitimate distinct findings stay separate, low enough that the bulk
+# of LLM paraphrases collapse. See
+# docs/specs/2026-06-28-thread-near-dup-supersession.md.
+_SIMILARITY_ELIGIBLE_TYPES = frozenset({"decision", "investigation_outcome"})
+_CONTAINER_SCOPED_SIMILARITY_THRESHOLD = 0.85
 
 # Sliding-window cap on the merge-history lists kept on the winner payload
 # (`merged_from`, `previous_evidence_text`, `previous_rationale`). Without a
@@ -882,6 +898,20 @@ class SQLiteQueueMixin:
                                 if pair not in seen:
                                     seen.add(pair)
                                     pairs.append(pair)
+                                continue
+                    # SequenceMatcher.ratio on canonical_key (catches paraphrases
+                    # of decisions/investigations the LLM produces across rebuilds
+                    # OR across per-item extractions on adjacent turns).
+                    # Stricter than Jaccard's noun-overlap (which would over-merge
+                    # decisions sharing common nouns) — character-level similarity
+                    # is the right shape for these types. 2026-06-28 per-item fix.
+                    if hint.memory_type in _SIMILARITY_ELIGIBLE_TYPES:
+                        sim = SequenceMatcher(None, existing_key, hint.canonical_key).ratio()
+                        if sim >= _CONTAINER_SCOPED_SIMILARITY_THRESHOLD:
+                            pair = (existing_record.id, hint.replacement_memory_id)
+                            if pair not in seen:
+                                seen.add(pair)
+                                pairs.append(pair)
                 continue
 
             # Thread-scoped supersession (existing behavior for decisions/investigations)

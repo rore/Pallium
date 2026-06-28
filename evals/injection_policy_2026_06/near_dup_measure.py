@@ -189,19 +189,24 @@ def _per_source_top_noise(
     threshold: float,
     top_n: int = 10,
 ) -> list[dict[str, Any]]:
-    """Top-N (source_id, type) buckets by active near-dup pair count.
+    """Top-N (container_ref, source_id, type) buckets by active near-dup
+    pair count.
 
     Surfaces noisy threads — the 48-investigation thread that motivated
     the 2026-06-28 fix lives here.
+
+    Bucket key includes container_ref so two containers reusing the same
+    source_id (e.g. synthetic test sources) can never blend duplicate
+    counts. P2 fix 2026-06-28 from code review.
     """
     active = [r for r in rows if r.lifecycle == "active"]
-    by_source: dict[tuple[str, str], list[Row]] = defaultdict(list)
+    by_source: dict[tuple[str, str, str], list[Row]] = defaultdict(list)
     for r in active:
         if r.source_id:
-            by_source[(r.source_id, r.type)].append(r)
+            by_source[(r.container_ref, r.source_id, r.type)].append(r)
 
     out: list[dict[str, Any]] = []
-    for (source_id, mtype), items in by_source.items():
+    for (container_ref, source_id, mtype), items in by_source.items():
         n = len(items)
         if n < 2:
             continue
@@ -217,7 +222,7 @@ def _per_source_top_noise(
             "type": mtype,
             "active_count": n,
             "near_dup_pairs": dup_pairs,
-            "container_ref": items[0].container_ref,
+            "container_ref": container_ref,
         })
     out.sort(key=lambda d: (-d["near_dup_pairs"], -d["active_count"]))
     return out[:top_n]
@@ -226,15 +231,18 @@ def _per_source_top_noise(
 def _simulate_fix_c(rows: list[Row], threshold: float) -> dict[str, Any]:
     """Simulate Fix C (chronological in-thread sim>=threshold) on active rows.
 
-    For each (source_id, type), walk chronologically and supersede a new row
-    when sim>=threshold against any winner already kept. Reports counts and
-    per-type breakdown.
+    For each (container_ref, source_id, type), walk chronologically and
+    supersede a new row when sim>=threshold against any winner already
+    kept. Reports counts and per-type breakdown.
+
+    Bucket key includes container_ref so simulated demotions never cross
+    a container boundary (P2 fix 2026-06-28).
     """
     active = [r for r in rows if r.lifecycle == "active"]
-    by_source: dict[tuple[str, str], list[Row]] = defaultdict(list)
+    by_source: dict[tuple[str, str, str], list[Row]] = defaultdict(list)
     for r in active:
         if r.source_id:
-            by_source[(r.source_id, r.type)].append(r)
+            by_source[(r.container_ref, r.source_id, r.type)].append(r)
     for items in by_source.values():
         items.sort(key=lambda r: (r.created_at, r.id))
 
@@ -242,7 +250,7 @@ def _simulate_fix_c(rows: list[Row], threshold: float) -> dict[str, Any]:
     kept = 0
     demoted_by_type: dict[str, int] = defaultdict(int)
     kept_by_type: dict[str, int] = defaultdict(int)
-    for (source_id, mtype), items in by_source.items():
+    for (container_ref, source_id, mtype), items in by_source.items():
         winners: list[Row] = []
         for item in items:
             superseded = any(

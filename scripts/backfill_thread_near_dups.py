@@ -4,19 +4,19 @@ investigation_outcome / decision memories (2026-06-28).
 Spec: docs/specs/2026-06-28-thread-near-dup-supersession.md
 Companion eval: evals/injection_policy_2026_06/near_dup_measure.py
 
-Walks active thread-derived memories per (source_id, type) in
-chronological order. For each new memory, finds prior active winners
-in the same (source_id, type) bucket; if any prior winner's normalized
-canonical_key has ``SequenceMatcher.ratio >= NEAR_DUP_THRESHOLD`` against
-the new memory's canonical_key, supersedes the prior winner with the
-new one.
+Walks active thread-derived memories per (container_ref, source_id, type)
+in chronological order. For each new memory, finds prior active winners
+in the same bucket; if any prior winner's normalized canonical_key has
+``SequenceMatcher.ratio >= NEAR_DUP_THRESHOLD`` against the new memory's
+canonical_key, supersedes the prior winner with the new one.
 
 Important guarantees:
 
-- **same-source/thread scope only.** A memory only supersedes another
-  with the same ``source_id`` (i.e. the same thread). Container scope
-  is preserved by construction since same source_id implies same
-  container.
+- **same-container/source/thread scope only.** A memory only supersedes
+  another with the same ``container_ref`` AND ``source_id``. The
+  container_ref guard is defensive: two containers could in principle
+  reuse the same ``source_id`` (e.g. synthetic test sources), and we
+  must never cross a container boundary.
 - **idempotent.** Re-runs perform zero writes once the DB is in steady
   state — every (already-superseded record, winner) pair is skipped
   because the prior record's lifecycle is already "superseded" and the
@@ -61,8 +61,15 @@ class Candidate:
     created_at: datetime
 
 
-def _load_candidates(storage: SQLiteStorageProvider) -> list[Candidate]:
-    """Load all active thread-derived decision/investigation_outcome rows."""
+def _load_candidates(
+    storage: SQLiteStorageProvider, *, source_types: tuple[str, ...],
+) -> list[Candidate]:
+    """Load all active decision/investigation_outcome rows for the given
+    source_types. The default is thread-derived; the per-item case
+    (``claude-code``, ``codex``) needs a different bucketing strategy
+    (see ``_plan_per_item``).
+    """
+    source_type_set = set(source_types)
     out: list[Candidate] = []
     with storage._session_factory() as session:
         records = session.scalars(
@@ -76,7 +83,7 @@ def _load_candidates(storage: SQLiteStorageProvider) -> list[Candidate]:
                 payload = json.loads(r.payload_json) if r.payload_json else {}
             except json.JSONDecodeError:
                 continue
-            if payload.get("source_type") != "thread_detection":
+            if payload.get("source_type") not in source_type_set:
                 continue
             ck = str(payload.get("canonical_key") or "").strip()
             if not ck:
@@ -121,24 +128,31 @@ def _plan(
 ) -> list[tuple[Candidate, Candidate, float]]:
     """Plan (prior_to_supersede, new_winner, similarity) triples.
 
-    Within each (source_id, type) bucket, iterates to a fixed point:
-    each round walks new items against the current winners list, picks
-    the first qualifying prior and pairs it with the new item. Mirrors
-    the runtime fix's "newer supersedes older" semantics where each
-    rebuild only sees currently-active conclusions and would converge
-    over multiple rebuilds. Backfill converges in one execute by
-    looping until no new pairs are produced.
+    Within each (container_ref, source_id, type) bucket, iterates to a
+    fixed point: each round walks new items against the current winners
+    list, picks the first qualifying prior and pairs it with the new
+    item. Mirrors the runtime fix's "newer supersedes older" semantics
+    where each rebuild only sees currently-active conclusions and would
+    converge over multiple rebuilds. Backfill converges in one execute
+    by looping until no new pairs are produced.
 
     The "first qualifying prior (oldest first)" rule keeps the plan
     deterministic and matches the simulator in
     evals/injection_policy_2026_06/near_dup_measure.py.
+
+    Bucket key is (container_ref, source_id, type): two containers could
+    in principle reuse the same source_id (especially synthetic test
+    sources), and we must never plan a supersession that crosses a
+    container boundary — the resolver and the thread writer are both
+    container-scoped, and the data model treats container_ref as the
+    authoritative scope. P1 fix 2026-06-28 from code review.
     """
-    by_bucket: dict[tuple[str, str], list[Candidate]] = defaultdict(list)
+    by_bucket: dict[tuple[str, str, str], list[Candidate]] = defaultdict(list)
     for c in candidates:
-        by_bucket[(c.source_id, c.type)].append(c)
+        by_bucket[(c.container_ref, c.source_id, c.type)].append(c)
 
     plan: list[tuple[Candidate, Candidate, float]] = []
-    for (source_id, mtype), items in by_bucket.items():
+    for (container_ref, source_id, mtype), items in by_bucket.items():
         items.sort(key=lambda c: (c.created_at, c.id))
         # Iterate to fixed point: a single chronological pass may produce
         # surviving winners that are near-dups of each other once earlier
@@ -223,14 +237,80 @@ def _apply(
     return stats
 
 
+def _plan_per_item(
+    candidates: list[Candidate],
+    threshold: float,
+) -> list[tuple[Candidate, Candidate, float]]:
+    """Per-item planner for source_type in {claude-code, codex}.
+
+    Per-item rows have distinct ``source_id`` per row (each Claude/Codex
+    conversation item gets its own ``cc-<hash>``), so the thread bucket
+    key ``(container_ref, source_id, type)`` would be size-1 and miss
+    every paraphrase. Per-item rows are deduped at CONTAINER scope —
+    mirroring the runtime resolver branch in
+    ``storage/sqlite_queue.py`` (``_SIMILARITY_ELIGIBLE_TYPES`` +
+    ``_CONTAINER_SCOPED_SIMILARITY_THRESHOLD``).
+
+    Bucket key is ``(container_ref, type)``. Otherwise same fixed-point
+    walk as ``_plan``.
+    """
+    by_bucket: dict[tuple[str, str], list[Candidate]] = defaultdict(list)
+    for c in candidates:
+        by_bucket[(c.container_ref, c.type)].append(c)
+
+    plan: list[tuple[Candidate, Candidate, float]] = []
+    for (container_ref, mtype), items in by_bucket.items():
+        items.sort(key=lambda c: (c.created_at, c.id))
+        active = list(items)
+        for _ in range(len(items) + 1):
+            winners: list[Candidate] = []
+            round_pairs: list[tuple[Candidate, Candidate, float]] = []
+            for new_item in active:
+                chosen_prior: Candidate | None = None
+                chosen_sim = 0.0
+                for prior in winners:
+                    if prior.canonical_key == new_item.canonical_key:
+                        sim = 1.0
+                    else:
+                        sim = SequenceMatcher(
+                            None, prior.canonical_key, new_item.canonical_key
+                        ).ratio()
+                    if sim >= threshold:
+                        chosen_prior = prior
+                        chosen_sim = sim
+                        break
+                if chosen_prior is not None:
+                    round_pairs.append((chosen_prior, new_item, chosen_sim))
+                    winners = [w for w in winners if w.id != chosen_prior.id]
+                    winners.append(new_item)
+                else:
+                    winners.append(new_item)
+            if not round_pairs:
+                break
+            plan.extend(round_pairs)
+            active = winners
+    return plan
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Backfill thread-near-dup supersession")
+    parser = argparse.ArgumentParser(description="Backfill near-dup supersession")
     parser.add_argument("--db-path", required=True, help="Path to SQLite database file")
     parser.add_argument(
         "--threshold",
         type=float,
         default=NEAR_DUP_THRESHOLD,
         help=f"Similarity threshold (default: {NEAR_DUP_THRESHOLD})",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=("thread", "per-item", "both"),
+        default="both",
+        help=(
+            "Which source_type bucket to process. "
+            "'thread' = source_type=thread_detection, bucket by source_id. "
+            "'per-item' = source_type in {claude-code, codex}, bucket by container_ref. "
+            "'both' = run thread first, then per-item (default)."
+        ),
     )
     parser.add_argument("--execute", action="store_true", help="Actually write (dry-run by default)")
     parser.add_argument("--max-print", type=int, default=20, help="Max plan rows to print")
@@ -243,38 +323,52 @@ def main(argv: list[str] | None = None) -> int:
 
     db_url = f"sqlite:///{db_path}"
     storage = SQLiteStorageProvider(db_url)
-
-    candidates = _load_candidates(storage)
-    plan = _plan(candidates, args.threshold)
     existing_pairs = _existing_supersedes_pairs(storage)
 
-    by_type: dict[str, int] = defaultdict(int)
-    for prior, _winner, _sim in plan:
-        by_type[prior.type] += 1
-
     print(f"DB: {db_path}")
-    print(f"Active thread-derived candidates: {len(candidates)}")
-    print(f"Threshold: {args.threshold}")
-    print(f"Planned supersessions: {len(plan)}  by type: {dict(by_type)}")
+    print(f"Threshold: {args.threshold}  Scope: {args.scope}")
 
-    print("\nSample (oldest planned demotions):")
-    for prior, winner, sim in plan[: args.max_print]:
-        print(
-            f"  thread={prior.source_id[:24]}.. type={prior.type}  "
-            f"sim={sim:.3f}  prior={prior.id[:8]} -> winner={winner.id[:8]}  "
-            f"({prior.created_at} -> {winner.created_at})"
-        )
-    if len(plan) > args.max_print:
-        print(f"  ... ({len(plan) - args.max_print} more)")
+    total_applied = {"lifecycle_flipped": 0, "relations_created": 0, "skipped_already_done": 0}
+
+    def _run_phase(label: str, source_types: tuple[str, ...], plan_fn) -> None:
+        candidates = _load_candidates(storage, source_types=source_types)
+        plan = plan_fn(candidates, args.threshold)
+        by_type: dict[str, int] = defaultdict(int)
+        for prior, _winner, _sim in plan:
+            by_type[prior.type] += 1
+        print(f"\n--- {label} ---")
+        print(f"Active candidates: {len(candidates)}")
+        print(f"Planned supersessions: {len(plan)}  by type: {dict(by_type)}")
+        print("Sample (oldest planned demotions):")
+        for prior, winner, sim in plan[: args.max_print]:
+            print(
+                f"  bucket={prior.source_id[:24]}.. type={prior.type}  "
+                f"sim={sim:.3f}  prior={prior.id[:8]} -> winner={winner.id[:8]}  "
+                f"({prior.created_at} -> {winner.created_at})"
+            )
+        if len(plan) > args.max_print:
+            print(f"  ... ({len(plan) - args.max_print} more)")
+        if args.execute and plan:
+            stats = _apply(storage, plan, existing_pairs)
+            for k, v in stats.items():
+                total_applied[k] += v
+            print(f"Applied. lifecycle_flipped={stats['lifecycle_flipped']} "
+                  f"relations_created={stats['relations_created']} "
+                  f"skipped_already_done={stats['skipped_already_done']}")
+
+    if args.scope in ("thread", "both"):
+        _run_phase("Thread (source_type=thread_detection)", ("thread_detection",), _plan)
+    if args.scope in ("per-item", "both"):
+        _run_phase("Per-item (source_type in {claude-code, codex})", ("claude-code", "codex"), _plan_per_item)
 
     if not args.execute:
         print("\nDRY RUN — pass --execute to apply.")
-        return 0
-
-    stats = _apply(storage, plan, existing_pairs)
-    print(f"\nApplied. lifecycle_flipped={stats['lifecycle_flipped']} "
-          f"relations_created={stats['relations_created']} "
-          f"skipped_already_done={stats['skipped_already_done']}")
+    else:
+        print(
+            f"\nTotal applied. lifecycle_flipped={total_applied['lifecycle_flipped']} "
+            f"relations_created={total_applied['relations_created']} "
+            f"skipped_already_done={total_applied['skipped_already_done']}"
+        )
     return 0
 
 
