@@ -192,6 +192,16 @@ Use `POST /query/debug` to see exactly why Pallium abstained. The trace shows
 which candidates were retrieved, which were excluded by visibility or routing,
 and which decision path was taken.
 
+When the opt-in `[injection.policy]` block is configured (see
+[Known Limitations](#known-limitations) below), specific memory types
+can be demoted from proactive injection to event-triggered or on-demand
+modes. Demoted types still appear in `pallium_query` results and in
+`POST /query/debug`; they are just not auto-injected via
+`should_inject: true` unless a trigger (failure, retry threshold,
+session resumption, explicit query) fires. The same abstain shape is
+reused — the demoted type either does not appear in
+`injectable_blocks` or `should_inject` resolves to `false`.
+
 ## Privacy Model
 
 Locality is not privacy. `container_ref` identifies where an item belongs, and
@@ -213,6 +223,25 @@ contract.
 
 Current areas under active hardening:
 
+- **Proactive-injection precision** — a directed analysis on 2026-06-27
+  measured baseline precision at ~44% across active containers (68%
+  bad-rate on a multi-topic container, 53% on focused single-topic
+  ones). None of the proactive memory types cleared a 70% precision bar
+  on chronological 80/20 holdout. An opt-in per-type abstention policy
+  (`[injection.policy]` in `pallium.local.toml`) demotes
+  `task_checkpoint`, `investigation_outcome`, `thread_summary`, and
+  `fact_summary` from proactive injection to event-triggered or
+  on-demand modes when enabled. Default install does NOT enable the
+  policy. See
+  [docs/specs/2026-06-27-injection-policy-abstention.md](specs/2026-06-27-injection-policy-abstention.md).
+- **Thread-rebuild near-duplicate supersession** — until 2026-06-28
+  (commit `d078462`), supersession on incremental thread rebuilds
+  required byte-equality on `canonical_key`, so paraphrased reruns of
+  the same decision or investigation outcome accumulated as duplicates.
+  The fix replaces byte-equality with a `SequenceMatcher` similarity
+  threshold; databases that predate it may still contain accumulated
+  paraphrase duplicates from prior rebuilds. See
+  [docs/specs/2026-06-28-thread-near-dup-supersession.md](specs/2026-06-28-thread-near-dup-supersession.md).
 - **Extraction confidence** — promoted memory objects carry a type-based
   confidence label but no instance-level support signal. Grounding checks
   exist for decision and investigation evidence fields (substring containment
