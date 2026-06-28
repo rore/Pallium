@@ -74,7 +74,18 @@ def load_usage_audit_rows(
     conn: sqlite3.Connection,
     since: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Pull memory_usage_audit rows; optionally filter by created_at >= since."""
+    """Pull memory_usage_audit rows; optionally filter by created_at >= since.
+
+    Returns an empty list if the table does not exist yet (the schema
+    migration runs at server boot — running the measurement script
+    against a pre-Phase-5a DB is valid but yields no data).
+    """
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name='memory_usage_audit'"
+    )
+    if not cur.fetchone():
+        return []
     sql = (
         "SELECT id, query_audit_log_id, memory_object_id, memory_type, "
         "       container_ref, thread_ref, trigger_origin, "

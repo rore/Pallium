@@ -187,3 +187,21 @@ def test_build_report_has_expected_sections() -> None:
     assert "demoted_type_discovery" in report
     assert report["window"]["n_usage_rows"] == 1
     assert report["window"]["n_feedback_rows"] == 1
+
+
+def test_load_usage_audit_rows_returns_empty_when_table_missing(tmp_path) -> None:
+    """Defensive: if the schema migration hasn't run yet (pre-Phase-5a
+    DB), the script must yield empty rows, not crash.
+    """
+    import sqlite3
+    from evals.injection_policy_2026_06.phase6_measurement import (
+        load_usage_audit_rows,
+    )
+    db_path = tmp_path / "no_table.db"
+    con = sqlite3.connect(db_path)
+    con.execute("CREATE TABLE other_table (id TEXT)")
+    con.commit()
+    con.row_factory = sqlite3.Row
+    rows = load_usage_audit_rows(con)
+    con.close()
+    assert rows == []
