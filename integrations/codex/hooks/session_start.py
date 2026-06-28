@@ -35,6 +35,8 @@ def _fetch_retrieval_fallback(container_ref: str, actor_ref: str) -> list[dict]:
         "actor_ref": actor_ref,
         "visibility": "private",
         "limit": 5,
+        # Phase 4 (2026-06-28): tag the orientation query for audit-log analysis.
+        "trigger_origin": "session_start_orientation",
     })
     if not response:
         return []

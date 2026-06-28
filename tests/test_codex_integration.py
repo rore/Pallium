@@ -177,8 +177,12 @@ def test_codex_stop_hook_ingests_quietly(monkeypatch: pytest.MonkeyPatch) -> Non
         stop.main()
 
     assert exc.value.code == 0
-    assert len(calls) == 1
-    call = calls[0]
+    # Phase 5b: stop hook now also issues a populator GET after ingest.
+    # The fake returns None so the populator no-ops. Verify the ingest
+    # call is present.
+    ingest_calls = [c for c in calls if c["path"] == "/items"]
+    assert len(ingest_calls) == 1
+    call = ingest_calls[0]
     assert call["method"] == "POST"
     assert call["path"] == "/items"
     assert call["quiet"] is True

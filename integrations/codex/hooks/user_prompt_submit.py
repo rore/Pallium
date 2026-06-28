@@ -74,6 +74,8 @@ def main() -> None:
             "query_text": query_text,
             "query_limit": 5,
             "query_actor_ref": actor_ref,
+            # Phase 4 (2026-06-28): tag the proactive prompt-submit query.
+            "query_trigger_origin": "user_prompt_submit",
         })
 
         if not response:
