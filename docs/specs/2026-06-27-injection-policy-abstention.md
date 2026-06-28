@@ -1,8 +1,10 @@
 # Injection Policy: Abstention Over Mechanism
 
 **Date:** 2026-06-27
-**Status:** Plan — not yet implemented
+**Status:** Shipped (Phases 0, 0.5, 1, 2a, 3a, 3b, 4, 5a, 5b) — Phase 2b and Phase 6 pending fresh-data accumulation
+**Last updated:** 2026-06-28 (Phase 5b match-text source-of-truth follow-up)
 **Owner:** Rotem Hermon
+**Roadmap:** [`roadmap/features/add-injection-policy-abstention.md`](../../roadmap/features/add-injection-policy-abstention.md)
 **Supersedes / gates:** `add-operational-fact-memory`, `investigate-thread-level-interest-and-threadless-aggregation` (paused pending this experiment)
 
 ## Background

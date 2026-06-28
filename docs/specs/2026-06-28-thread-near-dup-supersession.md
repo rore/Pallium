@@ -1,9 +1,11 @@
 # Thread-rebuild near-duplicate supersession
 
 **Date:** 2026-06-28
-**Status:** Shipped
+**Status:** Shipped (writer fix + per-item resolver branch + match-text follow-up)
+**Last updated:** 2026-06-28 (per-item resolver-side similarity branch in `storage/sqlite_queue.py`)
 **Owner:** Rotem Hermon
-**Touches:** `semantic/agent_conversation_memory_threads.py`
+**Roadmap:** [`roadmap/features/add-thread-near-dup-supersession.md`](../../roadmap/features/add-thread-near-dup-supersession.md)
+**Touches:** `semantic/agent_conversation_memory_threads.py` (writer), `storage/sqlite_queue.py` (resolver similarity branch), `core/service.py` + `api/schemas.py` + `api/routes.py` + integrations stop hooks (Phase 5b match-text)
 **Companion:** commit f9af592 (T2, 2026-06-04) — preserved, not rolled back.
 
 ## Problem
