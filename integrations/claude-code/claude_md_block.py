@@ -38,5 +38,19 @@ correctly — you only need to worry about this for explicit tool calls.
 - Re-query for something already in the injected Pallium block
 - Ingest routine conversation — hooks do this automatically
 - Flag speculatively — only flag when you have concrete contrary evidence
+
+**Abstention policy (optional, opt-in via TOML):**
+Pallium supports an `[injection.policy]` config that demotes specific
+memory types (`task_checkpoint`, `investigation_outcome`,
+`thread_summary`, `fact_summary`) from proactive injection to event-
+or on-demand mode. When this is enabled, you will see fewer cards
+auto-injected — by design, not by failure. Reach for `pallium_query`
+more aggressively when stuck (failed tool calls, repeated retries,
+"have we hit this before"). Deterministic triggers in the Claude
+Code hooks (e.g. PostToolUse on failure) handle some of this
+automatically. `pallium_rate_memory` on injected blocks remains
+mandatory. Default install does NOT enable the policy. See
+`docs/specs/2026-06-27-injection-policy-abstention.md` in the
+Pallium repo.
 <!-- pallium:end -->
 """

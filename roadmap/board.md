@@ -1,4 +1,7 @@
 # Next
+- add-injection-policy-abstention
+
+# Paused
 - investigate-thread-level-interest-and-threadless-aggregation
 - add-operational-fact-memory
 

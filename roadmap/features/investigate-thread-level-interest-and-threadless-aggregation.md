@@ -1,11 +1,27 @@
 ---
 id: investigate-thread-level-interest-and-threadless-aggregation
 title: Investigate thread-level interest extraction and threadless aggregation
-status: not-started
+status: paused
 priority: medium
 commitment: uncommitted
 milestone: Next
 ---
+
+> **Paused 2026-06-27** pending outcome of the abstention-policy work in
+> [`docs/specs/2026-06-27-injection-policy-abstention.md`](../../docs/specs/2026-06-27-injection-policy-abstention.md).
+> The data analysis under that spec showed:
+> 1. `interest` (where it still appears in data) and adjacent
+>    aggregation-style types (`fact_summary`, `thread_summary`) have
+>    poor score separability and high off-topic rates.
+> 2. `fact_summary` will be suspended in Phase 3b for insufficient
+>    signal; `thread_summary` becomes explicit on-demand only.
+> 3. Investing in better thread-level interest extraction is unlikely
+>    to pay off until proactive vs on-demand delivery for these classes
+>    is settled.
+>
+> Resume gate: Phase 6 measurement results show a real demand for a
+> thread-level aggregation memory class that the abstention policy
+> can't satisfy.
 
 ## Summary
 

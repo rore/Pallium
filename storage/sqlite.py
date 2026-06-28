@@ -25,6 +25,7 @@ from storage.sqlite_schema import (
     MemoryFeedbackRecord,
     MemoryFlagRecord,
     MemoryObjectRecord,
+    MemoryUsageAuditRecord,
     PackageProcessingStatusRecord,
     QueryAuditLogRecord,
     RelationRecord,
@@ -771,6 +772,124 @@ class SQLiteStorageProvider(
     def write_query_audit_row(self, row: dict[str, Any]) -> None:
         record = QueryAuditLogRecord(**row)
         self._with_retry(lambda session: session.add(record))
+
+    # ── Phase 5: memory_usage_audit ──────────────────────────────────
+    #
+    # See docs/specs/2026-06-27-injection-policy-abstention.md.
+    # Distinct from memory_feedback (human ratings); this table records
+    # whether the agent actually USED an injected memory, populated
+    # asynchronously by an integration-side heuristic (Phase 5b).
+
+    def write_memory_usage_audit_rows(
+        self,
+        *,
+        query_audit_log_id: str,
+        injected_blocks: list[dict[str, Any]],
+        container_ref: str | None,
+        thread_ref: str | None,
+        trigger_origin: str | None,
+    ) -> list[str]:
+        """Write one usage-audit row per injected block.
+
+        Called from `write_query_audit` after the query_audit_log row is
+        persisted, so we already have a stable audit id. Rows are
+        written with `referenced_in_next_turn=NULL` / `populated_at=NULL`
+        — the Phase 5b populator fills those in later via the
+        update endpoint.
+
+        Returns the list of inserted row ids in the same order as the
+        input blocks.
+        """
+        from core.models import new_id
+        if not injected_blocks:
+            return []
+        ids: list[str] = []
+        records: list[MemoryUsageAuditRecord] = []
+        created_at = utc_now()
+        for block in injected_blocks:
+            memory_object_id = (block or {}).get("memory_object_id")
+            if not memory_object_id:
+                continue
+            row_id = new_id()
+            ids.append(row_id)
+            records.append(MemoryUsageAuditRecord(
+                id=row_id,
+                query_audit_log_id=query_audit_log_id,
+                memory_object_id=memory_object_id,
+                memory_type=(block or {}).get("memory_type"),
+                container_ref=container_ref,
+                thread_ref=thread_ref,
+                trigger_origin=trigger_origin,
+                referenced_in_next_turn=None,
+                reference_kind=None,
+                observation_window_turns=None,
+                created_at=created_at,
+                populated_at=None,
+            ))
+        if records:
+            self._with_retry(lambda session: session.add_all(records))
+        return ids
+
+    def list_memory_usage_audit_rows(
+        self,
+        query_audit_log_id: str,
+    ) -> list[dict[str, Any]]:
+        """List all usage-audit rows for a given query, oldest first."""
+        def _do(session: Session) -> list[dict[str, Any]]:
+            stmt = (
+                select(MemoryUsageAuditRecord)
+                .where(MemoryUsageAuditRecord.query_audit_log_id == query_audit_log_id)
+                .order_by(MemoryUsageAuditRecord.created_at.asc())
+            )
+            out: list[dict[str, Any]] = []
+            for r in session.execute(stmt).scalars().all():
+                out.append({
+                    "id": r.id,
+                    "query_audit_log_id": r.query_audit_log_id,
+                    "memory_object_id": r.memory_object_id,
+                    "memory_type": r.memory_type,
+                    "container_ref": r.container_ref,
+                    "thread_ref": r.thread_ref,
+                    "trigger_origin": r.trigger_origin,
+                    "referenced_in_next_turn": (
+                        bool(r.referenced_in_next_turn)
+                        if r.referenced_in_next_turn is not None
+                        else None
+                    ),
+                    "reference_kind": r.reference_kind,
+                    "observation_window_turns": r.observation_window_turns,
+                    "created_at": r.created_at,
+                    "populated_at": r.populated_at,
+                })
+            return out
+        return self._with_retry(_do)
+
+    def update_memory_usage_audit_row(
+        self,
+        *,
+        audit_row_id: str,
+        referenced_in_next_turn: bool,
+        reference_kind: str | None,
+        observation_window_turns: int | None,
+    ) -> bool:
+        """Update a single usage-audit row.
+
+        Idempotent: if the row is already populated (populated_at IS NOT
+        NULL), this is a no-op and returns False. Otherwise updates and
+        returns True. Phase 5b populator depends on this idempotence.
+        """
+        def _do(session: Session) -> bool:
+            r = session.get(MemoryUsageAuditRecord, audit_row_id)
+            if r is None:
+                return False
+            if r.populated_at is not None:
+                return False  # already populated; no-op for idempotence
+            r.referenced_in_next_turn = 1 if referenced_in_next_turn else 0
+            r.reference_kind = reference_kind
+            r.observation_window_turns = observation_window_turns
+            r.populated_at = utc_now()
+            return True
+        return self._with_retry(_do)
 
     def _after_commit_processed_source_item_persist(
         self,

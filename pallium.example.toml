@@ -74,3 +74,44 @@ enabled = true
 index_path = "./vector_index"
 embedding_provider = "onnx"
 min_similarity = 0.55
+
+# ── Injection policy abstention (Phase 3b — uncomment to enable) ────────
+#
+# See docs/specs/2026-06-27-injection-policy-abstention.md.
+#
+# When this block is ABSENT (the default) the abstention policy is a
+# bit-exact no-op — every memory type is proactively injectable as before.
+#
+# The block below is the recommendation that emerges from Phase 1+2a
+# evaluation: no type meets the >=70% precision pass bar on chronological
+# holdout, so the proactive set is empty. Demoted types are still
+# retrievable on-demand:
+#
+#  - investigation_outcome: surfaced by the PostToolUse failure +
+#    retry-threshold triggers (Phase 4 hooks).
+#  - thread_summary: explicit pallium_query only.
+#  - fact_summary: pipeline known broken (architect review 616f2f55);
+#    suspended until reconsidered.
+#  - task_checkpoint: switches to event-trigger model (session-resumption
+#    via SessionStart hook, plus the new PostToolUse triggers).
+#
+# Per-container overrides match the query's container_ref exactly:
+#
+# [injection.policy.types.investigation_outcome]
+# mode = "on_demand"
+#
+# [injection.policy.types.thread_summary]
+# mode = "on_demand"
+#
+# [injection.policy.types.fact_summary]
+# mode = "suspended"
+#
+# [injection.policy.types.task_checkpoint]
+# mode = "event"
+#
+# # Per-container override example: disable proactive on the xlm container
+# # while leaving the focused-repo container free to override differently.
+# [[injection.policy.containers]]
+# container_ref = "path:xlm:2889e4f8fd37"
+# [injection.policy.containers.types.task_checkpoint]
+# mode = "on_demand"

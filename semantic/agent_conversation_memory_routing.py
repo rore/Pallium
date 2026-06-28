@@ -138,6 +138,8 @@ def route_query_results(
     include_trace: bool = False,
     debug_candidate_loader=None,
     routing_overrides: RoutingOverrides | None = None,
+    injection_policy=None,
+    trigger_origin: str | None = None,
 ) -> PackageQueryOutcome:
         _ov = routing_overrides or {}
         _layer_weights: dict[str, dict[str, int]] = _ov.get("layer_weights") or ROUTING_LAYER_WEIGHTS
@@ -480,6 +482,8 @@ def route_query_results(
             query_filters=query_filters,
             runtime_context=runtime_context,
             evidence_request=signal_envelope.evidence_request,
+            injection_policy=injection_policy,
+            trigger_origin=trigger_origin,
         )
         _annotate_excluded_candidates(
             ranked_candidates=ranked_candidates,

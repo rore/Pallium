@@ -411,6 +411,10 @@ def build_service(
         query_stats=query_stats,
         metrics_store=metrics_store,
         metrics_retention_days=resolved_config.observability.metrics_retention_days,
+        # Phase 3a (2026-06-27): per-type / per-container abstention policy.
+        # Default is empty → bit-exact no-op vs prior behaviour. See
+        # docs/specs/2026-06-27-injection-policy-abstention.md.
+        injection_policy=resolved_config.injection.policy,
     )
 
     return BuildResult(

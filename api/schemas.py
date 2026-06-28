@@ -104,6 +104,11 @@ class QueryRequest(BaseModel):
     work_refs: list[str] | None = None
     visibility: Visibility | VisibilityContextModel | None = None
     runtime_context: RuntimeContextModel | None = None
+    # Phase 4 (2026-06-27): opaque label identifying which deterministic
+    # trigger fired this query. Validated server-side against a known
+    # token set; None means "legacy / proactive default." See
+    # docs/specs/2026-06-27-injection-policy-abstention.md.
+    trigger_origin: str | None = None
 
     def visibility_kind(self) -> str | None:
         if isinstance(self.visibility, VisibilityContextModel):
@@ -300,6 +305,10 @@ class ItemAndQueryRequest(BaseModel):
     query_actor_ref: str | None = None
     work_refs: list[str] | None = None
     runtime_context: RuntimeContextModel | None = None
+    # Phase 4 (2026-06-27): opaque trigger label for the query side of
+    # the combined ingest-and-query call. Same semantics as
+    # QueryRequest.trigger_origin.
+    query_trigger_origin: str | None = None
 
     def visibility_kind(self) -> str | None:
         if isinstance(self.visibility, VisibilityContextModel):
@@ -408,3 +417,45 @@ class MemoryFeedbackResponse(BaseModel):
     memory_object_id: str
     rating: str
     recorded: bool
+
+
+# Phase 5 (2026-06-27): per-injected-block usage telemetry.
+# See docs/specs/2026-06-27-injection-policy-abstention.md.
+
+class MemoryUsageAuditRowResponse(BaseModel):
+    id: str
+    query_audit_log_id: str
+    memory_object_id: str
+    memory_type: str | None = None
+    container_ref: str | None = None
+    thread_ref: str | None = None
+    trigger_origin: str | None = None
+    referenced_in_next_turn: bool | None = None
+    reference_kind: str | None = None
+    observation_window_turns: int | None = None
+    created_at: datetime | None = None
+    populated_at: datetime | None = None
+
+
+class MemoryUsageAuditListResponse(BaseModel):
+    rows: list[MemoryUsageAuditRowResponse]
+
+
+_REFERENCE_KIND_VALUES: tuple[str, ...] = (
+    "id_quote",
+    "verbatim_snippet",
+    "entity_match",
+)
+
+
+class MemoryUsageAuditUpdateRequest(BaseModel):
+    referenced_in_next_turn: bool
+    # reference_kind is required when referenced_in_next_turn is True;
+    # validated server-side. When False (no reference), kind is None.
+    reference_kind: str | None = None
+    observation_window_turns: int | None = None
+
+
+class MemoryUsageAuditUpdateResponse(BaseModel):
+    audit_row_id: str
+    updated: bool   # False if already populated (no-op) or row not found

@@ -27,6 +27,85 @@ from semantic.agent_conversation_memory_routing_injection import (
     _VERBOSE as _INJECTION_VERBOSE,
     _verbose as _injection_verbose,
 )
+
+
+# ── Phase 3a: injection-policy abstention gate ──────────────────────────
+#
+# See docs/specs/2026-06-27-injection-policy-abstention.md.
+#
+# When the policy is None or empty, the gate is a no-op: every candidate
+# passes through unchanged. With a populated InjectionPolicyConfig, each
+# candidate's memory_type is looked up (per-container override > global)
+# and either dropped (modes "event", "on_demand", "suspended") or
+# threshold-checked against `QueryResultItem.score` (mode "proactive").
+#
+# The gate reads `candidate["item"].score` — the SAME field surfaced
+# into injected_blocks_json[*].score and persisted to
+# candidate_scores_json (Phase 0.5). NOT routing_score. Phase 2a's
+# audit-only replay confirmed routing_score yields ~51% precision vs
+# ~76% on score.
+#
+# Phase 4 (2026-06-27): when the request carries a deterministic
+# on-demand `trigger_origin`, the gate bypasses the
+# "event"/"on_demand"/"suspended" drop. Proactive threshold gating
+# still applies — the trigger does not bypass score thresholds; it
+# only bypasses the type-level demotion. This is what lets explicit
+# `pallium_query` for an `on_demand` type actually return results.
+
+_TRIGGER_BYPASS_ORIGINS: frozenset[str] = frozenset({
+    "session_start_checkpoint",
+    "post_tool_failure",
+    "retry_threshold",
+    "user_explicit",
+})
+
+
+def _policy_allows_proactive_injection(
+    candidate: dict[str, object],
+    injection_policy,
+    query_filters: QueryFilters | None,
+    trigger_origin: str | None = None,
+) -> bool:
+    """Return True iff the candidate is allowed by the abstention policy.
+
+    Default-allow when no policy is configured for the candidate's type.
+    When `trigger_origin` is in _TRIGGER_BYPASS_ORIGINS, demoted modes
+    (event/on_demand/suspended) act as "allow" — the deterministic
+    trigger is explicitly retrieving these types. Proactive-mode score
+    thresholds still apply regardless.
+    """
+    if injection_policy is None or injection_policy.is_empty():
+        return True
+    item = candidate.get("item")
+    if item is None:
+        return True
+    memory_type = getattr(item, "type", None)
+    if not memory_type:
+        return True
+    container_ref = query_filters.container_ref if query_filters is not None else None
+    effective = injection_policy.effective(memory_type, container_ref)
+    if effective is None:
+        return True
+    mode = effective.mode
+    if mode == "proactive":
+        # Phase 3a: gate on QueryResultItem.score — the same field
+        # surfaced into injected_blocks_json[*].score and persisted into
+        # candidate_scores_json[*].score (Phase 0.5). NOT routing_score —
+        # Phase 2a audit-replay confirmed routing_score yields ~51%
+        # precision vs ~76% on score. See
+        # docs/specs/2026-06-27-injection-policy-abstention.md.
+        if effective.min_score is None:
+            return True  # defensive — loader should enforce
+        score = getattr(item, "score", None)
+        if score is None:
+            return False
+        return float(score) >= float(effective.min_score)
+    # "event", "on_demand", "suspended" — drop from proactive UNLESS
+    # the call carried a deterministic trigger asking for this type.
+    if trigger_origin in _TRIGGER_BYPASS_ORIGINS:
+        return True
+    return False
+
 from semantic.agent_conversation_memory_routing_scoring import (
     _is_current_query_echo,
     _summary_low_value_reason,
@@ -750,6 +829,8 @@ def _build_injectable_blocks(
     query_filters: QueryFilters | None,
     runtime_context: QueryRuntimeContext | None,
     evidence_request: bool = False,
+    injection_policy=None,
+    trigger_origin: str | None = None,
 ) -> tuple[list[InjectableBlock], dict[str, object]]:
     same_thread_context = _evaluate_same_thread_local_context(
         ranked_candidates,
@@ -828,7 +909,7 @@ def _build_injectable_blocks(
         return source_evidence_resolved
     primary_eligible_candidates = []
     for candidate in final_candidates:
-        if _candidate_is_injection_eligible(
+        if not _candidate_is_injection_eligible(
             candidate,
             intent=intent,
             query_text=query_text,
@@ -836,8 +917,6 @@ def _build_injectable_blocks(
             allow_source_companion=False,
             evidence_request=evidence_request,
         ):
-            primary_eligible_candidates.append(candidate)
-        else:
             # A8: candidate survived routing + selection but a per-candidate
             # gate (BM25 floor / content overlap / disclaimer / type filter)
             # rejected it here. Skip annotation when suppression already owns
@@ -847,6 +926,21 @@ def _build_injectable_blocks(
                     "selection_drop_reason_code",
                     "displaced_by_per_candidate_eligibility",
                 )
+            continue
+        # Phase 3a: abstention policy gate. No-op when injection_policy is
+        # None or empty; otherwise gates on QueryResultItem.score per the
+        # configured per-type (and optional per-container) policy. See
+        # docs/specs/2026-06-27-injection-policy-abstention.md.
+        if not _policy_allows_proactive_injection(
+            candidate, injection_policy, query_filters, trigger_origin
+        ):
+            if not candidate.get("suppression_reason_code"):
+                candidate.setdefault(
+                    "selection_drop_reason_code",
+                    "displaced_by_injection_policy",
+                )
+            continue
+        primary_eligible_candidates.append(candidate)
     # Suppress cross-thread task_checkpoints during work_resumption in an
     # established thread with sufficient local context. Checkpoints are
     # ephemeral ("what I'm working on now") and stale when carried forward.
@@ -1885,6 +1979,8 @@ _SELECTION_DROP_HUMAN_REASONS: dict[str, str] = {
         "Candidate was filtered by `_candidate_locality_compatible_for_packaging` against the primary item's locality.",
     "displaced_by_cross_thread_checkpoint_suppression":
         "Cross-thread task_checkpoint suppressed during work_resumption in an established thread with sufficient local context.",
+    "displaced_by_injection_policy":
+        "Candidate was dropped by the abstention policy gate (per-type proactive threshold or non-proactive mode). See docs/specs/2026-06-27-injection-policy-abstention.md.",
     "displaced_by_per_candidate_eligibility":
         "Per-candidate injection-eligibility check (BM25 floor / content-overlap / disclaimer) rejected this candidate.",
     "displaced_by_r2b_subject_overlap":

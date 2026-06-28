@@ -202,8 +202,68 @@ If memory doesn't appear:
 | No memory injected | Pallium not running | Start service or check port |
 | No memory injected | Hooks not registered | Re-run `python -m app.run setup claude-code` |
 | Memory injected but irrelevant | Early in project history | Give it more sessions to build up relevant memory |
+| Specific memory type stopped auto-injecting | Abstention policy enabled in `pallium.local.toml` | See [Abstention Policy](#abstention-policy-opt-in). Use `pallium_query` for explicit retrieval. |
 | Hook timeout errors in stderr | Pallium responding slowly | Check processor queue, ensure embedding model is downloaded |
 | "Pallium not configured" from MCP | `PALLIUM_BASE_URL` not set | Setup command configures this automatically |
+
+## Abstention Policy (opt-in)
+
+The default install proactively injects every memory type when relevant.
+A per-type `[injection.policy]` block in `pallium.local.toml` can
+demote specific types to event- or on-demand mode. See
+[`docs/specs/2026-06-27-injection-policy-abstention.md`](specs/2026-06-27-injection-policy-abstention.md)
+for the full spec; quick summary below.
+
+**Modes** (per memory type, per container):
+
+| Mode | Behavior |
+|---|---|
+| `proactive` | Auto-inject when score ≥ `min_score` |
+| `event` | Drop from proactive; surfaced only by deterministic triggers (Phase 4 hooks) |
+| `on_demand` | Drop from proactive; surfaced only by explicit `pallium_query` |
+| `suspended` | Drop entirely (Phase 6 measurement / data-driven decision) |
+
+**Deterministic triggers** added in Phase 4 — wired automatically by
+`setup claude-code`:
+
+| Hook | Trigger | Type surfaced |
+|---|---|---|
+| `SessionStart` | Prior open work matches current cwd/branch/paths | `task_checkpoint` |
+| `PostToolUse` | Tool call failed (non-zero exit) | `investigation_outcome` matching error signature |
+| `PostToolUse` | Same `(tool, target)` failed ≥3 times | `investigation_outcome` matching the retried operation |
+
+Every Pallium query — proactive, triggered, or explicit — now carries a
+`trigger_origin` label that lands in `query_audit_log.trigger_origin`
+and `memory_usage_audit.trigger_origin` for measurement. Valid values:
+`session_start_orientation`, `session_start_checkpoint`,
+`user_prompt_submit`, `pre_compact`, `post_tool_failure`,
+`retry_threshold`, `user_explicit`. Unknown values are rejected by the
+API.
+
+**Usage telemetry** (Phase 5a): every injected block now writes a row
+to `memory_usage_audit` with `referenced_in_next_turn = NULL`. The
+Phase 5b populator hook (not yet shipped) will fill in whether the
+agent actually used the memory in its next turn. The
+`GET /memory-usage-audit?query_audit_log_id=...` and
+`POST /memory-usage-audit/{audit_row_id}` endpoints support the
+populator.
+
+**Default install does NOT enable the policy** — `pallium.local.toml`
+ships without an `[injection.policy]` block, and the gate is a
+bit-exact no-op when absent. To opt in, copy the commented block from
+`pallium.example.toml` and uncomment. The recommended starting point
+is:
+
+- `task_checkpoint` → `event`
+- `investigation_outcome` → `on_demand`
+- `thread_summary` → `on_demand`
+- `fact_summary` → `suspended`
+
+Phase 1 data showed no type met ≥70% precision on holdout, so the
+shipped example block does NOT enable proactive injection for any
+type. Operators tighten via per-container overrides once Phase 6
+measurement (4-week window after Phase 5b) yields usage rates that
+justify it.
 
 ## Configuration
 

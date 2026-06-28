@@ -1,0 +1,279 @@
+{
+  "config": {
+    "dedup_tie_resolution": "majority_rating: tie -> not_relevant",
+    "min_events_for_reporting": 6,
+    "min_holdout_kept": 10,
+    "min_train_kept_relevant": 5,
+    "precision_target": 0.7,
+    "split_tie_break": [
+      "event_created_at",
+      "memory_object_id",
+      "query_audit_log_id"
+    ],
+    "train_fraction": 0.8
+  },
+  "dedup": {
+    "n_collapsed_pairs": 11,
+    "n_events_after": 606,
+    "n_events_before": 617,
+    "n_ties_to_not_relevant": 3
+  },
+  "per_type": {
+    "constraint_memory": {
+      "disposition": {
+        "disposition": "demote_to_on_demand",
+        "reason": "holdout precision=0.0, kept=2 below pass bar (>= 0.7, >= 10)"
+      },
+      "holdout": {
+        "applied_threshold": 12.0,
+        "kept_bad": 2,
+        "kept_relevant": 0,
+        "kept_total": 2,
+        "n_holdout": 6,
+        "n_relevant_holdout": 0,
+        "precision": 0.0,
+        "recall": null
+      },
+      "n_holdout": 6,
+      "n_total": 65,
+      "n_train": 59,
+      "train_threshold": {
+        "best": {
+          "kept_bad": 6,
+          "kept_relevant": 16,
+          "kept_total": 22,
+          "precision": 0.7272727272727273,
+          "recall": 0.7272727272727273,
+          "threshold": 12.0
+        },
+        "min_kept_relevant_required": 5,
+        "n_relevant_train": 22,
+        "n_total_train": 36,
+        "reason_no_threshold": null,
+        "target_precision": 0.7
+      }
+    },
+    "decision": {
+      "disposition": {
+        "disposition": "demote_to_on_demand",
+        "reason": "holdout precision=0.625, kept=16 below pass bar (>= 0.7, >= 10)"
+      },
+      "holdout": {
+        "applied_threshold": 19.0,
+        "kept_bad": 6,
+        "kept_relevant": 10,
+        "kept_total": 16,
+        "n_holdout": 28,
+        "n_relevant_holdout": 11,
+        "precision": 0.625,
+        "recall": 0.9090909090909091
+      },
+      "n_holdout": 28,
+      "n_total": 143,
+      "n_train": 115,
+      "train_threshold": {
+        "best": {
+          "kept_bad": 20,
+          "kept_relevant": 47,
+          "kept_total": 67,
+          "precision": 0.7014925373134329,
+          "recall": 0.746031746031746,
+          "threshold": 19.0
+        },
+        "min_kept_relevant_required": 5,
+        "n_relevant_train": 63,
+        "n_total_train": 115,
+        "reason_no_threshold": null,
+        "target_precision": 0.7
+      }
+    },
+    "fact_summary": {
+      "disposition": {
+        "disposition": "suspend_insufficient_data",
+        "reason": "spec: fact_summary suspended; pipeline known broken"
+      },
+      "holdout": {
+        "applied_threshold": null,
+        "kept_bad": 0,
+        "kept_relevant": 0,
+        "kept_total": 0,
+        "n_holdout": 0,
+        "n_relevant_holdout": 0,
+        "precision": null,
+        "recall": null
+      },
+      "n_holdout": 0,
+      "n_total": 10,
+      "n_train": 10,
+      "train_threshold": {
+        "best": null,
+        "min_kept_relevant_required": 5,
+        "n_relevant_train": 3,
+        "n_total_train": 10,
+        "reason_no_threshold": "unreachable_at_target",
+        "target_precision": 0.7
+      }
+    },
+    "interest": {
+      "disposition": {
+        "disposition": "report_only",
+        "reason": "type not in spec final policy"
+      },
+      "holdout": {
+        "applied_threshold": 12.0,
+        "kept_bad": 0,
+        "kept_relevant": 0,
+        "kept_total": 0,
+        "n_holdout": 0,
+        "n_relevant_holdout": 0,
+        "precision": null,
+        "recall": null
+      },
+      "n_holdout": 0,
+      "n_total": 8,
+      "n_train": 8,
+      "train_threshold": {
+        "best": {
+          "kept_bad": 2,
+          "kept_relevant": 6,
+          "kept_total": 8,
+          "precision": 0.75,
+          "recall": 1.0,
+          "threshold": 12.0
+        },
+        "min_kept_relevant_required": 5,
+        "n_relevant_train": 6,
+        "n_total_train": 8,
+        "reason_no_threshold": null,
+        "target_precision": 0.7
+      }
+    },
+    "investigation_outcome": {
+      "disposition": {
+        "disposition": "demote_to_on_demand",
+        "reason": "spec: pre-decided on-demand regardless of numbers"
+      },
+      "holdout": {
+        "applied_threshold": 23.0,
+        "kept_bad": 3,
+        "kept_relevant": 3,
+        "kept_total": 6,
+        "n_holdout": 46,
+        "n_relevant_holdout": 12,
+        "precision": 0.5,
+        "recall": 0.25
+      },
+      "n_holdout": 46,
+      "n_total": 192,
+      "n_train": 146,
+      "train_threshold": {
+        "best": {
+          "kept_bad": 2,
+          "kept_relevant": 8,
+          "kept_total": 10,
+          "precision": 0.8,
+          "recall": 0.14545454545454545,
+          "threshold": 23.0
+        },
+        "min_kept_relevant_required": 5,
+        "n_relevant_train": 55,
+        "n_total_train": 146,
+        "reason_no_threshold": null,
+        "target_precision": 0.7
+      }
+    },
+    "task_checkpoint": {
+      "disposition": {
+        "disposition": "reference_only",
+        "reason": "spec: phase 4 event-trigger is the real gate"
+      },
+      "holdout": {
+        "applied_threshold": 13.0,
+        "kept_bad": 3,
+        "kept_relevant": 3,
+        "kept_total": 6,
+        "n_holdout": 16,
+        "n_relevant_holdout": 9,
+        "precision": 0.5,
+        "recall": 0.3333333333333333
+      },
+      "n_holdout": 16,
+      "n_total": 125,
+      "n_train": 109,
+      "train_threshold": {
+        "best": {
+          "kept_bad": 12,
+          "kept_relevant": 33,
+          "kept_total": 45,
+          "precision": 0.7333333333333333,
+          "recall": 0.5689655172413793,
+          "threshold": 13.0
+        },
+        "min_kept_relevant_required": 5,
+        "n_relevant_train": 58,
+        "n_total_train": 109,
+        "reason_no_threshold": null,
+        "target_precision": 0.7
+      }
+    },
+    "task_trace": {
+      "disposition": {
+        "disposition": null,
+        "insufficient_for_reporting": true,
+        "reason": "n_total=2 < 6"
+      },
+      "holdout": null,
+      "n_holdout": 2,
+      "n_total": 2,
+      "n_train": 0,
+      "train_threshold": null
+    },
+    "thread_summary": {
+      "disposition": {
+        "disposition": "demote_to_on_demand",
+        "reason": "spec: pre-decided on-demand regardless of numbers"
+      },
+      "holdout": {
+        "applied_threshold": null,
+        "kept_bad": 0,
+        "kept_relevant": 0,
+        "kept_total": 0,
+        "n_holdout": 24,
+        "n_relevant_holdout": 2,
+        "precision": null,
+        "recall": null
+      },
+      "n_holdout": 24,
+      "n_total": 61,
+      "n_train": 37,
+      "train_threshold": {
+        "best": null,
+        "min_kept_relevant_required": 5,
+        "n_relevant_train": 17,
+        "n_total_train": 37,
+        "reason_no_threshold": "kept_relevant=3 < 5",
+        "target_precision": 0.7
+      }
+    }
+  },
+  "phase": "1 \u2014 chronological holdout",
+  "recommended_final_policy": {},
+  "skips": {
+    "no_block_match": 10,
+    "no_block_score": 24,
+    "other_rating": 0
+  },
+  "spec": "docs/specs/2026-06-27-injection-policy-abstention.md",
+  "split_summary": {
+    "holdout_window": [
+      "2026-06-04 16:48:38.712754",
+      "2026-06-25 12:28:36.825505"
+    ],
+    "n_holdout": 122,
+    "n_train": 484,
+    "train_window": [
+      "2026-05-03 12:49:54.422690",
+      "2026-06-04 16:02:09.549610"
+    ]
+  }
+}

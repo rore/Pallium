@@ -17,6 +17,11 @@ from api.schemas import (
     MemoryExpandResponse,
     MemoryFeedbackRequest,
     MemoryFeedbackResponse,
+    MemoryUsageAuditListResponse,
+    MemoryUsageAuditRowResponse,
+    MemoryUsageAuditUpdateRequest,
+    MemoryUsageAuditUpdateResponse,
+    _REFERENCE_KIND_VALUES,
     ProcessingStatusResponse,
     QueryDebugResponse,
     QueryRequest,
@@ -216,6 +221,37 @@ _EXPAND_PAYLOAD_EXCLUDED_KEYS: frozenset[str] = frozenset({
 })
 
 
+# Phase 4 (2026-06-27): allowed values for query_audit_log.trigger_origin.
+# Triggers are integration-host concepts; this set lists the labels the
+# in-repo hooks currently emit. None / absent is the legacy default.
+# See docs/specs/2026-06-27-injection-policy-abstention.md.
+_VALID_TRIGGER_ORIGINS: frozenset[str] = frozenset({
+    # Existing hooks (tagged for analysis):
+    "session_start_orientation",
+    "user_prompt_submit",
+    "pre_compact",
+    # New Phase 4 triggers:
+    "session_start_checkpoint",
+    "post_tool_failure",
+    "retry_threshold",
+    "user_explicit",
+})
+
+
+def _validate_trigger_origin(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if value not in _VALID_TRIGGER_ORIGINS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown trigger_origin {value!r}; valid values: "
+                f"{sorted(_VALID_TRIGGER_ORIGINS)}"
+            ),
+        )
+    return value
+
+
 def _maybe_write_query_audit(
     service: PalliumService,
     audit_log_enabled: bool,
@@ -223,6 +259,7 @@ def _maybe_write_query_audit(
     request,
     query_text: str,
     query_result,
+    trigger_origin: str | None = None,
 ) -> None:
     if not audit_log_enabled:
         return
@@ -242,6 +279,7 @@ def _maybe_write_query_audit(
             results=query_result.results,
             ranked_candidates=ranked_candidates,
             injection_method=getattr(query_result, 'injection_method', None),
+            trigger_origin=trigger_origin,
         )
     except Exception:
         logger.warning("query audit log write failed", exc_info=True)
@@ -347,6 +385,8 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
 
     @router.post("/query", response_model=QueryResponse)
     def query_items(request: QueryRequest) -> QueryResponse:
+        # Phase 4: validate trigger_origin (rejects unknown values).
+        _trigger_origin = _validate_trigger_origin(request.trigger_origin)
         result = service.query(
             request.text,
             request.limit,
@@ -359,6 +399,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             work_refs=_normalize_query_work_refs(request.work_refs),
             visibility=request.visibility_kind(),
             runtime_context=_deserialize_runtime_context(request.runtime_context),
+            trigger_origin=_trigger_origin,
         )
         if audit_log_enabled:
             try:
@@ -377,6 +418,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                     results=result.results,
                     ranked_candidates=ranked_candidates,
                     injection_method=getattr(result, 'injection_method', None),
+                    trigger_origin=_trigger_origin,
                 )
             except Exception:
                 logger.warning("query audit log write failed", exc_info=True)
@@ -402,6 +444,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             visibility=request.visibility_kind(),
             runtime_context=_deserialize_runtime_context(request.runtime_context),
             include_trace=True,
+            trigger_origin=_validate_trigger_origin(request.trigger_origin),
         )
         if result.trace is None:
             raise ValueError("debug query must include retrieval trace")
@@ -468,6 +511,9 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             _deserialize_runtime_context(request.runtime_context),
             exclude_item_id=ingest_result.source_item_id,
         )
+        _trigger_origin = _validate_trigger_origin(
+            getattr(request, "query_trigger_origin", None)
+        )
         query_result = service.query(
             query_text,
             request.query_limit,
@@ -477,9 +523,11 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             work_refs=_normalize_query_work_refs(request.work_refs),
             visibility=request.visibility_kind(),
             runtime_context=runtime_context,
+            trigger_origin=_trigger_origin,
         )
         _maybe_write_query_audit(
             service, audit_log_enabled, ingest_result, request, query_text, query_result,
+            trigger_origin=_trigger_origin,
         )
         return ItemAndQueryResponse(
             source_item_id=ingest_result.source_item_id,
@@ -515,6 +563,9 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             _deserialize_runtime_context(request.runtime_context),
             exclude_item_id=ingest_result.source_item_id,
         )
+        _trigger_origin = _validate_trigger_origin(
+            getattr(request, "query_trigger_origin", None)
+        )
         query_result = service.query(
             query_text,
             request.query_limit,
@@ -525,9 +576,11 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             visibility=request.visibility_kind(),
             runtime_context=runtime_context,
             include_trace=True,
+            trigger_origin=_trigger_origin,
         )
         _maybe_write_query_audit(
             service, audit_log_enabled, ingest_result, request, query_text, query_result,
+            trigger_origin=_trigger_origin,
         )
         if query_result.trace is None:
             raise ValueError("debug query must include retrieval trace")
@@ -608,6 +661,58 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             memory_object_id=memory_object_id,
             rating=request.rating,
             recorded=True,
+        )
+
+    # ── Phase 5: memory_usage_audit endpoints ───────────────────────────
+    # See docs/specs/2026-06-27-injection-policy-abstention.md.
+    # POST is idempotent on a per-row basis: re-populating a row that's
+    # already been resolved is a no-op (returns updated=False). The
+    # Phase 5b populator hook depends on this so it can safely retry.
+
+    @router.get(
+        "/memory-usage-audit",
+        response_model=MemoryUsageAuditListResponse,
+    )
+    def list_memory_usage_audit(
+        query_audit_log_id: str = Query(..., min_length=1),
+    ) -> MemoryUsageAuditListResponse:
+        rows = service.list_memory_usage_audit(query_audit_log_id)
+        return MemoryUsageAuditListResponse(
+            rows=[MemoryUsageAuditRowResponse(**row) for row in rows]
+        )
+
+    @router.post(
+        "/memory-usage-audit/{audit_row_id}",
+        response_model=MemoryUsageAuditUpdateResponse,
+    )
+    def update_memory_usage_audit(
+        audit_row_id: str, request: MemoryUsageAuditUpdateRequest,
+    ) -> MemoryUsageAuditUpdateResponse:
+        if request.referenced_in_next_turn and not request.reference_kind:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "reference_kind is required when "
+                    "referenced_in_next_turn=true"
+                ),
+            )
+        if request.reference_kind is not None and request.reference_kind not in _REFERENCE_KIND_VALUES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown reference_kind {request.reference_kind!r}; "
+                    f"valid: {list(_REFERENCE_KIND_VALUES)}"
+                ),
+            )
+        updated = service.update_memory_usage_audit(
+            audit_row_id=audit_row_id,
+            referenced_in_next_turn=request.referenced_in_next_turn,
+            reference_kind=request.reference_kind,
+            observation_window_turns=request.observation_window_turns,
+        )
+        return MemoryUsageAuditUpdateResponse(
+            audit_row_id=audit_row_id,
+            updated=updated,
         )
 
     return router

@@ -97,6 +97,67 @@ class SnapshotConfig:
     max_snapshots: int = 5
 
 
+# ── Phase 3a: injection-policy abstention (per type, per container) ─────
+#
+# See docs/specs/2026-06-27-injection-policy-abstention.md.
+#
+# Default is empty — absent `[injection.policy]` means "no policy, behave
+# as before." Phase 3b will populate the types dict via TOML edits.
+#
+# Container override matching is exact string equality against
+# `container_ref`. TOML keys are opaque — case, slashes, and colons are
+# all significant.
+
+_INJECTION_POLICY_VALID_MODES: frozenset[str] = frozenset({
+    "proactive",       # gate on score >= min_score
+    "event",           # drop from proactive; Phase 4 event triggers replace
+    "on_demand",       # drop from proactive; explicit pallium_query only
+    "suspended",       # drop from proactive; pipeline known broken
+})
+
+
+@dataclass(frozen=True)
+class InjectionTypePolicy:
+    """Per-type proactive injection policy.
+
+    `min_score` is required when mode == "proactive"; it is the result-score
+    threshold (QueryResultItem.score) the candidate must meet. The other
+    modes drop the type from proactive injection entirely.
+    """
+    mode: str = "proactive"
+    min_score: float | None = None
+
+
+@dataclass(frozen=True)
+class InjectionPolicyConfig:
+    """Global + per-container injection policies.
+
+    Empty dicts mean "no policy, no-op." A query's effective per-type
+    policy is the per-container override (matched by query's
+    `container_ref`) if present, else the global `types[type]`, else
+    no policy (pass-through).
+    """
+    types: dict[str, InjectionTypePolicy] = field(default_factory=dict)
+    # container_ref -> {memory_type: InjectionTypePolicy}
+    containers: dict[str, dict[str, InjectionTypePolicy]] = field(default_factory=dict)
+
+    def is_empty(self) -> bool:
+        return not self.types and not self.containers
+
+    def effective(self, memory_type: str, container_ref: str | None) -> InjectionTypePolicy | None:
+        """Return the effective policy for (memory_type, container_ref) or None."""
+        if container_ref and container_ref in self.containers:
+            override = self.containers[container_ref].get(memory_type)
+            if override is not None:
+                return override
+        return self.types.get(memory_type)
+
+
+@dataclass(frozen=True)
+class InjectionConfig:
+    policy: InjectionPolicyConfig = field(default_factory=InjectionPolicyConfig)
+
+
 def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
     return {
         "agent_conversation_memory": SemanticPackageConfig(
@@ -124,6 +185,7 @@ class AppConfig:
     retention: RetentionConfig = field(default_factory=RetentionConfig)
     vector_index: VectorIndexConfig = field(default_factory=VectorIndexConfig)
     snapshot: SnapshotConfig = field(default_factory=SnapshotConfig)
+    injection: InjectionConfig = field(default_factory=InjectionConfig)
 
     # Legacy compatibility inputs. New code should prefer llm_providers and semantic_packages.
     llm_provider: str | None = None
@@ -273,6 +335,7 @@ class AppConfig:
             embedding_providers=_build_embedding_provider_configs(config_data),
             semantic_packages=_build_package_configs(config_data, env_values),
             vector_index=_build_vector_index_config(config_data, env_values),
+            injection=_build_injection_config(config_data),
             llm_provider=_resolve_legacy_value("PALLIUM_LLM_PROVIDER", env_values),
             llm_model=_resolve_legacy_value("PALLIUM_LLM_MODEL", env_values),
             llm_base_url=_resolve_legacy_value("PALLIUM_LLM_BASE_URL", env_values),
@@ -621,6 +684,101 @@ def _build_vector_index_config(config_data: dict[str, Any], env_values: dict[str
             env_values.get("PALLIUM_VECTOR_INDEX_MIN_SIMILARITY"),
             raw.get("min_similarity"),
         ),
+    )
+
+
+def _build_injection_type_policy(raw: Any) -> InjectionTypePolicy:
+    if not isinstance(raw, dict):
+        raise ValueError(
+            "Each [injection.policy.types.<type>] block must be a table; "
+            f"got {type(raw).__name__}"
+        )
+    mode = _as_string(raw.get("mode", "proactive"))
+    if mode not in _INJECTION_POLICY_VALID_MODES:
+        raise ValueError(
+            f"Invalid injection policy mode {mode!r}; "
+            f"valid values: {sorted(_INJECTION_POLICY_VALID_MODES)}"
+        )
+    raw_min = raw.get("min_score")
+    min_score: float | None = None
+    if raw_min is not None:
+        try:
+            min_score = float(raw_min)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"min_score must be numeric; got {raw_min!r}"
+            ) from exc
+    if mode == "proactive" and min_score is None:
+        raise ValueError(
+            "Injection policy mode 'proactive' requires a numeric min_score"
+        )
+    return InjectionTypePolicy(mode=mode, min_score=min_score)
+
+
+def _build_injection_types_block(raw_types: Any) -> dict[str, InjectionTypePolicy]:
+    if raw_types is None:
+        return {}
+    if not isinstance(raw_types, dict):
+        raise ValueError(
+            "[injection.policy.types] must be a table; "
+            f"got {type(raw_types).__name__}"
+        )
+    out: dict[str, InjectionTypePolicy] = {}
+    for type_name, raw_value in raw_types.items():
+        out[str(type_name)] = _build_injection_type_policy(raw_value)
+    return out
+
+
+def _build_injection_config(config_data: dict[str, Any]) -> InjectionConfig:
+    raw_injection = config_data.get("injection")
+    if raw_injection is None:
+        return InjectionConfig()
+    if not isinstance(raw_injection, dict):
+        raise ValueError(
+            "[injection] must be a table; "
+            f"got {type(raw_injection).__name__}"
+        )
+    raw_policy = raw_injection.get("policy")
+    if raw_policy is None:
+        return InjectionConfig()
+    if not isinstance(raw_policy, dict):
+        raise ValueError(
+            "[injection.policy] must be a table; "
+            f"got {type(raw_policy).__name__}"
+        )
+
+    types = _build_injection_types_block(raw_policy.get("types"))
+
+    containers: dict[str, dict[str, InjectionTypePolicy]] = {}
+    raw_containers = raw_policy.get("containers")
+    if raw_containers is not None:
+        if not isinstance(raw_containers, list):
+            raise ValueError(
+                "[[injection.policy.containers]] must be an array of tables; "
+                f"got {type(raw_containers).__name__}"
+            )
+        for entry in raw_containers:
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    "Each [[injection.policy.containers]] entry must be a table"
+                )
+            container_ref = _as_optional_string(entry.get("container_ref"))
+            if not container_ref:
+                raise ValueError(
+                    "Each [[injection.policy.containers]] entry must set "
+                    "container_ref (non-empty string)"
+                )
+            if container_ref in containers:
+                raise ValueError(
+                    f"Duplicate container_ref in [[injection.policy.containers]]: "
+                    f"{container_ref!r}"
+                )
+            containers[container_ref] = _build_injection_types_block(
+                entry.get("types")
+            )
+
+    return InjectionConfig(
+        policy=InjectionPolicyConfig(types=types, containers=containers)
     )
 
 

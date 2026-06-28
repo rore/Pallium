@@ -1,4 +1,20 @@
-"""Stop hook — ingests the assistant's last response from the transcript."""
+"""Stop hook — ingests the assistant's last response from the transcript.
+
+Phase 5b contract (TODO; not yet implemented in this hook):
+    After ingesting the assistant response, this hook will be the
+    natural site for the `memory_usage_audit` populator:
+      1. For each recent query_audit_log row from this thread within
+         the last few turns, GET /memory-usage-audit?query_audit_log_id=...
+      2. For each returned row with populated_at IS NULL, run the
+         minimum-viable matcher against the assistant transcript:
+           - id_quote: look for `ref:<memory_object_id>` mentions
+           - verbatim_snippet: any snippet >= 40 chars from the memory
+             block's text appears in the transcript
+      3. POST /memory-usage-audit/<row_id> with the result. POST is
+         idempotent — re-populating a row no-ops, so retrying safely
+         after transient errors is fine.
+    See docs/specs/2026-06-27-injection-policy-abstention.md (Phase 5b).
+"""
 
 from __future__ import annotations
 

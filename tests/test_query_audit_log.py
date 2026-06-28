@@ -366,6 +366,7 @@ def test_candidate_scores_json_populated(test_db_url: str) -> None:
         evidence=[],
         memory_object_id="mo-10",
         type="decision",
+        retrieval_source="both",
     )
     item2 = QueryResultItem(
         result_id="memory_object:mo-11",
@@ -434,6 +435,9 @@ def test_candidate_scores_json_populated(test_db_url: str) -> None:
     assert scores[0]["support_grade"] == "strong"
     assert scores[0]["suppression_reason_code"] is None
     assert scores[0]["injected"] is True
+    # Phase 0.5: result `score` (policy gate) + retrieval_source
+    assert scores[0]["score"] == 0.9
+    assert scores[0]["retrieval_source"] == "both"
 
     # Second candidate (not injected)
     assert scores[1]["memory_object_id"] == "mo-11"
@@ -441,6 +445,9 @@ def test_candidate_scores_json_populated(test_db_url: str) -> None:
     assert scores[1]["routing_score"] == 0.4
     assert scores[1]["injected"] is False
     assert scores[1]["suppression_reason_code"] == "low_relevance"
+    # Phase 0.5: retrieval_source defaults to None when unset
+    assert scores[1]["score"] == 0.5
+    assert scores[1]["retrieval_source"] is None
 
 
 # ── Test 14: serialization failure does not break audit write ───────────
