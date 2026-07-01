@@ -66,6 +66,29 @@ class MemoryObjectRecord(Base):
     actor_ref = Column(String, nullable=True)
     freshness_at = Column(DateTime(timezone=True), nullable=True)
     subject = Column(String, nullable=True)
+    # W3 explicit memory-write columns (see docs/specs/2026-07-01-milestone-shaped-memory-contract.md §W3).
+    # `origin` distinguishes agent-explicit writes from automatic extraction and
+    # from user-requested notes. Defaults to 'agent_inferred' so all pre-W3 rows
+    # are tagged correctly by the migration, and so fresh-DB rows inserted
+    # without an explicit origin also classify correctly. Server-side default
+    # matches the ALTER TABLE ADD COLUMN default in _MEMORY_OBJECT_MIGRATIONS.
+    origin = Column(String, nullable=True, server_default="agent_inferred")
+    origin_session_id = Column(String, nullable=True)
+    origin_agent_id = Column(String, nullable=True)
+    # `correction_reason` is written when a memory is corrected, superseded, or
+    # forgotten via the explicit tools. Provides audit context.
+    correction_reason = Column(Text, nullable=True)
+    # Explicit supersession chain — populated by pallium_supersede / pallium_correct.
+    # If set, this memory has been superseded by the referenced memory_object id.
+    # Lifecycle-column supersession already exists; this column adds the pointer
+    # so the chain is walkable without a Relation lookup. Both paths coexist.
+    superseded_by_id = Column(String, nullable=True)
+    # Soft-delete tombstone. `is_soft_deleted=1` hides the row from default
+    # retrieval; audit / retrospective queries can opt in. Server-side default
+    # of 0 matches the ALTER TABLE default so fresh-DB rows are visible by default.
+    is_soft_deleted = Column(Integer, nullable=False, default=0, server_default="0")
+    soft_deleted_at = Column(DateTime(timezone=True), nullable=True)
+    soft_delete_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
@@ -313,6 +336,17 @@ class SQLiteSchemaMixin:
         "container_ref": "ALTER TABLE memory_objects ADD COLUMN container_ref VARCHAR",
         "actor_ref": "ALTER TABLE memory_objects ADD COLUMN actor_ref VARCHAR",
         "subject": "ALTER TABLE memory_objects ADD COLUMN subject VARCHAR",
+        # W3 explicit-write columns. All nullable / default-safe so pre-W3 rows
+        # remain valid without a data backfill. `origin` defaults to
+        # 'agent_inferred' so existing extraction writes classify correctly.
+        "origin": "ALTER TABLE memory_objects ADD COLUMN origin VARCHAR DEFAULT 'agent_inferred'",
+        "origin_session_id": "ALTER TABLE memory_objects ADD COLUMN origin_session_id VARCHAR",
+        "origin_agent_id": "ALTER TABLE memory_objects ADD COLUMN origin_agent_id VARCHAR",
+        "correction_reason": "ALTER TABLE memory_objects ADD COLUMN correction_reason TEXT",
+        "superseded_by_id": "ALTER TABLE memory_objects ADD COLUMN superseded_by_id VARCHAR",
+        "is_soft_deleted": "ALTER TABLE memory_objects ADD COLUMN is_soft_deleted INTEGER DEFAULT 0",
+        "soft_deleted_at": "ALTER TABLE memory_objects ADD COLUMN soft_deleted_at DATETIME",
+        "soft_delete_reason": "ALTER TABLE memory_objects ADD COLUMN soft_delete_reason TEXT",
     }
     _INDEX_ENTRY_MIGRATIONS = {
         "text_view_name": "ALTER TABLE index_entries ADD COLUMN text_view_name VARCHAR",
@@ -345,6 +379,27 @@ class SQLiteSchemaMixin:
             "CREATE INDEX IF NOT EXISTS idx_memory_objects_subject_lookup "
             "ON memory_objects(container_ref, subject, type) "
             "WHERE lifecycle = 'active' AND subject IS NOT NULL"
+        ),
+        # W3 explicit-write indexes. `origin` is queried by the dashboard to
+        # distinguish explicit writes from inferred extraction. `superseded_by_id`
+        # supports fast supersession-chain traversal without a Relation lookup.
+        # `is_soft_deleted` partial index keeps default-retrieval queries cheap
+        # (they filter on `is_soft_deleted = 0`, so we only index the small
+        # tombstone set).
+        "idx_memory_objects_origin": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_objects_origin "
+            "ON memory_objects(origin, container_ref, created_at) "
+            "WHERE origin IS NOT NULL"
+        ),
+        "idx_memory_objects_superseded_by": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_objects_superseded_by "
+            "ON memory_objects(superseded_by_id) "
+            "WHERE superseded_by_id IS NOT NULL"
+        ),
+        "idx_memory_objects_soft_deleted": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_objects_soft_deleted "
+            "ON memory_objects(container_ref, created_at) "
+            "WHERE is_soft_deleted = 1"
         ),
         "idx_source_items_thread_lookup": (
             "CREATE INDEX IF NOT EXISTS idx_source_items_thread_lookup "
