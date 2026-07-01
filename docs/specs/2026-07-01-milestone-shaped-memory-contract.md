@@ -257,9 +257,19 @@ Exposed via MCP in `mcp/server.py`:
 
 Every write records:
 - `origin: agent_explicit | agent_inferred | user_requested`
+  - `agent_explicit`: agent used `pallium_remember`, `pallium_correct`,
+    `pallium_supersede`, or `pallium_forget`.
+  - `agent_inferred`: extracted by the semantic pipeline from source items.
+  - `user_requested`: user explicitly flagged content for storage
+    (`artifact_kind="note"` or via UI).
 - source session, agent id, container_ref
-- confidence
+- confidence (**stored for audit only; never used in retrieval ranking**
+  — see Invariant 1 enforcement below)
 - correction reason (for `correct`/`supersede`/`forget`)
+- explicit supersession chain: if superseded, links to the new memory via
+  `superseded_by_id`.
+- soft-delete tombstone: if forgotten, marked `is_soft_deleted=1` with
+  reason; hidden from retrieval by default.
 
 Superseded rows preserved for audit (Pallium's existing supersession pattern).
 Soft-deleted rows hidden from recall by default; retrospective queries opt in.
@@ -270,11 +280,41 @@ Soft-deleted rows hidden from recall by default; retrospective queries opt in.
   memory arguably makes the correction more reliable, not less. Skip until
   live data says otherwise.
 
+### Invariant 1 enforcement in W3
+
+The two invariants at the top of [`docs/context/lessons.md`](../context/lessons.md)
+bind every PR in this workstream. Concretely for W3:
+
+- Confidence scores recorded by `pallium_remember` are audit-only.
+  Retrieval ranking must not use confidence as a boost signal.
+  Confidence may inform downstream evaluation or filtering, but ranking
+  changes require explicit verified use (outcome recorded, user confirmed,
+  or offline evaluator judgment) — not the write itself.
+- `pallium_correct` and `pallium_supersede` preserve old memories in the
+  database for audit; they do not retroactively update the old memory's
+  ranking or boost the corrected memory in retrieval.
+- `pallium_record_outcome` records a fact but does not update retrieval
+  ranking for the linked procedure or any related memories until W4
+  integration testing verifies the contract.
+
+Any violation of these three rules is a red flag during code review and
+must be sent back before merge.
+
 ### Acceptance
 - All five tools reachable from Claude Code and Codex integrations.
 - Scenario 5 (preserve architectural decision) passes because the agent used
   `pallium_remember` at the moment the decision was stated.
 - `origin` observable in `memory_objects`; queryable in the dashboard.
+- **Concurrent-write handling:** correct/supersede on an already-superseded
+  memory returns 409 Conflict; forget is idempotent on an already-forgotten
+  memory.
+- **Rollback plan documented and tested:** config kill-switch
+  (`explicit_memory_writes.enabled = false`) disables all five tools
+  without requiring schema migration.
+- **Per-PR architect checkpoints** during the two-week implementation:
+  (1) concurrency + validation review on the storage/sqlite.py + schema PR;
+  (2) Invariant 1 review on the semantic/memory_writes.py PR;
+  (3) soft-delete + consolidation interaction review before final merge.
 
 ### Files
 - `mcp/server.py`, `storage/sqlite.py`, `semantic/memory_writes.py` (new)
