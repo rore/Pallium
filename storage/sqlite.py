@@ -9,7 +9,7 @@ from typing import Any, Callable, TypeVar
 from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from core.errors import is_transient_error
+from core.errors import SupersessionConflictError, is_transient_error
 from core.contracts import ProcessResult
 from core.models import EvidenceReference, IndexEntry, MemoryFeedback, MemoryFlag, MemoryObject, Relation, SourceItem, utc_now
 from core.turn_inference import ThreadStats
@@ -333,6 +333,164 @@ class SQLiteStorageProvider(
                 flagged_at=flag.flagged_at,
             ))
         self._with_retry(_do)
+
+    # ── W3 explicit memory-write methods ─────────────────────────────
+    #
+    # These four methods back the pallium_remember / pallium_correct /
+    # pallium_supersede / pallium_forget MCP tools. Each is atomic (wrapped
+    # in _with_retry which uses session.begin()). They only manipulate the
+    # W3 columns added in the W3 storage-schema PR; they do NOT create or
+    # delete rows in memory_objects — that path goes through
+    # create_memory_object.
+    #
+    # Invariant 1 (see docs/context/lessons.md): none of these methods
+    # update retrieval ranking or accessibility state. `origin` is stored
+    # for audit and dashboard filtering; `superseded_by_id` and
+    # `is_soft_deleted` gate visibility via retrieval filters but do not
+    # boost any ranking. `correction_reason` is audit-only.
+
+    def mark_memory_origin(
+        self,
+        memory_object_id: str,
+        *,
+        origin: str,
+        origin_session_id: str | None = None,
+        origin_agent_id: str | None = None,
+    ) -> None:
+        """Set W3 origin fields on an existing memory.
+
+        Called by the explicit-write path AFTER create_memory_object so the
+        agent's session / agent_ref are audit-recorded. `origin` must be
+        one of the enum values: 'agent_explicit', 'agent_inferred',
+        'user_requested'. Validation happens at the MCP tool boundary; this
+        method trusts its inputs.
+
+        Idempotent: calling twice with the same values is a no-op.
+
+        Raises KeyError if the memory_object does not exist.
+        """
+        allowed = {"agent_explicit", "agent_inferred", "user_requested"}
+        if origin not in allowed:
+            raise ValueError(f"origin must be one of {sorted(allowed)}, got {origin!r}")
+
+        def _do(session):
+            record = session.get(MemoryObjectRecord, memory_object_id)
+            if record is None:
+                raise KeyError(memory_object_id)
+            record.origin = origin
+            if origin_session_id is not None:
+                record.origin_session_id = origin_session_id
+            if origin_agent_id is not None:
+                record.origin_agent_id = origin_agent_id
+        self._with_retry(_do)
+
+    def link_supersession(
+        self,
+        old_memory_object_id: str,
+        new_memory_object_id: str,
+        *,
+        correction_reason: str | None = None,
+    ) -> None:
+        """Mark old memory as superseded by new memory. Atomic.
+
+        Sets on the old memory:
+        - lifecycle='superseded'
+        - superseded_by_id=new_memory_object_id
+        - correction_reason (if provided)
+
+        Conflict handling: if the old memory is already superseded
+        (lifecycle != 'active' OR superseded_by_id set), raises
+        SupersessionConflictError. This lets the MCP tool return 409
+        Conflict to the caller — first writer wins.
+
+        The new memory must already exist (create_memory_object first),
+        otherwise raises KeyError for new_memory_object_id.
+        """
+        def _do(session):
+            old = session.get(MemoryObjectRecord, old_memory_object_id)
+            if old is None:
+                raise KeyError(old_memory_object_id)
+            new = session.get(MemoryObjectRecord, new_memory_object_id)
+            if new is None:
+                raise KeyError(new_memory_object_id)
+            if old.lifecycle != "active" or old.superseded_by_id is not None:
+                raise SupersessionConflictError(
+                    f"memory {old_memory_object_id!r} is not active "
+                    f"(lifecycle={old.lifecycle!r}, "
+                    f"superseded_by_id={old.superseded_by_id!r})"
+                )
+            old.lifecycle = "superseded"
+            old.superseded_by_id = new_memory_object_id
+            if correction_reason is not None:
+                old.correction_reason = correction_reason
+        self._with_retry(_do)
+
+    def soft_delete_memory(
+        self,
+        memory_object_id: str,
+        *,
+        reason: str,
+        deleted_at: datetime | None = None,
+    ) -> bool:
+        """Soft-delete a memory (pallium_forget).
+
+        Sets is_soft_deleted=1, soft_deleted_at, soft_delete_reason.
+        Does NOT change lifecycle — a soft-deleted memory may still be
+        'active' or 'superseded'; the tombstone is orthogonal.
+
+        Idempotent: calling on an already-soft-deleted memory returns
+        False without modifying anything. First soft-delete returns True.
+
+        Raises KeyError if the memory_object does not exist.
+        """
+        def _do(session):
+            record = session.get(MemoryObjectRecord, memory_object_id)
+            if record is None:
+                raise KeyError(memory_object_id)
+            if record.is_soft_deleted == 1:
+                return False
+            record.is_soft_deleted = 1
+            record.soft_deleted_at = deleted_at or utc_now()
+            record.soft_delete_reason = reason
+            return True
+        return self._with_retry(_do)
+
+    def correct_memory_payload(
+        self,
+        memory_object_id: str,
+        *,
+        new_payload: dict,
+        correction_reason: str,
+    ) -> None:
+        """In-place correction of a memory (pallium_correct).
+
+        Updates payload_json + correction_reason atomically. Does NOT
+        change lifecycle — this is "the extraction was incomplete or
+        mislabeled" semantics, not "obsolete, replace with a new memory."
+        For the latter, callers should use link_supersession instead.
+
+        Raises SupersessionConflictError if the memory is already
+        superseded — a superseded memory should not be modified in place;
+        the caller should supersede the current active memory in the
+        chain instead.
+
+        Raises KeyError if the memory_object does not exist.
+        """
+        def _do(session):
+            record = session.get(MemoryObjectRecord, memory_object_id)
+            if record is None:
+                raise KeyError(memory_object_id)
+            if record.lifecycle != "active" or record.superseded_by_id is not None:
+                raise SupersessionConflictError(
+                    f"cannot correct non-active memory {memory_object_id!r} "
+                    f"(lifecycle={record.lifecycle!r}, "
+                    f"superseded_by_id={record.superseded_by_id!r})"
+                )
+            record.payload_json = self._dumps(new_payload) or "{}"
+            record.correction_reason = correction_reason
+        self._with_retry(_do)
+
+    # ── /W3 explicit memory-write methods ────────────────────────────
 
     def record_memory_feedback(
         self,

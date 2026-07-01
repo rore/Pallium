@@ -25,3 +25,17 @@ def is_transient_error(exc: Exception) -> bool:
         return False
     message = str(original).lower()
     return any(s in message for s in _TRANSIENT_SQLITE_ERROR_SUBSTRINGS)
+
+
+class SupersessionConflictError(Exception):
+    """Raised by W3 storage methods when a supersession or correction is
+    attempted on a memory that is not currently active.
+
+    Callers (typically the MCP tool boundary) surface this as HTTP 409
+    Conflict so an agent that concurrently attempts the same operation
+    gets a clean, retryable error rather than a corrupted supersession
+    chain.
+
+    Not a transient error — do not retry via _with_retry.
+    """
+
