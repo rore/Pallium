@@ -165,3 +165,120 @@ class PalliumMcpClient:
             return {"error": str(exc), "detail": body}
         except Exception as exc:
             return {"error": str(exc)}
+
+    # ── W3 explicit memory-write client methods ─────────────────────
+    # Thin wrappers over /memory/remember, /memory/{id}/correct,
+    # /memory/supersede, /memory/{id}/forget, /memory/record-outcome.
+    # Errors surface as {"error", "status_code", "detail"} to keep the MCP
+    # tool response format consistent and let the calling agent see the
+    # reason (e.g. 409 Conflict) rather than an opaque exception.
+
+    async def _post_or_error(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
+                response = await http.post(path, json=payload)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as exc:
+            try:
+                body = exc.response.json()
+            except Exception:
+                body = exc.response.text
+            return {
+                "error": str(exc),
+                "status_code": exc.response.status_code,
+                "detail": body,
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def remember_memory(
+        self,
+        *,
+        text: str,
+        type: str,
+        confidence: float | None = None,
+        evidence: list[str] | None = None,
+        origin_session_id: str | None = None,
+        origin_agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"text": text, "type": type}
+        if confidence is not None:
+            payload["confidence"] = confidence
+        if evidence is not None:
+            payload["evidence"] = evidence
+        for key in ("container_ref", "actor_ref", "thread_ref"):
+            v = getattr(self._ctx, key, None)
+            if v is not None:
+                payload[key] = v
+        if origin_session_id is not None:
+            payload["origin_session_id"] = origin_session_id
+        if origin_agent_id is not None:
+            payload["origin_agent_id"] = origin_agent_id
+        return await self._post_or_error("/memory/remember", payload)
+
+    async def correct_memory(
+        self,
+        memory_object_id: str,
+        *,
+        corrected_text: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        return await self._post_or_error(
+            f"/memory/{memory_object_id}/correct",
+            {"corrected_text": corrected_text, "reason": reason},
+        )
+
+    async def supersede_memory(
+        self,
+        *,
+        new_text: str,
+        supersedes_id: str,
+        reason: str | None = None,
+        type: str | None = None,
+        origin_session_id: str | None = None,
+        origin_agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "new_text": new_text,
+            "supersedes_id": supersedes_id,
+        }
+        if reason is not None:
+            payload["reason"] = reason
+        if type is not None:
+            payload["type"] = type
+        for key in ("container_ref", "actor_ref", "thread_ref"):
+            v = getattr(self._ctx, key, None)
+            if v is not None:
+                payload[key] = v
+        if origin_session_id is not None:
+            payload["origin_session_id"] = origin_session_id
+        if origin_agent_id is not None:
+            payload["origin_agent_id"] = origin_agent_id
+        return await self._post_or_error("/memory/supersede", payload)
+
+    async def forget_memory(
+        self,
+        memory_object_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        return await self._post_or_error(
+            f"/memory/{memory_object_id}/forget",
+            {"reason": reason},
+        )
+
+    async def record_outcome(
+        self,
+        *,
+        procedure_id: str,
+        outcome: str,
+        evidence: list[str] | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"procedure_id": procedure_id, "outcome": outcome}
+        if evidence is not None:
+            payload["evidence"] = evidence
+        if note is not None:
+            payload["note"] = note
+        return await self._post_or_error("/memory/record-outcome", payload)

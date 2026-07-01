@@ -465,3 +465,128 @@ class MemoryUsageAuditUpdateRequest(BaseModel):
 class MemoryUsageAuditUpdateResponse(BaseModel):
     audit_row_id: str
     updated: bool   # False if already populated (no-op) or row not found
+
+
+# ── W3 explicit memory-write tools ─────────────────────────────────
+# See docs/specs/2026-07-01-milestone-shaped-memory-contract.md §W3.
+# These schemas back the pallium_remember / pallium_correct /
+# pallium_supersede / pallium_forget / pallium_record_outcome MCP tools.
+# Validation happens here at the API boundary (Invariant 1 discipline).
+
+# Enum of memory origins recorded by the explicit-write path.
+_ORIGIN_LITERALS = Literal["agent_explicit", "agent_inferred", "user_requested"]
+
+# Bounded text lengths to prevent unbounded prompt-injection / storage bloat.
+_MAX_MEMORY_TEXT_CHARS = 10_000
+_MAX_REASON_CHARS = 500
+
+
+class RememberMemoryRequest(BaseModel):
+    """pallium_remember(text, type, ...): durable fact write.
+
+    `type` names a registered memory type (decision, investigation_outcome,
+    constraint_memory, operational_fact, etc). The service validates the
+    type is registered before writing.
+
+    `confidence` is stored for audit only. Invariant 1: it is NEVER used
+    for retrieval ranking. Values >1.0 are rejected as they suggest the
+    caller misunderstands the field.
+    """
+    text: str = Field(min_length=1, max_length=_MAX_MEMORY_TEXT_CHARS)
+    type: str = Field(min_length=1)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    evidence: list[str] | None = Field(default=None, max_length=5)
+    container_ref: str | None = None
+    actor_ref: str | None = None
+    thread_ref: str | None = None
+    origin_session_id: str | None = None
+    origin_agent_id: str | None = None
+
+
+class RememberMemoryResponse(BaseModel):
+    memory_object_id: str
+    origin: _ORIGIN_LITERALS
+    created_at: datetime
+
+
+class CorrectMemoryRequest(BaseModel):
+    """pallium_correct: in-place fix of a wrong memory.
+
+    Use when the memory is partially wrong (extraction was incomplete or
+    mislabeled). For fully-obsolete memories, use pallium_supersede
+    instead — that keeps the old memory in the audit chain and creates a
+    new one.
+    """
+    corrected_text: str = Field(min_length=1, max_length=_MAX_MEMORY_TEXT_CHARS)
+    reason: str = Field(
+        min_length=1,
+        max_length=_MAX_REASON_CHARS,
+        description="Why the correction is needed. Include a note about the prior evidence.",
+    )
+
+
+class CorrectMemoryResponse(BaseModel):
+    memory_object_id: str
+    corrected: bool  # True on success; false if the memory is not active
+
+
+class SupersedeMemoryRequest(BaseModel):
+    """pallium_supersede: explicit supersession — new memory replaces old.
+
+    Both memories persist. The old one is marked lifecycle='superseded'
+    and gets a pointer to the new one via superseded_by_id. Retrieval
+    hides superseded rows by default; retrospective queries opt in.
+    """
+    new_text: str = Field(min_length=1, max_length=_MAX_MEMORY_TEXT_CHARS)
+    supersedes_id: str = Field(min_length=1)
+    reason: str | None = Field(default=None, max_length=_MAX_REASON_CHARS)
+    # The new memory takes the old memory's type/container by default; overrides here.
+    type: str | None = None
+    container_ref: str | None = None
+    actor_ref: str | None = None
+    thread_ref: str | None = None
+    origin_session_id: str | None = None
+    origin_agent_id: str | None = None
+
+
+class SupersedeMemoryResponse(BaseModel):
+    old_memory_object_id: str
+    new_memory_object_id: str
+    superseded: bool  # True on success; false only if a concurrent supersession lost
+
+
+class ForgetMemoryRequest(BaseModel):
+    """pallium_forget: soft-delete with tombstone.
+
+    The memory row remains in the database for audit. It's marked
+    is_soft_deleted=1 and excluded from default retrieval. Retrospective
+    audit queries can still surface it.
+
+    Idempotent: forgetting an already-forgotten memory returns
+    forgotten=False without modifying anything.
+    """
+    reason: str = Field(min_length=1, max_length=_MAX_REASON_CHARS)
+
+
+class ForgetMemoryResponse(BaseModel):
+    memory_object_id: str
+    forgotten: bool  # False on second call (idempotent)
+
+
+class RecordOutcomeRequest(BaseModel):
+    """pallium_record_outcome: link outcome to a procedure / operational memory.
+
+    Feeds W4 operational-fact memory success/failure counters. Stored
+    for audit; NOT used to update retrieval ranking until W4 integration
+    testing verifies the contract end-to-end.
+    """
+    procedure_id: str = Field(min_length=1)
+    outcome: Literal["success", "failure", "inconclusive"]
+    evidence: list[str] | None = Field(default=None, max_length=5)
+    note: str | None = Field(default=None, max_length=_MAX_REASON_CHARS)
+
+
+class RecordOutcomeResponse(BaseModel):
+    procedure_id: str
+    outcome: Literal["success", "failure", "inconclusive"]
+    recorded: bool

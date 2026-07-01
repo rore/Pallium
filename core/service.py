@@ -643,6 +643,214 @@ class PalliumService:
             container_ref=container_ref,
         )
 
+    # ── W3 explicit memory-write service methods ─────────────────────
+    #
+    # Thin wrappers on top of the storage-layer methods added in the W3
+    # storage-methods PR. Purpose here: build MemoryObject envelopes for
+    # remember/supersede, record origin provenance, and (later) hook into
+    # the query-stats surface if we decide to count explicit writes.
+    #
+    # Invariant 1 (docs/context/lessons.md): none of these methods update
+    # retrieval ranking or accessibility state. confidence is stored via
+    # payload; the storage layer never reads it for ranking.
+
+    # The five type ids the initial version accepts. Extraction pipeline
+    # already writes to these types via the same table; we validate at the
+    # tool boundary so the agent doesn't invent new memory types by accident.
+    _W3_ALLOWED_MEMORY_TYPES = frozenset(
+        {"decision", "investigation_outcome", "constraint_memory", "operational_fact", "note"}
+    )
+
+    def remember_memory(
+        self,
+        *,
+        text: str,
+        type: str,
+        confidence: float | None = None,
+        evidence: list[str] | None = None,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
+        thread_ref: str | None = None,
+        origin_session_id: str | None = None,
+        origin_agent_id: str | None = None,
+    ) -> MemoryObject:
+        """pallium_remember: agent explicitly stores a durable fact.
+
+        Creates a memory with origin='agent_explicit' and the given
+        provenance. Confidence is stored in payload for audit only —
+        Invariant 1 forbids ranking from using it directly.
+        """
+        if type not in self._W3_ALLOWED_MEMORY_TYPES:
+            raise ValueError(
+                f"type must be one of {sorted(self._W3_ALLOWED_MEMORY_TYPES)}, got {type!r}"
+            )
+        payload: dict[str, object] = {"statement": text}
+        if confidence is not None:
+            payload["confidence"] = confidence
+        if evidence:
+            payload["evidence"] = list(evidence)
+        payload["source"] = "agent_explicit_write"
+
+        memory = MemoryObject(
+            type=type,
+            schema_id=f"{type}.agent_explicit.v1",
+            schema_version="1",
+            payload=payload,
+            container_ref=container_ref,
+            actor_ref=actor_ref,
+        )
+        self._storage.create_memory_object(memory)
+        self._storage.mark_memory_origin(
+            memory.id,
+            origin="agent_explicit",
+            origin_session_id=origin_session_id,
+            origin_agent_id=origin_agent_id,
+        )
+        return memory
+
+    def correct_memory(
+        self,
+        memory_object_id: str,
+        *,
+        corrected_text: str,
+        reason: str,
+    ) -> bool:
+        """pallium_correct: in-place fix. Returns True on success.
+
+        Raises SupersessionConflictError (surfaces as 409) if the memory
+        is not currently active — corrections must target the head of the
+        supersession chain, not a stale entry.
+        """
+        existing = self._storage.get_memory_object(memory_object_id)
+        new_payload = dict(existing.payload)
+        new_payload["statement"] = corrected_text
+        new_payload["source"] = "agent_explicit_correction"
+        self._storage.correct_memory_payload(
+            memory_object_id,
+            new_payload=new_payload,
+            correction_reason=reason,
+        )
+        return True
+
+    def supersede_memory(
+        self,
+        *,
+        new_text: str,
+        supersedes_id: str,
+        reason: str | None = None,
+        type: str | None = None,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
+        thread_ref: str | None = None,
+        origin_session_id: str | None = None,
+        origin_agent_id: str | None = None,
+    ) -> tuple[str, str]:
+        """pallium_supersede: explicit chain — new memory replaces old.
+
+        Returns (old_id, new_id). If `type` / `container_ref` / `actor_ref`
+        are None, defaults are taken from the old memory. Raises
+        SupersessionConflictError if the old memory is not currently
+        active (surfaces as 409 to the MCP caller).
+        """
+        old = self._storage.get_memory_object(supersedes_id)
+        resolved_type = type or old.type
+        if resolved_type not in self._W3_ALLOWED_MEMORY_TYPES:
+            raise ValueError(
+                f"type must be one of {sorted(self._W3_ALLOWED_MEMORY_TYPES)}, got {resolved_type!r}"
+            )
+        payload: dict[str, object] = {
+            "statement": new_text,
+            "source": "agent_explicit_supersede",
+            "supersedes_id": supersedes_id,
+        }
+        new_memory = MemoryObject(
+            type=resolved_type,
+            schema_id=f"{resolved_type}.agent_explicit.v1",
+            schema_version="1",
+            payload=payload,
+            container_ref=container_ref or old.container_ref,
+            actor_ref=actor_ref or old.actor_ref,
+        )
+        self._storage.create_memory_object(new_memory)
+        self._storage.mark_memory_origin(
+            new_memory.id,
+            origin="agent_explicit",
+            origin_session_id=origin_session_id,
+            origin_agent_id=origin_agent_id,
+        )
+        self._storage.link_supersession(
+            supersedes_id,
+            new_memory.id,
+            correction_reason=reason,
+        )
+        return (supersedes_id, new_memory.id)
+
+    def forget_memory(self, memory_object_id: str, *, reason: str) -> bool:
+        """pallium_forget: soft-delete with tombstone.
+
+        Idempotent: returns True on first call, False if the memory was
+        already soft-deleted.
+        """
+        return self._storage.soft_delete_memory(memory_object_id, reason=reason)
+
+    def record_procedure_outcome(
+        self,
+        *,
+        procedure_id: str,
+        outcome: str,
+        evidence: list[str] | None = None,
+        note: str | None = None,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
+        origin_session_id: str | None = None,
+        origin_agent_id: str | None = None,
+    ) -> bool:
+        """pallium_record_outcome: attach an outcome to an operational-fact
+        procedure. Feeds W4 success/failure counters.
+
+        v1 stores the outcome as an agent_explicit `note` memory linked
+        by payload; a proper counter-update path lands with W4.
+        """
+        if outcome not in ("success", "failure", "inconclusive"):
+            raise ValueError(
+                f"outcome must be success | failure | inconclusive, got {outcome!r}"
+            )
+        # Confirm the procedure exists so we don't accept dangling references.
+        try:
+            self._storage.get_memory_object(procedure_id)
+        except KeyError as exc:
+            raise KeyError(f"procedure_id {procedure_id!r} not found") from exc
+
+        payload: dict[str, object] = {
+            "statement": f"Procedure outcome: {outcome}",
+            "procedure_id": procedure_id,
+            "outcome": outcome,
+            "source": "agent_explicit_outcome",
+        }
+        if evidence:
+            payload["evidence"] = list(evidence)
+        if note:
+            payload["note"] = note
+
+        outcome_memory = MemoryObject(
+            type="note",
+            schema_id="note.agent_explicit.outcome.v1",
+            schema_version="1",
+            payload=payload,
+            container_ref=container_ref,
+            actor_ref=actor_ref,
+        )
+        self._storage.create_memory_object(outcome_memory)
+        self._storage.mark_memory_origin(
+            outcome_memory.id,
+            origin="agent_explicit",
+            origin_session_id=origin_session_id,
+            origin_agent_id=origin_agent_id,
+        )
+        return True
+
+    # ── /W3 explicit memory-write service methods ────────────────────
+
     def _run_targeted_fact_consolidation(self, use_case: str, container_ref: str, subjects: list[str]) -> None:
         """Callback for ThreadRebuilder: run fact consolidation for specific subjects."""
         self._consolidation_runner.run_targeted_consolidation(use_case, container_ref, subjects)

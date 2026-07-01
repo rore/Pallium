@@ -5,8 +5,12 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 
 from api.schemas import (
+    CorrectMemoryRequest,
+    CorrectMemoryResponse,
     FlagMemoryRequest,
     FlagMemoryResponse,
+    ForgetMemoryRequest,
+    ForgetMemoryResponse,
     ItemAndQueryDebugResponse,
     ItemAndQueryRequest,
     ItemAndQueryResponse,
@@ -27,7 +31,14 @@ from api.schemas import (
     QueryRequest,
     QueryResponse,
     QueueHealthResponse,
+    RecordOutcomeRequest,
+    RecordOutcomeResponse,
+    RememberMemoryRequest,
+    RememberMemoryResponse,
+    SupersedeMemoryRequest,
+    SupersedeMemoryResponse,
 )
+from core.errors import SupersessionConflictError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
 from core.turn_inference import resolve_runtime_context
@@ -738,6 +749,124 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
         return MemoryUsageAuditUpdateResponse(
             audit_row_id=audit_row_id,
             updated=updated,
+        )
+
+    # ── W3 explicit memory-write endpoints ──────────────────────────
+    # See docs/specs/2026-07-01-milestone-shaped-memory-contract.md §W3.
+    # HTTP status semantics:
+    #   200 OK — success
+    #   400 Bad Request — invalid enum value (type / outcome) or missing memory
+    #   404 Not Found — memory_object_id does not exist
+    #   409 Conflict — supersede/correct on already-superseded memory
+    #                  (SupersessionConflictError). Caller should re-fetch
+    #                  the chain head and retry on the current active memory.
+
+    @router.post("/memory/remember", response_model=RememberMemoryResponse)
+    def remember_memory(request: RememberMemoryRequest) -> RememberMemoryResponse:
+        try:
+            memory = service.remember_memory(
+                text=request.text,
+                type=request.type,
+                confidence=request.confidence,
+                evidence=request.evidence,
+                container_ref=request.container_ref,
+                actor_ref=request.actor_ref,
+                thread_ref=request.thread_ref,
+                origin_session_id=request.origin_session_id,
+                origin_agent_id=request.origin_agent_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return RememberMemoryResponse(
+            memory_object_id=memory.id,
+            origin="agent_explicit",
+            created_at=memory.created_at,
+        )
+
+    @router.post(
+        "/memory/{memory_object_id}/correct",
+        response_model=CorrectMemoryResponse,
+    )
+    def correct_memory(
+        memory_object_id: str, request: CorrectMemoryRequest,
+    ) -> CorrectMemoryResponse:
+        try:
+            service.correct_memory(
+                memory_object_id,
+                corrected_text=request.corrected_text,
+                reason=request.reason,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="memory object not found")
+        except SupersessionConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return CorrectMemoryResponse(
+            memory_object_id=memory_object_id,
+            corrected=True,
+        )
+
+    @router.post("/memory/supersede", response_model=SupersedeMemoryResponse)
+    def supersede_memory(request: SupersedeMemoryRequest) -> SupersedeMemoryResponse:
+        try:
+            old_id, new_id = service.supersede_memory(
+                new_text=request.new_text,
+                supersedes_id=request.supersedes_id,
+                reason=request.reason,
+                type=request.type,
+                container_ref=request.container_ref,
+                actor_ref=request.actor_ref,
+                thread_ref=request.thread_ref,
+                origin_session_id=request.origin_session_id,
+                origin_agent_id=request.origin_agent_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except KeyError:
+            raise HTTPException(
+                status_code=404,
+                detail=f"memory object {request.supersedes_id!r} not found",
+            )
+        except SupersessionConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return SupersedeMemoryResponse(
+            old_memory_object_id=old_id,
+            new_memory_object_id=new_id,
+            superseded=True,
+        )
+
+    @router.post(
+        "/memory/{memory_object_id}/forget",
+        response_model=ForgetMemoryResponse,
+    )
+    def forget_memory(
+        memory_object_id: str, request: ForgetMemoryRequest,
+    ) -> ForgetMemoryResponse:
+        try:
+            forgotten = service.forget_memory(memory_object_id, reason=request.reason)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="memory object not found")
+        return ForgetMemoryResponse(
+            memory_object_id=memory_object_id,
+            forgotten=forgotten,
+        )
+
+    @router.post("/memory/record-outcome", response_model=RecordOutcomeResponse)
+    def record_outcome(request: RecordOutcomeRequest) -> RecordOutcomeResponse:
+        try:
+            service.record_procedure_outcome(
+                procedure_id=request.procedure_id,
+                outcome=request.outcome,
+                evidence=request.evidence,
+                note=request.note,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        return RecordOutcomeResponse(
+            procedure_id=request.procedure_id,
+            outcome=request.outcome,
+            recorded=True,
         )
 
     return router

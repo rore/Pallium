@@ -192,6 +192,165 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         result = await client.get_status()
         return json.dumps(result, indent=2, default=str)
 
+    # ── W3 explicit memory-write tools ─────────────────────────────
+    # See docs/specs/2026-07-01-milestone-shaped-memory-contract.md §W3.
+    # These tools let the agent deliberately shape memory — remember a
+    # fact worth keeping, correct a wrong memory, supersede an obsolete
+    # one, forget an irrelevant one, record a procedure outcome. Writes
+    # are tagged origin='agent_explicit' for audit.
+    #
+    # Invariant 1 (retrieval is not use): none of these tools update
+    # retrieval ranking or accessibility state. Confidence is audit-only.
+
+    @server.tool()
+    async def pallium_remember(
+        text: str,
+        type: str,
+        confidence: float | None = None,
+        evidence: list[str] | None = None,
+        container_ref: str | None = None,
+        thread_ref: str | None = None,
+        actor_ref: str | None = None,
+        visibility: str | None = None,
+    ) -> str:
+        """Explicitly store a durable fact in Pallium memory.
+
+        Use when a fact is worth keeping across sessions and automatic
+        extraction may not capture it reliably — for example, an
+        architectural decision the user just made, a repository constraint
+        the current session discovered, or an operational fact worth
+        remembering. `type` must be one of: decision, investigation_outcome,
+        constraint_memory, operational_fact, note. `text` is the fact in
+        the agent's own words (max ~10k chars). `confidence` is audit-only
+        (never boosts retrieval ranking). `evidence` is an optional list of
+        source refs (max 5)."""
+        ctx = resolve_context(
+            container_ref=container_ref,
+            thread_ref=thread_ref,
+            actor_ref=actor_ref,
+            visibility=visibility,
+        )
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        client = PalliumMcpClient(ctx)
+        result = await client.remember_memory(
+            text=text,
+            type=type,
+            confidence=confidence,
+            evidence=evidence,
+        )
+        return json.dumps(result, indent=2, default=str)
+
+    @server.tool()
+    async def pallium_correct(
+        memory_object_id: str,
+        corrected_text: str,
+        reason: str,
+    ) -> str:
+        """Fix a memory in place — the extraction was incomplete or mislabeled.
+
+        Use when the memory is partially wrong. For fully obsolete
+        memories, use pallium_supersede instead. Returns 409 if the memory
+        is not currently active — in that case, walk the supersession chain
+        via pallium_expand and correct the head. `reason` should include a
+        short note about the prior evidence (max 500 chars)."""
+        ctx = resolve_context()
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        client = PalliumMcpClient(ctx)
+        result = await client.correct_memory(
+            memory_object_id,
+            corrected_text=corrected_text,
+            reason=reason,
+        )
+        return json.dumps(result, indent=2, default=str)
+
+    @server.tool()
+    async def pallium_supersede(
+        new_text: str,
+        supersedes_id: str,
+        reason: str | None = None,
+        type: str | None = None,
+        container_ref: str | None = None,
+        thread_ref: str | None = None,
+        actor_ref: str | None = None,
+        visibility: str | None = None,
+    ) -> str:
+        """Replace an obsolete memory with a new one. Both persist.
+
+        Use when a memory is fully obsolete and a new memory replaces it
+        end-to-end (e.g., "Actually, use approach Y instead of X"). The
+        old memory is marked lifecycle='superseded' and gets a pointer to
+        the new one. Retrieval hides superseded rows by default;
+        retrospective queries can still see them. Returns 409 if the old
+        memory is already superseded (first writer wins)."""
+        ctx = resolve_context(
+            container_ref=container_ref,
+            thread_ref=thread_ref,
+            actor_ref=actor_ref,
+            visibility=visibility,
+        )
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        client = PalliumMcpClient(ctx)
+        result = await client.supersede_memory(
+            new_text=new_text,
+            supersedes_id=supersedes_id,
+            reason=reason,
+            type=type,
+        )
+        return json.dumps(result, indent=2, default=str)
+
+    @server.tool()
+    async def pallium_forget(
+        memory_object_id: str,
+        reason: str,
+    ) -> str:
+        """Soft-delete a memory. Hidden from retrieval; audit trail preserved.
+
+        Use when a memory is irrelevant, misleading, or should not be
+        surfaced again. The row stays in the database (audit / retrospective
+        queries can still see it), but default retrieval excludes it.
+        Idempotent — forgetting an already-forgotten memory returns
+        forgotten=false. `reason` is required (max 500 chars). Distinct
+        from pallium_flag_memory: forget is agent-decisive and immediate,
+        flag is a votes-based suppression signal."""
+        ctx = resolve_context()
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        client = PalliumMcpClient(ctx)
+        result = await client.forget_memory(memory_object_id, reason=reason)
+        return json.dumps(result, indent=2, default=str)
+
+    @server.tool()
+    async def pallium_record_outcome(
+        procedure_id: str,
+        outcome: Literal["success", "failure", "inconclusive"],
+        evidence: list[str] | None = None,
+        note: str | None = None,
+    ) -> str:
+        """Record the outcome of following an operational procedure.
+
+        Use after attempting to apply an operational_fact memory (e.g., a
+        test command, a wrapper script, a repository setup step) so
+        Pallium can track which procedures actually work. `outcome` must be
+        one of: success, failure, inconclusive. This is stored as an
+        agent_explicit note linked to the procedure; W4 operational-fact
+        memory will consume these outcomes for its success/failure
+        counters. Ranking is NOT updated from these outcomes until W4
+        integration testing verifies the contract."""
+        ctx = resolve_context()
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        client = PalliumMcpClient(ctx)
+        result = await client.record_outcome(
+            procedure_id=procedure_id,
+            outcome=outcome,
+            evidence=evidence,
+            note=note,
+        )
+        return json.dumps(result, indent=2, default=str)
+
     return server
 
 
