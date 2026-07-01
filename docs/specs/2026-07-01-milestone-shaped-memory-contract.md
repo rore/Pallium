@@ -48,8 +48,27 @@ Non-negotiable. If a change can't clear this bar, it doesn't ship this milestone
   concurrency, or storage effect. New code without tests is not reviewable.
 - **Integration tests** for every new MCP tool, every new memory type, every
   new event trigger. Test through the same entry point production uses.
-- **End-to-end tests** — every workstream that ships a user-facing capability
-  drives it through the narrow-target scenario replays under
+- **End-to-end edge-case coverage** — every feature ships with an E2E test
+  file covering *all* edge cases:
+  - Every enum value / type variant the tool accepts (not just one).
+  - Boundary values: empty / at-max / over-max for every bounded input.
+  - Error paths: missing entity → 404, invalid enum → 400 or 422, state
+    conflict → 409, and every other documented error status.
+  - State interactions: idempotence (call-twice), cross-state combinations
+    (e.g., correct-on-soft-deleted, forget-on-superseded), chain length > 2.
+  - Locales / encodings: Unicode text, non-ASCII, emoji where content is
+    user-facing.
+  - Full-lifecycle journeys: create → mutate → dispose, chained tool calls
+    an agent would realistically make.
+  - Retrieval integration: writes are actually indexed and findable.
+  - Error-message quality: assertions that error `detail` names the
+    allowed set / the conflicting state — the agent must be able to
+    self-correct from the message.
+  - **Reference shape:** `tests/test_w3_memory_writes_e2e.py` — 55 tests
+    across 9 test classes. Any new feature's E2E suite should look
+    structurally similar.
+- **Narrow-target scenarios** — every workstream that ships a user-facing
+  capability also drives it through the scenario replays under
   `evals/narrow_target_claude_code/`. If a scenario doesn't exercise the
   change, add or extend one.
 - **Regression sweep** before merge:
