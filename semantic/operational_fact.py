@@ -45,6 +45,10 @@ logger = logging.getLogger(__name__)
 # Constants (public — imported by wiring in PR 3)                             #
 # --------------------------------------------------------------------------- #
 
+OPERATIONAL_FACT_TYPE: Final[str] = "operational_fact"
+"""Canonical memory-type name. Single source of truth for the routing gate,
+the wiring layer, and the type registry."""
+
 DISCOVERY_TO_USE_WINDOW: Final[int] = 10
 """Maximum number of turns between a discovery event and its matching use."""
 
@@ -678,6 +682,7 @@ def derive_operational_facts(
 
 
 __all__ = [
+    "OPERATIONAL_FACT_TYPE",
     "DISCOVERY_TO_USE_WINDOW",
     "WORD_BOUNDARY_ARTIFACT_LEN_MAX",
     "MAX_ARTIFACT_LEN",

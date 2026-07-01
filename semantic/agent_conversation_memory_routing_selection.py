@@ -15,6 +15,7 @@ from semantic.agent_conversation_memory_routing_constants import (
     ROUTING_LOWER_LEVEL_EXACT_TYPES,
     ROUTING_SUPPORT_THRESHOLD,
     WORK_RESUMPTION_SIGNAL_PRIORITY,
+    QuerySignalEnvelope,
     normalize_lexical_score,
     _candidate_container_refs,
     _candidate_thread_refs,
@@ -27,6 +28,7 @@ from semantic.agent_conversation_memory_routing_injection import (
     _VERBOSE as _INJECTION_VERBOSE,
     _verbose as _injection_verbose,
 )
+from semantic.operational_fact import OPERATIONAL_FACT_TYPE
 
 
 # ── Phase 3a: injection-policy abstention gate ──────────────────────────
@@ -65,16 +67,32 @@ def _policy_allows_proactive_injection(
     injection_policy,
     query_filters: QueryFilters | None,
     trigger_origin: str | None = None,
+    envelope: QuerySignalEnvelope | None = None,
 ) -> bool:
     """Return True iff the candidate is allowed by the abstention policy.
 
-    Default-allow when no policy is configured for the candidate's type.
+    Default-allow when no policy is configured for the candidate's type,
+    EXCEPT for `operational_fact` — that type's built-in default is
+    ``on_demand`` regardless of config, because leaving it as proactive
+    (via the missing-config default-allow branch) would silently regress
+    the three-layer zero-proactive guarantee. See W4 PR 2 progress log.
+
     When `trigger_origin` is in _TRIGGER_BYPASS_ORIGINS, demoted modes
     (event/on_demand/suspended) act as "allow" — the deterministic
     trigger is explicitly retrieving these types. Proactive-mode score
     thresholds still apply regardless.
+
+    For `operational_fact`, ``envelope.operational_intent == True`` acts
+    as an additional bypass — a token-based verb-object signal that the
+    user's prompt is about running / testing / configuring something.
+    The signal is type-scoped: it does NOT enter _TRIGGER_BYPASS_ORIGINS
+    (which is trigger-agnostic across types).
     """
     if injection_policy is None or injection_policy.is_empty():
+        # Even without a configured policy, operational_fact must NOT be
+        # proactively injected — the built-in default is on_demand.
+        if _candidate_is_operational_fact(candidate):
+            return _operational_fact_on_demand_allows(trigger_origin, envelope)
         return True
     item = candidate.get("item")
     if item is None:
@@ -85,6 +103,9 @@ def _policy_allows_proactive_injection(
     container_ref = query_filters.container_ref if query_filters is not None else None
     effective = injection_policy.effective(memory_type, container_ref)
     if effective is None:
+        # Same built-in default for operational_fact.
+        if memory_type == OPERATIONAL_FACT_TYPE:
+            return _operational_fact_on_demand_allows(trigger_origin, envelope)
         return True
     mode = effective.mode
     if mode == "proactive":
@@ -101,8 +122,45 @@ def _policy_allows_proactive_injection(
             return False
         return float(score) >= float(effective.min_score)
     # "event", "on_demand", "suspended" — drop from proactive UNLESS
-    # the call carried a deterministic trigger asking for this type.
+    # the call carried a deterministic trigger asking for this type,
+    # OR (for operational_fact only) the operational_intent signal fired.
+    # Design invariant: operational_fact under mode="suspended" is a hard
+    # kill switch — trigger bypass and operational_intent bypass BOTH
+    # inert. Other types keep the existing bypass semantics.
+    if mode == "suspended" and memory_type == OPERATIONAL_FACT_TYPE:
+        return False
     if trigger_origin in _TRIGGER_BYPASS_ORIGINS:
+        return True
+    if (
+        memory_type == OPERATIONAL_FACT_TYPE
+        and mode != "suspended"
+        and envelope is not None
+        and envelope.operational_intent
+    ):
+        return True
+    return False
+
+
+def _candidate_is_operational_fact(candidate: dict[str, object]) -> bool:
+    item = candidate.get("item")
+    if item is None:
+        return False
+    return getattr(item, "type", None) == OPERATIONAL_FACT_TYPE
+
+
+def _operational_fact_on_demand_allows(
+    trigger_origin: str | None,
+    envelope: QuerySignalEnvelope | None,
+) -> bool:
+    """Built-in operational_fact on-demand rule.
+
+    Allowed only when a deterministic trigger fires OR the operational_intent
+    signal is set. Never fires proactively without a signal — this is the
+    three-layer zero-proactive guarantee's second layer.
+    """
+    if trigger_origin in _TRIGGER_BYPASS_ORIGINS:
+        return True
+    if envelope is not None and envelope.operational_intent:
         return True
     return False
 
@@ -831,6 +889,7 @@ def _build_injectable_blocks(
     evidence_request: bool = False,
     injection_policy=None,
     trigger_origin: str | None = None,
+    envelope: QuerySignalEnvelope | None = None,
 ) -> tuple[list[InjectableBlock], dict[str, object]]:
     same_thread_context = _evaluate_same_thread_local_context(
         ranked_candidates,
@@ -932,7 +991,7 @@ def _build_injectable_blocks(
         # configured per-type (and optional per-container) policy. See
         # docs/specs/2026-06-27-injection-policy-abstention.md.
         if not _policy_allows_proactive_injection(
-            candidate, injection_policy, query_filters, trigger_origin
+            candidate, injection_policy, query_filters, trigger_origin, envelope
         ):
             if not candidate.get("suppression_reason_code"):
                 candidate.setdefault(

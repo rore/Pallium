@@ -484,6 +484,7 @@ def route_query_results(
             evidence_request=signal_envelope.evidence_request,
             injection_policy=injection_policy,
             trigger_origin=trigger_origin,
+            envelope=signal_envelope,
         )
         _annotate_excluded_candidates(
             ranked_candidates=ranked_candidates,

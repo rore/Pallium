@@ -23,6 +23,7 @@ from semantic.agent_conversation_memory_routing_constants import (
     WORK_RESUMPTION_THIN_CHECKPOINT_PENALTY,
     _result_layer,
 )
+from semantic.operational_fact import KNOWN_FAMILIES
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +563,67 @@ def _derive_latest_status_signal(
     return False, derivation
 
 
+# ---------------------------------------------------------------------------
+# operational_intent — structural verb-object detector for operational_fact
+#
+# Fires when the query contains an operational verb (run/test/install/etc.)
+# AND a known command-family token (python/uv/npm/etc. — see
+# semantic.operational_fact.KNOWN_FAMILIES). English-first; documented
+# limitation for v1. See docs/specs/2026-05-31-operational-fact-memory-design.md
+# §Surfacing.
+# ---------------------------------------------------------------------------
+
+_OPERATIONAL_VERBS: frozenset[str] = frozenset({
+    "run", "test", "install", "build", "configure",
+    "deploy", "fix", "start", "stop", "setup", "check",
+})
+
+
+def _derive_operational_intent(
+    query_tokens: tuple[str, ...],
+) -> tuple[bool, list[str]]:
+    """Structural verb-object detector.
+
+    Returns (fired, derivation_reasons). Pure: no clock, no random, no I/O.
+    """
+    derivation: list[str] = []
+    if not query_tokens:
+        return False, derivation
+    lowered_tokens = tuple(t.lower() for t in query_tokens)
+    verbs_hit = _OPERATIONAL_VERBS.intersection(lowered_tokens)
+    if not verbs_hit:
+        return False, derivation
+    family_hit: str | None = None
+    for token in lowered_tokens:
+        if token in KNOWN_FAMILIES:
+            family_hit = token
+            break
+        # Suffix / punctuation variants only — e.g. "python3", "python.exe",
+        # "docker-compose", "pnpm.cmd". Strip trailing digits and common
+        # punctuation and re-test for exact membership. Avoids the earlier
+        # substring-match false-fire class ("pip" inside "pipeline",
+        # "git" inside "digital", "uv" inside "curve", "go" inside "good").
+        stripped = token.rstrip("0123456789")
+        stripped = stripped.rstrip(".-_")
+        if stripped and stripped != token and stripped in KNOWN_FAMILIES:
+            family_hit = stripped
+            break
+        # Explicit whitelist for a couple of common non-suffix variants
+        # that are unambiguously family members regardless of context.
+        head = token.split(".", 1)[0].split("-", 1)[0]
+        if head and head != token and head in KNOWN_FAMILIES:
+            family_hit = head
+            break
+    if family_hit is None:
+        return False, derivation
+    # Deterministic derivation strings — sorted verb selection so identical
+    # inputs produce identical output regardless of set iteration order.
+    verb = sorted(verbs_hit)[0]
+    derivation.append(f"operational_verb={verb}")
+    derivation.append(f"operational_family={family_hit}")
+    return True, derivation
+
+
 def _derive_query_signal_envelope(
     *,
     text: str,
@@ -581,6 +643,7 @@ def _derive_query_signal_envelope(
         "latest_status_request": False,
         "resume_state": False,
         "evidence_request": False,
+        "operational_intent": False,
     }
     derivation: list[str] = []
 
@@ -617,6 +680,11 @@ def _derive_query_signal_envelope(
                 candidate_evidence, anchor_prefiltered_candidates
             )
             derivation.extend(latest_derivation)
+
+        # operational_intent — orthogonal to the other signals. A query can be
+        # both resume_state=True AND operational_intent=True.
+        signals["operational_intent"], op_derivation = _derive_operational_intent(query_tokens)
+        derivation.extend(op_derivation)
 
     # Tier 1 confidence
     active_signals = [s for s, v in signals.items() if v and s != "low_value"]
@@ -687,6 +755,7 @@ def _check_evidence_trace_override(
             latest_status_request=envelope.latest_status_request,
             resume_state=envelope.resume_state,
             evidence_request=True,
+            operational_intent=envelope.operational_intent,
             source="semantic",
             confidence="medium",
             semantic_classification_used=True,

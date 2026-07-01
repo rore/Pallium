@@ -109,6 +109,13 @@ min_similarity = 0.55
 # [injection.policy.types.task_checkpoint]
 # mode = "event"
 #
+# # W4: operational_fact ships on-demand only. The routing gate ALSO
+# # enforces on_demand as the built-in default even if this block is
+# # commented out, so ranking is safe by default. See
+# # docs/specs/2026-05-31-operational-fact-memory-design.md.
+# [injection.policy.types.operational_fact]
+# mode = "on_demand"
+#
 # # Per-container override example: disable proactive on the xlm container
 # # while leaving the focused-repo container free to override differently.
 # [[injection.policy.containers]]

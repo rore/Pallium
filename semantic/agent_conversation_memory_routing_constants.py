@@ -56,6 +56,7 @@ class QuerySignalEnvelope:
     latest_status_request: bool = False
     resume_state: bool = False
     evidence_request: bool = False
+    operational_intent: bool = False
     source: str = "structural"
     confidence: str = "low"
     semantic_classification_used: bool = False

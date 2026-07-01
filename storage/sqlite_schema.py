@@ -401,6 +401,20 @@ class SQLiteSchemaMixin:
             "ON memory_objects(container_ref, created_at) "
             "WHERE is_soft_deleted = 1"
         ),
+        # W4: operational_fact retrieval — active-lookup and supersession-walk
+        # partial indexes. Maintenance rule: editing the WHERE clause of these
+        # entries in place would leave a stale index on populated DBs; instead
+        # pick a new name or add an explicit DROP INDEX migration.
+        "idx_memory_objects_operational_fact_active": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_objects_operational_fact_active "
+            "ON memory_objects(container_ref, lifecycle, created_at DESC) "
+            "WHERE type = 'operational_fact'"
+        ),
+        "idx_memory_objects_operational_fact_supersedes": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_objects_operational_fact_supersedes "
+            "ON memory_objects(superseded_by_id) "
+            "WHERE type = 'operational_fact' AND superseded_by_id IS NOT NULL"
+        ),
         "idx_source_items_thread_lookup": (
             "CREATE INDEX IF NOT EXISTS idx_source_items_thread_lookup "
             "ON source_items(container_ref, thread_ref, created_at, id)"
