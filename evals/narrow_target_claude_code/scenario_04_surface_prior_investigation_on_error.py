@@ -1,5 +1,7 @@
 """Scenario 4 — Surface a prior investigation when the same error class reappears.
 
+# measures: injection-precision
+
 See docs/specs/2026-07-01-narrow-target-claude-code-in-pallium-repo.md#scenario-4
 """
 

@@ -1,5 +1,7 @@
 """Scenario 5 — Preserve an architectural decision made in-conversation.
 
+# measures: injection-precision
+
 See docs/specs/2026-07-01-narrow-target-claude-code-in-pallium-repo.md#scenario-5
 
 Session A: user says "let's not use approach X because Y" and the agent

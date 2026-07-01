@@ -423,8 +423,14 @@ conflict slot. Enforced by test in W4 PR 1 (isolated) and PR 3 (wired).
 - **Cross-integration parity:** scenario 1 passes on both Claude Code and
   Codex against the same fixture (added as a parity assertion in W4 PR 4,
   not a new W2 scenario).
-- Zero `injection_mode="proactive"` audit-log entries with
-  `type=operational_fact` after ship.
+- Zero proactive `operational_fact` injections after ship, defined
+  operationally as: rows in `query_audit_log` where
+  `trigger_origin IS NULL AND should_inject = 1` and the row's
+  `injected_blocks_json` contains a block with
+  `memory_type = "operational_fact"`. Enforced by
+  `count_proactive_operational_fact_injections` in
+  `evals/narrow_target_claude_code/_shared.py` and the CI regression
+  test `tests/test_narrow_target_zero_proactive.py`.
 - **Unit test coverage:** ≥55 cases in `tests/test_operational_fact_derivation.py`
   covering the discovery+use predicate (Windows word-boundary guard for
   artifacts <10 chars, salted machine-hash, path normalization, redaction

@@ -1,5 +1,7 @@
 """Run all narrow-target scenarios and write aggregate baseline JSON.
 
+# measures: injection-precision, specificity
+
 Measures: injection-precision + specificity (not candidate-recovery).
 
 Usage:
@@ -23,8 +25,9 @@ from . import (
     scenario_05_preserve_architectural_decision,
     scenario_06_ruled_out_hypothesis_context_only,
     scenario_07_unrelated_prior_errors_no_injection,
+    scenario_negative_no_operational_fact,
 )
-from ._shared import ScenarioResult
+from ._shared import ScenarioResult, assert_scenario_has_measures_header
 
 SCENARIOS = (
     scenario_01_repeat_failed_command,
@@ -34,7 +37,20 @@ SCENARIOS = (
     scenario_05_preserve_architectural_decision,
     scenario_06_ruled_out_hypothesis_context_only,
     scenario_07_unrelated_prior_errors_no_injection,
+    scenario_negative_no_operational_fact,
 )
+
+
+def _lint_scenario_headers() -> None:
+    """Enforce the # measures: header on every scenario module + this
+    runner. Fails fast on the runner side so a missing header trips
+    before scenarios execute.
+    """
+    from . import run_all as _self
+
+    assert_scenario_has_measures_header(_self)
+    for mod in SCENARIOS:
+        assert_scenario_has_measures_header(mod)
 
 
 def _mean(xs: list[float]) -> float:
@@ -47,6 +63,7 @@ def _mean(xs: list[float]) -> float:
 
 def _aggregate(results: list[ScenarioResult]) -> dict:
     verdicts = [r.verdict for r in results]
+    proactive_total = sum(r.proactive_operational_fact_count for r in results)
     return {
         "meta": {
             "measures": "injection-precision, specificity",
@@ -60,6 +77,8 @@ def _aggregate(results: list[ScenarioResult]) -> dict:
         },
         "precision_mean": _mean([r.precision for r in results]),
         "specificity_mean": _mean([r.specificity for r in results]),
+        # W4 acceptance: aggregate must be zero.
+        "proactive_operational_fact_count": proactive_total,
         "scenarios": [r.to_dict() for r in results],
     }
 
@@ -74,6 +93,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # Enforce the measures-header lint before running any scenario.
+    _lint_scenario_headers()
+
     results: list[ScenarioResult] = []
     for mod in SCENARIOS:
         try:
@@ -81,7 +103,10 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001 -- eval runner must not crash on one scenario
             from ._shared import incomplete
             results.append(
-                incomplete(getattr(mod, "SCENARIO_ID", mod.__name__), reason=f"runner exception: {exc!r}")
+                incomplete(
+                    getattr(mod, "SCENARIO_ID", mod.__name__),
+                    reason=f"runner exception: {exc!r}",
+                )
             )
 
     report = _aggregate(results)
@@ -93,9 +118,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         sys.stdout.write(payload + "\n")
 
-    # Exit non-zero if any scenario FAILed; INCOMPLETE is not a failure.
+    # Exit non-zero if any scenario FAILed OR the zero-proactive
+    # invariant tripped. INCOMPLETE is not a failure.
     any_failed = report["verdicts"]["FAIL"] > 0
-    return 1 if any_failed else 0
+    proactive_violation = report["proactive_operational_fact_count"] > 0
+    return 1 if (any_failed or proactive_violation) else 0
 
 
 if __name__ == "__main__":

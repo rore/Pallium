@@ -1,5 +1,7 @@
 """Scenario 7 — Two unrelated prior errors superficially match; Pallium injects neither.
 
+# measures: specificity
+
 See docs/specs/2026-07-01-narrow-target-claude-code-in-pallium-repo.md#scenario-7
 """
 

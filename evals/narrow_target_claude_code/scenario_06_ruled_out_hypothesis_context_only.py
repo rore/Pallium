@@ -1,5 +1,7 @@
 """Scenario 6 — Ruled-out hypothesis stays context-only; new session's diagnosis stays free.
 
+# measures: specificity
+
 See docs/specs/2026-07-01-narrow-target-claude-code-in-pallium-repo.md#scenario-6
 """
 

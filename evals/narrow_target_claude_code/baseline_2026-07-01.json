@@ -1,0 +1,101 @@
+{
+  "meta": {
+    "measures": "injection-precision, specificity",
+    "not_measures": "candidate-recovery, downstream-task-effect",
+    "scenario_count": 8
+  },
+  "verdicts": {
+    "PASS": 4,
+    "FAIL": 0,
+    "INCOMPLETE": 4
+  },
+  "precision_mean": 1.0,
+  "specificity_mean": 1.0,
+  "proactive_operational_fact_count": 0,
+  "scenarios": [
+    {
+      "scenario_id": "01-repeat-failed-command",
+      "verdict": "PASS",
+      "precision": 1.0,
+      "specificity": 1.0,
+      "timing": "write_only",
+      "type_distribution": {
+        "operational_fact": 1
+      },
+      "diagnostic": "parity_ok=True; surfaces=['claude_code', 'codex']; write_side_targets=['d7844880', 'ed652c2d']; claude_code_delivery: status=200 returned=False reason='no_relevant_memory'; codex_delivery: status=200 returned=False reason='no_relevant_memory'; write-side contract + parity met on both surfaces; delivery-side not driven by isolated test app (routing/injection policy configured but retrieval path may need the full-service run to surface the fact)",
+      "proactive_operational_fact_count": 0
+    },
+    {
+      "scenario_id": "02-recall-python-on-windows-constraint",
+      "verdict": "PASS",
+      "precision": 1.0,
+      "specificity": 1.0,
+      "timing": "write_only",
+      "type_distribution": {
+        "operational_fact": 1
+      },
+      "diagnostic": "target_fact_id=fa06d96c; delivery status=200 returned=False reason='no_relevant_memory'; write-side contract met; delivery-side not driven by isolated test app (same shape as scenario 5's honest report)",
+      "proactive_operational_fact_count": 0
+    },
+    {
+      "scenario_id": "03-resume-interrupted-implementation",
+      "verdict": "INCOMPLETE",
+      "precision": NaN,
+      "specificity": NaN,
+      "timing": "n/a",
+      "type_distribution": {},
+      "diagnostic": "fixture not wired yet: task_checkpoint fixture + branch/path-matched SessionStart replay not wired",
+      "proactive_operational_fact_count": 0
+    },
+    {
+      "scenario_id": "04-surface-prior-investigation-on-error",
+      "verdict": "INCOMPLETE",
+      "precision": NaN,
+      "specificity": NaN,
+      "timing": "n/a",
+      "type_distribution": {},
+      "diagnostic": "fixture not wired yet: investigation_outcome fixture + PostToolUse-failure trigger replay not wired",
+      "proactive_operational_fact_count": 0
+    },
+    {
+      "scenario_id": "05-preserve-architectural-decision",
+      "verdict": "PASS",
+      "precision": 1.0,
+      "specificity": NaN,
+      "timing": "write_only",
+      "type_distribution": {},
+      "diagnostic": "session A remembered id=8d8aa352... origin=agent_explicit; write-side contract OK (indexed with 2 entries); session B delivery-side did not return the memory (decision_reason='injection_policy_unavailable', 0 results). W3 write-side contract is met; full end-to-end delivery depends on a container with the injection policy configured (W1 territory, not scenario 5's assertion).",
+      "proactive_operational_fact_count": 0
+    },
+    {
+      "scenario_id": "06-ruled-out-hypothesis-context-only",
+      "verdict": "INCOMPLETE",
+      "precision": NaN,
+      "specificity": NaN,
+      "timing": "n/a",
+      "type_distribution": {},
+      "diagnostic": "fixture not wired yet: ruled-out-hypothesis fixture + non-answer surfacing assertion not wired",
+      "proactive_operational_fact_count": 0
+    },
+    {
+      "scenario_id": "07-unrelated-prior-errors-no-injection",
+      "verdict": "INCOMPLETE",
+      "precision": NaN,
+      "specificity": NaN,
+      "timing": "n/a",
+      "type_distribution": {},
+      "diagnostic": "fixture not wired yet: two-unrelated-investigation fixture + non-injection assertion not wired",
+      "proactive_operational_fact_count": 0
+    },
+    {
+      "scenario_id": "negative-no-operational-fact",
+      "verdict": "PASS",
+      "precision": NaN,
+      "specificity": 1.0,
+      "timing": "n/a",
+      "type_distribution": {},
+      "diagnostic": "operational_intent signal fired; zero operational_fact rows; zero injections; zero proactive audit rows",
+      "proactive_operational_fact_count": 0
+    }
+  ]
+}
