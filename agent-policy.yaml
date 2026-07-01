@@ -75,6 +75,11 @@ zones:
       reason: review-routing definitions; weakening allows checkpoint bypass
       checkpoint: architecture-review
 
+    # --- Semantic-layer: derivation predicates (structural, load-bearing)
+    - path: "semantic/operational_fact.py"
+      reason: operational_fact derivation predicate — argv matching, scope resolution, redaction gate
+      checkpoint: architecture-review
+
   watch:
     # Layer entry surfaces — surfaced in PR comment, no checkpoint
     - path: "api/**"
