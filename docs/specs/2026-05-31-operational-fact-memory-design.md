@@ -1,7 +1,7 @@
 # Operational Fact Memory
 
-**Date:** 2026-05-31 (revised 2026-06-04)
-**Status:** Draft. Phase 0 spike must complete before any code lands.
+**Date:** 2026-05-31 (revised 2026-06-04, 2026-07-01)
+**Status:** Phase 0 resolved 2026-07-01 — see [`.local/milestone-progress-2026-07/w4-phase0-spike-2026-07-01.md`](../../.local/milestone-progress-2026-07/w4-phase0-spike-2026-07-01.md). **v1 surface: Surface B** (UserPromptSubmit, both integrations). Implementation sequenced under W4 of the [Shaped Memory Contract milestone](2026-07-01-milestone-shaped-memory-contract.md).
 **Scope:** New derived memory type owned by the `agent_work_trace` package.
 
 ---
@@ -12,7 +12,7 @@ In session A an agent discovers how this repo or machine works — Python path, 
 
 Pallium should preserve the discovered fact and surface it on demand, so future sessions start from known evidence instead of rediscovering basics.
 
-The capture pipeline (Stop hook + `agent_work_trace_turn` metadata, [semantic/agent_work_trace.py](../../semantic/agent_work_trace.py)) is **structurally present but production-broken**: as of 2026-06-04, `read_turn()` mis-parses the on-disk Claude Code transcript shape and returns zero tool calls; the live DB has 0 `task_trace` memory objects across 773 processed items. T3 (`fix/t3-agent-work-trace-activation`) replaces the per-line aggregation with a turn-bracket pipeline and adds a Codex translator (OpenAI Responses → Anthropic shape). Once T3 lands, the metadata fields this spec depends on (`files_read`, `commands`, `grep_patterns`, `files_modified`, plus a new `patch_bodies` field for Codex `apply_patch` events) are populated. **Phase 0 of this spec assumes T3 is merged and the metadata is observable in the live DB.** What's still missing after T3 is derivation and surfacing.
+The capture pipeline (Stop hook + `agent_work_trace_turn` metadata, [semantic/agent_work_trace.py](../../semantic/agent_work_trace.py)) has been active since T3 landed. **As of 2026-07-01 the live DB shows 1,251 source_items with `agent_work_trace_turn` metadata and 64 `task_trace` memory objects.** Discovery+use signals are captured; derivation and surfacing are what W4 adds.
 
 This must be generic — not keyed to product names, ticket ids, tool names, or one-off phrasing.
 
@@ -28,28 +28,28 @@ Future siblings (not v1, not committed): a project file index; a deterministic e
 
 ---
 
-## Phase 0 — Verification spike (REQUIRED)
+## Phase 0 — Verification spike (RESOLVED 2026-07-01)
 
-The spike answers four questions and produces a go/no-go.
+Full findings in [`.local/milestone-progress-2026-07/w4-phase0-spike-2026-07-01.md`](../../.local/milestone-progress-2026-07/w4-phase0-spike-2026-07-01.md). Summary of the four go/no-go answers:
 
-**T3 prerequisite.** Q3 below cannot be evaluated until T3 (`fix/t3-agent-work-trace-activation`) is merged and at least one Claude Code session has run end-to-end so that `source_items.metadata_json` actually contains `agent_work_trace_turn` keys and `memory_objects.type='task_trace'` rows exist. Until then the answer to Q3 is forced: insufficient data.
+1. **Q1 — PreToolUse `additionalContext` reaches the model?** YES on Claude Code (system-reminder injection). Codex has no PreToolUse equivalent.
+2. **Q2 — Structural operational-intent signal available or cheap?** YES, cheap to add (<150 LOC in `semantic/agent_conversation_memory_routing_signals.py`).
+3. **Q3 — `agent_work_trace_turn` metadata sufficient?** PARTIALLY. Bash-based discovery+use is fully covered (95% populated `commands`, 100% `exit_code` / `cmd` on each command). `files_read` populated on 22% of turns — usable secondary signal. `cwd` populated **0%** — the design's `cwd`-based scope derivation is not viable; scope resolution moves to service-level. `patch_bodies` populated **0%** in the surveyed Claude-Code DB — the `apply_patch` branch defers to a contingent PR pending Codex evidence.
+4. **Q4 — Downscope to `task_trace` formatting?** NOT VIABLE. Rebuilding evidence-links, per-artifact granularity, conflict slot, and supersession on `task_trace` = rebuilding `operational_fact` in a different table.
 
-1. Does Claude Code `PreToolUse` `additionalContext` reach the model, or only the runtime/user?
-2. Can the routing-signals pipeline expose a structural operational-intent signal (verb-object on normalized tokens, language-agnostic), or is one cheap to add?
-3. Is the existing `agent_work_trace_turn` metadata sufficient for the discovery + use predicate without further hook changes? (Post-T3 fields: `files_read`, `commands`, `grep_patterns`, `files_modified`, `patch_bodies`. The last covers Codex `apply_patch` and `apply_patch_call` items, where T3 preserves the freeform body or the structured `{operation: {type, path, diff}}` for predicate use.)
-4. Could the goal be met by formatting `task_trace`'s `commands_succeeded` better and adding cross-thread retrieval, instead of a new memory type? (downscope)
+### v1 surface decision
 
-### Outcome matrix
+Q1 is YES but only for Claude Code (Codex asymmetry). Q2 is YES for both integrations. Choosing **Surface B** (UserPromptSubmit, both integrations) preserves cross-integration parity — the same posture W3 established with the explicit write tools. Surface A (PreToolUse) becomes a scoped follow-up if evals show the "surface before the tool call" moment is materially better than "surface at prompt submit."
 
-| Q1: PreToolUse model-visible? | Q2: intent signal available? | v1 surface |
-|---|---|---|
-| yes | — | **Surface A only** (PreToolUse, Claude Code) |
-| no | yes | **Surface B only** (UserPromptSubmit, both integrations) |
-| no | no | **Kill v1.** No on-demand path; storing facts is dead code. |
+### Predicate narrowing (evidence-driven)
 
-If the spike shows `task_trace` formatting alone covers the use case, downscope to that and skip Phases 1–4. The spec must be revisited, not extended past its scope, before adding code.
+Based on the Q3 field-presence data:
 
-Known relevant code: [semantic/agent_work_trace.py](../../semantic/agent_work_trace.py), [integrations/claude-code/hooks/](../../integrations/claude-code/hooks/), [integrations/codex/hooks/](../../integrations/codex/hooks/), `semantic/agent_conversation_memory_routing_selection.py`, `api/schemas.py` `QueryRequest`. Verify active code paths; do not assume from roadmap status.
+- **Discovery — primary:** `commands[i]` with `exit_code == 0` whose `cmd` contains a stable artifact token.
+- **Discovery — secondary:** `files_read[i]` (path-only). Coverage ~22% — usable but not primary.
+- **Discovery — deferred:** `apply_patch` (Codex `patch_bodies`). Ships in a contingent follow-up PR only if a Codex live DB shows populated `patch_bodies`.
+- **Use:** `commands[j]` with `exit_code == 0` where `cmd` matches the discovery artifact via substring or word-boundary within N=10 subsequent turns in the same thread.
+- **Scope:** `scope_kind='repo'` for repo-relative artifacts; `scope_kind='machine_repo'` otherwise. `scope_ref` computed at service level (not per turn), because `cwd` is not captured — see updated §Scope Rules below.
 
 ---
 
@@ -102,20 +102,22 @@ Consolidation exclusion lives outside `TypeRegistration` — wire through the sa
 
 Operates on `agent_work_trace`'s per-turn capture surface ([integrations/claude-code/hooks/common.py:644-682](../../integrations/claude-code/hooks/common.py#L644)) — `{files_read, commands{cmd, exit_code, output_tail, failure_class}, grep_patterns, files_modified, patch_bodies}`. Structural and ecosystem-agnostic.
 
-`patch_bodies` (added by T3) is a list of `{body?, operation?}` records. `body` is the freeform `apply_patch` DSL string for Codex `function_call.name == "apply_patch"` events; `operation` is the structured `{type: create_file|update_file|delete_file, path, diff}` shape for top-level `apply_patch_call` items. The predicate may treat `operation.path` as a discovery candidate (Read-equivalent) and `operation.diff` as a use-equivalent edit signal. T3 does NOT itself parse freeform `body` — that's this spec's job.
+**Field-presence in the live DB (2026-07-01, 200-turn sweep):** `commands` 95%, `has_productive_action` 98%, `files_modified` 29%, `files_read` 22%, `grep_patterns` 5%, `patch_bodies` 0% (Claude-Code DB — Codex-only field), `cwd` / `branch_ref` / `commit_ref` 0%. v1 predicate is scoped accordingly.
+
+`patch_bodies` is a list of `{body?, operation?}` records. `body` is the freeform `apply_patch` DSL string for Codex `function_call.name == "apply_patch"` events; `operation` is the structured `{type: create_file|update_file|delete_file, path, diff}` shape for top-level `apply_patch_call` items. The predicate treats `operation.path` as a discovery candidate and `operation.diff` as a use-equivalent edit signal **in a contingent follow-up PR only**, gated on evidence that Codex live traffic populates `patch_bodies`.
 
 A fact is created when **all** hold:
 
-1. **Discovery event** — any tool call whose result yields a candidate artifact:
-   - `Read` of a project file producing extractable text containing a path, command, version, port, or URL
-   - `Bash` exit 0 whose `output_tail` contains an extractable artifact
-   - `Grep`/`Glob` whose result lists a candidate path
-   - `apply_patch` `operation.path` (Codex structured form) — a path being touched is itself a discovery signal for that path's existence
-2. **Later successful action** — `Bash` exit 0 within N=10 turns in the same thread, OR an `apply_patch` event with `operation.path` (structured form) within the same window.
+1. **Discovery event** — any of:
+   - **Primary:** `Bash` exit 0 whose `output_tail` or `cmd` contains an extractable artifact (path, command, version, port, URL).
+   - **Secondary:** `Read` of a project file (path-only; content extraction not required for the discovery signal).
+   - **Deferred (contingent PR 5):** `apply_patch` `operation.path` (Codex structured form).
+2. **Later successful action** — `Bash` exit 0 within N=10 turns in the same thread whose `cmd` matches the discovery artifact per rule 3.
 3. **Argv contains the artifact** as a substring, OR contains a path-equivalent (slash normalization, drive-letter case-insensitive on Windows). Same `command_family` alone does not satisfy this. **For artifacts shorter than 10 characters, enforce a word-boundary match** (`\b{artifact}\b` after normalization) to avoid Windows/POSIX false positives (e.g., a 4-character artifact `pyth` must not match `is_pythonic`).
 4. Both events within the same `scope_ref`.
 5. Evidence links to both source items retained.
 6. `command_family` derived deterministically from artifact + argv, not used as an extraction filter.
+7. **Redaction** — every `artifact`, `artifact_normalized`, and `evidence[].fragment` passes through the shared redaction helper (see §Redaction) before candidate emission. Bearer tokens, API keys, env-var secrets, and connection strings never enter the payload.
 
 If the predicate is not satisfied, no fact is created.
 
@@ -142,7 +144,9 @@ Two scopes, chosen at promotion time:
 
 Heuristic: repo-relative (no drive letter, no absolute path) → `repo`. Otherwise → `machine_repo`.
 
-`scope_ref` follows existing container_ref conventions ([integrations/claude-code/hooks/common.py:40-69](../../integrations/claude-code/hooks/common.py#L40)). For `machine_repo`: `<container_ref>@machine:<sha256-prefix-of(socket.gethostname() + platform.system() + platform.machine())>` — stdlib-only, cross-platform (no `os.uname()` which doesn't exist on Windows), no PII.
+`scope_ref` follows existing container_ref conventions ([integrations/claude-code/hooks/common.py:40-69](../../integrations/claude-code/hooks/common.py#L40)). For `machine_repo`: `<container_ref>@machine:<sha256-prefix-of(salt + socket.gethostname() + platform.system() + platform.machine())>` — stdlib-only, cross-platform (no `os.uname()` which doesn't exist on Windows), no PII. **The hostname is salted** with a stable per-installation salt so raw hostnames never enter `scope_ref` and the DB doesn't become an implicit machine inventory. **The machine hash is computed once at service start** and cached; it is not re-computed per candidate.
+
+**Note on `cwd`:** the design originally derived `scope_ref` from per-turn `cwd`. Live-DB evidence (2026-07-01) shows `cwd` is not populated in `agent_work_trace_turn` metadata (0% across a 200-turn sweep). Scope derivation therefore happens at the service level from `container_ref` + machine hash, not from turn metadata.
 
 ---
 
@@ -159,45 +163,52 @@ Conflicting facts are never injected together.
 
 Cases this handles: Python interpreter path moves `.venv` → `.venv-wsl` (same `command_family=python`, same `artifact_role=interpreter`); test command `pytest` → `uv run pytest`; service port changes.
 
+**Cross-origin rule:** derivation never supersedes a fact with `origin='agent_explicit'`. An explicit fact written via `pallium_remember(type='operational_fact', ...)` (W3) always wins its conflict slot against a derived fact. Colliding derived candidates are either skipped or written with `lifecycle='superseded'` linked to the explicit fact.
+
+---
+
+## Redaction
+
+Every candidate emitted by the predicate passes through a shared redaction helper before being written. Values redacted (case-insensitive):
+
+- **Bearer tokens** — `Authorization: Bearer <redacted>`.
+- **API keys** — `X-API-Key: <redacted>`, `x-api-key=<redacted>`.
+- **Private-key material** — `-----BEGIN [A-Z ]+PRIVATE KEY-----...`.
+- **Environment-variable secrets** — env vars whose name contains `PASSWORD|SECRET|TOKEN|KEY|AUTH` are redacted at the value.
+- **Connection strings** — `mongodb://`, `postgres://`, `mysql://`, `redis://` with embedded credentials.
+- **HTTP header values** — `Authorization:` and `Cookie:` header values.
+
+The helper is a single shared function (factored from or into `semantic/agent_work_trace.py` — see PR 1). Redaction happens before the payload is built; the raw pre-redaction values never enter the SQLite row.
+
 ---
 
 ## Surfacing
 
 Store many facts. Inject few.
 
-v1 ships **exactly one surface**, picked by Phase 0.
+**v1 ships Surface B** (UserPromptSubmit, both integrations). See Phase 0 resolution above.
 
-### Surface A — PreToolUse Bash (Claude Code only)
+### Surface B — UserPromptSubmit (both integrations)
 
-Active iff Phase 0 confirms `additionalContext` reaches the model.
+The `operational_intent` signal is a token-based verb-object detector in `semantic/agent_conversation_memory_routing_signals.py`, added under W4 PR 2. It is structural (not phrase matching) and English-first — non-English fall-through is a documented limitation for v1, revisit if evals show impact.
 
-When the agent is about to run argv, surface the active fact for the derived `command_family` in the current container's scope:
+When the operational_intent signal fires, or when `trigger_origin` is one of the Phase 4 event triggers (`post_tool_failure`, `retry_threshold`, `session_start_checkpoint`, `user_explicit`), operational facts compete with normal injection **at lower priority than `constraint_memory`**. Cap: 3 facts per UserPromptSubmit, one per `command_family`.
 
-```
-Operational fact: previous sessions used .venv/Scripts/python.exe for Python in this repo.
-```
+Config default: `[injection.policy.types.operational_fact] mode = "on_demand"`. `mode="suspended"` hides on both read and inject paths.
 
-- Advisory only. No blocking, no rewriting, no suppression of the Bash call.
-- Lookup keyed by `(command_family, artifact_role*, container_scope)` — `artifact_role` optional; the hook may not know it from argv alone, in which case it returns the most-recently-used active fact in the family.
-- Latency budget < 100 ms. The MCP/`pallium_query` path is too coarse (text-similarity scoring over the full memory store); Surface A needs a direct lookup endpoint on the Pallium HTTP service. Phase 2 adds it: `GET /operational_fact/lookup?command_family=...&scope_ref=...` returning the active fact (or null) with a small in-process cache. The new MCP-tool work is still cut from v1; this endpoint is internal to the integration hook, not exposed via MCP.
-- `superseded` facts not surfaced. Conflicting active facts not surfaced (already a `query_audit_log` entry).
+### Surface A — PreToolUse (deferred to a follow-up milestone)
 
-### Surface B — UserPromptSubmit (cross-integration fallback)
+Surface A remains architecturally viable on Claude Code (Phase 0 Q1 answered YES) but is deferred out of v1 to preserve Claude/Codex parity. Revisit if Surface B evals show the "surface before the tool call" moment is materially better than "surface at prompt submit."
 
-Active iff Surface A is not viable AND a structural intent signal exists.
-
-The intent signal must be structural, not phrase matching. Acceptable shapes:
-
-1. A verb-object extractor on normalized tokens (Phase 0 scopes if absent).
-2. The cue-free routing infrastructure exposing `intent.operational`.
-
-Phrase matching is rejected (English-biased, structurally unsound). If neither shape is available after Phase 0, kill v1.
-
-When the intent signal fires, operational facts compete with normal injection at lower priority than `constraint_memory`. Cap: 3 facts per UserPromptSubmit, one per `command_family`.
+If Surface A ships later, it adds:
+- `pre_tool_use.py` (NEW, Claude Code only) — `command_family`-keyed lookup, < 100 ms, advisory only.
+- `GET /operational_fact/lookup?command_family=...&scope_ref=...` internal HTTP endpoint (bypasses MCP for latency).
 
 ### Ranking
 
-Sort by `last_used_at` descending. Take top N (1 for Surface A, 3 for Surface B).
+Sort by `last_used_at` descending. Take top 3.
+
+**Invariant 1 preservation:** `success_count` / `failure_count` / `reuse_count` / `last_used_at` / `last_confirmed_at` are stored under a nested `use_counters` sub-blob in the payload and are NOT read by any ranking or retrieval path in v1. This is enforced by a code-level diff-grep test in W4 PR 3 that fails if any ranking file reads them.
 
 ### Do-not-inject
 
@@ -211,23 +222,25 @@ Sort by `last_used_at` descending. Take top N (1 for Surface A, 3 for Surface B)
 
 ## Hooks
 
-### If Surface A active
+**v1 wires Surface B in both integrations.** Surface A hooks are deferred; the row is kept for future reference.
 
-| Hook | Change |
-|---|---|
-| `pre_tool_use.py` (NEW, Claude Code only) | `command_family`-keyed lookup, < 100 ms, advisory. |
-| `pre_compact.py` (Claude only) | **Preservation only.** Re-inject an operational fact if and only if it was already surfaced in the active conversation window before compaction. Not an independent injection path; never introduces a fact the model hasn't seen. |
-| `session_start.py`, `user_prompt_submit.py` | No change. |
-| Codex | No operational-fact integration in v1 (no PreToolUse equivalent). |
-
-### If Surface B active
+### Surface B (v1)
 
 | Hook | Change |
 |---|---|
 | `user_prompt_submit.py` | Route through structural intent signal; inject only on operational intent. Same in Claude and Codex. |
 | `pre_compact.py` (Claude only) | **Preservation only.** Re-inject an operational fact if and only if it was already surfaced in the active conversation window before compaction. Never an independent injection. |
-| `common.py` (both) | Mirror extraction/redaction additions; parity test. |
+| `common.py` (both) | Reuse the shared redaction helper; parity test in W4 PR 4 (scenario 8). |
 | `session_start.py`, `stop.py` | No change. |
+
+### Surface A (deferred, not v1)
+
+| Hook | Change |
+|---|---|
+| `pre_tool_use.py` (NEW, Claude Code only) | `command_family`-keyed lookup, < 100 ms, advisory. |
+| `pre_compact.py` (Claude only) | Preservation only, as above. |
+| `session_start.py`, `user_prompt_submit.py` | No change. |
+| Codex | No operational-fact integration on this surface (no PreToolUse equivalent). |
 
 Existing constraints in either case: hooks stdlib-only; Pallium-unreachable must not break the agent; redaction before storage; container pinning and visibility unchanged.
 

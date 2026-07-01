@@ -343,66 +343,123 @@ must be sent back before merge.
 
 ## Workstream 4 — Ship operational memory as an on-demand object
 
-**Duration:** 2 weeks (development can overlap W3's testing tail; integration
-begins only after W3 preconditions below are met)
-**Depends on:** W3 (`pallium_record_outcome`), W1 event triggers (already live).
+**Duration:** ~3 weeks split across 5 sequenced PRs (see
+[`.local/milestone-progress-2026-07/w4-pr-plan-2026-07-01.md`](../../.local/milestone-progress-2026-07/w4-pr-plan-2026-07-01.md)).
+**Depends on:** W3 (`pallium_record_outcome`, shipped), W1 event triggers (live).
 **Attacks:** gap #2 (no shipped operational-memory object).
 
-**Precondition — hard gate:** W3 explicit-tools MCP surface, including
-`pallium_record_outcome`, is merged, tested, and reachable from both
-Claude Code and Codex integrations before W4 integration testing begins.
-Target: end-of-day Wednesday of Week 3. If W3 slips beyond this, W4 start
-defers; W4 development can continue in isolation but no shipping commit
-until W3 is green.
+**Precondition — hard gate:** W3 shipped end-to-end. Confirmed 2026-07-01.
+
+**Phase 0 spike resolved 2026-07-01.** Full findings:
+[`.local/milestone-progress-2026-07/w4-phase0-spike-2026-07-01.md`](../../.local/milestone-progress-2026-07/w4-phase0-spike-2026-07-01.md).
+Live DB shows 1,251 turns of `agent_work_trace_turn` metadata; upstream capture
+is producing. Decision: **v1 ships Surface B (UserPromptSubmit, both integrations).**
+Surface A (PreToolUse, Claude only) deferred to a follow-up milestone to
+preserve Claude/Codex parity established by W3.
 
 Unpause [`roadmap/features/add-operational-fact-memory.md`](../../roadmap/features/add-operational-fact-memory.md).
 Phase 4 triggers are shipped per `roadmap/scope.md`; resume gate is met.
 
 ### Shape
 
-Per [`docs/specs/2026-05-31-operational-fact-memory-design.md`](2026-05-31-operational-fact-memory-design.md),
-fields: `trigger`, `steps`, `evidence`, `success_count`, `failure_count`,
-`last_confirmed_at`, `applicability` (`repo` | `machine_repo` + `scope_ref`).
+Per [`docs/specs/2026-05-31-operational-fact-memory-design.md`](2026-05-31-operational-fact-memory-design.md).
+Payload fields: `command_family`, `artifact_role`, `scope_kind`, `scope_ref`,
+`subject`, `artifact`, `artifact_normalized`, `evidence[discovery+use]`,
+`lifecycle`, `supersedes`, plus a nested `use_counters` sub-blob for
+`reuse_count` / `success_count` / `failure_count` / `last_used_at` /
+`last_confirmed_at`. The nesting is a structural Invariant-1 guard —
+ranking paths cannot reach these without a deliberate schema-shape change.
 
 ### Derivation
+
 - From `agent_work_trace_turn` metadata already captured by the Stop hook.
+- **Predicate scope (evidence-driven):** Bash-based discovery+use is primary
+  (95% coverage in live DB); `files_read` is secondary (22% coverage);
+  `apply_patch` is deferred to a contingent PR pending Codex live-DB evidence
+  that `patch_bodies` is populated (currently 0% in the surveyed
+  Claude-Code DB).
+- **Scope derivation** happens at service level (salted machine-hash cached
+  at service start), not from turn metadata — `cwd` was found to be 0%
+  populated in `agent_work_trace_turn`.
 - No new capture surface.
 
 ### Delivery
-- **On-demand only.** Trigger-based via the abstention Phase 4 event triggers
-  (PostToolUse failure, SessionStart on repo match, user_prompt_submit with
-  operational-intent signal).
-- **Zero proactive injections.** Enforced by config default and asserted in test.
+
+- **Surface B (UserPromptSubmit) only in v1.** Both Claude Code and Codex.
+- Trigger origins: `post_tool_failure`, `retry_threshold`,
+  `session_start_checkpoint`, `user_explicit`, OR a new `operational_intent`
+  routing signal (token-based verb-object detector, ~150 LOC).
+- **On-demand only. Zero proactive injections.** Three enforcement layers:
+  config default `mode="on_demand"`, routing gate, audit-log invariant test.
+- `mode="suspended"` hides on both read AND inject paths (not just inject).
+
+### Redaction — non-negotiable
+
+Every `artifact`, `artifact_normalized`, and `evidence[].fragment` passes
+through a shared redaction helper (factored from or into
+`semantic/agent_work_trace.py`). Bearer tokens, API keys, env-var secrets
+(`PASSWORD|SECRET|TOKEN|KEY|AUTH`), private-key material, and connection
+strings (`mongodb://`, `postgres://`, `mysql://`, `redis://`) never enter
+the payload. Redacted fixtures in every derivation-test file.
+
+### Cross-origin rule
+
+Derivation never supersedes a fact with `origin='agent_explicit'`. Explicit
+writes via `pallium_remember(type='operational_fact', ...)` always win the
+conflict slot. Enforced by test in W4 PR 1 (isolated) and PR 3 (wired).
 
 ### Deliberate skips (learn from live data first)
-- `success_count` / `failure_count` are stored but **not** wired into ranking.
-  Ranking evolves once we have live signal.
+
+- `use_counters.success_count` / `.failure_count` are stored but **not**
+  wired into ranking. Ranking evolves once we have live signal.
+  Code-level guard: nested payload sub-blob + diff-grep test in PR 3 that
+  fails if any ranking file reads them.
 - No proactive score threshold. Not applicable — this type isn't proactive.
+- Surface A (PreToolUse) not shipped in v1; parity concern.
 
 ### Acceptance
-- Scenario 1 (don't repeat previously-failed command) passes.
-- Scenario 2 (recall Python-on-Windows constraint) passes.
+- Narrow-target scenario 1 (don't repeat previously-failed command) passes.
+- Narrow-target scenario 2 (recall Python-on-Windows constraint) passes.
+- **Cross-integration parity:** scenario 1 passes on both Claude Code and
+  Codex against the same fixture (added as a parity assertion in W4 PR 4,
+  not a new W2 scenario).
 - Zero `injection_mode="proactive"` audit-log entries with
   `type=operational_fact` after ship.
-- **Unit test coverage:** ~40 cases covering discovery+use predicate
-  (including the Windows word-boundary guard for artifacts <10 chars),
-  scope_kind heuristic, dedup + conflict/supersession, redaction,
-  path normalization, malformed-metadata safety.
-- **Integration test coverage:** ~15 cases covering type routing
-  registration, on-demand query gating (excludes superseded /
-  soft-deleted / cross-container), config gate, audit-log
-  zero-proactive assertion.
+- **Unit test coverage:** ≥55 cases in `tests/test_operational_fact_derivation.py`
+  covering the discovery+use predicate (Windows word-boundary guard for
+  artifacts <10 chars, salted machine-hash, path normalization, redaction
+  matrix, cross-origin conflict, predicate purity, wall-clock budget
+  <5s on the 1,251-turn corpus, malformed-metadata safety).
+- **Integration test coverage:** ≥30 cases across
+  `tests/test_operational_fact_routing.py`,
+  `tests/test_operational_fact_indexes_schema.py`, and
+  `tests/test_operational_fact_end_to_end.py` covering type routing
+  registration, on-demand query gating, config gate (proactive/on_demand/
+  suspended semantics), audit-log zero-proactive assertion, concurrent
+  supersession with exactly-one-active assertion, backfill dry-run
+  histogram, Invariant-1 diff-grep guard.
+- Every scenario report carries a `# measures:` header naming
+  candidate-recovery / injection-precision / downstream-task-effect
+  (Invariant 2, enforced by `run_all.py` lint).
 - **Regression sweep clean:** narrow-target baseline precision +
   specificity unchanged on scenarios not in W4's scope; full pytest
   suite green minus the pre-existing failure.
-- **Per-PR architect checkpoints:** (1) derivation predicate review
-  before the semantic/operational_fact.py PR merges; (2) routing gate
-  + Invariant 1 review before the routing PR merges; (3) scenario 1+2
-  fixture wiring review before final scenarios merge.
+- **Per-PR architect checkpoints:** (1) predicate design + test matrix
+  before PR 1 implementation starts; (2) persistence-review + architecture-
+  review as distinct checkpoints on PR 2; (3) architecture-review on PR 3
+  wiring + Invariant-1 guard; (4) fixture design + assertion strength on
+  PR 4 scenarios.
 
 ### Files
-- `semantic/agent_work_trace.py`, `semantic/operational_fact.py` (new)
-- Integration tests under `evals/narrow_target_claude_code/`.
+- `semantic/operational_fact.py` (new, PR 1) — derivation predicate,
+  redaction, scope resolver, command-family classifier.
+- `semantic/agent_work_trace.py` — post-processing wiring (PR 3).
+- `semantic/agent_conversation_memory_routing_signals.py` — new
+  `operational_intent` signal (PR 2).
+- `semantic/agent_conversation_memory_routing_selection.py` — on-demand
+  routing gate (PR 2).
+- `storage/sqlite_schema.py` — two partial indexes (PR 2, persistence-review).
+- Integration tests under `evals/narrow_target_claude_code/` (PR 4).
 
 ---
 
