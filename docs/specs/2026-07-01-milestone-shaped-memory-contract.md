@@ -365,6 +365,21 @@ fields: `trigger`, `steps`, `evidence`, `success_count`, `failure_count`,
 - Scenario 2 (recall Python-on-Windows constraint) passes.
 - Zero `injection_mode="proactive"` audit-log entries with
   `type=operational_fact` after ship.
+- **Unit test coverage:** ~40 cases covering discovery+use predicate
+  (including the Windows word-boundary guard for artifacts <10 chars),
+  scope_kind heuristic, dedup + conflict/supersession, redaction,
+  path normalization, malformed-metadata safety.
+- **Integration test coverage:** ~15 cases covering type routing
+  registration, on-demand query gating (excludes superseded /
+  soft-deleted / cross-container), config gate, audit-log
+  zero-proactive assertion.
+- **Regression sweep clean:** narrow-target baseline precision +
+  specificity unchanged on scenarios not in W4's scope; full pytest
+  suite green minus the pre-existing failure.
+- **Per-PR architect checkpoints:** (1) derivation predicate review
+  before the semantic/operational_fact.py PR merges; (2) routing gate
+  + Invariant 1 review before the routing PR merges; (3) scenario 1+2
+  fixture wiring review before final scenarios merge.
 
 ### Files
 - `semantic/agent_work_trace.py`, `semantic/operational_fact.py` (new)

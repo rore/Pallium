@@ -112,7 +112,7 @@ A fact is created when **all** hold:
    - `Grep`/`Glob` whose result lists a candidate path
    - `apply_patch` `operation.path` (Codex structured form) — a path being touched is itself a discovery signal for that path's existence
 2. **Later successful action** — `Bash` exit 0 within N=10 turns in the same thread, OR an `apply_patch` event with `operation.path` (structured form) within the same window.
-3. **Argv contains the artifact** as a substring, OR contains a path-equivalent (slash normalization, drive-letter case-insensitive on Windows). Same `command_family` alone does not satisfy this.
+3. **Argv contains the artifact** as a substring, OR contains a path-equivalent (slash normalization, drive-letter case-insensitive on Windows). Same `command_family` alone does not satisfy this. **For artifacts shorter than 10 characters, enforce a word-boundary match** (`\b{artifact}\b` after normalization) to avoid Windows/POSIX false positives (e.g., a 4-character artifact `pyth` must not match `is_pythonic`).
 4. Both events within the same `scope_ref`.
 5. Evidence links to both source items retained.
 6. `command_family` derived deterministically from artifact + argv, not used as an extraction filter.
