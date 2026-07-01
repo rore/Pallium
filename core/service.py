@@ -661,6 +661,71 @@ class PalliumService:
         {"decision", "investigation_outcome", "constraint_memory", "operational_fact", "note"}
     )
 
+    def _w3_memory_text_view_name(self, memory_type: str) -> str:
+        """Text-view name for an explicit-write memory's lexical index entry.
+
+        Mirrors semantic/common.py::_memory_text_view_name so that
+        agent-explicit memories index into the same text views the
+        extraction pipeline uses. Retrieval treats explicit-write and
+        inferred memories identically once indexed.
+        """
+        if memory_type == "decision":
+            return "memory_object.decision_context"
+        if memory_type == "investigation_outcome":
+            return "memory_object.investigation_context"
+        return "memory_object.summary"
+
+    def _index_explicit_write(
+        self,
+        memory_object_id: str,
+        memory_type: str,
+        text: str,
+    ) -> None:
+        """Emit lexical + (best-effort) vector index entries for an
+        explicit-write memory so it is retrievable immediately.
+
+        The extraction pipeline goes through _persist_process_result which
+        writes index entries alongside the memory; explicit writes take a
+        different code path (single storage.create_memory_object call), so
+        we index here explicitly. Without this the memory exists but is
+        invisible to /query — see scenario 5 wiring.
+        """
+        # Local import — avoid circular / heavy import at module load.
+        from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
+        from semantic.common import normalize_for_index  # type: ignore
+
+        text_view = normalize_for_index(text)
+        self._storage.create_index_entry(
+            build_index_entry(
+                target_kind="memory_object",
+                target_id=memory_object_id,
+                index_type="lexical",
+                text_view=text_view,
+                text_view_name=self._w3_memory_text_view_name(memory_type),
+            )
+        )
+        # Vector index is best-effort. If no embedding provider is
+        # configured, skip silently — the memory remains retrievable via
+        # lexical search which is enough for scenario 5's assertion.
+        try:
+            from semantic.agent_conversation_memory_embedding import (  # type: ignore
+                VECTOR_EMBEDDING_PROVIDER_NAME,
+                VECTOR_EMBEDDING_PROVIDER_VERSION,
+            )
+            self._storage.create_index_entry(
+                build_index_entry(
+                    target_kind="memory_object",
+                    target_id=memory_object_id,
+                    index_type=VECTOR_INDEX_TYPE,
+                    text_view=text,
+                    text_view_name=f"{self._w3_memory_text_view_name(memory_type)}.embedding",
+                    provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
+                    provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
+                )
+            )
+        except Exception:  # noqa: BLE001 -- vector index is best-effort
+            logger.debug("W3 explicit write: skipping vector index entry", exc_info=True)
+
     def remember_memory(
         self,
         *,
@@ -706,6 +771,10 @@ class PalliumService:
             origin_session_id=origin_session_id,
             origin_agent_id=origin_agent_id,
         )
+        # Emit index entries so the memory is retrievable via /query
+        # right away, without waiting for a downstream re-indexer. Match
+        # the shape the extraction pipeline uses.
+        self._index_explicit_write(memory.id, type, text)
         return memory
 
     def correct_memory(
@@ -778,6 +847,10 @@ class PalliumService:
             origin_session_id=origin_session_id,
             origin_agent_id=origin_agent_id,
         )
+        # Same as remember_memory: index the new memory so it's
+        # retrievable immediately. The old memory's index entries remain
+        # in place; retrieval filters superseded rows out via lifecycle.
+        self._index_explicit_write(new_memory.id, resolved_type, new_text)
         self._storage.link_supersession(
             supersedes_id,
             new_memory.id,
