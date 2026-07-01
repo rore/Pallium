@@ -1,18 +1,17 @@
 # Now
 - milestone-shaped-memory-contract
-  - W1: finish injection-policy-abstention (Phase 2b + Phase 6)
-  - W2: narrow-target Claude-Code-on-this-repo scenarios + baseline eval
-  - W3: explicit memory-write MCP tools (remember/correct/supersede/forget/record_outcome)
-  - W4: ship operational-fact memory as on-demand object
-  - W5: shadow-test typed one-pass extraction; per-type go/no-go
-  - W6: two enforceable invariants in lessons.md
-  - W7: rolling simplification pass (semantic ≤10k lines, routing ≤5 files)
+  - W1: finish injection-policy-abstention (Phase 2b + Phase 6) — awaiting fresh data window (~2026-07-05)
+  - W2: narrow-target Claude-Code-on-this-repo scenarios + baseline eval — ✅ shipped
+  - W3: explicit memory-write MCP tools (remember/correct/supersede/forget/record_outcome) — ✅ shipped
+  - W4: ship operational-fact memory as on-demand object — ✅ **shipped 2026-07-01** (5 PRs a0ef64c → b5bf26e)
+  - W5: shadow-test typed one-pass extraction; per-type go/no-go — in progress
+  - W6: two enforceable invariants in lessons.md — ✅ shipped
+  - W7: rolling simplification pass (semantic ≤10k lines, routing ≤5 files) — Phase 1 in progress
 
 # Next
 
 # Paused
 - investigate-thread-level-interest-and-threadless-aggregation
-- add-operational-fact-memory  (resumed under W4 of the milestone above)
 
 # Later
 - add-bounded-memory-lifecycle-hardening
@@ -26,6 +25,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-operational-fact-memory  (shipped 2026-07-01 as W4)
 - add-thread-near-dup-supersession
 - add-injection-policy-abstention
 - add-agent-work-trace-parallel-package

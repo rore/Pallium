@@ -24,17 +24,13 @@ comes first.
 
 ## Workstreams
 
-- **W1** — Finish delivery-side fix (abstention Phase 2b + Phase 6)
-- **W2** — Narrow target: Claude Code sessions on this repo, five named
-  scenarios with runnable evals
-- **W3** — Explicit memory-write MCP tools (`remember` / `correct` /
-  `supersede` / `forget` / `record_outcome`)
-- **W4** — Ship operational memory as on-demand object (unpause
-  `add-operational-fact-memory`)
-- **W5** — Shadow-test typed one-pass extraction; per-type go/no-go
-- **W6** — Two enforceable invariants in `docs/context/lessons.md`
-- **W7** — Simplification pass (rolling; `semantic/` ≤10k lines, routing
-  ≤5 files, no no-default config knobs)
+- **W1** — Finish delivery-side fix (abstention Phase 2b + Phase 6) — ⏳ awaiting fresh data window (~2026-07-05).
+- **W2** — Narrow target: Claude Code sessions on this repo, five named scenarios with runnable evals — ✅ shipped.
+- **W3** — Explicit memory-write MCP tools (`remember` / `correct` / `supersede` / `forget` / `record_outcome`) — ✅ shipped.
+- **W4** — Ship operational memory as on-demand object (unpause `add-operational-fact-memory`) — ✅ **shipped 2026-07-01** across 5 PRs (a0ef64c → b5bf26e).
+- **W5** — Shadow-test typed one-pass extraction; per-type go/no-go — ⏳ in progress.
+- **W6** — Two enforceable invariants in `docs/context/lessons.md` — ✅ shipped.
+- **W7** — Simplification pass (rolling; `semantic/` ≤10k lines, routing ≤5 files, no no-default config knobs) — ⏳ Phase 1 in progress.
 
 ## Milestone Acceptance
 

@@ -1,29 +1,35 @@
 ---
 id: add-operational-fact-memory
 title: Operational fact memory — reduce agent rediscovery waste
-status: paused
+status: shipped
 priority: medium
-commitment: shaping
-milestone: Next
+commitment: shipping
+milestone: 2026-07-shaped-memory-contract
+shipped_at: 2026-07-01
 ---
 
-> **Paused 2026-06-27** pending outcome of the abstention-policy work in
-> [`docs/specs/2026-06-27-injection-policy-abstention.md`](../../docs/specs/2026-06-27-injection-policy-abstention.md).
-> The data analysis under that spec showed:
-> 1. The dominant injection failure is targeting, not coverage — adding
->    another extracted memory type without an on-demand retrieval path
->    would land in the same off-topic-injection failure mode (~55% bad
->    rate, ~92% off-topic).
-> 2. The operational-fact spec itself already flagged this risk: "if no
->    on-demand surfacing path exists, storing facts is dead code."
-> 3. Phase 4 of the abstention plan establishes deterministic triggers
->    for on-demand retrieval. Operational-fact memory should be revisited
->    only after those triggers are live and proven, so it can ship as a
->    trigger-targeted type rather than a proactive one.
+> **Shipped 2026-07-01** as W4 of the [Shaped Memory Contract milestone](milestone-shaped-memory-contract.md).
+> Phase 0 verification spike resolved: Surface B (UserPromptSubmit,
+> both integrations), Bash-primary predicate, files_read secondary,
+> apply_patch deferred pending Codex live-DB evidence.
+> Five PRs merged (a0ef64c → b5bf26e):
 >
-> Resume gate: Phase 4 trigger pass-bar met; consider whether
-> operational-fact content is best modeled as its own type or absorbed
-> into existing `decision`/`task_checkpoint` types under triggered recall.
+> - PR 0 (a0ef64c) — docs reconciliation, Phase 0 outcome frozen.
+> - PR 1 (afa8766) — derivation predicate + shared redaction helper (83 tests).
+> - PR 2 (c9f42cd) — routing gate + partial indexes + `operational_intent` signal (89 tests).
+> - PR 3 (dcc9cd5) — derivation wiring + backfill scaffolding + Invariant-1 diff-grep (50 tests).
+> - PR 4 (b5bf26e) — narrow-target scenarios 1+2+negative wired end-to-end (14 tests).
+>
+> Milestone acceptance met: scenarios 1+2 pass with cross-integration
+> parity; zero proactive `operational_fact` injections verified with
+> positive-control regression test; every scenario carries the
+> `# measures:` header; Invariant 1 code-level guard active.
+>
+> Deferred to follow-ups: full delivery-side end-to-end pass
+> (`timing='on_time'` vs current `write_only`); Codex `apply_patch`
+> predicate branch (PR 5, contingent on Codex live-DB evidence);
+> slot-scoped supersession with agent_explicit priority; backfill
+> live-DB corpus scan + `--commit` persistence.
 
 ## Summary
 
@@ -78,15 +84,23 @@ rules, surfacing strategy, and Phase 0 verification gates.
 
 ## Done When
 
-1. Phase 0 verification spike from the spec is complete and the spec is
-   updated with direct file references.
-2. Operational facts are derived from `agent_work_trace_turn` metadata
-   without altering capture.
-3. Facts are surfaced at the right moment in fresh sessions and do not
-   crowd existing memory cards.
-4. A regression covers the rediscovery scenario end-to-end.
+1. ✅ Phase 0 verification spike complete (2026-07-01,
+   `.local/milestone-progress-2026-07/w4-phase0-spike-2026-07-01.md`).
+2. ✅ Operational facts derived from `agent_work_trace_turn` metadata
+   without altering capture (`semantic/operational_fact.py`,
+   `semantic/agent_work_trace.py` wiring).
+3. ✅ Facts surfaced on-demand via routing gate + `operational_intent`
+   signal; zero proactive injections enforced by three-layer guard
+   (config default + gate built-in default + audit-log invariant test).
+4. ✅ Regression covers the rediscovery scenario end-to-end
+   (`evals/narrow_target_claude_code/scenario_01_repeat_failed_command.py`,
+   `scenario_02_recall_python_on_windows_constraint.py`,
+   `scenario_negative_no_operational_fact.py`; W3-style write-side
+   PASS, delivery-side `write_only` with honest diagnostic).
 
 ## Notes
 
-Status is `proposed` until Phase 0 lands. No code changes before the
-verification spike updates the spec.
+Shipped as five sequenced PRs under the Shaped Memory Contract
+milestone, W4. Every PR passed architect design review + independent
+code review before merge. Zero regressions across the 236 W4-specific
+tests added (2686 → 2922 total).

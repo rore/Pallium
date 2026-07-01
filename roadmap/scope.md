@@ -58,6 +58,11 @@ Shipped since last major scope update:
 
 Current focus:
 
+- **Shaped Memory Contract milestone (2026-07-01)**: W2, W3, W4, W6 shipped;
+  W1 awaiting fresh data window; W5 in progress; W7 rolling.
+- **Operational fact memory (W4, shipped 2026-07-01)**: derived from
+  `agent_work_trace_turn` metadata; surfaces on-demand via UserPromptSubmit
+  `operational_intent` signal; zero-proactive invariant enforced.
 - **Routing calibration**: 3 regressions from routing simplification still open; fixing injection confidence thresholds
 - **LoCoMo benchmark**: baseline at 61.2% on conv-26; confirms need for fact extraction package alongside agent continuity
 - **Lifecycle hardening**: stale/superseded/contradictory memory handling before broader reuse and sharing work
