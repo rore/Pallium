@@ -173,6 +173,15 @@ class FeaturesConfig:
     # derivation on a developer's machine.
     operational_fact_derivation: bool = False
 
+    # W5 PR 1: shadow-extractor pipeline. When True, every source item
+    # processed by the live extractor is ALSO fed through a single-call
+    # strict-JSON extractor whose output lands in ``memory_objects_shadow``.
+    # Shadow writes are guaranteed disjoint from the live path — see
+    # docs/specs/2026-07-01-milestone-shaped-memory-contract.md §W5.
+    # Default off. Enable only in the measurement window; the shadow
+    # extractor costs an extra LLM call per source item.
+    typed_extraction_shadow: bool = False
+
 
 def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
     return {
@@ -769,6 +778,12 @@ def _build_features_config(
             "PALLIUM_FEATURES_OPERATIONAL_FACT_DERIVATION",
             env_values,
             raw.get("operational_fact_derivation"),
+            False,
+        ),
+        typed_extraction_shadow=_resolve_bool_value(
+            "PALLIUM_FEATURES_TYPED_EXTRACTION_SHADOW",
+            env_values,
+            raw.get("typed_extraction_shadow"),
             False,
         ),
     )

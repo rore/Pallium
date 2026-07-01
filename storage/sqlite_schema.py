@@ -200,6 +200,51 @@ class QueryAuditLogRecord(Base):
     trigger_origin = Column(String, nullable=True)
 
 
+class MemoryObjectShadowRecord(Base):
+    """W5 PR 1 — shadow-extractor output.
+
+    Mirrors the live memory_objects shape closely enough for the
+    comparison eval to join easily, but is NOT foreign-keyed to it.
+    Shadow rows must survive live-row supersession/soft-delete, and
+    the shadow extractor may produce memories that never get a live
+    counterpart (that is the whole point of the shadow).
+
+    Correlation to live rows happens at eval time via source_item_id.
+    """
+
+    __tablename__ = "memory_objects_shadow"
+
+    id = Column(String, primary_key=True)
+    source_item_id = Column(String, nullable=False)
+    package_name = Column(String, nullable=False)
+    # Groups all rows produced by one LLM call (one source item → one run).
+    shadow_run_id = Column(String, nullable=False)
+    shadow_run_at = Column(DateTime(timezone=True), nullable=False)
+    prompt_version = Column(String, nullable=False)
+    provider_name = Column(String, nullable=False)
+    provider_kind = Column(String, nullable=False)
+    model = Column(String, nullable=False)
+
+    # Mirrored memory-object shape
+    type = Column(String, nullable=False)
+    schema_id = Column(String, nullable=False)
+    schema_version = Column(String, nullable=False)
+    payload_json = Column(Text, nullable=False)
+    subject = Column(String, nullable=True)
+    container_ref = Column(String, nullable=True)
+    actor_ref = Column(String, nullable=True)
+    visibility = Column(String, nullable=True, default="private")
+
+    # Shadow-specific
+    live_counterpart_ids_json = Column(Text, nullable=True)
+    llm_call_metadata_json = Column(Text, nullable=True)
+    # "ok" | "schema_failure" | "llm_error"
+    parse_status = Column(String, nullable=False, default="ok")
+    parse_error = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+
 class MemoryFlagRecord(Base):
     __tablename__ = "memory_flags"
 
@@ -414,6 +459,26 @@ class SQLiteSchemaMixin:
             "CREATE INDEX IF NOT EXISTS idx_memory_objects_operational_fact_supersedes "
             "ON memory_objects(superseded_by_id) "
             "WHERE type = 'operational_fact' AND superseded_by_id IS NOT NULL"
+        ),
+        # W5 PR 1: memory_objects_shadow indexes. Additive; the shadow
+        # table is not on the live retrieval path so these serve the
+        # comparison eval and shadow-write throughput only.
+        "idx_shadow_source_item": (
+            "CREATE INDEX IF NOT EXISTS idx_shadow_source_item "
+            "ON memory_objects_shadow(source_item_id, type)"
+        ),
+        "idx_shadow_run": (
+            "CREATE INDEX IF NOT EXISTS idx_shadow_run "
+            "ON memory_objects_shadow(shadow_run_id)"
+        ),
+        "idx_shadow_type_created": (
+            "CREATE INDEX IF NOT EXISTS idx_shadow_type_created "
+            "ON memory_objects_shadow(type, created_at)"
+        ),
+        "idx_shadow_parse_status": (
+            "CREATE INDEX IF NOT EXISTS idx_shadow_parse_status "
+            "ON memory_objects_shadow(parse_status, created_at) "
+            "WHERE parse_status != 'ok'"
         ),
         "idx_source_items_thread_lookup": (
             "CREATE INDEX IF NOT EXISTS idx_source_items_thread_lookup "

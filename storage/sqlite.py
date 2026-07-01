@@ -25,6 +25,7 @@ from storage.sqlite_schema import (
     MemoryFeedbackRecord,
     MemoryFlagRecord,
     MemoryObjectRecord,
+    MemoryObjectShadowRecord,
     MemoryUsageAuditRecord,
     PackageProcessingStatusRecord,
     QueryAuditLogRecord,
@@ -304,6 +305,32 @@ class SQLiteStorageProvider(
             created_at=memory_object.created_at,
         )
         self._with_retry(lambda session: session.add(record))
+
+    def insert_shadow_extraction(
+        self,
+        *,
+        rows: list[MemoryObjectShadowRecord],
+    ) -> None:
+        """Bulk-insert shadow-extraction rows for one source item.
+
+        W5 PR 1 helper. Persistence path is intentionally disjoint from
+        the live memory-object writer — this helper touches ONLY
+        ``memory_objects_shadow`` and never any live table. Concurrency
+        goes through ``_with_retry`` (same serialization guarantee as
+        ``create_memory_object``); the shadow row set for one LLM call
+        is committed atomically as one transaction.
+
+        Callers must guarantee every row shares the same
+        ``shadow_run_id``. Empty ``rows`` is a no-op.
+        """
+        if not rows:
+            return
+
+        def _do(session):
+            for row in rows:
+                session.add(row)
+
+        self._with_retry(_do)
 
     def get_memory_object(self, memory_object_id: str) -> MemoryObject:
         with self._session_factory() as session:
