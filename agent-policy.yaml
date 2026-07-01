@@ -79,6 +79,9 @@ zones:
     - path: "semantic/operational_fact.py"
       reason: operational_fact derivation predicate — argv matching, scope resolution, redaction gate
       checkpoint: architecture-review
+    - path: "semantic/extraction_typed_shadow.py"
+      reason: W5 shadow extractor — single-call strict-JSON extractor + parsing contract; must never propagate errors to live path
+      checkpoint: architecture-review
 
   watch:
     # Layer entry surfaces — surfaced in PR comment, no checkpoint
