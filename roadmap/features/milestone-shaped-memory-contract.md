@@ -28,7 +28,7 @@ comes first.
 - **W2** — Narrow target: Claude Code sessions on this repo, five named scenarios with runnable evals — ✅ shipped.
 - **W3** — Explicit memory-write MCP tools (`remember` / `correct` / `supersede` / `forget` / `record_outcome`) — ✅ shipped.
 - **W4** — Ship operational memory as on-demand object (unpause `add-operational-fact-memory`) — ✅ **shipped 2026-07-01** across 5 PRs (a0ef64c → b5bf26e).
-- **W5** — Shadow-test typed one-pass extraction; per-type go/no-go — ⏳ in progress.
+- **W5** — Shadow-test typed one-pass extraction; per-type go/no-go — ⏳ 4 of 5 PRs shipped 2026-07-01 (foundation + extractor + wiring + comparison eval). PR 5 (per-type promotion) contingent on ≥2 weeks of shadow-populated live data.
 - **W6** — Two enforceable invariants in `docs/context/lessons.md` — ✅ shipped.
 - **W7** — Simplification pass (rolling; `semantic/` ≤10k lines, routing ≤5 files, no no-default config knobs) — ⏳ Phase 1 in progress.
 

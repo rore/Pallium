@@ -4,7 +4,7 @@
   - W2: narrow-target Claude-Code-on-this-repo scenarios + baseline eval — ✅ shipped
   - W3: explicit memory-write MCP tools (remember/correct/supersede/forget/record_outcome) — ✅ shipped
   - W4: ship operational-fact memory as on-demand object — ✅ **shipped 2026-07-01** (5 PRs a0ef64c → b5bf26e)
-  - W5: shadow-test typed one-pass extraction; per-type go/no-go — in progress
+  - W5: shadow-test typed one-pass extraction; per-type go/no-go — 4 of 5 PRs shipped 2026-07-01 (c2be06c → 8bd779d); PR 5 contingent on ≥2 weeks live data
   - W6: two enforceable invariants in lessons.md — ✅ shipped
   - W7: rolling simplification pass (semantic ≤10k lines, routing ≤5 files) — Phase 1 in progress
 
