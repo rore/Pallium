@@ -1,5 +1,68 @@
 # Lessons
 
+## Invariants (2026-07-01 — apply to every retrieval / eval PR)
+
+These two rules are enforceable in PR review. Any PR touching retrieval,
+ranking, memory-write accessibility, or evaluation reports must clear both.
+
+### Invariant 1 — Retrieval is not use.
+
+A memory's ranking, decay, boost, or accessibility state must never update
+solely because that memory was retrieved. Any change to accessibility state
+(use counters, recency boosts, decay resets, retrieval-frequency multipliers,
+ranking priors) requires evidence of downstream use:
+
+- the agent cited the memory in its response, OR
+- the agent's next action changed because of the memory, OR
+- the user confirmed the memory was correct/useful, OR
+- an outcome was recorded via `pallium_record_outcome` on a linked procedure,
+  OR
+- an offline evaluator judged the memory necessary for the turn.
+
+**Rationale.** A self-reinforcing loop where retrieval biases future retrieval
+creates topically-similar false positives that grow more dominant over time.
+Comparable external systems that ship this pattern also disable it in their
+retrieval evaluations to stay deterministic — which means their headline
+retrieval numbers are measured with the very mechanism that biases production
+turned off. Pallium must not adopt any form of this loop.
+
+**How to enforce in review.** For any PR touching retrieval or ranking, the
+description must state whether the change writes any accessibility state on
+retrieval, and if so, what downstream-use signal gates the write. "It's just
+a small boost" is not an answer — either the boost fires only on
+verified-use evidence, or it doesn't ship.
+
+### Invariant 2 — Every retrieval eval states what it measures.
+
+Retrieval evaluations answer three distinct questions. A number that doesn't
+name which one is misleading. Every published eval report must state, up
+front, which of these it measures:
+
+- **Candidate recovery.** Given we should retrieve X, can the retriever find
+  X? (Recall@K, MRR, precision-at-known-target.)
+- **Injection precision.** Should anything have been injected on this turn,
+  and if so, was the injected memory the right one? Measured against
+  human-rated or feedback-labelled data joined to audit-log injection events.
+- **Downstream task effect.** Did injecting this memory actually help the
+  agent do better on the task? Measured on task-outcome corpora, not
+  retrieval fixtures.
+
+These are three different measurements. A system can have excellent candidate
+recovery, poor injection precision, and no measured task effect all at once —
+that combination is exactly the failure mode Pallium's abstention work
+addresses.
+
+**How to enforce in review.** Any PR that adds, changes, or publishes an eval
+number must have a one-line "measures: candidate-recovery | injection-precision |
+downstream-task-effect" statement in the report header. Reports without it
+are sent back. Multi-metric reports name each metric per column.
+
+**References.**
+- W6 of [`docs/specs/2026-07-01-milestone-shaped-memory-contract.md`](../specs/2026-07-01-milestone-shaped-memory-contract.md)
+- Retrieval-vs-intervention split framing informs [`docs/specs/2026-06-27-injection-policy-abstention.md`](../specs/2026-06-27-injection-policy-abstention.md)
+
+---
+
 ## 2026-03-09 - Idempotent ingest can hide semantic-path changes
 
 Problem:

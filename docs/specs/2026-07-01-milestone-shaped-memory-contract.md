@@ -134,8 +134,13 @@ Continues [`docs/specs/2026-06-27-injection-policy-abstention.md`](2026-06-27-in
 This is the only workstream that directly moves the headline failure number.
 
 ### Tasks
+- **Precondition (go/no-go by Wed of Week 1):** Verify Phase 0.5
+  instrumentation has accumulated ≥7 days of fresh audit data with the
+  block `score` field populated. If not met, Phase 2b defers to Week 2 and
+  Week 1's W1 focus becomes Phase 1 re-validation on fresh data + Phase 6
+  measurement setup.
 - Complete Phase 2b — exact prospective replay on a fresh data window with the
-  new `score` field populated.
+  new `score` field populated. **Week 1 start depends on the precondition.**
 - Complete Phase 6 — ~2-week measurement window with `memory_usage_audit`
   populated by `referenced_in_next_turn`.
 - Publish per-type precision delta (before/after abstention) on the rated corpus
@@ -144,6 +149,12 @@ This is the only workstream that directly moves the headline failure number.
 ### Acceptance
 - Held-out precision ≥ 70% on the types that stayed proactive
   (`constraint_memory`, `decision`).
+  **Re-baseline note:** Phase 1 holdout analysis (2026-06-27) showed no
+  type reached 70% on the held-out tail. Phase 2b exact-replay results
+  govern the shipped precision target; if replay shows lower precision
+  than the plan expected, re-baseline this acceptance criterion in the
+  spec (documenting the delta and the reason) before shipping the
+  workstream.
 - Signed-off per-type report: which types earned their proactive status, which
   drop to on-demand permanently, which stay suspended.
 
@@ -187,18 +198,40 @@ General enough that if it works here, it plausibly works elsewhere.
    user says "let's not use approach X because Y." Session B considers approach
    X for a related task. Pallium surfaces the decision.
 
+### Negative scenarios (must also pass — precision AND specificity)
+
+Positive-only scenarios can hide a false-injection increase. Two negative
+cases explicitly test non-injection:
+
+6. **Prior investigation ruled a hypothesis out; new session hits a related
+   error from a different root cause.** Pallium surfaces the prior
+   investigation via trigger (context-only), does not proactively inject it
+   as "the answer," and does not block the agent from pursuing a new
+   diagnosis.
+7. **Two unrelated prior errors superficially match the current query terms.**
+   Pallium does not inject either. Specificity (correct non-injections) is
+   measured, not just precision (correct injections).
+
 ### Deliverables
 - `docs/specs/2026-07-01-narrow-target-claude-code-in-pallium-repo.md` naming
   the scenarios, their explicit pass conditions, and how each is measured.
-- `evals/narrow_target_claude_code/` — one runnable scenario replay per case.
-  Each plays a canned session end-to-end and reports pass/fail.
+- `evals/narrow_target_claude_code/` — one runnable scenario replay per case
+  (7 total: 5 positive + 2 negative). Each plays a canned session end-to-end
+  and reports pass/fail.
 - Baseline numbers against today's Pallium checked in. These are the target
   to beat.
 
 ### Acceptance
-- Five runnable scenario replays. All produce a deterministic pass/fail.
-- Baseline report at `evals/narrow_target_claude_code/baseline_2026-07-01.json`.
-- Every subsequent PR in this milestone states which scenario(s) it moves.
+- Seven runnable scenario replays (5 positive + 2 negative). All produce a
+  deterministic pass/fail.
+- Baseline report at `evals/narrow_target_claude_code/baseline_2026-07-01.json`
+  reporting **both** metrics:
+  - **precision** = correct injections / total injections
+  - **specificity** = correct non-injections / total non-injections where
+    memory exists that could have been injected
+- Every subsequent PR in this milestone states which scenario(s) it moves
+  AND commits to precision ≥ baseline AND specificity ≥ baseline. Never
+  trade one for the other without explicit written justification.
 
 ---
 
@@ -251,9 +284,17 @@ Soft-deleted rows hidden from recall by default; retrospective queries opt in.
 
 ## Workstream 4 — Ship operational memory as an on-demand object
 
-**Duration:** 2 weeks (can overlap with W3 tail)
+**Duration:** 2 weeks (development can overlap W3's testing tail; integration
+begins only after W3 preconditions below are met)
 **Depends on:** W3 (`pallium_record_outcome`), W1 event triggers (already live).
 **Attacks:** gap #2 (no shipped operational-memory object).
+
+**Precondition — hard gate:** W3 explicit-tools MCP surface, including
+`pallium_record_outcome`, is merged, tested, and reachable from both
+Claude Code and Codex integrations before W4 integration testing begins.
+Target: end-of-day Wednesday of Week 3. If W3 slips beyond this, W4 start
+defers; W4 development can continue in isolation but no shipping commit
+until W3 is green.
 
 Unpause [`roadmap/features/add-operational-fact-memory.md`](../../roadmap/features/add-operational-fact-memory.md).
 Phase 4 triggers are shipped per `roadmap/scope.md`; resume gate is met.
@@ -387,26 +428,53 @@ move together, or the pass didn't work.
    annotations, constants, floor, injection, justification, policy, scoring,
    selection, signals, suppression, trace}.py`. Target shape: one `routing.py`
    owning signal envelope → lane narrowing → scoring → selection, with `trace`
-   and `justification` as siblings. Test-gated: existing routing tests green +
-   narrow-target scenarios don't regress.
+   and `justification` as siblings.
+
+   **Audited plan (routing-file audit, Week 1):**
+   - **Trivial merges (Phase 1, no test change):** `annotations.py` and
+     `suppression.py` fold into `scoring.py`. `justification.py` archives to
+     `docs/archived/` (unused in prod, kept for historical eval comparisons).
+     Est. ~350 LOC reduction, 12 → 9 core files, no logic change.
+   - **Hold (Phase 2, keep as siblings this milestone):** `constants.py`,
+     `scoring.py`, `signals.py`, `policy.py`, `selection.py`, `injection.py`,
+     `floor.py`, `trace.py`. Each is load-bearing or has focused test
+     isolation value; touching risks precision regression.
+   - **W8+ candidates:** `selection.py` (2372 LOC) modularization; `trace.py`
+     fold once trace becomes stable.
+   - **Gate:** existing routing tests green + narrow-target scenarios don't
+     regress.
 
 2. **Delete score-based proactive paths for on-demand / suspended types.**
    Any code that computes proactive score thresholds for `fact_summary`
    (suspended), `investigation_outcome` (on-demand), `thread_summary`
-   (on-demand only) is dead. Grep and remove.
+   (on-demand only) is dead. Grep, remove, update tests in the same PR.
 
 3. **Audit unused prompt-role infrastructure.** `prompt_provenance.py`,
    `prompt_roles.py`, `prompt_variant_metrics.py` — if not on the live path,
-   move to `evals/` or delete. Judged by runtime import trace, not by intent.
+   move to `evals/` or delete. **Judged by runtime import trace from named
+   entry points** (`api/`, `mcp/`, integration hooks, `semantic/agent_conversation_memory.py`),
+   not by grep alone. Import-only-from-tests counts as not-live.
 
 4. **Collapse constraint sub-module remainder.** `agent_conversation_memory_
-   constraints.py` — the constraint_policy lane was already deleted. What's
-   left probably belongs in the main module or gets deleted.
+   constraints.py` — the constraint_policy lane was already deleted.
+   **Pre-audit PR required before any deletion:** file audit lists what
+   the module still owns, which files import it, and proposes concrete
+   merge-or-delete disposition per top-level symbol. Deletion proceeds in
+   a separate PR only after the audit PR is reviewed.
 
-5. **Consolidate extraction paths after W5.** `agent_conversation_memory` and
-   `conversational_knowledge` already run in parallel. W5 adds a typed shadow.
-   For each memory type where shadow wins per the W5 decision gate, the losing
-   path is **deleted in the same PR** as the promotion.
+5. **Consolidate extraction paths after W5.** For each memory type where the
+   shadow extractor wins per the W5 decision gate, in the same PR that
+   promotes shadow:
+   - **Delete** the extraction logic AND the prompt schema for that type
+     in the losing extractor package.
+   - **Keep** the memory type itself, its routing logic, its storage schema,
+     and all existing memory objects of that type — they remain queryable
+     from historical writes.
+   - Same-PR atomicity: if the shadow promotion fails review, the old
+     extraction path stays intact. No orphan state.
+   - If a type is coupled to others across a shared prompt contract in the
+     losing package (audited in W5 week 4 prep), that group of types is
+     promoted or rejected together, not individually.
 
 ### Rules applied to every PR this milestone
 

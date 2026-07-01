@@ -6,6 +6,7 @@ Use `docs/context/` for broader design context, but keep roadmap state and queue
 Repo-level non-negotiables:
 
 - use `README.md`, `docs/context/*`, relevant `docs/designs/*`, and `roadmap/*` as the source of truth
+- **honor the two invariants at the top of [`docs/context/lessons.md`](docs/context/lessons.md)** on every retrieval / ranking / eval PR: (1) retrieval alone never updates accessibility state — verified downstream use only; (2) every eval number states whether it measures candidate-recovery, injection-precision, or downstream-task-effect
 - optimize for the smallest valuable slice that strengthens the current product claim
 - protect the generic core, reusable capability, and package-specific semantic boundaries
 - call out roadmap, docs, and code drift explicitly before endorsing a change
