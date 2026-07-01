@@ -1,8 +1,18 @@
+# Now
+- milestone-shaped-memory-contract
+  - W1: finish injection-policy-abstention (Phase 2b + Phase 6)
+  - W2: narrow-target Claude-Code-on-this-repo scenarios + baseline eval
+  - W3: explicit memory-write MCP tools (remember/correct/supersede/forget/record_outcome)
+  - W4: ship operational-fact memory as on-demand object
+  - W5: shadow-test typed one-pass extraction; per-type go/no-go
+  - W6: two enforceable invariants in lessons.md
+  - W7: rolling simplification pass (semantic ≤10k lines, routing ≤5 files)
+
 # Next
 
 # Paused
 - investigate-thread-level-interest-and-threadless-aggregation
-- add-operational-fact-memory
+- add-operational-fact-memory  (resumed under W4 of the milestone above)
 
 # Later
 - add-bounded-memory-lifecycle-hardening
