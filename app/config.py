@@ -158,6 +158,22 @@ class InjectionConfig:
     policy: InjectionPolicyConfig = field(default_factory=InjectionPolicyConfig)
 
 
+@dataclass(frozen=True)
+class FeaturesConfig:
+    """Feature flags for progressively-rolling-out capabilities.
+
+    Every field must have a safe-off default. See individual field
+    docstrings for what each flag gates.
+    """
+
+    # W4 PR 3: derivation of operational_fact memories from the
+    # agent_work_trace_turn corpus. When False, task_trace is written as
+    # before and zero operational_fact rows are produced by the plugin.
+    # Default off so a mid-milestone git pull does NOT silently enable
+    # derivation on a developer's machine.
+    operational_fact_derivation: bool = False
+
+
 def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
     return {
         "agent_conversation_memory": SemanticPackageConfig(
@@ -186,6 +202,7 @@ class AppConfig:
     vector_index: VectorIndexConfig = field(default_factory=VectorIndexConfig)
     snapshot: SnapshotConfig = field(default_factory=SnapshotConfig)
     injection: InjectionConfig = field(default_factory=InjectionConfig)
+    features: FeaturesConfig = field(default_factory=FeaturesConfig)
 
     # Legacy compatibility inputs. New code should prefer llm_providers and semantic_packages.
     llm_provider: str | None = None
@@ -336,6 +353,7 @@ class AppConfig:
             semantic_packages=_build_package_configs(config_data, env_values),
             vector_index=_build_vector_index_config(config_data, env_values),
             injection=_build_injection_config(config_data),
+            features=_build_features_config(config_data, env_values),
             llm_provider=_resolve_legacy_value("PALLIUM_LLM_PROVIDER", env_values),
             llm_model=_resolve_legacy_value("PALLIUM_LLM_MODEL", env_values),
             llm_base_url=_resolve_legacy_value("PALLIUM_LLM_BASE_URL", env_values),
@@ -727,6 +745,33 @@ def _build_injection_types_block(raw_types: Any) -> dict[str, InjectionTypePolic
     for type_name, raw_value in raw_types.items():
         out[str(type_name)] = _build_injection_type_policy(raw_value)
     return out
+
+
+def _build_features_config(
+    config_data: dict[str, Any],
+    env_values: dict[str, str],
+) -> FeaturesConfig:
+    """Read the [features] section into a FeaturesConfig.
+
+    Missing section returns defaults (all flags off). Env-var overrides
+    win via the standard PALLIUM_FEATURES_<FLAG_UPPER> pattern.
+    """
+    raw = config_data.get("features")
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError(
+            "[features] must be a table; "
+            f"got {type(raw).__name__}"
+        )
+    return FeaturesConfig(
+        operational_fact_derivation=_resolve_bool_value(
+            "PALLIUM_FEATURES_OPERATIONAL_FACT_DERIVATION",
+            env_values,
+            raw.get("operational_fact_derivation"),
+            False,
+        ),
+    )
 
 
 def _build_injection_config(config_data: dict[str, Any]) -> InjectionConfig:

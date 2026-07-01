@@ -116,6 +116,16 @@ min_similarity = 0.55
 # [injection.policy.types.operational_fact]
 # mode = "on_demand"
 #
+# # W4 PR 3: turn on structural derivation of operational_fact memories
+# # from the agent_work_trace_turn metadata. Bit-exact no-op when False
+# # (task_trace still writes as before; zero operational_fact rows).
+# # Fresh installs SHOULD leave this False until they see the type is
+# # useful in their own workflow — the derivation adds a small write-side
+# # cost per thread rebuild and the retrieval side is opt-in via the
+# # UserPromptSubmit operational_intent signal.
+# [features]
+# operational_fact_derivation = false
+#
 # # Per-container override example: disable proactive on the xlm container
 # # while leaving the focused-repo container free to override differently.
 # [[injection.policy.containers]]

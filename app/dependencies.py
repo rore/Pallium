@@ -187,7 +187,12 @@ def _build_plugin_for_package(*, config: AppConfig, package_config: SemanticPack
             provider_name=package_config.llm_provider,
             model=package_config.model,
         )
-        return AgentWorkTracePlugin(provider=provider)
+        return AgentWorkTracePlugin(
+            provider=provider,
+            operational_fact_derivation_enabled=(
+                config.features.operational_fact_derivation
+            ),
+        )
 
     if implementation == "conversational_knowledge":
         if not package_config.llm_provider or not package_config.model:

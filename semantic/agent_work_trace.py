@@ -12,8 +12,18 @@ from capabilities.thread_aggregation import ThreadAggregate
 from core.contracts import MemoryRetentionPolicy, ProcessResult
 from core.indexing import build_index_entry, BUILTIN_INDEX_PROVIDER_NAME, BUILTIN_INDEX_PROVIDER_VERSION
 from core.models import IndexEntry, MemoryObject, Relation, SourceItem, new_id, utc_now
+from core.type_registry import TypeRegistration, TypeRegistry
 from providers.llm.base import LLMProvider, LLMJsonResponse
 from semantic.base import ThreadAggregationSemanticPlugin
+from semantic.operational_fact import (
+    CommandRecord,
+    OPERATIONAL_FACT_TYPE,
+    OperationalFactCandidate,
+    ScopeResolver,
+    TurnRecord,
+    build_default_scope_resolver,
+    derive_operational_facts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +32,11 @@ TASK_TRACE_SCHEMA_ID = "agent_work_trace.task_trace"
 TASK_TRACE_SCHEMA_VERSION = "v1"
 
 LEXICAL_TEXT_VIEW_NAME = "memory_object.task_trace_lexical"
+
+# W4 PR 3: operational_fact derivation constants
+OPERATIONAL_FACT_SCHEMA_ID = "agent_work_trace.operational_fact"
+OPERATIONAL_FACT_SCHEMA_VERSION = "v1"
+OPERATIONAL_FACT_LEXICAL_TEXT_VIEW = "memory_object.operational_fact_lexical"
 
 MAX_EXPLORATORY_FILES = 30
 MAX_PRODUCTIVE_FILES = 20
@@ -91,8 +106,16 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
 
     name = "agent_work_trace"
 
-    def __init__(self, provider: LLMProvider) -> None:
+    def __init__(
+        self,
+        provider: LLMProvider,
+        *,
+        operational_fact_derivation_enabled: bool = False,
+        scope_resolver: ScopeResolver | None = None,
+    ) -> None:
         self._provider = provider
+        self._operational_fact_derivation_enabled = operational_fact_derivation_enabled
+        self._scope_resolver = scope_resolver or build_default_scope_resolver()
 
     @property
     def parallel_processing(self) -> bool:
@@ -107,9 +130,49 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
         return True
 
     @property
+    def non_superseding_types(self) -> frozenset[str]:
+        # operational_fact supersession is keyed on the conflict slot
+        # (command_family, artifact_role, scope_kind, scope_ref) per the
+        # design doc §Deduplication And Conflict — NOT on (type, schema_id).
+        # Excluding it here prevents the blanket rebuild-supersedes-prior
+        # sweep from wiping every prior derived fact in the rebuild window.
+        # Slot-scoped supersession lands in a follow-up storage pass; the
+        # design permits either "skip the derived candidate" or "write it
+        # as superseded linked to the winner" and PR 3 chooses skip via
+        # the `origin` boundary (see §5 of the PR-3 design doc).
+        return frozenset({OPERATIONAL_FACT_TYPE})
+
+    @property
     def memory_retention_policy(self) -> MemoryRetentionPolicy:
         return MemoryRetentionPolicy(
             working_types=frozenset({TASK_TRACE_TYPE}),
+            durable_types=frozenset({OPERATIONAL_FACT_TYPE}),
+        )
+
+    def register_routing_types(self, registry: TypeRegistry) -> None:
+        """Register operational_fact with the core type registry.
+
+        task_trace is intentionally NOT registered here — it's a
+        thread-level aggregate that is retrieved via internal paths, not
+        the standard routing gate. operational_fact IS user-visible via
+        Surface B (UserPromptSubmit + operational_intent signal) and
+        must be routable.
+        """
+        registry.register(
+            TypeRegistration(
+                type_name=OPERATIONAL_FACT_TYPE,
+                layer_name=OPERATIONAL_FACT_TYPE,
+                weight_by_intent={
+                    "recall": 150,
+                    "structured_recall": 220,
+                    "work_resumption": 145,
+                    "evidence_trace": 180,
+                },
+                default_weight=150,
+                block_title="Operational fact",
+                block_text_field="subject",
+                high_value=True,
+            )
         )
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
@@ -283,9 +346,173 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
             text_view_name=LEXICAL_TEXT_VIEW_NAME,
         )
 
+        # W4 PR 3: operational_fact derivation.
+        # Runs only when the [features] operational_fact_derivation flag is
+        # on (default: False). Zero cost when flag is off. When on, emits
+        # additional operational_fact MemoryObjects + IndexEntries into
+        # the same ProcessResult that carries task_trace.
+        extra_memories: list[MemoryObject] = []
+        extra_indexes: list[IndexEntry] = []
+        if self._operational_fact_derivation_enabled and turns and trace_items:
+            turn_stream = _build_turn_stream_from_aggregate(trace_items, turns)
+            candidates = derive_operational_facts(
+                turn_stream=turn_stream,
+                container_ref=aggregate.container_ref,
+                scope_resolver=self._scope_resolver,
+            )
+            for cand in candidates:
+                mem = _candidate_to_memory_object(cand, aggregate)
+                extra_memories.append(mem)
+                extra_indexes.append(_candidate_to_index_entry(cand, mem))
+
         return ProcessResult(
-            memory_objects=[memory_obj],
+            memory_objects=[memory_obj, *extra_memories],
             relations=[],
-            index_entries=[index_entry],
+            index_entries=[index_entry, *extra_indexes],
             thread_rebuild_requested=False,
         )
+
+
+# --------------------------------------------------------------------------- #
+# W4 PR 3 helpers — operational_fact derivation wiring                        #
+# --------------------------------------------------------------------------- #
+
+
+def _build_turn_stream_from_aggregate(
+    trace_items: list[SourceItem],
+    turns: list[dict],
+) -> list[TurnRecord]:
+    """Build the operational_fact predicate's TurnRecord stream.
+
+    Pairs trace_items[i] with turns[i] by index — the same invariant
+    build_thread_summary relies on when building task_trace.
+    """
+    assert len(trace_items) == len(turns), "trace_items/turns paired invariant violated"
+    records: list[TurnRecord] = []
+    for i, (item, turn) in enumerate(zip(trace_items, turns)):
+        cmd_records = tuple(
+            CommandRecord(
+                cmd=str(c.get("cmd") or ""),
+                exit_code=c.get("exit_code"),
+                output_tail=str(c.get("output_tail") or ""),
+                failure_class=str(c.get("failure_class") or ""),
+            )
+            for c in (turn.get("commands") or [])
+            if isinstance(c, dict) and c.get("cmd")
+        )
+        ts = ""
+        if item.occurred_at is not None:
+            ts = item.occurred_at.isoformat()
+        elif item.created_at is not None:
+            ts = item.created_at.isoformat()
+        records.append(
+            TurnRecord(
+                turn_index=i,
+                source_item_id=item.id,
+                timestamp=ts,
+                commands=cmd_records,
+                files_read=tuple(
+                    str(p) for p in (turn.get("files_read") or []) if p
+                ),
+                files_modified=tuple(
+                    str(p) for p in (turn.get("files_modified") or []) if p
+                ),
+                grep_patterns=tuple(
+                    str(p) for p in (turn.get("grep_patterns") or []) if p
+                ),
+            )
+        )
+    return records
+
+
+def _candidate_to_memory_object(
+    cand: OperationalFactCandidate,
+    aggregate: ThreadAggregate,
+) -> MemoryObject:
+    """Convert a derivation candidate into a persistable MemoryObject.
+
+    Invariant 1 code-level guard: `use_counters` is a NESTED sub-blob
+    under payload — never at top level. Any retrieval code trying to
+    rank on `success_count` / `reuse_count` / `last_used_at` must
+    reach through two levels of dict access, which is grep-visible in
+    code review. See tests/test_operational_fact_invariant1.py.
+    """
+    now = utc_now()
+    now_iso = now.isoformat()
+    evidence_dicts = [
+        {
+            "kind": ev.kind,
+            "source_item_id": ev.source_item_id,
+            "tool": ev.tool,
+            "turn_index": ev.turn_index,
+            "timestamp": ev.timestamp,
+            "fragment": ev.fragment,
+        }
+        for ev in cand.evidence
+    ]
+    payload: dict[str, Any] = {
+        "command_family": cand.command_family,
+        "artifact_role": cand.artifact_role,
+        "scope_kind": cand.scope_kind,
+        "scope_ref": cand.scope_ref,
+        "subject": cand.subject,
+        "artifact": cand.artifact,
+        "artifact_normalized": cand.artifact_normalized,
+        "evidence": evidence_dicts,
+        # `origin` in payload identifies this memory as agent-derived
+        # (structural extraction from tool trace). Explicit writes via
+        # W3 pallium_remember carry origin='agent_explicit'. The
+        # cross-origin rule (design doc §Conflict slot) states that
+        # derivation never supersedes an existing agent_explicit fact
+        # in the same conflict slot; that guard lands in a follow-up
+        # storage-level pass. Meanwhile this field makes the intent
+        # visible on every derived row.
+        "origin": "agent_inferred",
+        # Nested — Invariant 1 code-level guard. Ranking layer must not
+        # read these fields on retrieval paths; only outcome-recording
+        # writes them.
+        "use_counters": {
+            "reuse_count": 1,
+            "success_count": 0,
+            "failure_count": 0,
+            "last_used_at": now_iso,
+            "last_confirmed_at": None,
+        },
+    }
+    return MemoryObject(
+        type=OPERATIONAL_FACT_TYPE,
+        schema_id=OPERATIONAL_FACT_SCHEMA_ID,
+        schema_version=OPERATIONAL_FACT_SCHEMA_VERSION,
+        lifecycle="active",
+        visibility=aggregate.visibility,
+        container_ref=aggregate.container_ref,
+        freshness_at=now,
+        payload=payload,
+    )
+
+
+def _candidate_to_index_entry(
+    cand: OperationalFactCandidate,
+    memory_obj: MemoryObject,
+) -> IndexEntry:
+    """Emit the lexical index entry for a derived operational_fact.
+
+    Text view mirrors the W3 explicit-write shape: subject + family +
+    role + artifact tokens — the terms a UserPromptSubmit query is
+    likely to carry when the operational_intent signal fires.
+    """
+    parts = [
+        cand.subject or "",
+        cand.command_family or "",
+        cand.artifact_role or "",
+        cand.artifact_normalized or "",
+        cand.artifact or "",
+    ]
+    text_view = " ".join(p for p in parts if p)
+    return build_index_entry(
+        target_kind="memory_object",
+        target_id=memory_obj.id,
+        index_type="lexical",
+        text_view=text_view,
+        text_view_name=OPERATIONAL_FACT_LEXICAL_TEXT_VIEW,
+    )
