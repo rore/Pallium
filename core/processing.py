@@ -72,6 +72,7 @@ class ItemProcessor:
         get_item_processing_fn: Callable[[str], ItemProcessingResult],
         get_item_processing_summary_fn: Callable[[str], ItemProcessingResult] | None = None,
         metrics_store=None,
+        shadow_llm_provider=None,
     ) -> None:
         self._storage = storage
         self._semantic_plugins = semantic_plugins
@@ -84,6 +85,12 @@ class ItemProcessor:
         self._get_item_processing = get_item_processing_fn
         self._get_item_processing_summary = get_item_processing_summary_fn or get_item_processing_fn
         self._metrics_store = metrics_store
+        # W5 PR 3: shadow-extraction provider. None when the
+        # [features] typed_extraction_shadow flag is off — the wired
+        # shadow call becomes a no-op. Provider is injected rather
+        # than looked up so the flag off-state doesn't touch the
+        # semantic module at all.
+        self._shadow_llm_provider = shadow_llm_provider
         self._logger = logging.getLogger(__name__)
 
     def process_next_source_item(
@@ -378,6 +385,14 @@ class ItemProcessor:
                 source_item=source_item,
                 provenance=memory_provenance,
             )
+            # W5 PR 3: shadow extraction. Runs after the live extractor
+            # has fully committed. Guaranteed non-fatal: the safe-wrapper
+            # swallows every exception so shadow failures never propagate
+            # up the live path.
+            self._run_shadow_extraction_safely(
+                source_item=source_item,
+                plugin_name=plugin_name,
+            )
         except Exception as exc:
             failure_category = classify_failure(exc, phase="process_item")
             error = truncate_processing_error(exc)
@@ -530,6 +545,152 @@ class ItemProcessor:
                     "error": str(error)[:500],
                 },
             )
+
+    def _run_shadow_extraction_safely(
+        self,
+        *,
+        source_item: SourceItem,
+        plugin_name: str,
+    ) -> None:
+        """W5 PR 3: run the shadow extractor on a committed source item.
+
+        Every failure mode is caught and dropped — the shadow must
+        never propagate errors to the live path. Feature flag is
+        expressed as ``self._shadow_llm_provider is None``: when the
+        flag is off, no provider is injected and this method is a
+        cheap no-op (early return, no import of the shadow module).
+        """
+        if self._shadow_llm_provider is None:
+            return
+        try:
+            # Imported lazily so flag-off processes pay no import cost.
+            from semantic.extraction_typed_shadow import (
+                run_typed_shadow_extraction,
+            )
+
+            extraction = run_typed_shadow_extraction(
+                source_item, provider=self._shadow_llm_provider,
+            )
+            rows = self._build_shadow_rows(
+                source_item=source_item,
+                plugin_name=plugin_name,
+                extraction=extraction,
+            )
+            if not rows:
+                return
+            insert = getattr(self._storage, "insert_shadow_extraction", None)
+            if insert is None:
+                return
+            insert(rows=rows)
+        except Exception as exc:  # noqa: BLE001 -- shadow must never break live
+            self._logger.warning(
+                "shadow_extraction_dropped",
+                extra={
+                    "source_item_id": source_item.id,
+                    "error": repr(exc)[:500],
+                },
+            )
+
+    def _build_shadow_rows(
+        self,
+        *,
+        source_item: SourceItem,
+        plugin_name: str,
+        extraction,
+    ) -> list:
+        """Convert a TypedShadowExtraction into MemoryObjectShadowRecord rows.
+
+        One row per extracted item; if parse_status != 'ok' and no items
+        came back, one '_shadow_marker' row is written so the failure-
+        rate query has evidence.
+        """
+        import json as _json
+        from datetime import datetime, timezone
+
+        from core.models import new_id
+        from storage.sqlite_schema import MemoryObjectShadowRecord
+
+        now = datetime.now(timezone.utc)
+        provider = self._shadow_llm_provider
+        provider_name = getattr(provider, "provider_name", "unknown")
+        provider_kind = getattr(provider, "provider_kind", "unknown")
+        model = getattr(provider, "model", "unknown")
+
+        rows: list[MemoryObjectShadowRecord] = []
+        metadata_json = None
+        if extraction.llm_call_metadata is not None:
+            meta = extraction.llm_call_metadata
+            metadata_json = _json.dumps({
+                "provider_name": getattr(meta, "provider_name", None),
+                "model": getattr(meta, "model", None),
+                "attempt_count": getattr(meta, "attempt_count", None),
+                "retry_count": getattr(meta, "retry_count", None),
+            })
+
+        def _push(mtype: str, payload: dict, subject: str) -> None:
+            rows.append(MemoryObjectShadowRecord(
+                id=new_id(),
+                source_item_id=source_item.id,
+                package_name=plugin_name,
+                shadow_run_id=extraction.shadow_run_id,
+                shadow_run_at=now,
+                prompt_version=extraction.prompt_version,
+                provider_name=provider_name,
+                provider_kind=provider_kind,
+                model=model,
+                type=mtype,
+                schema_id=f"typed_shadow.{mtype}",
+                schema_version="1",
+                payload_json=_json.dumps(payload, ensure_ascii=False),
+                subject=subject or None,
+                container_ref=source_item.container_ref,
+                actor_ref=source_item.actor_ref,
+                visibility=source_item.visibility,
+                live_counterpart_ids_json=None,
+                llm_call_metadata_json=metadata_json,
+                parse_status=extraction.parse_status,
+                parse_error=extraction.parse_error,
+                created_at=now,
+            ))
+
+        for d in extraction.decisions:
+            _push("decision", {
+                "subject": d.subject, "statement": d.statement,
+                "rationale": d.rationale, "evidence_span": d.evidence_span,
+                "alternatives_rejected": list(d.alternatives_rejected),
+            }, d.subject)
+        for i in extraction.investigations:
+            _push("investigation_outcome", {
+                "subject": i.subject, "hypothesis": i.hypothesis,
+                "outcome": i.outcome, "resolution": i.resolution,
+                "evidence_span": i.evidence_span,
+            }, i.subject)
+        for c in extraction.constraints:
+            _push("constraint_memory", {
+                "subject": c.subject, "modality": c.modality,
+                "action": c.action, "statement": c.statement,
+                "evidence_span": c.evidence_span,
+            }, c.subject)
+        for f in extraction.operational_facts:
+            _push("operational_fact", {
+                "command_family": f.command_family, "subject": f.subject,
+                "artifact": f.artifact, "outcome": f.outcome,
+                "evidence_span": f.evidence_span,
+            }, f.subject)
+        for s in extraction.supersessions:
+            _push("supersession", {
+                "subject": s.subject,
+                "supersedes_statement": s.supersedes_statement,
+                "new_statement": s.new_statement,
+                "evidence_span": s.evidence_span,
+            }, s.subject)
+
+        # Marker row: total-failure cases still get a row so the eval
+        # can measure shadow failure rate.
+        if not rows and extraction.parse_status != "ok":
+            _push("_shadow_marker", {}, "")
+
+        return rows
 
     def _emit_memory_creation_provenance(
         self,
