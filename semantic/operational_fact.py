@@ -330,9 +330,23 @@ def _iter_argv_head(cmd: str) -> tuple[str, ...]:
 
     Not a full shell parser. Sufficient for extracting the command name
     and immediate subcommand for family + role classification.
+
+    PR 2 of the operational_fact redesign (2026-07-02): tokenization
+    stops at shell-word boundaries — the first ``<<`` (heredoc marker),
+    ``>``/``>>`` (redirection), ``|`` (pipe), ``;`` / ``&&`` / ``||``
+    (command separator). Everything after those markers belongs to a
+    different logical unit and MUST NOT be included in the argv token
+    list. Previously the tokenizer read the entire ``cmd`` field
+    including heredoc bodies — an argv like
+    ``cat > file <<'EOF'\\nimport sys\\nsys.path...`` had its Python
+    source content scanned as if the ``import`` / ``sys`` / etc. were
+    argv tokens, producing garbage "artifacts" from source code.
     """
     if not cmd:
         return ()
+    # Truncate at the first unquoted shell-word boundary so downstream
+    # regex/token consumers only see the primary argv slice.
+    cmd = _shell_word_head(cmd)
     tokens: list[str] = []
     buf: list[str] = []
     quote: str | None = None
@@ -355,6 +369,46 @@ def _iter_argv_head(cmd: str) -> tuple[str, ...]:
     if buf:
         tokens.append("".join(buf))
     return tuple(tokens)
+
+
+def _shell_word_head(cmd: str) -> str:
+    """Return the portion of ``cmd`` up to the first unquoted
+    shell-word boundary.
+
+    Boundaries: ``<<`` (heredoc), ``>`` / ``>>`` (redirect),
+    ``|`` (pipe), ``;`` (statement separator), ``&&`` / ``||``
+    (short-circuit). Quotes are respected — a ``;`` inside single
+    or double quotes is text, not a boundary.
+
+    Not a full shell parser. Sufficient to prevent heredoc bodies
+    and pipeline tails from being scanned as if they were argv.
+    """
+    if not cmd:
+        return cmd
+    quote: str | None = None
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ('"', "'"):
+            quote = ch
+            i += 1
+            continue
+        # 2-char operators (must check before single-char to prefer
+        # the longer match).
+        two = cmd[i:i + 2]
+        if two in ("<<", ">>", "&&", "||"):
+            return cmd[:i]
+        # Single-char boundaries.
+        if ch in ("|", ">", ";"):
+            return cmd[:i]
+        i += 1
+    return cmd
 
 
 def _strip_wrappers(argv: tuple[str, ...]) -> tuple[str, ...]:
@@ -457,6 +511,12 @@ def _extract_artifact_tokens(cmd: str, output_tail: str) -> list[str]:
 
     Returns the raw (pre-redaction) tokens; the caller normalizes and
     redacts. Order matters: paths first, then URLs, then versions.
+
+    PR 2 of the operational_fact redesign (2026-07-02): the ``cmd``
+    input is truncated at the first shell-word boundary via
+    :func:`_shell_word_head` before URL regex-scan. A heredoc body
+    or piped-tail command that follows ``<<EOF`` / ``|`` is a
+    different logical unit and MUST NOT contribute artifacts.
     """
     tokens: list[str] = []
     seen: set[str] = set()
@@ -471,6 +531,7 @@ def _extract_artifact_tokens(cmd: str, output_tail: str) -> list[str]:
         tokens.append(t)
 
     # argv tokens after the command head are the primary candidates.
+    # ``_iter_argv_head`` already truncates at shell-word boundaries.
     argv = _strip_wrappers(_iter_argv_head(cmd))
     for tok in argv[1:]:
         if tok.startswith("-"):
@@ -486,7 +547,11 @@ def _extract_artifact_tokens(cmd: str, output_tail: str) -> list[str]:
     output_tail = output_tail or ""
     for m in _PATH_TOKEN_RE.finditer(output_tail):
         _push(m.group(0))
-    for m in _URL_TOKEN_RE.finditer(cmd + " " + output_tail):
+    # URL regex on the argv-head slice of cmd + output_tail. Heredoc
+    # bodies (post-``<<EOF``) are excluded from the cmd side via
+    # ``_shell_word_head``.
+    cmd_head = _shell_word_head(cmd)
+    for m in _URL_TOKEN_RE.finditer(cmd_head + " " + output_tail):
         _push(m.group(0))
     for m in _VERSION_TOKEN_RE.finditer(output_tail):
         _push(m.group(0))
