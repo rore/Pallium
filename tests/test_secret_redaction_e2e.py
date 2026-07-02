@@ -106,10 +106,16 @@ _ALL_KNOWN_SECRETS = [
     _OPENAI_ANT,
     _AWS_KEY,
     _JWT_TRIPLE,
-    # DB URL — the password ``hunter2`` is the sensitive fragment.
-    "hunter2",
-    # Bearer header token — the trailing hex.
-    "1234567890abcdef1234567890abcdef1234",
+]
+
+# Secrets that only make sense in a specific wrapper shape — asserted
+# separately because the raw value is captured only when the wrapper
+# lands in prose. E.g. ``hunter2`` alone is 7 chars (below Tier B min)
+# and only becomes redactable when appearing inside a
+# ``postgres://user:hunter2@host`` URL.
+_WRAPPED_SECRETS: list[tuple[str, str]] = [
+    (_DB_URL_CREDS, "hunter2"),
+    (_BEARER_HEADER, "1234567890abcdef1234567890abcdef1234"),
 ]
 
 
@@ -234,11 +240,6 @@ class TestKnownShapeSecretRedaction:
     """Every enumerated Tier-A secret shape must be redacted at every
     surface the API can return."""
 
-    @pytest.mark.xfail(
-        reason="PR 0 barriers not yet wired: ingest_item / LLM extract / retrieval / expand / FTS. "
-        "Flip to must-pass after step 8.",
-        strict=False,
-    )
     def test_github_pat_never_leaks(self, service, sqlite_conn):
         _ingest_chat_content(service, f"my token = {_GITHUB_PAT}")
         _assert_no_secret_in_db(sqlite_conn, _GITHUB_PAT)
@@ -250,48 +251,52 @@ class TestKnownShapeSecretRedaction:
         )
         _assert_no_secret_in_query_result(result, _GITHUB_PAT)
 
-    @pytest.mark.xfail(reason="write/retrieval barriers not wired", strict=False)
     def test_slack_bot_token_never_leaks(self, service, sqlite_conn):
         _ingest_chat_content(service, f"slack bot: {_SLACK_BOT}")
         _assert_no_secret_in_db(sqlite_conn, _SLACK_BOT)
 
-    @pytest.mark.xfail(reason="write/retrieval barriers not wired", strict=False)
     def test_openai_anthropic_key_never_leaks(self, service, sqlite_conn):
         _ingest_chat_content(service, f"anthropic key was: {_OPENAI_ANT}")
         _assert_no_secret_in_db(sqlite_conn, _OPENAI_ANT)
 
-    @pytest.mark.xfail(reason="write/retrieval barriers not wired", strict=False)
     def test_aws_access_key_never_leaks(self, service, sqlite_conn):
         _ingest_chat_content(service, f"AWS_ACCESS_KEY_ID={_AWS_KEY}")
         _assert_no_secret_in_db(sqlite_conn, _AWS_KEY)
 
-    @pytest.mark.xfail(reason="write/retrieval barriers not wired", strict=False)
     def test_jwt_triple_never_leaks(self, service, sqlite_conn):
         _ingest_chat_content(service, f"session={_JWT_TRIPLE}")
         _assert_no_secret_in_db(sqlite_conn, _JWT_TRIPLE)
 
-    @pytest.mark.xfail(reason="write/retrieval barriers not wired", strict=False)
     def test_db_connection_creds_never_leak(self, service, sqlite_conn):
         _ingest_chat_content(service, f"connect: {_DB_URL_CREDS}")
         _assert_no_secret_in_db(sqlite_conn, "hunter2")
 
-    @pytest.mark.xfail(reason="write/retrieval barriers not wired", strict=False)
     def test_bearer_header_never_leaks(self, service, sqlite_conn):
         _ingest_chat_content(service, f"curl -H '{_BEARER_HEADER}'")
         _assert_no_secret_in_db(sqlite_conn, "1234567890abcdef1234567890abcdef1234")
 
-    @pytest.mark.xfail(reason="lexical_fts barrier not wired", strict=False)
     def test_all_known_secrets_absent_from_lexical_fts(self, service, sqlite_conn):
         """Any of the secrets in the ingested content must NOT be
         searchable via lexical FTS after the barrier is wired.
         This is the retrieval-corruption test — a lexical hit on a
         secret is worse than a memory row containing it, because
         retrieval will surface it into the LLM prompt on any query
-        that scores it."""
-        big_dump = "\n".join(
+        that scores it.
+
+        Each secret is ingested inside its natural wrapper (raw
+        token in prose, or password inside a URL, or bearer inside
+        an Authorization header) so the pipeline sees a realistic
+        input shape."""
+        # Raw provider tokens land in prose as-is; Tier A catches them.
+        prose_dump = "\n".join(
             [f"secret {i}: {s}" for i, s in enumerate(_ALL_KNOWN_SECRETS)]
         )
-        _ingest_chat_content(service, big_dump)
+        # Wrapped secrets require their container to be sensible input.
+        wrapped_dump = "\n".join(
+            [f"wrap {i}: {wrapper}" for i, (wrapper, _) in enumerate(_WRAPPED_SECRETS)]
+        )
+        _ingest_chat_content(service, prose_dump + "\n" + wrapped_dump)
+
         rows = sqlite_conn.execute(
             "SELECT text_view FROM lexical_fts"
         ).fetchall()
@@ -300,6 +305,11 @@ class TestKnownShapeSecretRedaction:
             for secret in _ALL_KNOWN_SECRETS:
                 assert secret not in text, (
                     f"lexical_fts contains raw secret {secret!r}"
+                )
+            for _, sensitive_fragment in _WRAPPED_SECRETS:
+                assert sensitive_fragment not in text, (
+                    f"lexical_fts contains raw fragment "
+                    f"{sensitive_fragment!r} from a wrapped secret"
                 )
 
 
@@ -314,22 +324,18 @@ class TestUnknownShapeSecretRedaction:
     fail — they lock the design's promise that unknown formats are
     caught by entropy+context, not by pattern lookup."""
 
-    @pytest.mark.xfail(reason="Tier B not yet applied at ingest boundary", strict=False)
     def test_synth_token_never_leaks(self, service, sqlite_conn):
         _ingest_chat_content(service, _SYNTH_CUE_CONTEXT)
         _assert_no_secret_in_db(sqlite_conn, _SYNTH_TOKEN)
 
-    @pytest.mark.xfail(reason="Tier B not yet applied at ingest boundary", strict=False)
     def test_unknown_yaml_key_never_leaks(self, service, sqlite_conn):
         _ingest_chat_content(service, _UNKNOWN_YAML_CONTEXT)
         _assert_no_secret_in_db(sqlite_conn, _UNKNOWN_YAML_KEY)
 
-    @pytest.mark.xfail(reason="Tier B not yet applied at ingest boundary", strict=False)
     def test_unknown_header_val_never_leaks(self, service, sqlite_conn):
         _ingest_chat_content(service, _UNKNOWN_HEADER_CONTEXT)
         _assert_no_secret_in_db(sqlite_conn, _UNKNOWN_HEADER_VAL)
 
-    @pytest.mark.xfail(reason="Tier B not yet applied at ingest boundary", strict=False)
     def test_xyzlang_ecosystem_token_never_leaks(self, service, sqlite_conn):
         """Synthetic never-seen ecosystem — proves the generalization
         contract in the same shape as the operational_fact fresh-
@@ -369,3 +375,40 @@ class TestNotOverRedacted:
             (f"%{uid}%",),
         ).fetchall()
         assert rows, "UUID got FP-redacted at ingest"
+
+    def test_user_note_content_preserved_verbatim(self, service, sqlite_conn):
+        """User-explicit ``note`` artifacts bypass the write barrier —
+        a runbook or procedure the user pasted for verbatim recall
+        must land in storage exactly as written. Placeholder patterns
+        like ``key=NEW_KEY`` in a procedure step are documentation,
+        not secrets; redacting them destroys the note's utility.
+
+        This is the deliberate carve-out documented in
+        ``core/service.py::ingest_item``. The tradeoff: a user who
+        pastes a real secret into a note has explicitly asked us to
+        remember it; that's a user decision, not a silent leak.
+        """
+        procedure = (
+            "API key rotation procedure:\n"
+            "1. Generate new key in admin console\n"
+            "2. Update in vault: vault kv put secret/api-keys key=NEW_KEY\n"
+            "3. Restart service"
+        )
+        service.ingest_item(
+            source_type="agent_artifact",
+            source_id=f"note-{new_id()[:8]}",
+            content_type="text/plain",
+            content=procedure,
+            metadata=None,
+            use_case="demo_agent_memory",
+            artifact_kind="note",
+            role="user",
+            container_ref=CONTAINER_REF,
+            thread_ref=THREAD_REF,
+            visibility="private",
+        )
+        rows = sqlite_conn.execute(
+            "SELECT content FROM source_items WHERE content LIKE ?",
+            ("%key=NEW_KEY%",),
+        ).fetchall()
+        assert rows, "user-explicit note was redacted despite artifact_kind='note'"

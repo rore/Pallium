@@ -46,14 +46,19 @@ _ENV_VAR_SECRET_RE: Final = re.compile(
     re.IGNORECASE,
 )
 _ENV_VAR_YAML_SECRET_RE: Final = re.compile(
-    # yaml-style ``password: value`` — case-insensitive full-word key.
+    # yaml-style ``password: value`` and header-style ``X-Custom-Auth: value``.
+    # Case-insensitive full-word key with a preceding non-word-char
+    # boundary so ``MYPASSWORD`` doesn't false-positive. Includes the
+    # bare ``auth`` cue so ``X-Custom-Auth: <token>`` header shapes are
+    # covered without needing a per-provider regex.
     # The value stops at newline or closing quote to preserve inline
     # comments and multi-key documents.
     r"(?<![A-Za-z0-9_])"
     r"(password|passwd|pwd|secret|token|apikey|api[_-]?key|"
     r"credentials?|private[_-]?key|access[_-]?key|signing[_-]?key|"
     r"client[_-]?secret|refresh[_-]?token|session[_-]?id|"
-    r"webhook[_-]?secret|authorization)"
+    r"webhook[_-]?secret|authorization|auth[_-]?token|"
+    r"bearer[_-]?token|auth)"
     r"(?![A-Za-z0-9_])"
     r"\s*:\s*[\"\']?[^\"\'\r\n]+",
     re.IGNORECASE,
@@ -242,7 +247,10 @@ _CONTENT_HASH_RE: Final = re.compile(r"^[0-9a-f]{32,64}$")
 # small and case-insensitive to bound false positives — ``key`` alone
 # is intentionally excluded (would false-positive on ``keyboard
 # shortcut``, ``primary key``, etc.); the compound forms below cover
-# the real cases.
+# the real cases, and the additional ``_KEY_SUFFIX_RE`` compound-key
+# heuristic (below the frozenset) catches names like
+# ``mycompany_prod_key`` and ``deploy_key`` that no fixed cue-word
+# list can enumerate.
 _TIER_B_CUE_WORDS: Final[frozenset[str]] = frozenset({
     "password", "passwd", "pwd",
     "secret", "secrets",
@@ -259,6 +267,14 @@ _TIER_B_CUE_WORDS: Final[frozenset[str]] = frozenset({
     "client_secret", "client-secret", "clientsecret",
     "refresh_token", "refresh-token",
 })
+
+# Compound-key suffix: matches ``<word>_key`` / ``<word>-key`` /
+# ``<word>key`` case-insensitive. Deliberately requires a word char
+# immediately before ``key`` so bare "primary key" / "keyboard" don't
+# fire. Catches the long-tail of custom secret naming (mycompany_prod_key,
+# deploy_key, master_key, github_key, etc.) that a fixed cue-word list
+# can never enumerate.
+_KEY_SUFFIX_RE: Final = re.compile(r"\w[_\-]?key\b", re.IGNORECASE)
 
 
 def _shannon_entropy(token: str) -> float:
@@ -326,7 +342,15 @@ def redact_probable_secrets(text: str) -> str:
         window_start = max(0, start - _TIER_B_CUE_WINDOW)
         window_end = min(len(text), end + _TIER_B_CUE_WINDOW)
         window = text_lower[window_start:window_end]
-        if not any(cue in window for cue in _TIER_B_CUE_WORDS):
+        # Cue-word requirement: either a full cue-word appears in the
+        # 30-char window, OR the window contains a compound-key suffix
+        # (e.g. ``<word>_key``, ``deploy_key``, ``myprod_key``). Both
+        # signal that the adjacent high-entropy token is credential
+        # material.
+        has_cue = any(cue in window for cue in _TIER_B_CUE_WORDS)
+        if not has_cue and _KEY_SUFFIX_RE.search(window):
+            has_cue = True
+        if not has_cue:
             continue
         replacements.append((start, end, f"[REDACTED-{len(token)}c]"))
 

@@ -29,8 +29,9 @@ from core.observability import IntegrationDebugLogger, QueryStats
 from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalProvider
-from semantic.base import SemanticPlugin
 from semantic.agent_conversation_memory_embedding import build_memory_match_text
+from semantic.base import SemanticPlugin
+from semantic.redaction import redact_sensitive
 from storage.base import QueueHealthSnapshot, RetentionLeaseLostError, RetentionRunStats, StorageProvider, ThreadProcessingLease
 from storage.vector_index import VectorIndex
 from core.text import normalize_for_index as _normalize_for_index
@@ -49,6 +50,61 @@ def _build_workstream_capability(storage) -> WorkstreamCapability | None:
     except Exception:
         return None
     return WorkstreamCapability(SQLiteWorkstreamStore(session_factory))
+
+
+def _redact_ingest_value(value, *, visited: set[int] | None = None):
+    """Recursively redact string leaves in an arbitrary JSON-like value.
+
+    Universal ingest write barrier (PR 0 step 6). Applied to
+    ``content`` and every value in ``metadata`` before the SourceItem
+    is constructed — closes the leak channel that let LLM assistant
+    output and tool metadata carry credentials into ``source_items``
+    and, via the built-off-content lexical index, into
+    ``lexical_fts``.
+
+    Rules:
+    - Strings pass through :func:`semantic.redaction.redact_sensitive`
+      (Tier A + Tier B).
+    - Dicts / lists / tuples are walked recursively. Keys are NOT
+      redacted (breaks downstream code that keys on names like
+      ``command``, ``file_path``). Only values.
+    - Non-string leaves (int, float, bool, None, datetime) pass through
+      untouched.
+    - Circular references (in-process object graphs) are broken via a
+      ``visited`` set keyed by ``id(obj)``. JSON-parsed input is
+      always a tree; this is defensive.
+    - Deliberately preserves container types: a ``tuple`` metadata
+      value stays a tuple, a ``list`` stays a list. Downstream code
+      that pattern-matches on type does not observe a change from
+      redaction.
+    """
+    if isinstance(value, str):
+        return redact_sensitive(value)
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    if visited is None:
+        visited = set()
+    obj_id = id(value)
+    if obj_id in visited:
+        # Cycle in an in-process object graph — refuse to recurse.
+        return "[REDACTED CYCLE]"
+    visited.add(obj_id)
+    try:
+        if isinstance(value, dict):
+            return {
+                k: _redact_ingest_value(v, visited=visited)
+                for k, v in value.items()
+            }
+        if isinstance(value, list):
+            return [_redact_ingest_value(v, visited=visited) for v in value]
+        if isinstance(value, tuple):
+            return tuple(_redact_ingest_value(v, visited=visited) for v in value)
+    finally:
+        visited.discard(obj_id)
+    # datetime, bytes, custom classes — leave untouched. Bytes in
+    # metadata would round-trip through JSON as a text encoding
+    # anyway; we do not attempt to decode them here.
+    return value
 
 
 class PalliumService:
@@ -183,6 +239,43 @@ class PalliumService:
         if plugin.requires_visibility_context and (container_ref is None or visibility is None):
             processing_status = "skipped"
             processing_error = "visibility_context_required"
+
+        # -----------------------------------------------------------------
+        # PR 0 step 6: universal write barrier.
+        #
+        # Every ingest — chat, tool metadata, hook-emitted event, future
+        # source_type — passes ``content`` and ``metadata`` through the
+        # shared redaction helper BEFORE the SourceItem is constructed.
+        # This runs regardless of role or source_type: the barrier's
+        # correctness must not depend on caller discipline.
+        #
+        # DELIBERATE EXCEPTION: ``note`` artifacts (see
+        # semantic/agent_conversation_memory_note.py) are the
+        # user-explicit "remember this verbatim" surface. Redacting a
+        # note silently destroys the placeholder / procedure text the
+        # user asked us to preserve (e.g. a runbook containing
+        # ``key=NEW_KEY`` as a substitution instruction). Notes are
+        # allowed to store raw content on the user's explicit
+        # instruction; the tradeoff is documented at the note
+        # ingestion path.
+        #
+        # Consequences:
+        # - ``source_items.content`` never persists a raw secret (except
+        #   notes explicitly stored by the user).
+        # - The lexical index built off ``source_item.content`` at
+        #   line 232 below never carries a raw secret into
+        #   ``lexical_fts.text_view`` (with the same note exception).
+        # - Downstream semantic plugins that read metadata by key see
+        #   the same dict shape (only string LEAVES are rewritten).
+        #
+        # The dedupe check on line 174 above already short-circuits on
+        # ``find_source_item`` before we reach here; redacting a
+        # duplicate is wasted work but never wrong.
+        # -----------------------------------------------------------------
+        is_user_note = (artifact_kind == "note")
+        if not is_user_note:
+            content = redact_sensitive(content) if content else content
+            metadata = _redact_ingest_value(metadata) if metadata else metadata
 
         source_item = build_source_item(
             source_type=source_type,
