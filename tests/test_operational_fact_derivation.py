@@ -21,10 +21,8 @@ import pytest
 
 from semantic import operational_fact as op
 from semantic.operational_fact import (
-    DISCOVERY_TO_USE_WINDOW,
     KNOWN_FAMILIES,
     MAX_ARTIFACT_LEN,
-    WORD_BOUNDARY_ARTIFACT_LEN_MAX,
     build_default_scope_resolver,
     derive_operational_facts,
     resolve_scope,
@@ -174,17 +172,6 @@ class TestNegativeDerivation:
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
         assert cands == []
 
-    def test_use_outside_window_11_turns_later_no_candidate(self):
-        turns = [
-            make_bash_turn(0, "uv sync"),
-            *[make_turn(i) for i in range(1, DISCOVERY_TO_USE_WINDOW + 1)],
-            make_bash_turn(
-                DISCOVERY_TO_USE_WINDOW + 1, "uv run pytest tests/"
-            ),
-        ]
-        cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
-        assert cands == []
-
     def test_use_of_different_artifact_same_family_no_candidate(self):
         turns = [
             make_bash_turn(0, "python 3.12 foo.py"),
@@ -248,36 +235,14 @@ class TestNegativeDerivation:
 
 
 # --------------------------------------------------------------------------- #
-# TestWindowsWordBoundary                                                     #
+# TestWindowsWordBoundary — REMOVED in PR 5 of the operational_fact redesign  #
+#                                                                             #
+# The word-boundary matcher (`_artifact_matches_argv`) was part of the        #
+# pre-PR-3 discovery+use pairing model. PR 3 replaced pairing with the        #
+# reconnaissance-verb predicate, and PR 5 removed the matcher and its         #
+# tests. Word-boundary semantics are still enforced upstream in               #
+# `semantic.argv` via the shared shell tokenizer.                             #
 # --------------------------------------------------------------------------- #
-
-
-class TestWindowsWordBoundary:
-    def test_word_boundary_2_char_artifact_positive(self):
-        assert op._artifact_matches_argv("uv", "uv sync")
-
-    def test_word_boundary_2_char_artifact_negative(self):
-        assert not op._artifact_matches_argv("uv", "souvenir --help")
-
-    def test_word_boundary_4_char_artifact_positive_and_negative(self):
-        assert op._artifact_matches_argv("pyth", "pyth --help")
-        assert not op._artifact_matches_argv("pyth", "is_pythonic")
-
-    def test_word_boundary_9_char_artifact_guard_applied(self):
-        art = "a" * WORD_BOUNDARY_ARTIFACT_LEN_MAX  # 9 chars
-        assert op._artifact_matches_argv(art, f"{art} sync")
-        assert not op._artifact_matches_argv(art, f"prefix{art}suffix")
-
-    def test_word_boundary_10_char_artifact_guard_not_applied(self):
-        art = "a" * (WORD_BOUNDARY_ARTIFACT_LEN_MAX + 1)  # 10 chars — substring mode
-        # Embedded substring must match once the guard is not applied.
-        assert op._artifact_matches_argv(art, f"prefix{art}suffix")
-
-    def test_word_boundary_utf8_artifact_positive(self):
-        assert op._artifact_matches_argv("π_env", "python π_env --check")
-
-    def test_word_boundary_utf8_artifact_negative(self):
-        assert not op._artifact_matches_argv("π_env", "superπ_environment")
 
 
 # --------------------------------------------------------------------------- #
