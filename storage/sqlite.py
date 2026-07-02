@@ -853,6 +853,54 @@ class SQLiteStorageProvider(
             record.text_view = text_view
         self._with_retry(_do)
 
+    def redact_index_entry_text_view(
+        self, index_entry_id: str, new_text_view: str,
+    ) -> None:
+        """Rewrite ``index_entries.text_view`` AND its ``lexical_fts``
+        row (FTS5 cannot be UPDATEd on columns — DELETE + INSERT is
+        the required pattern).
+
+        This exists specifically for the PR-0 secrets-purge path: the
+        pre-existing :meth:`update_index_entry_text_view` at
+        :meth:`SqliteStorage.update_index_entry_text_view` above touches
+        only the ``index_entries`` table, which leaves the FTS index
+        holding the pre-redaction ``text_view`` — retrievable by
+        lexical search. That is unsafe for secret redaction.
+
+        Mirror of :meth:`_retarget_index_entries_in_session`
+        (lines below) for a single entry ID, changing text_view
+        instead of target_id.
+
+        Vector rows (``index_type != 'lexical'``) are unaffected —
+        their text_view lives on the record itself.
+
+        Raises ``KeyError`` if the entry does not exist.
+        """
+        def _do(session):
+            record = session.get(IndexEntryRecord, index_entry_id)
+            if record is None:
+                raise KeyError(index_entry_id)
+            record.text_view = new_text_view
+            if record.index_type != "lexical":
+                return
+            container_ref = self._resolve_container_ref_in_session(
+                session, record.target_kind, record.target_id,
+            )
+            session.execute(
+                text("DELETE FROM lexical_fts WHERE index_entry_id = :id"),
+                {"id": index_entry_id},
+            )
+            insert_lexical_fts_row(
+                session,
+                index_entry_id=index_entry_id,
+                target_kind=record.target_kind,
+                target_id=record.target_id,
+                text_view=new_text_view,
+                text_view_name=record.text_view_name,
+                container_ref=container_ref,
+            )
+        self._with_retry(_do)
+
     def retarget_index_entries_for_target(
         self, target_kind: str, old_target_id: str, new_target_id: str,
     ) -> int:
