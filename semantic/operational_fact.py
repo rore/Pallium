@@ -607,6 +607,284 @@ def _build_candidate(
     )
 
 
+# --------------------------------------------------------------------------- #
+# Admission gate (W4 follow-up 2026-07-02)                                    #
+#                                                                             #
+# Live-data analysis of the shipped predicate found 86% of 157 emitted        #
+# rows were the `command_family="shell"` fallback slot — regex patterns,     #
+# arbitrary source files, argv fragments. The admission gate applies         #
+# after `_build_candidate` and drops candidates that lack an operational-    #
+# shape artifact. Design invariant preserved: known families with            #
+# unfamiliar artifacts still get facts; unknown families do not.             #
+# --------------------------------------------------------------------------- #
+
+
+MAX_CANDIDATES_PER_REBUILD: Final[int] = 5
+
+
+_INTERPRETER_ALLOWED_STEMS: Final[frozenset[str]] = frozenset({
+    "python", "python3", "python3.exe", "python.exe",
+    "node", "node.exe",
+    "ruby", "deno", "bun",
+})
+
+
+# Per-family runner subcommand allow-lists. Drawn from the actual
+# documented top-level subcommands of each CLI (npm-cli-docs, cargo book,
+# docker CLI reference, uv docs, go command list, gradle default tasks).
+# An empty frozenset means "any subcommand accepted within this known
+# family" (used for make/service where the argv-2 token is inherently
+# specific and bounded by the family being valid at all).
+_RUNNER_SUBCOMMANDS: Final[dict[str, frozenset[str]]] = {
+    "python": frozenset({"test", "pytest", "run", "install", "sync", "format", "-m"}),
+    "uv": frozenset({"run", "sync", "pip", "tool", "venv", "add", "remove", "lock", "export"}),
+    "pip": frozenset({"install", "uninstall", "list", "freeze", "show", "download"}),
+    "npm": frozenset({"test", "run", "install", "i", "build", "dev", "start", "ci", "publish", "exec"}),
+    "pnpm": frozenset({"test", "run", "install", "i", "build", "dev", "start", "exec", "add", "remove"}),
+    "yarn": frozenset({"test", "run", "install", "build", "dev", "start", "add", "remove"}),
+    "cargo": frozenset({"test", "run", "build", "check", "install", "clippy", "fmt", "update", "publish"}),
+    "go": frozenset({"test", "run", "build", "mod", "get", "vet", "fmt", "install"}),
+    "gradle": frozenset({"build", "test", "clean", "assemble", "check", "run", "installDist"}),
+    "docker": frozenset({"run", "exec", "ps", "build", "pull", "push", "compose", "logs", "stop", "rm", "inspect"}),
+    "git": frozenset({
+        "status", "log", "diff", "show", "fetch", "pull", "push",
+        "checkout", "branch", "rebase", "merge", "commit", "add",
+        "reset", "stash", "cherry-pick", "tag", "rev-parse",
+    }),
+    "make": frozenset(),
+    "service": frozenset(),
+}
+
+
+_OPERATIONAL_CONFIG_FILES: Final[frozenset[str]] = frozenset({
+    "pyproject.toml", "package.json", "package-lock.json",
+    "Makefile", "makefile", "GNUmakefile",
+    "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml",
+    "gradlew", "gradlew.bat", "build.gradle", "build.gradle.kts", "settings.gradle",
+    ".python-version", ".nvmrc", ".node-version", ".tool-versions",
+    "Cargo.toml", "Cargo.lock",
+    "go.mod", "go.sum",
+    "tsconfig.json", "jsconfig.json",
+    "justfile", "Justfile",
+    "requirements.txt", "requirements-dev.txt", "poetry.lock", "uv.lock",
+    "Pipfile", "Pipfile.lock",
+    "Dockerfile", "Containerfile",
+    ".env.example",
+})
+
+
+# Strict version regex for admission (fullmatch only). Tightened from the
+# extraction regex (which accepts 2-part "127.0.0.1"-style fragments) to
+# reject non-semver-shaped strings. Major limited to <100 to reject the
+# IPv4-prefix false positive ``127.0.0`` observed in the live corpus —
+# no real tool in this domain reaches major=100+, so this is a safe
+# heuristic without a per-artifact context check.
+_VERSION_STRICT_RE: Final = re.compile(r"[0-9]{1,2}\.\d+\.\d+(?:[-+][\w.]+)?")
+
+
+# host:port pattern for endpoint admission.
+_HOST_PORT_RE: Final = re.compile(r"[a-zA-Z0-9.\-]+:\d{2,5}")
+
+
+# Stricter port token: requires the leading colon so a bare ``80`` doesn't
+# get admitted as an endpoint via the shape channel. The extraction regex
+# stays permissive.
+_PORT_TOKEN_STRICT_RE: Final = re.compile(r":\d{2,5}")
+
+
+@dataclass(frozen=True)
+class AdmissionDiagnostics:
+    """Counters describing why candidates were filtered.
+
+    Semantics:
+
+    - ``admitted`` — number of candidates in the returned list AFTER
+      dedup and per-thread cap. This is the count callers see; it is
+      the value that matters for downstream metrics.
+    - ``fallback_family`` — rejected at admission because the family
+      was ``_FAMILY_FALLBACK`` and no shape channel matched.
+    - ``non_operational_shape`` — rejected at admission because no
+      shape channel matched (keyed by role for observability).
+    - ``capped`` — number of admitted-and-deduped candidates dropped
+      by the per-thread cap.
+
+    Coherence:
+    ``admitted + capped + fallback_family + sum(non_operational_shape.values())``
+    equals the raw pre-admission candidate count MINUS the number
+    collapsed by dedup within the admitted set. Dedup is not counted
+    here because its behavior (collapsing (family, role, scope,
+    artifact_norm) duplicates) is orthogonal to admission and
+    already covered by the derivation invariant tests.
+    """
+
+    admitted: int = 0
+    fallback_family: int = 0
+    non_operational_shape: dict[str, int] = field(default_factory=dict)
+    capped: int = 0
+
+
+_HIGH_VALUE_FAMILIES: Final[frozenset[str]] = frozenset({
+    "python", "uv", "node", "npm", "pnpm", "yarn",
+    "cargo", "go", "gradle", "docker", "make",
+})
+
+
+_ROLE_SPECIFICITY: Final[dict[str, int]] = {
+    "interpreter": 0,
+    "runner": 1,
+    "endpoint": 2,
+    "version": 3,
+    "task": 4,
+    "path": 5,
+    "venv": 6,
+}
+
+
+_REGEX_META_RE: Final = re.compile(r"[\|\^\$\(\)\{\}\[\]\\\?\*\+]")
+
+
+def _looks_like_noise(artifact_normalized: str) -> bool:
+    """Heuristic 'is this obviously not operational memory' check.
+
+    Live-data buckets we want to drop from the known-family channel:
+    - Regex patterns captured from grep argv (contain meta chars).
+    - Empty or whitespace-only.
+    - Purely numeric tokens (port fragments, exit codes).
+    - Whitespace-containing strings (pseudo-headers like
+      "Content-Type: application/json" landed in ``service/path``
+      via curl argv on the live corpus).
+    """
+    art = artifact_normalized
+    if not art or not art.strip():
+        return True
+    if _REGEX_META_RE.search(art):
+        return True
+    # Bare integers or plain floats that aren't semver → noise.
+    if re.fullmatch(r"\d+(?:\.\d+)?", art):
+        return True
+    # Any whitespace inside the artifact → not an operational token.
+    if re.search(r"\s", art):
+        return True
+    # IPv4-address prefixes (``127.0.0`` observed in live corpus at
+    # role=version) are numeric noise slots that survived the version
+    # regex. Reject them at the noise layer so both role=version and
+    # any other role that lands here drop the artifact.
+    if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){0,3}", art):
+        return True
+    return False
+
+
+def _is_operational_shape_artifact(
+    artifact_normalized: str,
+    family: str,
+    role: str,
+) -> bool:
+    """Return True iff the artifact has an operationally-meaningful shape.
+
+    Design invariant enforced here:
+    "Known families with unfamiliar artifacts still emit; unknown /
+    fallback families with random argv are rejected."
+
+    Two admission channels:
+
+    1. **Known family channel** — family ∈ ``KNOWN_FAMILIES`` minus the
+       ``shell`` fallback: admit unless the artifact is obviously
+       noise (regex meta, bare integers). This preserves the
+       new-ecosystem-no-code-change invariant (cargo/Bun/etc.).
+    2. **Shape-only channel** — family == fallback: admit only when
+       the artifact matches an explicit operational shape (config
+       file basename, interpreter, venv, endpoint). This drops the
+       86% shell-fallback noise the live data flagged.
+    """
+    art = artifact_normalized.lower() if artifact_normalized else ""
+    if not art:
+        return False
+
+    basename = art.rsplit("/", 1)[-1]
+
+    # --- Shape catalog (checked first; role- and family-tolerant) ---
+
+    # Interpreter shape — known interpreter stem at path terminal.
+    for allowed in _INTERPRETER_ALLOWED_STEMS:
+        if basename == allowed or basename.startswith(allowed + "."):
+            return True
+
+    # Venv shape.
+    if (
+        art.endswith("/.venv")
+        or "/.venv/bin/python" in art
+        or "/.venv/scripts/python.exe" in art
+    ):
+        return True
+
+    # Operational config-file basename.
+    if basename in {n.lower() for n in _OPERATIONAL_CONFIG_FILES}:
+        return True
+
+    # Endpoint shape.
+    if _URL_TOKEN_RE.match(artifact_normalized):
+        return True
+    if _HOST_PORT_RE.fullmatch(artifact_normalized):
+        return True
+    # Strict port shape requires the leading colon; drops bare "80".
+    if _PORT_TOKEN_STRICT_RE.fullmatch(artifact_normalized):
+        return True
+
+    # Strict semver.
+    if _VERSION_STRICT_RE.fullmatch(artifact_normalized):
+        return True
+
+    # --- Known-family channel ---
+    # For known families (not the shell fallback), admit any artifact
+    # that isn't obviously noise. Preserves the design invariant that
+    # a fresh ecosystem's discovery+use pair emits without code change.
+    if family in KNOWN_FAMILIES and family != _FAMILY_FALLBACK:
+        if not _looks_like_noise(artifact_normalized):
+            return True
+
+    return False
+
+
+def _is_admissible_candidate(
+    cand: OperationalFactCandidate,
+) -> tuple[bool, str]:
+    """Return (admit, reason_if_rejected).
+
+    Rejection reasons are diagnostic labels for observability; they
+    match the keys the AdmissionDiagnostics counter uses. Admission
+    delegates to :func:`_is_operational_shape_artifact`, which
+    enforces both the fallback-family shape channel and the known-
+    family sanity channel.
+    """
+    if not _is_operational_shape_artifact(
+        cand.artifact_normalized, cand.command_family, cand.artifact_role
+    ):
+        if cand.command_family == _FAMILY_FALLBACK:
+            return False, "fallback_family"
+        return False, f"non_operational_shape:{cand.artifact_role}"
+    return True, ""
+
+
+def _rank_candidates_for_cap(
+    cands: list[OperationalFactCandidate],
+) -> list[OperationalFactCandidate]:
+    """Deterministic ranking for the per-thread cap.
+
+    Preference order:
+      1. Known high-value family (python/uv/npm/... over service/shell).
+      2. Specific role (interpreter > runner > endpoint > version > path).
+      3. Earlier discovery turn (stable within a run).
+      4. Artifact-normalized string (final tiebreak, deterministic).
+    """
+    def _key(c: OperationalFactCandidate) -> tuple:
+        family_rank = 0 if c.command_family in _HIGH_VALUE_FAMILIES else 1
+        role_rank = _ROLE_SPECIFICITY.get(c.artifact_role, 99)
+        turn_rank = c.evidence[0].turn_index if c.evidence else 0
+        return (family_rank, role_rank, turn_rank, c.artifact_normalized)
+
+    return sorted(cands, key=_key)
+
+
 def _dedup_candidates(
     candidates: list[OperationalFactCandidate],
 ) -> list[OperationalFactCandidate]:
@@ -646,18 +924,27 @@ def derive_operational_facts(
     turn_stream: Sequence[TurnRecord],
     container_ref: str,
     scope_resolver: ScopeResolver,
-) -> list[OperationalFactCandidate]:
+    *,
+    return_diagnostics: bool = False,
+) -> list[OperationalFactCandidate] | tuple[list[OperationalFactCandidate], AdmissionDiagnostics]:
     """Emit operational-fact candidates from a stream of turn records.
 
     Pure. Same input → identical output. Ordering is deterministic by
     (discovery turn_index, artifact_normalized). Supersession, lifecycle,
     and cross-run reuse counters are the wiring layer's responsibility.
+
+    ``return_diagnostics`` — opt-in. When True, returns
+    ``(candidates, AdmissionDiagnostics)`` where the diagnostics report
+    admitted / rejected-per-reason / capped counts. Default False keeps
+    the historical signature and return type for existing callers.
     """
     if not turn_stream:
+        if return_diagnostics:
+            return [], AdmissionDiagnostics()
         return []
     turns = sorted(turn_stream, key=lambda t: t.turn_index)
     open_discoveries: list[DiscoveryEvent] = []
-    candidates: list[OperationalFactCandidate] = []
+    raw_candidates: list[OperationalFactCandidate] = []
 
     for turn in turns:
         # 1. Retire discoveries older than the window.
@@ -673,7 +960,7 @@ def derive_operational_facts(
                 continue
             cand = _build_candidate(disc, use, container_ref, scope_resolver)
             if cand is not None:
-                candidates.append(cand)
+                raw_candidates.append(cand)
             # Discovery closed; drop from open set.
         open_discoveries = remaining
 
@@ -688,7 +975,43 @@ def derive_operational_facts(
             already_open.add(d.artifact_normalized)
             open_discoveries.append(d)
 
-    return _dedup_candidates(candidates)
+    # 4. Admission gate (W4 follow-up 2026-07-02) — reject fallback-family
+    #    catch-all and non-operational-shape artifacts. See admission-gate
+    #    block above for the design invariant.
+    admitted: list[OperationalFactCandidate] = []
+    diag_fallback = 0
+    diag_shape: dict[str, int] = {}
+    for cand in raw_candidates:
+        ok, reason = _is_admissible_candidate(cand)
+        if ok:
+            admitted.append(cand)
+            continue
+        if reason == "fallback_family":
+            diag_fallback += 1
+        elif reason.startswith("non_operational_shape:"):
+            role = reason.split(":", 1)[1]
+            diag_shape[role] = diag_shape.get(role, 0) + 1
+
+    # 5. Dedup after admission (fewer keys → same result, but cheaper).
+    deduped = _dedup_candidates(admitted)
+
+    # 6. Per-thread cap. Rank first, then take head. Preserve emission
+    #    order in the returned list for stable downstream consumption.
+    capped_count = 0
+    if len(deduped) > MAX_CANDIDATES_PER_REBUILD:
+        ranked = _rank_candidates_for_cap(deduped)
+        kept = set(id(c) for c in ranked[:MAX_CANDIDATES_PER_REBUILD])
+        capped_count = len(deduped) - MAX_CANDIDATES_PER_REBUILD
+        deduped = [c for c in deduped if id(c) in kept]
+
+    if return_diagnostics:
+        return deduped, AdmissionDiagnostics(
+            admitted=len(deduped),
+            fallback_family=diag_fallback,
+            non_operational_shape=diag_shape,
+            capped=capped_count,
+        )
+    return deduped
 
 
 __all__ = [
@@ -697,6 +1020,7 @@ __all__ = [
     "WORD_BOUNDARY_ARTIFACT_LEN_MAX",
     "MAX_ARTIFACT_LEN",
     "MAX_FRAGMENT_LEN",
+    "MAX_CANDIDATES_PER_REBUILD",
     "KNOWN_FAMILIES",
     "ScopeKind",
     "ScopeResolver",
@@ -705,6 +1029,7 @@ __all__ = [
     "DiscoveryEvent",
     "UseEvent",
     "OperationalFactCandidate",
+    "AdmissionDiagnostics",
     "resolve_scope",
     "build_default_scope_resolver",
     "derive_operational_facts",
