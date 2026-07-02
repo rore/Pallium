@@ -16,6 +16,7 @@ from providers.llm.aicore_auth import AICoreDeploymentCatalog, AICoreTokenProvid
 from providers.llm.anthropic_claude import AnthropicClaudeLLMProvider
 from providers.llm.base import LLMProvider
 from providers.llm.openai_compatible import OpenAICompatibleLLMProvider
+from providers.llm.redacting_wrapper import RedactingLLMProviderWrapper
 from retrieval.base import RetrievalProvider
 from retrieval.lexical import LexicalRetrievalProvider
 from retrieval.vector import VectorRetrievalProvider
@@ -49,13 +50,28 @@ def build_storage_provider(config: AppConfig) -> StorageProvider:
 
 
 def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> LLMProvider:
+    """Construct an LLM provider from config, wrapped in the shared
+    redaction barrier (:class:`RedactingLLMProviderWrapper`).
+
+    The wrapper redacts every string leaf of the model's response
+    before returning it. This closes the leak channel that would
+    otherwise let LLM-extracted memory (thread_summary,
+    task_checkpoint, investigation_outcome, task_trace, ...) carry
+    a secret directly into ``MemoryObject.payload`` even after the
+    write barrier at ingest redacted the source.
+
+    Every provider path (openai_compatible, anthropic_claude,
+    aicore_anthropic) is wrapped uniformly — the barrier's presence
+    is not a per-provider choice.
+    """
     provider_config = config.provider_config(provider_name)
     if not provider_config.base_url:
         raise ValueError(f"LLM provider '{provider_name}' requires a base URL")
 
     provider_kind = provider_config.kind.lower()
+    inner: LLMProvider
     if provider_kind == "openai_compatible":
-        return OpenAICompatibleLLMProvider(
+        inner = OpenAICompatibleLLMProvider(
             provider_name=provider_name,
             model=model,
             base_url=provider_config.base_url,
@@ -63,8 +79,8 @@ def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> 
             timeout_seconds=provider_config.timeout_seconds,
             retry_policy=provider_config.retry_policy,
         )
-    if provider_kind in {"anthropic_claude", "claude", "anthropic"}:
-        return AnthropicClaudeLLMProvider(
+    elif provider_kind in {"anthropic_claude", "claude", "anthropic"}:
+        inner = AnthropicClaudeLLMProvider(
             provider_name=provider_name,
             model=model,
             base_url=provider_config.base_url,
@@ -74,8 +90,7 @@ def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> 
             auth_style=provider_config.auth_style,
             max_tokens=provider_config.max_tokens,
         )
-
-    if provider_kind == "aicore_anthropic":
+    elif provider_kind == "aicore_anthropic":
         aicore_cfg = provider_config.aicore
         if not aicore_cfg:
             raise ValueError(
@@ -94,7 +109,7 @@ def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> 
             token_provider=token_provider,
             timeout_seconds=provider_config.timeout_seconds,
         )
-        return AICoreAnthropicLLMProvider(
+        inner = AICoreAnthropicLLMProvider(
             provider_name=provider_name,
             model=model,
             base_url=aicore_cfg.base_url,
@@ -105,8 +120,10 @@ def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> 
             retry_policy=provider_config.retry_policy,
             max_tokens=provider_config.max_tokens,
         )
+    else:
+        raise ValueError(f"Unsupported LLM provider kind: {provider_config.kind}")
 
-    raise ValueError(f"Unsupported LLM provider kind: {provider_config.kind}")
+    return RedactingLLMProviderWrapper(inner)
 
 
 def build_embedding_provider(config: AppConfig, *, provider_name: str) -> EmbeddingProvider:

@@ -527,6 +527,19 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def redact_index_entry_text_view(
+        self, index_entry_id: str, new_text_view: str,
+    ) -> None:
+        """FTS-safe text_view rewrite (DELETE + INSERT on ``lexical_fts``).
+
+        Used by the secret-redaction pipeline. Unlike
+        :meth:`update_index_entry_text_view` this method also updates
+        the ``lexical_fts`` mirror row so lexical search never returns
+        the pre-redaction text.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def search_index_entries(
         self,
         tokens: list[str],

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import uuid
@@ -29,8 +30,9 @@ from core.observability import IntegrationDebugLogger, QueryStats
 from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalProvider
-from semantic.base import SemanticPlugin
 from semantic.agent_conversation_memory_embedding import build_memory_match_text
+from semantic.base import SemanticPlugin
+from semantic.redaction import redact_sensitive
 from storage.base import QueueHealthSnapshot, RetentionLeaseLostError, RetentionRunStats, StorageProvider, ThreadProcessingLease
 from storage.vector_index import VectorIndex
 from core.text import normalize_for_index as _normalize_for_index
@@ -49,6 +51,108 @@ def _build_workstream_capability(storage) -> WorkstreamCapability | None:
     except Exception:
         return None
     return WorkstreamCapability(SQLiteWorkstreamStore(session_factory))
+
+
+def _redact_ingest_value(value, *, visited: set[int] | None = None):
+    """Recursively redact string leaves in an arbitrary JSON-like value.
+
+    Universal ingest write barrier (PR 0 step 6). Applied to
+    ``content`` and every value in ``metadata`` before the SourceItem
+    is constructed — closes the leak channel that let LLM assistant
+    output and tool metadata carry credentials into ``source_items``
+    and, via the built-off-content lexical index, into
+    ``lexical_fts``.
+
+    Rules:
+    - Strings pass through :func:`semantic.redaction.redact_sensitive`
+      (Tier A + Tier B).
+    - Dicts / lists / tuples are walked recursively. Keys are NOT
+      redacted (breaks downstream code that keys on names like
+      ``command``, ``file_path``). Only values.
+    - Non-string leaves (int, float, bool, None, datetime) pass through
+      untouched.
+    - Circular references (in-process object graphs) are broken via a
+      ``visited`` set keyed by ``id(obj)``. JSON-parsed input is
+      always a tree; this is defensive.
+    - Deliberately preserves container types: a ``tuple`` metadata
+      value stays a tuple, a ``list`` stays a list. Downstream code
+      that pattern-matches on type does not observe a change from
+      redaction.
+    """
+    if isinstance(value, str):
+        return redact_sensitive(value)
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    if visited is None:
+        visited = set()
+    obj_id = id(value)
+    if obj_id in visited:
+        # Cycle in an in-process object graph — refuse to recurse.
+        return "[REDACTED CYCLE]"
+    visited.add(obj_id)
+    try:
+        if isinstance(value, dict):
+            return {
+                k: _redact_ingest_value(v, visited=visited)
+                for k, v in value.items()
+            }
+        if isinstance(value, list):
+            return [_redact_ingest_value(v, visited=visited) for v in value]
+        if isinstance(value, tuple):
+            return tuple(_redact_ingest_value(v, visited=visited) for v in value)
+    finally:
+        visited.discard(obj_id)
+    # datetime, bytes, custom classes — leave untouched. Bytes in
+    # metadata would round-trip through JSON as a text encoding
+    # anyway; we do not attempt to decode them here.
+    return value
+
+
+def _redact_query_result(result: "QueryResult") -> "QueryResult":
+    """Retrieval-barrier redaction over a QueryResult.
+
+    Runs at the boundary between the query executor and the caller.
+    Redacts every text-carrying field on ``injectable_blocks`` and
+    ``results`` (via ``dataclasses.replace`` since both are frozen
+    dataclasses). Metadata IDs, scores, and non-text fields are
+    passed through unchanged.
+
+    This is defense-in-depth: even if a secret was persisted before
+    PR 0's write barrier landed (or slipped past the LLM-response
+    wrapper), it never leaves the process unredacted.
+    """
+    from core.models import InjectableBlock, QueryResultItem  # local import — avoid top-level cycle
+
+    def _redact_block(block: InjectableBlock) -> InjectableBlock:
+        return dataclasses.replace(
+            block,
+            title=redact_sensitive(block.title) if block.title else block.title,
+            text=redact_sensitive(block.text) if block.text else block.text,
+        )
+
+    def _redact_item(item: QueryResultItem) -> QueryResultItem:
+        # Note artifacts bypass redaction — same carveout as the
+        # write barrier at ``ingest_item`` and ``get_memory_expand``.
+        # A user-explicit note is preserved verbatim on the retrieval
+        # surface just as it was on write. Both the source-item
+        # ``artifact_kind`` and the memory ``type`` are checked
+        # because a note may surface as either shape depending on the
+        # retrieval path.
+        if item.artifact_kind == "note" or item.type == "note":
+            return item
+        return dataclasses.replace(
+            item,
+            excerpt=redact_sensitive(item.excerpt) if item.excerpt else item.excerpt,
+            payload=_redact_ingest_value(item.payload) if item.payload else item.payload,
+        )
+
+    redacted_blocks = [_redact_block(b) for b in result.injectable_blocks]
+    redacted_results = [_redact_item(i) for i in result.results]
+    return dataclasses.replace(
+        result,
+        injectable_blocks=redacted_blocks,
+        results=redacted_results,
+    )
 
 
 class PalliumService:
@@ -183,6 +287,43 @@ class PalliumService:
         if plugin.requires_visibility_context and (container_ref is None or visibility is None):
             processing_status = "skipped"
             processing_error = "visibility_context_required"
+
+        # -----------------------------------------------------------------
+        # PR 0 step 6: universal write barrier.
+        #
+        # Every ingest — chat, tool metadata, hook-emitted event, future
+        # source_type — passes ``content`` and ``metadata`` through the
+        # shared redaction helper BEFORE the SourceItem is constructed.
+        # This runs regardless of role or source_type: the barrier's
+        # correctness must not depend on caller discipline.
+        #
+        # DELIBERATE EXCEPTION: ``note`` artifacts (see
+        # semantic/agent_conversation_memory_note.py) are the
+        # user-explicit "remember this verbatim" surface. Redacting a
+        # note silently destroys the placeholder / procedure text the
+        # user asked us to preserve (e.g. a runbook containing
+        # ``key=NEW_KEY`` as a substitution instruction). Notes are
+        # allowed to store raw content on the user's explicit
+        # instruction; the tradeoff is documented at the note
+        # ingestion path.
+        #
+        # Consequences:
+        # - ``source_items.content`` never persists a raw secret (except
+        #   notes explicitly stored by the user).
+        # - The lexical index built off ``source_item.content`` at
+        #   line 232 below never carries a raw secret into
+        #   ``lexical_fts.text_view`` (with the same note exception).
+        # - Downstream semantic plugins that read metadata by key see
+        #   the same dict shape (only string LEAVES are rewritten).
+        #
+        # The dedupe check on line 174 above already short-circuits on
+        # ``find_source_item`` before we reach here; redacting a
+        # duplicate is wasted work but never wrong.
+        # -----------------------------------------------------------------
+        is_user_note = (artifact_kind == "note")
+        if not is_user_note:
+            content = redact_sensitive(content) if content else content
+            metadata = _redact_ingest_value(metadata) if metadata else metadata
 
         source_item = build_source_item(
             source_type=source_type,
@@ -526,7 +667,7 @@ class PalliumService:
             thread_ref,
             runtime_context,
         )
-        return self._query_executor.query(
+        result = self._query_executor.query(
             text,
             limit,
             source_type=source_type,
@@ -541,6 +682,12 @@ class PalliumService:
             include_trace=include_trace,
             trigger_origin=trigger_origin,
         )
+        # PR 0 step 8: retrieval barrier (defense in depth).
+        # Even if a secret slips past the write barrier + LLM-response
+        # wrapper (e.g. was persisted before PR 0, or a redaction miss),
+        # it never reaches the LLM prompt. Redact injectable_blocks and
+        # results before returning.
+        return _redact_query_result(result)
 
     def run_consolidation_pass(
         self,
@@ -1137,6 +1284,12 @@ class PalliumService:
         (see ``semantic.agent_conversation_memory_embedding``
         ``build_memory_match_text``). None when the type has no per-type
         text view or no fields are populated.
+
+        PR 0 step 8: retrieval-side redaction is applied here — the
+        payload dict, each source item's ``content`` + ``metadata``,
+        and the match_text pass through :func:`redact_sensitive`.
+        Defense in depth: even if a secret was persisted before the
+        write barrier landed, ``pallium_expand`` never returns it raw.
         """
         memory_object = self._storage.get_memory_object(memory_object_id)
         effective_container = container_ref or memory_object.container_ref
@@ -1151,6 +1304,20 @@ class PalliumService:
                 continue
             effective_actor_ref = query_actor_ref or memory_object.actor_ref
             if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_actor_ref=effective_actor_ref):
+                # Note artifacts bypass redaction — same carveout as
+                # the write barrier at ``ingest_item`` (a user-explicit
+                # verbatim recall surface).
+                if item.artifact_kind != "note":
+                    item = dataclasses.replace(
+                        item,
+                        content=redact_sensitive(item.content) if item.content else item.content,
+                        metadata=_redact_ingest_value(item.metadata) if item.metadata else item.metadata,
+                    )
                 items.append(item)
         match_text = build_memory_match_text(memory_object) or None
-        return memory_object.payload, items, match_text
+        if match_text:
+            match_text = redact_sensitive(match_text)
+        payload = memory_object.payload
+        if payload:
+            payload = _redact_ingest_value(payload)
+        return payload, items, match_text
