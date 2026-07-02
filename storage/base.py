@@ -423,32 +423,52 @@ class StorageProvider(ABC):
         subject_in: list[str] | None = None,
         *,
         include_soft_deleted: bool = False,
+        include_candidates: bool = False,
     ) -> list[MemoryObject]:
-        """List memory objects. By default, soft-deleted rows are
-        excluded — pass ``include_soft_deleted=True`` for audit paths.
+        """List memory objects.
+
+        Defaults:
+
+        - Soft-deleted rows are excluded — pass ``include_soft_deleted=True``
+          for audit paths.
+        - When ``lifecycle is None`` (unfiltered), only lifecycle values
+          in the visible allowlist ``("active", "superseded", "suppressed")``
+          are returned. Non-allowlist values (``"candidate"`` and any
+          future hidden lifecycles) are excluded unless the caller
+          passes ``include_candidates=True`` or an explicit
+          ``lifecycle="<value>"`` filter. This is PR 3 of the
+          operational_fact redesign — ``lifecycle="candidate"`` rows
+          are invisible to operator surfaces until PR 4's promotion
+          gate flips them to ``active``.
         """
         raise NotImplementedError
 
     @abstractmethod
     def list_memory_objects_for_source_item(
-        self, source_item_id: str, *, include_soft_deleted: bool = False,
+        self, source_item_id: str, *,
+        include_soft_deleted: bool = False,
+        include_candidates: bool = False,
     ) -> list[MemoryObject]:
         raise NotImplementedError
 
     def list_memory_objects_for_source_items(
-        self, source_item_ids: list[str], *, include_soft_deleted: bool = False,
+        self, source_item_ids: list[str], *,
+        include_soft_deleted: bool = False,
+        include_candidates: bool = False,
     ) -> dict[str, list[MemoryObject]]:
         """Batch variant: returns {source_item_id: [MemoryObject, ...]} for all given IDs.
 
         Default implementation calls the per-item method in a loop.
         Backends may override with a single-query implementation.
-        Honors ``include_soft_deleted`` uniformly with the single-item
-        method.
+        Honors ``include_soft_deleted`` and ``include_candidates``
+        uniformly with the single-item method.
         """
         result: dict[str, list[MemoryObject]] = {}
         for sid in source_item_ids:
             result[sid] = self.list_memory_objects_for_source_item(
-                sid, include_soft_deleted=include_soft_deleted,
+                sid,
+                include_soft_deleted=include_soft_deleted,
+                include_candidates=include_candidates,
             )
         return result
 

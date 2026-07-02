@@ -221,12 +221,16 @@ class TestSensitiveArtifactSkipsEmission:
 
     def test_benign_artifact_still_emits(self):
         # Regression pin: PR A must not break the legit emission path.
+        # PR 3 update: use a reconnaissance verb (``uv --version``) so
+        # the new predicate model produces a candidate. The invariant
+        # "benign artifacts continue to emit" is what matters — the
+        # exact verb the transcript uses is incidental.
         turns = [
-            self._turn(0, "uv sync ./pyproject.toml"),
-            self._turn(1, "uv run pytest ./pyproject.toml"),
+            self._turn(0, "uv --version", output_tail="uv 0.4.15"),
+            self._turn(1, "cat pyproject.toml", output_tail="[project]"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
-        assert any(c.command_family == "uv" for c in cands)
+        assert any(c.command_family == "uv" or c.command_family == "python" for c in cands)
 
     def test_mixed_trace_ssh_dropped_benign_kept(self):
         turns = [

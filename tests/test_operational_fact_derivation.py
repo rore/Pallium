@@ -46,15 +46,18 @@ CONTAINER = "git:example/repo"
 
 class TestPositiveDerivation:
     def test_python_interpreter_discovery_then_use(self):
+        # PR 3 (reconnaissance-verb model): ``where python`` alone emits
+        # the interpreter candidate. The paired-use turn is no longer
+        # needed for admission.
         turns = [
             make_bash_turn(0, "where python", output_tail="C:/Users/x/.venv/Scripts/python.exe"),
-            make_bash_turn(1, "C:/Users/x/.venv/Scripts/python.exe --version"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
-        assert len(cands) == 1
-        assert cands[0].command_family == "python"
-        assert cands[0].artifact_role == "interpreter"
-        assert cands[0].scope_kind == "machine_repo"
+        assert cands, "command_lookup must emit a candidate"
+        interp = [c for c in cands if c.artifact_role == "interpreter"]
+        assert interp, "expected interpreter role from command_lookup with .venv path"
+        assert interp[0].command_family == "python"
+        assert interp[0].scope_kind == "machine_repo"
 
     def test_python_version_file_read_then_use(self):
         turns = [
@@ -65,34 +68,38 @@ class TestPositiveDerivation:
         assert any(".python-version" in c.artifact_normalized for c in cands)
 
     def test_uv_sync_discovery_then_uv_run_pytest(self):
+        # PR 3: ``uv --version`` is a reconnaissance verb (version_query)
+        # that emits an uv-family candidate directly. ``uv sync`` is not
+        # a recon verb in the new model.
         turns = [
-            make_bash_turn(0, "uv sync ./pyproject.toml"),
-            make_bash_turn(1, "uv run pytest ./pyproject.toml"),
+            make_bash_turn(0, "uv --version", output_tail="uv 0.4.0"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
         assert any(c.command_family == "uv" for c in cands)
 
     def test_npm_test_script_discovery_then_use(self):
+        # PR 3: ``npm --version`` (version_query) emits the npm-family
+        # candidate directly under the reconnaissance-verb model.
         turns = [
-            make_turn(0, files_read=["package.json"]),
-            make_bash_turn(1, "npm test package.json"),
+            make_bash_turn(0, "npm --version", output_tail="10.2.4"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
         assert any(c.command_family == "npm" for c in cands)
 
     def test_gradle_wrapper_discovery_then_use(self):
+        # PR 3: ``./gradlew --version`` (version_query) emits the gradle
+        # family candidate. gradlew is normalized (leading `./` stripped).
         turns = [
-            make_bash_turn(0, "bash ./gradlew --help"),
-            make_bash_turn(1, "bash ./gradlew test"),
+            make_bash_turn(0, "./gradlew --version", output_tail="Gradle 8.2"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
-        # gradlew is in argv[1] as a path-shaped token in both turns.
-        assert any("gradlew" in c.artifact_normalized for c in cands)
+        assert any(c.command_family == "gradle" for c in cands)
 
     def test_docker_compose_service_discovery_then_use(self):
+        # PR 3: ``cat docker-compose.yml`` (cat_config_recon) maps the
+        # anchor basename to the docker family.
         turns = [
-            make_bash_turn(0, "docker ps ./compose.yml", output_tail="pallium_web"),
-            make_bash_turn(1, "docker exec ./compose.yml bash"),
+            make_bash_turn(0, "cat docker-compose.yml"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
         assert any(c.command_family == "docker" for c in cands)
@@ -106,9 +113,10 @@ class TestPositiveDerivation:
         assert any(c.command_family == "service" for c in cands)
 
     def test_git_wrapper_discovery_then_use(self):
+        # PR 3: ``git --version`` (version_query) emits the git-family
+        # candidate directly.
         turns = [
-            make_bash_turn(0, "git rev-parse --show-toplevel", output_tail="/repo/pallium"),
-            make_bash_turn(1, "git status /repo/pallium"),
+            make_bash_turn(0, "git --version", output_tail="git version 2.42.0"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
         assert any(c.command_family == "git" for c in cands)
@@ -199,6 +207,12 @@ class TestNegativeDerivation:
         turns = [make_bash_turn(0, "ls"), make_bash_turn(1, "ls")]
         assert derive_operational_facts(turns, CONTAINER, fake_scope_resolver) == []
 
+    @pytest.mark.xfail(
+        reason="operational_fact redesign PR 3 removed the discovery+use pairing "
+               "model; each reconnaissance verb emits independently, so cross-scope "
+               "pairing is no longer a concept the predicate enforces",
+        strict=False,
+    )
     def test_discovery_wrong_scope_no_candidate(self):
         # Custom resolver that produces different scope refs for the two
         # turns' artifacts; predicate cannot fabricate a cross-scope match
@@ -541,9 +555,11 @@ class TestMalformedMetadata:
         derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
 
     def test_turn_stream_out_of_order_still_derives(self):
+        # PR 3: each recon verb emits independently; out-of-order input
+        # still produces the expected family candidate.
         turns = [
-            make_bash_turn(1, "uv run pytest ./pyproject.toml"),
-            make_bash_turn(0, "uv sync ./pyproject.toml"),
+            make_bash_turn(1, "uv --version", output_tail="uv 0.4.0"),
+            make_bash_turn(0, "cat pyproject.toml"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
         assert any(c.command_family == "uv" for c in cands)
@@ -556,9 +572,11 @@ class TestMalformedMetadata:
 
 class TestUnicode:
     def test_unicode_artifact_survives_normalization(self):
+        # PR 3: use a reconnaissance verb (``ls`` = directory_probe) so
+        # a single event emits a candidate; the invariant preserved here
+        # is that non-ASCII characters survive redaction/normalization.
         turns = [
-            make_bash_turn(0, "python résumé.py --check"),
-            make_bash_turn(1, "python résumé.py"),
+            make_bash_turn(0, "ls résumé.py"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
         assert any("résumé.py" in c.artifact_normalized for c in cands)
@@ -642,14 +660,14 @@ class TestCrossOriginConflict:
         # precedence is enforced by the wiring layer (PR 3). This test
         # documents the boundary: the predicate emits its candidate
         # regardless of whether an explicit fact exists.
+        # PR 3 (recon-verb model): use ``uv --version`` (version_query).
         turns = [
-            make_bash_turn(0, "uv sync ./pyproject.toml"),
-            make_bash_turn(1, "uv run pytest ./pyproject.toml"),
+            make_bash_turn(0, "uv --version", output_tail="uv 0.4.0"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
         assert any(c.command_family == "uv" for c in cands), (
             "predicate must emit derived candidate; agent_explicit priority is "
-            "PR 3 (wiring) territory"
+            "wiring-layer territory"
         )
 
 
@@ -673,32 +691,33 @@ class TestDedupAndConflictSlot:
         assert len(keys) == len(cands)
 
     def test_dedup_different_artifact_same_slot_both_emitted(self):
-        # Same slot (uv, runner, repo, container) with two different
-        # artifact_normalized values → both emitted; supersession is PR 3.
+        # Same slot (python config anchor at repo scope) with two
+        # different artifact_normalized values → both emitted;
+        # supersession is the wiring layer's responsibility.
+        # PR 3 (recon-verb model): use cat_config_recon on two anchors.
         turns = [
-            make_bash_turn(0, "uv sync ./target/a"),
-            make_bash_turn(1, "uv run ./target/a"),
-            make_bash_turn(2, "uv sync ./target/b"),
-            make_bash_turn(3, "uv run ./target/b"),
+            make_bash_turn(0, "cat pyproject.toml"),
+            make_bash_turn(1, "cat requirements.txt"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
         arts = {c.artifact_normalized for c in cands}
-        assert any("target/a" in a for a in arts)
-        assert any("target/b" in a for a in arts)
+        assert any("pyproject.toml" in a for a in arts)
+        assert any("requirements.txt" in a for a in arts)
         # Cardinality-1 pin on the conflict slot itself: both artifacts land
         # in the SAME (command_family, artifact_role, scope_kind, scope_ref)
-        # slot — supersession is PR 3's responsibility, not the predicate's.
+        # slot — supersession is the wiring layer's responsibility.
         slots = {
             (c.command_family, c.artifact_role, c.scope_kind, c.scope_ref)
             for c in cands
-            if "target/a" in c.artifact_normalized or "target/b" in c.artifact_normalized
+            if "pyproject.toml" in c.artifact_normalized
+            or "requirements.txt" in c.artifact_normalized
         }
         assert len(slots) == 1, f"expected one shared slot; got {slots}"
 
     def test_dedup_use_counters_not_populated_by_predicate(self):
+        # PR 3 (recon-verb model): a single ``uv --version`` emits.
         turns = [
-            make_bash_turn(0, "uv sync ./pyproject.toml"),
-            make_bash_turn(1, "uv run pytest ./pyproject.toml"),
+            make_bash_turn(0, "uv --version", output_tail="uv 0.4.0"),
         ]
         cands = derive_operational_facts(turns, CONTAINER, fake_scope_resolver)
         assert cands

@@ -64,6 +64,37 @@ def _session_a_turns() -> list[dict[str, Any]]:
                 },
             },
         },
+        # Turn 0.5: reconnaissance — confirm the interpreter path with
+        # ``where python`` before invoking it. Natural fresh-agent step:
+        # the note pointed at an absolute path, but a real agent still
+        # sanity-checks what ``python`` on PATH resolves to on this
+        # machine so the command_lookup verb fires and produces the
+        # python-interpreter operational_fact under PR 3.
+        {
+            "source_type": "claude_code",
+            "source_id": "scn02-t0b",
+            "content_type": "text/plain",
+            "content": "confirm python interpreter path",
+            "container_ref": "scn02",
+            "thread_ref": "scn02-thread",
+            "visibility": "public",
+            "metadata": {
+                **base,
+                "agent_work_trace_turn": {
+                    "commands": [
+                        {
+                            "cmd": "where python",
+                            "exit_code": 0,
+                            "output_tail": _INTERPRETER,
+                        }
+                    ],
+                    "files_read": [],
+                    "files_modified": [],
+                    "grep_patterns": [],
+                    "has_productive_action": False,
+                },
+            },
+        },
         # Turn 1: successful use.
         {
             "source_type": "claude_code",

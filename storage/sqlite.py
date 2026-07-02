@@ -44,6 +44,16 @@ _T = TypeVar("_T")
 _DISPLAY_TEXT_KEYS = ("summary", "statement", "decision", "investigation_outcome", "interest_text", "constraint_text", "carry_forward_answer", "outcome", "content", "title", "investigation_subject", "subject")
 
 
+# PR 3 of operational_fact redesign: lifecycles that are visible to
+# operator surfaces by default when the caller passes no explicit
+# ``lifecycle=...`` filter. Non-allowlist values (``candidate`` and any
+# future hidden lifecycles like ``quarantined``) require either an
+# explicit ``lifecycle=<value>`` filter OR ``include_candidates=True``
+# to appear. New lifecycle values default to invisible — adding one
+# here is a deliberate review step.
+_DEFAULT_VISIBLE_LIFECYCLES: tuple[str, ...] = ("active", "superseded", "suppressed")
+
+
 def _extract_display_text(payload: dict) -> str:
     for key in _DISPLAY_TEXT_KEYS:
         val = payload.get(key)
@@ -633,6 +643,7 @@ class SQLiteStorageProvider(
         subject_in: list[str] | None = None,
         *,
         include_soft_deleted: bool = False,
+        include_candidates: bool = False,
     ) -> list[MemoryObject]:
         with self._session_factory() as session:
             statement = select(MemoryObjectRecord)
@@ -640,6 +651,16 @@ class SQLiteStorageProvider(
                 statement = statement.where(MemoryObjectRecord.type.in_(memory_types))
             if lifecycle is not None:
                 statement = statement.where(MemoryObjectRecord.lifecycle == lifecycle)
+            elif not include_candidates:
+                # PR 3 of operational_fact redesign: default filter —
+                # non-allowlist lifecycles (``candidate`` and any future
+                # hidden values) are invisible unless explicitly opted
+                # into via ``include_candidates=True`` or an exact
+                # ``lifecycle=...`` filter. Preserves existing behavior
+                # for ``active`` / ``superseded`` / ``suppressed``.
+                statement = statement.where(
+                    MemoryObjectRecord.lifecycle.in_(_DEFAULT_VISIBLE_LIFECYCLES)
+                )
             if container_ref is not None:
                 statement = statement.where(MemoryObjectRecord.container_ref == container_ref)
             if subject_in is not None:
@@ -653,7 +674,9 @@ class SQLiteStorageProvider(
         return [self._to_memory_object(record) for record in records]
 
     def list_memory_objects_for_source_item(
-        self, source_item_id: str, *, include_soft_deleted: bool = False,
+        self, source_item_id: str, *,
+        include_soft_deleted: bool = False,
+        include_candidates: bool = False,
     ) -> list[MemoryObject]:
         with self._session_factory() as session:
             relation_records = session.scalars(
@@ -672,11 +695,17 @@ class SQLiteStorageProvider(
             )
             if not include_soft_deleted:
                 statement = statement.where(MemoryObjectRecord.is_soft_deleted == 0)
+            if not include_candidates:
+                statement = statement.where(
+                    MemoryObjectRecord.lifecycle.in_(_DEFAULT_VISIBLE_LIFECYCLES)
+                )
             records = session.scalars(statement).all()
         return [self._to_memory_object(record) for record in records]
 
     def list_memory_objects_for_source_items(
-        self, source_item_ids: list[str], *, include_soft_deleted: bool = False,
+        self, source_item_ids: list[str], *,
+        include_soft_deleted: bool = False,
+        include_candidates: bool = False,
     ) -> dict[str, list[MemoryObject]]:
         if not source_item_ids:
             return {}
@@ -701,6 +730,10 @@ class SQLiteStorageProvider(
             )
             if not include_soft_deleted:
                 memory_stmt = memory_stmt.where(MemoryObjectRecord.is_soft_deleted == 0)
+            if not include_candidates:
+                memory_stmt = memory_stmt.where(
+                    MemoryObjectRecord.lifecycle.in_(_DEFAULT_VISIBLE_LIFECYCLES)
+                )
             memory_records = session.scalars(memory_stmt).all()
             memory_by_id = {record.id: self._to_memory_object(record) for record in memory_records}
         result: dict[str, list[MemoryObject]] = {}

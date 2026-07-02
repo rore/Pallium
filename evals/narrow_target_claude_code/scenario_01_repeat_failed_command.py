@@ -91,6 +91,36 @@ def _session_a_turns(agent_surface: str) -> list[dict[str, Any]]:
                 },
             },
         },
+        # Turn 0.5: reconnaissance — locate the real interpreter with
+        # ``where python``. This is the natural first step a fresh
+        # agent takes after ``uv sync`` fails on Windows (ASR blocks the
+        # Scripts/python.exe stub) — resolve which interpreter is
+        # actually on PATH before invoking one by absolute path.
+        {
+            "source_type": agent_surface,
+            "source_id": f"{agent_surface}-scn01-t0b",
+            "content_type": "text/plain",
+            "content": "locate real python interpreter",
+            "container_ref": f"scn01-{agent_surface}",
+            "thread_ref": f"scn01-thread-{agent_surface}",
+            "visibility": "public",
+            "metadata": {
+                **base_turn_meta,
+                "agent_work_trace_turn": {
+                    "commands": [
+                        {
+                            "cmd": "where python",
+                            "exit_code": 0,
+                            "output_tail": _INTERPRETER,
+                        }
+                    ],
+                    "files_read": [],
+                    "files_modified": [],
+                    "grep_patterns": [],
+                    "has_productive_action": False,
+                },
+            },
+        },
         # Turn 1: discover the interpreter path via Read.
         {
             "source_type": agent_surface,

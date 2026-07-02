@@ -36,6 +36,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Final, Literal, Sequence
 
+from semantic.argv import (
+    argv_basename as _argv_basename,
+    iter_argv_head as _iter_argv_head_shared,
+    shell_word_head as _shell_word_head_shared,
+    strip_wrappers as _strip_wrappers_shared,
+)
 from semantic.redaction import is_sensitive_artifact, redact_sensitive
 
 logger = logging.getLogger(__name__)
@@ -94,6 +100,11 @@ _FAMILY_FALLBACK: Final[str] = "shell"
 _WRAPPER_COMMANDS: Final[frozenset[str]] = frozenset({
     "env", "sudo", "time", "xargs", "nice", "nohup", "exec",
 })
+# NOTE: the shell-tokenizer primitives (_iter_argv_head, _shell_word_head,
+# _strip_wrappers) were extracted to ``semantic/argv.py`` in PR 3 of the
+# operational_fact redesign (2026-07-02) so ``semantic/reconnaissance.py``
+# uses the SAME logic. The local names below preserve backward
+# compatibility for tests and downstream callers; they are thin wrappers.
 
 # Argv-shape → artifact-role heuristics (see design doc §Deduplication)
 _INTERPRETER_SUFFIXES: Final[tuple[str, ...]] = (
@@ -326,106 +337,23 @@ def build_default_scope_resolver(
 
 
 def _iter_argv_head(cmd: str) -> tuple[str, ...]:
-    """Split argv respecting simple single/double quoting.
+    """Thin wrapper around :func:`semantic.argv.iter_argv_head`.
 
-    Not a full shell parser. Sufficient for extracting the command name
-    and immediate subcommand for family + role classification.
-
-    PR 2 of the operational_fact redesign (2026-07-02): tokenization
-    stops at shell-word boundaries — the first ``<<`` (heredoc marker),
-    ``>``/``>>`` (redirection), ``|`` (pipe), ``;`` / ``&&`` / ``||``
-    (command separator). Everything after those markers belongs to a
-    different logical unit and MUST NOT be included in the argv token
-    list. Previously the tokenizer read the entire ``cmd`` field
-    including heredoc bodies — an argv like
-    ``cat > file <<'EOF'\\nimport sys\\nsys.path...`` had its Python
-    source content scanned as if the ``import`` / ``sys`` / etc. were
-    argv tokens, producing garbage "artifacts" from source code.
+    Preserved as a private name for backward compatibility with tests
+    and downstream callers that imported the internal API before the
+    PR 3 extraction to :mod:`semantic.argv`.
     """
-    if not cmd:
-        return ()
-    # Truncate at the first unquoted shell-word boundary so downstream
-    # regex/token consumers only see the primary argv slice.
-    cmd = _shell_word_head(cmd)
-    tokens: list[str] = []
-    buf: list[str] = []
-    quote: str | None = None
-    for ch in cmd:
-        if quote:
-            if ch == quote:
-                quote = None
-            else:
-                buf.append(ch)
-            continue
-        if ch in ('"', "'"):
-            quote = ch
-            continue
-        if ch.isspace():
-            if buf:
-                tokens.append("".join(buf))
-                buf = []
-            continue
-        buf.append(ch)
-    if buf:
-        tokens.append("".join(buf))
-    return tuple(tokens)
+    return _iter_argv_head_shared(cmd)
 
 
 def _shell_word_head(cmd: str) -> str:
-    """Return the portion of ``cmd`` up to the first unquoted
-    shell-word boundary.
-
-    Boundaries: ``<<`` (heredoc), ``>`` / ``>>`` (redirect),
-    ``|`` (pipe), ``;`` (statement separator), ``&&`` / ``||``
-    (short-circuit). Quotes are respected — a ``;`` inside single
-    or double quotes is text, not a boundary.
-
-    Not a full shell parser. Sufficient to prevent heredoc bodies
-    and pipeline tails from being scanned as if they were argv.
-    """
-    if not cmd:
-        return cmd
-    quote: str | None = None
-    i = 0
-    n = len(cmd)
-    while i < n:
-        ch = cmd[i]
-        if quote:
-            if ch == quote:
-                quote = None
-            i += 1
-            continue
-        if ch in ('"', "'"):
-            quote = ch
-            i += 1
-            continue
-        # 2-char operators (must check before single-char to prefer
-        # the longer match).
-        two = cmd[i:i + 2]
-        if two in ("<<", ">>", "&&", "||"):
-            return cmd[:i]
-        # Single-char boundaries.
-        if ch in ("|", ">", ";"):
-            return cmd[:i]
-        i += 1
-    return cmd
+    """Thin wrapper around :func:`semantic.argv.shell_word_head`."""
+    return _shell_word_head_shared(cmd)
 
 
 def _strip_wrappers(argv: tuple[str, ...]) -> tuple[str, ...]:
-    """Peel `env`, `sudo`, etc. off the front of an argv list."""
-    while argv:
-        head = argv[0].rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower()
-        # Strip `env FOO=bar ...` including env-var assignments.
-        if head == "env":
-            argv = argv[1:]
-            while argv and "=" in argv[0] and not argv[0].startswith(("-", "/", "\\", ".")):
-                argv = argv[1:]
-            continue
-        if head in _WRAPPER_COMMANDS:
-            argv = argv[1:]
-            continue
-        break
-    return argv
+    """Thin wrapper around :func:`semantic.argv.strip_wrappers`."""
+    return _strip_wrappers_shared(argv)
 
 
 def _command_family(cmd: str, artifact: str) -> str:
@@ -1042,73 +970,49 @@ def derive_operational_facts(
     """Emit operational-fact candidates from a stream of turn records.
 
     Pure. Same input → identical output. Ordering is deterministic by
-    (discovery turn_index, artifact_normalized). Supersession, lifecycle,
-    and cross-run reuse counters are the wiring layer's responsibility.
+    (turn_index, artifact_normalized). Lifecycle promotion (candidate →
+    active) is the wiring layer's responsibility (PR 4).
+
+    PR 3 of the operational_fact redesign (2026-07-02) replaced the
+    discovery+use pairing model with a **reconnaissance-verb** model:
+    each candidate is emitted directly from a reconnaissance event
+    (``which python``, ``python --version``, ``cat pyproject.toml``,
+    ``ls src/``, etc.) via the closed verb set in
+    :mod:`semantic.reconnaissance`. Cross-thread recurrence — not
+    intra-thread use-pairing — is the durability signal (see PR 4).
 
     ``return_diagnostics`` — opt-in. When True, returns
-    ``(candidates, AdmissionDiagnostics)`` where the diagnostics report
-    admitted / rejected-per-reason / capped counts. Default False keeps
-    the historical signature and return type for existing callers.
+    ``(candidates, AdmissionDiagnostics)``.
     """
+    # Local import to keep the module import cycle acyclic — the
+    # reconnaissance module depends on this one for CommandRecord/
+    # TurnRecord types.
+    from semantic.reconnaissance import (
+        ReconnaissanceEvent,
+        detect_reconnaissance,
+    )
+
     if not turn_stream:
         if return_diagnostics:
             return [], AdmissionDiagnostics()
         return []
     turns = sorted(turn_stream, key=lambda t: t.turn_index)
-    open_discoveries: list[DiscoveryEvent] = []
     raw_candidates: list[OperationalFactCandidate] = []
 
     for turn in turns:
-        # 1. Retire discoveries older than the window.
-        window_start = turn.turn_index - DISCOVERY_TO_USE_WINDOW
-        open_discoveries = [d for d in open_discoveries if d.turn_index >= window_start]
-
-        # 2. Close open discoveries against this turn's uses.
-        remaining: list[DiscoveryEvent] = []
-        for disc in open_discoveries:
-            use = _try_match_use(disc, turn)
-            if use is None:
-                remaining.append(disc)
-                continue
-            cand = _build_candidate(disc, use, container_ref, scope_resolver)
+        for event in detect_reconnaissance(turn):
+            cand = _recon_event_to_candidate(event, container_ref, scope_resolver)
             if cand is not None:
                 raw_candidates.append(cand)
-            # Discovery closed; drop from open set.
-        open_discoveries = remaining
 
-        # 3. Emit new discoveries from this turn (bash primary + files_read secondary).
-        new_bash = _bash_discovery(turn)
-        new_reads = _files_read_discovery(turn)
-        # Deduplicate against existing open discoveries on artifact_normalized
-        already_open = {d.artifact_normalized for d in open_discoveries}
-        for d in new_bash + new_reads:
-            if d.artifact_normalized in already_open:
-                continue
-            already_open.add(d.artifact_normalized)
-            open_discoveries.append(d)
+    # Dedup on the conflict slot. Two reconnaissance events for the
+    # same slot in the same thread collapse — the recurrence gate at
+    # promotion time (PR 4) counts distinct THREADS, not distinct
+    # events, so intra-thread duplication doesn't help.
+    deduped = _dedup_candidates(raw_candidates)
 
-    # 4. Admission gate (W4 follow-up 2026-07-02) — reject fallback-family
-    #    catch-all and non-operational-shape artifacts. See admission-gate
-    #    block above for the design invariant.
-    admitted: list[OperationalFactCandidate] = []
-    diag_fallback = 0
-    diag_shape: dict[str, int] = {}
-    for cand in raw_candidates:
-        ok, reason = _is_admissible_candidate(cand)
-        if ok:
-            admitted.append(cand)
-            continue
-        if reason == "fallback_family":
-            diag_fallback += 1
-        elif reason.startswith("non_operational_shape:"):
-            role = reason.split(":", 1)[1]
-            diag_shape[role] = diag_shape.get(role, 0) + 1
-
-    # 5. Dedup after admission (fewer keys → same result, but cheaper).
-    deduped = _dedup_candidates(admitted)
-
-    # 6. Per-thread cap. Rank first, then take head. Preserve emission
-    #    order in the returned list for stable downstream consumption.
+    # Per-thread cap. Same ranking heuristic as before; preserves
+    # deterministic tie-breaks.
     capped_count = 0
     if len(deduped) > MAX_CANDIDATES_PER_REBUILD:
         ranked = _rank_candidates_for_cap(deduped)
@@ -1119,11 +1023,154 @@ def derive_operational_facts(
     if return_diagnostics:
         return deduped, AdmissionDiagnostics(
             admitted=len(deduped),
-            fallback_family=diag_fallback,
-            non_operational_shape=diag_shape,
+            fallback_family=0,  # PR 3: no fallback channel; reconnaissance-only
+            non_operational_shape={},  # PR 3: no shape-channel rejection
             capped=capped_count,
         )
     return deduped
+
+
+def _recon_event_to_candidate(
+    event: "ReconnaissanceEvent",  # noqa: F821 — imported lazily above
+    container_ref: str,
+    scope_resolver: ScopeResolver,
+) -> OperationalFactCandidate | None:
+    """Map a :class:`ReconnaissanceEvent` to an
+    :class:`OperationalFactCandidate`.
+
+    Sourced from PR 3 of the operational_fact redesign. Replaces
+    ``_build_candidate`` which paired a discovery with a use event —
+    the new model emits directly from a single reconnaissance verb.
+    """
+    # The "answer" the recon event captured (interpreter path, semver,
+    # config-anchor basename, host:port) is the durable artifact when
+    # available; else fall back to the target.
+    artifact_raw = event.discovered_value or event.target
+    if not artifact_raw:
+        return None
+    artifact_normalized = _normalize_artifact(artifact_raw)
+    if not artifact_normalized:
+        return None
+    # Sensitive-artifact skip — belt-and-braces with the reconnaissance
+    # module's own SENSITIVE_ANCHOR_BASENAMES filter and PR 0's
+    # redaction pipeline. If any of these three layers miss, we still
+    # want the artifact rejected before it lands in storage.
+    if is_sensitive_artifact(artifact_normalized, context=event.fragment):
+        return None
+    if is_sensitive_artifact(artifact_raw, context=event.fragment):
+        return None
+    # Reject trivial single-character or all-punctuation artifacts.
+    if len(artifact_normalized) < 2:
+        return None
+    if not any(c.isalnum() for c in artifact_normalized):
+        return None
+
+    scope_kind, scope_ref = scope_resolver(container_ref, artifact_raw)
+    family = _family_for_verb(event, artifact_normalized)
+    role = _role_for_verb(event, artifact_normalized, family)
+    subject = f"{family}: {artifact_raw}"[:MAX_FRAGMENT_LEN]
+
+    # Build a DiscoveryEvent as evidence so downstream serializers that
+    # inspect ``cand.evidence[i].kind == "discovery"`` continue to
+    # work. The evidence carries the reconnaissance verb via the
+    # fragment prefix in the memory payload dict — see
+    # ``_candidate_to_memory_object`` in ``semantic/agent_work_trace.py``.
+    disc = DiscoveryEvent(
+        source_item_id=event.source_item_id,
+        tool=event.tool,
+        turn_index=event.turn_index,
+        timestamp=event.timestamp,
+        fragment=event.fragment,
+        artifact_raw=artifact_raw[:MAX_ARTIFACT_LEN],
+        artifact_normalized=artifact_normalized,
+    )
+    return OperationalFactCandidate(
+        command_family=family,
+        artifact_role=role,
+        scope_kind=scope_kind,
+        scope_ref=scope_ref,
+        subject=redact_sensitive(subject),
+        artifact=artifact_raw[:MAX_ARTIFACT_LEN],
+        artifact_normalized=artifact_normalized,
+        evidence=(disc,),
+    )
+
+
+def _family_for_verb(event: "ReconnaissanceEvent", artifact_norm: str) -> str:  # noqa: F821
+    """Best-effort command_family classification for a recon event.
+
+    The verb determines the general shape; ``_FAMILY_KEYWORD_MAP``
+    handles known ecosystems. Unknown targets get their basename as
+    the family — that's the ecosystem-agnostic path (Test 4a).
+    """
+    verb = event.verb
+    if verb in ("port_probe",):
+        return "service"
+    if verb in ("file_read_recon", "cat_config_recon"):
+        # Family drives from the anchor basename category so recall
+        # queries like "how do I run tests" still hit the right slot.
+        base = event.target.lower()
+        for prefix in ("pyproject", "requirements", "poetry", "pipfile", ".python", "uv."):
+            if base.startswith(prefix):
+                return "python"
+        for prefix in ("package.json", "package-lock", "pnpm-lock", "yarn", ".nvmrc", ".node", "tsconfig", "jsconfig"):
+            if base.startswith(prefix):
+                return "node"
+        if base.startswith("cargo"):
+            return "cargo"
+        if base.startswith("go."):
+            return "go"
+        if base in {"makefile", "gnumakefile", "justfile"}:
+            return "make"
+        if base.startswith(("docker", "compose", "container")):
+            return "docker"
+        if base.startswith(("build.gradle", "gradlew", "settings.gradle")):
+            return "gradle"
+        return _FAMILY_FALLBACK
+    # command_lookup / version_query / help_query — target IS the tool
+    # basename. Consult the family-keyword map first.
+    target = event.target.lower()
+    if target in _FAMILY_KEYWORD_MAP:
+        return _FAMILY_KEYWORD_MAP[target]
+    # Also check with .exe stripped.
+    if target.endswith(".exe") and target[:-4] in _FAMILY_KEYWORD_MAP:
+        return _FAMILY_KEYWORD_MAP[target[:-4]]
+    if verb == "directory_probe":
+        return _FAMILY_FALLBACK
+    # Unknown tool — use its own name as the family. Ecosystem-agnostic
+    # admission: xyzlang → family="xyzlang". The recurrence gate in
+    # PR 4 filters out one-off / noise families by requiring cross-
+    # thread recurrence for promotion. Strip .exe unconditionally on
+    # this branch so ``which xyzlang`` and ``which xyzlang.exe``
+    # collapse to the same family — otherwise mixed POSIX/Windows
+    # fleets silently break the recurrence counter.
+    if target.endswith(".exe"):
+        target = target[:-4]
+    return target or _FAMILY_FALLBACK
+
+
+def _role_for_verb(event: "ReconnaissanceEvent", artifact_norm: str, family: str) -> str:  # noqa: F821
+    """Best-effort artifact_role classification for a recon event."""
+    verb = event.verb
+    if verb == "version_query":
+        return "version"
+    if verb == "port_probe":
+        return "endpoint"
+    if verb == "command_lookup":
+        # If the discovered_value looks like an interpreter path,
+        # role=interpreter; else role=runner.
+        low = artifact_norm.lower()
+        for sfx in _INTERPRETER_SUFFIXES:
+            if low.endswith(sfx) or low.endswith(sfx + ".exe"):
+                return "interpreter"
+        return "runner"
+    if verb in ("file_read_recon", "cat_config_recon"):
+        return "config"
+    if verb == "help_query":
+        return "help"
+    if verb == "directory_probe":
+        return "path"
+    return "path"
 
 
 __all__ = [

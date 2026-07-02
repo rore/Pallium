@@ -408,7 +408,39 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
         Task_trace rows and index entries for kept memories pass
         through untouched.
         """
-        op_facts = [m for m in result.memory_objects if m.type == OPERATIONAL_FACT_TYPE]
+        # PR 3 of the operational_fact redesign (2026-07-02): every
+        # newly-derived operational_fact ships as ``lifecycle="candidate"``.
+        # The pre-PR-3 reconcile hook applied active-slot dedup which
+        # would silently drop candidates that duplicate an existing
+        # ACTIVE slot from a legacy row — that breaks PR 4's cross-
+        # thread recurrence counting.
+        #
+        # Two-tier handling under PR 3:
+        # 1. Active op_facts (from W3 pallium_remember or legacy rows)
+        #    still hit the active-slot dedup below.
+        # 2. Candidate op_facts (from the reconnaissance predicate) run
+        #    through a separate intra-container-per-thread dedup: if
+        #    THIS thread already has a candidate for the same conflict
+        #    slot, drop the fresh one. Cross-thread candidates accumulate
+        #    unmolested — PR 4's promotion counter needs distinct-thread
+        #    evidence across candidates. This bounds candidate row
+        #    growth without harming the promotion signal.
+        candidate_op_facts = [
+            m for m in result.memory_objects
+            if m.type == OPERATIONAL_FACT_TYPE and m.lifecycle == "candidate"
+        ]
+        if candidate_op_facts:
+            result = self._dedup_candidates_intra_thread(
+                result,
+                candidate_op_facts,
+                storage=storage,
+                container_ref=container_ref,
+                visibility=visibility,
+            )
+        op_facts = [
+            m for m in result.memory_objects
+            if m.type == OPERATIONAL_FACT_TYPE and m.lifecycle == "active"
+        ]
         if not op_facts:
             return result
 
@@ -506,6 +538,155 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
             index_entries=filtered_indexes,
             thread_rebuild_requested=result.thread_rebuild_requested,
         )
+
+    def _dedup_candidates_intra_thread(
+        self,
+        result: ProcessResult,
+        candidate_op_facts: list[MemoryObject],
+        *,
+        storage: Any,
+        container_ref: str,
+        visibility: str,
+    ) -> ProcessResult:
+        """Bound candidate accumulation for a single thread's rebuilds.
+
+        PR 3 of the operational_fact redesign (2026-07-02): the
+        reconnaissance predicate emits one candidate per matched verb
+        per turn. When a thread's summary is rebuilt (which happens on
+        every new item, per the ThreadAggregation pipeline), the SAME
+        recon events re-emit the SAME candidate slots. Without this
+        pass, one thread with 10 rebuilds and 5 recon slots produces
+        50 candidate rows for what is, factually, 5 pieces of evidence.
+
+        The dedup is scoped **per-thread** (not per-container) because
+        PR 4's promotion counter keys on distinct threads. Dropping
+        cross-thread duplicates here would silently zero out PR 4's
+        recurrence signal. Keep those; only collapse within-thread
+        churn.
+
+        The thread scope is derived from the candidates' backing
+        source items: two candidates are same-thread when they share
+        a ``thread_ref`` via their evidence source items. In practice
+        (this plugin), every candidate emitted by one rebuild belongs
+        to one thread aggregate, so we look up the aggregate's
+        ``thread_ref`` and query existing candidates in that thread
+        alone.
+        """
+        # Derive the thread_ref from the first candidate's evidence
+        # source item. All candidates in this result share the same
+        # thread aggregate.
+        thread_ref = self._infer_thread_ref(candidate_op_facts, storage)
+        if not thread_ref:
+            # No thread scope — nothing safe to dedup against. Better
+            # to accept accumulation than to drop cross-thread evidence.
+            return result
+
+        try:
+            existing_candidates = storage.list_memory_objects(
+                memory_types=[OPERATIONAL_FACT_TYPE],
+                lifecycle="candidate",
+                container_ref=container_ref,
+                include_soft_deleted=False,
+            )
+        except TypeError:
+            existing_candidates = storage.list_memory_objects(
+                memory_types=[OPERATIONAL_FACT_TYPE],
+                lifecycle="candidate",
+                container_ref=container_ref,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "operational_fact candidate dedup skipped: %s", exc,
+            )
+            return result
+
+        # Only same-thread rows count as prior evidence for dedup.
+        # Cross-thread candidates are the PR 4 promotion signal and
+        # MUST NOT collapse here.
+        same_thread_slots: set[tuple[str, str, str, str, str]] = set()
+        for row in existing_candidates:
+            row_thread = self._thread_ref_for_row(row, storage)
+            if row_thread != thread_ref:
+                continue
+            p = row.payload or {}
+            same_thread_slots.add((
+                str(p.get("command_family") or ""),
+                str(p.get("artifact_role") or ""),
+                str(p.get("scope_kind") or ""),
+                str(p.get("scope_ref") or ""),
+                str(p.get("artifact_normalized") or ""),
+            ))
+
+        dropped: set[str] = set()
+        for mem in candidate_op_facts:
+            p = mem.payload or {}
+            slot = (
+                str(p.get("command_family") or ""),
+                str(p.get("artifact_role") or ""),
+                str(p.get("scope_kind") or ""),
+                str(p.get("scope_ref") or ""),
+                str(p.get("artifact_normalized") or ""),
+            )
+            if slot in same_thread_slots:
+                dropped.add(mem.id)
+            else:
+                same_thread_slots.add(slot)
+
+        if not dropped:
+            return result
+
+        logger.info(
+            "operational_fact intra-thread candidate dedup: dropped %d "
+            "duplicate candidate(s) in container=%s thread=%s",
+            len(dropped), container_ref, thread_ref,
+        )
+        filtered_memories = [
+            m for m in result.memory_objects
+            if not (m.type == OPERATIONAL_FACT_TYPE and m.id in dropped)
+        ]
+        filtered_indexes = [
+            idx for idx in result.index_entries
+            if idx.target_id not in dropped
+        ]
+        return ProcessResult(
+            memory_objects=filtered_memories,
+            relations=result.relations,
+            index_entries=filtered_indexes,
+            thread_rebuild_requested=result.thread_rebuild_requested,
+        )
+
+    def _infer_thread_ref(
+        self, candidates: list[MemoryObject], storage: Any,
+    ) -> str | None:
+        for cand in candidates:
+            payload = cand.payload or {}
+            for ev in payload.get("evidence", []) or []:
+                sid = ev.get("source_item_id") if isinstance(ev, dict) else None
+                if not sid:
+                    continue
+                try:
+                    src = storage.get_source_item(sid)
+                except Exception:  # pragma: no cover - defensive
+                    continue
+                if src is not None and getattr(src, "thread_ref", None):
+                    return src.thread_ref
+        return None
+
+    def _thread_ref_for_row(
+        self, row: MemoryObject, storage: Any,
+    ) -> str | None:
+        payload = row.payload or {}
+        for ev in payload.get("evidence", []) or []:
+            sid = ev.get("source_item_id") if isinstance(ev, dict) else None
+            if not sid:
+                continue
+            try:
+                src = storage.get_source_item(sid)
+            except Exception:  # pragma: no cover - defensive
+                continue
+            if src is not None and getattr(src, "thread_ref", None):
+                return src.thread_ref
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -618,7 +799,14 @@ def _candidate_to_memory_object(
         type=OPERATIONAL_FACT_TYPE,
         schema_id=OPERATIONAL_FACT_SCHEMA_ID,
         schema_version=OPERATIONAL_FACT_SCHEMA_VERSION,
-        lifecycle="active",
+        # PR 3 of the operational_fact redesign (2026-07-02): every
+        # newly-derived operational_fact ships as ``candidate``. PR 4
+        # adds a promotion pass that flips it to ``active`` once a
+        # cross-thread recurrence threshold is met. Between PR 3 and
+        # PR 4, candidates accumulate but never surface at any
+        # operator surface (storage default filter,
+        # dashboard, MCP, retrieval).
+        lifecycle="candidate",
         visibility=aggregate.visibility,
         container_ref=aggregate.container_ref,
         freshness_at=now,
