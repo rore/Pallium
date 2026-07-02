@@ -412,9 +412,27 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
         if not op_facts:
             return result
 
-        # Load active operational_fact rows for this container and
-        # index by conflict slot. One query covers all candidates.
+        # Load active OR soft-deleted operational_fact rows for this
+        # container and index by conflict slot. Intentionally
+        # ``include_soft_deleted=True`` — the dedup guarantee is
+        # "don't resurrect a row we already emitted, even if the
+        # tightening/purge CLI has since soft-deleted it." Post-PR-1
+        # of the operational_fact redesign the default excludes
+        # soft-deleted; opt-in explicit here because the reconcile
+        # hook wants the wider set.
         try:
+            existing = storage.list_memory_objects(
+                memory_types=[OPERATIONAL_FACT_TYPE],
+                lifecycle="active",
+                container_ref=container_ref,
+                include_soft_deleted=True,
+            )
+        except TypeError:
+            # Backward-compat fallback: an older storage backend
+            # doesn't accept the ``include_soft_deleted`` kwarg. Fall
+            # back to the pre-PR-1 signature; storage returns all
+            # rows by default in that shape, so slot indexing still
+            # works.
             existing = storage.list_memory_objects(
                 memory_types=[OPERATIONAL_FACT_TYPE],
                 lifecycle="active",
@@ -432,12 +450,11 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
 
         existing_slots: set[tuple[str, str, str, str, str]] = set()
         for row in existing:
-            # `list_memory_objects` returns soft-deleted rows too — the
-            # domain MemoryObject doesn't carry the flag. Treat every
-            # matching slot as "already claimed" for dedup purposes:
-            # if a row was soft-deleted (e.g. by the tightening cleanup
-            # CLI), re-emitting the same slot would resurrect the
-            # noise. Skip.
+            # Every existing slot — active OR soft-deleted — is
+            # treated as claimed. A soft-deleted row that was
+            # intentionally purged (e.g. by the tightening cleanup
+            # CLI or the secrets-purge CLI) must not be re-created
+            # on the next rebuild.
             p = row.payload or {}
             slot = (
                 str(p.get("command_family") or ""),

@@ -415,22 +415,41 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_memory_objects(self, memory_types: list[str] | None = None, lifecycle: str | None = None, container_ref: str | None = None, subject_in: list[str] | None = None) -> list[MemoryObject]:
+    def list_memory_objects(
+        self,
+        memory_types: list[str] | None = None,
+        lifecycle: str | None = None,
+        container_ref: str | None = None,
+        subject_in: list[str] | None = None,
+        *,
+        include_soft_deleted: bool = False,
+    ) -> list[MemoryObject]:
+        """List memory objects. By default, soft-deleted rows are
+        excluded — pass ``include_soft_deleted=True`` for audit paths.
+        """
         raise NotImplementedError
 
     @abstractmethod
-    def list_memory_objects_for_source_item(self, source_item_id: str) -> list[MemoryObject]:
+    def list_memory_objects_for_source_item(
+        self, source_item_id: str, *, include_soft_deleted: bool = False,
+    ) -> list[MemoryObject]:
         raise NotImplementedError
 
-    def list_memory_objects_for_source_items(self, source_item_ids: list[str]) -> dict[str, list[MemoryObject]]:
+    def list_memory_objects_for_source_items(
+        self, source_item_ids: list[str], *, include_soft_deleted: bool = False,
+    ) -> dict[str, list[MemoryObject]]:
         """Batch variant: returns {source_item_id: [MemoryObject, ...]} for all given IDs.
 
         Default implementation calls the per-item method in a loop.
         Backends may override with a single-query implementation.
+        Honors ``include_soft_deleted`` uniformly with the single-item
+        method.
         """
         result: dict[str, list[MemoryObject]] = {}
         for sid in source_item_ids:
-            result[sid] = self.list_memory_objects_for_source_item(sid)
+            result[sid] = self.list_memory_objects_for_source_item(
+                sid, include_soft_deleted=include_soft_deleted,
+            )
         return result
 
     @abstractmethod

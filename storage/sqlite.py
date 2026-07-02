@@ -625,7 +625,15 @@ class SQLiteStorageProvider(
             return self._refresh_memory_object_freshness_in_session(session, memory_object_id)
         return self._with_retry(_do)
 
-    def list_memory_objects(self, memory_types: list[str] | None = None, lifecycle: str | None = None, container_ref: str | None = None, subject_in: list[str] | None = None) -> list[MemoryObject]:
+    def list_memory_objects(
+        self,
+        memory_types: list[str] | None = None,
+        lifecycle: str | None = None,
+        container_ref: str | None = None,
+        subject_in: list[str] | None = None,
+        *,
+        include_soft_deleted: bool = False,
+    ) -> list[MemoryObject]:
         with self._session_factory() as session:
             statement = select(MemoryObjectRecord)
             if memory_types:
@@ -636,10 +644,17 @@ class SQLiteStorageProvider(
                 statement = statement.where(MemoryObjectRecord.container_ref == container_ref)
             if subject_in is not None:
                 statement = statement.where(MemoryObjectRecord.subject.in_(subject_in))
+            if not include_soft_deleted:
+                # PR 1: default filter — tombstoned rows must not be
+                # returned unless the caller explicitly opts in
+                # (audit tools, undo replays).
+                statement = statement.where(MemoryObjectRecord.is_soft_deleted == 0)
             records = session.scalars(statement).all()
         return [self._to_memory_object(record) for record in records]
 
-    def list_memory_objects_for_source_item(self, source_item_id: str) -> list[MemoryObject]:
+    def list_memory_objects_for_source_item(
+        self, source_item_id: str, *, include_soft_deleted: bool = False,
+    ) -> list[MemoryObject]:
         with self._session_factory() as session:
             relation_records = session.scalars(
                 select(RelationRecord).where(
@@ -652,12 +667,17 @@ class SQLiteStorageProvider(
             memory_object_ids = [record.from_id for record in relation_records]
             if not memory_object_ids:
                 return []
-            records = session.scalars(
-                select(MemoryObjectRecord).where(MemoryObjectRecord.id.in_(memory_object_ids))
-            ).all()
+            statement = select(MemoryObjectRecord).where(
+                MemoryObjectRecord.id.in_(memory_object_ids)
+            )
+            if not include_soft_deleted:
+                statement = statement.where(MemoryObjectRecord.is_soft_deleted == 0)
+            records = session.scalars(statement).all()
         return [self._to_memory_object(record) for record in records]
 
-    def list_memory_objects_for_source_items(self, source_item_ids: list[str]) -> dict[str, list[MemoryObject]]:
+    def list_memory_objects_for_source_items(
+        self, source_item_ids: list[str], *, include_soft_deleted: bool = False,
+    ) -> dict[str, list[MemoryObject]]:
         if not source_item_ids:
             return {}
         with self._session_factory() as session:
@@ -676,9 +696,12 @@ class SQLiteStorageProvider(
                 all_memory_ids.add(rel.from_id)
             if not all_memory_ids:
                 return {sid: [] for sid in source_item_ids}
-            memory_records = session.scalars(
-                select(MemoryObjectRecord).where(MemoryObjectRecord.id.in_(list(all_memory_ids)))
-            ).all()
+            memory_stmt = select(MemoryObjectRecord).where(
+                MemoryObjectRecord.id.in_(list(all_memory_ids))
+            )
+            if not include_soft_deleted:
+                memory_stmt = memory_stmt.where(MemoryObjectRecord.is_soft_deleted == 0)
+            memory_records = session.scalars(memory_stmt).all()
             memory_by_id = {record.id: self._to_memory_object(record) for record in memory_records}
         result: dict[str, list[MemoryObject]] = {}
         for sid in source_item_ids:

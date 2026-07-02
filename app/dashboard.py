@@ -102,6 +102,7 @@ def mount_dashboard(app: FastAPI) -> None:
         limit: int = Query(50, ge=1),
         offset: int = Query(0, ge=0),
         sort: str | None = Query(None),
+        include_soft_deleted: bool = Query(False),
     ) -> JSONResponse:
         limit = min(limit, 200)
         service = app.state.pallium_service
@@ -131,6 +132,12 @@ def mount_dashboard(app: FastAPI) -> None:
                 like_pattern = f"%{search.strip()}%"
                 stmt = stmt.where(MemoryObjectRecord.payload_json.ilike(like_pattern))
                 count_stmt = count_stmt.where(MemoryObjectRecord.payload_json.ilike(like_pattern))
+            if not include_soft_deleted:
+                # PR 1 of operational_fact redesign: exclude tombstones
+                # from the default dashboard view. Audit UI can pass
+                # ``?include_soft_deleted=1`` to review purged rows.
+                stmt = stmt.where(MemoryObjectRecord.is_soft_deleted == 0)
+                count_stmt = count_stmt.where(MemoryObjectRecord.is_soft_deleted == 0)
 
             total = session.scalar(count_stmt) or 0
 

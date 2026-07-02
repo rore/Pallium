@@ -115,6 +115,14 @@ class MemoryObject:
     envelope: MemoryEnvelope | None = None
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
+    # 2026-07-02 (PR 1 of operational_fact redesign): the storage
+    # layer's ``memory_objects.is_soft_deleted`` column was previously
+    # dropped by the codec, so retrieval/dashboard callers saw
+    # tombstoned rows as if they were live. Now propagated end-to-end
+    # so every consumer that reads a MemoryObject can honor the flag.
+    # Callers who want to include tombstones in a query pass
+    # ``include_soft_deleted=True`` to the storage list methods.
+    is_soft_deleted: bool = False
 
 
 @dataclass(frozen=True)
