@@ -412,3 +412,138 @@ class TestNotOverRedacted:
             ("%key=NEW_KEY%",),
         ).fetchall()
         assert rows, "user-explicit note was redacted despite artifact_kind='note'"
+
+
+class TestRetrievalBarrierDefenseInDepth:
+    """Locks the retrieval-side redaction: even if a secret slipped
+    past the write barrier (e.g. was persisted before PR 0 landed
+    or via a redaction miss), ``service.query`` and
+    ``get_memory_expand`` never surface it to the caller.
+
+    These tests plant a raw secret DIRECTLY into storage bypassing
+    ``ingest_item``, then assert retrieval barriers still redact.
+    """
+
+    def test_query_redacts_secret_in_stored_excerpt(self, service, sqlite_conn):
+        """Plant a raw GitHub PAT in a memory_object payload via SQL,
+        then query — the retrieval barrier must redact before return."""
+        import json
+        from datetime import datetime, timezone
+
+        secret = "ghp_" + ("Z" * 36)
+        payload = json.dumps({"summary": f"leaked token was {secret}"})
+        # Insert directly bypassing ingest.
+        now = datetime.now(timezone.utc).isoformat()
+        sqlite_conn.execute(
+            "INSERT INTO memory_objects "
+            "(id, type, schema_id, schema_version, payload_json, lifecycle, "
+            " visibility, container_ref, actor_ref, subject, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                new_id(), "thread_summary", "test", "1", payload,
+                "active", "private", CONTAINER_REF, None,
+                f"planted secret {secret}", now,
+            ),
+        )
+        sqlite_conn.commit()
+        # Storage still has raw value (write barrier didn't run).
+        raw = sqlite_conn.execute(
+            "SELECT payload_json, subject FROM memory_objects WHERE subject LIKE ?",
+            (f"%{secret}%",),
+        ).fetchall()
+        assert raw, "planted secret should still be in storage before retrieval"
+        # Retrieval barrier redacts the returned payload.
+        result = service.query(
+            text="leaked token",
+            limit=10,
+            container_ref=CONTAINER_REF,
+            trigger_origin="user_prompt_submit",
+        )
+        _assert_no_secret_in_query_result(result, secret)
+
+    def test_get_memory_expand_redacts_planted_secret(self, service, sqlite_conn):
+        """Plant a raw secret in a memory row + a source_item, then
+        call get_memory_expand — both surfaces must return redacted."""
+        import json
+        from datetime import datetime, timezone
+
+        secret = "sk-ant-api03-" + ("Q" * 40)
+        memory_id = new_id()
+        source_id = new_id()
+        now = datetime.now(timezone.utc).isoformat()
+        # Insert memory_object with raw secret in payload.
+        sqlite_conn.execute(
+            "INSERT INTO memory_objects "
+            "(id, type, schema_id, schema_version, payload_json, lifecycle, "
+            " visibility, container_ref, actor_ref, subject, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                memory_id, "investigation_outcome", "test", "1",
+                json.dumps({"outcome_evidence_text": f"exposed key was {secret}"}),
+                "active", "private", CONTAINER_REF, None,
+                "test subject", now,
+            ),
+        )
+        # Insert source_item + relation so expand finds evidence.
+        sqlite_conn.execute(
+            "INSERT INTO source_items "
+            "(id, source_type, source_id, content_type, content, "
+            " artifact_kind, role, visibility, container_ref, actor_ref, "
+            " processing_status, processing_attempts, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                source_id, "claude-code", f"src-{source_id[:8]}",
+                "text/plain", f"raw source: {secret}",
+                "assistant_output", "assistant",
+                "private", CONTAINER_REF, None,
+                "completed", 1, now,
+            ),
+        )
+        sqlite_conn.execute(
+            "INSERT INTO relations (id, from_kind, from_id, relation_type, to_kind, to_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (new_id(), "memory_object", memory_id, "supported_by", "source_item", source_id),
+        )
+        sqlite_conn.commit()
+
+        # Call get_memory_expand — both payload and item.content must
+        # come back redacted.
+        payload, items, match_text = service.get_memory_expand(
+            memory_id, container_ref=CONTAINER_REF,
+        )
+        assert secret not in json.dumps(payload or {})
+        for item in items:
+            assert secret not in (item.content or "")
+
+    def test_note_not_redacted_at_retrieval(self, service, sqlite_conn):
+        """The retrieval-side note carveout: a memory of ``type='note'``
+        or a source_item with ``artifact_kind='note'`` is preserved
+        verbatim even by the retrieval barrier. Same trade-off as
+        the write barrier — user-explicit recall wins."""
+        procedure = "step: set key=NEW_KEY"
+        service.ingest_item(
+            source_type="agent_artifact",
+            source_id=f"note-retr-{new_id()[:8]}",
+            content_type="text/plain",
+            content=procedure,
+            metadata=None,
+            use_case="demo_agent_memory",
+            artifact_kind="note",
+            role="user",
+            container_ref=CONTAINER_REF,
+            thread_ref=THREAD_REF,
+            visibility="private",
+        )
+        result = service.query(
+            text="key=NEW_KEY",
+            limit=10,
+            container_ref=CONTAINER_REF,
+            trigger_origin="user_prompt_submit",
+        )
+        # At least one note result contains the raw placeholder.
+        note_results = [r for r in result.results if r.type == "note" or r.artifact_kind == "note"]
+        assert note_results, "note not returned by query"
+        assert any(
+            "key=NEW_KEY" in (r.excerpt or "") or "key=NEW_KEY" in json.dumps(r.payload or {})
+            for r in note_results
+        ), "note content was redacted despite the carveout"
