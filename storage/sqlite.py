@@ -750,6 +750,7 @@ class SQLiteStorageProvider(
         scope_kind: str,
         scope_ref: str,
         artifact_normalized: str,
+        visibility: str = "private",
     ) -> int:
         """See :meth:`StorageProvider.count_distinct_threads_for_conflict_slot`.
 
@@ -758,6 +759,12 @@ class SQLiteStorageProvider(
         payload-column split. Filters both candidate and active rows
         (so a slot with one active + one candidate row already counts
         the two threads) and excludes soft-deleted rows.
+
+        Scope isolation: filters on ``visibility`` so a private
+        candidate can't accidentally count as evidence for a global
+        slot in the same container (or vice versa). Same defense-in-
+        depth as the container_ref filter — the plan's §Invariants
+        section calls this out explicitly.
         """
         from semantic.operational_fact import OPERATIONAL_FACT_TYPE
 
@@ -773,6 +780,7 @@ class SQLiteStorageProvider(
                     "JOIN source_items s ON s.id = r.to_id "
                     "WHERE m.type = :type "
                     "  AND m.container_ref = :container_ref "
+                    "  AND m.visibility = :visibility "
                     "  AND m.lifecycle IN ('candidate', 'active') "
                     "  AND m.is_soft_deleted = 0 "
                     "  AND json_extract(m.payload_json, '$.command_family') = :command_family "
@@ -785,6 +793,7 @@ class SQLiteStorageProvider(
                 {
                     "type": OPERATIONAL_FACT_TYPE,
                     "container_ref": container_ref,
+                    "visibility": visibility,
                     "command_family": command_family,
                     "artifact_role": artifact_role,
                     "scope_kind": scope_kind,

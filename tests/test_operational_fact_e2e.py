@@ -725,3 +725,29 @@ class TestUserPromptSubmitInjection:
             "non-operational prompt surfaced an operational_fact; "
             f"overlap={non_op_result_ids & active_ids}"
         )
+
+    def test_operational_intent_signal_fires_on_run_python_tests(self):
+        """Injection-side lock: the operational_intent routing signal
+        MUST fire on the plan's canonical query ("how do I run the
+        tests here?") and MUST NOT fire on off-topic prompts.
+
+        This asserts on the routing-signal boundary independent of
+        BM25 index sizing. Even if a test-fixture index is too small
+        to cross the per-candidate injection floor, the classification
+        of "operational intent → route to operational_fact preferred
+        layer" must hold. If a future change disables the signal but
+        leaves BM25 retrieval intact, the sibling test above still
+        passes; THIS test catches the regression.
+        """
+        from semantic.agent_conversation_memory_routing_signals import (
+            _derive_operational_intent,
+        )
+
+        def _toks(s: str) -> tuple[str, ...]:
+            return tuple(t.strip().lower() for t in s.split() if t.strip())
+
+        fired, _ = _derive_operational_intent(_toks("how do I run python tests here"))
+        assert fired, "operational_intent signal did not fire on canonical query"
+
+        fired_off, _ = _derive_operational_intent(_toks("what did I have for lunch"))
+        assert not fired_off, "operational_intent signal fired on off-topic prompt"

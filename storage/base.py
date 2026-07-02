@@ -461,17 +461,24 @@ class StorageProvider(ABC):
         scope_kind: str,
         scope_ref: str,
         artifact_normalized: str,
+        visibility: str = "private",
     ) -> int:
         """Count distinct ``thread_ref`` values supporting a single
-        ``operational_fact`` conflict slot in one container.
+        ``operational_fact`` conflict slot in one container at one
+        visibility scope.
 
         The count joins ``memory_objects`` (operational_fact rows in the
         slot, ``lifecycle in ('candidate','active')``, not
-        soft-deleted) to their ``supported_by`` relations to their
-        backing ``source_items`` and returns the number of distinct
-        non-null ``thread_ref`` values seen. One thread with ten
-        supporting source items counts once — this is the anti-
-        inflation guarantee PR 4 promotion depends on.
+        soft-deleted, matching ``visibility``) to their ``supported_by``
+        relations to their backing ``source_items`` and returns the
+        number of distinct non-null ``thread_ref`` values seen. One
+        thread with ten supporting source items counts once — this is
+        the anti-inflation guarantee PR 4 promotion depends on.
+
+        ``visibility`` isolates private vs global slots — a private
+        candidate must never count as evidence for a global slot in
+        the same container_ref (or vice versa). Same defense-in-depth
+        as ``container_ref`` isolation.
 
         Returns 0 if the slot has no rows or all supporting source
         items have NULL ``thread_ref``.

@@ -730,21 +730,27 @@ class SQLiteQueueMixin:
                 scope_kind=hint.scope_kind,
                 scope_ref=hint.scope_ref,
                 artifact_normalized=hint.artifact_normalized,
+                visibility=hint.visibility,
             )
             if distinct_threads < PROMOTION_THREAD_THRESHOLD:
                 continue
 
             # Every candidate row in the same slot for this container
-            # promotes together. This includes the just-emitted
-            # candidate (already visible to this session) AND every
-            # prior candidate that had been accumulating below the
+            # AND at the same visibility scope promotes together. This
+            # includes the just-emitted candidate (already visible to
+            # this session) AND every prior candidate at that
+            # visibility that had been accumulating below the
             # threshold. Anti-inflation guard: candidates only —
             # active rows already are active and re-flipping them is
             # a no-op that would still write a spurious audit row.
+            # Visibility filter: private/global candidates must NEVER
+            # collapse (defense-in-depth with the count query's
+            # visibility scoping — plan §Invariants).
             candidate_records = session.scalars(
                 select(MemoryObjectRecord).where(
                     MemoryObjectRecord.type == OPERATIONAL_FACT_TYPE,
                     MemoryObjectRecord.container_ref == hint.container_ref,
+                    MemoryObjectRecord.visibility == hint.visibility,
                     MemoryObjectRecord.lifecycle == "candidate",
                     MemoryObjectRecord.is_soft_deleted == 0,
                 )
@@ -791,6 +797,7 @@ class SQLiteQueueMixin:
         scope_kind: str,
         scope_ref: str,
         artifact_normalized: str,
+        visibility: str = "private",
     ) -> int:
         """Session-scoped variant of
         :meth:`SQLiteStorageProvider.count_distinct_threads_for_conflict_slot`.
@@ -798,6 +805,10 @@ class SQLiteQueueMixin:
         Must run within the transaction that just persisted the
         candidate rows and their ``supported_by`` relations — otherwise
         the count is off-by-one.
+
+        Scope isolation: filters on ``visibility`` so a private
+        candidate can't count as evidence for a global slot (or vice
+        versa).
         """
         from semantic.operational_fact import OPERATIONAL_FACT_TYPE
 
@@ -812,6 +823,7 @@ class SQLiteQueueMixin:
                 "JOIN source_items s ON s.id = r.to_id "
                 "WHERE m.type = :type "
                 "  AND m.container_ref = :container_ref "
+                "  AND m.visibility = :visibility "
                 "  AND m.lifecycle IN ('candidate', 'active') "
                 "  AND m.is_soft_deleted = 0 "
                 "  AND json_extract(m.payload_json, '$.command_family') = :command_family "
@@ -824,6 +836,7 @@ class SQLiteQueueMixin:
             {
                 "type": OPERATIONAL_FACT_TYPE,
                 "container_ref": container_ref,
+                "visibility": visibility,
                 "command_family": command_family,
                 "artifact_role": artifact_role,
                 "scope_kind": scope_kind,
