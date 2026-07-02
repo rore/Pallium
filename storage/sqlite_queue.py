@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
@@ -7,7 +8,7 @@ from difflib import SequenceMatcher
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from core.contracts import ProcessResult, SupersessionHint
+from core.contracts import ProcessResult, PromotionHint, SupersessionHint
 from core.visibility import visibility_matches_exact
 from core.models import new_id, utc_now
 from core.observability import OBSERVABILITY_METADATA_KEY
@@ -26,6 +27,7 @@ from storage.sqlite_schema import (
     IndexEntryRecord,
     MaintenanceStateRecord,
     MemoryObjectRecord,
+    OperationalFactPromotionLogRecord,
     PackageProcessingStatusRecord,
     RelationRecord,
     SourceItemRecord,
@@ -38,6 +40,16 @@ _CONTAINER_SCOPED_SUPERSESSION_TYPES = frozenset({
     "decision",
     "investigation_outcome",
 })
+
+# PR 4 of the operational_fact redesign (2026-07-02): a slot promotes
+# to ``active`` once at least this many distinct threads support it via
+# ``supported_by`` relations to source_items. Two threads = "the same
+# question was answered independently twice, so it's a durable fact,
+# not a one-off." Default 2, no config knob yet — TODO: read from
+# ``pallium.local.toml [operational_fact] promotion_threads`` once the
+# config surface stabilizes. Bumping this constant globally is safe;
+# lowering it below 2 disables the whole recurrence gate.
+PROMOTION_THREAD_THRESHOLD = 2
 # Only constraints take the Jaccard-overlap branch. Decisions and
 # investigation_outcomes were widened to container scope in T2
 # (2026-06-04) but their canonical_key is now
@@ -655,6 +667,171 @@ class SQLiteQueueMixin:
                     text_view_name=index_entry.text_view_name,
                     container_ref=container_ref,
                 )
+        # PR 4 of the operational_fact redesign (2026-07-02): after
+        # persisting candidate rows + their ``supported_by`` relations,
+        # evaluate every promotion hint inside the SAME session. The
+        # freshly-inserted rows are visible to the join
+        # ``count_distinct_threads_for_conflict_slot`` so the hint's
+        # slot count includes the just-emitted candidate. Any
+        # slot that crosses the threshold flips every candidate row in
+        # the slot (this hint's candidate plus any prior candidates in
+        # the same container/slot) to ``lifecycle="active"`` and writes
+        # an audit row.
+        if result.promotion_hints:
+            self._evaluate_promotion_hints_in_session(session, result.promotion_hints)
+
+    def _evaluate_promotion_hints_in_session(
+        self,
+        session: Session,
+        hints: list[PromotionHint],
+    ) -> None:
+        """Promote candidate operational_fact rows whose slot has
+        crossed :data:`PROMOTION_THREAD_THRESHOLD` distinct
+        supporting threads.
+
+        Same-slot hints deduplicate by ``(container_ref, slot_key)``:
+        two candidates in one hint list that share a slot only need
+        one promotion pass. Promotion updates every candidate row in
+        the slot (not just the one referenced by the hint) so a slot
+        with 3 pre-existing candidates and 1 new candidate all flip
+        together the first time the threshold is met. Idempotent:
+        once every candidate in a slot has been promoted, the next
+        hint for the same slot no-ops because there are no more
+        candidate rows to update.
+
+        Every promotion writes one row per flipped memory to
+        ``operational_fact_promotion_log`` with
+        ``distinct_threads_count`` set to the witness count at the
+        moment of promotion. Rows are append-only.
+        """
+        from semantic.operational_fact import OPERATIONAL_FACT_TYPE
+
+        # Deduplicate hints by (container, slot). Multiple hints for
+        # the same slot only need one promotion pass.
+        seen_slots: set[tuple[str, str, str, str, str, str]] = set()
+        for hint in hints:
+            slot_key = (
+                hint.container_ref,
+                hint.command_family,
+                hint.artifact_role,
+                hint.scope_kind,
+                hint.scope_ref,
+                hint.artifact_normalized,
+            )
+            if slot_key in seen_slots:
+                continue
+            seen_slots.add(slot_key)
+
+            distinct_threads = self._count_distinct_threads_for_slot_in_session(
+                session,
+                container_ref=hint.container_ref,
+                command_family=hint.command_family,
+                artifact_role=hint.artifact_role,
+                scope_kind=hint.scope_kind,
+                scope_ref=hint.scope_ref,
+                artifact_normalized=hint.artifact_normalized,
+            )
+            if distinct_threads < PROMOTION_THREAD_THRESHOLD:
+                continue
+
+            # Every candidate row in the same slot for this container
+            # promotes together. This includes the just-emitted
+            # candidate (already visible to this session) AND every
+            # prior candidate that had been accumulating below the
+            # threshold. Anti-inflation guard: candidates only —
+            # active rows already are active and re-flipping them is
+            # a no-op that would still write a spurious audit row.
+            candidate_records = session.scalars(
+                select(MemoryObjectRecord).where(
+                    MemoryObjectRecord.type == OPERATIONAL_FACT_TYPE,
+                    MemoryObjectRecord.container_ref == hint.container_ref,
+                    MemoryObjectRecord.lifecycle == "candidate",
+                    MemoryObjectRecord.is_soft_deleted == 0,
+                )
+            ).all()
+            promoted_at = utc_now()
+            for record in candidate_records:
+                # Re-parse payload_json to filter on the slot key. The
+                # SQL WHERE could do this with json_extract, but
+                # SQLAlchemy expressions for json_extract are backend-
+                # specific — a Python filter on a bounded candidate
+                # set (few rows per container) is simpler and just as
+                # correct.
+                try:
+                    payload = json.loads(record.payload_json or "{}")
+                except Exception:
+                    continue
+                if (
+                    str(payload.get("command_family") or "") == hint.command_family
+                    and str(payload.get("artifact_role") or "") == hint.artifact_role
+                    and str(payload.get("scope_kind") or "") == hint.scope_kind
+                    and str(payload.get("scope_ref") or "") == hint.scope_ref
+                    and str(payload.get("artifact_normalized") or "") == hint.artifact_normalized
+                ):
+                    record.lifecycle = "active"
+                    session.add(
+                        OperationalFactPromotionLogRecord(
+                            id=new_id(),
+                            memory_object_id=record.id,
+                            from_lifecycle="candidate",
+                            to_lifecycle="active",
+                            reason="recurrence_threshold_met",
+                            distinct_threads_count=distinct_threads,
+                            promoted_at=promoted_at,
+                        )
+                    )
+
+    def _count_distinct_threads_for_slot_in_session(
+        self,
+        session: Session,
+        *,
+        container_ref: str,
+        command_family: str,
+        artifact_role: str,
+        scope_kind: str,
+        scope_ref: str,
+        artifact_normalized: str,
+    ) -> int:
+        """Session-scoped variant of
+        :meth:`SQLiteStorageProvider.count_distinct_threads_for_conflict_slot`.
+
+        Must run within the transaction that just persisted the
+        candidate rows and their ``supported_by`` relations — otherwise
+        the count is off-by-one.
+        """
+        from semantic.operational_fact import OPERATIONAL_FACT_TYPE
+
+        row = session.execute(
+            text(
+                "SELECT COUNT(DISTINCT s.thread_ref) "
+                "FROM memory_objects m "
+                "JOIN relations r ON r.from_id = m.id "
+                "  AND r.relation_type = 'supported_by' "
+                "  AND r.from_kind = 'memory_object' "
+                "  AND r.to_kind = 'source_item' "
+                "JOIN source_items s ON s.id = r.to_id "
+                "WHERE m.type = :type "
+                "  AND m.container_ref = :container_ref "
+                "  AND m.lifecycle IN ('candidate', 'active') "
+                "  AND m.is_soft_deleted = 0 "
+                "  AND json_extract(m.payload_json, '$.command_family') = :command_family "
+                "  AND json_extract(m.payload_json, '$.artifact_role') = :artifact_role "
+                "  AND json_extract(m.payload_json, '$.scope_kind') = :scope_kind "
+                "  AND json_extract(m.payload_json, '$.scope_ref') = :scope_ref "
+                "  AND json_extract(m.payload_json, '$.artifact_normalized') = :artifact_normalized "
+                "  AND s.thread_ref IS NOT NULL"
+            ),
+            {
+                "type": OPERATIONAL_FACT_TYPE,
+                "container_ref": container_ref,
+                "command_family": command_family,
+                "artifact_role": artifact_role,
+                "scope_kind": scope_kind,
+                "scope_ref": scope_ref,
+                "artifact_normalized": artifact_normalized,
+            },
+        ).one()
+        return int(row[0] or 0)
 
     def _delete_index_entries_for_target_in_session(
         self,

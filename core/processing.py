@@ -348,6 +348,7 @@ class ItemProcessor:
                 source_item_metadata_updates=metadata_updates,
                 thread_rebuild_requested=direct_result.thread_rebuild_requested,
                 supersession_hints=direct_result.supersession_hints,
+                promotion_hints=direct_result.promotion_hints,
             )
             if using_package_tracking:
                 # Multi-package path: persist results without marking source_item as completed.

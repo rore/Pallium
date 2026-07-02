@@ -451,6 +451,33 @@ class StorageProvider(ABC):
     ) -> list[MemoryObject]:
         raise NotImplementedError
 
+    @abstractmethod
+    def count_distinct_threads_for_conflict_slot(
+        self,
+        *,
+        container_ref: str,
+        command_family: str,
+        artifact_role: str,
+        scope_kind: str,
+        scope_ref: str,
+        artifact_normalized: str,
+    ) -> int:
+        """Count distinct ``thread_ref`` values supporting a single
+        ``operational_fact`` conflict slot in one container.
+
+        The count joins ``memory_objects`` (operational_fact rows in the
+        slot, ``lifecycle in ('candidate','active')``, not
+        soft-deleted) to their ``supported_by`` relations to their
+        backing ``source_items`` and returns the number of distinct
+        non-null ``thread_ref`` values seen. One thread with ten
+        supporting source items counts once — this is the anti-
+        inflation guarantee PR 4 promotion depends on.
+
+        Returns 0 if the slot has no rows or all supporting source
+        items have NULL ``thread_ref``.
+        """
+        raise NotImplementedError
+
     def list_memory_objects_for_source_items(
         self, source_item_ids: list[str], *,
         include_soft_deleted: bool = False,

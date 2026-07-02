@@ -296,6 +296,7 @@ class ThreadRebuilder:
                         index_entries=thread_result.index_entries,
                         source_item_metadata_updates=metadata_updates,
                         supersession_hints=thread_result.supersession_hints,
+                        promotion_hints=thread_result.promotion_hints,
                     )
                 self._emit_thread_rebuild_outcome(
                     lease=current_lease,

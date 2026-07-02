@@ -741,6 +741,59 @@ class SQLiteStorageProvider(
             result[sid] = [memory_by_id[mid] for mid in source_to_memory_ids.get(sid, []) if mid in memory_by_id]
         return result
 
+    def count_distinct_threads_for_conflict_slot(
+        self,
+        *,
+        container_ref: str,
+        command_family: str,
+        artifact_role: str,
+        scope_kind: str,
+        scope_ref: str,
+        artifact_normalized: str,
+    ) -> int:
+        """See :meth:`StorageProvider.count_distinct_threads_for_conflict_slot`.
+
+        PR 4 of operational_fact redesign. Uses ``json_extract`` on the
+        payload_json column to match the slot key without requiring a
+        payload-column split. Filters both candidate and active rows
+        (so a slot with one active + one candidate row already counts
+        the two threads) and excludes soft-deleted rows.
+        """
+        from semantic.operational_fact import OPERATIONAL_FACT_TYPE
+
+        with self._session_factory() as session:
+            row = session.execute(
+                text(
+                    "SELECT COUNT(DISTINCT s.thread_ref) "
+                    "FROM memory_objects m "
+                    "JOIN relations r ON r.from_id = m.id "
+                    "  AND r.relation_type = 'supported_by' "
+                    "  AND r.from_kind = 'memory_object' "
+                    "  AND r.to_kind = 'source_item' "
+                    "JOIN source_items s ON s.id = r.to_id "
+                    "WHERE m.type = :type "
+                    "  AND m.container_ref = :container_ref "
+                    "  AND m.lifecycle IN ('candidate', 'active') "
+                    "  AND m.is_soft_deleted = 0 "
+                    "  AND json_extract(m.payload_json, '$.command_family') = :command_family "
+                    "  AND json_extract(m.payload_json, '$.artifact_role') = :artifact_role "
+                    "  AND json_extract(m.payload_json, '$.scope_kind') = :scope_kind "
+                    "  AND json_extract(m.payload_json, '$.scope_ref') = :scope_ref "
+                    "  AND json_extract(m.payload_json, '$.artifact_normalized') = :artifact_normalized "
+                    "  AND s.thread_ref IS NOT NULL"
+                ),
+                {
+                    "type": OPERATIONAL_FACT_TYPE,
+                    "container_ref": container_ref,
+                    "command_family": command_family,
+                    "artifact_role": artifact_role,
+                    "scope_kind": scope_kind,
+                    "scope_ref": scope_ref,
+                    "artifact_normalized": artifact_normalized,
+                },
+            ).one()
+            return int(row[0] or 0)
+
     def create_relation(self, relation: Relation) -> None:
         record = RelationRecord(
             id=relation.id,
