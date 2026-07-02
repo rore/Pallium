@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from capabilities.thread_aggregation import ThreadAggregate
-from core.contracts import MemoryRetentionPolicy, ProcessResult
+from core.contracts import MemoryRetentionPolicy, ProcessResult, PromotionHint
 from core.indexing import build_index_entry, BUILTIN_INDEX_PROVIDER_NAME, BUILTIN_INDEX_PROVIDER_VERSION
 from core.models import IndexEntry, MemoryObject, Relation, SourceItem, new_id, utc_now
 from core.type_registry import TypeRegistration, TypeRegistry
@@ -362,6 +362,7 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
         # the same ProcessResult that carries task_trace.
         extra_memories: list[MemoryObject] = []
         extra_indexes: list[IndexEntry] = []
+        extra_relations: list[Relation] = []
         if self._operational_fact_derivation_enabled and turns and trace_items:
             turn_stream = _build_turn_stream_from_aggregate(trace_items, turns)
             candidates = derive_operational_facts(
@@ -373,10 +374,33 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
                 mem = _candidate_to_memory_object(cand, aggregate)
                 extra_memories.append(mem)
                 extra_indexes.append(_candidate_to_index_entry(cand, mem))
+                # PR 4 of operational_fact redesign: emit
+                # ``supported_by`` relations from the derived memory to
+                # each source_item that carried the evidence. This is
+                # the join table the promotion counter reads to answer
+                # "how many distinct threads support this slot" —
+                # without these relations, promotion is impossible.
+                # De-dup by source_item_id since two evidence entries
+                # (discovery + use) may point to the same source item.
+                seen_source_ids: set[str] = set()
+                for ev in cand.evidence:
+                    sid = ev.source_item_id
+                    if not sid or sid in seen_source_ids:
+                        continue
+                    seen_source_ids.add(sid)
+                    extra_relations.append(
+                        Relation(
+                            from_kind="memory_object",
+                            from_id=mem.id,
+                            relation_type="supported_by",
+                            to_kind="source_item",
+                            to_id=sid,
+                        )
+                    )
 
         return ProcessResult(
             memory_objects=[memory_obj, *extra_memories],
-            relations=[],
+            relations=extra_relations,
             index_entries=[index_entry, *extra_indexes],
             thread_rebuild_requested=False,
         )
@@ -437,6 +461,14 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
                 container_ref=container_ref,
                 visibility=visibility,
             )
+        # PR 4 of operational_fact redesign: emit a PromotionHint for
+        # every kept candidate. The promotion evaluator runs
+        # post-persist in the SAME storage transaction so the freshly-
+        # inserted candidate + supported_by relations are visible to
+        # ``count_distinct_threads_for_conflict_slot``.
+        result = self._append_promotion_hints_for_kept_candidates(
+            result, container_ref=container_ref, visibility=visibility,
+        )
         op_facts = [
             m for m in result.memory_objects
             if m.type == OPERATIONAL_FACT_TYPE and m.lifecycle == "active"
@@ -537,6 +569,8 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
             relations=result.relations,
             index_entries=filtered_indexes,
             thread_rebuild_requested=result.thread_rebuild_requested,
+            supersession_hints=result.supersession_hints,
+            promotion_hints=result.promotion_hints,
         )
 
     def _dedup_candidates_intra_thread(
@@ -648,11 +682,83 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
             idx for idx in result.index_entries
             if idx.target_id not in dropped
         ]
+        # Drop any ``supported_by`` relations that would dangle after the
+        # dropped candidates disappear. Otherwise the relation would
+        # reference a memory_object id that never gets written and
+        # ``count_distinct_threads_for_conflict_slot`` would still see it.
+        filtered_relations = [
+            r for r in result.relations
+            if not (r.from_kind == "memory_object" and r.from_id in dropped)
+        ]
         return ProcessResult(
             memory_objects=filtered_memories,
-            relations=result.relations,
+            relations=filtered_relations,
             index_entries=filtered_indexes,
             thread_rebuild_requested=result.thread_rebuild_requested,
+            supersession_hints=result.supersession_hints,
+            promotion_hints=result.promotion_hints,
+        )
+
+    def _append_promotion_hints_for_kept_candidates(
+        self,
+        result: ProcessResult,
+        *,
+        container_ref: str,
+        visibility: str,
+    ) -> ProcessResult:
+        """Emit one ``PromotionHint`` per kept candidate operational_fact.
+
+        PR 4 of the operational_fact redesign. Called after intra-
+        thread dedup so the hints reflect exactly what will be
+        persisted. The evaluator inside the storage transaction reads
+        each hint's slot key, queries
+        ``count_distinct_threads_for_conflict_slot``, and — if the
+        recurrence threshold is met — flips every candidate row in the
+        slot (this candidate plus any prior candidates for the same
+        container/slot) to ``lifecycle="active"``.
+
+        This is a pure functional transformation: the ``ProcessResult``
+        is rebuilt with ``promotion_hints`` appended. No storage
+        access.
+        """
+        kept_candidates = [
+            m for m in result.memory_objects
+            if m.type == OPERATIONAL_FACT_TYPE and m.lifecycle == "candidate"
+        ]
+        if not kept_candidates:
+            return result
+        hints = list(result.promotion_hints)
+        for mem in kept_candidates:
+            p = mem.payload or {}
+            command_family = str(p.get("command_family") or "")
+            artifact_role = str(p.get("artifact_role") or "")
+            scope_kind = str(p.get("scope_kind") or "")
+            scope_ref = str(p.get("scope_ref") or "")
+            artifact_normalized = str(p.get("artifact_normalized") or "")
+            if not (command_family and scope_kind and scope_ref and artifact_normalized):
+                # Slot key incomplete — skip. A defensive guard so the
+                # evaluator never runs a query against an empty slot.
+                continue
+            hints.append(
+                PromotionHint(
+                    candidate_memory_id=mem.id,
+                    command_family=command_family,
+                    artifact_role=artifact_role,
+                    scope_kind=scope_kind,
+                    scope_ref=scope_ref,
+                    artifact_normalized=artifact_normalized,
+                    container_ref=container_ref,
+                    visibility=visibility,
+                )
+            )
+        return ProcessResult(
+            memory_objects=result.memory_objects,
+            relations=result.relations,
+            index_entries=result.index_entries,
+            source_item_metadata_updates=result.source_item_metadata_updates,
+            thread_rebuild_requested=result.thread_rebuild_requested,
+            supersession_hints=result.supersession_hints,
+            promotion_hints=hints,
         )
 
     def _infer_thread_ref(

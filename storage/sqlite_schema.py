@@ -351,6 +351,27 @@ class SourceItemWorkstreamRecord(Base):
     stage = Column(String, nullable=True)
 
 
+class OperationalFactPromotionLogRecord(Base):
+    """PR 4 of operational_fact redesign — audit trail for
+    ``lifecycle`` transitions of ``operational_fact`` memory objects.
+
+    Every promotion event (``candidate -> active``) writes exactly one
+    row per memory that was flipped. Rows are strictly append-only and
+    are not read by retrieval / ranking / injection paths. Intended
+    consumers are post-hoc debugging, live-DB audits, and metrics.
+    """
+
+    __tablename__ = "operational_fact_promotion_log"
+
+    id = Column(String, primary_key=True)
+    memory_object_id = Column(String, nullable=False)
+    from_lifecycle = Column(String, nullable=False)
+    to_lifecycle = Column(String, nullable=False)
+    reason = Column(String, nullable=False)
+    distinct_threads_count = Column(Integer, nullable=False, default=0)
+    promoted_at = Column(DateTime(timezone=True), nullable=False)
+
+
 class SQLiteSchemaMixin:
     _SOURCE_ITEM_MIGRATIONS = {
         "occurred_at": "ALTER TABLE source_items ADD COLUMN occurred_at DATETIME",
@@ -560,6 +581,17 @@ class SQLiteSchemaMixin:
         "idx_source_item_workstreams_wm": (
             "CREATE INDEX IF NOT EXISTS idx_source_item_workstreams_wm "
             "ON source_item_workstreams(watermark)"
+        ),
+        # PR 4 of operational_fact redesign: promotion audit rows are
+        # append-only and queried by memory_object_id (for a debug
+        # lookup) or by promoted_at (for a time-window rollup).
+        "idx_operational_fact_promotion_log_memory": (
+            "CREATE INDEX IF NOT EXISTS idx_operational_fact_promotion_log_memory "
+            "ON operational_fact_promotion_log(memory_object_id, promoted_at)"
+        ),
+        "idx_operational_fact_promotion_log_promoted_at": (
+            "CREATE INDEX IF NOT EXISTS idx_operational_fact_promotion_log_promoted_at "
+            "ON operational_fact_promotion_log(promoted_at)"
         ),
     }
     _QUERY_AUDIT_LOG_INDEX_MIGRATIONS = {

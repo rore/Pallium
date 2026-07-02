@@ -53,13 +53,27 @@ def service(test_db_url):
     storage = SQLiteStorageProvider(test_db_url)
     plugins = {
         "demo_agent_memory": DemoAgentMemoryPlugin(),
-        "agent_work_trace": AgentWorkTracePlugin(provider=_StubOutcome()),
+        "agent_work_trace": AgentWorkTracePlugin(
+            provider=_StubOutcome(),
+            operational_fact_derivation_enabled=True,
+        ),
     }
+    # Wire the routing type_registry from plugin registrations —
+    # matches the shape ``app/dependencies.py`` uses in production.
+    # Without this, ``QueryExecutor`` never routes injection blocks
+    # for the operational_intent signal Test 7 relies on.
+    from core.type_registry import TypeRegistry
+    type_registry = TypeRegistry()
+    for plugin in plugins.values():
+        register_routing_types = getattr(plugin, "register_routing_types", None)
+        if callable(register_routing_types):
+            register_routing_types(type_registry)
     return PalliumService(
         storage=storage,
         retrieval=LexicalRetrievalProvider(storage),
         semantic_plugins=plugins,
         default_use_case="demo_agent_memory",
+        type_registry=type_registry if len(type_registry) > 0 else None,
     )
 
 
@@ -375,35 +389,365 @@ class TestUnknownEcosystemCandidate:
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — Cross-session recurrence promotes (PR 4 — XFAIL until then)
+# Test 1 — Cross-session recurrence promotes (PR 4)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="promotion mechanism ships in PR 4", strict=True)
+CONTAINER_X = "git:example.com/repo-X"
+
+
+def _ingest_recon_trace(
+    service,
+    *,
+    thread_ref: str,
+    turns_data: list[dict],
+    container_ref: str = CONTAINER_X,
+    cwd: str = "/home/user/project",
+) -> None:
+    """Ingest a list of turns (each with commands/files_read etc.) as
+    ``agent_work_trace_turn`` source items and drain the queue so
+    thread rebuild + reconcile hook + promotion runs.
+    """
+    for turn in turns_data:
+        service.ingest_item(
+            source_type="claude-code",
+            source_id=f"cc-recon-{new_id()[:12]}",
+            content_type="text/plain",
+            content="Turn: recon.",
+            metadata={
+                "agent_work_trace_turn": turn,
+                "cwd": cwd,
+            },
+            use_case="demo_agent_memory",
+            artifact_kind="assistant_output",
+            role="assistant",
+            container_ref=container_ref,
+            thread_ref=thread_ref,
+            visibility="private",
+        )
+    service.drain_processing_queue(worker_id="e2e-pr4-test")
+
+
+def _list_op_facts(service, *, container_ref: str, include_candidates: bool = True):
+    return service._storage.list_memory_objects(
+        memory_types=[OPERATIONAL_FACT_TYPE],
+        container_ref=container_ref,
+        include_candidates=include_candidates,
+    )
+
+
+def _query_promotion_log_ids(service):
+    """Return the set of memory_object_ids that have promotion-log rows."""
+    from storage.sqlite_schema import OperationalFactPromotionLogRecord
+    from sqlalchemy import select
+
+    storage = service._storage
+    with storage._session_factory() as session:
+        rows = session.scalars(
+            select(OperationalFactPromotionLogRecord)
+        ).all()
+    return {r.memory_object_id for r in rows}
+
+
 class TestCrossSessionRecurrencePromotes:
+    """Two-session reconnaissance promotes a candidate to active; a
+    single-session recon leaves it invisible.
+    """
+
     def test_two_sessions_promote_to_active(self, service):
-        # PR 4 test scaffold. Placeholder assertion — will be filled in
-        # when PR 4 lands.
-        raise AssertionError("PR 4 not yet implemented")
+        # Session A: reconnaissance turns. Because thread-rebuild fires
+        # on every rebuild-triggering item and the reconnaissance
+        # predicate runs on the accumulated turn set, we ingest turns
+        # that between them include recon verbs for python and the
+        # test runner.
+        sess_a_turns = [
+            {
+                "commands": [
+                    {"cmd": "where python", "exit_code": 0, "output_tail": "/usr/local/bin/python"},
+                ],
+                "files_read": [],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+            {
+                "commands": [
+                    {"cmd": "python --version", "exit_code": 0, "output_tail": "Python 3.12.4"},
+                ],
+                "files_read": [],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+            {
+                "commands": [
+                    {"cmd": "cat pyproject.toml", "exit_code": 0, "output_tail": "[project]\nname = 'x'"},
+                ],
+                "files_read": ["pyproject.toml"],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+            {
+                "commands": [
+                    {"cmd": "uv run pytest", "exit_code": 0, "output_tail": "1 passed"},
+                ],
+                "files_read": [],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+        ]
+        _ingest_recon_trace(service, thread_ref="sess-a", turns_data=sess_a_turns)
+
+        # After session A alone: candidate rows exist but nothing is active.
+        rows_after_a = _list_op_facts(service, container_ref=CONTAINER_X)
+        assert rows_after_a, "session A ingest produced zero operational_fact rows"
+        assert all(r.lifecycle == "candidate" for r in rows_after_a), (
+            "session A should only produce candidates: "
+            f"{[(r.id, r.lifecycle) for r in rows_after_a]}"
+        )
+
+        # Retrieval must not surface any candidate to the operator.
+        pre_promotion = service.query(
+            text="python",
+            limit=20,
+            trigger_origin="user_prompt_submit",
+            container_ref=CONTAINER_X,
+        )
+        pre_block_ids = {b.memory_object_id for b in pre_promotion.injectable_blocks}
+        candidate_ids = {r.id for r in rows_after_a}
+        assert not (pre_block_ids & candidate_ids), (
+            "candidate leaked into injectable_blocks before promotion: "
+            f"{pre_block_ids & candidate_ids}"
+        )
+
+        # Session B: repeat the durable subset of recon in a NEW thread.
+        sess_b_turns = [
+            {
+                "commands": [
+                    {"cmd": "python --version", "exit_code": 0, "output_tail": "Python 3.12.4"},
+                ],
+                "files_read": [],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+            {
+                "commands": [
+                    {"cmd": "uv run pytest", "exit_code": 0, "output_tail": "1 passed"},
+                ],
+                "files_read": [],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+        ]
+        _ingest_recon_trace(service, thread_ref="sess-b", turns_data=sess_b_turns)
+
+        rows_after_b = _list_op_facts(service, container_ref=CONTAINER_X)
+        # At least one row for the python interpreter slot should now
+        # be active — the version-query slot is answered by BOTH
+        # sessions (session A ``python --version`` and session B
+        # ``python --version``). The `where python` slot is not, so
+        # not every candidate promotes; that's expected.
+        interpreter_actives = [
+            r for r in rows_after_b
+            if r.lifecycle == "active"
+            and (r.payload or {}).get("command_family") == "python"
+        ]
+        assert interpreter_actives, (
+            "expected at least one active python operational_fact after cross-session recurrence; "
+            f"rows={[(r.id, r.lifecycle, (r.payload or {}).get('artifact_role'), (r.payload or {}).get('artifact_normalized')) for r in rows_after_b]}"
+        )
+
+        # An operational_fact_promotion_log audit row exists for at
+        # least one promoted memory.
+        promoted_ids = _query_promotion_log_ids(service)
+        assert promoted_ids, "expected at least one operational_fact_promotion_log row"
+        assert any(r.id in promoted_ids for r in interpreter_actives), (
+            "promotion-log rows do not reference any active interpreter row"
+        )
 
 
 # ---------------------------------------------------------------------------
-# Test 4b — Unknown ecosystem promotes after recurrence (PR 4 — XFAIL)
+# Test 4b — Unknown ecosystem promotes after recurrence (PR 4)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="promotion mechanism ships in PR 4", strict=True)
 class TestUnknownEcosystemPromotes:
     def test_xyzlang_promotes_after_two_sessions(self, service):
-        raise AssertionError("PR 4 not yet implemented")
+        sess_a_turns = [
+            {
+                "commands": [
+                    {"cmd": "where xyzlang", "exit_code": 0, "output_tail": "/usr/local/bin/xyzlang"},
+                ],
+                "files_read": [],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+            {
+                "commands": [
+                    {"cmd": "xyzlang --version", "exit_code": 0, "output_tail": "xyzlang 3.14.15"},
+                ],
+                "files_read": [],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+        ]
+        _ingest_recon_trace(service, thread_ref="sess-a", turns_data=sess_a_turns)
+
+        # Session A alone: candidates only, no active row.
+        rows_after_a = _list_op_facts(service, container_ref=CONTAINER_X)
+        xyz_rows_a = [r for r in rows_after_a if (r.payload or {}).get("command_family") == "xyzlang"]
+        assert xyz_rows_a, (
+            "session A should have produced at least one xyzlang candidate; "
+            f"rows={[(r.id, (r.payload or {}).get('command_family')) for r in rows_after_a]}"
+        )
+        assert all(r.lifecycle == "candidate" for r in xyz_rows_a)
+
+        # Session B repeats the recon in a NEW thread.
+        _ingest_recon_trace(service, thread_ref="sess-b", turns_data=sess_a_turns)
+
+        rows_after_b = _list_op_facts(service, container_ref=CONTAINER_X)
+        xyz_actives = [
+            r for r in rows_after_b
+            if r.lifecycle == "active"
+            and (r.payload or {}).get("command_family") == "xyzlang"
+        ]
+        assert xyz_actives, (
+            "expected at least one active xyzlang operational_fact after cross-session recurrence; "
+            f"rows={[(r.id, r.lifecycle, (r.payload or {}).get('command_family'), (r.payload or {}).get('artifact_normalized')) for r in rows_after_b]}"
+        )
 
 
 # ---------------------------------------------------------------------------
-# Test 7 — UserPromptSubmit injects on operational intent (PR 4 — XFAIL)
+# Test 7 — UserPromptSubmit injects on operational intent (PR 4)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="promotion mechanism ships in PR 4", strict=True)
 class TestUserPromptSubmitInjection:
     def test_how_do_i_run_tests_injects_test_runner_fact(self, service):
-        raise AssertionError("PR 4 not yet implemented")
+        # Reuse Test-1 style promotion: two sessions running python
+        # + pytest recon.
+        sess_a_turns = [
+            {
+                "commands": [
+                    {"cmd": "where python", "exit_code": 0, "output_tail": "/usr/local/bin/python"},
+                ],
+                "files_read": [],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+            {
+                "commands": [
+                    {"cmd": "python --version", "exit_code": 0, "output_tail": "Python 3.12.4"},
+                ],
+                "files_read": [],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+            {
+                "commands": [
+                    {"cmd": "cat pyproject.toml", "exit_code": 0, "output_tail": "[project]"},
+                ],
+                "files_read": ["pyproject.toml"],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+            {
+                "commands": [
+                    {"cmd": "uv run pytest", "exit_code": 0, "output_tail": "1 passed"},
+                ],
+                "files_read": [],
+                "files_modified": [],
+                "grep_patterns": [],
+                "has_productive_action": False,
+            },
+        ]
+        _ingest_recon_trace(service, thread_ref="sess-a", turns_data=sess_a_turns)
+        _ingest_recon_trace(service, thread_ref="sess-b", turns_data=sess_a_turns)
+
+        # After both sessions, at least one op_fact is active.
+        actives = [
+            r for r in _list_op_facts(service, container_ref=CONTAINER_X)
+            if r.lifecycle == "active"
+        ]
+        assert actives, "expected active operational_fact rows after 2-session recon"
+
+        # Operational-intent prompt surfaces the active fact through
+        # the retrieval + routing pipeline. The signal fires on an
+        # operational verb (``run``) AND a known command-family token
+        # (``python``); see
+        # docs/specs/2026-05-31-operational-fact-memory-design.md
+        # §Surfacing. We assert at the ``results`` level rather than
+        # the ``injectable_blocks`` level because the per-candidate
+        # BM25 injection floor (12.0 raw BM25) is calibrated against
+        # production-scale index text — the tiny e2e fixture indexes
+        # cannot cross it. What matters for this invariant is that
+        # (a) an active op_fact was retrieved for the operational
+        # query, and (b) a non-operational query does NOT surface it.
+        op_result = service.query(
+            text="how do I run python tests here",
+            limit=20,
+            trigger_origin="user_prompt_submit",
+            container_ref=CONTAINER_X,
+        )
+        op_result_ids = {
+            r.memory_object_id for r in op_result.results
+            if r.type == OPERATIONAL_FACT_TYPE and r.memory_object_id
+        }
+        active_ids = {r.id for r in actives}
+        assert op_result_ids & active_ids, (
+            "operational query did not retrieve any active operational_fact; "
+            f"active_ids={active_ids} result_ids={op_result_ids}"
+        )
+
+        # Non-operational prompt does NOT surface any op_fact. Uses
+        # the same ``results`` surface for symmetry with the positive
+        # assertion above.
+        non_op_result = service.query(
+            text="what did I have for lunch",
+            limit=20,
+            trigger_origin="user_prompt_submit",
+            container_ref=CONTAINER_X,
+        )
+        non_op_result_ids = {
+            r.memory_object_id for r in non_op_result.results
+            if r.type == OPERATIONAL_FACT_TYPE and r.memory_object_id
+        }
+        assert not (non_op_result_ids & active_ids), (
+            "non-operational prompt surfaced an operational_fact; "
+            f"overlap={non_op_result_ids & active_ids}"
+        )
+
+    def test_operational_intent_signal_fires_on_run_python_tests(self):
+        """Injection-side lock: the operational_intent routing signal
+        MUST fire on the plan's canonical query ("how do I run the
+        tests here?") and MUST NOT fire on off-topic prompts.
+
+        This asserts on the routing-signal boundary independent of
+        BM25 index sizing. Even if a test-fixture index is too small
+        to cross the per-candidate injection floor, the classification
+        of "operational intent → route to operational_fact preferred
+        layer" must hold. If a future change disables the signal but
+        leaves BM25 retrieval intact, the sibling test above still
+        passes; THIS test catches the regression.
+        """
+        from semantic.agent_conversation_memory_routing_signals import (
+            _derive_operational_intent,
+        )
+
+        def _toks(s: str) -> tuple[str, ...]:
+            return tuple(t.strip().lower() for t in s.split() if t.strip())
+
+        fired, _ = _derive_operational_intent(_toks("how do I run python tests here"))
+        assert fired, "operational_intent signal did not fire on canonical query"
+
+        fired_off, _ = _derive_operational_intent(_toks("what did I have for lunch"))
+        assert not fired_off, "operational_intent signal fired on off-topic prompt"

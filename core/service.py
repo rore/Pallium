@@ -1274,6 +1274,20 @@ class PalliumService:
         )
 
     def _persist_process_result(self, result: ProcessResult) -> None:
+        # PR 4 of the operational_fact redesign (2026-07-02): route
+        # every persist through the storage's atomic ``commit_process_result``
+        # so promotion hints are evaluated in the SAME transaction that
+        # inserts the candidate row + its ``supported_by`` relations.
+        # The evaluator needs to see the just-inserted rows for the
+        # slot-count query to include this candidate.
+        #
+        # ``commit_process_result`` also resolves supersession pairs
+        # from ``result.supersession_hints``; if no hints are present
+        # it's a plain persist. Preserves the pre-PR-4 semantics for
+        # every non-op_fact caller.
+        if result.promotion_hints or result.supersession_hints:
+            self._storage.commit_process_result(result=result)
+            return
         for memory_object in result.memory_objects:
             self._storage.create_memory_object(memory_object)
         for relation in result.relations:

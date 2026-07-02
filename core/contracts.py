@@ -27,6 +27,38 @@ class SupersessionHint:
 
 
 @dataclass(frozen=True)
+class PromotionHint:
+    """Hint that a candidate operational_fact should be promoted iff its
+    conflict slot has crossed the recurrence threshold.
+
+    Emitted by ``AgentWorkTracePlugin.reconcile_process_result`` (PR 4 of
+    the operational_fact redesign) and evaluated atomically in the same
+    storage transaction that persists the candidate row and its
+    ``supported_by`` relations. The evaluator queries
+    ``count_distinct_threads_for_conflict_slot`` on the storage; if the
+    count is ``>= PROMOTION_THREAD_THRESHOLD``, every candidate row in
+    the same slot (this ``container_ref`` + slot key) is flipped to
+    ``lifecycle="active"`` and an audit row is written to
+    ``operational_fact_promotion_log``.
+
+    The hint carries the slot key rather than the memory object because
+    promotion is slot-scoped: promoting the newly-emitted candidate is
+    only meaningful if all older candidates in the same slot promote
+    together. Otherwise a slot with 5 candidates would need 5 rebuilds
+    to reach full active state.
+    """
+
+    candidate_memory_id: str
+    command_family: str
+    artifact_role: str
+    scope_kind: str
+    scope_ref: str
+    artifact_normalized: str
+    container_ref: str
+    visibility: str = "private"
+
+
+@dataclass(frozen=True)
 class ProcessResult:
     memory_objects: list[MemoryObject]
     relations: list[Relation]
@@ -34,6 +66,7 @@ class ProcessResult:
     source_item_metadata_updates: dict[str, dict[str, Any]] = field(default_factory=dict)
     thread_rebuild_requested: bool = True
     supersession_hints: list[SupersessionHint] = field(default_factory=list)
+    promotion_hints: list[PromotionHint] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
