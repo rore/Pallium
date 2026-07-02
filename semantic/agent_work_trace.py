@@ -157,18 +157,27 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
         the standard routing gate. operational_fact IS user-visible via
         Surface B (UserPromptSubmit + operational_intent signal) and
         must be routable.
+
+        Weight-by-intent MUST match the hardcoded values in
+        ``semantic/agent_conversation_memory_routing_constants.py``
+        (``ROUTING_LAYER_WEIGHTS[intent][OPERATIONAL_FACT_TYPE]``).
+        The routing layer reads the hardcoded constant, not this
+        registration — this registration remains for renderer /
+        block-title purposes and for a future refactor that unifies
+        the two sources. Drift between them is caught by
+        ``tests/test_operational_fact_routing_constants.py``.
         """
         registry.register(
             TypeRegistration(
                 type_name=OPERATIONAL_FACT_TYPE,
                 layer_name=OPERATIONAL_FACT_TYPE,
                 weight_by_intent={
-                    "recall": 150,
+                    "recall": 145,
                     "structured_recall": 220,
                     "work_resumption": 145,
                     "evidence_trace": 180,
                 },
-                default_weight=150,
+                default_weight=145,
                 block_title="Operational fact",
                 block_text_field="subject",
                 high_value=True,
