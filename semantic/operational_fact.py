@@ -36,7 +36,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Final, Literal, Sequence
 
-from semantic.redaction import redact_sensitive
+from semantic.redaction import is_sensitive_artifact, redact_sensitive
 
 logger = logging.getLogger(__name__)
 
@@ -500,6 +500,16 @@ def _make_discovery(
     if len(normalized) < 2:
         return None
     if not any(c.isalnum() for c in normalized):
+        return None
+    # W4 follow-up 2026-07-02: skip emission when the artifact IS a
+    # secret (SSH keys, .pem/.key, AWS/kube creds, SSH targets under
+    # ssh/scp/rsync argv). Different semantics from redact_sensitive:
+    # a text-redacted artifact of "[REDACTED]" would collapse N
+    # distinct secret rows into a single useless memory. Skip is the
+    # correct behavior.
+    if is_sensitive_artifact(normalized, context=fragment_source):
+        return None
+    if is_sensitive_artifact(artifact_raw, context=fragment_source):
         return None
     fragment = redact_sensitive(fragment_source)[:MAX_FRAGMENT_LEN]
     artifact_display = redact_sensitive(artifact_raw)[:MAX_ARTIFACT_LEN]
