@@ -381,6 +381,115 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
             thread_rebuild_requested=False,
         )
 
+    def reconcile_process_result(
+        self,
+        result: ProcessResult,
+        *,
+        storage: Any,
+        container_ref: str,
+        visibility: str,
+    ) -> ProcessResult:
+        """Cross-run dedup for operational_fact rows.
+
+        The class-level ``non_superseding_types`` intentionally exempts
+        ``operational_fact`` from the blanket rebuild-supersedes-prior
+        sweep — because the correct dedup key is the conflict slot
+        ``(command_family, artifact_role, scope_kind, scope_ref,
+        artifact_normalized)``, not ``(type, schema_id)``.
+
+        This hook implements the slot-scoped dedup the class-level
+        docstring says the storage pass should handle: for each
+        newly-derived operational_fact in ``result.memory_objects``,
+        drop it if an active row with the same conflict slot already
+        exists in the same container. The alternative — writing a
+        superseded chain — was rejected in the PR-3 design (§5) in
+        favor of "skip the derived candidate".
+
+        Task_trace rows and index entries for kept memories pass
+        through untouched.
+        """
+        op_facts = [m for m in result.memory_objects if m.type == OPERATIONAL_FACT_TYPE]
+        if not op_facts:
+            return result
+
+        # Load active operational_fact rows for this container and
+        # index by conflict slot. One query covers all candidates.
+        try:
+            existing = storage.list_memory_objects(
+                memory_types=[OPERATIONAL_FACT_TYPE],
+                lifecycle="active",
+                container_ref=container_ref,
+            )
+        except Exception as exc:
+            # Defensive: if the storage handle doesn't support the
+            # signature we expect (e.g., a mock in a scenario harness),
+            # skip dedup rather than break persistence.
+            logger.warning(
+                "operational_fact dedup skipped: storage.list_memory_objects failed (%s)",
+                exc,
+            )
+            return result
+
+        existing_slots: set[tuple[str, str, str, str, str]] = set()
+        for row in existing:
+            # `list_memory_objects` returns soft-deleted rows too — the
+            # domain MemoryObject doesn't carry the flag. Treat every
+            # matching slot as "already claimed" for dedup purposes:
+            # if a row was soft-deleted (e.g. by the tightening cleanup
+            # CLI), re-emitting the same slot would resurrect the
+            # noise. Skip.
+            p = row.payload or {}
+            slot = (
+                str(p.get("command_family") or ""),
+                str(p.get("artifact_role") or ""),
+                str(p.get("scope_kind") or ""),
+                str(p.get("scope_ref") or ""),
+                str(p.get("artifact_normalized") or ""),
+            )
+            existing_slots.add(slot)
+
+        # Filter candidate op_facts against the existing slots.
+        kept_ids: set[str] = set()
+        dropped_ids: set[str] = set()
+        for mem in op_facts:
+            p = mem.payload or {}
+            slot = (
+                str(p.get("command_family") or ""),
+                str(p.get("artifact_role") or ""),
+                str(p.get("scope_kind") or ""),
+                str(p.get("scope_ref") or ""),
+                str(p.get("artifact_normalized") or ""),
+            )
+            if slot in existing_slots:
+                dropped_ids.add(mem.id)
+            else:
+                kept_ids.add(mem.id)
+                existing_slots.add(slot)  # so intra-batch dupes also collapse
+
+        if not dropped_ids:
+            return result
+
+        logger.info(
+            "operational_fact dedup: dropped %d candidate(s) already present in container %s",
+            len(dropped_ids), container_ref,
+        )
+
+        # Strip dropped memories AND their index entries.
+        filtered_memories = [
+            m for m in result.memory_objects
+            if m.type != OPERATIONAL_FACT_TYPE or m.id in kept_ids
+        ]
+        filtered_indexes = [
+            idx for idx in result.index_entries
+            if idx.target_id not in dropped_ids
+        ]
+        return ProcessResult(
+            memory_objects=filtered_memories,
+            relations=result.relations,
+            index_entries=filtered_indexes,
+            thread_rebuild_requested=result.thread_rebuild_requested,
+        )
+
 
 # --------------------------------------------------------------------------- #
 # W4 PR 3 helpers — operational_fact derivation wiring                        #

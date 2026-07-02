@@ -427,6 +427,12 @@ def _normalize_artifact(raw: str) -> str:
     # Strip a leading `./` so `./gradlew` and `gradlew` match.
     if s.startswith("./"):
         s = s[2:]
+    # Strip trailing argv-punctuation (``;`` / ``,`` / stray quote).
+    # Live data showed rows like ``https://x.com/foo;`` from
+    # ``curl URL;`` — the argv tokenizer left the terminator attached.
+    # Trimming here means the same underlying identifier collapses in
+    # dedup with its cleanly-captured sibling.
+    s = _strip_trailing_junk(s)
     if len(s) > MAX_ARTIFACT_LEN:
         s = s[:MAX_ARTIFACT_LEN]
     return s
@@ -742,6 +748,37 @@ _ROLE_SPECIFICITY: Final[dict[str, int]] = {
 
 _REGEX_META_RE: Final = re.compile(r"[\|\^\$\(\)\{\}\[\]\\\?\*\+]")
 
+# Shell command-substitution markers that indicate an artifact was
+# captured mid-command rather than as a durable identifier. The live
+# corpus produced rows like ``https://x.com/?bust=$(date +%s)`` (bash
+# ``$(...)``) and ``?t=`whoami``` (backticks). Reject only those two
+# unambiguous markers, NOT bare ``&`` / ``;`` — which are legitimate
+# in URL query strings (e.g. ``?a=1&b=2``) and only appear as
+# argv-terminator noise at the trailing end, where
+# ``_strip_trailing_junk`` handles them during normalization.
+_SHELL_SUBSTITUTION_RE: Final = re.compile(r"\$\(|`")
+
+# Trailing punctuation that argv tokenization commonly leaves attached
+# to an otherwise-valid URL/artifact. Not itself grounds for rejection,
+# but callers strip these before applying the URL shape check.
+_TRAILING_JUNK_CHARS: Final[str] = ";,\"'"
+
+
+def _strip_trailing_junk(s: str) -> str:
+    """Strip trailing argv-punctuation from an artifact string.
+
+    Repeatedly trims until stable. Preserves the rest of the artifact
+    exactly; does not touch leading whitespace/metachars because those
+    would indicate a completely broken capture upstream (which is a
+    different failure to log).
+    """
+    if not s:
+        return s
+    out = s
+    while out and out[-1] in _TRAILING_JUNK_CHARS:
+        out = out[:-1]
+    return out
+
 
 def _looks_like_noise(artifact_normalized: str) -> bool:
     """Heuristic 'is this obviously not operational memory' check.
@@ -820,6 +857,16 @@ def _is_operational_shape_artifact(
     # Operational config-file basename.
     if basename in {n.lower() for n in _OPERATIONAL_CONFIG_FILES}:
         return True
+
+    # Global shell-substitution guard — any artifact carrying ``$(...)``
+    # or backtick command substitution came from a specific command
+    # invocation and won't generalize (e.g. ``?bust=$(date +%s)``).
+    # Reject before any shape channel. Bare ``&``/``;`` are permitted
+    # because they can appear inside legitimate URL query strings;
+    # ``_strip_trailing_junk`` handles their argv-terminator noise
+    # form during normalization.
+    if _SHELL_SUBSTITUTION_RE.search(artifact_normalized):
+        return False
 
     # Endpoint shape.
     if _URL_TOKEN_RE.match(artifact_normalized):
