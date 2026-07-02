@@ -363,6 +363,17 @@ for stdio mode.
 | `pallium_expand` | Get the full structured payload and source conversation items behind a memory card. Use when a memory card has `[+expand]` available and the agent needs the original context or complete structured fields. |
 | `pallium_flag_memory` | Flag a memory as incorrect or outdated. See [Flagging Wrong Memories](#flagging-wrong-memories) below. |
 
+Explicit memory-write tools (use sparingly — automatic extraction covers
+routine cases):
+
+| Tool | Purpose |
+|---|---|
+| `pallium_remember(text, type, ...)` | Durable fact write. `type` ∈ `{decision, investigation_outcome, constraint_memory, operational_fact, note}`. Use when the user has stated an architectural decision, hard constraint, or investigation conclusion that should survive compaction. |
+| `pallium_correct(memory_id, corrected_text, reason)` | Fix a wrong memory in place (extraction was mislabeled or partial). Returns 409 if already superseded — walk the chain via `pallium_expand` and correct the head. For fully obsolete memories use `pallium_supersede`. |
+| `pallium_supersede(new_text, supersedes_id, reason?)` | Replace an obsolete memory. Both rows persist; retrieval hides the old. Use when the old was correct at the time but a different fact now applies. Returns 409 on double-supersede. |
+| `pallium_forget(memory_id, reason)` | Soft-delete. Retrieval hides it; audit trail preserved. Idempotent. Agent-decisive; use `pallium_flag_memory` when you're one voter among many. |
+| `pallium_record_outcome(procedure_id, outcome, ...)` | Record `success` / `failure` / `inconclusive` for an `operational_fact` procedure. Confidence and counter values are audit-only — they do not boost retrieval ranking. |
+
 All tools accept optional scope parameters (`container_ref`, `thread_ref`,
 `actor_ref`, `visibility`) for filtering. When omitted, defaults come from
 environment variables (`PALLIUM_CONTAINER_REF`, `PALLIUM_THREAD_REF`,

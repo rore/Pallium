@@ -466,6 +466,65 @@ PALLIUM_VECTOR_INDEX_EMBEDDING_PROVIDER=onnx
 PALLIUM_VECTOR_INDEX_MIN_SIMILARITY=0.55
 ```
 
+## Features
+
+Progressively-rolling-out capabilities gated by explicit flags. Every
+flag has a safe-off default. Enable per-installation via `pallium.local.toml`
+or override via `PALLIUM_FEATURES_<FLAG_UPPER>` env variable (env wins).
+
+```toml
+[features]
+operational_fact_derivation = false
+typed_extraction_shadow     = false
+```
+
+- `operational_fact_derivation` — when true, the `agent_work_trace` plugin
+  derives `operational_fact` memories from tool-usage traces at thread-
+  rebuild time. Both this flag AND the `[semantic_packages.agent_work_trace]`
+  block must be enabled. Delivery is on-demand only; retrieval requires
+  either a Phase-4 trigger (`post_tool_failure`, `retry_threshold`,
+  `session_start_checkpoint`, `user_explicit`) or the token-based
+  `operational_intent` signal on the query. Default off.
+- `typed_extraction_shadow` — when true, every source item that finishes
+  the live extractor is ALSO fed through a single-call strict-JSON typed
+  extractor whose output lands in `memory_objects_shadow`. Zero effect on
+  live retrieval; used for offline comparison via
+  `evals/typed_extraction_shadow/compare.py`. Default off (extra LLM cost).
+
+## Injection Policy (Abstention)
+
+Per-type control over whether proactive injection is permitted. Modes
+are `proactive` (score-gated), `event` (deterministic-trigger only),
+`on_demand` (explicit query only), `suspended` (hidden entirely on read
+and inject). Missing types default to `proactive` — except
+`operational_fact`, which the routing gate defaults to `on_demand`
+regardless of config, to preserve the zero-proactive design invariant.
+
+```toml
+[injection.policy.types.investigation_outcome]
+mode = "on_demand"
+
+[injection.policy.types.thread_summary]
+mode = "on_demand"
+
+[injection.policy.types.fact_summary]
+mode = "suspended"
+
+[injection.policy.types.task_checkpoint]
+mode = "event"
+
+[injection.policy.types.operational_fact]
+mode = "on_demand"
+
+# Optional per-container override:
+[[injection.policy.containers]]
+container_ref = "git:example/repo"
+[injection.policy.containers.types.task_checkpoint]
+mode = "on_demand"
+```
+
+Full spec: [`docs/specs/2026-06-27-injection-policy-abstention.md`](specs/2026-06-27-injection-policy-abstention.md).
+
 ## Current Defaults
 
 The following defaults apply when fields are omitted:

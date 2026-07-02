@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-04-16
+2026-07-02
 
 ## Repo Snapshot
 
@@ -36,6 +36,8 @@
   - `atomic_fact` (from `conversational_knowledge`)
   - `fact_summary` (from `conversational_knowledge` consolidation, `high_value=True`)
   - `task_trace` (from `agent_work_trace` parallel package — per-session structural trail of agent tool usage)
+  - `note` (durable verbatim note; `artifact_kind="note"` bypass path)
+  - `operational_fact` (from `agent_work_trace` — derived operational orientation, on-demand only)
 - visibility terminology: `"limited"` renamed to `"container"` (visible within this single container); `container_visibility` field renamed to `visibility`; breaking change — requires fresh DB after applying
 - actor-scoped memory and container-driven visibility rules are shipped:
   - `actor_ref` field on MemoryObject tracks who a memory is personal to
@@ -143,6 +145,21 @@
   - `annotation_ids` and `annotation_count` removed from API responses and contracts
   - annotation data was 100% duplicated in MemoryObjects; no query-time code read annotations
   - core data model reduced to four primitives: SourceItem, MemoryObject, Relation, IndexEntry
+
+## Shaped Memory Contract Milestone (2026-07)
+
+Governing spec: [`docs/specs/2026-07-01-milestone-shaped-memory-contract.md`](../specs/2026-07-01-milestone-shaped-memory-contract.md).
+
+Shipped in this milestone:
+
+- **W2 — narrow-target scenarios**: seven runnable Claude-Code-on-this-repo scenarios (five positive + two negative) under `evals/narrow_target_claude_code/`. Baseline: precision_mean=1.0, specificity_mean=1.0, `proactive_operational_fact_count=0` on scenarios 1+2+5+negative; scenarios 3/4/6/7 remain INCOMPLETE by design (wire post-milestone).
+- **W3 — explicit memory-write tools** (MCP + HTTP surface): `pallium_remember`, `pallium_correct`, `pallium_supersede`, `pallium_forget`, `pallium_record_outcome`. Every write records `origin ∈ {agent_explicit, agent_inferred, user_requested}`. Full E2E edge-case suite is the reference shape for the repo-level rule ([AGENTS.md](../../AGENTS.md)) that "every feature ships with end-to-end coverage of all edge cases."
+- **W4 — operational-fact memory**: new derived type `operational_fact` from `agent_work_trace` package. Discovery+use predicate over `agent_work_trace_turn` metadata; salted machine-hash `scope_kind ∈ {repo, machine_repo}`; nested `use_counters` sub-blob preserving Invariant 1 (retrieval never boosts ranking without downstream use). Surface B (UserPromptSubmit) only in v1: routing gate demotes to `on_demand` and requires `trigger_origin ∈ _TRIGGER_BYPASS_ORIGINS` or the new token-based `operational_intent` signal on the query envelope. Three-layer zero-proactive enforcement (config default, gate built-in default, audit-log invariant test with positive control).
+- **W5 — shadow-extractor scaffolding**: new `memory_objects_shadow` table + strict-JSON single-call `semantic/extraction_typed_shadow.py` producing five typed arrays (decisions, investigations, constraints, operational_facts, supersessions). Wired into `core/processing.py` behind `[features] typed_extraction_shadow` (default off); safe-wrapper guarantees never propagates to the live path. Comparison eval `evals/typed_extraction_shadow/compare.py` joins shadow vs live vs `memory_feedback` and emits per-type precision-bounds / recall / drift; per-type promotion decisions are contingent on ≥2 weeks of shadow-populated live data.
+- **W6 — enforceable invariants**: two invariants at the top of [`docs/context/lessons.md`](lessons.md), cross-referenced in AGENTS.md. Invariant 1 has a code-level guard (`use_counters` nested payload + diff-grep test in `tests/test_operational_fact_invariant1.py`).
+- **Routing constants wiring for `operational_fact`**: `STRUCTURED_LAYERS`, `ROUTING_PREFERRED_LAYERS`, `ROUTING_LAYER_WEIGHTS`, `ROUTING_SAFE_FALLBACK_LAYERS` in `semantic/agent_conversation_memory_routing_constants.py` all extended with `operational_fact`; drift-guard test pins the invariant that plugin `TypeRegistration.weight_by_intent` matches the hardcoded constants.
+
+Not yet shipped: W1 Phase 2b (awaiting ≥7 days of fresh score-field audit data), W5 PR 5 (per-type promotion, awaiting ≥2 weeks live shadow data), W4 PR 5 Codex `apply_patch` branch (contingent on live-Codex-DB evidence).
 
 ## Verification Notes
 

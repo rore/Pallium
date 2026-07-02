@@ -140,8 +140,15 @@ From stored evidence, Pallium derives typed memory:
 | `atomic_fact` | "Jordan completed a half-marathon in Denver in March 2024" |
 | `thread_summary` | "Discussed migration strategy, agreed on staged rollout" |
 | `constraint_memory` | "Must stay on Python 3.12 for compatibility" |
+| `note` | Verbatim durable note; explicit ingest with `artifact_kind="note"` |
+| `operational_fact` | "Working python interpreter on this machine is at `.venv/Scripts/python.exe`" — derived from tool traces, surfaced on-demand |
 
 Every memory object stays linked to its supporting source evidence.
+
+Agents that want direct control over memory writes can use the explicit
+MCP tools: `pallium_remember`, `pallium_correct`, `pallium_supersede`,
+`pallium_forget`, `pallium_record_outcome`. See
+[docs/agent-integration.md](docs/agent-integration.md#mcp-tools-agent-initiated-memory-access).
 
 Retrieval combines lexical search (FTS5 + BM25), vector similarity, and
 hybrid RRF fusion. The query path is deterministic by default, with selective

@@ -291,6 +291,38 @@ Global visibility extends the model with cross-container actor-scoped memory:
 - `core/filters.py` exempts global from container_ref filtering (same as public) so global items reach the visibility check from any container
 - does not participate in thread aggregation or cross-container consolidation
 
+## Agent Work Trace Package
+
+`agent_work_trace` is a parallel semantic package (runs alongside `agent_conversation_memory`) that captures the structural trail of an agent's tool usage per turn. It reads `SourceItem.metadata["agent_work_trace_turn"]` — the `{files_read, commands, grep_patterns, files_modified, patch_bodies}` shape stamped by the Claude Code and Codex Stop hooks — and produces two memory types:
+
+- `task_trace` — thread-level summary of a session's discovery trail (exploratory files, productive files, commands succeeded/failed, working directory). One row per rebuilt thread.
+- `operational_fact` — structurally-derived orientation facts: "on this machine the working python interpreter is at X", "in this repo `./gradlew test` is the working test command". Derived by a discovery+use predicate over `agent_work_trace_turn.commands` within a ten-turn window in the same scope. Payload carries `command_family`, `artifact_role`, `scope_kind ∈ {repo, machine_repo}`, `scope_ref`, `subject`, `artifact`, `artifact_normalized`, `evidence[discovery+use]`, `origin`, and a nested `use_counters` sub-blob (Invariant-1 code-level guard — retrieval paths cannot reach counter fields without a deliberate two-level access).
+
+Scope resolution: repo-relative artifacts get `scope_kind='repo'`; absolute paths get `scope_kind='machine_repo'` with `scope_ref = <container_ref>@machine:<salted-sha256(hostname+platform)>`. Machine-hash is salted with a per-installation secret (env `PALLIUM_MACHINE_HASH_SALT` or `~/.pallium/machine_salt`) so raw hostnames never enter storage.
+
+Redaction is mandatory before any derived candidate reaches storage. `semantic/redaction.py` strips bearer tokens, API-key headers, env-var secrets (`PASSWORD|SECRET|TOKEN|KEY|AUTH`), private-key blocks, connection strings, and `Authorization`/`Cookie` header values. Every `artifact`, `artifact_normalized`, and `evidence[].fragment` passes through it.
+
+Delivery is **on-demand only** (Surface B, UserPromptSubmit). The routing gate at `_policy_allows_proactive_injection` treats `operational_fact` with a built-in default of `on_demand` regardless of whether the toml block `[injection.policy.types.operational_fact]` is present. Injection is only permitted when either:
+
+- the query carries a deterministic `trigger_origin ∈ {post_tool_failure, retry_threshold, session_start_checkpoint, user_explicit}`, or
+- the new `operational_intent` signal fires on the query envelope. The signal is a structural verb+family detector (`_derive_operational_intent` in `agent_conversation_memory_routing_signals.py`): verbs from `{run, test, install, build, configure, deploy, fix, start, stop, setup, check}` plus a `KNOWN_FAMILIES` token match (exact membership or suffix-variant like `python3`, `docker-compose`, `pnpm.cmd`). English-first; multilingual is a documented limitation.
+
+Three-layer zero-proactive enforcement: (1) config default `mode="on_demand"`, (2) built-in gate default when config is missing, (3) audit-log invariant test that runs a 100-invocation matrix over (policy × trigger × envelope) with a positive-control that seeds a real proactive audit row to confirm the guard detects it.
+
+Derivation runs at thread-rebuild time when `[features] operational_fact_derivation = true` (both the feature flag AND the `agent_work_trace` package must be enabled). Package registration lives in `AgentWorkTracePlugin.register_routing_types` with a `TypeRegistration` (weights per intent kept in lockstep with the hardcoded `ROUTING_LAYER_WEIGHTS` via a drift-guard test).
+
+`operational_fact` is `durable_types` in `MemoryRetentionPolicy` (never garbage-collected on retention). `non_superseding_types` excludes `operational_fact` from the rebuild-supersedes-prior sweep — same-slot supersession is scoped to the design's conflict-slot key `(command_family, artifact_role, scope_kind, scope_ref)`, not `(type, schema_id)`, so blanket sweeps do not wipe the whole window's derived facts.
+
+## Typed-Extraction Shadow Pipeline
+
+A parallel single-call strict-JSON extractor runs alongside the live staged extraction pipeline when `[features] typed_extraction_shadow = true`. Prompt version is pinned (`typed_shadow_v1`); output is a schema-validated dict with five arrays (`decisions`, `investigations`, `constraints`, `operational_facts`, `supersessions`) with per-field length caps and enum validation.
+
+Outputs land in `memory_objects_shadow` — an additive table that mirrors the memory-object shape closely enough for comparison joins but is NOT foreign-keyed to `memory_objects` (shadow rows must survive live-row supersession/soft-delete, and shadow may produce memories with no live counterpart). Correlation to live rows happens at eval time via `source_item_id`.
+
+Zero effect on live retrieval is guaranteed by three defensive layers: (1) `run_typed_shadow_extraction` never raises — LLM errors and schema failures become `parse_status` values on the returned dataclass; (2) `insert_shadow_extraction` touches only `memory_objects_shadow` (diff-grep-tested); (3) the wiring in `_run_shadow_extraction_safely` wraps the call in `try/except Exception` and runs *after* the live extractor has fully committed, so a shadow failure short-circuits without corrupting the live pipeline.
+
+The comparison eval (`evals/typed_extraction_shadow/compare.py`) joins live memory objects against shadow rows against `memory_feedback` ratings; emits per-type precision (with `shadow_precision_lower_bound`/`upper_bound`), recall against a ground-truth JSONL, and drift metrics. Promotion decisions are per-type and human-gated: `shadow_precision_lower_bound − live_precision ≥ 0.05`, no recall regression, `coverage_ratio ≥ 0.9`, and coverage hard-floor 0.7. No automatic cutovers; every promotion is a checked-in decision spec + a PR that deletes the losing live extractor for that type.
+
 ## Future Operational Scale
 
 The current architecture intentionally accepts some write amplification in

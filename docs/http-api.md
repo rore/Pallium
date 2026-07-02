@@ -371,6 +371,66 @@ relevant to the `content` (or `query_text` if provided).
 `POST /item-and-query/debug` returns the same plus `trace` (same as
 `POST /query/debug`).
 
+## Explicit Memory Writes
+
+Five endpoints let an agent shape memory directly, alongside the automatic
+extraction path. Every write records an `origin ∈ {agent_explicit,
+agent_inferred, user_requested}`. Use these when a fact deserves
+preservation and automatic extraction may miss it — not on every turn.
+
+### POST /memory/remember
+
+Durable fact write. `type` names a registered memory type (one of
+`decision`, `investigation_outcome`, `constraint_memory`, `operational_fact`,
+`note`). Body fields: `text`, `type`, optional `confidence` (audit only —
+does NOT influence retrieval ranking), `evidence` list, `container_ref`,
+`actor_ref`, `thread_ref`, `origin_session_id`, `origin_agent_id`.
+
+Response: `{memory_object_id, origin, created_at}`.
+
+Errors: 400 on unknown `type`, 422 on validation (text length, confidence
+range).
+
+### POST /memory/{memory_object_id}/correct
+
+In-place fix of a wrong memory (extraction was mislabeled or partial).
+Body: `corrected_text`, `reason`. Returns `{corrected: true}`.
+
+Returns 409 if the memory is already superseded — walk the chain via
+`GET /memory/{id}/expand` and correct the head.
+
+For fully obsolete memories, use `/memory/supersede` instead.
+
+### POST /memory/supersede
+
+Replace an obsolete memory. Body: `new_text`, `supersedes_id`, optional
+`type`, `reason`. Both rows persist; retrieval hides the old.
+
+Response: `{new_memory_object_id, superseded_memory_object_id}`.
+
+Returns 409 on double-supersede.
+
+### POST /memory/{memory_object_id}/forget
+
+Soft-delete. Retrieval hides the row; audit trail preserved. Body: `reason`.
+Idempotent — repeated calls on an already-forgotten memory return
+`{forgotten: false}` without error.
+
+Use `/memory/{id}/flag` instead when you're one voter among many;
+`/memory/forget` is agent-decisive and immediate.
+
+### POST /memory/record-outcome
+
+Record success / failure / inconclusive for an operational-fact procedure.
+Body: `procedure_id` (an `operational_fact` memory-object id), `outcome`
+(one of `"success"`, `"failure"`, `"inconclusive"`), optional `evidence`,
+`note`. Response: `{recorded: true}`.
+
+Counters live under `payload["use_counters"]` on the target memory — a
+nested sub-blob that retrieval paths cannot read (Invariant 1: retrieval
+does not update ranking). This endpoint is the only writer of those
+counters.
+
 ## GET /memory/{memory_object_id}/expand
 
 Use this endpoint to retrieve the structured payload fields and source conversation items

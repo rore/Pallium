@@ -53,6 +53,7 @@ jobs:
 | Factual knowledge | `atomic_fact` | "Jordan completed a half-marathon in Denver in March 2024" |
 | Consolidated facts | `fact_summary` | Cross-thread factual summary grouped by subject and topic |
 | Stated constraint | `constraint_memory` | "Must stay on Python 3.12 for compatibility" |
+| Operational orientation | `operational_fact` | "This machine's python interpreter lives at `.venv/Scripts/python.exe`" — derived from tool-usage traces; surfaced on-demand only |
 | Cross-thread carry-forward | `continuity_memory` | Same question answered consistently across threads |
 | Recurring patterns | `pattern_memory` | Repeated architectural preference across conversations |
 
@@ -291,6 +292,15 @@ fit decision/finding/checkpoint types.
 
 Additional packages:
 
+- `agent_work_trace` — **operational orientation**: derives `operational_fact`
+  memories (working python interpreter path, working test command, service
+  endpoint, wrapper script) from a discovery+use predicate over the tool-
+  usage trail the Stop hook stamps into `SourceItem.metadata`. Also emits
+  thread-level `task_trace` summaries. `operational_fact` is delivered
+  **on-demand only** — surfaced by an `operational_intent` query signal
+  (verb + tool-family) or by Phase-4 deterministic triggers, never
+  proactively. Enable per `[semantic_packages.agent_work_trace]` + set
+  `[features] operational_fact_derivation = true`.
 - `llm_agent_memory` — generic LLM-backed extraction over the semantic
   interface
 - `demo_agent_memory` — deterministic skeleton for local testing without a
