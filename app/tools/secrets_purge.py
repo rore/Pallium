@@ -81,7 +81,6 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from semantic.redaction import redact_sensitive
-from storage.sqlite import SQLiteStorageProvider
 
 logger = logging.getLogger(__name__)
 
@@ -320,8 +319,13 @@ def build_plan(sqlite_path: Path) -> PurgePlan:
 def apply_plan(sqlite_path: Path, db_url: str, plan: PurgePlan) -> dict[str, int]:
     """Apply the redaction plan to the DB. Returns per-bucket rowcounts.
 
-    Index entries + lexical_fts use the FTS-safe storage helper so the
-    virtual FTS table stays in sync.
+    All rewrites (memory / source_items / index_entries + lexical_fts)
+    happen inside ONE sqlite3 transaction so a crash between phases
+    cannot leave the DB in an inconsistent half-redacted state.
+    Previously the index-entries + FTS rewrite used a separate
+    SQLAlchemy session — a crash mid-loop could commit memory rewrites
+    while leaving FTS unredacted, defeating the retrieval barrier for
+    the surviving rows.
     """
     now = datetime.now(timezone.utc).isoformat()
     modified = {
@@ -331,13 +335,10 @@ def apply_plan(sqlite_path: Path, db_url: str, plan: PurgePlan) -> dict[str, int
         "index_entry_rewrites": 0,
     }
 
-    # Storage handle for the FTS-safe helper.
-    storage = SQLiteStorageProvider(db_url)
-
     conn = sqlite3.connect(str(sqlite_path), timeout=SQLITE_BUSY_TIMEOUT_S)
     try:
         cur = conn.cursor()
-        cur.execute("BEGIN")
+        cur.execute("BEGIN IMMEDIATE")  # exclusive write lock
         try:
             # 1. Memory rewrites (narrative types).
             for row in plan.memory_rows:
@@ -369,6 +370,61 @@ def apply_plan(sqlite_path: Path, db_url: str, plan: PurgePlan) -> dict[str, int
                 )
                 modified["source_item_rewrites"] += res.rowcount
 
+            # 4. Index entries + lexical_fts — in the SAME transaction
+            #    via raw SQL so FTS5 DELETE+INSERT stays atomic with
+            #    the memory/source rewrites above. Do NOT use
+            #    SqliteStorage.redact_index_entry_text_view here: it
+            #    opens a separate SQLAlchemy session which would
+            #    commit outside this transaction (and leave a crash
+            #    window where memory is redacted but FTS is not).
+            for entry in plan.index_entries:
+                # Resolve target_kind / target_id / text_view_name /
+                # container_ref for the FTS row rebuild. These fields
+                # live on the index_entries record.
+                row = cur.execute(
+                    "SELECT target_kind, target_id, text_view_name, index_type "
+                    "FROM index_entries WHERE id = ?",
+                    (entry.index_entry_id,),
+                ).fetchone()
+                if row is None:
+                    continue
+                target_kind, target_id, text_view_name, index_type = row
+                # Update index_entries.text_view.
+                res = cur.execute(
+                    "UPDATE index_entries SET text_view = ? WHERE id = ?",
+                    (entry.redacted_text_view, entry.index_entry_id),
+                )
+                if index_type != "lexical":
+                    # Non-lexical (vector) entries have no lexical_fts
+                    # mirror; skip the FTS rebuild.
+                    modified["index_entry_rewrites"] += res.rowcount
+                    continue
+                # container_ref lookup — matches
+                # SqliteStorage._resolve_container_ref_in_session.
+                container_ref = _resolve_container_ref_in_txn(
+                    cur, target_kind, target_id,
+                )
+                # DELETE + INSERT the lexical_fts row.
+                cur.execute(
+                    "DELETE FROM lexical_fts WHERE index_entry_id = ?",
+                    (entry.index_entry_id,),
+                )
+                cur.execute(
+                    "INSERT INTO lexical_fts"
+                    "(text_view, index_entry_id, target_kind, target_id, "
+                    " text_view_name, container_ref) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        entry.redacted_text_view,
+                        entry.index_entry_id,
+                        target_kind,
+                        target_id,
+                        text_view_name,
+                        container_ref,
+                    ),
+                )
+                modified["index_entry_rewrites"] += res.rowcount
+
             conn.commit()
         except Exception:
             conn.rollback()
@@ -376,21 +432,41 @@ def apply_plan(sqlite_path: Path, db_url: str, plan: PurgePlan) -> dict[str, int
     finally:
         conn.close()
 
-    # 4. Index entries + lexical_fts — done via storage helper so FTS5
-    #    mirror stays in sync. Runs OUTSIDE the sqlite3 transaction
-    #    because it uses a separate SQLAlchemy session.
-    for entry in plan.index_entries:
-        storage.redact_index_entry_text_view(
-            entry.index_entry_id, entry.redacted_text_view,
-        )
-        modified["index_entry_rewrites"] += 1
-
     return modified
+
+
+def _resolve_container_ref_in_txn(cur, target_kind: str, target_id: str) -> str | None:
+    """Resolve the container_ref for an index-entry target inside an
+    open sqlite3 cursor. Mirrors
+    ``SqliteStorage._resolve_container_ref_in_session`` but uses raw
+    SQL against the same transaction so FTS rebuild is atomic with
+    the surrounding rewrite.
+    """
+    if target_kind == "memory_object":
+        row = cur.execute(
+            "SELECT container_ref FROM memory_objects WHERE id = ?",
+            (target_id,),
+        ).fetchone()
+    elif target_kind == "source_item":
+        row = cur.execute(
+            "SELECT container_ref FROM source_items WHERE id = ?",
+            (target_id,),
+        ).fetchone()
+    else:
+        row = None
+    return row[0] if row else None
 
 
 def undo_plan(sqlite_path: Path, db_url: str, manifest: dict) -> dict[str, int]:
     """Reverse a prior --commit by replaying the pre-redaction snapshots
-    stored in the manifest."""
+    stored in the manifest.
+
+    All undo operations (memory / source_items / index_entries + FTS)
+    run inside ONE sqlite3 transaction so a crash mid-undo cannot
+    leave the DB half-restored. Uses ``BEGIN IMMEDIATE`` for an
+    exclusive write lock so concurrent service writes cannot
+    interleave.
+    """
     snapshots = manifest.get("pre_redaction_snapshots", {})
     memory_snaps = snapshots.get("memory_objects", [])
     regenerable_ids = snapshots.get("regenerable_soft_deleted_ids", [])
@@ -404,12 +480,10 @@ def undo_plan(sqlite_path: Path, db_url: str, manifest: dict) -> dict[str, int]:
         "index_entry_rewrites_undone": 0,
     }
 
-    storage = SQLiteStorageProvider(db_url)
-
     conn = sqlite3.connect(str(sqlite_path), timeout=SQLITE_BUSY_TIMEOUT_S)
     try:
         cur = conn.cursor()
-        cur.execute("BEGIN")
+        cur.execute("BEGIN IMMEDIATE")
         try:
             for snap in memory_snaps:
                 res = cur.execute(
@@ -433,18 +507,49 @@ def undo_plan(sqlite_path: Path, db_url: str, manifest: dict) -> dict[str, int]:
                     (snap["content"], snap["metadata_json"], snap["source_item_id"]),
                 )
                 modified["source_item_rewrites_undone"] += res.rowcount
+
+            # Index entries + FTS — same atomicity as apply_plan.
+            for snap in index_entry_snaps:
+                entry_id = snap["index_entry_id"]
+                orig_text = snap["text_view"]
+                row = cur.execute(
+                    "SELECT target_kind, target_id, text_view_name, index_type "
+                    "FROM index_entries WHERE id = ?",
+                    (entry_id,),
+                ).fetchone()
+                if row is None:
+                    continue
+                target_kind, target_id, text_view_name, index_type = row
+                res = cur.execute(
+                    "UPDATE index_entries SET text_view = ? WHERE id = ?",
+                    (orig_text, entry_id),
+                )
+                if index_type == "lexical":
+                    container_ref = _resolve_container_ref_in_txn(
+                        cur, target_kind, target_id,
+                    )
+                    cur.execute(
+                        "DELETE FROM lexical_fts WHERE index_entry_id = ?",
+                        (entry_id,),
+                    )
+                    cur.execute(
+                        "INSERT INTO lexical_fts"
+                        "(text_view, index_entry_id, target_kind, target_id, "
+                        " text_view_name, container_ref) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            orig_text, entry_id, target_kind, target_id,
+                            text_view_name, container_ref,
+                        ),
+                    )
+                modified["index_entry_rewrites_undone"] += res.rowcount
+
             conn.commit()
         except Exception:
             conn.rollback()
             raise
     finally:
         conn.close()
-
-    for snap in index_entry_snaps:
-        storage.redact_index_entry_text_view(
-            snap["index_entry_id"], snap["text_view"],
-        )
-        modified["index_entry_rewrites_undone"] += 1
 
     return modified
 

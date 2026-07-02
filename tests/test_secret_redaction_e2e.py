@@ -547,3 +547,96 @@ class TestRetrievalBarrierDefenseInDepth:
             "key=NEW_KEY" in (r.excerpt or "") or "key=NEW_KEY" in json.dumps(r.payload or {})
             for r in note_results
         ), "note content was redacted despite the carveout"
+
+
+class TestLLMResponseBarrier:
+    """Locks the RedactingLLMProviderWrapper barrier (PR 0 step 7).
+
+    Codex-review Finding 2: the ``service`` fixture above constructs
+    ``AgentWorkTracePlugin(provider=_StubOutcomeProvider())`` directly,
+    bypassing ``app.dependencies.build_llm_provider`` where the
+    wrapper is applied. This class adds explicit tests that verify
+    the wrapper redacts secrets in LLM ``parsed_json`` output before
+    the extractor sees them.
+    """
+
+    def test_wrapper_redacts_secret_in_parsed_json(self):
+        """Direct unit-style e2e: LLM emits a secret in parsed_json,
+        wrapper strips it before the caller reads."""
+        from providers.llm.redacting_wrapper import RedactingLLMProviderWrapper
+        from providers.llm.base import LLMJsonResponse, LLMProvider
+
+        gh = "ghp_" + ("Z" * 36)
+
+        class _LeakingProvider(LLMProvider):
+            def generate_json(self, *, system_prompt, user_prompt, schema_description):
+                # Simulate an LLM hallucinating a secret in its
+                # extraction output (an alarmingly-common failure
+                # mode when summarizing a redacted source).
+                return LLMJsonResponse(
+                    raw_text=json.dumps({"outcome": f"leaked {gh}"}),
+                    parsed_json={
+                        "outcome": f"the LLM copied {gh} into the summary",
+                        "evidence": [f"see also {gh}"],
+                    },
+                )
+
+        wrapped = RedactingLLMProviderWrapper(_LeakingProvider())
+        response = wrapped.generate_json(
+            system_prompt="", user_prompt="", schema_description="",
+        )
+        assert gh not in json.dumps(response.parsed_json)
+        assert gh not in response.raw_text
+        # Structural integrity: the outer shape is preserved.
+        assert set(response.parsed_json.keys()) == {"outcome", "evidence"}
+        assert isinstance(response.parsed_json["evidence"], list)
+
+    def test_wrapper_is_wired_in_build_llm_provider(self):
+        """Guard: any future refactor that removes the wrapper from
+        ``app.dependencies.build_llm_provider`` fails this test.
+
+        Reloads ``app.dependencies`` at test-start so that any earlier
+        module-scope monkey-patch (e.g. from
+        ``evals.narrow_target_claude_code._shared`` which replaces
+        ``build_llm_provider`` with a stub for scenario runs) does not
+        contaminate this test's view of the module.
+        """
+        import importlib
+
+        import app.dependencies
+        # Force a clean reload of app.dependencies so any monkey-patch
+        # from a prior test in the session is undone.
+        app_deps_fresh = importlib.reload(app.dependencies)
+
+        from providers.llm.redacting_wrapper import RedactingLLMProviderWrapper
+        from providers.llm.base import LLMJsonResponse, LLMProvider
+        from unittest.mock import MagicMock, patch
+
+        class _FakeProvider(LLMProvider):
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def generate_json(self, **_):
+                return LLMJsonResponse(raw_text="{}", parsed_json={})
+
+        fake_provider_cfg = MagicMock()
+        fake_provider_cfg.base_url = "http://stub.local"
+        fake_provider_cfg.kind = "openai_compatible"
+        fake_provider_cfg.api_key = "test-key"
+        fake_provider_cfg.timeout_seconds = 10
+        fake_provider_cfg.retry_policy = MagicMock()
+
+        fake_config = MagicMock()
+        fake_config.provider_config.return_value = fake_provider_cfg
+
+        with patch.object(
+            app_deps_fresh, "OpenAICompatibleLLMProvider", _FakeProvider,
+        ):
+            provider = app_deps_fresh.build_llm_provider(
+                fake_config, provider_name="stub", model="stub-model",
+            )
+
+        assert isinstance(provider, RedactingLLMProviderWrapper), (
+            "build_llm_provider must return a RedactingLLMProviderWrapper. "
+            "If a refactor removed the wrapper, the LLM barrier is bypassed."
+        )
