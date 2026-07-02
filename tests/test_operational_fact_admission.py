@@ -181,13 +181,14 @@ class TestPerThreadCap:
     """Deterministic cap under a synthetic stream of admissible candidates."""
 
     def _make_admissible_stream(self, n: int):
-        # Generate n discovery+use pairs at different turn indices with
-        # distinct known-family artifacts so all admit.
+        # PR 3 (recon-verb model): each ``which tool_NNN`` invocation is
+        # a command_lookup reconnaissance event that emits an admissible
+        # candidate (distinct family per unknown target → distinct slot).
         turns = []
         for i in range(n):
-            artifact = f"scripts/mod_{i:03d}.py"
-            turns.append(make_bash_turn(2 * i, f"python {artifact} --dry"))
-            turns.append(make_bash_turn(2 * i + 1, f"python {artifact}"))
+            turns.append(make_bash_turn(
+                i, f"which tool_{i:03d}", output_tail=f"/usr/bin/tool_{i:03d}",
+            ))
         return turns
 
     def test_cap_default_value(self):
@@ -300,14 +301,14 @@ class TestDiagnosticsShape:
         assert diag == AdmissionDiagnostics()
 
     def test_diagnostics_admitted_equals_returned_length_under_cap(self):
-        # Generate 10 admissible discovery/use pairs — the cap trims
-        # to 5. diag.admitted must equal len(cands) == 5, and
-        # diag.capped must equal 5.
+        # PR 3 (recon-verb model): 10 admissible command_lookup events;
+        # the cap trims to 5. diag.admitted must equal len(cands) == 5,
+        # and diag.capped must equal 5.
         turns = []
         for i in range(10):
-            artifact = f"scripts/mod_{i:03d}.py"
-            turns.append(make_bash_turn(2 * i, f"python {artifact} --dry"))
-            turns.append(make_bash_turn(2 * i + 1, f"python {artifact}"))
+            turns.append(make_bash_turn(
+                i, f"which tool_{i:03d}", output_tail=f"/usr/bin/tool_{i:03d}",
+            ))
         cands, diag = derive_operational_facts(
             turns, CONTAINER, fake_scope_resolver, return_diagnostics=True
         )

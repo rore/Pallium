@@ -593,7 +593,16 @@ class PalliumService:
         )
 
     def _build_processing_result(self, source_item: SourceItem) -> ItemProcessingResult:
-        memory_objects = self._storage.list_memory_objects_for_source_item(source_item.id)
+        # PR 3 of operational_fact redesign (2026-07-02): the caller-
+        # observability response includes candidates. Post-ingest is
+        # not an operator surface; the API client reconciles
+        # memory_object_ids against index_entries and needs to see
+        # every row just written — including ``lifecycle="candidate"``
+        # operational_fact rows. Operator surfaces (dashboard, query
+        # retrieval) filter candidates via their own defaults.
+        memory_objects = self._storage.list_memory_objects_for_source_item(
+            source_item.id, include_candidates=True,
+        )
         relations = self._storage.list_relations_for_source_item(source_item.id)
         index_entries = self._storage.list_index_entries_for_target(
             target_kind="source_item",

@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 _DASHBOARD_HTML_PATH = Path(__file__).parent / "dashboard.html"
 
+# PR 3 of operational_fact redesign: the dashboard /api/memories view
+# runs a raw SELECT (not through ``list_memory_objects``), so it needs
+# its own allowlist mirror. Kept in sync with the storage-layer default
+# ``_DEFAULT_VISIBLE_LIFECYCLES``; drift between the two is a bug.
+_DASHBOARD_VISIBLE_LIFECYCLES: tuple[str, ...] = ("active", "superseded", "suppressed")
+
 
 def mount_dashboard(app: FastAPI) -> None:
     assets_dir = Path(__file__).resolve().parent.parent / "assets"
@@ -103,6 +109,7 @@ def mount_dashboard(app: FastAPI) -> None:
         offset: int = Query(0, ge=0),
         sort: str | None = Query(None),
         include_soft_deleted: bool = Query(False),
+        include_candidates: bool = Query(False),
     ) -> JSONResponse:
         limit = min(limit, 200)
         service = app.state.pallium_service
@@ -125,6 +132,19 @@ def mount_dashboard(app: FastAPI) -> None:
             elif lifecycle is not None:
                 stmt = stmt.where(MemoryObjectRecord.lifecycle == lifecycle)
                 count_stmt = count_stmt.where(MemoryObjectRecord.lifecycle == lifecycle)
+            elif not include_candidates:
+                # PR 3 of operational_fact redesign: default filter —
+                # hide ``candidate`` (and any future non-allowlist)
+                # rows unless the caller explicitly passes
+                # ``include_candidates=1`` or an exact
+                # ``?lifecycle=candidate`` filter. Mirrors the storage
+                # default at ``list_memory_objects``.
+                stmt = stmt.where(
+                    MemoryObjectRecord.lifecycle.in_(_DASHBOARD_VISIBLE_LIFECYCLES)
+                )
+                count_stmt = count_stmt.where(
+                    MemoryObjectRecord.lifecycle.in_(_DASHBOARD_VISIBLE_LIFECYCLES)
+                )
             if container_ref is not None:
                 stmt = stmt.where(MemoryObjectRecord.container_ref == container_ref)
                 count_stmt = count_stmt.where(MemoryObjectRecord.container_ref == container_ref)
@@ -165,11 +185,22 @@ def mount_dashboard(app: FastAPI) -> None:
                     stmt = stmt.where(MemoryObjectRecord.id.in_(flagged_ids))
                 elif lifecycle is not None:
                     stmt = stmt.where(MemoryObjectRecord.lifecycle == lifecycle)
+                elif not include_candidates:
+                    stmt = stmt.where(
+                        MemoryObjectRecord.lifecycle.in_(_DASHBOARD_VISIBLE_LIFECYCLES)
+                    )
                 if container_ref is not None:
                     stmt = stmt.where(MemoryObjectRecord.container_ref == container_ref)
                 if search is not None and search.strip():
                     like_pattern = f"%{search.strip()}%"
                     stmt = stmt.where(MemoryObjectRecord.payload_json.ilike(like_pattern))
+                if not include_soft_deleted:
+                    # Pre-PR-3 bug: the ``most_negative`` sort branch
+                    # rebuilt ``stmt`` from scratch but forgot to
+                    # re-apply the is_soft_deleted filter, leaking
+                    # tombstoned rows to this view. Fixed as part of
+                    # PR 3's dashboard audit.
+                    stmt = stmt.where(MemoryObjectRecord.is_soft_deleted == 0)
             else:
                 stmt = stmt.order_by(MemoryObjectRecord.created_at.desc())
 

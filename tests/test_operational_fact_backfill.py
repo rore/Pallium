@@ -45,21 +45,18 @@ def _fake_scope_resolver(container_ref, artifact_path):
 
 
 def _seed_uv_turn_stream() -> list[TurnRecord]:
+    # PR 3 (recon-verb model): ``uv --version`` is a version_query
+    # reconnaissance verb that emits a uv-family candidate directly.
+    # ``uv sync`` / ``uv run`` are not recon verbs in the new model.
     return [
         TurnRecord(
             turn_index=0,
             source_item_id="src-0",
             timestamp="2026-07-01T00:00:00Z",
             commands=(
-                CommandRecord(cmd="uv sync ./pyproject.toml", exit_code=0),
-            ),
-        ),
-        TurnRecord(
-            turn_index=1,
-            source_item_id="src-1",
-            timestamp="2026-07-01T00:01:00Z",
-            commands=(
-                CommandRecord(cmd="uv run pytest ./pyproject.toml", exit_code=0),
+                CommandRecord(
+                    cmd="uv --version", exit_code=0, output_tail="uv 0.4.0",
+                ),
             ),
         ),
     ]
@@ -212,6 +209,9 @@ class TestCLI:
         assert "no candidates to commit" in stderr.getvalue()
 
     def test_dry_run_with_fixture_env_derives(self, tmp_path, monkeypatch):
+        # PR 3 (recon-verb model): ``uv --version`` is a version_query
+        # reconnaissance verb; ``uv sync``/``uv run`` no longer produce
+        # candidates on their own.
         fixture = {
             "git:example/repo": [
                 {
@@ -219,18 +219,8 @@ class TestCLI:
                     "source_item_id": "src-0",
                     "timestamp": "2026-07-01T00:00:00Z",
                     "commands": [
-                        {"cmd": "uv sync ./pyproject.toml", "exit_code": 0}
-                    ],
-                    "files_read": [],
-                    "files_modified": [],
-                    "grep_patterns": [],
-                },
-                {
-                    "turn_index": 1,
-                    "source_item_id": "src-1",
-                    "timestamp": "2026-07-01T00:01:00Z",
-                    "commands": [
-                        {"cmd": "uv run pytest ./pyproject.toml", "exit_code": 0}
+                        {"cmd": "uv --version", "exit_code": 0,
+                         "output_tail": "uv 0.4.0"}
                     ],
                     "files_read": [],
                     "files_modified": [],

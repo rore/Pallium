@@ -148,7 +148,10 @@ class TestFeatureFlagOn:
         op_facts = [m for m in result.memory_objects if m.type == OPERATIONAL_FACT_TYPE]
         for f in op_facts:
             assert f.schema_id == OPERATIONAL_FACT_SCHEMA_ID
-            assert f.lifecycle == "active"
+            # PR 3 (recon-verb model): derived candidates ship as
+            # lifecycle="candidate"; promotion to "active" is the wiring
+            # layer's job at the next milestone.
+            assert f.lifecycle == "candidate"
 
     def test_flag_on_visibility_matches_aggregate(self):
         items = _seed_discovery_use_turns()
@@ -237,7 +240,10 @@ class TestPayloadShape:
         for f in op_facts:
             assert f.payload["origin"] == "agent_inferred"
 
-    def test_evidence_has_exactly_two_entries(self):
+    def test_evidence_has_exactly_one_entry(self):
+        # PR 3 (recon-verb model): each candidate is derived from a single
+        # reconnaissance event, so payload["evidence"] is length 1 and
+        # contains only a "discovery" kind entry.
         items = _seed_discovery_use_turns()
         aggregate = build_thread_aggregate(items)
         plugin = _build_plugin(enabled=True)
@@ -246,9 +252,9 @@ class TestPayloadShape:
         assert op_facts
         for f in op_facts:
             ev = f.payload["evidence"]
-            assert len(ev) == 2
+            assert len(ev) == 1
             kinds = {e["kind"] for e in ev}
-            assert kinds == {"discovery", "use"}
+            assert kinds == {"discovery"}
 
     def test_evidence_source_item_ids_link_back(self):
         items = _seed_discovery_use_turns()

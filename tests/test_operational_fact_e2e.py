@@ -1,0 +1,409 @@
+"""E2E tests for the operational_fact redesign — PR 3+ invariants.
+
+Locks the design invariants from the plan at
+``C:\\Users\\I347041\\.claude\\plans\\noble-brewing-squid.md``:
+
+Test 1 — cross-session recurrence promotes; single-session does not.
+Test 4a — unknown ecosystem produces a candidate (PR 3).
+Test 4b — unknown ecosystem promotes after recurrence (PR 4).
+Test 5 — cross-container isolation (PR 3).
+Test 7 — UserPromptSubmit injects on operational intent (PR 4).
+Test 9 — candidate invisibility at every operator surface (PR 3).
+
+PR 3 lands Tests 4a, 5, 9. Tests 1, 4b, 7 are XFAIL until PR 4.
+
+Reference E2E shape: tests/test_agent_work_trace_e2e.py fixture pattern.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.dashboard import mount_dashboard
+from core.models import IndexEntry, MemoryObject, new_id, utc_now
+from core.service import PalliumService
+from providers.llm.base import LLMJsonResponse, LLMProvider
+from retrieval.lexical import LexicalRetrievalProvider
+from semantic.agent_work_trace import AgentWorkTracePlugin
+from semantic.demo_agent_memory import DemoAgentMemoryPlugin
+from semantic.operational_fact import OPERATIONAL_FACT_TYPE
+from storage.sqlite import SQLiteStorageProvider
+
+
+CONTAINER_A = "git:example.com/repo-A"
+CONTAINER_B = "git:example.com/repo-B"
+
+
+class _StubOutcome(LLMProvider):
+    def generate_json(self, **_):
+        return LLMJsonResponse(raw_text='{"outcome":""}', parsed_json={"outcome": ""})
+
+
+@pytest.fixture
+def test_db_url(tmp_path):
+    return f"sqlite:///{tmp_path / 'op_fact_e2e.db'}"
+
+
+@pytest.fixture
+def service(test_db_url):
+    storage = SQLiteStorageProvider(test_db_url)
+    plugins = {
+        "demo_agent_memory": DemoAgentMemoryPlugin(),
+        "agent_work_trace": AgentWorkTracePlugin(provider=_StubOutcome()),
+    }
+    return PalliumService(
+        storage=storage,
+        retrieval=LexicalRetrievalProvider(storage),
+        semantic_plugins=plugins,
+        default_use_case="demo_agent_memory",
+    )
+
+
+@pytest.fixture
+def dashboard_client(service):
+    app = FastAPI()
+    app.state.pallium_service = service
+    mount_dashboard(app)
+    return TestClient(app)
+
+
+def _seed_candidate(
+    storage,
+    *,
+    container_ref: str = CONTAINER_A,
+    command_family: str = "python",
+    artifact_role: str = "interpreter",
+    scope_kind: str = "machine_repo",
+    artifact_normalized: str = "/usr/local/bin/python",
+    lifecycle: str = "candidate",
+    subject_override: str | None = None,
+) -> str:
+    """Insert a synthetic operational_fact row directly.
+
+    Test 9 uses this to prove operator-surface invisibility of
+    ``lifecycle=candidate`` rows without depending on the derivation
+    pipeline (that is covered by Test 4a). Test 5 uses it to place
+    facts in each container without a full pipeline run.
+    """
+    now = utc_now()
+    scope_ref = container_ref if scope_kind == "repo" else f"{container_ref}@machine:testhash"
+    subject = subject_override or f"{command_family}: {artifact_normalized}"
+    mem = MemoryObject(
+        type=OPERATIONAL_FACT_TYPE,
+        schema_id="operational_fact.v1",
+        schema_version="1",
+        payload={
+            "command_family": command_family,
+            "artifact_role": artifact_role,
+            "scope_kind": scope_kind,
+            "scope_ref": scope_ref,
+            "subject": subject,
+            "artifact": artifact_normalized,
+            "artifact_normalized": artifact_normalized,
+            "origin": "agent_inferred",
+            "evidence": [
+                {
+                    "kind": "discovery",
+                    "verb": "command_lookup",
+                    "source_item_id": "src-test-0000",
+                    "tool": "Bash",
+                    "turn_index": 0,
+                    "timestamp": "2026-07-02T00:00:00Z",
+                    "fragment": f"which {command_family}",
+                },
+            ],
+            "use_counters": {
+                "reuse_count": 1,
+                "success_count": 0,
+                "failure_count": 0,
+                "last_used_at": now.isoformat(),
+                "last_confirmed_at": None,
+            },
+        },
+        lifecycle=lifecycle,
+        visibility="private",
+        container_ref=container_ref,
+        freshness_at=now,
+    )
+    storage.create_memory_object(mem)
+    # Emit a lexical index entry so retrieval has something concrete to
+    # (correctly) refuse to surface for the candidate case.
+    idx = IndexEntry(
+        target_kind="memory_object",
+        target_id=mem.id,
+        index_type="lexical",
+        text_view=f"{subject} {command_family} {artifact_role} {artifact_normalized}",
+    )
+    storage.create_index_entry(idx)
+    return mem.id
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — Candidate invisibility at every operator surface (PR 3)
+# ---------------------------------------------------------------------------
+
+
+class TestCandidateInvisibility:
+    """Every read surface must exclude ``lifecycle=candidate`` by default.
+
+    This is the load-bearing PR 3 contract: without it, the promotion
+    gate in PR 4 is meaningless — an un-promoted candidate that leaks
+    into retrieval or the dashboard is indistinguishable from an
+    ``active`` fact.
+    """
+
+    def test_list_memory_objects_default_excludes_candidate(self, service):
+        cand_id = _seed_candidate(service._storage, lifecycle="candidate")
+        active_id = _seed_candidate(
+            service._storage, lifecycle="active",
+            artifact_normalized="/usr/local/bin/python2",
+        )
+        results = service._storage.list_memory_objects(
+            memory_types=[OPERATIONAL_FACT_TYPE], container_ref=CONTAINER_A,
+        )
+        ids = {r.id for r in results}
+        assert active_id in ids
+        assert cand_id not in ids
+
+    def test_list_memory_objects_include_candidates_returns_them(self, service):
+        cand_id = _seed_candidate(service._storage, lifecycle="candidate")
+        results = service._storage.list_memory_objects(
+            memory_types=[OPERATIONAL_FACT_TYPE],
+            container_ref=CONTAINER_A,
+            include_candidates=True,
+        )
+        assert cand_id in {r.id for r in results}
+
+    def test_list_memory_objects_explicit_lifecycle_candidate_returns_it(self, service):
+        # Explicit ``lifecycle="candidate"`` bypasses the default filter.
+        cand_id = _seed_candidate(service._storage, lifecycle="candidate")
+        results = service._storage.list_memory_objects(
+            memory_types=[OPERATIONAL_FACT_TYPE],
+            container_ref=CONTAINER_A,
+            lifecycle="candidate",
+        )
+        assert cand_id in {r.id for r in results}
+
+    def test_query_retrieval_excludes_candidate(self, service):
+        # Two rows: one candidate (invisible) and one active sibling.
+        # Primary invariant: retrieval never surfaces the candidate.
+        cand_id = _seed_candidate(
+            service._storage,
+            lifecycle="candidate",
+            artifact_normalized="/usr/local/bin/xyzlang",
+            command_family="xyzlang",
+            subject_override="xyzlang interpreter recon candidate",
+        )
+        active_id = _seed_candidate(
+            service._storage,
+            lifecycle="active",
+            artifact_normalized="/usr/local/bin/xyzlang2",
+            command_family="xyzlang",
+            subject_override="xyzlang interpreter recon active",
+        )
+        result = service.query(
+            text="xyzlang interpreter recon",
+            limit=20,
+            trigger_origin="user_prompt_submit",
+            container_ref=CONTAINER_A,
+        )
+        # InjectableBlock.memory_object_id is the correct attribute
+        # (verified against core/models.py::InjectableBlock).
+        block_ids = {b.memory_object_id for b in result.injectable_blocks}
+        # Load-bearing assertion: the candidate never appears in the
+        # injectable set. If retrieval surfaces zero blocks (routing
+        # not fully wired for op_fact in this test fixture), the
+        # invariant is trivially satisfied — but the raw hits under
+        # the query must ALSO exclude the candidate for the assertion
+        # to be meaningful. Check raw_hits as belt-and-braces.
+        assert cand_id not in block_ids, (
+            f"candidate {cand_id} leaked into injectable_blocks"
+        )
+        # Belt-and-braces: check the raw retrieval hits too. Even if
+        # ranking/injection doesn't surface the candidate as a block,
+        # the raw retrieval layer must not return it.
+        raw_hit_ids = set()
+        for hit in getattr(result, "raw_hits", []) or []:
+            tid = getattr(hit, "target_id", None) or getattr(hit, "memory_object_id", None)
+            if tid:
+                raw_hit_ids.add(tid)
+        assert cand_id not in raw_hit_ids, (
+            f"candidate {cand_id} leaked into raw retrieval hits: {raw_hit_ids}"
+        )
+
+    def test_dashboard_api_default_excludes_candidate(self, service, dashboard_client):
+        cand_id = _seed_candidate(service._storage, lifecycle="candidate")
+        active_id = _seed_candidate(
+            service._storage, lifecycle="active",
+            artifact_normalized="/usr/local/bin/python2",
+        )
+        resp = dashboard_client.get(
+            "/dashboard/api/memories",
+            params={"type": OPERATIONAL_FACT_TYPE, "limit": 100},
+        )
+        assert resp.status_code == 200
+        ids = {m["id"] for m in resp.json()["memories"]}
+        assert active_id in ids
+        assert cand_id not in ids
+
+    def test_dashboard_api_explicit_lifecycle_candidate_returns_it(self, service, dashboard_client):
+        cand_id = _seed_candidate(service._storage, lifecycle="candidate")
+        resp = dashboard_client.get(
+            "/dashboard/api/memories",
+            params={"type": OPERATIONAL_FACT_TYPE, "lifecycle": "candidate"},
+        )
+        assert resp.status_code == 200
+        ids = {m["id"] for m in resp.json()["memories"]}
+        assert cand_id in ids
+
+    def test_lifecycle_promoted_to_active_becomes_visible(self, service):
+        cand_id = _seed_candidate(service._storage, lifecycle="candidate")
+        # Default query excludes it.
+        pre = service._storage.list_memory_objects(
+            memory_types=[OPERATIONAL_FACT_TYPE], container_ref=CONTAINER_A,
+        )
+        assert cand_id not in {r.id for r in pre}
+        # Flip to active.
+        service._storage.update_memory_object_lifecycle(cand_id, "active")
+        # Now it appears.
+        post = service._storage.list_memory_objects(
+            memory_types=[OPERATIONAL_FACT_TYPE], container_ref=CONTAINER_A,
+        )
+        assert cand_id in {r.id for r in post}
+
+
+# ---------------------------------------------------------------------------
+# Test 5 — Cross-container isolation (PR 3)
+# ---------------------------------------------------------------------------
+
+
+class TestCrossContainerIsolation:
+    def test_active_facts_isolated_by_container(self, service):
+        a_id = _seed_candidate(
+            service._storage, container_ref=CONTAINER_A, lifecycle="active",
+            artifact_normalized="/usr/local/bin/python_A",
+        )
+        b_id = _seed_candidate(
+            service._storage, container_ref=CONTAINER_B, lifecycle="active",
+            artifact_normalized="/usr/local/bin/python_B",
+        )
+        a_rows = service._storage.list_memory_objects(
+            memory_types=[OPERATIONAL_FACT_TYPE], container_ref=CONTAINER_A,
+        )
+        b_rows = service._storage.list_memory_objects(
+            memory_types=[OPERATIONAL_FACT_TYPE], container_ref=CONTAINER_B,
+        )
+        a_ids = {r.id for r in a_rows}
+        b_ids = {r.id for r in b_rows}
+        assert a_id in a_ids and b_id not in a_ids
+        assert b_id in b_ids and a_id not in b_ids
+
+    def test_query_scopes_to_container(self, service):
+        _seed_candidate(
+            service._storage, container_ref=CONTAINER_A, lifecycle="active",
+            artifact_normalized="/usr/local/bin/python_A",
+            subject_override="python: /usr/local/bin/python_A",
+        )
+        _seed_candidate(
+            service._storage, container_ref=CONTAINER_B, lifecycle="active",
+            artifact_normalized="/usr/local/bin/python_B",
+            subject_override="python: /usr/local/bin/python_B",
+        )
+        # Query in A must not surface B's fact even though the term
+        # "python" matches both.
+        result = service.query(
+            text="python interpreter",
+            limit=20,
+            trigger_origin="user_prompt_submit",
+            container_ref=CONTAINER_A,
+        )
+        # Assert no block references container B's artifact string.
+        rendered = " ".join(str(b) for b in result.injectable_blocks)
+        assert "python_B" not in rendered
+
+
+# ---------------------------------------------------------------------------
+# Test 4a — Unknown ecosystem produces a candidate (PR 3)
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownEcosystemCandidate:
+    """A fresh ecosystem's reconnaissance turn produces a
+    ``lifecycle=candidate`` operational_fact, even if the interpreter
+    name is unknown to any allow-list.
+
+    Uses the derivation predicate directly rather than the full ingest
+    pipeline to keep the invariant scope tight.
+    """
+
+    def test_xyzlang_which_produces_candidate(self):
+        from semantic.operational_fact import derive_operational_facts
+        from tests.fixtures.operational_fact import fake_scope_resolver, make_bash_turn
+
+        turns = [
+            make_bash_turn(0, "which xyzlang", output_tail="/usr/local/bin/xyzlang"),
+            make_bash_turn(1, "xyzlang --version", output_tail="xyzlang 3.14.15"),
+        ]
+        candidates = derive_operational_facts(
+            turns, CONTAINER_A, fake_scope_resolver,
+        )
+        # At least one candidate whose artifact references xyzlang.
+        assert any("xyzlang" in c.artifact_normalized for c in candidates)
+
+    def test_candidate_defaults_invisible_at_dashboard(self, service, dashboard_client):
+        # A candidate — even one with the family="xyzlang" that no
+        # allow-list would ever have — must not appear in the default
+        # dashboard view.
+        cand_id = _seed_candidate(
+            service._storage,
+            lifecycle="candidate",
+            command_family="xyzlang",
+            artifact_normalized="/usr/local/bin/xyzlang",
+            subject_override="xyzlang: /usr/local/bin/xyzlang",
+        )
+        resp = dashboard_client.get(
+            "/dashboard/api/memories",
+            params={"type": OPERATIONAL_FACT_TYPE, "limit": 100},
+        )
+        assert resp.status_code == 200
+        ids = {m["id"] for m in resp.json()["memories"]}
+        assert cand_id not in ids
+
+
+# ---------------------------------------------------------------------------
+# Test 1 — Cross-session recurrence promotes (PR 4 — XFAIL until then)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(reason="promotion mechanism ships in PR 4", strict=True)
+class TestCrossSessionRecurrencePromotes:
+    def test_two_sessions_promote_to_active(self, service):
+        # PR 4 test scaffold. Placeholder assertion — will be filled in
+        # when PR 4 lands.
+        raise AssertionError("PR 4 not yet implemented")
+
+
+# ---------------------------------------------------------------------------
+# Test 4b — Unknown ecosystem promotes after recurrence (PR 4 — XFAIL)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(reason="promotion mechanism ships in PR 4", strict=True)
+class TestUnknownEcosystemPromotes:
+    def test_xyzlang_promotes_after_two_sessions(self, service):
+        raise AssertionError("PR 4 not yet implemented")
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — UserPromptSubmit injects on operational intent (PR 4 — XFAIL)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(reason="promotion mechanism ships in PR 4", strict=True)
+class TestUserPromptSubmitInjection:
+    def test_how_do_i_run_tests_injects_test_runner_fact(self, service):
+        raise AssertionError("PR 4 not yet implemented")
