@@ -185,16 +185,35 @@ def _redact_json_leaves(obj: Any) -> Any:
 
 
 def _redact_json_string(json_str: str | None) -> str | None:
-    """Redact a JSON-serialized dict/list without altering its shape."""
+    """Redact a JSON-serialized dict/list without altering its shape.
+
+    Return the input unchanged unless a string leaf was actually
+    redacted. This avoids false-positive "changes" from JSON round-
+    trip artifacts (Unicode escape ``\\u2192`` normalizing to the
+    literal arrow char under ``ensure_ascii=False``, key-order
+    differences, whitespace, etc.) — those are byte-level noise, not
+    semantic redaction.
+
+    Detection strategy: parse the input, walk it, apply
+    :func:`redact_sensitive` to each string leaf, and check whether
+    the walked structure differs from the parsed structure. If not,
+    return the original ``json_str`` byte-identical.
+    """
     if not json_str:
         return json_str
     try:
         obj = json.loads(json_str)
     except (json.JSONDecodeError, TypeError):
         # Fall back to plain-text redaction if not valid JSON.
-        return redact_sensitive(json_str)
-    redacted = _redact_json_leaves(obj)
-    return json.dumps(redacted, ensure_ascii=False)
+        red = redact_sensitive(json_str)
+        return red if red != json_str else json_str
+    redacted_obj = _redact_json_leaves(obj)
+    if redacted_obj == obj:
+        # Structurally unchanged — return the original byte-string
+        # to avoid triggering false-positive rewrites from JSON
+        # serialization drift.
+        return json_str
+    return json.dumps(redacted_obj, ensure_ascii=False)
 
 
 def _scan_memory_rows(conn: sqlite3.Connection) -> tuple[list[MemoryRowCandidate], list[str], list[str]]:

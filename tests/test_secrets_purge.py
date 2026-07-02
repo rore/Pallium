@@ -191,8 +191,8 @@ class TestBucketClassification:
         _seed_memory(
             storage,
             type="note",
-            subject="note with key=NEW_KEY placeholder",
-            payload={"content": "step: use key=NEW_KEY"},
+            subject="note with password=hunter2 placeholder",
+            payload={"content": "step: use password=hunter2"},
         )
         plan = sp.build_plan(sqlite_path)
         # No rewrite, no soft-delete — just tracked as skipped.
@@ -249,11 +249,11 @@ class TestSourceItemAndIndex:
         _seed_source_item(
             storage, artifact_kind="assistant_output",
             content="clean",
-            metadata={"headers": {"Authorization": "Bearer abc123abc123abc123"}},
+            metadata={"headers": {"Authorization": "Bearer abc123abc123abc123abc"}},
         )
         plan = sp.build_plan(sqlite_path)
         assert len(plan.source_items) == 1
-        assert "abc123abc123abc123" not in (plan.source_items[0].redacted_metadata_json or "")
+        assert "abc123abc123abc123abc" not in (plan.source_items[0].redacted_metadata_json or "")
 
     def test_index_entry_text_view_rewritten(self, storage, sqlite_path):
         mid = _seed_memory(storage, type="task_trace", subject="x", payload={"x": 1})

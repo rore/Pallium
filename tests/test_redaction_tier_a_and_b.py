@@ -204,11 +204,15 @@ class TestTierBHighEntropyWithCue:
          "refresh_token", "client_secret", "session_id", "webhook"],
     )
     def test_high_entropy_near_cue_redacts(self, cue):
+        # Cue must appear as an ASSIGNMENT KEY (``:`` or ``=``) for
+        # Tier B to fire. Prose usage ``the <cue> is X`` is
+        # deliberately not sufficient — the 2026-07-02 live-DB
+        # dry-run showed that treating bare mentions as sufficient
+        # produced high FP rates on ordinary narrative.
         secret = _real_shape("", "", 30)
-        s = f"the {cue} is {secret}"
+        s = f"{cue}: {secret}"
         out = redact_sensitive(s)
         assert secret not in out
-        assert "[REDACTED-30c]" in out
 
     def test_short_token_not_redacted_even_near_cue(self):
         # Under min length (20).
@@ -378,3 +382,82 @@ class TestPreExistingBehaviorPreserved:
         assert "abc123" not in redact_sensitive(
             'headers = {"Authorization": "Bearer abc123"}'
         )
+
+
+class TestFalsePositiveFixesFromLiveDryRun:
+    """Regression pins for FPs discovered by the 2026-07-02 live-DB
+    dry-run of ``secrets_purge.py``. Each test locks a specific
+    over-broad match the naive PR 0 shipped that would have
+    silently corrupted 5000+ legitimate rows."""
+
+    def test_placeholder_none_value_not_redacted(self):
+        # Config-defaults pattern: ``password=None`` (Python literal).
+        # The RHS is a placeholder, not a secret. Env-var rule must
+        # skip.
+        assert redact_sensitive("llm_api_key=None") == "llm_api_key=None"
+        assert redact_sensitive("password=null") == "password=null"
+        assert redact_sensitive("token: None") == "token: None"
+
+    def test_empty_quoted_value_not_redacted(self):
+        assert redact_sensitive('password=""') == 'password=""'
+        assert redact_sensitive("api_key=''") == "api_key=''"
+
+    def test_boolean_placeholder_not_redacted(self):
+        assert redact_sensitive("auth=true") == "auth=true"
+        assert redact_sensitive("secret=false") == "secret=false"
+
+    def test_real_password_still_redacted(self):
+        # The exemption must not weaken redaction of actual values.
+        assert "hunter2" not in redact_sensitive("password=hunter2")
+        assert "s3cret" not in redact_sensitive("api_key: s3cretValue")
+
+    def test_doc_path_with_token_word_not_redacted(self):
+        # Tier B FP guard: paths ending in a file extension near cue
+        # words don't fire. Regression pin against the live-corpus
+        # example ``docs/plans/2026-05-04-token-savings-levers.md``.
+        s = "See docs/plans/2026-05-04-token-savings-levers.md for context"
+        assert "token-savings-levers.md" in redact_sensitive(s)
+
+    def test_py_file_path_near_cue_word_not_redacted(self):
+        s = "check semantic/auth_token_handler.py for the token flow"
+        assert "auth_token_handler.py" in redact_sensitive(s)
+
+    def test_test_name_with_key_suffix_not_redacted(self):
+        # Compound-key regex now requires trailing : or = separator.
+        # Test names like ``TestX.test_includes_query_key`` no longer
+        # trigger the cue-word window.
+        s = "TestStatusEndpointQueryStats.test_status_includes_query_key passed"
+        assert "test_status_includes_query_key" in redact_sensitive(s)
+
+    def test_actual_config_key_assignment_still_redacted(self):
+        # Compound-key with trailing separator + high-entropy value:
+        # this IS a secret.
+        secret = _real_shape("", "", 40)
+        s = f"deploy_key: {secret}"
+        assert secret not in redact_sensitive(s)
+
+    def test_bulleted_narrative_authorization_not_redacted(self):
+        # Regression pin: ``- Authorization: Export APIs are protected...``
+        # is a bulleted category label in prose, not a header
+        # assignment. The multi-word prose guard must skip it.
+        s = "per ILM-012:\n- Authorization: Export APIs are protected by OAuth2"
+        assert "Export APIs are protected" in redact_sensitive(s)
+
+    def test_yaml_prose_value_not_redacted(self):
+        # Same guard on yaml-style assignments. A comment sentence in
+        # a doc that says ``password: This section describes ...``
+        # should not have its RHS redacted.
+        s = "password: This section describes the rotation procedure"
+        assert "This section describes" in redact_sensitive(s)
+
+    def test_short_token_value_still_redacted(self):
+        # The prose guard only trips on 3+ short words. A single-token
+        # value stays redacted.
+        assert "hunter2" not in redact_sensitive("password: hunter2")
+
+    def test_long_token_value_still_redacted(self):
+        # A single high-entropy value ≥ 12 chars still redacts, even
+        # in a multi-word RHS (word count guard requires all words
+        # short).
+        secret = "abcdefghijkl12345"  # 17 chars, no whitespace
+        assert secret not in redact_sensitive(f"password: leaked {secret}")

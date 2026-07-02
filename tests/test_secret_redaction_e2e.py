@@ -129,7 +129,7 @@ _WRAPPED_SECRETS: list[tuple[str, str]] = [
 # - a nearby cue word so Tier B's context requirement fires
 
 _SYNTH_TOKEN = "SYNTHTOKEN-4a8f9c2e1b7d6a3f5e0c8b2a9d4e7c1f6b3a"
-_SYNTH_CUE_CONTEXT = f"our secret is {_SYNTH_TOKEN}"
+_SYNTH_CUE_CONTEXT = f"secret = {_SYNTH_TOKEN}"
 
 _UNKNOWN_YAML_KEY = "b64EncodedRandomLookingValueHereXYZ123abcDEF"
 _UNKNOWN_YAML_CONTEXT = f"mycompany_prod_key: {_UNKNOWN_YAML_KEY}"

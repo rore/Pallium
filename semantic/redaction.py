@@ -25,7 +25,19 @@ from __future__ import annotations
 import re
 from typing import Final
 
-_BEARER_RE: Final = re.compile(r"Bearer\s+\S+", re.IGNORECASE)
+_BEARER_RE: Final = re.compile(
+    # ``Bearer <token>`` header. Value must be at least 20 chars OR
+    # contain a non-alphanumeric character (`.`, `-`, `_`, `=`, `/`) —
+    # real bearer tokens are always long random strings. This avoids
+    # false-positives on prose like ``Bearer tokens are common`` and
+    # ``a Bearer authentication scheme``. When someone writes an actual
+    # short bearer value in prose (`Bearer abc123`) with only 6 chars
+    # of alphanumeric, we accept the leak — it's a documentation
+    # example, not real material, and can't be distinguished from
+    # prose. Tradeoff documented at 2026-07-02 live-DB dry-run.
+    r"Bearer\s+(?=\S*[.\-_=/])\S{6,}|Bearer\s+[A-Za-z0-9]{20,}",
+    re.IGNORECASE,
+)
 _API_KEY_HEADER_RE: Final = re.compile(
     r"(x-api-key|api[_-]?key)\s*[:=]\s*\S+",
     re.IGNORECASE,
@@ -38,8 +50,14 @@ _ENV_VAR_SECRET_RE: Final = re.compile(
     # CREDENTIAL(S) / PRIVATE_KEY / ACCESS_KEY. Tradeoff: still does not
     # catch bare API_TOKEN=... without a `=`, but the yaml-style `:`
     # separator is picked up by the yaml env-secret rule below.
+    #
+    # Deliberately excluded 2026-07-02 from live-DB dry-run: bare
+    # ``KEY=...`` matched Python dict-key assignments like
+    # ``key = (memory_object.type, ...)`` — Python code uses ``key``
+    # as a common variable name. Compound forms (``API_KEY``,
+    # ``ACCESS_KEY``, ``PRIVATE_KEY``, ``SIGNING_KEY``) still fire.
     r"(?<![A-Za-z0-9_])"
-    r"(PASSWORD|PASSWD|PWD|SECRET|TOKEN|KEY|AUTH|APIKEY|APITOKEN|PAT|"
+    r"(PASSWORD|PASSWD|PWD|SECRET|TOKEN|AUTH|APIKEY|APITOKEN|PAT|"
     r"CREDENTIALS?|PRIVATE_KEY|ACCESS_KEY|SIGNING_KEY|CLIENT_SECRET|"
     r"REFRESH_TOKEN|SESSION_ID|WEBHOOK_SECRET)"
     r"(?![A-Za-z0-9_])\s*=\s*\S+",
@@ -72,9 +90,23 @@ _CONNECTION_STRING_RE: Final = re.compile(
     re.IGNORECASE,
 )
 _SENSITIVE_HEADER_RE: Final = re.compile(
-    # Terminate value at newline OR closing quote so surrounding argv
-    # (e.g. the URL after -H "Authorization: ...") is preserved.
-    r"(Authorization|Cookie|Set-Cookie|Proxy-Authorization)\s*:\s*[^\n\r\"']+",
+    # ``Header: value`` where value stops at newline or a closing
+    # quote — the quote stop is critical because argv shapes like
+    # ``curl -H "Authorization: Bearer <token>" <url>`` must keep the
+    # trailing URL intact.  Allows optional closing quote after the
+    # header name for JSON/dict shapes like
+    # ``{"Authorization": "Bearer ..."}``.
+    #
+    # Value must contain a token-like fragment (>= 12 non-whitespace
+    # chars, or a known scheme name, or a ``=`` cookie shape) to
+    # avoid FPs on narrative like ``- Authorization: Export APIs are
+    # ...``. When the value is wrapped in quotes (JSON/dict), the
+    # match consumes the opening quote and stops at the closing
+    # quote; the value between quotes gets ``[REDACTED]``.
+    r"(Authorization|Cookie|Set-Cookie|Proxy-Authorization)[\"']?\s*:\s*"
+    r"(?=[\"']?(?:(?:\s*(?:Bearer|Basic|Digest|ApiKey|Token)\s+)|"
+    r"(?:[^\n\r\"']*=)|(?:\S{12,})))"
+    r"[\"']?[^\n\r\"']+",
     re.IGNORECASE,
 )
 
@@ -156,7 +188,9 @@ def redact_sensitive(text: str) -> str:
        becomes ``Authorization: [REDACTED]`` without partial JWT
        exposure.
     3. Generic bearer / api-key headers (``_BEARER_RE``, ``_API_KEY_HEADER_RE``).
-    4. Env-var and yaml-style secret KVs.
+    4. Env-var and yaml-style secret KVs — but skip when the value is
+       a Python/JSON/YAML placeholder (``None``, ``null``, ``nil``,
+       ``""``, ``''``, ``true``, ``false``) via ``_PLACEHOLDER_RHS_RE``.
     5. Connection strings.
     6. Basic-auth URLs (preserves scheme+host, redacts credentials).
     7. **Tier A provider-specific token shapes** — most-specific prefix
@@ -174,9 +208,9 @@ def redact_sensitive(text: str) -> str:
     out = _PRIVATE_KEY_BLOCK_RE.sub("[REDACTED KEY BLOCK]", out)
     out = _SENSITIVE_HEADER_RE.sub(r"\1: [REDACTED]", out)
     out = _BEARER_RE.sub("Bearer [REDACTED]", out)
-    out = _API_KEY_HEADER_RE.sub(r"\1=[REDACTED]", out)
-    out = _ENV_VAR_SECRET_RE.sub(r"\1=[REDACTED]", out)
-    out = _ENV_VAR_YAML_SECRET_RE.sub(r"\1: [REDACTED]", out)
+    out = _API_KEY_HEADER_RE.sub(_env_var_secret_replacer("="), out)
+    out = _ENV_VAR_SECRET_RE.sub(_env_var_secret_replacer("="), out)
+    out = _ENV_VAR_YAML_SECRET_RE.sub(_env_var_secret_replacer(":"), out)
     out = _CONNECTION_STRING_RE.sub(r"\1://[REDACTED]", out)
     out = _BASIC_AUTH_URL_RE.sub(r"\1://\2:[REDACTED]@", out)
     # 7: Tier A — most-specific prefix first per Section A of the PR-0
@@ -194,6 +228,65 @@ def redact_sensitive(text: str) -> str:
     # redactions in stored payloads.
     out = redact_probable_secrets(out)
     return out
+
+
+# Placeholder values that should NOT be redacted even when they sit
+# on the RHS of a ``password=`` / ``token:`` assignment. Applied to
+# both the ``=`` and ``:`` env-var rules via a shared replacer.
+_PLACEHOLDER_RHS_VALUES: Final[frozenset[str]] = frozenset({
+    "none", "null", "nil", "undefined",
+    "true", "false",
+    '""', "''", '"none"', "'none'", '"null"', "'null'",
+    "0", "1",
+})
+
+
+def _env_var_secret_replacer(separator: str):
+    """Return a re.sub replacer that skips placeholder RHS values.
+
+    The env-var regexes (``_ENV_VAR_SECRET_RE`` and
+    ``_ENV_VAR_YAML_SECRET_RE``) match ``NAME<sep>VALUE`` where
+    VALUE is greedy up to whitespace or newline. When VALUE is a
+    placeholder (``None``, ``null``, ``""``, ``return None``, etc.)
+    OR contains structural code markers that indicate the ``:`` or
+    ``=`` is Python/argv syntax rather than an assignment separator,
+    we return the match unchanged. Prevents false-positive rewrites
+    in config-defaults prose like ``llm_api_key=None,`` and Python
+    code like ``if not session_id: return None``.
+
+    Also skip when the RHS is clearly English prose (multiple words
+    with no token-shape fragment). ``Authorization: Export APIs are
+    protected`` is a bulleted-list category label, not a header
+    assignment; the value has 8 words and no ≥12-char token.
+    """
+    def _replacer(match: re.Match) -> str:
+        name = match.group(1)
+        full = match.group(0)
+        try:
+            _, rhs = full.split(separator, 1)
+        except ValueError:
+            rhs = ""
+        rhs_norm = rhs.strip().rstrip(",;").strip().lower()
+        if rhs_norm in _PLACEHOLDER_RHS_VALUES:
+            return full
+        for kw in ("return", "yield", "raise", "print"):
+            if rhs_norm.startswith(kw + " "):
+                arg = rhs_norm[len(kw):].strip()
+                if arg in _PLACEHOLDER_RHS_VALUES:
+                    return full
+        if any(sym in rhs for sym in ("(", ")", "[", "]", "==", "!=", "->", "=>", "<=", ">=")):
+            return full
+        # English-prose guard: if the RHS is a multi-word sentence
+        # with NO fragment of ≥12 non-whitespace chars, it is not a
+        # secret value. Real credential values always contain some
+        # token-shape substring.
+        rhs_body = rhs.strip().rstrip(",;").strip().strip("\"'")
+        if rhs_body and " " in rhs_body:
+            words = rhs_body.split()
+            if len(words) >= 3 and not any(len(w) >= 12 for w in words):
+                return full
+        return f"{name}{separator} [REDACTED]" if separator == ":" else f"{name}{separator}[REDACTED]"
+    return _replacer
 
 
 def redact_command(cmd: str) -> str:
@@ -243,19 +336,36 @@ _UUID_RE: Final = re.compile(
 )
 _CONTENT_HASH_RE: Final = re.compile(r"^[0-9a-f]{32,64}$")
 
-# Cue words that indicate a nearby token is likely a secret. Kept
-# small and case-insensitive to bound false positives — ``key`` alone
-# is intentionally excluded (would false-positive on ``keyboard
-# shortcut``, ``primary key``, etc.); the compound forms below cover
-# the real cases, and the additional ``_KEY_SUFFIX_RE`` compound-key
-# heuristic (below the frozenset) catches names like
-# ``mycompany_prod_key`` and ``deploy_key`` that no fixed cue-word
-# list can enumerate.
+# Filesystem paths and URLs — tokens containing common file
+# extensions or path separators are structural references, not
+# opaque credentials. A path like ``docs/plans/2026-token-savings.md``
+# has 40+ chars of medium entropy but is not a secret. Common file
+# extensions we see near reasonable prose text.
+_PATH_LIKE_TOKEN_RE: Final = re.compile(
+    r"\.(?:md|py|js|ts|tsx|jsx|go|rs|java|kt|sh|bat|ps1|toml|yaml|yml|"
+    r"json|xml|html|css|txt|log|conf|cfg|ini|env|lock|sql|csv|"
+    r"tsv|jsonl)$",
+    re.IGNORECASE,
+)
+# A path token contains `/` and terminates in a recognizable file
+# extension — treat as a structural reference, not a secret.
+_FILE_PATH_TOKEN_RE: Final = re.compile(
+    r"^[\w./\-]+/[\w./\-]+\.(?:md|py|js|ts|tsx|jsx|go|rs|java|kt|sh|bat|ps1|"
+    r"toml|yaml|yml|json|xml|html|css|txt|log|conf|cfg|ini|env|lock|"
+    r"sql|csv|tsv|jsonl)$",
+    re.IGNORECASE,
+)
+
+# Cue words that indicate a nearby token is likely a secret.
+# Broadened back to include common terms — the FP problem in prose
+# (e.g. "session's config") is solved instead by a per-window
+# regex that requires the cue to appear IMMEDIATELY before an
+# assignment separator (``:`` or ``=``). See ``_cue_appears_as_assignment``.
 _TIER_B_CUE_WORDS: Final[frozenset[str]] = frozenset({
     "password", "passwd", "pwd",
     "secret", "secrets",
     "token", "tokens",
-    "apikey", "api_key", "api-key",
+    "apikey", "api_key", "api-key", "api_token", "api-token",
     "auth", "authorization",
     "bearer",
     "credential", "credentials",
@@ -266,15 +376,36 @@ _TIER_B_CUE_WORDS: Final[frozenset[str]] = frozenset({
     "webhook",
     "client_secret", "client-secret", "clientsecret",
     "refresh_token", "refresh-token",
+    "auth_token", "auth-token", "authtoken",
 })
 
-# Compound-key suffix: matches ``<word>_key`` / ``<word>-key`` /
-# ``<word>key`` case-insensitive. Deliberately requires a word char
-# immediately before ``key`` so bare "primary key" / "keyboard" don't
-# fire. Catches the long-tail of custom secret naming (mycompany_prod_key,
-# deploy_key, master_key, github_key, etc.) that a fixed cue-word list
-# can never enumerate.
-_KEY_SUFFIX_RE: Final = re.compile(r"\w[_\-]?key\b", re.IGNORECASE)
+# The cue word must appear as an assignment KEY — i.e., immediately
+# followed (allowing quotes and whitespace) by ``:`` or ``=``.
+# Prevents the common English usage of "secret", "session", "auth",
+# "token", "authorization" in prose from triggering Tier B on any
+# nearby high-entropy identifier. Left boundary allows underscore
+# so ``xyz_api_token`` / ``deploy_key`` / ``master_secret`` match
+# on the compound suffix — the common user naming pattern.
+_CUE_AS_ASSIGNMENT_RE: Final = re.compile(
+    r"(?:^|[^A-Za-z0-9])(?:"
+    r"password|passwd|pwd|secret|secrets|token|tokens|apikey|api[_-]?key|"
+    r"api[_-]?token|auth|authorization|bearer|credentials?|"
+    r"access[_-]?key|accesskey|private[_-]?key|privatekey|"
+    r"signing[_-]?key|session|sessionid|session[_-]?id|webhook|"
+    r"client[_-]?secret|clientsecret|refresh[_-]?token|auth[_-]?token"
+    r")\s*[\"\']?\s*[:=]",
+    re.IGNORECASE,
+)
+
+# Compound-key suffix: matches ``<word>_key:`` / ``<word>_key=`` /
+# ``<word>-key:`` / ``<word>-key=`` case-insensitive — the trailing
+# ``:`` or ``=`` requirement is what distinguishes a config
+# assignment (``mycompany_prod_key: <value>``) from a symbol name
+# in code (``TestStatusEndpointQueryStats.test_status_includes_query_key``).
+# Without the trailing separator the pattern is too permissive: any
+# identifier ending in ``_key`` fires, including test names, field
+# accesses, and method signatures.
+_KEY_SUFFIX_RE: Final = re.compile(r"\w[_\-]?key\s*[:=]", re.IGNORECASE)
 
 
 def _shannon_entropy(token: str) -> float:
@@ -305,6 +436,13 @@ def _tier_b_is_fp_shape(token: str) -> bool:
     if _UUID_RE.match(token):
         return True
     if _CONTENT_HASH_RE.match(token):
+        return True
+    # Filesystem paths / URLs with file extensions — structural
+    # references, not secrets. A path like ``docs/plans/token-savings.md``
+    # would otherwise trigger on the ``token`` cue-word window.
+    if _FILE_PATH_TOKEN_RE.match(token):
+        return True
+    if _PATH_LIKE_TOKEN_RE.search(token) and "/" in token:
         return True
     return False
 
@@ -342,12 +480,13 @@ def redact_probable_secrets(text: str) -> str:
         window_start = max(0, start - _TIER_B_CUE_WINDOW)
         window_end = min(len(text), end + _TIER_B_CUE_WINDOW)
         window = text_lower[window_start:window_end]
-        # Cue-word requirement: either a full cue-word appears in the
-        # 30-char window, OR the window contains a compound-key suffix
-        # (e.g. ``<word>_key``, ``deploy_key``, ``myprod_key``). Both
-        # signal that the adjacent high-entropy token is credential
-        # material.
-        has_cue = any(cue in window for cue in _TIER_B_CUE_WORDS)
+        # Cue-word requirement: the cue must appear as an assignment
+        # KEY (immediately followed by ``:`` or ``=``, optionally with
+        # a quote) OR as a compound-key pattern (``<word>_key:``,
+        # ``<word>_key=``). Bare mentions in prose (``the session's
+        # config``, ``a token is`` etc.) do NOT count — see
+        # ``_CUE_AS_ASSIGNMENT_RE``.
+        has_cue = bool(_CUE_AS_ASSIGNMENT_RE.search(window))
         if not has_cue and _KEY_SUFFIX_RE.search(window):
             has_cue = True
         if not has_cue:
