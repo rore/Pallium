@@ -1,8 +1,25 @@
 # Operational Fact Memory
 
-**Date:** 2026-05-31 (revised 2026-06-04, 2026-07-01)
+**Date:** 2026-05-31 (revised 2026-06-04, 2026-07-01, 2026-07-02)
 **Status:** Phase 0 resolved 2026-07-01 — see [`.local/milestone-progress-2026-07/w4-phase0-spike-2026-07-01.md`](../../.local/milestone-progress-2026-07/w4-phase0-spike-2026-07-01.md). **v1 surface: Surface B** (UserPromptSubmit, both integrations). Implementation sequenced under W4 of the [Shaped Memory Contract milestone](2026-07-01-milestone-shaped-memory-contract.md).
 **Scope:** New derived memory type owned by the `agent_work_trace` package.
+
+---
+
+## Revision Notes
+
+### 2026-07-02 — Reconnaissance-verb predicate + promotion (PRs 3, 4, 5)
+
+Live-data analysis of the shipped v1 extractor showed the discovery+use pairing model in §Extraction Predicate was too permissive: any argv token repeated within the 10-turn window became a fact, and 86% of emitted rows landed in the `command_family="shell"` fallback slot (regex patterns, one-off script paths, argv fragments). The `command_family` open-set language read as "structural predicate fires the first time we see cargo" but in practice fired for arbitrary noise.
+
+Two orthogonal, tool-agnostic signals replace the pairing model:
+
+1. **Reconnaissance-verb signal** (see updated §Extraction Predicate below). A turn is a reconnaissance event if it uses a verb from a small closed set — `which`, `where`, `type`, `command -v`, `--version`, `--help`, `--list`, `ls`, `stat`, `test -f`, `cat` of a config-anchor file, port probes, or `Read` on a config anchor. This grammar is bounded and language-agnostic; a new ecosystem does not invent a new reconnaissance verb.
+2. **Recurrence-based promotion** (see new §Promotion below). A reconnaissance event produces a `candidate` row invisible to retrieval/injection/dashboard. Only when the same conflict slot is answered in ≥2 distinct threads does it promote to `active`. One-off script paths never promote because they don't recur.
+
+Together these replace the pre-PR-3 admission-gate machinery (`_RUNNER_SUBCOMMANDS`, `_OPERATIONAL_CONFIG_FILES`, `_INTERPRETER_ALLOWED_STEMS`, `_HIGH_VALUE_FAMILIES`-fallback channel). The `command_family` open-set language is retired; a candidate's family is derived from the reconnaissance verb's target and, for unknown targets, is the target's basename itself — the recurrence gate at promotion time is what filters one-off noise, not a per-family allow-list.
+
+PR 3 (commit `3825537`) shipped the reconnaissance-verb predicate + candidate lifecycle. PR 4 (commit `59d8dfd`) shipped the promotion mechanism via `supported_by` relations and the cross-thread recurrence count. PR 5 (this revision) migrated 231 legacy pre-PR-3 active rows via a manifest-guarded soft-delete migration (`app/tools/operational_fact_migration_pr5.py`, reason tag `operational_fact_redesign_migration_2026_07`), removed the retired admission-gate code from `semantic/operational_fact.py`, and retired the tightening cleanup CLI at `app/tools/operational_fact_tightening_cleanup.py`.
 
 ---
 
@@ -78,7 +95,7 @@ Schema id: `agent_work_trace.operational_fact`. Owned by `agent_work_trace`.
 }
 ```
 
-`command_family` is derived deterministically from artifact shape and argv. Values are not closed: any new ecosystem (cargo, Bun, hatch) gets a `command_family` value the first time the structural predicate fires on it — the derivation reads the argv head, not a hardcoded enum. Concrete reference set: `python | node | gradle | npm | pnpm | yarn | uv | pip | cargo | go | docker | service | git | shell`.
+`command_family` is derived deterministically from the reconnaissance-verb target (see §Extraction Predicate). Known ecosystems (Python, Node, npm/pnpm/yarn, uv, pip, cargo, go, gradle, docker, git, make, service, shell) flow through `_FAMILY_KEYWORD_MAP`. Unknown targets — a fresh ecosystem's CLI — get the target's basename as their family. This is the ecosystem-agnostic branch; the recurrence gate at promotion time (see §Promotion) is what filters one-off noise, not a per-family allow-list. The pre-PR-3 "Values are not closed" language is superseded: the family space is open, but promotion is what confers durability, not the family value itself.
 
 ### Routing registration
 
@@ -100,38 +117,59 @@ Consolidation exclusion lives outside `TypeRegistration` — wire through the sa
 
 ## Extraction Predicate
 
-Operates on `agent_work_trace`'s per-turn capture surface ([integrations/claude-code/hooks/common.py:644-682](../../integrations/claude-code/hooks/common.py#L644)) — `{files_read, commands{cmd, exit_code, output_tail, failure_class}, grep_patterns, files_modified, patch_bodies}`. Structural and ecosystem-agnostic.
+**Superseded by the reconnaissance-verb model in PR 3 (2026-07-02).** The historic §Extraction Predicate — a discovery+use pair bound by argv-match within 10 turns — is retained for historical context in the [pre-PR-3 draft](https://github.com/rore/Pallium/blame/main/docs/specs/2026-05-31-operational-fact-memory-design.md). The current predicate is:
 
-**Field-presence in the live DB (2026-07-01, 200-turn sweep):** `commands` 95%, `has_productive_action` 98%, `files_modified` 29%, `files_read` 22%, `grep_patterns` 5%, `patch_bodies` 0% (Claude-Code DB — Codex-only field), `cwd` / `branch_ref` / `commit_ref` 0%. v1 predicate is scoped accordingly.
+Operates on `agent_work_trace`'s per-turn capture surface — `{files_read, commands{cmd, exit_code, output_tail, failure_class}, grep_patterns, files_modified, patch_bodies}` — via the closed reconnaissance-verb set in [`semantic/reconnaissance.py`](../../semantic/reconnaissance.py).
 
-`patch_bodies` is a list of `{body?, operation?}` records. `body` is the freeform `apply_patch` DSL string for Codex `function_call.name == "apply_patch"` events; `operation` is the structured `{type: create_file|update_file|delete_file, path, diff}` shape for top-level `apply_patch_call` items. The predicate treats `operation.path` as a discovery candidate and `operation.diff` as a use-equivalent edit signal **in a contingent follow-up PR only**, gated on evidence that Codex live traffic populates `patch_bodies`.
+**Reconnaissance verbs (closed set).** A turn contributes a candidate iff it contains at least one of:
 
-A fact is created when **all** hold:
+- `command_lookup` — argv head ∈ `{which, where, type, command}` (also `command -v` recognized by argv[0..1]). Target = argv[N]. Discovered value = the path in `output_tail`.
+- `version_query` — any argv containing `--version` / `-V` / `--ver`. Target = argv[0]. Discovered value = the version token extracted from `output_tail` via a bounded semver regex.
+- `help_query` — any argv containing `--help` / `-h` / `-?`. Target = argv[0].
+- `port_probe` — argv head ∈ `{curl, wget, nc}` with `-sI` / `--spider` / `-z`. Target = host:port extracted from the argv URL.
+- `file_read_recon` — `Read` tool events (via `TurnRecord.files_read`) whose basename is in a small closed allow-list of config anchors (`pyproject.toml`, `package.json`, `Makefile`, `docker-compose.yml`, `go.mod`, `Cargo.toml`, …).
+- `cat_config_recon` — argv head `cat` with argv[1] basename in the same allow-list.
+- `directory_probe` — argv head ∈ `{ls, stat, find, test}`. Target = the argv path token. Not gated on "under container root"; promotion via recurrence carries the durability signal.
 
-1. **Discovery event** — any of:
-   - **Primary:** `Bash` exit 0 whose `output_tail` or `cmd` contains an extractable artifact (path, command, version, port, URL).
-   - **Secondary:** `Read` of a project file (path-only; content extraction not required for the discovery signal).
-   - **Deferred (contingent PR 5):** `apply_patch` `operation.path` (Codex structured form).
-2. **Later successful action** — `Bash` exit 0 within N=10 turns in the same thread whose `cmd` matches the discovery artifact per rule 3.
-3. **Argv contains the artifact** as a substring, OR contains a path-equivalent (slash normalization, drive-letter case-insensitive on Windows). Same `command_family` alone does not satisfy this. **For artifacts shorter than 10 characters, enforce a word-boundary match** (`\b{artifact}\b` after normalization) to avoid Windows/POSIX false positives (e.g., a 4-character artifact `pyth` must not match `is_pythonic`).
-4. Both events within the same `scope_ref`.
-5. Evidence links to both source items retained.
-6. `command_family` derived deterministically from artifact + argv, not used as an extraction filter.
-7. **Redaction** — every `artifact`, `artifact_normalized`, and `evidence[].fragment` passes through the shared redaction helper (see §Redaction) before candidate emission. Bearer tokens, API keys, env-var secrets, and connection strings never enter the payload.
+Each predicate emits at most one `ReconnaissanceEvent`. The event maps directly to an `OperationalFactCandidate` (see `_recon_event_to_candidate` in [`semantic/operational_fact.py`](../../semantic/operational_fact.py)). Every user-facing string is passed through `semantic.redaction.redact_sensitive` before candidate emission; sensitive artifacts (SSH keys, `.pem`/`.key`, AWS/kube creds, SSH targets) are skipped entirely rather than redacted.
 
-If the predicate is not satisfied, no fact is created.
+**Family and role derivation.** The candidate's `command_family` is derived from the recon verb's target: known ecosystems flow through the `_FAMILY_KEYWORD_MAP` (Python, Node, npm, cargo, gradle, docker, git, make, service, shell); for unknown targets (`xyzlang`, an unfamiliar CLI), the family is the target's basename itself. This is the ecosystem-agnostic branch: a fresh tool admits without a code change; the recurrence gate at promotion time (see §Promotion) decides durability.
 
-**Invariant:** the predicate must catch a discovery + use pair in a fresh ecosystem (Rust + cargo, Bun, hatch) without code or spec changes.
+**Role derivation.** `artifact_role` is derived from the verb (see `_role_for_verb`): `version_query` → `version`; `port_probe` → `endpoint`; `command_lookup` on an interpreter-shaped basename → `interpreter`, else `runner`; `file_read_recon` / `cat_config_recon` → `config`; `help_query` → `help`; `directory_probe` → `path`.
+
+**Ecosystem-agnostic invariant.** The predicate must catch a reconnaissance-answer pair in a fresh ecosystem (Rust + cargo, Bun, hatch, `xyzlang`) without code or spec changes. Locked by `tests/test_operational_fact_e2e.py::test_unknown_ecosystem_*`.
+
+If the predicate is not satisfied, no candidate is created.
 
 ### Examples (illustrative, not closed)
 
-`python` — discovery: `where python`, `python --version`, read of `.python-version` / `pyproject.toml`, listing of `.venv*`, stat of `.venv/Scripts/python.exe`. Use: any later Bash exit 0 whose argv contains the candidate.
-
-`test` (any runner) — discovery: read of `package.json`, `pyproject.toml`, `Makefile`, `build.gradle`; `<runner> --help`/`--list`. Use: later Bash exit 0 whose argv contains the candidate command stem and produces no test-failure markers.
-
-`service` — discovery: `docker ps`, read of `compose.yml`/`docker-compose.yml`, port health check. Use: later Bash exit 0 against the same host:port, or a command depending on the service.
+`python` — `where python`, `python --version`, `cat pyproject.toml`, `Read .python-version`.
+`test` (any runner) — `Read package.json`, `Read pyproject.toml`, `Read Makefile`, `<runner> --help`.
+`service` — `curl -sI http://localhost:8000/health`, `Read docker-compose.yml`, `nc -z localhost 5432`.
+`xyzlang` (fresh ecosystem) — `where xyzlang`, `xyzlang --version`. Family = `xyzlang`. Recurrence gate decides whether it promotes to `active`.
 
 ---
+
+## Promotion
+
+**New in PR 4 (2026-07-02).** Candidates emitted by the reconnaissance predicate ship as `lifecycle="candidate"` and are invisible to `service.query`, `_storage.list_memory_objects` (at default filters), the dashboard `/api/memories` endpoint, and MCP `pallium_query`. Only after cross-thread recurrence does a candidate promote to `active`.
+
+**Recurrence signal — `supported_by` relations.** When `_candidate_to_memory_object` at [`semantic/agent_work_trace.py`](../../semantic/agent_work_trace.py) constructs an operational_fact `MemoryObject`, it also constructs a `Relation(from_kind="memory_object", from_id=<memory_id>, relation_type="supported_by", to_kind="source_item", to_id=<discovery.source_item_id>)` for each evidence entry. This creates a graph from operational_fact → discovery source items → thread_ref.
+
+**Promotion query — `count_distinct_threads_for_conflict_slot`.** A helper on `SqliteStorage` joins `memory_objects` (filtered by container_ref + type + slot fields + lifecycle in `{candidate, active}`) to `relations` (`from_id = memory_object.id AND relation_type = "supported_by"`) to `source_items` (`id = relations.to_id`) and returns `COUNT(DISTINCT source_items.thread_ref)`. A candidate promoted by one thread pointing at ten source items counts as one thread — the anti-inflation invariant.
+
+**Promotion transaction — `promotion_hints` on `ProcessResult`.** The reconcile hook at `semantic/agent_work_trace.py` returns hints describing "for each candidate slot, promote if the distinct-thread count ≥ threshold." `_persist_process_result` in [`core/service.py`](../../core/service.py) inserts candidate rows + `supported_by` relations, then evaluates the hints inside the SAME transaction (candidate rows are visible to the query at that point), then performs the `UPDATE ... SET lifecycle='active'` promotions. Atomic: either everything commits or nothing does.
+
+**Threshold.** `PROMOTION_THREAD_THRESHOLD = 2` by default. Configurable via `pallium.local.toml` under `[operational_fact] promotion_threads`. Recurrence in ≥ N distinct threads is the durability signal that replaces the pre-PR-3 admission-gate allow-lists.
+
+**Slot supersession.** If promotion produces a second active row in the same conflict slot with a different `artifact_normalized`, the older row is marked `superseded` and the newer row's `supersedes` link is set. See §Deduplication.
+
+**Promotion log — `operational_fact_promotion_log` table.** Every lifecycle transition writes a row to this table (`from_lifecycle`, `to_lifecycle`, `reason`, `distinct_threads_count`, `promoted_at`). Not queried by retrieval or ranking; strictly for post-hoc debugging and metrics.
+
+**Locks.** Tests 1 (two-session recurrence promotes), 4b (unknown ecosystem promotes after recurrence), 7 (UserPromptSubmit injects on operational intent) in `tests/test_operational_fact_e2e.py`.
+
+---
+
 
 ## Scope Rules
 
