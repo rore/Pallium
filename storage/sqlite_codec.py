@@ -83,6 +83,11 @@ class SQLiteCodecMixin:
             actor_ref=record.actor_ref,
             freshness_at=SQLiteCodecMixin._normalize_datetime(record.freshness_at),
             created_at=SQLiteCodecMixin._normalize_datetime(record.created_at) or utc_now(),
+            # PR 1 of operational_fact redesign: propagate the
+            # soft-delete flag through the codec so read-side callers
+            # (retrieval, dashboard, MCP) can honor it. Previously
+            # dropped, causing tombstoned rows to be returned as active.
+            is_soft_deleted=bool(getattr(record, "is_soft_deleted", 0)),
         )
 
     @staticmethod
