@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
+from core.subject import subject_text_for_payload
 from storage.sqlite_schema import MemoryFeedbackRecord, MemoryFlagRecord, MemoryObjectRecord
 
 logger = logging.getLogger(__name__)
@@ -197,16 +198,23 @@ def mount_dashboard(app: FastAPI) -> None:
 
             fb = feedback_counts.get(rec.id)
 
+            # Prefer the stored subject column when populated; fall
+            # back to the shared subject helper so older rows (subject
+            # column NULL before the writer landed) and types whose
+            # subject lives only in payload still surface cleanly.
+            subject = rec.subject or subject_text_for_payload(rec.type, payload)
+            display_text = _extract_display_text(payload) or subject
+
             memories.append({
                 "id": rec.id,
                 "type": rec.type,
                 "lifecycle": rec.lifecycle,
                 "container_ref": rec.container_ref,
-                "display_text": _extract_display_text(payload),
+                "display_text": display_text,
                 "confidence": confidence,
                 "created_at": created_at.isoformat() if created_at else None,
                 "visibility": rec.visibility,
-                "subject": rec.subject,
+                "subject": subject,
                 "schema_id": rec.schema_id,
                 "payload": payload,
                 "feedback": fb,

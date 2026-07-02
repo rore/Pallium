@@ -200,6 +200,90 @@ class TestDashboardIntegration:
         body = resp.json()
         assert body["memories"][0]["display_text"] == "Found root cause in parser"
 
+    def test_memories_operational_fact_renders_subject(self, tmp_path: Path) -> None:
+        """Regression: operational_fact rows must NOT render as '<no summary>'.
+
+        The type's payload uses ``subject`` (and ``artifact``) rather than
+        ``summary``/``statement``. The dashboard endpoint must surface
+        those via the shared ``subject_text_for_payload`` helper + the
+        ``subject`` key in ``_DISPLAY_TEXT_KEYS``.
+        """
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            service = app.state.pallium_service
+            mo = MemoryObject(
+                type="operational_fact",
+                schema_id="agent_work_trace.operational_fact",
+                schema_version="v1",
+                payload={
+                    "command_family": "python",
+                    "artifact_role": "interpreter",
+                    "scope_kind": "machine_repo",
+                    "scope_ref": "test@machine:hash",
+                    "subject": "python: .venv/Scripts/python.exe",
+                    "artifact": ".venv/Scripts/python.exe",
+                    "artifact_normalized": ".venv/scripts/python.exe",
+                    "origin": "agent_inferred",
+                    "use_counters": {
+                        "reuse_count": 1,
+                        "success_count": 0,
+                        "failure_count": 0,
+                        "last_used_at": None,
+                        "last_confirmed_at": None,
+                    },
+                },
+                lifecycle="active",
+                created_at=datetime(2026, 7, 2, 10, 0, 0, tzinfo=timezone.utc),
+            )
+            service._storage.create_memory_object(mo)
+            resp = client.get("/dashboard/api/memories")
+        body = resp.json()
+        assert len(body["memories"]) == 1
+        m = body["memories"][0]
+        # display_text (SUMMARY column) must have content, not empty.
+        assert m["display_text"], (
+            f"operational_fact display_text was empty: {m!r}"
+        )
+        assert "python" in m["display_text"].lower()
+        # subject field is also populated so tooltips / details work.
+        assert m["subject"], "operational_fact subject was empty"
+
+    def test_memories_subject_falls_back_when_column_null(self, tmp_path: Path) -> None:
+        """The dashboard falls back to subject_text_for_payload when the
+        DB column is NULL (older rows written before the subject writer
+        landed). Applies to any type whose payload has 'subject'.
+        """
+        from sqlalchemy import text as _text
+
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            service = app.state.pallium_service
+            mo = MemoryObject(
+                type="operational_fact",
+                schema_id="agent_work_trace.operational_fact",
+                schema_version="v1",
+                payload={
+                    "subject": "shell: uv sync",
+                    "artifact": "uv sync",
+                    "command_family": "uv",
+                    "artifact_role": "runner",
+                    "scope_kind": "repo",
+                    "scope_ref": "test",
+                    "origin": "agent_inferred",
+                },
+                lifecycle="active",
+                created_at=datetime(2026, 7, 2, 10, 0, 0, tzinfo=timezone.utc),
+            )
+            service._storage.create_memory_object(mo)
+            # Simulate an older row: null the subject column directly.
+            with service._storage._engine.begin() as conn:
+                conn.execute(_text("UPDATE memory_objects SET subject=NULL"))
+            resp = client.get("/dashboard/api/memories")
+        body = resp.json()
+        m = body["memories"][0]
+        assert m["subject"] == "shell: uv sync"
+        assert m["display_text"] == "shell: uv sync"
+
     def test_memories_default_lifecycle_shows_all(self, tmp_path: Path) -> None:
         """When no lifecycle filter is passed, all lifecycles are returned."""
         app = create_app(_test_config(tmp_path))

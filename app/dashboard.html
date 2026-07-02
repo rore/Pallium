@@ -1613,7 +1613,7 @@ function renderMemTable() {
         '<td class="toggle-icon">' + (isExpanded ? '&#9660;' : '&#9654;') + '</td>' +
         '<td><span class="type-chip ' + typeSlug + '">' + escapeHtml(m.type || '?') + '</span></td>' +
         '<td><span class="lc-chip ' + lcSlug + '">' + escapeHtml(m.lifecycle || '?') + '</span></td>' +
-        '<td><span class="' + confClass(m.confidence) + '">' + escapeHtml(String(m.confidence || '?')) + '</span></td>' +
+        '<td><span class="' + confClass(m.confidence) + '">' + escapeHtml(m.confidence && m.confidence !== 'unknown' ? String(m.confidence) : '—') + '</span></td>' +
         '<td title="' + escapeHtml(m.container_ref || '') + '">' +
           escapeHtml(shortContainer(m.container_ref)) + '</td>' +
         '<td title="' + escapeHtml(m.created_at || '') + '">' + formatDate(m.created_at) + '</td>' +
