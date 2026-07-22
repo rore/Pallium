@@ -1,0 +1,42 @@
+{
+  "demoted_type_discovery": {
+    "fact_summary": {
+      "n_proactive_injections": 0,
+      "n_triggered_injections": 0,
+      "trigger_breakdown": {}
+    },
+    "investigation_outcome": {
+      "n_proactive_injections": 0,
+      "n_triggered_injections": 0,
+      "trigger_breakdown": {}
+    },
+    "task_checkpoint": {
+      "n_proactive_injections": 0,
+      "n_triggered_injections": 0,
+      "trigger_breakdown": {}
+    },
+    "thread_summary": {
+      "n_proactive_injections": 0,
+      "n_triggered_injections": 0,
+      "trigger_breakdown": {}
+    }
+  },
+  "per_trigger": {
+    "user_prompt_submit": {
+      "n_populated": 31,
+      "n_referenced": 0,
+      "n_total": 33,
+      "rating_precision": 0.9047619047619048,
+      "usage_rate": 0.0
+    }
+  },
+  "per_type_proactive": {},
+  "phase": "6 \u2014 measurement",
+  "spec": "docs/specs/2026-06-27-injection-policy-abstention.md",
+  "window": {
+    "n_feedback_rows": 671,
+    "n_populated_rows": 31,
+    "n_usage_rows": 33,
+    "since": "2026-07-04T00:00:00"
+  }
+}

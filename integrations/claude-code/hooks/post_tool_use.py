@@ -19,13 +19,24 @@ distinguish trigger-driven calls from proactive ones (Phase 6
 measurement).
 
 Triggers are STRUCTURAL only (per the 2026-05-30 decision): no NL
-phrase cues. Matching is by tool name, exit-code/failure-class, and
-normalized target path.
+phrase cues. Matching is by tool name, failure inference over the
+tool_response text surface, and normalized target path.
+
+Failure inference: Claude Code's Bash `tool_response` carries
+`{stdout, stderr, interrupted, ...}` and NO exit-code field, so failure
+is inferred from the `interrupted` flag plus marker-scanning stdout+stderr
+(`_infer_failure`/`_extract_tool_output`). This catches MARKED and
+interrupted failures, not every non-zero exit.
+
+OPT-IN: disabled unless `PALLIUM_POSTTOOL_TRIGGERS=1`. Once enabled, a
+fired trigger injects via `_TRIGGER_BYPASS_ORIGINS` regardless of the
+server-side injection policy, so it is a behaviour change, not a no-op.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -47,6 +58,53 @@ from common import (
 
 RETRY_THRESHOLD = 3
 RETRY_COUNTERS_DIR = STATE_DIR / "retry_counters"
+
+# Deterministic on-demand triggers ship OFF by default so the installed hook
+# stays inert until a user opts in. Once enabled, a fired trigger injects via
+# _TRIGGER_BYPASS_ORIGINS regardless of server-side injection policy, so this
+# is a behaviour change, not a no-op — hence the explicit opt-in.
+# See docs/specs/2026-06-27-injection-policy-abstention.md (Phase 4).
+_TRIGGERS_ENABLED = os.environ.get("PALLIUM_POSTTOOL_TRIGGERS", "") == "1"
+
+
+def _extract_tool_output(tool_response: object) -> str:
+    """Build a text surface for failure inference from a PostToolUse payload.
+
+    Claude Code's Bash tool_response carries {stdout, stderr, interrupted,
+    isImage, noOutputExpected} and NO exit-code field — error text lands in
+    stdout OR stderr depending on the failure. Older/other shapes may use
+    output/error, and tool_response is occasionally a bare string. Concatenate
+    the text-bearing fields so the existing marker-based `_infer_exit_code`
+    can scan them; return "" when nothing textual is present.
+    """
+    if isinstance(tool_response, str):
+        return tool_response
+    if not isinstance(tool_response, dict):
+        return ""
+    parts: list[str] = []
+    for key in ("stdout", "stderr", "output", "error"):
+        val = tool_response.get(key)
+        if val:
+            parts.append(str(val))
+    return "\n".join(parts)
+
+
+def _infer_failure(tool_response: object, output: str) -> tuple[bool, int]:
+    """Return (failed, exit_code) for a PostToolUse payload.
+
+    Structural + marker-based only (no NL cues). Two signals:
+      - `interrupted` flag on the tool_response dict (reliable failure).
+      - `_infer_exit_code` scanning the text surface for failure markers
+        ("exit code: N", tracebacks, "command failed", etc.).
+    Note this detects MARKED/interrupted failures, not every non-zero exit —
+    Claude Code does not expose a real exit code, so a silently-failing
+    command with clean-looking output cannot be caught here.
+    """
+    if isinstance(tool_response, dict) and tool_response.get("interrupted") is True:
+        return True, 1
+    exit_code = _infer_exit_code(output)
+    return exit_code != 0, exit_code
+
 
 
 def _load_retry_counters(session_id: str) -> dict:
@@ -146,6 +204,10 @@ def _maybe_fire_retry_query(
 
 def main() -> None:
     try:
+        # Deterministic triggers are opt-in; stay inert unless enabled.
+        if not _TRIGGERS_ENABLED:
+            sys.exit(0)
+
         payload = read_hook_input()
         cwd = payload.get("cwd", ".")
         session_id = payload.get("session_id") or ""
@@ -155,16 +217,13 @@ def main() -> None:
         tool_name = (payload.get("tool_name") or "").strip()
         tool_input = payload.get("tool_input") or {}
         tool_response = payload.get("tool_response") or {}
-        # Claude Code emits tool_response as either dict or string; we
-        # only need the text representation for failure inference.
-        if isinstance(tool_response, dict):
-            output = tool_response.get("output") or tool_response.get("error") or ""
-        else:
-            output = str(tool_response)
+        # Real Claude Code Bash tool_response keys are stdout/stderr/interrupted
+        # (no exit-code field); _extract_tool_output handles that plus the
+        # legacy output/error and bare-string shapes.
+        output = _extract_tool_output(tool_response)
 
         normalized_target = _normalize_target(tool_name, tool_input)
-        exit_code = _infer_exit_code(output)
-        failed = exit_code != 0
+        failed, exit_code = _infer_failure(tool_response, output)
 
         blocks: list[dict] = []
 

@@ -145,3 +145,162 @@ class TestRetryQueryEmitsTriggerOrigin:
         _, _, payload = sent[0]
         assert payload["trigger_origin"] == "retry_threshold"
         assert "Bash" in payload["text"]
+
+
+# ---------------------------------------------------------------------------
+# main()-level tests driven by REALISTIC Claude Code PostToolUse payloads.
+#
+# The pre-existing tests above exercise helpers with hand-fed strings and never
+# call main(), so they could not catch the payload-shape mismatch: Claude Code's
+# Bash tool_response carries {stdout, stderr, interrupted, isImage,
+# noOutputExpected} and NO exit-code field, while the hook read
+# tool_response.get("output"/"error"). These tests drive main() end-to-end with
+# the real shape (captured from session transcripts) so the failure path is
+# actually verified.
+# ---------------------------------------------------------------------------
+
+# Real Bash failure payload shape (from Claude Code session JSONL): the command
+# "sqlite3 ..." fails with "command not found" written to STDOUT, empty stderr,
+# no exit-code key anywhere, and is_error is not set on tool_response.
+_FAILED_BASH_PAYLOAD = {
+    "cwd": ".",
+    "session_id": "sess-main-1",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sqlite3 db.sqlite '.tables'"},
+    "tool_response": {
+        "stdout": "/usr/bin/bash: line 1: sqlite3: command not found",
+        "stderr": "",
+        "interrupted": False,
+        "isImage": False,
+        "noOutputExpected": False,
+    },
+}
+
+# A traceback failure, error text on stderr this time.
+_FAILED_PYTEST_PAYLOAD = {
+    "cwd": ".",
+    "session_id": "sess-main-2",
+    "tool_name": "Bash",
+    "tool_input": {"command": "python -m pytest tests/x"},
+    "tool_response": {
+        "stdout": "collected 3 items\n",
+        "stderr": "Traceback (most recent call last):\n  File ...\nAssertionError\n1 failed",
+        "interrupted": False,
+        "isImage": False,
+        "noOutputExpected": False,
+    },
+}
+
+# A clean success — must never fire a failure trigger.
+_SUCCESS_BASH_PAYLOAD = {
+    "cwd": ".",
+    "session_id": "sess-main-3",
+    "tool_name": "Bash",
+    "tool_input": {"command": "ls -la"},
+    "tool_response": {
+        "stdout": "total 4\n-rw-r--r-- 1 user user 0 file.txt",
+        "stderr": "",
+        "interrupted": False,
+        "isImage": False,
+        "noOutputExpected": False,
+    },
+}
+
+
+def _run_main(pt, payload, td):
+    """Drive main() with a payload on stdin, capturing outgoing pallium requests."""
+    import io
+    import json
+
+    sent = []
+
+    def fake_request(method, path, req_payload):
+        sent.append((method, path, req_payload))
+        return {"injectable_blocks": []}
+
+    with mock.patch.object(pt, "RETRY_COUNTERS_DIR", Path(td) / "retry_counters"), \
+        mock.patch.object(pt, "_TRIGGERS_ENABLED", True), \
+        mock.patch.object(pt, "pallium_request", side_effect=fake_request), \
+        mock.patch.object(pt, "resolve_container_ref", return_value="git:repo"), \
+        mock.patch.object(pt, "derive_actor_ref", return_value="user"), \
+        mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))):
+        try:
+            pt.main()
+        except SystemExit:
+            pass
+    return sent
+
+
+class TestMainFailureDetection:
+    """main()-level regression coverage for the real PostToolUse payload shape."""
+
+    def test_failed_bash_stdout_marker_fires_failure_trigger(self):
+        pt = _import_with_isolated_state_dir()
+        with tempfile.TemporaryDirectory() as td:
+            sent = _run_main(pt, _FAILED_BASH_PAYLOAD, td)
+        failure_calls = [p for (_, _, p) in sent if p.get("trigger_origin") == "post_tool_failure"]
+        assert failure_calls, (
+            "Expected a post_tool_failure query for a failed Bash command "
+            "(command-not-found on stdout), but none fired. tool_response uses "
+            "stdout/stderr keys, not output/error."
+        )
+
+    def test_failed_pytest_stderr_traceback_fires_failure_trigger(self):
+        pt = _import_with_isolated_state_dir()
+        with tempfile.TemporaryDirectory() as td:
+            sent = _run_main(pt, _FAILED_PYTEST_PAYLOAD, td)
+        failure_calls = [p for (_, _, p) in sent if p.get("trigger_origin") == "post_tool_failure"]
+        assert failure_calls, "Expected a post_tool_failure query for a pytest traceback on stderr."
+
+    def test_success_does_not_fire_failure_trigger(self):
+        pt = _import_with_isolated_state_dir()
+        with tempfile.TemporaryDirectory() as td:
+            sent = _run_main(pt, _SUCCESS_BASH_PAYLOAD, td)
+        failure_calls = [p for (_, _, p) in sent if p.get("trigger_origin") == "post_tool_failure"]
+        assert not failure_calls, "A clean success must not fire a failure trigger."
+
+    def test_retry_counter_increments_on_repeated_failure(self):
+        pt = _import_with_isolated_state_dir()
+        with tempfile.TemporaryDirectory() as td:
+            # Three identical failures should reach RETRY_THRESHOLD and fire a retry query.
+            sent_total = []
+            for _ in range(pt.RETRY_THRESHOLD):
+                sent_total.extend(_run_main(pt, _FAILED_BASH_PAYLOAD, td))
+        retry_calls = [p for (_, _, p) in sent_total if p.get("trigger_origin") == "retry_threshold"]
+        assert retry_calls, (
+            f"Expected a retry_threshold query after {pt.RETRY_THRESHOLD} identical failures."
+        )
+
+    def test_interrupted_fires_failure_trigger(self):
+        pt = _import_with_isolated_state_dir()
+        payload = {
+            "cwd": ".",
+            "session_id": "sess-int",
+            "tool_name": "Bash",
+            "tool_input": {"command": "sleep 999"},
+            "tool_response": {"stdout": "", "stderr": "", "interrupted": True},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            sent = _run_main(pt, payload, td)
+        failure_calls = [p for (_, _, p) in sent if p.get("trigger_origin") == "post_tool_failure"]
+        assert failure_calls, "An interrupted tool call must fire a failure trigger."
+
+    def test_triggers_disabled_by_default_is_inert(self):
+        """With the opt-in flag off, main() must emit no queries even on failure."""
+        import io
+        import json
+
+        pt = _import_with_isolated_state_dir()
+        sent = []
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(pt, "RETRY_COUNTERS_DIR", Path(td) / "retry_counters"), \
+                mock.patch.object(pt, "_TRIGGERS_ENABLED", False), \
+                mock.patch.object(pt, "pallium_request", side_effect=lambda *a, **k: sent.append(a)), \
+                mock.patch.object(pt, "resolve_container_ref", return_value="git:repo"), \
+                mock.patch.object(pt, "derive_actor_ref", return_value="user"), \
+                mock.patch.object(sys, "stdin", io.StringIO(json.dumps(_FAILED_BASH_PAYLOAD))):
+                try:
+                    pt.main()
+                except SystemExit:
+                    pass
+        assert sent == [], "Default-off flag must make the hook inert."
