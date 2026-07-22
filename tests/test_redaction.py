@@ -16,7 +16,7 @@ from semantic.operational_fact import (
     TurnRecord,
     derive_operational_facts,
 )
-from semantic.redaction import is_sensitive_artifact
+from redaction import is_sensitive_artifact
 from tests.fixtures.operational_fact import fake_scope_resolver
 
 

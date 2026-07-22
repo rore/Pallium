@@ -32,7 +32,7 @@ from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalProvider
 from semantic.agent_conversation_memory_embedding import build_memory_match_text
 from semantic.base import SemanticPlugin
-from semantic.redaction import redact_sensitive
+from redaction import redact_sensitive
 from storage.base import QueueHealthSnapshot, RetentionLeaseLostError, RetentionRunStats, StorageProvider, ThreadProcessingLease
 from storage.vector_index import VectorIndex
 from core.text import normalize_for_index as _normalize_for_index

@@ -1,10 +1,13 @@
 """Shared redaction helper for values that may carry secrets before storage.
 
-Owned by the `semantic` layer so both derived-memory pipelines
-(agent_work_trace family) and future consumers can share one source of
-truth for the redaction rule set. Hook-layer callers are expected to
-migrate to this helper in a follow-up change; this module does not
-alter existing hook behavior.
+A cross-cutting leaf utility (pure stdlib: `re`, `typing`, `math`). Homed as
+a top-level `redaction` package — not under `semantic` — so every consumer
+across layers can share one source of truth for the redaction rule set
+without crossing a layer boundary: `core.service` (ingest barrier),
+`providers.llm.redacting_wrapper` (LLM-output barrier, a strict leaf that
+may only import top-level leaves), `app.tools.secrets_purge`, and the
+`semantic` operational_fact / reconnaissance predicates. Enforced leaf by
+the "redaction stays leaf" import-linter contract.
 
 Two shapes:
 

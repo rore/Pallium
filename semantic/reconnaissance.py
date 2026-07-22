@@ -43,8 +43,8 @@ from semantic.argv import (
     shell_word_head,
     strip_wrappers,
 )
-from semantic.operational_fact import CommandRecord, TurnRecord
-from semantic.redaction import redact_sensitive
+from semantic.turn_records import CommandRecord, TurnRecord
+from redaction import redact_sensitive
 
 
 # ---------------------------------------------------------------------------

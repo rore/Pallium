@@ -49,7 +49,8 @@ from semantic.argv import (
     shell_word_head as _shell_word_head_shared,
     strip_wrappers as _strip_wrappers_shared,
 )
-from semantic.redaction import is_sensitive_artifact, redact_sensitive
+from redaction import is_sensitive_artifact, redact_sensitive
+from semantic.turn_records import CommandRecord, TurnRecord  # re-exported for back-compat
 
 logger = logging.getLogger(__name__)
 
@@ -129,33 +130,6 @@ _PORT_TOKEN_RE: Final = re.compile(r"^:?\d{2,5}$")
 # --------------------------------------------------------------------------- #
 # Public dataclasses                                                          #
 # --------------------------------------------------------------------------- #
-
-
-@dataclass(frozen=True)
-class CommandRecord:
-    """One command extracted from ``agent_work_trace_turn.commands``."""
-
-    cmd: str
-    exit_code: int | None = None
-    output_tail: str = ""
-    failure_class: str = ""
-
-
-@dataclass(frozen=True)
-class TurnRecord:
-    """A single turn's structural evidence.
-
-    The predicate reads nothing else: no LLM output, no thread text, no
-    routing context.
-    """
-
-    turn_index: int
-    source_item_id: str
-    timestamp: str = ""
-    commands: tuple[CommandRecord, ...] = ()
-    files_read: tuple[str, ...] = ()
-    files_modified: tuple[str, ...] = ()
-    grep_patterns: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 from providers.llm.base import LLMJsonResponse, LLMProvider
-from semantic.redaction import redact_sensitive
+from redaction import redact_sensitive
 
 
 def _redact_parsed_json_value(value: Any, *, visited: set[int] | None = None) -> Any:
