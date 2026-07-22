@@ -268,13 +268,13 @@ class TestRedaction:
             assert "sk-abc123" not in c.artifact_normalized
 
     def test_redaction_api_key_header_case_insensitive(self):
-        from semantic.redaction import redact_sensitive
+        from redaction import redact_sensitive
         redacted = redact_sensitive('curl -H "x-API-Key: hunter2" https://api.example.com')
         assert "hunter2" not in redacted
         assert "[REDACTED]" in redacted
 
     def test_redaction_env_var_secret_prefix(self):
-        from semantic.redaction import redact_sensitive
+        from redaction import redact_sensitive
         redacted = redact_sensitive("PASSWORD=hunter2 python foo.py")
         assert "hunter2" not in redacted
         assert "PASSWORD=[REDACTED]" in redacted
@@ -283,20 +283,20 @@ class TestRedaction:
         assert "foo.py" in redacted
 
     def test_redaction_connection_string_postgres(self):
-        from semantic.redaction import redact_sensitive
+        from redaction import redact_sensitive
         redacted = redact_sensitive("psql postgresql://user:pw@host/db")
         assert "user:pw@host" not in redacted
         assert "postgresql://[REDACTED]" in redacted
 
     def test_redaction_connection_string_multi_scheme(self):
-        from semantic.redaction import redact_sensitive
+        from redaction import redact_sensitive
         for scheme in ("mongodb", "mysql", "redis", "amqp"):
             r = redact_sensitive(f"connect {scheme}://user:pw@host/db")
             assert f"{scheme}://[REDACTED]" in r
             assert "user:pw" not in r
 
     def test_redaction_authorization_header(self):
-        from semantic.redaction import redact_sensitive
+        from redaction import redact_sensitive
         redacted = redact_sensitive('curl -H "Authorization: Basic Zm9v"')
         assert "Zm9v" not in redacted
         assert "[REDACTED]" in redacted
@@ -304,12 +304,12 @@ class TestRedaction:
     def test_redaction_source_is_semantic_module(self):
         # The predicate imports its redaction helper from semantic.redaction.
         # This test asserts the shared source-of-truth boundary.
-        assert op.redact_sensitive.__module__ == "semantic.redaction"
+        assert op.redact_sensitive.__module__ == "redaction"
 
     def test_redaction_does_not_mangle_legitimate_env_prefixed_identifiers(self):
         # Regression: earlier pattern with no left boundary was consuming
         # RHS of MONKEY=..., HOTKEY_MAPPING=..., AUTHOR=... — plainly wrong.
-        from semantic.redaction import redact_sensitive
+        from redaction import redact_sensitive
         for text in [
             "MONKEY=banana",
             "HOTKEY_MAPPING=foo.json",
@@ -324,7 +324,7 @@ class TestRedaction:
     def test_redaction_env_var_secret_with_word_boundary_still_fires(self):
         # Verify the corrected env-var regex still catches real secrets when
         # the identifier is EXACTLY one of the sensitive keywords.
-        from semantic.redaction import redact_sensitive
+        from redaction import redact_sensitive
         assert "[REDACTED]" in redact_sensitive("PASSWORD=hunter2 python foo.py")
         assert "[REDACTED]" in redact_sensitive("SECRET=abc123 script")
         assert "[REDACTED]" in redact_sensitive("api call TOKEN=xyz used")
@@ -333,7 +333,7 @@ class TestRedaction:
     def test_redaction_authorization_header_preserves_trailing_url(self):
         # Regression: earlier pattern consumed everything up to newline,
         # destroying the URL argv that IS the artifact.
-        from semantic.redaction import redact_sensitive
+        from redaction import redact_sensitive
         text = 'curl -H "Authorization: Bearer sk-xxx" https://api.example.com/health'
         r = redact_sensitive(text)
         assert "https://api.example.com/health" in r
@@ -701,7 +701,7 @@ class TestDedupAndConflictSlot:
 class TestModuleImportBoundary:
     @pytest.mark.parametrize(
         "module_name",
-        ["semantic.operational_fact", "semantic.redaction"],
+        ["semantic.operational_fact", "redaction"],
     )
     def test_predicate_does_not_import_storage_or_core_or_integrations(self, module_name):
         source = importlib.import_module(module_name).__file__

@@ -19,7 +19,7 @@ import re
 
 import pytest
 
-from semantic.redaction import (
+from redaction import (
     redact_probable_secrets,
     redact_sensitive,
 )

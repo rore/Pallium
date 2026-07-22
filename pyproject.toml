@@ -77,6 +77,7 @@ packages = [
     "providers",
     "providers.embedding",
     "providers.llm",
+    "redaction",
     "retrieval",
     "semantic",
     "storage",
@@ -90,7 +91,7 @@ packages = [
 # CI:     python scripts/run-import-linter.py --out build/import-linter-report.json
 # ----------------------------------------------------------------------
 [tool.importlinter]
-root_packages = ["api", "app", "capabilities", "core", "providers", "retrieval", "semantic", "storage"]
+root_packages = ["api", "app", "capabilities", "core", "providers", "redaction", "retrieval", "semantic", "storage"]
 exclude_type_checking_imports = true
 include_external_packages = false
 
@@ -105,6 +106,16 @@ name = "providers stays leaf"
 type = "forbidden"
 source_modules = ["providers"]
 forbidden_modules = ["api", "app", "capabilities", "core", "retrieval", "semantic", "storage"]
+allow_indirect_imports = true
+
+# 1b. redaction is a cross-cutting leaf utility — imports nothing internal.
+# Homed as a top-level package (not under semantic) so providers/core/app/
+# semantic can all depend on it without crossing a layer boundary.
+[[tool.importlinter.contracts]]
+name = "redaction stays leaf"
+type = "forbidden"
+source_modules = ["redaction"]
+forbidden_modules = ["api", "app", "capabilities", "core", "providers", "retrieval", "semantic", "storage"]
 allow_indirect_imports = true
 
 # 2. retrieval stays below orchestration.

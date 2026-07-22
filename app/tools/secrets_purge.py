@@ -80,7 +80,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-from semantic.redaction import redact_sensitive
+from redaction import redact_sensitive
 
 logger = logging.getLogger(__name__)
 
