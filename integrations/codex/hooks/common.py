@@ -488,11 +488,13 @@ def _infer_exit_code(tool_output: str) -> int:
     strong_failure_markers = (
         "command failed", "traceback (most recent call last)",
         "fatal:", "panic:", "exited with", "non-zero exit",
-        # Common shell/tool failures where no explicit exit code is echoed.
-        # High-confidence phrases only — kept narrow to avoid false positives
-        # on successful output that merely mentions an error.
-        "command not found", "no such file or directory",
-        "permission denied", "segmentation fault",
+        # Unambiguous shell failures where no explicit exit code is echoed.
+        # Deliberately narrow: phrases like "permission denied" / "no such
+        # file" also appear in the stdout/stderr of SUCCESSFUL commands
+        # (e.g. `find` skipping unreadable dirs, `grep` over logs), so they
+        # are excluded to avoid false-positive failure classification —
+        # this helper is shared with the Stop-path work-trace extractor.
+        "command not found", "segmentation fault",
     )
     if any(marker in lower for marker in strong_failure_markers):
         return 1
