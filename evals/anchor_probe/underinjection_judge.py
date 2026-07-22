@@ -81,6 +81,8 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--distinct", action="store_true",
                     help="Dedupe samples by (top mid, thread_ref) so one underlying decision can't dominate the sample.")
+    ap.add_argument("--exclude-internal", action="store_true",
+                    help="Drop agent-internal / automated monitoring prompts so the sample reflects genuine user recall turns.")
     args = ap.parse_args()
 
     con = sqlite3.connect(args.db)
@@ -100,6 +102,14 @@ def main() -> int:
         cs = json.loads(r["candidate_scores_json"]) or []
         if not cs:
             continue
+        if args.exclude_internal:
+            ql = (r["query_text"] or "").lower()
+            _markers = ("check import", "check fast import", "check if the article",
+                        "check extraction", "read last", "read the last", "background task",
+                        "task-notification", "bringing up nodes", "monitor", "progress:",
+                        "output file", "log file c:/")
+            if any(m in ql for m in _markers):
+                continue
         top = max(cs, key=lambda c: (c.get("routing_score") or 0))
         rs = (top.get("routing_score") or 0)
         if rs < args.min_rs:
@@ -131,6 +141,11 @@ def main() -> int:
             "rs": rs,
             "rank": top.get("routing_rank"),
             "type": top.get("layer"),
+            "memory_type": top.get("memory_type"),
+            "lexical_score": top.get("lexical_score"),
+            "vector_score": top.get("vector_score"),
+            "support_grade": top.get("support_grade"),
+            "container_ref": r["container_ref"],
             "mid": mid,
             "thread_ref": r["thread_ref"],
             "subject": subj,
@@ -155,8 +170,8 @@ def main() -> int:
 
     config = AppConfig.from_env()
     provider = build_llm_provider(
-        config, provider_name="hai_anthropic",
-        model="anthropic--claude-sonnet-latest",
+        config, provider_name="hai",
+        model="claude-sonnet-latest",
     )
 
     counts = {"yes_helpful": 0, "no_helpful": 0, "neutral": 0}
@@ -187,6 +202,8 @@ def main() -> int:
         if verdict not in counts:
             verdict = "neutral"
         counts[verdict] += 1
+        s["verdict"] = verdict
+        s["reason"] = reason
 
         print(f"  [{i}/{len(samples)}] rs={s['rs']:.0f} type={s['type']} -> {verdict}  ({reason[:80]})")
         table_lines.append(
@@ -230,6 +247,27 @@ def main() -> int:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(out, encoding="utf-8")
         print(f"\nwrote {args.out}")
+        # JSONL sidecar: one labeled row per judged sample, for building a
+        # re-admission counterfactual rule (judge verdict = ground truth).
+        jsonl_path = args.out.with_suffix(".jsonl")
+        with jsonl_path.open("w", encoding="utf-8") as fh:
+            for s in samples:
+                fh.write(json.dumps({
+                    "audit_id": s["audit_id"],
+                    "container_ref": s.get("container_ref"),
+                    "query": s["query"][:300],
+                    "rs": s["rs"],
+                    "rank": s["rank"],
+                    "layer": s["type"],
+                    "memory_type": s.get("memory_type"),
+                    "lexical_score": s.get("lexical_score"),
+                    "vector_score": s.get("vector_score"),
+                    "support_grade": s.get("support_grade"),
+                    "subject": s["subject"][:200],
+                    "verdict": s.get("verdict", "neutral"),
+                    "reason": s.get("reason", ""),
+                }) + "\n")
+        print(f"wrote {jsonl_path}")
 
     return 0
 

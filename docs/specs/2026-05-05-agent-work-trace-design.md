@@ -6,9 +6,11 @@
 
 ## Overview
 
-Agents doing engineering work repeatedly pay to discover the same things: which files matter, which commands work, where a bug lives. Pallium currently captures what the agent *said* (via `agent_conversation_memory`), but not what it *did* — which files it read, which commands it ran, what exploration path it took.
+Agents doing engineering work repeatedly pay to discover the same things: which files matter, which commands work, where a bug lives — and they repeat the same failures, re-running commands that already failed in a prior session (wrong flag, wrong path, wrong invocation). Pallium currently captures what the agent *said* (via `agent_conversation_memory`), but not what it *did* — which files it read, which commands it ran and which failed, what exploration path it took.
 
-`agent_work_trace` is a parallel semantic package that captures the structural trail of agent work per turn, aggregates it into a compact `task_trace` memory object per session, and injects it on session resume so the agent can skip the orientation phase and go directly to the relevant location.
+**Purpose:** reduce the agent's cost — tool calls, token volume, and wasted error-retries — by reusing prior discovery and prior failures instead of re-deriving them. If the agent learned it once in this repo, it should not pay to learn it again.
+
+`agent_work_trace` is a parallel semantic package that captures the structural trail of agent work per turn (files touched, commands run, failures hit) and aggregates it into a compact `task_trace` memory object. Surfacing that trail to a later session is what produces the saving; injecting on session resume is the first delivery path (see §Injection), not the definition of the feature — any surface that puts the right prior discovery in front of the agent at the right moment serves the same goal.
 
 **Determinism model:** the structural trace (files, commands, exploratory/productive split, path normalization, failure classification) is fully deterministic. The optional outcome summary (`outcome` field) is best-effort LLM-derived from agent response texts. The package should not be described as "fully deterministic" — the structural trail is deterministic; the outcome is not.
 
@@ -18,9 +20,13 @@ Agents doing engineering work repeatedly pay to discover the same things: which 
 
 ## Hypothesis and Measurement
 
-**Hypothesis:** injecting a compact task trace on session resume reduces orientation tool calls before first productive action.
+**Hypothesis:** surfacing a compact task trace to a later session in the same repo reduces the agent's discovery cost — fewer orientation tool calls before the first productive action, and fewer repeated failures — without a matching quality loss.
 
-**Why not "re-discovery rate":** a file re-read after trace injection can mean the trace worked (agent went directly to the right file) or that it was irrelevant. Raw duplicate reads are not a clean signal.
+Two distinct wins the feature targets:
+- **Re-discovery avoidance:** the agent goes directly to the relevant files/commands instead of re-exploring the repo from zero.
+- **Repeated-error avoidance:** the agent does not re-run a command that already failed in a prior session; the prior failure is available as context.
+
+**Measurement caveat:** a file re-read after trace surfacing is ambiguous in isolation — it can mean the trace worked (agent went directly to the right file) or that it was irrelevant. Raw duplicate-read counts alone are not a clean signal; pair them with the before/after orientation-cost comparison below and with the repeated-error rate.
 
 **Primary metric — orientation cost before first productive action:**
 - Number of Read / Grep / Glob / Bash calls before the first Edit / Write / test command in a session
@@ -28,14 +34,18 @@ Agents doing engineering work repeatedly pay to discover the same things: which 
 - Repeated broad commands (repo-wide grep, find, ls-tree, full test discovery)
 - Tool calls until the agent first touches a file present in the injected `task_trace.productive_files`
 
+**Secondary metric — repeated-error rate:**
+- Count of commands that failed in this session and had already failed (same normalized command, same repo) in a prior session
+- Whether surfacing `commands_failed` from the prior trace reduces that count
+
 **Measurement mechanism (v1):**
 - The SessionStart hook writes the injected `task_trace` payload to `{STATE_DIR}/{session_id}.work_trace_state.json` when a trace is injected.
-- Measurement analysis is done offline: compare orientation call counts between sessions where a trace was injected vs. sessions where none was available.
+- Measurement analysis is done offline: compare orientation call counts and repeated-error counts between sessions where a trace was surfaced vs. sessions where none was available.
 - The Stop-side per-turn accumulation loop is deferred — v1 relies on offline log analysis, not real-time metric computation.
 
 **Measurement events (append-only):** at each thread rebuild, a lightweight metric event is appended to a local append-only log (`{STATE_DIR}/work_trace_metrics.jsonl`). This is separate from the superseded `task_trace` memory object. Supersession must not destroy the experiment history.
 
-**Validation threshold:** measurable reduction in orientation call count across 15+ comparable sessions within the same repo over a few weeks of normal use.
+**Validation threshold:** measurable reduction in orientation call count and/or repeated-error rate across 15+ comparable sessions within the same repo over a few weeks of normal use.
 
 ---
 
