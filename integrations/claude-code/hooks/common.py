@@ -484,6 +484,11 @@ def _infer_exit_code(tool_output: str) -> int:
     strong_failure_markers = (
         "command failed", "traceback (most recent call last)",
         "fatal:", "panic:", "exited with", "non-zero exit",
+        # Common shell/tool failures where no explicit exit code is echoed.
+        # High-confidence phrases only — kept narrow to avoid false positives
+        # on successful output that merely mentions an error.
+        "command not found", "no such file or directory",
+        "permission denied", "segmentation fault",
     )
     if any(marker in lower for marker in strong_failure_markers):
         return 1
