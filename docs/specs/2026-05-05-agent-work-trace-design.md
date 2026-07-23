@@ -6,9 +6,11 @@
 
 ## Overview
 
-Agents doing engineering work repeatedly pay to discover the same things: which files matter, which commands work, where a bug lives. Pallium currently captures what the agent *said* (via `agent_conversation_memory`), but not what it *did* — which files it read, which commands it ran, what exploration path it took.
+Agents doing engineering work repeatedly pay to discover the same things: which files matter, which commands work, where a bug lives — and they repeat the same failures, re-running commands that already failed in a prior session (wrong flag, wrong path, wrong invocation). Pallium currently captures what the agent *said* (via `agent_conversation_memory`), but not what it *did* — which files it read, which commands it ran and which failed, what exploration path it took.
 
-`agent_work_trace` is a parallel semantic package that captures the structural trail of agent work per turn, aggregates it into a compact `task_trace` memory object per session, and injects it on session resume so the agent can skip the orientation phase and go directly to the relevant location.
+**Purpose:** reduce the agent's cost — tool calls, token volume, and wasted error-retries — by reusing prior discovery and prior failures instead of re-deriving them. If the agent learned it once in this repo, it should not pay to learn it again.
+
+`agent_work_trace` is a parallel semantic package that captures the structural trail of agent work per turn (files touched, commands run, failures hit) and aggregates it into a compact `task_trace` memory object. Surfacing that trail to a later session is what produces the saving; injecting on session resume is the first delivery path (see §Injection), not the definition of the feature — any surface that puts the right prior discovery in front of the agent at the right moment serves the same goal.
 
 **Determinism model:** the structural trace (files, commands, exploratory/productive split, path normalization, failure classification) is fully deterministic. The optional outcome summary (`outcome` field) is best-effort LLM-derived from agent response texts. The package should not be described as "fully deterministic" — the structural trail is deterministic; the outcome is not.
 
@@ -18,19 +20,23 @@ Agents doing engineering work repeatedly pay to discover the same things: which 
 
 ## Hypothesis and Measurement
 
-**Hypothesis:** injecting a compact task trace on session resume reduces orientation tool calls before first productive action.
+**Hypothesis:** surfacing a compact task trace to a later session in the same repo reduces the agent's discovery cost — fewer orientation tool calls before the first productive action — without a matching quality loss.
 
-**Why not "re-discovery rate":** a file re-read after trace injection can mean the trace worked (agent went directly to the right file) or that it was irrelevant. Raw duplicate reads are not a clean signal.
+**The win the feature targets: re-discovery avoidance** — the agent goes directly to the relevant files instead of re-exploring the repo from zero.
+
+**Measured-out-of-scope: repeated-error avoidance.** The original design also hypothesized value in surfacing prior failures so the agent avoids re-running commands that already failed. Live-data analysis (see `docs/investigations/2026-07-22-task-trace-cross-session-value.md`) measured cross-session repeated command failures at **~nil** (0 of 178 failed commands re-failed in a later session) and command reuse at ~1%. The reusable value is almost entirely in **files** (~28% of a later session's pre-productive file reads are re-discovery), not commands. `commands_succeeded`/`commands_failed` remain in the payload (the injection card still renders them) but are not treated as a value driver, and there is no repeated-error metric.
+
+**Measurement caveat:** a file re-read after trace surfacing is ambiguous in isolation — it can mean the trace worked (agent went directly to the right file) or that it was irrelevant. Raw duplicate-read counts alone are not a clean signal; pair them with the before/after orientation-cost comparison below.
 
 **Primary metric — orientation cost before first productive action:**
 - Number of Read / Grep / Glob / Bash calls before the first Edit / Write / test command in a session
 - Token volume from discovery tool results before first productive action
 - Repeated broad commands (repo-wide grep, find, ls-tree, full test discovery)
-- Tool calls until the agent first touches a file present in the injected `task_trace.productive_files`
+- Tool calls until the agent first touches a file present in the injected `task_trace.exploratory_files` (the deduped files-touched list; see Data Capture)
 
 **Measurement mechanism (v1):**
 - The SessionStart hook writes the injected `task_trace` payload to `{STATE_DIR}/{session_id}.work_trace_state.json` when a trace is injected.
-- Measurement analysis is done offline: compare orientation call counts between sessions where a trace was injected vs. sessions where none was available.
+- Measurement analysis is done offline: compare orientation call counts between sessions where a trace was surfaced vs. sessions where none was available.
 - The Stop-side per-turn accumulation loop is deferred — v1 relies on offline log analysis, not real-time metric computation.
 
 **Measurement events (append-only):** at each thread rebuild, a lightweight metric event is appended to a local append-only log (`{STATE_DIR}/work_trace_metrics.jsonl`). This is separate from the superseded `task_trace` memory object. Supersession must not destroy the experiment history.
@@ -143,24 +149,20 @@ turns = [
 ```
 If no turns found, skip rebuild.
 
-**Step 2 — Exploratory vs. productive split:**
+**Step 2 — Files-touched list:**
 
-Files read before the first turn with `has_productive_action=True` are `exploratory_files`. Files read in turns where or after `has_productive_action=True` are `productive_files`. This split is the core signal for the orientation-cost metric.
+`exploratory_files` is the deduped union of every file read across the session's turns. This is the file trail — the payload with measured cross-session value.
 
-The split tracks Edit/Write actions only. A test command or diagnostic read does not count as a productive action. Use `first_write_action_at_turn` as the field name to make this explicit.
+> **Revised 2026-07-23.** The original design split reads into `exploratory_files` (read before the first Edit/Write turn) and `productive_files` (read from that turn on), keyed on `first_write_action_at_turn`. Live-data analysis (`docs/investigations/2026-07-22-task-trace-cross-session-value.md`) showed this collapsed to empty on ~78% of traces: whenever an Edit/Write happened in the first turn — or never — the `turns[:first_write]` slice was empty and `exploratory_files` came back `[]`, disabling the feature's one valuable payload. The turn-order split is removed. `exploratory_files` is now the full union; `first_write_action_at_turn` is still computed (metrics/diagnostic); `productive_files` is retained as an always-empty key for payload-shape and metrics compatibility. The "what was actually worked on" signal lives in `files_modified` (captured directly from Edit/Write).
 
 ```python
 first_write_action_turn = next(
     (i for i, t in enumerate(turns) if t["has_productive_action"]), None
-)
+)  # retained for metrics/diagnostic only — no longer buckets files
 exploratory_files = list(dict.fromkeys(
-    f for t in turns[:first_write_action_turn] for f in t["files_read"]
-)) if first_write_action_turn is not None else list(dict.fromkeys(
     f for t in turns for f in t["files_read"]
 ))
-productive_files = list(dict.fromkeys(
-    f for t in turns[first_write_action_turn:] for f in t["files_read"]
-)) if first_write_action_turn is not None else []
+productive_files = []  # split removed; productive signal is files_modified
 ```
 
 **Step 3 — Path normalization:**

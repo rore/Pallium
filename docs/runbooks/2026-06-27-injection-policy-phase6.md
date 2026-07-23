@@ -111,3 +111,57 @@ trail:
 git add evals/injection_policy_2026_06/phase6_<DATE>.json
 git commit -m "Phase 6 measurement window: <DATE>"
 ```
+
+## 2026-07-23 baseline + scheduled window
+
+After the delivery-path fixes merged to main (`6d1d190` failure-trigger
+field, `0198a78` git-grounded orientation), a **day-0 baseline** was
+captured:
+
+```
+evals/injection_policy_2026_06/phase6_measurement_2026-07-23_baseline.json
+```
+
+Baseline read (since 2026-06-27, n_usage_rows=115, n_feedback=691):
+`session_start_orientation` now fires (8 rows, up from 0 pre-fix) but
+usage is not yet populated; `post_tool_failure` / `retry_threshold`
+still show no rows. This is expected — the fixes are days old. The real
+read needs the ~2-week window.
+
+**Scheduled window (~2026-08-06).** Re-run with the window start pinned
+to the fix-merge date so the numbers reflect post-fix behavior only:
+
+```bash
+python -m evals.injection_policy_2026_06.phase6_measurement \
+  --since 2026-07-23 \
+  --output evals/injection_policy_2026_06/phase6_measurement_2026-08-06.json
+```
+
+Check: did the dead triggers move off zero, and did injected memories
+get used next-turn (usage_rate populated)?
+
+## Companion: re-admission opportunity (under-injection)
+
+A separate finding (`docs/investigations/2026-07-22-task-trace-cross-session-value.md`)
+showed the abstention gate may over-suppress on genuine user turns. Run
+this **two-step, offline** measurement on the same ~Aug 6 window to size
+the opportunity (no production routing change):
+
+```bash
+# 1. Judge suppressed candidates on user turns (LLM; needs PALLIUM_CONFIG_FILE + PALLIUM_HAI_API_KEY)
+python -m evals.anchor_probe.underinjection_judge \
+  --since 2026-07-23 --limit 150 --min-rs 300 --distinct --exclude-internal \
+  --out evals/anchor_probe/underinjection_2026-08-06.md
+# -> also emits underinjection_2026-08-06.jsonl
+
+# 2. Score re-admission rules against the judge labels
+python -m evals.anchor_probe.readmission_counterfactual \
+  --labels evals/anchor_probe/underinjection_2026-08-06.jsonl
+```
+
+`--exclude-internal` is required — agent-internal monitoring prompts
+(self-echoing "check progress" turns) otherwise dominate the sample and
+mask the user-turn signal. Single-seed judge calls carry ~20pp variance
+(see `docs/context/validation.md`); a follow-up may add multi-seed
+consensus. This measurement gates any live re-admission change — it does
+not make one.

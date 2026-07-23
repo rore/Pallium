@@ -126,7 +126,10 @@ class TestThreadRebuild:
         assert mo.type == TASK_TRACE_TYPE
         assert mo.payload["turn_count"] == 2
 
-    def test_exploratory_productive_split(self):
+    def test_files_touched_union(self):
+        """All read files land in exploratory_files (deduped union); the
+        turn-order split was removed (see 2026-07-22 investigation). The
+        'worked on' signal lives in files_modified; productive_files is empty."""
         from semantic.agent_work_trace import AgentWorkTracePlugin
         plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider())
         items = _make_trace_items([
@@ -138,8 +141,28 @@ class TestThreadRebuild:
         payload = result.memory_objects[0].payload
         assert "src/main.py" in payload["exploratory_files"]
         assert "src/config.py" in payload["exploratory_files"]
-        assert "src/fix.py" in payload["productive_files"]
-        assert payload["first_write_action_at_turn"] == 1
+        assert "src/fix.py" in payload["exploratory_files"]
+        assert payload["exploratory_files"].count("src/main.py") == 1  # deduped
+        assert payload["productive_files"] == []
+        # files_modified carries the productive signal (not path-normalized — raw input)
+        assert "/home/user/project/src/fix.py" in payload["files_modified"]
+        assert payload["first_write_action_at_turn"] == 1  # still computed for metrics
+
+    def test_split_does_not_collapse_when_write_in_first_turn(self):
+        """Regression for the split-collapse bug: when an Edit/Write happens in
+        the very first turn, exploratory_files must still contain the read files
+        (the old turns[:0] slice returned [])."""
+        from semantic.agent_work_trace import AgentWorkTracePlugin
+        plugin = AgentWorkTracePlugin(provider=StubOutcomeProvider())
+        items = _make_trace_items([
+            {"files_read": ["/home/user/project/src/a.py", "/home/user/project/src/b.py"], "commands": [], "grep_patterns": [], "has_productive_action": True, "files_modified": ["/home/user/project/src/a.py"]},
+        ])
+        aggregate = build_thread_aggregate(items)
+        result = plugin.build_thread_summary(aggregate, conclusions=[])
+        payload = result.memory_objects[0].payload
+        assert payload["first_write_action_at_turn"] == 0
+        assert "src/a.py" in payload["exploratory_files"]
+        assert "src/b.py" in payload["exploratory_files"]
 
     def test_path_normalization(self):
         from semantic.agent_work_trace import AgentWorkTracePlugin

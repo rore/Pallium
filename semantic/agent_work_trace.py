@@ -229,23 +229,28 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
         for turn in turns:
             turn["files_read"] = [normalize_path(f, cwd) for f in turn.get("files_read", [])]
 
-        # Exploratory vs. productive split
+        # Files touched this session (deduped union of all reads).
+        #
+        # Historical note: this was split into exploratory_files (read before
+        # the first Edit/Write turn) and productive_files (read from that turn
+        # on). Live-data analysis (docs/investigations/2026-07-22-task-trace-
+        # cross-session-value.md) showed the turn-order split collapsed to
+        # empty on ~78% of traces — whenever a write happened in the first turn
+        # (or never), turns[:first_write] was empty and exploratory_files came
+        # back []. The file trail is the one payload with measured value, so it
+        # must not depend on that fragile boundary. exploratory_files is now the
+        # full deduped union of files read; the "what was actually worked on"
+        # signal lives in files_modified (captured directly from Edit/Write).
+        # productive_files is retained as an always-empty key for payload-shape
+        # and metrics compatibility (core/processing.py counts it; the injection
+        # card renderer does not read it).
         first_write_action_turn = next(
             (i for i, t in enumerate(turns) if t.get("has_productive_action")), None
         )
-
-        if first_write_action_turn is not None:
-            exploratory_files = list(dict.fromkeys(
-                f for t in turns[:first_write_action_turn] for f in t["files_read"]
-            ))
-            productive_files = list(dict.fromkeys(
-                f for t in turns[first_write_action_turn:] for f in t["files_read"]
-            ))
-        else:
-            exploratory_files = list(dict.fromkeys(
-                f for t in turns for f in t["files_read"]
-            ))
-            productive_files = []
+        exploratory_files = list(dict.fromkeys(
+            f for t in turns for f in t["files_read"]
+        ))
+        productive_files: list[str] = []
 
         # Aggregate commands
         commands_succeeded = [c for t in turns for c in t.get("commands", []) if c.get("exit_code") == 0]
