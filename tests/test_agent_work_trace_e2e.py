@@ -379,7 +379,8 @@ class TestFullPipeline:
         assert payload["turn_count"] == 2
         assert "src/retrieval.py" in payload["exploratory_files"]
         assert "src/config.py" in payload["exploratory_files"]
-        assert "src/retrieval.py" in payload["productive_files"]
+        assert payload["productive_files"] == []  # split removed; union in exploratory_files
+        assert "/home/user/project/src/retrieval.py" in payload["files_modified"]
         assert payload["first_write_action_at_turn"] == 1
         assert "python -m pytest" in payload["commands_succeeded"]
         assert payload["outcome"] == "Fixed the bug in retrieval."
@@ -437,7 +438,8 @@ class TestFullPipeline:
         latest = max(active_traces, key=lambda t: t.created_at)
         assert latest.payload["turn_count"] == 3
         assert latest.payload["outcome"] == "Second outcome."
-        assert "src/b.py" in latest.payload["productive_files"]
+        assert "src/b.py" in latest.payload["exploratory_files"]  # union; split removed
+        assert "/home/user/project/src/b.py" in latest.payload["files_modified"]
 
     def test_llm_failure_produces_task_trace_without_outcome(self, failing_service):
         """LLM failure is non-blocking; trace is created without outcome."""
@@ -649,7 +651,8 @@ class TestRegressions:
         traces = _get_task_traces(service)
         assert len(traces) == 1
         assert traces[0].payload["turn_count"] == 2
-        assert "src/service.py" in traces[0].payload["productive_files"]
+        assert "src/service.py" in traces[0].payload["exploratory_files"]  # union; split removed
+        assert "/home/user/project/src/service.py" in traces[0].payload["files_modified"]
 
     def test_parallel_processing_does_not_conflict_with_primary_package(self, service):
         """Item with trace metadata is processed by both demo_agent_memory and agent_work_trace.
