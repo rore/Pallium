@@ -441,6 +441,23 @@ class SQLiteSchemaMixin:
         ),
     }
     _INDEX_MIGRATIONS = {
+        # General container+lifecycle lookup. The hot retrieval / consolidation
+        # / thread-rebuild / work-trace paths all call
+        # ``list_memory_objects(container_ref=…, lifecycle="active")`` (often
+        # with an additional ``type IN (…)`` filter). Without this index those
+        # queries do a full table SCAN of memory_objects, which grows linearly
+        # with the table and became the dominant retrieval cost on large DBs
+        # (~75 ms → ~15 ms on a 15k-row table). The leading ``container_ref,
+        # lifecycle`` prefix serves the type-filtered variants too; the
+        # ``is_soft_deleted`` trailing column keeps the default
+        # ``is_soft_deleted = 0`` filter inside the index. Not redundant with
+        # the partial ``idx_memory_objects_operational_fact_active`` (that one
+        # is scoped ``WHERE type = 'operational_fact'``) or with
+        # ``idx_memory_objects_subject_lookup`` (that one requires a subject).
+        "idx_memory_objects_container_lifecycle": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_objects_container_lifecycle "
+            "ON memory_objects(container_ref, lifecycle, is_soft_deleted)"
+        ),
         "idx_memory_objects_subject_lookup": (
             "CREATE INDEX IF NOT EXISTS idx_memory_objects_subject_lookup "
             "ON memory_objects(container_ref, subject, type) "
@@ -685,6 +702,7 @@ class SQLiteSchemaMixin:
             self._ensure_fts5_table()
             self._backfill_legacy_memory_freshness()
             self._backfill_thread_position()
+            self._optimize_query_planner_stats()
 
     @contextmanager
     def _schema_initialization_lock(self):
@@ -956,6 +974,29 @@ class SQLiteSchemaMixin:
                 "UPDATE source_items SET thread_position = 1 "
                 "WHERE thread_ref IS NULL AND thread_position IS NULL"
             ))
+
+    def _optimize_query_planner_stats(self) -> None:
+        """Refresh SQLite query-planner statistics at schema-init.
+
+        The planner picks join order and index usage from the stats in
+        ``sqlite_stat1``. On a DB that has never had ``ANALYZE`` run, the
+        planner falls back to blind heuristics — which, once ``relations``
+        grew into the hundreds of thousands of rows, chose a catastrophic
+        join order for ``find_latest_checkpoint`` (starting from the huge
+        ``relations`` table instead of the selective thread filter:
+        ~165 ms → ~18 ms once stats exist).
+
+        ``PRAGMA analysis_limit`` bounds the work so this stays cheap even
+        as the DB grows (SQLite samples rather than full-scanning every
+        index); ``PRAGMA optimize`` then runs ANALYZE only where the stats
+        are stale or missing. Both are no-ops on non-sqlite engines.
+        """
+        if self._engine.url.drivername != "sqlite":
+            return
+        with self._engine.begin() as connection:
+            # Bound the sampling cost; SQLite's own recommended value.
+            connection.execute(text("PRAGMA analysis_limit=400"))
+            connection.execute(text("PRAGMA optimize"))
 
 
 def insert_lexical_fts_row(
