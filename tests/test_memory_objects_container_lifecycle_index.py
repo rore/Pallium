@@ -170,14 +170,25 @@ class TestSchemaCoexistence:
 
 
 class TestQueryPlannerStats:
-    def test_analyze_stats_present_after_init(self, fresh_store):
-        # PRAGMA optimize at schema-init should have populated sqlite_stat1
-        # (there is at least one index to analyze), so the planner is not
-        # flying blind on populated DBs.
+    def test_optimize_runs_without_error(self, fresh_store):
+        # _optimize_query_planner_stats must not raise on an empty or small DB.
+        # PRAGMA optimize is adaptive — it skips ANALYZE when the table is too
+        # small to bother, so sqlite_stat1 may not exist on a tiny test DB.
+        # The contract is "no error" on small DBs and "stats populated" on
+        # large ones; we only test the former here.
         _seed_memory_object(fresh_store, "mo-stats")
-        fresh_store._initialize_schema()
-        with fresh_store._engine.connect() as conn:
+        fresh_store._initialize_schema()  # must not raise
+
+    def test_analyze_stats_populated_on_large_db(self, tmp_path):
+        # PRAGMA optimize creates sqlite_stat1 once the table is large enough
+        # for the planner to bother. Seed enough rows to cross the threshold.
+        db = tmp_path / "large.db"
+        store = SQLiteStorageProvider(database_url=f"sqlite:///{db}")
+        for i in range(200):
+            _seed_memory_object(store, f"mo-{i}")
+        store._initialize_schema()
+        with store._engine.connect() as conn:
             has_stat = conn.execute(
                 text("SELECT name FROM sqlite_master WHERE name='sqlite_stat1'")
             ).fetchone()
-        assert has_stat is not None
+        assert has_stat is not None, "sqlite_stat1 should exist after optimize on a populated DB"
