@@ -458,6 +458,14 @@ class SQLiteSchemaMixin:
             "CREATE INDEX IF NOT EXISTS idx_memory_objects_container_lifecycle "
             "ON memory_objects(container_ref, lifecycle, is_soft_deleted)"
         ),
+        # Dashboard memory-browser default view: no container_ref filter, so
+        # the leading-container index above can't help. This one covers the
+        # browser's WHERE lifecycle IN (...) AND is_soft_deleted=0 ORDER BY
+        # created_at DESC pattern (60ms full-scan → <1ms on a 15k-row table).
+        "idx_memory_objects_visible_created": (
+            "CREATE INDEX IF NOT EXISTS idx_memory_objects_visible_created "
+            "ON memory_objects(is_soft_deleted, lifecycle, created_at DESC)"
+        ),
         "idx_memory_objects_subject_lookup": (
             "CREATE INDEX IF NOT EXISTS idx_memory_objects_subject_lookup "
             "ON memory_objects(container_ref, subject, type) "
