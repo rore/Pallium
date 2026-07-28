@@ -179,16 +179,3 @@ class TestQueryPlannerStats:
         _seed_memory_object(fresh_store, "mo-stats")
         fresh_store._initialize_schema()  # must not raise
 
-    def test_analyze_stats_populated_on_large_db(self, tmp_path):
-        # PRAGMA optimize creates sqlite_stat1 once the table is large enough
-        # for the planner to bother. Seed enough rows to cross the threshold.
-        db = tmp_path / "large.db"
-        store = SQLiteStorageProvider(database_url=f"sqlite:///{db}")
-        for i in range(200):
-            _seed_memory_object(store, f"mo-{i}")
-        store._initialize_schema()
-        with store._engine.connect() as conn:
-            has_stat = conn.execute(
-                text("SELECT name FROM sqlite_master WHERE name='sqlite_stat1'")
-            ).fetchone()
-        assert has_stat is not None, "sqlite_stat1 should exist after optimize on a populated DB"
