@@ -528,7 +528,13 @@ def _cmd_stop_impl(home: Path) -> bool:
 
     # Force kill
     if sys.platform == "win32":
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
+        # CREATE_NO_WINDOW (0x08000000): under pythonw.exe (no parent console)
+        # a bare taskkill spawns a visible console window on each call.
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True,
+            creationflags=0x08000000,
+        )
     else:
         os.kill(pid, signal.SIGKILL)
 

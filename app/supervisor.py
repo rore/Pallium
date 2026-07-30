@@ -27,6 +27,15 @@ if sys.platform == "win32":
 else:
     _POPEN_KWARGS = {"start_new_session": True}
 
+# When the supervisor runs under pythonw.exe (no parent console — e.g. the
+# Windows Scheduled Task launcher), every child console process spawns its own
+# visible window. CREATE_NO_WINDOW (0x08000000) suppresses that. The long-lived
+# children already inherit it via _POPEN_KWARGS; the transient `taskkill` reaper
+# calls did not, so each reap flashed a taskkill.exe console. Apply it there too.
+_NO_WINDOW_KWARGS: dict[str, object] = (
+    {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+)
+
 
 def _default_popen(cmd: list[str], **kwargs) -> subprocess.Popen:
     return subprocess.Popen(cmd, **{**kwargs, **_POPEN_KWARGS})
@@ -78,7 +87,13 @@ def _kill_tree(
             cmd.insert(1, "/F")
         try:
             run_timeout = wait_timeout if wait_timeout > 0 else 5.0
-            result = runner(cmd, capture_output=True, timeout=run_timeout, check=False)
+            result = runner(
+                cmd,
+                capture_output=True,
+                timeout=run_timeout,
+                check=False,
+                **_NO_WINDOW_KWARGS,
+            )
             if result.returncode not in _TASKKILL_SUCCESS_CODES:
                 if log is not None:
                     log(
