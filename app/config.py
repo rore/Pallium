@@ -87,7 +87,7 @@ class ObservabilityConfig:
     # injectable_blocks, or anything the agent sees. Removable: delete
     # the runner + table + this flag with no other behaviour change.
     shadow_subtask_selector_enabled: bool = False
-    shadow_subtask_selector_timeout_ms: int = 2000
+    shadow_subtask_selector_timeout_ms: int = 10000
 
 
 @dataclass(frozen=True)
@@ -324,7 +324,7 @@ class AppConfig:
                     "PALLIUM_OBSERVABILITY_SHADOW_SUBTASK_SELECTOR_TIMEOUT_MS",
                     env_values,
                     _read_nested(config_data, "observability", "shadow_subtask_selector_timeout_ms"),
-                    2000,
+                    10000,
                 ),
             ),
             retention=RetentionConfig(

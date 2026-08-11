@@ -157,7 +157,7 @@ class SubtaskSelectorShadowRunner:
         storage: Any,
         provider: Any,
         model: str | None,
-        timeout_ms: int = 2000,
+        timeout_ms: int = 10000,
         prompt_version: str = PROMPT_VERSION,
         synchronous: bool = False,
         max_workers: int = 2,
