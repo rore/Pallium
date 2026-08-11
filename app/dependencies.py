@@ -417,6 +417,37 @@ def build_service(
         if callable(register_routing_types):
             register_routing_types(type_registry)
 
+    # Shadow-only sub-task selector (REPORT6 validation experiment). Default
+    # off. Reuses the default package's LLM provider/model. If the default
+    # package has no LLM provider, or the provider fails to build, the shadow
+    # stays disabled (runner=None) — never blocks startup.
+    shadow_subtask_selector = None
+    obs = resolved_config.observability
+    if obs.shadow_subtask_selector_enabled:
+        pkg = resolved_config.semantic_packages.get(resolved_config.default_use_case)
+        if pkg is not None and pkg.llm_provider and pkg.model:
+            try:
+                from semantic.agent_conversation_memory_subtask_selector_shadow import (
+                    SubtaskSelectorShadowRunner,
+                )
+                selector_provider = build_llm_provider(
+                    resolved_config, provider_name=pkg.llm_provider, model=pkg.model,
+                )
+                shadow_subtask_selector = SubtaskSelectorShadowRunner(
+                    storage=storage,
+                    provider=selector_provider,
+                    model=pkg.model,
+                    timeout_ms=obs.shadow_subtask_selector_timeout_ms,
+                )
+                logger.info("Shadow sub-task selector ENABLED (model=%s)", pkg.model)
+            except Exception:
+                logger.warning("Shadow sub-task selector disabled: provider build failed", exc_info=True)
+        else:
+            logger.warning(
+                "Shadow sub-task selector enabled but default package '%s' has no LLM provider; disabled",
+                resolved_config.default_use_case,
+            )
+
     service = PalliumService(
         storage=storage,
         retrieval=retrieval,
@@ -437,6 +468,7 @@ def build_service(
         # Default is empty → bit-exact no-op vs prior behaviour. See
         # docs/specs/2026-06-27-injection-policy-abstention.md.
         injection_policy=resolved_config.injection.policy,
+        shadow_subtask_selector=shadow_subtask_selector,
     )
 
     return BuildResult(

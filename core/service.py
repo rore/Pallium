@@ -175,6 +175,7 @@ class PalliumService:
         metrics_store=None,
         metrics_retention_days: int = 0,
         injection_policy=None,
+        shadow_subtask_selector=None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -196,6 +197,7 @@ class PalliumService:
             routing_overrides=routing_overrides,
             query_stats=query_stats,
             injection_policy=injection_policy,
+            shadow_subtask_selector=shadow_subtask_selector,
         )
         self._thread_rebuilder = ThreadRebuilder(
             storage=storage,

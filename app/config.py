@@ -79,6 +79,15 @@ class ObservabilityConfig:
     integration_debug: bool = False
     query_audit_log: bool = False
     metrics_retention_days: int = 0
+    # Shadow-only sub-task selector experiment (REPORT6 validation).
+    # Default False = bit-exact no-op vs prior behaviour. When True, a
+    # frozen B/C selector observes work_resumption==strongly_eligible
+    # multi-candidate queries off the hot path and records its picks to
+    # the subtask_selector_shadow table. It NEVER affects should_inject,
+    # injectable_blocks, or anything the agent sees. Removable: delete
+    # the runner + table + this flag with no other behaviour change.
+    shadow_subtask_selector_enabled: bool = False
+    shadow_subtask_selector_timeout_ms: int = 2000
 
 
 @dataclass(frozen=True)
@@ -304,6 +313,18 @@ class AppConfig:
                     env_values,
                     _read_nested(config_data, "observability", "metrics_retention_days"),
                     0,
+                ),
+                shadow_subtask_selector_enabled=_resolve_bool_value(
+                    "PALLIUM_OBSERVABILITY_SHADOW_SUBTASK_SELECTOR_ENABLED",
+                    env_values,
+                    _read_nested(config_data, "observability", "shadow_subtask_selector_enabled"),
+                    False,
+                ),
+                shadow_subtask_selector_timeout_ms=_resolve_int_setting(
+                    "PALLIUM_OBSERVABILITY_SHADOW_SUBTASK_SELECTOR_TIMEOUT_MS",
+                    env_values,
+                    _read_nested(config_data, "observability", "shadow_subtask_selector_timeout_ms"),
+                    2000,
                 ),
             ),
             retention=RetentionConfig(

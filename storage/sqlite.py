@@ -32,6 +32,7 @@ from storage.sqlite_schema import (
     RelationRecord,
     SQLiteSchemaMixin,
     SourceItemRecord,
+    SubtaskSelectorShadowRecord,
     ThreadProcessingLeaseRecord,
     insert_lexical_fts_row,
 )
@@ -1122,6 +1123,15 @@ class SQLiteStorageProvider(
 
     def write_query_audit_row(self, row: dict[str, Any]) -> None:
         record = QueryAuditLogRecord(**row)
+        self._with_retry(lambda session: session.add(record))
+
+    def write_subtask_selector_shadow_row(self, row: dict[str, Any]) -> None:
+        """Persist one shadow sub-task-selector observation.
+
+        Write-only side table for the REPORT6 shadow experiment; never
+        read by the injection pipeline. See SubtaskSelectorShadowRecord.
+        """
+        record = SubtaskSelectorShadowRecord(**row)
         self._with_retry(lambda session: session.add(record))
 
     # ── Phase 5: memory_usage_audit ──────────────────────────────────

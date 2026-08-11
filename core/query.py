@@ -42,6 +42,7 @@ class QueryExecutor:
         routing_overrides=None,
         query_stats: QueryStats | None = None,
         injection_policy=None,
+        shadow_subtask_selector=None,
     ) -> None:
         self._storage = storage
         self._retrieval = retrieval
@@ -51,6 +52,7 @@ class QueryExecutor:
         self._routing_overrides = routing_overrides
         self._query_stats = query_stats
         self._injection_policy = injection_policy
+        self._shadow_subtask_selector = shadow_subtask_selector
 
     def query(
         self,
@@ -175,6 +177,23 @@ class QueryExecutor:
             )
             # Attach ranked_candidates for audit logging without modifying QueryResult's public contract
             object.__setattr__(result, '_ranked_candidates', outcome.ranked_candidates)
+            # Shadow-only observer (REPORT6 sub-task selector experiment). Reads
+            # the finalized, frozen `result` and writes to its own side table;
+            # it can never change `should_inject` / `injectable_blocks` / what
+            # the agent sees. Guarded so any failure is contained. Default off.
+            if self._shadow_subtask_selector is not None:
+                try:
+                    self._shadow_subtask_selector.observe(
+                        result=result,
+                        query_text=text,
+                        container_ref=container_ref,
+                        thread_ref=thread_ref,
+                        actor_ref=actor_ref,
+                        visibility=visibility,
+                        trigger_origin=trigger_origin,
+                    )
+                except Exception:
+                    logger.warning("shadow subtask selector observe failed", exc_info=True)
             if self._query_stats is not None:
                 self._query_stats.record_query(result)
             return result

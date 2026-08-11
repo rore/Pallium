@@ -245,6 +245,62 @@ class MemoryObjectShadowRecord(Base):
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class SubtaskSelectorShadowRecord(Base):
+    """Shadow-only sub-task selector experiment (REPORT6 validation).
+
+    One row per qualifying query: work_resumption==strongly_eligible with
+    >=2 cross-session candidates. Records the frozen B and C selector
+    decisions (pick/NONE), the candidate set they saw, and per-selector
+    LLM cost/latency telemetry. This table is WRITE-ONLY from the shadow
+    path and is never read by the injection pipeline — deleting the table
+    and the runner reverts behaviour with zero live impact.
+
+    Not foreign-keyed to query_audit_log: the shadow write happens inside
+    QueryExecutor.query (before the audit row is written by the API layer),
+    and audit logging may be disabled independently. Correlation to
+    subsequent session behaviour happens at eval time via
+    (thread_ref, container_ref, created_at) joined to source_items — the
+    same reconstruction REPORT6 used.
+    """
+
+    __tablename__ = "subtask_selector_shadow"
+
+    id = Column(String, primary_key=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    # Frozen prompt/version tag so a later prompt change is distinguishable.
+    prompt_version = Column(String, nullable=False)
+    provider_name = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+
+    # Query context (reconstructs query/thread + joins subsequent turns).
+    trigger_origin = Column(String, nullable=True)
+    query_text = Column(Text, nullable=False)
+    container_ref = Column(String, nullable=True)
+    thread_ref = Column(String, nullable=True)
+    actor_ref = Column(String, nullable=True)
+    visibility = Column(String, nullable=True)
+    work_resumption_state = Column(String, nullable=True)
+
+    # Candidate set the selectors saw (ordered by routing_rank), with per-
+    # candidate id/type/support/scores/cross_session/text/source_task.
+    candidate_count = Column(Integer, nullable=False, default=0)
+    cross_session_candidate_count = Column(Integer, nullable=False, default=0)
+    candidate_set_json = Column(Text, nullable=False, default="[]")
+
+    # Denormalized picks for cheap counting of "actual selector picks".
+    # NULL = selector errored; "NONE" = deliberate abstention; else a mid.
+    selector_b_pick = Column(String, nullable=True)
+    selector_c_pick = Column(String, nullable=True)
+
+    # Full per-selector detail: pick, reason, parse_status, error, latency_ms,
+    # model, provider, est_prompt_tokens, est_completion_tokens, est_cost_usd.
+    selectors_json = Column(Text, nullable=False, default="{}")
+
+    # Denormalized cost/latency rollups (both selector calls combined).
+    total_est_cost_usd = Column(Float, nullable=True)
+    total_latency_ms = Column(Float, nullable=True)
+
+
 class MemoryFlagRecord(Base):
     __tablename__ = "memory_flags"
 
