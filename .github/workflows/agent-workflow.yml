@@ -1,0 +1,282 @@
+# agent-workflow CI — combined redline + workflow-compliance check.
+#
+# Two jobs run on every PR against `main`:
+#
+#   1. `redline`          — runs import-linter boundary check, then
+#                           agent-redline's reporter on the PR's diff
+#                           and produces `redline-verdict.json` as an
+#                           artifact, plus its own sticky comment.
+#   2. `agent-workflow`   — `needs: [redline]`. Downloads the verdict
+#                           artifact and runs the workflow-compliance
+#                           checker on every Work Record changed in the
+#                           PR (multi-record aware since slice 0).
+#
+# Two stickies (distinct `header:`) keep the verdicts independently
+# legible in the PR conversation. Either job can fail; the second runs
+# unconditionally so the compliance verdict still surfaces when redline
+# blocked.
+#
+# Consumer prerequisites:
+#   - scripts/agent-redline-report.py     (vendored redline reporter)
+#   - scripts/agent-workflow-check.py     (vendored agent-workflow checker)
+#   - scripts/format-verdict-comment.py   (sticky-comment renderer)
+#   - scripts/run-import-linter.py        (boundary check; outputs build/import-linter-report.json)
+#   - agent-redline-policy.yaml           (redline's per-repo policy)
+#   - agent-workflow.yaml                 (this workflow's per-repo config)
+#   - .agent-redline/agent-policy.schema.json  (for schema validation step)
+#   - .agent-workflow/tasks/{slug}.md     (per-task Work Record(s))
+
+name: agent-workflow
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write   # both jobs post sticky comments
+
+jobs:
+  redline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -e "." pyyaml jsonschema import-linter
+
+      - name: Run import-linter boundary check
+        run: |
+          mkdir -p build
+          python scripts/run-import-linter.py --out build/import-linter-report.json
+          echo "--- import-linter-report.json ---"
+          cat build/import-linter-report.json
+
+      - name: Compute changed-files list from PR base→head
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" > changed-files.txt
+          echo "--- changed-files.txt ---"
+          cat changed-files.txt
+
+      - name: Compute PR labels and CODEOWNER approvals
+        id: review_inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
+        run: |
+          LABELS=$(python -c "import json,os; print(','.join(l['name'] for l in json.loads(os.environ.get('LABELS_JSON','[]'))))")
+          echo "labels=${LABELS}" >> "$GITHUB_OUTPUT"
+          echo "PR labels: ${LABELS}"
+
+          APPROVERS=""
+          if [[ -f .github/CODEOWNERS || -f CODEOWNERS || -f docs/CODEOWNERS ]]; then
+            APPROVED_LOGINS=$(gh api \
+              "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
+              --jq '[.[] | select(.state == "APPROVED") | .user.login] | unique | join(",")' \
+              2>/dev/null || echo "")
+            if [[ "$APPROVED_LOGINS" =~ ^[A-Za-z0-9_,-]*$ ]]; then
+              APPROVERS="$APPROVED_LOGINS"
+            else
+              echo "::warning::gh api returned non-login output; proceeding with empty approver list."
+              APPROVERS=""
+            fi
+            echo "CODEOWNER approvers: ${APPROVERS}"
+          else
+            echo "::warning::No CODEOWNERS file found; checkpoints requiring codeownerApproval will surface as unsatisfied."
+          fi
+          echo "codeowner_approvals=${APPROVERS}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate agent-redline-policy.yaml against schema
+        run: |
+          python - <<'PY'
+          import json, sys, yaml, jsonschema
+          schema = json.load(open(".agent-redline/agent-policy.schema.json"))
+          policy = yaml.safe_load(open("agent-redline-policy.yaml"))
+          try:
+              jsonschema.validate(instance=policy, schema=schema)
+          except jsonschema.ValidationError as e:
+              loc = "/".join(str(p) for p in e.absolute_path) or "(root)"
+              print(f"::error::agent-redline-policy.yaml invalid at {loc}: {e.message}")
+              sys.exit(1)
+          print("agent-redline-policy.yaml is valid against the schema.")
+          PY
+
+      - name: Run agent-redline reporter
+        id: report
+        run: |
+          set +e
+          BOUNDARY_ARG=""
+          if [[ -f build/import-linter-report.json ]]; then
+            BOUNDARY_ARG="--boundary-report build/import-linter-report.json --boundary-format json-violations"
+            echo "boundary report present — feeding to reporter"
+          fi
+          python scripts/agent-redline-report.py \
+            --policy agent-redline-policy.yaml \
+            --changed-files changed-files.txt \
+            --pr-labels "${{ steps.review_inputs.outputs.labels }}" \
+            --codeowner-approvals "${{ steps.review_inputs.outputs.codeowner_approvals }}" \
+            $BOUNDARY_ARG \
+            --json-out redline-verdict.json
+          EXIT=$?
+          echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+          echo "--- redline-verdict.json ---"
+          cat redline-verdict.json || echo "(no verdict produced)"
+
+      - name: Upload redline verdict artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redline-verdict
+          path: redline-verdict.json
+          if-no-files-found: warn
+
+      - name: Format verdict for PR comment
+        if: always()
+        run: |
+          {
+            echo "## agent-redline"
+            echo
+            if [[ ! -f redline-verdict.json ]]; then
+              echo ":no_entry: Reporter did not produce a verdict file."
+            else
+              VERDICT=$(python -c "import json; print(json.load(open('redline-verdict.json')).get('verdict', 'UNKNOWN'))")
+              SUMMARY=$(python -c "import json; print(json.load(open('redline-verdict.json')).get('summary', ''))")
+              case "$VERDICT" in
+                BLUE)               icon=":white_check_mark:" ;;
+                GRAY)               icon=":warning:" ;;
+                RED)                icon=":exclamation:" ;;
+                BOUNDARY_VIOLATION) icon=":no_entry:" ;;
+                *)                  icon=":grey_question:" ;;
+              esac
+              echo "$icon **${VERDICT}** — ${SUMMARY}"
+              echo
+              python - <<'PY'
+          import json
+          v = json.load(open("redline-verdict.json"))
+          zones = v.get("zones", {})
+          for k in ("red", "gray", "blue", "watch"):
+              files = zones.get(k) or []
+              if files:
+                  print(f"- **{k}** ({len(files)}): " + ", ".join(f"`{f}`" for f in files))
+          bvs = v.get("boundaryViolations") or []
+          if bvs:
+              print("\n**Boundary violations:**")
+              for bv in bvs:
+                  print(f"- `{bv.get('rule')}` — {bv.get('detail')}")
+          PY
+            fi
+          } > redline-comment.md
+
+      - name: Post sticky PR comment
+        if: always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: redline-comment.md
+          header: agent-redline
+
+      - name: Enforce reporter exit code
+        run: |
+          EXIT="${{ steps.report.outputs.exit_code }}"
+          if [[ "$EXIT" == "2" ]]; then
+            echo "redline exited 2 (boundary violation); failing CI."
+            exit 1
+          fi
+          echo "redline exited $EXIT — non-blocking."
+
+  agent-workflow:
+    needs: [redline]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install pyyaml jsonschema
+
+      - name: Download redline verdict artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: redline-verdict
+          path: .
+
+      - name: Compute changed-files list from PR base→head
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" > changed-files.txt
+          echo "--- changed-files.txt ---"
+          cat changed-files.txt
+
+      - name: Derive task slug from the PR's source branch
+        id: slug
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          slug="${HEAD_REF}"
+          for prefix in slice/ feat/ feature/ fix/ bug/ chore/ demo/; do
+            slug="${slug#${prefix}}"
+          done
+          slug="${slug//\//-}"
+          echo "slug=${slug}" >> "$GITHUB_OUTPUT"
+          echo "Derived slug: ${slug}"
+
+      - name: Run agent-workflow checker
+        id: check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          VERDICT_ARG=""
+          if [[ -f redline-verdict.json ]]; then
+            VERDICT_ARG="--redline-verdict redline-verdict.json"
+          fi
+          python scripts/agent-workflow-check.py \
+            --repo-root . \
+            --changed-files changed-files.txt \
+            --slug "${{ steps.slug.outputs.slug }}" \
+            --base-ref "$BASE_SHA" \
+            --head-ref "$HEAD_SHA" \
+            $VERDICT_ARG > verdict.json
+          EXIT=$?
+          echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+          echo "--- verdict.json ---"
+          cat verdict.json
+
+      - name: Format verdict for PR comment
+        env:
+          AGENT_WORKFLOW_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python scripts/format-verdict-comment.py verdict.json > comment.md
+
+      - name: Post sticky PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: comment.md
+          header: agent-workflow
+
+      - name: Enforce checker exit code
+        run: |
+          EXIT="${{ steps.check.outputs.exit_code }}"
+          if [[ "$EXIT" == "2" ]]; then
+            echo "checker exited 2 (blocking); failing CI."
+            exit 1
+          fi
+          echo "checker exited $EXIT — non-blocking."

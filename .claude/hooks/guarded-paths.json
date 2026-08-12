@@ -1,0 +1,13 @@
+{
+  "guardedPaths": [
+    "api/",
+    "app/",
+    "capabilities/",
+    "core/",
+    "providers/",
+    "redaction/",
+    "retrieval/",
+    "semantic/",
+    "storage/"
+  ]
+}

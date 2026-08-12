@@ -1,0 +1,17 @@
+# Stack-neutral suppression markers shipped by agent-redline core.
+#
+# Bootstrap copies this file to `.agent-redline/suppressions.yaml` in
+# the consuming repo when no language extension is selected (zone-only
+# repos). Language extensions ship their own
+# `extensions/<name>/suppressions.yaml` that supersedes this file
+# during bootstrap.
+#
+# The list is deliberately narrow. Adopters extend via the policy's
+# `suppressions.add` block; markers not on the active list are
+# ignored by the reporter.
+
+suppressions:
+  inlineComments:
+    - "# nosec"
+    - "# semgrep:ignore"
+    - "# semgrep-ignore"

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rore/agent-workflow/agent-workflow.schema.json",
+  "title": "agent-workflow.yaml",
+  "description": "Schema for the optional per-repository agent-workflow.yaml override file. Fields are added incrementally as backlog items consume them; unknown top-level fields are permitted today so partial configs do not break.",
+  "type": "object",
+  "required": ["version", "project", "workRecord"],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "project": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "workRecord": {
+      "type": "object",
+      "description": "Selects the Work Record backend and its options. Bootstrap proposes the values; the human confirms.",
+      "required": ["backend"],
+      "properties": {
+        "backend": {
+          "description": "Which backend the skill and CI checker use to read and write the Work Record.",
+          "enum": ["local", "jira"]
+        },
+        "local": {
+          "type": "object",
+          "description": "Options for the local Markdown backend. Required when backend is local.",
+          "required": ["taskPath"],
+          "properties": {
+            "taskPath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Repo-relative path template for the per-task Work Record file. {slug} is substituted from the branch or PR. Example: .agent-workflow/tasks/{slug}.md"
+            }
+          },
+          "additionalProperties": false
+        },
+        "jira": {
+          "type": "object",
+          "description": "Options for the Jira backend. Field shape reserved here; full validation lands with W18.",
+          "additionalProperties": true
+        },
+        "requiredForBranchChanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true (default), the CI checker emits a blocking `workrecord.required_for_branch_changes` predicate if a PR touched code paths but resolved no Work Record at the branch slug. Set to false to allow pure-housekeeping PRs (e.g. vendored-script bumps, formatter passes) to exit clean without a Work Record."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "backend": { "const": "local" } } },
+          "then": { "required": ["local"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "redline": {
+      "description": "Whether the harness requires agent-redline. 'required' (the default) treats a missing redline verdict at PR time as a CI configuration error. 'optional' lets the checker proceed with an advisory when the verdict is unavailable. Scalar enum, not an object.",
+      "enum": ["required", "optional"]
+    },
+    "redlineVerdictPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path the CI checker reads to find redline's verdict artifact. Repo-relative or absolute. Default when omitted: 'build/redline-verdict.json'."
+    },
+    "hooks": {
+      "type": "object",
+      "description": "Options for the Claude Code accelerator hooks bootstrap installs (a non-normative, harness-specific nudge; CI remains the enforcement floor).",
+      "properties": {
+        "guardedPaths": {
+          "type": "array",
+          "description": "Path prefixes the plan-mode gate hook treats as guarded code. When a plan touches any of these, the gate requires the plan to include the Work Record step. Bootstrap detects the repo's code roots and sets this; if omitted the hook defaults to [\"src/\"]. Matched on a path boundary, case-insensitively.",
+          "items": { "type": "string", "minLength": 1 },
+          "default": ["src/"]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
