@@ -56,27 +56,46 @@ Shipped since last major scope update:
 - **Shared prompt-role governance**: contract ownership for `write_extraction`, `write_enrichment`, `query_ambiguity_resolution`
 - **Live improvement loop**: drift metrics, shadow routing comparison, replay-promotion tooling
 
-Current focus:
+Current focus — Pallium vNext (2026-08):
 
-- **Shaped Memory Contract milestone (2026-07-01)**: W2, W3, W4, W6 shipped;
-  W1 awaiting fresh data window; W5 in progress; W7 rolling.
-- **Operational fact memory (W4, shipped 2026-07-01)**: derived from
-  `agent_work_trace_turn` metadata; surfaces on-demand via UserPromptSubmit
-  `operational_intent` signal; zero-proactive invariant enforced.
-- **Routing calibration**: 3 regressions from routing simplification still open; fixing injection confidence thresholds
-- **LoCoMo benchmark**: baseline at 61.2% on conv-26; confirms need for fact extraction package alongside agent continuity
-- **Lifecycle hardening**: stale/superseded/contradictory memory handling before broader reuse and sharing work
+The active milestone is **Pallium vNext: historical agent work as a first-class
+context layer** (strategy: `docs/context/strategy-vnext.md`; execution plan:
+`docs/designs/015-vnext-historical-work-execution.md`). The prior Shaped Memory
+Contract milestone is wound down (W2/W3/W4/W6 shipped; W1/W5/W7 parked as residuals
+under Paused).
 
-Next (from board.md):
+vNext is validation-first and experiment-gated: each phase must pass its live
+experiment before the next earns significant investment. Primary KPI: confirmed
+historical-reuse events per 100 substantive sessions. Hard invariant across all
+phases: visibility violations = 0.
+
+- **Phase 1 (Now) — Historical Lookup**: expose raw-history search as a deliberate
+  agent pull (raw-ranked retrieval mode, `pallium_search_history` tool,
+  source-context expansion) plus funnel telemetry. Gate = Experiment 1: do agents
+  invoke lookup unprompted, and is retrieved history materially used? If not
+  despite strong retrieval, the core thesis is weak.
+- **Phase 2 (Next) — Derived-memory continuous evaluation**: shadow
+  RAW/DERIVED/HYBRID on real lookups; derivation earns more responsibility only if
+  it repeatedly beats raw on a measured dimension. Gate = Experiment 3.
+- **Phase 3 (Later) — Continuity across sessions/agents**: reduce the manual
+  "summarize this for the other session" / "go read that transcript" handoff.
+  Gate = Experiment 2.
+- **Phase 4 (Later) — Shared knowledge**: design-007 Phase 2/3, gated by a real
+  multi-user deployment (Experiment 4); reconcile visibility vocabulary first.
+
+Rationale (from read-only corpus studies): useful cross-session history exists for
+~38% of real prompts and is ~88% experiential; raw hybrid search already surfaces
+it ~83% top-5; current derived memory did not beat raw on recall and is a lossy
+consumption representation (~29% misleading); and cross-session transfer is common
+but orchestrated manually today. This argues for changing the interaction model
+(deliberate pull + continuity), not abandoning historical memory — with derivation
+demoted to a continuously-evaluated optimization layer.
+
+Still parked (pre-vNext investigations):
 
 - investigate thread-level interest and threadless aggregation
 - investigate lexical retrieval scaling
-
-Later:
-
-- bounded memory lifecycle hardening
-- explicit shared-memory derivation
-- cross-container bounded memory
+- bounded memory lifecycle hardening (prerequisite for Phase 4 sharing)
 
 Still out of scope:
 

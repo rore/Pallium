@@ -1,22 +1,22 @@
-# Now
-- milestone-shaped-memory-contract
-  - W1: finish injection-policy-abstention (Phase 2b + Phase 6) — awaiting fresh data window (~2026-07-05)
-  - W2: narrow-target Claude-Code-on-this-repo scenarios + baseline eval — ✅ shipped
-  - W3: explicit memory-write MCP tools (remember/correct/supersede/forget/record_outcome) — ✅ shipped
-  - W4: ship operational-fact memory as on-demand object — ✅ **shipped 2026-07-01** (5 PRs a0ef64c → b5bf26e)
-  - W5: shadow-test typed one-pass extraction; per-type go/no-go — 4 of 5 PRs shipped 2026-07-01 (c2be06c → 8bd779d); PR 5 contingent on ≥2 weeks live data
-  - W6: two enforceable invariants in lessons.md — ✅ shipped
-  - W7: rolling simplification pass (semantic ≤10k lines, routing ≤5 files) — Phase 1 in progress
+# P1 · Historical Lookup
+- add-raw-historical-search-mode
+- add-agent-historical-lookup-tool
+- add-source-context-expansion
+- add-historical-lookup-funnel-telemetry
 
-# Next
+# P2 · Derived-memory eval
+- idea-raw-derived-hybrid-shadow-eval
+
+# P3–4
+- idea-cross-context-work-continuity
+- add-explicit-shared-memory-derivation
+- add-cross-container-bounded-memory
+- idea-visibility-vocab-reconciliation
+- add-bounded-memory-lifecycle-hardening
 
 # Paused
 - investigate-thread-level-interest-and-threadless-aggregation
-
-# Later
-- add-bounded-memory-lifecycle-hardening
-- add-explicit-shared-memory-derivation
-- add-cross-container-bounded-memory
+- milestone-shaped-memory-contract
 
 # Ideas
 - idea-operational-scale-hardening
@@ -25,7 +25,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
-- add-operational-fact-memory  (shipped 2026-07-01 as W4)
+- add-operational-fact-memory
 - add-thread-near-dup-supersession
 - add-injection-policy-abstention
 - add-agent-work-trace-parallel-package
