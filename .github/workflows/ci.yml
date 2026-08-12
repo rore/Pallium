@@ -34,16 +34,26 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          try {
-            Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction Stop
-            Add-MpPreference -ExclusionPath "$env:RUNNER_TEMP" -ErrorAction Stop
-            Write-Host "Defender exclusions added for workspace and RUNNER_TEMP."
-          } catch {
-            Write-Host "::warning::Could not add Defender exclusion: $($_.Exception.Message)"
+          foreach ($path in @("${{ github.workspace }}", "$env:RUNNER_TEMP")) {
+            try {
+              Add-MpPreference -ExclusionPath $path -ErrorAction Stop
+              Write-Host "Defender exclusion added: $path"
+            } catch {
+              Write-Host "::warning::Could not add Defender exclusion for ${path}: $($_.Exception.Message)"
+            }
           }
 
       - name: Install dependencies
         run: pip install -e ".[dev,vector]"
 
       - name: Run tests
-        run: python -m pytest tests/ -x -q
+        # Ubuntu uses the addopts default (-n 4). Windows is dominated by
+        # blocking file-I/O (per-test SQLite DBs on NTFS), so oversubscribe
+        # past the 4 vCPUs to hide that latency. Probe: measure vs -n 4.
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            python -m pytest tests/ -x -q -n 8
+          else
+            python -m pytest tests/ -x -q
+          fi

@@ -26,13 +26,34 @@
 
 ## Implementation
 
-- Edited `.github/workflows/ci.yml` `test` job: added `cache: pip` + `cache-dependency-path: pyproject.toml` to `actions/setup-python@v5`, and a Windows-only step (`if: runner.os == 'Windows'`, `shell: pwsh`) that runs `Add-MpPreference -ExclusionPath` for `${{ github.workspace }}` and `$env:RUNNER_TEMP`, wrapped in try/catch so an unavailable cmdlet degrades to a `::warning::` instead of failing the job.
+- Edited `.github/workflows/ci.yml` `test` job: added `cache: pip` + `cache-dependency-path: pyproject.toml` to `actions/setup-python@v5`, and a Windows-only step (`if: runner.os == 'Windows'`, `shell: pwsh`) that runs `Add-MpPreference -ExclusionPath` for `${{ github.workspace }}` and `$env:RUNNER_TEMP`, non-fatal via per-path try/catch.
+- Opened PR #6; CI run 31611370742 completed green.
 
-## Evidence (local verification)
+## Evidence (CI measurement — the definitive check)
 
-Ran on the local Windows dev machine — no `Add-MpPreference` executed (would mutate the machine's real Defender config); checks are parse/structure only.
+The Defender step **applied cleanly** on both Windows jobs (logged "Defender exclusions added…", no `::warning::`). Yet:
 
-- **YAML valid**: `yaml.safe_load(ci.yml)` parses; step order is checkout → setup-python(cache) → Defender(win-only) → install → test; matrix unchanged (`{ubuntu,windows} × {3.12,3.13}`); `setup-python` `with` = `{python-version, cache: pip, cache-dependency-path: pyproject.toml}`.
-- **PowerShell parses clean**: post-substitution run block fed to `[Parser]::ParseInput` → 0 syntax errors.
-- **Cmdlet real**: `Get-Command Add-MpPreference` → present (confirms cmdlet + `-ExclusionPath` param are valid).
-- **Not locally provable**: the actual Windows speedup can only be measured by the PR's CI run — there is no local GitHub-Windows-runner equivalent. Definitive check = compare `test (windows-latest, *)` wall time vs the ~10 min baseline, same collected test count, green.
+| Job | pytest self-timed, baseline | pytest self-timed, with fix |
+|---|---|---|
+| ubuntu (3.12 / 3.13) | ~84–90s | ~84–90s |
+| windows-latest 3.13 | ~618s | **513s** |
+| windows-latest 3.12 | ~618s | **624s** |
+
+pip cache: install 42s → 38s (cold-miss on first run; negligible).
+
+## Assumption failure — the plan's premise was wrong
+
+**Recorded assumption (Approach):** Windows Defender real-time scanning of per-test SQLite temp files is the *dominant* Windows cost.
+
+**Disproved by:** exclusion applied successfully but yielded only ~17% on 3.13 and ~0% on 3.12 (within variance). The ~6× gap is real in-pytest execution time (513–624s vs ~90s), pointing at NTFS file I/O for thousands of per-test SQLite DB create/open/close ops + per-worker native imports — costs Defender exclusion does not remove.
+
+**Returned to planning.** The Defender + pip-cache change is harmless and a small partial win, but does not meet the Outcome (close the gap with Ubuntu). Candidate next levers, pending developer direction on scope/risk:
+1. In-memory SQLite (`sqlite:///:memory:`) for tests that don't need a file DB — highest-confidence lever (removes the file I/O), but touches `tests/**`/conftest and carries behavior risk (WAL, snapshot/cross-connection tests). Separate, larger task.
+2. Oversubscribe xdist workers on Windows (`-n 8`) — cheap one-line CI probe; helps only if the suite is I/O-bound (waiting), not CPU-bound.
+3. Pragmatic matrix reduction — run Windows on fewer Python versions / nightly only; cost reduction, not a real speedup.
+
+## Decision (lever 1 chosen)
+
+Developer chose the cheap probe. Windows `test` jobs now run `pytest -n 8` (Ubuntu stays `-n 4` via addopts). Rationale: the Windows cost is largely blocking file-I/O; oversubscribing past the 4 vCPUs can hide that latency for a one-line change. If the probe doesn't land, escalate to lever 1's in-memory-SQLite fix as a separate task. Defender exclusion + pip cache retained as a harmless partial win.
+
+**Verification:** compare `test (windows-latest, *)` pytest self-time on the next CI run vs this run's 513–624s baseline.
