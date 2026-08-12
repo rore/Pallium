@@ -4,7 +4,7 @@ title: Add explicit shared-memory derivation
 status: queued
 priority: medium
 commitment: committed
-milestone: Later
+milestone: pallium-vnext-p3
 ---
 
 ## Summary
@@ -47,6 +47,14 @@ The privacy-aware scope foundation defines local visibility boundaries, but late
 6. Later cross-container memory can build on this contract instead of redefining sharing behavior.
 
 ## Notes
+
+vNext gating (point of order for Phase 3): this mechanism is **downstream of, and
+may be obviated by, `idea-cross-user-raw-history-value`**. The first Phase-3
+experiment tests whether scoped *raw* history from one user helps another using the
+substrate we already have. Build explicit shared-derived-memory only if that
+experiment — or the continuous derived eval — shows raw cross-user sharing is
+insufficient. Do not lead Phase 3 with this item. Also requires
+`idea-visibility-vocab-reconciliation` first.
 
 Dependency note:
 

@@ -40,7 +40,7 @@ hybrid search is already strong (~83% top-5), so exposing it well is high-levera
 - the agent-facing tool that invokes this mode (see `add-agent-historical-lookup-tool`)
 - source-centric expansion (see `add-source-context-expansion`)
 - changing the existing proactive/memory injection path or its abstention policy
-- RAW/DERIVED/HYBRID shadow comparison (Phase 2)
+- RAW/DERIVED/HYBRID shadow comparison (continuous eval track)
 
 ## Done When
 

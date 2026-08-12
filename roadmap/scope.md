@@ -1,33 +1,22 @@
-Pallium now has a stable runtime shape for `agent_conversation_memory` with shipped multilingual support, multi-package parallel processing, hybrid retrieval, cue-free routing, and bounded consolidation.
+Pallium's current direction is **Pallium vNext: historical agent work as a
+first-class context layer** (see "Current focus" below; strategy
+`docs/context/strategy-vnext.md`, execution
+`docs/designs/015-vnext-historical-work-execution.md`). That is the active thesis
+and the lens for prioritization.
 
-The north star remains making Pallium reliably solve a bounded set of agent-memory jobs without repeated heuristic chasing:
+Everything below the current-focus section records the shipped foundation vNext
+builds on. It is context, **not** an invitation to reopen the prior
+proactive-injection / routing-optimization program — that program is not the
+current direction.
 
-- answer requirement and architecture questions from prior decisions and evidence
-- resume long investigations with findings, blockers, and prior reasoning intact
-- resume interrupted work from explicit checkpoints instead of transcript replay
-- reuse prior answers safely across later conversations when the same conclusion should help again
-- preserve findings discovered while exploring external systems without turning Pallium into the system of record
-- keep long-lived conversation continuity compact and selective rather than defaulting to transcript growth
-- let downstream agents stay thin by relying on Pallium's memory decisions instead of local heuristics
-
-Current gap assessment against that north star:
-- strongest today:
-  - thread continuity and multilingual content handling
-  - resumed-work checkpoints
-  - bounded investigation carry-forward
-  - package-owned injection decisions and compact carry-forward output
-  - cue-free routing with structural lane narrowing (no English phrase dependence)
-  - hybrid retrieval (lexical + vector + RRF fusion) with cross-script support
-- partial today:
-  - requirement and architecture recall when the decision or conclusion already exists in the current scope
-  - repeated-question reuse within bounded local scope
-  - evidence-backed reuse of findings that were surfaced clearly enough during the original interaction
-  - routing calibration across paraphrase variants (3 regressions from routing simplification still open)
-- still weak or unstable:
-  - thread-level interest extraction (per-item extraction loses subject context when interest spans multiple messages)
-  - lexical retrieval scaling beyond small-to-medium corpora
-  - systematic handling of stale, superseded, or contradictory structured memory
-  - confidence that Pallium stays quiet when it should and does not force downstream semantic compensation
+Foundation in place (shipped, stable): the `agent_conversation_memory` runtime with
+multilingual support, multi-package parallel processing, hybrid retrieval
+(lexical + vector + RRF fusion), cue-free structural routing, bounded consolidation,
+thread continuity, resumed-work checkpoints, evidence-backed investigation
+carry-forward, and package-owned injection decisions. Known residual limitations
+(thread-level interest extraction, lexical scaling beyond medium corpora, systematic
+stale/superseded/contradictory-memory handling) are **parked deliberately** under
+vNext (see Parked below) — they are not active optimization targets.
 
 Shipped since last major scope update:
 
@@ -74,14 +63,19 @@ phases: visibility violations = 0.
   source-context expansion) plus funnel telemetry. Gate = Experiment 1: do agents
   invoke lookup unprompted, and is retrieved history materially used? If not
   despite strong retrieval, the core thesis is weak.
-- **Phase 2 (Next) — Derived-memory continuous evaluation**: shadow
-  RAW/DERIVED/HYBRID on real lookups; derivation earns more responsibility only if
-  it repeatedly beats raw on a measured dimension. Gate = Experiment 3.
-- **Phase 3 (Later) — Continuity across sessions/agents**: reduce the manual
-  "summarize this for the other session" / "go read that transcript" handoff.
-  Gate = Experiment 2.
-- **Phase 4 (Later) — Shared knowledge**: design-007 Phase 2/3, gated by a real
-  multi-user deployment (Experiment 4); reconcile visibility vocabulary first.
+- **Continuous — Derived-memory evaluation (RAW/DERIVED/HYBRID + fidelity)**: not a
+  sequential phase. Once raw search lands, continuously shadow RAW/DERIVED/HYBRID on
+  real lookups and separately sample source→derived fidelity (to tell a derivation
+  failure from a retrieval failure); derivation earns more responsibility only if it
+  repeatedly beats raw on a measured dimension. Gate = Experiment 3.
+- **Phase 2 (Next) — Continuity across sessions/agents**: reduce the manual
+  "summarize this for the other session" / "go read that transcript" handoff. Prove
+  identified-source handoff value against manual baselines *before* building
+  automatic session correlation or `agent_ref` routing. Gate = Experiment 2.
+- **Phase 3 (Later) — Shared knowledge**: first test whether scoped *raw* history
+  from one user materially helps another (Experiment 4, needs a real multi-user
+  deployment); reconcile visibility vocabulary first; build the shared-derivation
+  mechanism (design-007 Phase 2/3) only if the raw-first result requires it.
 
 Rationale (from read-only corpus studies): useful cross-session history exists for
 ~38% of real prompts and is ~88% experiential; raw hybrid search already surfaces

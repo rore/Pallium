@@ -4,14 +4,18 @@
 - add-source-context-expansion
 - add-historical-lookup-funnel-telemetry
 
-# P2 · Derived-memory eval
+# Continuous · RAW/DERIVED/HYBRID eval
 - idea-raw-derived-hybrid-shadow-eval
+- idea-derivation-fidelity-eval
 
-# P3–4
+# P2 · Work Continuity
 - idea-cross-context-work-continuity
+
+# P3 · Shared Knowledge
+- idea-cross-user-raw-history-value
+- idea-visibility-vocab-reconciliation
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
-- idea-visibility-vocab-reconciliation
 - add-bounded-memory-lifecycle-hardening
 
 # Paused

@@ -4,7 +4,7 @@ title: Work continuity across sessions and agents
 status: queued
 priority: medium
 commitment: uncommitted
-milestone: pallium-vnext-p3
+milestone: pallium-vnext-p2
 ---
 
 ## Summary
@@ -26,10 +26,18 @@ dimension and there is no explicit handoff packaging.
 
 ## In Scope (outline — detail after Experiment 1)
 
-- stable work/session correlation across `session_id`s so resumption ranking spans
-  sessions, not just one long-lived thread
-- explicit continuation/handoff packaging (what the receiving context needs)
-- make `agent_ref` a first-class handoff dimension (Claude↔Codex)
+Test the simplest form first, and only invest in mechanism if it beats the manual
+baseline:
+
+- **First (validate the value):** a source session is *identified* by the user or
+  agent (no automatic session-identity solving); Pallium retrieves and packages that
+  session's relevant work; the receiving session continues from it. Measure against
+  the manual baselines (paste-a-summary / read-the-transcript) on user-orchestration
+  cost and correctness of understanding.
+- **Only if that wins (invest in mechanism):** stable work/session correlation
+  across `session_id`s so resumption ranking spans sessions automatically; make
+  `agent_ref` a first-class handoff dimension (Claude↔Codex); richer explicit
+  continuation packaging.
 - build on shipped `work_refs`, `task_checkpoint`, `resumed_session`
 
 ## Out of Scope
@@ -48,6 +56,9 @@ dimension and there is no explicit handoff packaging.
 
 ## Notes
 
-Gate: Experiment 2. Depends on Phase 1 (lookup/expand); independent of Phase 2.
-Execution context: `docs/designs/015-vnext-historical-work-execution.md` (Phase 3).
+Gate: Experiment 2. Depends on Phase 1 (lookup/expand); independent of the
+continuous derived eval. Sequence within the item: prove the value of
+identified-source handoff before building automatic session correlation or
+`agent_ref` routing — don't start by solving session identity.
+Execution context: `docs/designs/015-vnext-historical-work-execution.md` (Phase 2).
 Related shipped work: `add-work-ref-cross-surface-continuity`, design 013.

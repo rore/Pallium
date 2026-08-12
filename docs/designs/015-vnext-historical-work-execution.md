@@ -109,14 +109,21 @@ can measure whether agents actually do this unprompted.
   `source_hit`s (reusing `CompositeRetrievalProvider`) under existing
   scope/visibility/filters, bypassing the memory-only routing/abstention gate.
 - `add-agent-historical-lookup-tool` — an agent-facing MCP tool
-  (`pallium_search_history`) + client method + `trigger_origin="user_explicit"`,
-  with skill/CLAUDE.md guidance on *when* to look up.
+  (`pallium_search_history`) whose default is just "search prior work for X" (full
+  filters optional), tagged with a distinct agent-pull origin (e.g. `agent_pull` /
+  `mcp_pull` — **not** the existing `user_explicit` label, so agent-decided pulls
+  are separable from user-directed ones), with skill/CLAUDE.md guidance on *when*
+  to look up.
 - `add-source-context-expansion` — source-centric expand
-  (`GET /source/{id}/context`: neighbor turns by `thread_ref` + reverse
-  `supported_by` memories) for follow-through.
-- `add-historical-lookup-funnel-telemetry` — tag agent lookups distinctly and
-  record the pull funnel: opportunity → agent query → useful result → material
-  use; seed the reuse-events KPI and a missed-opportunity signal.
+  (`GET /source/{id}/context`: neighbor raw turns by `thread_ref`; supported
+  memories opt-in and separate so the RAW baseline stays uncontaminated) for
+  follow-through.
+- `add-historical-lookup-funnel-telemetry` — attribute agent pulls distinctly
+  (and separately capture whether the user directed the search); log the cheap
+  deterministic funnel facts online, and measure the ambiguous stages —
+  *opportunity* and *material use* — **retrospectively via a sampled judge, not an
+  online detector/matcher** (which would recreate the relevance-classification
+  problem). Seeds the reuse-events KPI.
 
 **Success gate.** Over a live window: agents invoke lookup at appropriate moments
 without explicit user prompting at a non-trivial rate; the funnel yields a first
@@ -124,30 +131,40 @@ without explicit user prompting at a non-trivial rate; the funnel yields a first
 breakdown. **Decision:** if agents don't pull despite strong retrieval, the core
 thesis is weak (strategy decision-point 1) — stop and reassess before Phase 2/3.
 
-**Dependencies.** None (substrate exists). Enables Phase 2 (RAW arm) and the KPI.
+**Dependencies.** None (substrate exists). Enables the continuous evaluation track
+(RAW arm) and Phases 2–3, and the KPI.
 
-## Phase 2 — Derived-memory continuous evaluation (RAW/DERIVED/HYBRID)
+## Continuous evaluation track — is derivation worth it? (RAW/DERIVED/HYBRID + fidelity)
 
-**Gate: Experiment 3.** Outlined as `idea-raw-derived-hybrid-shadow-eval`.
+**Gate: Experiment 3. This is a continuous track, not a sequential phase.** It
+cannot start before Phase 1 (there is no RAW arm without raw search), but once raw
+search lands it runs *continuously alongside* Phases 2–3 rather than blocking them.
+Outlined as `idea-raw-derived-hybrid-shadow-eval` and `idea-derivation-fidelity-eval`.
 
 **Goal.** Turn "is derivation worth it?" into a standing measurement instead of a
-one-off study.
+one-off study, and separate the two ways derivation can fail.
 
-**What we build.** A shadow runner (reusing the `subtask_selector_shadow` seam +
-a new side table) that, on real lookups, constructs RAW / DERIVED / HYBRID
-candidate sets and records recovered info, RAW-only vs DERIVED-only wins,
-completeness, misleading/unsupported rate, context size, derivation-failure vs
-retrieval-failure, and downstream material use; store the raw fusion score so the
-RAW arm is reconstructable; extend `evals/retrieval_ablation/` for periodic A/B.
+**What we build.**
+- *Retrieval-time comparison* (`idea-raw-derived-hybrid-shadow-eval`): a shadow
+  runner (reusing the `subtask_selector_shadow` seam + a new side table) that, on
+  real lookups, constructs RAW / DERIVED / HYBRID candidate sets and records
+  recovered info, RAW-only vs DERIVED-only wins, completeness, misleading/unsupported
+  rate, context size, and downstream material use; store the raw fusion score so the
+  RAW arm is reconstructable; extend `evals/retrieval_ablation/` for periodic A/B.
+- *Derivation fidelity* (`idea-derivation-fidelity-eval`): sampled source→derived
+  scoring (completeness, unsupported claims, drift, compression), independent of
+  whether the memory was retrieved — so a DERIVED loss can be attributed to bad
+  *derivation* vs bad *retrieval*.
 
-**Success gate.** Derived memory earns more responsibility **only if** it
-repeatedly beats RAW/HYBRID on precision, misleading rate, context-for-equivalent-
-quality, normalization recall, or downstream performance. Otherwise simplify
-around raw history (strategy decision-point 3).
+**Success gate.** Derived memory earns more responsibility **only if** it repeatedly
+beats RAW/HYBRID on precision, misleading rate, context-for-equivalent-quality,
+normalization recall, or downstream performance. Otherwise simplify around raw
+history (strategy decision-point 3).
 
-**Dependencies.** Phase 1 raw search (no RAW arm without it).
+**Dependencies.** Phase 1 raw search (no RAW arm without it). Runs continuously; does
+not gate Phases 2–3.
 
-## Phase 3 — Work continuity across contexts
+## Phase 2 — Work continuity across contexts
 
 **Gate: Experiment 2.** Outlined as `idea-cross-context-work-continuity`.
 
@@ -155,36 +172,48 @@ around raw history (strategy decision-point 3).
 manual "summarize this for the other session" / "go read that transcript" ritual,
 while preserving correct understanding.
 
-**What we build.** Stable work/session correlation across `session_id`s so
-resumption ranking spans sessions (not just one long thread); explicit
-continuation/handoff packaging; make `agent_ref` a first-class handoff dimension
-(Claude↔Codex). Builds on shipped `work_refs`, `task_checkpoint`, `resumed_session`.
+**What we build — simplest form first.**
+- *First, validate the value:* a source session is *identified* by the user or agent
+  (no automatic session-identity solving); Pallium retrieves and packages that
+  session's relevant work; the receiving session continues. Compare against the
+  manual baselines (paste-a-summary / read-the-transcript).
+- *Only if that beats manual, invest in mechanism:* stable work/session correlation
+  across `session_id`s so resumption ranking spans sessions; `agent_ref` as a
+  first-class handoff dimension (Claude↔Codex); richer continuation packaging. Builds
+  on shipped `work_refs`, `task_checkpoint`, `resumed_session`.
 
 **Success gate.** Pallium-supported continuation beats the manual baselines
 (summary / pointer / raw-transcript inspection) on user-orchestration cost while
 preserving correct prior-work understanding (strategy decision-point 2).
 
-**Dependencies.** Phase 1 (lookup/expand). Independent of Phase 2.
+**Dependencies.** Phase 1 (lookup/expand). Independent of the continuous eval track.
 
-## Phase 4 — Shared agent knowledge
+## Phase 3 — Shared agent knowledge
 
 **Gate: Experiment 4 (requires a real multi-user deployment).**
 
 **Goal.** Let knowledge produced by one user/agent/context benefit another where
 visibility permits — measured, not assumed.
 
-**What we build.** Reuse existing committed items
-`add-explicit-shared-memory-derivation` (design 007 Phase 2) and
-`add-cross-container-bounded-memory` (Phase 3); add
-`idea-visibility-vocab-reconciliation` to close the `global` vs `limited|user`
-drift *before* shared-derivation work.
+**What we build — raw value first, mechanism only if needed.**
+- *First:* `idea-cross-user-raw-history-value` — test whether scoped *raw* history
+  from user A materially helps user B in a real multi-user deployment, using the
+  substrate we already have (raw lookup + visibility enforcement). Precede it with
+  `idea-visibility-vocab-reconciliation` to close the `global` vs `limited|user`
+  drift before any cross-user work.
+- *Only if raw cross-user sharing proves insufficient:* the design-007 mechanism
+  items `add-explicit-shared-memory-derivation` (Phase 2) and
+  `add-cross-container-bounded-memory` (Phase 3), plus
+  `add-bounded-memory-lifecycle-hardening` as their safety prerequisite. These are
+  no longer the *entry point* to shared knowledge — they are downstream of a
+  demonstrated value result.
 
 **Success gate.** Cross-user work materially benefits another user;
 **visibility violations = 0.** Until a genuine multi-user environment exists, this
 phase stays validation-blocked by design.
 
-**Dependencies.** Sharing foundation Phase 1 (shipped); vocab reconciliation;
-lifecycle hardening (`add-bounded-memory-lifecycle-hardening`).
+**Dependencies.** Sharing foundation Phase 1 (shipped); vocab reconciliation before
+any cross-user work; lifecycle hardening before shared-derivation mechanism.
 
 ---
 
@@ -192,15 +221,17 @@ lifecycle hardening (`add-bounded-memory-lifecycle-hardening`).
 
 **Primary KPI:** confirmed historical-reuse events per 100 substantive sessions.
 
-**Supporting metrics** (built incrementally, mostly in Phases 1–2):
+**Supporting metrics** (built incrementally, starting in Phase 1):
 historical-opportunity → lookup rate; lookup → useful-result rate; lookup →
 material-use rate; missed lookup opportunities; continuation/handoff success;
-RAW vs DERIVED vs HYBRID performance; cross-agent reuse; cross-user reuse;
-proactive-resume precision; **visibility violations = 0**.
+RAW vs DERIVED vs HYBRID performance; derivation fidelity; cross-agent reuse;
+cross-user reuse; proactive-resume precision; **visibility violations = 0**.
 
 Instrumentation reuses `query_audit_log` / `memory_usage_audit` / `metrics` and
-the `phase6_measurement.py` rollup template; the material-use signal must go
-beyond the current citation-level matcher.
+the `phase6_measurement.py` rollup template. Cheap deterministic facts (lookup
+issued, results returned, agent-pull origin) are logged online; the ambiguous
+stages — historical opportunity and material use — are evaluated **retrospectively
+by a sampled judge**, not by a new online router or matcher.
 
 ## Non-goals for this phase
 
@@ -214,19 +245,19 @@ must justify itself on live precision.
 
 1. **Do agents reuse historical work often enough to matter?** → Phase 1 gate. If
    no despite good retrieval, the thesis is weak.
-2. **Does Pallium make cross-context continuity materially easier?** → Phase 3 gate.
-3. **Does derived memory beat raw enough to justify its complexity?** → Phase 2
-   gate. If never, simplify around raw history.
+2. **Does Pallium make cross-context continuity materially easier?** → Phase 2 gate.
+3. **Does derived memory beat raw enough to justify its complexity?** → continuous
+   evaluation track. If never, simplify around raw history.
 
 ## Strategy → phase → roadmap mapping
 
 | Strategy element | Phase | Roadmap item(s) |
 |---|---|---|
 | Bet 1: historical lookup | P1 | add-raw-historical-search-mode, add-agent-historical-lookup-tool, add-source-context-expansion |
-| KPI + funnel telemetry | P1→P2 | add-historical-lookup-funnel-telemetry |
-| Derived-memory as evaluated layer / Exp 3 | P2 | idea-raw-derived-hybrid-shadow-eval |
-| Bet 2: continuity / Exp 2 | P3 | idea-cross-context-work-continuity |
-| Bet 3: shared knowledge / Exp 4 | P4 | add-explicit-shared-memory-derivation, add-cross-container-bounded-memory, idea-visibility-vocab-reconciliation |
+| KPI + funnel telemetry | P1 | add-historical-lookup-funnel-telemetry |
+| Derived-memory as evaluated layer / Exp 3 | Continuous | idea-raw-derived-hybrid-shadow-eval, idea-derivation-fidelity-eval |
+| Bet 2: continuity / Exp 2 | P2 | idea-cross-context-work-continuity |
+| Bet 3: shared knowledge / Exp 4 | P3 | idea-cross-user-raw-history-value (first), idea-visibility-vocab-reconciliation, add-explicit-shared-memory-derivation, add-cross-container-bounded-memory, add-bounded-memory-lifecycle-hardening |
 
 ## Risks / open questions
 
@@ -234,7 +265,8 @@ must justify itself on live precision.
   corpus analysis — hence Phase 1 is a live behavioral test, not a build-and-hope.
 - **Material-use measurement** is currently citation-level; the KPI needs a
   stronger signal without over-claiming.
-- **Cross-agent frequency** is unknown outside this corpus; Phase 3 must not
-  over-invest in cross-agent before evidence.
+- **Cross-agent frequency** is unknown outside this corpus; Phase 2 continuity must
+  not over-invest in cross-agent before evidence, and should prove identified-source
+  handoff value before building automatic session correlation.
 - **Visibility drift** must be reconciled before any sharing work to avoid
   building Phase 4 on an ambiguous contract.

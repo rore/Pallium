@@ -4,7 +4,7 @@ title: RAW / DERIVED / HYBRID continuous shadow evaluation
 status: queued
 priority: medium
 commitment: uncommitted
-milestone: pallium-vnext-p2
+milestone: pallium-vnext-derived-eval
 ---
 
 ## Summary
@@ -47,5 +47,10 @@ whether to invest in better derivation or simplify around raw history
 
 ## Notes
 
-Gate: Experiment 3. Depends on Phase 1 raw search (no RAW arm without it).
-Execution context: `docs/designs/015-vnext-historical-work-execution.md` (Phase 2).
+Continuous track, not a gating phase: once Phase 1 raw search lands, this runs
+alongside P2/P3 (no RAW arm exists before then). Paired with
+`idea-derivation-fidelity-eval`, which isolates derivation quality from retrieval
+so a DERIVED loss can be attributed to bad derivation vs bad retrieval. Feeds
+strategy decision-point 3. Depends on Phase 1 raw search.
+Execution context: `docs/designs/015-vnext-historical-work-execution.md`
+(Continuous evaluation track).

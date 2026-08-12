@@ -4,7 +4,7 @@ title: Add bounded memory lifecycle hardening
 status: queued
 priority: high
 commitment: committed
-milestone: Later
+milestone: pallium-vnext-p3
 lane: stabilization-safety
 ---
 

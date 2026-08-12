@@ -4,7 +4,7 @@ title: Reconcile visibility vocabulary before shared-derivation
 status: queued
 priority: medium
 commitment: uncommitted
-milestone: pallium-vnext-p4
+milestone: pallium-vnext-p3
 ---
 
 ## Summary
@@ -43,6 +43,7 @@ revocation, and false-share bugs.
 
 ## Notes
 
-Gate: prerequisite for Phase 4 (Experiment 4). Precedes
-`add-explicit-shared-memory-derivation`.
-Execution context: `docs/designs/015-vnext-historical-work-execution.md` (Phase 4).
+Gate: prerequisite for Phase 3 (Experiment 4) — clean the visibility contract
+before any cross-user work, including the raw-first `idea-cross-user-raw-history-value`
+experiment. Precedes `add-explicit-shared-memory-derivation`.
+Execution context: `docs/designs/015-vnext-historical-work-execution.md` (Phase 3).

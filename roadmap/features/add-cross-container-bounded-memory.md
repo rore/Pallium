@@ -4,7 +4,7 @@ title: Add bounded cross-container memory
 status: queued
 priority: medium
 commitment: committed
-milestone: Later
+milestone: pallium-vnext-p3
 ---
 
 ## Summary
@@ -55,6 +55,11 @@ In the longer term, this is also the clearest bounded path toward coordination m
 8. Retrieval policy for cross-container shared memory is explicit rather than always-on.
 
 ## Notes
+
+vNext gating (Phase 3): furthest-downstream sharing item. Gated behind
+`idea-cross-user-raw-history-value` (does scoped raw history help another user at
+all?) and `add-explicit-shared-memory-derivation`. Build only if the raw-first
+experiment and the derived eval justify a bounded shared-derived object.
 
 Initial design assumptions:
 
