@@ -47,13 +47,4 @@ jobs:
         run: pip install -e ".[dev,vector]"
 
       - name: Run tests
-        # Ubuntu uses the addopts default (-n 4). Windows is dominated by
-        # blocking file-I/O (per-test SQLite DBs on NTFS), so oversubscribe
-        # past the 4 vCPUs to hide that latency. Probe: measure vs -n 4.
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            python -m pytest tests/ -x -q -n 8
-          else
-            python -m pytest tests/ -x -q
-          fi
+        run: python -m pytest tests/ -x -q

@@ -57,3 +57,9 @@ pip cache: install 42s → 38s (cold-miss on first run; negligible).
 Developer chose the cheap probe. Windows `test` jobs now run `pytest -n 8` (Ubuntu stays `-n 4` via addopts). Rationale: the Windows cost is largely blocking file-I/O; oversubscribing past the 4 vCPUs can hide that latency for a one-line change. If the probe doesn't land, escalate to lever 1's in-memory-SQLite fix as a separate task. Defender exclusion + pip cache retained as a harmless partial win.
 
 **Verification:** compare `test (windows-latest, *)` pytest self-time on the next CI run vs this run's 513–624s baseline.
+
+## Probe result — lever 1 disproved, reverted
+
+CI run 31613050924 with `-n 8` on Windows: **windows 3.13 failed.** `tests/test_codex_integration.py::test_codex_hooks_import_cleanly_as_subprocess[session_start.py]` hit `subprocess.TimeoutExpired` (10s) — the test spawns its own python subprocess and expects it within 10s; 8 pytest workers on a 4-vCPU runner oversubscribed the box and pushed that subprocess past its deadline. Oversubscription doesn't just fail to help, it **destabilizes** timeout-bound subprocess tests.
+
+Reverted the `Run tests` step to the addopts default (`-n 4` both OSes). PR is back to the Defender-exclusion + pip-cache partial win (~17% on 3.13). The real lever remains in-memory SQLite for tests (separate, larger task); not pursued here.
