@@ -1,15 +1,15 @@
 # Speed up the Windows CI test job
 
 <!-- agent-workflow:start -->
-**Outcome:** The Windows `test` matrix jobs in `.github/workflows/ci.yml` complete materially faster (target: closer to the ~2 min Ubuntu jobs, down from ~10–11 min) without changing what is tested or reducing coverage.
+**Outcome:** PR CI feedback is fast (~2 min) by keeping the full Windows suite off the per-PR critical path, while preserving Windows regression coverage: a fast Windows smoke on every PR + the full Windows matrix on push-to-main and nightly.
 
 **Target:** rore/pallium — `.github/workflows/ci.yml` only.
 
-**Scope:** `.github/workflows/ci.yml`. Add a Windows-only step that excludes the workspace + runner temp dirs from Windows Defender real-time scanning, and enable pip caching on `actions/setup-python`. No changes to test code, test selection, matrix dimensions, or `pyproject.toml` addopts.
+**Scope:** `.github/workflows/ci.yml`. Restructure into three jobs: `test` (Ubuntu full matrix, PR+push), `windows-smoke` (Windows 3.13, curated Windows-sensitive path list, PR+push), `windows-full` (Windows full matrix, `if: github.event_name != 'pull_request'` — push-to-main + nightly `schedule`). Retain the Defender exclusion + pip cache. No test-code, test-selection-marker, or `pyproject.toml` changes.
 
-**Constraints:** Do not reduce test coverage (no matrix trimming, no `-m` change). Do not touch guarded code paths. Windows Defender step must be Windows-only (`if: runner.os == 'Windows'`) and must not fail the job if the exclusion cmdlet is unavailable. Do not execute `Add-MpPreference` on the local dev machine — local verification is syntax/parse-only.
+**Constraints:** Do not reduce total test coverage (full Windows matrix still runs, just on push/nightly not PR). Do not touch guarded code paths. Defender step must be non-fatal. Smoke path list must reference only existing test paths.
 
-**Completion criteria:** `ci.yml` parses as valid YAML; the Windows Defender step's PowerShell parses without error; the CI run on the PR shows the Windows `test` jobs faster than the current ~10 min baseline with the same test count and green result.
+**Completion criteria:** `ci.yml` parses as valid YAML; all smoke paths exist; PR runs `test` + `windows-smoke` only (no `windows-full`); push/nightly runs `windows-full`; CI green.
 
 **Risk:** Routine
 
@@ -17,9 +17,9 @@
 
 **Reason:** `.github/workflows/ci.yml` is not a guarded path and not in the redline red/watch lists (closest analog: `scripts/**` = blue, local tooling). CI-config-only change; no product surface touched.
 
-**Approach:** In the `test` job add (1) `cache: pip` + `cache-dependency-path: pyproject.toml` on `actions/setup-python@v5`, and (2) a Windows-only pre-install step running `Add-MpPreference -ExclusionPath` for `${{ github.workspace }}` and `$env:RUNNER_TEMP`, wrapped so a failure is non-fatal. Root cause: every test builds a fresh SQLite DB in `tmp_path`; Defender real-time scanning of that file churn is the dominant Windows-only cost.
+**Approach:** Split the single matrix job into Ubuntu-full (PR+push), Windows-smoke (curated path list, PR+push), and Windows-full (push+nightly via `if` + `schedule` cron). This takes the ~10 min Windows suite off the PR gate (PR feedback ~2 min) while a fast Windows smoke guards the OS-sensitive hotspots on every PR and the full matrix still runs post-merge and nightly.
 
-**Verification:** Local — `yaml.safe_load(ci.yml)` parses; PowerShell `[Parser]::ParseInput` on the Defender step parses clean (no execution). CI — the `test (windows-latest, *)` jobs on the PR finish faster than the ~10 min baseline, green, same collected test count. True speedup can only be proven by the CI run (no local GitHub-Windows-runner equivalent).
+**Verification:** Local — YAML parses; smoke test paths all exist on disk; job `if`/trigger wiring inspected. CI — on the PR, only `test` + `windows-smoke` run (windows-full skipped), green; confirm on a push-to-main / nightly that `windows-full` runs. Definitive PR-latency improvement measured by the PR run's wall time vs the ~10 min baseline.
 
 **State:** Ready for review
 <!-- agent-workflow:end -->
@@ -63,3 +63,16 @@ Developer chose the cheap probe. Windows `test` jobs now run `pytest -n 8` (Ubun
 CI run 31613050924 with `-n 8` on Windows: **windows 3.13 failed.** `tests/test_codex_integration.py::test_codex_hooks_import_cleanly_as_subprocess[session_start.py]` hit `subprocess.TimeoutExpired` (10s) — the test spawns its own python subprocess and expects it within 10s; 8 pytest workers on a 4-vCPU runner oversubscribed the box and pushed that subprocess past its deadline. Oversubscription doesn't just fail to help, it **destabilizes** timeout-bound subprocess tests.
 
 Reverted the `Run tests` step to the addopts default (`-n 4` both OSes). PR is back to the Defender-exclusion + pip-cache partial win (~17% on 3.13). The real lever remains in-memory SQLite for tests (separate, larger task); not pursued here.
+
+## Final design — fast Windows regression on PR, full matrix on push/nightly
+
+Developer chose: keep a fast Windows smoke on every PR, run the full Windows matrix on push-to-main + nightly. Restructured `ci.yml` into three jobs:
+- `test` — Ubuntu {3.12, 3.13}, full suite, every PR + push + nightly (gates PRs, ~2 min).
+- `windows-smoke` — Windows 3.13, curated 15-path Windows-sensitive set (supervisor/kill-tree, codex + claude-code hooks, asyncio-windows, snapshot×4, storage-sqlite, sqlite-write-retry, launch-token, config, runtime-logging), every PR + push.
+- `windows-full` — Windows {3.12, 3.13}, full suite, `if: github.event_name != 'pull_request'` + nightly `schedule` cron (17 6 * * *).
+
+Local verification: YAML parses; triggers = push/pull_request/schedule; `windows-full` correctly gated off PRs; all 15 smoke paths exist on disk.
+
+**Coverage tradeoff (recorded):** a Windows-only regression outside the smoke set won't block a PR — it surfaces on push-to-main or nightly. Smoke path list lives in `ci.yml` and needs occasional curation as Windows-sensitive tests are added.
+
+**Follow-up for humans:** if branch protection is later enabled, the required-check names change (`test (ubuntu-latest, 3.12/3.13)`, `windows-smoke`); do not require `windows-full` (it doesn't run on PRs).
