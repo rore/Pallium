@@ -79,6 +79,7 @@ jobs:
           tests/test_snapshot_roundtrip.py
           tests/test_storage_sqlite.py
           tests/test_sqlite_write_retry.py
+          tests/test_queue_concurrent_claim.py
           tests/test_launch_token.py
           tests/test_config.py
           tests/test_runtime_logging.py

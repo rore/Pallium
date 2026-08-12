@@ -9,17 +9,29 @@
 
 **Constraints:** Do not reduce total test coverage (full Windows matrix still runs, just on push/nightly not PR). Do not touch guarded code paths. Defender step must be non-fatal. Smoke path list must reference only existing test paths.
 
-**Completion criteria:** `ci.yml` parses as valid YAML; all smoke paths exist; PR runs `test` + `windows-smoke` only (no `windows-full`); push/nightly runs `windows-full`; CI green.
+**Completion criteria:** `ci.yml` parses as valid YAML; all smoke paths exist; PR runs `test` + `windows-smoke` only (no `windows-full`); push/nightly runs `windows-full`; CI green including the `agent-workflow` + `redline` gates.
 
-**Risk:** Routine
+**Risk:** Elevated
 
 **Complexity:** Simple
 
-**Reason:** `.github/workflows/ci.yml` is not a guarded path and not in the redline red/watch lists (closest analog: `scripts/**` = blue, local tooling). CI-config-only change; no product surface touched.
+**Reason:** Redline classified the final diff as GRAY — both changed paths (`.github/workflows/ci.yml` and this Work Record) are unmatched by the policy's red/blue/watch lists and default to gray. Per the risk table, any gray path → Elevated. (My initial `Routine` call assumed ci.yml would map to blue like `scripts/**`; CI re-classification on the real diff corrected it. Complexity remains Simple — one config file.)
 
-**Approach:** Split the single matrix job into Ubuntu-full (PR+push), Windows-smoke (curated path list, PR+push), and Windows-full (push+nightly via `if` + `schedule` cron). This takes the ~10 min Windows suite off the PR gate (PR feedback ~2 min) while a fast Windows smoke guards the OS-sensitive hotspots on every PR and the full matrix still runs post-merge and nightly.
+**Discovery:** Existing single `test` job ran a 4-cell matrix ({ubuntu,windows}×{3.12,3.13}); Windows ~10–11 min vs Ubuntu ~2 min, gating every PR. pytest self-times 513–624s on Windows vs ~90s on Ubuntu. Cause is in-pytest execution (NTFS file I/O for per-test SQLite DBs + per-worker native imports), not step overhead. Defender exclusion removes only ~17%; `-n 8` oversubscription destabilizes timeout-bound subprocess tests. Redline defaults unmatched paths (incl. `.github/workflows/ci.yml`) to gray.
 
-**Verification:** Local — YAML parses; smoke test paths all exist on disk; job `if`/trigger wiring inspected. CI — on the PR, only `test` + `windows-smoke` run (windows-full skipped), green; confirm on a push-to-main / nightly that `windows-full` runs. Definitive PR-latency improvement measured by the PR run's wall time vs the ~10 min baseline.
+**Material assumptions:**
+- Windows-specific regressions cluster in identifiable modules (process mgmt, subprocess hooks, file I/O, SQLite locking). Disproved by: a Windows-only break landing in a module outside the smoke set → action: it surfaces on push/nightly, then add that module to the smoke list.
+- Scheduled runs execute against the default branch's workflow copy (standard GitHub behavior). Disproved by: nightly not running windows-full → action: check the cron/branch.
+
+**Plan:** Split the single matrix job into three: `test` (Ubuntu {3.12,3.13}, no `if` → PR+push+nightly), `windows-smoke` (Windows 3.13, folded-scalar pytest over a curated Windows-sensitive path list, no `if` → PR+push), `windows-full` (Windows {3.12,3.13}, `if: github.event_name != 'pull_request'` + a `schedule` cron `17 6 * * *`). Retain Defender exclusion + pip cache on the Windows jobs. Stop condition: if a smoke path is missing, pytest errors — verified all paths exist before push.
+
+**Verification plan:** Local — `yaml.safe_load` parses; enumerate jobs + `if`/trigger wiring; assert every smoke path exists on disk. CI — on the PR, `test`+`windows-smoke` run green and `windows-full` is skipped; PR wall-time vs the ~10 min baseline; `agent-workflow`+`redline` gates green. Post-merge/nightly — confirm `windows-full` runs.
+
+**Plan review:** clean-context review by Explore subagent (read-only, no planning context) — verdict *sound-with-nits*; full prose under `## Plan review` below. Two nits applied: corrected branch-protection check names; added `tests/test_queue_concurrent_claim.py` (SQLite locking-under-contention) to the smoke set.
+
+**Approvals:** Not required at this risk level (Elevated; High would require verbatim human approval).
+
+**Exceptions:** —
 
 **State:** Ready for review
 <!-- agent-workflow:end -->
@@ -68,11 +80,25 @@ Reverted the `Run tests` step to the addopts default (`-n 4` both OSes). PR is b
 
 Developer chose: keep a fast Windows smoke on every PR, run the full Windows matrix on push-to-main + nightly. Restructured `ci.yml` into three jobs:
 - `test` — Ubuntu {3.12, 3.13}, full suite, every PR + push + nightly (gates PRs, ~2 min).
-- `windows-smoke` — Windows 3.13, curated 15-path Windows-sensitive set (supervisor/kill-tree, codex + claude-code hooks, asyncio-windows, snapshot×4, storage-sqlite, sqlite-write-retry, launch-token, config, runtime-logging), every PR + push.
+- `windows-smoke` — Windows 3.13, curated 16-path Windows-sensitive set (supervisor/kill-tree, codex + claude-code hooks, asyncio-windows, snapshot×4, storage-sqlite, sqlite-write-retry, queue-concurrent-claim, launch-token, config, runtime-logging), every PR + push.
 - `windows-full` — Windows {3.12, 3.13}, full suite, `if: github.event_name != 'pull_request'` + nightly `schedule` cron (17 6 * * *).
 
-Local verification: YAML parses; triggers = push/pull_request/schedule; `windows-full` correctly gated off PRs; all 15 smoke paths exist on disk.
+Local verification: YAML parses; triggers = push/pull_request/schedule; `windows-full` correctly gated off PRs; all smoke paths exist on disk.
 
 **Coverage tradeoff (recorded):** a Windows-only regression outside the smoke set won't block a PR — it surfaces on push-to-main or nightly. Smoke path list lives in `ci.yml` and needs occasional curation as Windows-sensitive tests are added.
 
-**Follow-up for humans:** if branch protection is later enabled, the required-check names change (`test (ubuntu-latest, 3.12/3.13)`, `windows-smoke`); do not require `windows-full` (it doesn't run on PRs).
+**Follow-up for humans:** if branch protection is later enabled, require `test (3.12)`, `test (3.13)`, and `windows-smoke`. Do **not** use `test (ubuntu-latest, ...)` (runs-on is hardcoded, not a matrix axis, so the check names carry only the python-version) and do **not** require `windows-full` (it doesn't run on PRs).
+
+## Plan review
+
+Clean-context review (Explore subagent, read-only, no planning context) of the Work Record + `ci.yml`:
+
+**Trigger wiring — correct.** `windows-full` carries `if: github.event_name != 'pull_request'`: skipped on PRs (`event == 'pull_request'`), runs on push (`'push'`) and nightly (`'schedule'`). `test` and `windows-smoke` have no `if`, so they run on every PR/push/nightly. Windows coverage never drops to zero: PRs get `windows-smoke`; push-to-main and nightly get both. (Scheduled runs execute against the default branch's workflow copy — expected.)
+
+**YAML — clean, no bugs.** cron `17 6 * * *` valid; `if` implicit-expression syntax valid (no `${{ }}` needed); the `>` folded scalar yields one `python -m pytest -x -q tests/... ` with all paths space-joined; Defender step is per-job copy (not a within-job duplicate), non-fatal via try/catch + `::warning::`.
+
+**Smoke selection — reasonable; one gap fixed.** Process/subprocess, file I/O, path handling well covered. Gap: `tests/test_queue_concurrent_claim.py` (real threads on one SQLite file — claim-exclusivity, expired-lease reclaim, integrity-error races) is precisely Windows-sensitive SQLite locking-under-contention → **added to the smoke set.** `test_w3_memory_writes_e2e` (signal handling) and mocked-subprocess tests judged low-value/omitted.
+
+**Branch protection — check names corrected** (see follow-up note): real names are `test (3.12)` / `test (3.13)`, not `test (ubuntu-latest, ...)`.
+
+**Verdict: sound-with-nits** — both nits applied.
