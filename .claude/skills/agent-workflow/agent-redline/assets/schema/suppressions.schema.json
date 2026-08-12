@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rore/agent-workflow/blob/main/core/agent-redline/core/schema/suppressions.schema.json",
+  "title": "agent-redline vendored suppressions schema v1",
+  "description": "Schema for .agent-redline/suppressions.yaml \u00e2\u20ac\u201d the vendored marker list each language extension supplies. Bootstrap copies extensions/<name>/suppressions.yaml here at setup time. The reporter reads this file from a fixed path; do not relocate.",
+  "type": "object",
+  "required": [
+    "suppressions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "suppressions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inlineComments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "annotations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "configEdits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "files",
+            "keys"
+          ],
+          "properties": {
+            "files": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "keys": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "inlineComments"
+          ]
+        },
+        {
+          "required": [
+            "annotations"
+          ]
+        },
+        {
+          "required": [
+            "configEdits"
+          ]
+        }
+      ]
+    }
+  }
+}

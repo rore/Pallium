@@ -1,0 +1,25 @@
+version: 1
+
+project:
+  name: pallium
+
+workRecord:
+  backend: local
+  local:
+    taskPath: ".agent-workflow/tasks/{slug}.md"
+
+redline: required
+
+redlineVerdictPath: build/redline-verdict.json
+
+hooks:
+  guardedPaths:
+    - "api/"
+    - "app/"
+    - "capabilities/"
+    - "core/"
+    - "providers/"
+    - "redaction/"
+    - "retrieval/"
+    - "semantic/"
+    - "storage/"

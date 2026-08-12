@@ -1,0 +1,365 @@
+# agent-workflow CI — combined redline + workflow-compliance check.
+#
+# Two jobs run on every PR against `main`:
+#
+#   1. `redline`          — runs agent-redline's reporter on the PR's diff
+#                           and produces `redline-verdict.json` as an
+#                           artifact, plus its own sticky comment.
+#   2. `agent-workflow`   — `needs: [redline]`. Downloads the verdict
+#                           artifact and runs the workflow-compliance
+#                           checker on every Work Record changed in the
+#                           PR (multi-record aware since slice 0).
+#
+# Two stickies (distinct `header:`) keep the verdicts independently
+# legible in the PR conversation. Either job can fail; the second runs
+# unconditionally so the compliance verdict still surfaces when redline
+# blocked.
+#
+# Consumer prerequisites (drop alongside this workflow):
+#   - scripts/agent-redline-report.py     (vendored redline reporter)
+#   - scripts/agent-workflow-check.py     (vendored agent-workflow checker)
+#   - scripts/format-verdict-comment.py   (sticky-comment renderer)
+#   - agent-redline-policy.yaml     (redline's per-repo policy)
+#   - agent-workflow.yaml                 (this workflow's per-repo config)
+#   - .agent-workflow/tasks/{slug}.md     (per-task Work Record(s))
+
+name: agent-workflow
+
+on:
+  pull_request:
+    branches: [main]
+    # Slice G: include label events so applying a satisfying label
+    # (e.g. `architecture-reviewed`) re-runs CI and updates the
+    # review.checkpoints_satisfied predicate without requiring a
+    # follow-up commit. `opened`, `synchronize`, `reopened` are the
+    # default-set triggers; we add the label events explicitly.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write   # both jobs post sticky comments
+
+jobs:
+  redline:
+    runs-on: [self-hosted]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Reporter needs both PR sides to compute the diff. The
+          # default checkout depth=1 doesn't include the base SHA.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install pyyaml jsonschema
+
+      - name: Compute changed-files list from PR base→head
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          # Single newline-delimited file path per line. The reporter's
+          # --changed-files consumer parses this format directly.
+          git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" > changed-files.txt
+          echo "--- changed-files.txt ---"
+          cat changed-files.txt
+
+      - name: Compute PR labels and CODEOWNER approvals (slice G)
+        id: review_inputs
+        # Slice G: redline's reporter validates review checkpoints
+        # against PR labels and CODEOWNER approvals (see redline's
+        # _is_satisfied in core/agent-redline/core/reporter/reporter.py).
+        # The agent-workflow checker then surfaces redline's
+        # already-computed satisfaction state via the
+        # `review.checkpoints_satisfied` predicate. We do NOT
+        # re-implement satisfaction logic here.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
+        run: |
+          # Labels: comma-separated list of PR label names. Empty if
+          # the PR has no labels.
+          LABELS=$(python -c "import json,os; print(','.join(l['name'] for l in json.loads(os.environ.get('LABELS_JSON','[]'))))")
+          echo "labels=${LABELS}" >> "$GITHUB_OUTPUT"
+          echo "PR labels: ${LABELS}"
+
+          # CODEOWNER approvals: read the PR's APPROVED reviewers and
+          # pass the login list to redline. The intersection with
+          # CODEOWNERS is implicitly enforced by GitHub's branch-
+          # protection "Require Code Owner review" rule — when enabled,
+          # GitHub only counts approvals from codeowners against the
+          # required-reviewer count, so any APPROVED state we see at
+          # PR check time is at least branch-protection-compatible.
+          # Repos that don't enable Code Owner enforcement get weaker
+          # signal here — the predicate still surfaces unsatisfied
+          # checkpoints, but cannot tell non-codeowner approval from
+          # codeowner approval.
+          APPROVERS=""
+          if [[ -f .github/CODEOWNERS || -f CODEOWNERS || -f docs/CODEOWNERS ]]; then
+            APPROVED_LOGINS=$(gh api \
+              "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
+              --jq '[.[] | select(.state == "APPROVED") | .user.login] | unique | join(",")' \
+              2>/dev/null || echo "")
+            # Defensive: gh api can return a JSON error body (401, 403,
+            # etc.) that bypasses --jq and lands as literal JSON in
+            # stdout, which then poisons $GITHUB_OUTPUT (newlines +
+            # braces break bash multi-line var assignment). Accept only
+            # comma-separated GitHub login chars; anything else is
+            # treated as "no approvers available" and the predicate
+            # surfaces as unsatisfied — the label path still works.
+            if [[ "$APPROVED_LOGINS" =~ ^[A-Za-z0-9_,-]*$ ]]; then
+              APPROVERS="$APPROVED_LOGINS"
+            else
+              echo "::warning::gh api returned non-login output (likely 401/403); proceeding with empty approver list. Label-based satisfaction still applies."
+              APPROVERS=""
+            fi
+            echo "CODEOWNER approvers: ${APPROVERS}"
+          else
+            echo "::warning::No CODEOWNERS file found; redline checkpoints requiring codeownerApproval will surface as unsatisfied. Label-based satisfaction still applies."
+          fi
+          echo "codeowner_approvals=${APPROVERS}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate agent-redline-policy.yaml against schema
+        # Explicit gate: the reporter also validates on load, but it runs
+        # under `set +e` with its exit code captured as non-blocking, so a
+        # malformed policy would not fail CI there. This step runs without
+        # `set +e` so a schema-invalid policy blocks the PR loudly. Catches
+        # the class of bug where bootstrap emits keys the reporter silently
+        # ignores (e.g. codeownerApproval as a mapping, prRules.excludePatterns,
+        # notes on api/security) — green CI with dead policy semantics.
+        run: |
+          python - <<'PY'
+          import json, sys, yaml, jsonschema
+          schema = json.load(open(".agent-redline/agent-policy.schema.json"))
+          policy = yaml.safe_load(open("agent-redline-policy.yaml"))
+          try:
+              jsonschema.validate(instance=policy, schema=schema)
+          except jsonschema.ValidationError as e:
+              loc = "/".join(str(p) for p in e.absolute_path) or "(root)"
+              print(f"::error::agent-redline-policy.yaml invalid at {loc}: {e.message}")
+              sys.exit(1)
+          print("agent-redline-policy.yaml is valid against the schema.")
+          PY
+
+      - name: Run agent-redline reporter
+        id: report
+        run: |
+          set +e
+          # Optional --boundary-report: when a consumer commits a
+          # boundary-violations.json (e.g. produced by an ArchUnit run
+          # or import-linter), we pass it through so redline reports
+          # the violation. Without it, the reporter does path-based
+          # classification only.
+          BOUNDARY_ARG=""
+          if [[ -f agent-redline/boundary-violations.json ]]; then
+            BOUNDARY_ARG="--boundary-report agent-redline/boundary-violations.json --boundary-format json-violations"
+            echo "boundary report present — feeding to reporter"
+          fi
+          python scripts/agent-redline-report.py \
+            --policy agent-redline-policy.yaml \
+            --changed-files changed-files.txt \
+            --pr-labels "${{ steps.review_inputs.outputs.labels }}" \
+            --codeowner-approvals "${{ steps.review_inputs.outputs.codeowner_approvals }}" \
+            $BOUNDARY_ARG \
+            --json-out redline-verdict.json
+          EXIT=$?
+          echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+          echo "--- redline-verdict.json ---"
+          cat redline-verdict.json || echo "(no verdict produced)"
+
+      - name: Upload redline verdict artifact
+        # Always upload — even on reporter failure the artifact may
+        # contain a partial verdict the compliance job can describe.
+        # Workflow-compliance's risk.redline_findings_available
+        # predicate handles the "broken verdict" case.
+        #
+        # v4 is required on github.com (v3 artifact actions were
+        # retired) and is supported on GitHub Enterprise Server 3.11+.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redline-verdict
+          path: redline-verdict.json
+          if-no-files-found: warn
+
+      - name: Format verdict for PR comment
+        if: always()
+        run: |
+          {
+            echo "## agent-redline"
+            echo
+            if [[ ! -f redline-verdict.json ]]; then
+              echo ":no_entry: Reporter did not produce a verdict file."
+            else
+              VERDICT=$(python -c "import json; print(json.load(open('redline-verdict.json')).get('verdict', 'UNKNOWN'))")
+              SUMMARY=$(python -c "import json; print(json.load(open('redline-verdict.json')).get('summary', ''))")
+              case "$VERDICT" in
+                BLUE)               icon=":white_check_mark:" ;;
+                GRAY)               icon=":warning:" ;;
+                RED)                icon=":exclamation:" ;;
+                BOUNDARY_VIOLATION) icon=":no_entry:" ;;
+                *)                  icon=":grey_question:" ;;
+              esac
+              echo "$icon **${VERDICT}** — ${SUMMARY}"
+              echo
+              python - <<'PY'
+          import json
+          v = json.load(open("redline-verdict.json"))
+          zones = v.get("zones", {})
+          for k in ("red", "gray", "blue", "watch"):
+              files = zones.get(k) or []
+              if files:
+                  print(f"- **{k}** ({len(files)}): " + ", ".join(f"`{f}`" for f in files))
+          bvs = v.get("boundaryViolations") or []
+          if bvs:
+              print("\n**Boundary violations:**")
+              for bv in bvs:
+                  print(f"- `{bv.get('rule')}` — {bv.get('detail')}")
+          PY
+            fi
+          } > redline-comment.md
+
+      - name: Post sticky PR comment
+        if: always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: redline-comment.md
+          header: agent-redline
+
+      - name: Enforce reporter exit code
+        # Reporter exits 2 on boundary violation, 1 on shadow warnings,
+        # 0 clean. Block on 2 only; advisory results stay green and
+        # surface via the sticky.
+        run: |
+          EXIT="${{ steps.report.outputs.exit_code }}"
+          if [[ "$EXIT" == "2" ]]; then
+            echo "redline exited 2 (boundary violation); failing CI."
+            exit 1
+          fi
+          echo "redline exited $EXIT — non-blocking."
+
+  agent-workflow:
+    needs: [redline]
+    # Run even when redline failed — the compliance check is still
+    # useful (it names the missing-verdict case explicitly via the
+    # risk.redline_findings_available predicate).
+    if: always()
+    runs-on: [self-hosted]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Diff between PR base and head needs both sides available;
+          # the default depth=1 doesn't carry the base SHA.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install pyyaml jsonschema
+
+      - name: Download redline verdict artifact
+        # Artifact may be absent if the redline job died before its
+        # upload step ran. The checker's predicates handle the
+        # absence — we don't fail-fast here.
+        #
+        # v4 is required on github.com (v3 artifact actions were
+        # retired) and is supported on GitHub Enterprise Server 3.11+.
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: redline-verdict
+          path: .
+
+      - name: Compute changed-files list from PR base→head
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          # Newline-delimited paths; the checker's --changed-files
+          # consumer parses this format directly. Diff against the
+          # pull_request base SHA so PRs targeting a release branch
+          # are diffed against their real base.
+          git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" > changed-files.txt
+          echo "--- changed-files.txt ---"
+          cat changed-files.txt
+
+      - name: Derive task slug from the PR's source branch
+        id: slug
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          slug="${HEAD_REF}"
+          # Strip common branch prefixes; first match wins. Used as the
+          # --slug fallback when --changed-files yields zero Work
+          # Records — a task branch whose PR touched only code.
+          for prefix in slice/ feat/ feature/ fix/ bug/ chore/ demo/; do
+            slug="${slug#${prefix}}"
+          done
+          # Remaining '/' characters become '-' so the slug is a valid
+          # single-segment filename under .agent-workflow/tasks/.
+          slug="${slug//\//-}"
+          echo "slug=${slug}" >> "$GITHUB_OUTPUT"
+          echo "Derived slug: ${slug}"
+
+      - name: Run agent-workflow checker
+        id: check
+        env:
+          # PR base + head SHAs for the workrecord.commit_order
+          # predicate's branch-history walk. On a `pull/N/merge`
+          # checkout, `HEAD` is the synthetic merge commit;
+          # walking `origin/main..HEAD` collapses the branch's
+          # history to one. Passing the PR's real base+head SHAs
+          # makes the predicate see the actual commit ordering.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          # --redline-verdict points at the artifact downloaded above
+          # (root of the workspace). Falls back to cfg.redline.verdict_path
+          # only when the artifact didn't make it across.
+          VERDICT_ARG=""
+          if [[ -f redline-verdict.json ]]; then
+            VERDICT_ARG="--redline-verdict redline-verdict.json"
+          fi
+          # The checker discovers each Work Record changed in the PR
+          # via --changed-files. The branch-derived --slug is the
+          # explicit fallback for PRs that touched no Work Records.
+          python scripts/agent-workflow-check.py \
+            --repo-root . \
+            --changed-files changed-files.txt \
+            --slug "${{ steps.slug.outputs.slug }}" \
+            --base-ref "$BASE_SHA" \
+            --head-ref "$HEAD_SHA" \
+            $VERDICT_ARG > verdict.json
+          EXIT=$?
+          echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+          echo "--- verdict.json ---"
+          cat verdict.json
+
+      - name: Format verdict for PR comment
+        env:
+          AGENT_WORKFLOW_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python scripts/format-verdict-comment.py verdict.json > comment.md
+
+      - name: Post sticky PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: comment.md
+          header: agent-workflow
+
+      - name: Enforce checker exit code
+        # Exit 2 from the checker (any blocking predicate failed on any
+        # record) fails the job. Exit 1 (advisory only) leaves it green
+        # so the comment surfaces the warning without blocking merge.
+        run: |
+          EXIT="${{ steps.check.outputs.exit_code }}"
+          if [[ "$EXIT" == "2" ]]; then
+            echo "checker exited 2 (blocking); failing CI."
+            exit 1
+          fi
+          echo "checker exited $EXIT — non-blocking."

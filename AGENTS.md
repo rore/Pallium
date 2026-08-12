@@ -22,28 +22,40 @@ Testing and eval conventions: see `docs/testing-conventions.md`.
 
 ---
 
-## agent-redline
+<!-- agent-workflow:agents-section:start -->
+# agent-workflow
 
-This repo uses [agent-redline](https://github.com/rore/agent-redline). Before making changes:
+This repository uses [agent-workflow](https://github.com/rore/agent-workflow) — a workflow harness for engineering tasks. Bundled with agent-redline for path-based risk classification.
 
-1. Read `agent-policy.yaml`.
-2. Classify your intended change as blue / red / gray (see `docs/agent/`), and note any `watch` paths touched — those are surfaced in the PR comment regardless of the primary classification.
-3. Refuse to work around boundary rules. Fix the structure or escalate.
+**Where things live:**
 
-Per-checkpoint guidance lives in `docs/agent/`. Read the file matching the situation:
+| Path | What |
+|---|---|
+| `agent-workflow.yaml` | Per-repo config. Edit cautiously. |
+| `agent-redline-policy.yaml` | Per-repo redline policy (zones, boundaries, checkpoints). Architecture-review required. |
+| `.agent-redline/suppressions.yaml` | Suppression markers for redline. |
+| `.agent-workflow/tasks/<slug>.md` | One Work Record per task / branch. Slug derives from branch name. |
+| `scripts/agent-workflow-check.py` | Vendored CI checker. |
+| `scripts/agent-redline-report.py` | Vendored redline reporter. |
+| `docs/agent-workflow/` | Per-checkpoint reference docs. |
+| `docs/agent-redline/skills/` | Redline's per-checkpoint reference docs. |
+| `.github/workflows/agent-workflow.yml` | Combined CI workflow (redline + agent-workflow gates). |
+| `.claude/hooks/` | Claude Code hooks that keep the workflow engaged in plan mode (see below). |
 
-- `blue-zone-work.md` — autonomous work
-- `red-zone-change.md` — architectural change
-- `gray-zone-change.md` — unclassified path
-- `boundary-violation.md` — the boundary backend reported a forbidden import
-- `pr-discipline.md` — PR shape and description rules
-- `api-change-checkpoint.md`, `persistence-change-checkpoint.md`, `security-change-checkpoint.md` — when those checkpoints apply
+**To start a task:** invoke the `/agent-workflow` slash command. The skill walks the checkpoints and validates the Work Record at each transition.
 
-Run the local check before pushing:
+**Plan mode:** when you produce an implementation plan for a change that touches a **guarded path** (configured in `agent-workflow.yaml` under `hooks.guardedPaths`; defaults to `src/`), the plan's **first implementation step must be** *"Invoke the `/agent-workflow` skill to create the Work Record and classify risk, before any code edit."* On approval, do that step first, before editing any guarded file. A repo hook (`.claude/hooks/check-plan.sh`) validates this at plan-approval time; it is a nudge, not a substitute for the CI gate.
+
+**Local check before pushing:**
 
 ```bash
-./scripts/agent-redline-check.sh
+python scripts/agent-workflow-check.py --repo-root . --slug <slug>
 ```
+
+Exit codes: `0` clean, `1` advisory, `2` blocking. CI runs the same check on PR open and posts a sticky verdict comment.
+
+**Re-bootstrap:** delete `agent-workflow.yaml` and re-run `/agent-workflow`. The skill detects the absence and walks the install conversation.
+<!-- agent-workflow:agents-section:end -->
 
 ### Known import-graph smells (not enforced as layer contracts)
 

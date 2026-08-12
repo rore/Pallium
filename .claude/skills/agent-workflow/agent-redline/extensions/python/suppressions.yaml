@@ -1,0 +1,25 @@
+# Python suppression markers — vendored to .agent-redline/suppressions.yaml
+# at bootstrap time (extensions/python/scaffold.md instructs the copy).
+#
+# The reporter does NOT reach back to this file at runtime. Detection
+# reads the vendored copy.
+
+suppressions:
+  inlineComments:
+    - "# noqa"
+    - "# type: ignore"
+    - "# pylint: disable"
+    - "# pylint: skip-file"
+    - "# ruff: noqa"
+    - "# nosec"
+  configEdits:
+    files:
+      - "pyproject.toml"
+      - ".flake8"
+      - ".pylintrc"
+      - "setup.cfg"
+      - ".importlinter"
+    keys:
+      - "ignore_imports"
+      - "per-file-ignores"
+      - "ignore-paths"
