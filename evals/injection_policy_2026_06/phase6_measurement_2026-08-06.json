@@ -1,0 +1,66 @@
+{
+  "demoted_type_discovery": {
+    "fact_summary": {
+      "n_proactive_injections": 0,
+      "n_triggered_injections": 0,
+      "trigger_breakdown": {}
+    },
+    "investigation_outcome": {
+      "n_proactive_injections": 0,
+      "n_triggered_injections": 0,
+      "trigger_breakdown": {}
+    },
+    "task_checkpoint": {
+      "n_proactive_injections": 0,
+      "n_triggered_injections": 0,
+      "trigger_breakdown": {}
+    },
+    "thread_summary": {
+      "n_proactive_injections": 0,
+      "n_triggered_injections": 0,
+      "trigger_breakdown": {}
+    }
+  },
+  "per_trigger": {
+    "(proactive_default)": {
+      "n_populated": 0,
+      "n_referenced": 0,
+      "n_total": 1,
+      "rating_precision": null,
+      "usage_rate": null
+    },
+    "session_start_orientation": {
+      "n_populated": 0,
+      "n_referenced": 0,
+      "n_total": 6,
+      "rating_precision": null,
+      "usage_rate": null
+    },
+    "user_prompt_submit": {
+      "n_populated": 62,
+      "n_referenced": 0,
+      "n_total": 63,
+      "rating_precision": 0.6818181818181818,
+      "usage_rate": 0.0
+    }
+  },
+  "per_type_proactive": {
+    "decision": {
+      "n_populated": 0,
+      "n_rated_bad": 0,
+      "n_rated_relevant": 0,
+      "n_referenced": 0,
+      "n_total": 1,
+      "rating_precision": null,
+      "usage_rate": null
+    }
+  },
+  "phase": "6 \u2014 measurement",
+  "spec": "docs/specs/2026-06-27-injection-policy-abstention.md",
+  "window": {
+    "n_feedback_rows": 710,
+    "n_populated_rows": 62,
+    "n_usage_rows": 70,
+    "since": "2026-07-23"
+  }
+}
