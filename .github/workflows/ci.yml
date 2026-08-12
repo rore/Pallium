@@ -22,6 +22,25 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Windows Defender real-time scanning of the per-test SQLite temp files
+      # (a fresh DB is created in tmp_path for nearly every test) is the
+      # dominant cost of the Windows job — ~10 min vs ~2 min on Ubuntu.
+      # Excluding the workspace and runner temp dirs removes that overhead.
+      # Non-fatal: if the cmdlet is unavailable the job still proceeds.
+      - name: Exclude workspace from Windows Defender
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          try {
+            Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction Stop
+            Add-MpPreference -ExclusionPath "$env:RUNNER_TEMP" -ErrorAction Stop
+            Write-Host "Defender exclusions added for workspace and RUNNER_TEMP."
+          } catch {
+            Write-Host "::warning::Could not add Defender exclusion: $($_.Exception.Message)"
+          }
 
       - name: Install dependencies
         run: pip install -e ".[dev,vector]"
