@@ -5,16 +5,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Nightly full run (incl. the full Windows matrix). Off-peak, off :00.
+    - cron: "17 6 * * *"
 
 jobs:
+  # Full suite on Ubuntu — every PR, push, and nightly. Gates PRs (~2 min).
   test:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
         python-version: ["3.12", "3.13"]
-
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +24,95 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,vector]"
+
+      - name: Run tests
+        run: python -m pytest tests/ -x -q
+
+  # Fast Windows regression — every PR and push. Runs only the
+  # Windows-sensitive hotspots (process mgmt, subprocess hooks, file I/O,
+  # SQLite locking) so PRs get Windows signal without the ~10 min full suite.
+  # The full Windows matrix runs in `windows-full` on push-to-main + nightly.
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Exclude workspace from Windows Defender
+        shell: pwsh
+        run: |
+          foreach ($path in @("${{ github.workspace }}", "$env:RUNNER_TEMP")) {
+            try {
+              Add-MpPreference -ExclusionPath $path -ErrorAction Stop
+              Write-Host "Defender exclusion added: $path"
+            } catch {
+              Write-Host "::warning::Could not add Defender exclusion for ${path}: $($_.Exception.Message)"
+            }
+          }
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,vector]"
+
+      - name: Run Windows-sensitive tests
+        run: >
+          python -m pytest -x -q
+          tests/test_supervisor.py
+          tests/test_supervisor_kill_tree.py
+          tests/test_codex_integration.py
+          tests/test_codex_stop_match_text.py
+          tests/test_asyncio_windows_accept.py
+          tests/test_claude_code_hooks
+          tests/test_snapshot.py
+          tests/test_snapshot_concurrent.py
+          tests/test_snapshot_failure.py
+          tests/test_snapshot_roundtrip.py
+          tests/test_storage_sqlite.py
+          tests/test_sqlite_write_retry.py
+          tests/test_queue_concurrent_claim.py
+          tests/test_launch_token.py
+          tests/test_config.py
+          tests/test_runtime_logging.py
+
+  # Full Windows matrix — push-to-main and nightly only, never on PRs.
+  windows-full:
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Exclude workspace from Windows Defender
+        shell: pwsh
+        run: |
+          foreach ($path in @("${{ github.workspace }}", "$env:RUNNER_TEMP")) {
+            try {
+              Add-MpPreference -ExclusionPath $path -ErrorAction Stop
+              Write-Host "Defender exclusion added: $path"
+            } catch {
+              Write-Host "::warning::Could not add Defender exclusion for ${path}: $($_.Exception.Message)"
+            }
+          }
 
       - name: Install dependencies
         run: pip install -e ".[dev,vector]"
