@@ -1,5 +1,10 @@
 # Vision
 
+> Direction update (2026-08-12): [strategy-vnext.md](strategy-vnext.md) refines the
+> emphasis below. The accumulated history of agent-mediated work is the core asset;
+> derived knowledge memory is reframed as one continuously-evaluated representation of
+> that history rather than the product itself. Read the two together.
+
 ## What Pallium Is
 
 Pallium is a generic memory engine for agents.

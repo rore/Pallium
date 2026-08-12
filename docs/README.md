@@ -31,6 +31,7 @@ Project internals, architecture decisions, and planning.
 | [context/lessons.md](context/lessons.md) | Problem-solution pairs worth remembering |
 | [context/prompt-improvement.md](context/prompt-improvement.md) | Prompt variant workflow |
 | [context/vision.md](context/vision.md) | Project identity and principles |
+| [context/strategy-vnext.md](context/strategy-vnext.md) | vNext direction: historical agent work as a first-class context layer |
 | [designs/](designs/) | Design threads, proposals, and analyses |
 
 ## Ownership
