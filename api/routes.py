@@ -884,7 +884,9 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 actor_ref=request.actor_ref,
             )
         except KeyError:
-            raise HTTPException(status_code=404, detail="source item not found")
+            raise HTTPException(status_code=404, detail="source item not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return ForgetSourceResponse(**result)
 
     @router.post("/memory/record-outcome", response_model=RecordOutcomeResponse)

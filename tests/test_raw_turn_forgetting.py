@@ -235,3 +235,21 @@ def test_query_source_hit_gone_after_forget_by_id(client: TestClient) -> None:
 def test_source_forget_api_requires_a_target(client: TestClient) -> None:
     resp = client.post("/source/forget", json={"reason": "user request"})
     assert resp.status_code == 422
+
+
+def test_source_forget_api_rejects_both_targets(client: TestClient) -> None:
+    """Combining a single-item target with a scope target is ambiguous and
+    could silently leave the scope unforgotten — reject it (422)."""
+    resp = client.post("/source/forget", json={
+        "source_item_id": "s-x",
+        "container_ref": "chat:room-a",
+        "reason": "user request",
+    })
+    assert resp.status_code == 422
+
+
+def test_service_forget_source_rejects_both_targets(client: TestClient) -> None:
+    import pytest
+    service = client.app.state.pallium_service
+    with pytest.raises(ValueError):
+        service.forget_source(source_item_id="s-x", container_ref="chat:room-a", reason="r")

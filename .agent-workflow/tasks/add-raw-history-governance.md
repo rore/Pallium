@@ -2,7 +2,7 @@
 
 Pallium vNext P0. Execution context: `docs/designs/015-vnext-historical-work-execution.md` (P0 contract).
 
-> **Re-scope decision (2026-08-13, pending user confirmation):** investigation showed
+> **Re-scope decision (2026-08-13, APPROVED by user — "approved, continue"):** investigation showed
 > the original broad governance ticket is mostly a *straddle* — its mechanics attach to
 > P1 search/expansion paths that don't exist yet, reuse redaction/visibility that already
 > exist, or depend on the unbuilt P3 sharing/grant contract. This task is therefore
@@ -49,7 +49,7 @@ Persistence surface — new `source_items` soft-delete column + migration → `p
 - NO sharing/grant/revoke substrate anywhere (only OAuth `grant_type` + "shared source item" = two memories on one source). → shared-raw revocation depends entirely on the unbuilt P3 grant contract.
 
 **Material assumptions:**
-1. The re-scope (narrow this ticket to raw-turn forgetting; fold mechanics into P1; defer revocation to P3) is approved. Disproof: user wants the full governance item standalone now. Action: re-plan to build the P1-attached mechanics as scaffolding + define a sharing stub for revocation.
+1. The re-scope (narrow this ticket to raw-turn forgetting; fold mechanics into P1; defer revocation to P3) is APPROVED (user: "approved, continue", 2026-08-13). Was: disproof would be user wanting the full governance item standalone now → re-plan to build the P1-attached mechanics as scaffolding + define a sharing stub for revocation. (Resolved.)
 2. Soft-delete (auditable forgotten marker) is the right forgetting semantic, not hard delete. Disproof: user wants hard delete / GDPR-erasure semantics. Action: add a hard-erase path (ties into the TTL cascade `_delete_source_item_cascade_in_session`).
 3. Forgetting is testable now via existing `/query` source hits (source hits already appear in the mixed pool today). Disproof: source hits are not returned by `/query` in the test harness config. Action: test via the storage/filter layer directly + add the raw-search path test in P1.
 4. Access-audit exposures are built ONCE in P1 (serving both reuse funnel + governance access audit), not duplicated here. Disproof: governance needs a read audit before P1. Action: add a minimal raw-read audit here.

@@ -31,6 +31,11 @@ eval (`idea-raw-derived-hybrid-shadow-eval`) is trying to measure against.
 - a `GET /source/{id}/context` endpoint + `service.get_source_context` returning
   neighboring raw turns in the same `thread_ref`, visibility-enforced and
   redaction-aware (mirror `get_memory_expand`)
+- **exclude forgotten source turns** (both the anchor `source_item_id` and each
+  neighbor): `get_source_context` is a direct-fetch path that does NOT route
+  through `matches_filters`, so — exactly like the `get_memory_expand` skip added
+  in `add-raw-history-governance` — it must check the `forgotten` marker per turn
+  and omit forgotten turns fail-closed; a forgotten anchor yields no context
 - **per-neighbor visibility checks**: each neighbor turn is enforced individually
   (a thread can be mixed-visibility) — never widen to the whole thread
 - a **bounded expansion window** (neighbor count + token limit) so expansion returns
@@ -59,15 +64,26 @@ eval (`idea-raw-derived-hybrid-shadow-eval`) is trying to measure against.
    `parent_lookup_id` linking expansion to its lookup.
 3. Expansion honors visibility fail-closed (0 violations) per neighbor, and respects
    the expansion window/token bound.
+4. Forgotten source turns (per `add-raw-history-governance`) are never returned by
+   `get_source_context` — anchor or neighbor — verified fail-closed.
 
 ## Notes
 
 Governance note (2026-08-13): the per-neighbor visibility, bounded window/token cap,
 and redaction listed above ARE the P0 raw-history governance mechanics for the
 expansion path — `add-raw-history-governance` was re-scoped to raw-turn forgetting and
-delegates these to this item. The `parent_lookup_id` exposure recording here is the
-same exposed-source-ids audit deferred from `add-historical-lookup-funnel-telemetry`
-(build once; serves both the reuse funnel and the raw-read access audit).
+delegates these to this item. In addition, this path must **carry forward the
+forgotten-source gate**: `get_source_context` fetches turns directly (not via
+`matches_filters`), so it must replicate the per-turn `forgotten` skip that
+`add-raw-history-governance` added to `get_memory_expand`.
+
+The raw-read access audit — recording *which source item ids* an expansion returned —
+is the exposed-source-ids recording deferred from `add-historical-lookup-funnel-telemetry`
+(build once; serves both the reuse funnel and the raw-read audit). Note this is NOT the
+same as `parent_lookup_id`: `parent_lookup_id` only correlates an expansion to its
+triggering lookup; it does not identify the source items returned. Reference the shared
+telemetry contract for the exposed-source-ids audit rather than treating
+`parent_lookup_id` as that audit.
 
 Guarded paths: `api/`, `core/service.py` (red). Start with `/agent-workflow`.
 Execution context: `docs/designs/015-vnext-historical-work-execution.md` (Phase 1).

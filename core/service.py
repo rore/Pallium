@@ -1044,7 +1044,15 @@ class PalliumService:
         - ``source_item_id``: forget a single raw turn.
         - ``container_ref`` (optional ``thread_ref``): point-in-time bulk forget
           of the bounded scope; turns ingested later are unaffected.
+
+        Raises ValueError if neither target is given, or if a single-item
+        target is combined with a scope target (the request is ambiguous and
+        could silently leave the scope unforgotten).
         """
+        if source_item_id is not None and (container_ref is not None or thread_ref is not None):
+            raise ValueError(
+                "forget_source accepts source_item_id OR container_ref/thread_ref, not both"
+            )
         if source_item_id is not None:
             forgotten = self._storage.forget_source_item(
                 source_item_id, reason=reason, actor_ref=actor_ref,
