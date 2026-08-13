@@ -133,14 +133,29 @@ def evidence_link_recovery(
     runner report.
     """
     counts = {"both": 0, "raw_only": 0, "derived_only": 0, "neither": 0}
+    no_evidence = 0
     objects: list[dict] = []
     n_with_evidence = 0
     for obj in derived_objs_with_evidence:
-        has_evidence = len(obj.source_item_ids) > 0
-        if has_evidence:
-            n_with_evidence += 1
-        source_recovered = any(sid in raw_source_ids for sid in obj.source_item_ids)
         object_recovered = obj.entered_derived_arm
+        if not obj.source_item_ids:
+            # No linked source turns → RAW recovery is undefined for this episode.
+            # Segregate it rather than counting it toward the four labels, so the
+            # RAW-vs-DERIVED comparison isn't distorted by objects that structurally
+            # cannot have a RAW correspondence.
+            no_evidence += 1
+            objects.append(
+                {
+                    "memory_object_id": obj.memory_object_id,
+                    "linked_source_count": 0,
+                    "source_recovered_in_raw": None,
+                    "object_recovered_in_derived": object_recovered,
+                    "label": "no_evidence",
+                }
+            )
+            continue
+        n_with_evidence += 1
+        source_recovered = any(sid in raw_source_ids for sid in obj.source_item_ids)
         label = _recovery_label(source_recovered, object_recovered)
         counts[label] += 1
         objects.append(
@@ -156,6 +171,7 @@ def evidence_link_recovery(
         "seam": "candidate_recovery",
         "n_objects": len(derived_objs_with_evidence),
         "n_with_evidence": n_with_evidence,
+        "no_evidence": no_evidence,
         "counts": counts,
         "objects": objects,
     }

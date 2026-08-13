@@ -106,9 +106,12 @@ def test_recovery_both_raw_only_derived_only_neither() -> None:
 
 
 def test_recovery_object_with_no_evidence_and_empty_safe() -> None:
-    # An object with no linked source turns can only be derived_only or neither.
+    # An object with no linked source turns is segregated (RAW recovery undefined),
+    # NOT counted toward the four RAW-vs-DERIVED labels.
     out = evidence_link_recovery({"s1"}, [DerivedObjectEvidence("m0", (), entered_derived_arm=True)])
-    assert out["counts"]["derived_only"] == 1
+    assert out["no_evidence"] == 1
+    assert out["counts"]["derived_only"] == 0
+    assert out["counts"] == {"both": 0, "raw_only": 0, "derived_only": 0, "neither": 0}
     assert out["n_with_evidence"] == 0
     empty = evidence_link_recovery(set(), [])
     assert empty["n_objects"] == 0
@@ -387,15 +390,16 @@ def test_runner_three_arms_purity_recovery_and_seam_labels(synthetic_db) -> None
     assert cc["seam"] == "context_cost"
     assert set(cc["by_budget"]) == {"64", "256"}
     for budget_str, per_arm in cc["by_budget"].items():
-        for arm_name, res in per_arm.items():
+        for _arm_name, res in per_arm.items():
             assert res["total_tokens"] <= int(budget_str)
 
     # Seam labels + version stamp + current-index caveat; NO blended/downstream number.
     assert "current_index_replay" in report["caveats"]
     assert report["report_time_model"] == "test-model"
     blob = str(report)
-    assert "downstream" not in report["candidate_recovery_aggregate"]
     assert "derived_is_better" not in blob
+    # aggregate is the two distinct seams + context cost — no blended scalar metric.
+    assert "downstream" not in report["candidate_recovery_aggregate"]
     # The two seams stay distinct keys; no single "derived quality" scalar.
     assert "candidate_recovery" in pq and "representation_quality" in pq
     assert report["candidate_recovery_aggregate"]["counts"]["both"] >= 1

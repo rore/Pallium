@@ -425,10 +425,12 @@ def run_eval(
     # Aggregate the OBJECTIVE candidate-recovery seam across queries (judge-free).
     recovery_counts = {"both": 0, "raw_only": 0, "derived_only": 0, "neither": 0}
     n_recovery_objects = 0
+    n_no_evidence = 0
     for pq in per_query:
         for k, v in pq["candidate_recovery"]["counts"].items():
             recovery_counts[k] += v
         n_recovery_objects += pq["candidate_recovery"]["n_objects"]
+        n_no_evidence += pq["candidate_recovery"].get("no_evidence", 0)
 
     return {
         "eval": "raw_derived_hybrid.v1",
@@ -474,6 +476,7 @@ def run_eval(
         "candidate_recovery_aggregate": {
             "seam": "candidate_recovery",
             "n_objects": n_recovery_objects,
+            "n_no_evidence": n_no_evidence,
             "counts": recovery_counts,
         },
         "query_count": len(per_query),
