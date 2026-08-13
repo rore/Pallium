@@ -182,24 +182,28 @@ _CHECKPOINT_DESCRIPTIONS: dict[str, tuple[str, str]] = {
 }
 
 
-def _explain_satisfy(satisfy_by_raw: str, checkpoint_id: str) -> str:
+def _explain_satisfy(satisfy_by_raw: str) -> str:
     """Turn the comma-separated satisfy-by list into a developer-readable list.
 
     Input shape (from redline): ``CODEOWNER approval, label `<name>``` or
-    individual entries separated by commas. Output: two bullet-list
-    options the developer can follow without prior context.
+    individual entries separated by commas. A single option may name BOTH
+    (e.g. ``CODEOWNER approval or label `architecture-reviewed```), so the
+    label and codeowner checks are independent — an option matching one
+    must not shadow the other. Output: bullet-list options the developer
+    can follow without prior context.
     """
     opts = [o.strip() for o in satisfy_by_raw.split(",") if o.strip()]
     rendered: list[str] = []
     label_name: str | None = None
     has_codeowner = False
     for opt in opts:
-        if "label" in opt.lower():
+        low = opt.lower()
+        if "label" in low:
             # Pull the backticked label name if present.
             m = re.search(r"`([^`]+)`", opt)
             if m:
                 label_name = m.group(1)
-        elif "codeowner" in opt.lower():
+        if "codeowner" in low:
             has_codeowner = True
     if has_codeowner:
         rendered.append(
@@ -264,7 +268,7 @@ def _action_for(predicate: dict, slug: str) -> tuple[str, str, str, str] | None:
             f"protects with {article} {readable_name}. Reviewers check that "
             f"{reviewer_checks}, before code touching {protects} ships."
         )
-        how = _explain_satisfy(sby, cid)
+        how = _explain_satisfy(sby)
         return (
             f"Get {article} {readable_name} on this PR",
             why,
@@ -543,14 +547,19 @@ def _record_age(repo_root: Path, slug: str) -> str | None:
     if not path.exists():
         return None
     try:
-        # We deliberately don't import time; calling Path.stat() and
-        # comparing to current time via os.path.getmtime + a stub for
-        # "now" keeps this testable. Pull current time from env when
-        # provided (tests override) else use os.times for monotonic.
-        now = float(os.environ.get("AGENT_WORKFLOW_TEST_NOW", _now_seconds()))
+        # "Now" comes from AGENT_WORKFLOW_TEST_NOW when set (tests pin it
+        # for deterministic ages) else from _now_seconds() (which wraps
+        # time.time()); the record's own timestamp is its file mtime via
+        # Path.stat(). Parse the override defensively — a non-numeric value
+        # raises ValueError, which an OSError-only except would let escape.
+        override = os.environ.get("AGENT_WORKFLOW_TEST_NOW")
+        # `is not None`, not truthiness: a present-but-empty override is
+        # invalid (float("") raises ValueError → the except returns no age),
+        # distinct from an unset var which falls back to real time.
+        now = float(override) if override is not None else _now_seconds()
         mtime = path.stat().st_mtime
         return _human_age(now - mtime)
-    except OSError:
+    except (OSError, ValueError):
         return None
 
 

@@ -1,6 +1,6 @@
 # boundary-violation
 
-You're here because the boundary-rule backend reported a forbidden import, or because your intended change would create one. The base rules (refuse the workaround, fix the structure or escalate) are in `operating-mode.md`. This doc adds behavioral detail for the two legitimate responses.
+You're here because the boundary-rule backend reported a forbidden import, or because your intended change would create one. The base rules (refuse the workaround, fix the structure or escalate) are in `operating-mode.md`.
 
 ## Fix the structure
 
@@ -30,11 +30,17 @@ Then stop. Wait for the developer's call.
 
 ## Patterns to refuse
 
-These rationalizations lead to working around the rule. Recognize them in your own reasoning and treat them as signals to escalate, not proceed:
-
 - **"This import is just for tests."** The rule applies to all imports. If a test needs it, the test is at the wrong layer or the abstraction is missing.
-- **"This dependency already exists elsewhere."** That's the baseline the rule allows. It does not justify a *new* one. Existing violations are managed via the baseline file (see [agent-redline CI_INTEGRATION docs](https://github.com/rore/agent-redline/blob/main/docs/CI_INTEGRATION.md)).
+- **"This dependency already exists elsewhere."** That's the baseline the rule allows. It does not justify a *new* one. Existing violations are managed via the baseline file.
 - **"This is temporary, I'll fix it later."** No mechanism tracks it. Add to the baseline explicitly if it must ship now, or escalate.
 - **"The rule is too strict."** That's a policy edit. Refused as a side-effect — see `operating-mode.md` "Do not silently modify governance." Fix the structure or escalate.
 - **"It's just one line."** Lines aren't the issue. The forbidden dependency is.
 
+## Suppressions
+
+Adding `# noqa`, `# type: ignore`, `@SuppressWarnings`, `@ArchIgnore`, `ignore_imports`, or `per-file-ignores` on a non-exempt path. Responses above apply. Refuse:
+
+- **"Just for tests."** If the path isn't in `exemptPaths`, it isn't tests.
+- **"I'll remove it later."** Nothing tracks it.
+- **"The linter is wrong."** File an issue; don't suppress.
+- **"One suppression to ship."** Editing `exemptPaths` is itself red-zone.

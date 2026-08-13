@@ -665,6 +665,16 @@ def main(argv: list[str] | None = None) -> int:
             render_skipped(f"gh unavailable: {exc}").encode("utf-8")
         )
         return 0
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        # gh can return non-JSON on the happy path exit code: an SSO
+        # re-auth warning, an HTML error page, or a shape we don't expect.
+        # json.loads / dict indexing then raise, escaping the RuntimeError
+        # handler above and defeating the documented "Inspection skipped"
+        # fallback. Catch them and render the same skipped block.
+        sys.stdout.buffer.write(
+            render_skipped(f"unparseable gh response: {exc}").encode("utf-8")
+        )
+        return 0
 
     out = render_calibration(calibration) + "\n" + render_codeowners(
         codeowners, args.repo

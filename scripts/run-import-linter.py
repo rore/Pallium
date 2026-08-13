@@ -216,6 +216,65 @@ def write_report(out_path: Path, violations: list[dict[str, str]]) -> None:
     out_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _config_error_messages(report: Any) -> list[str]:
+    """Human-readable messages for invalid contract options (a CONFIG error).
+
+    A broken contract *option* means the import-linter config/policy is
+    malformed — not that a dependency rule was breached. Returned as plain
+    strings so the caller can log them and exit 2 (script error) without
+    writing them into the boundary-violations report, where the reporter
+    would headline them as a false BOUNDARY_VIOLATION.
+    """
+    messages: list[str] = []
+    for contract_name, exc in report.invalid_contract_options.items():
+        for field, msg in exc.errors.items():
+            messages.append(
+                f"{contract_name}: invalid contract option {field}: {msg}"
+            )
+    return messages
+
+
+def handle_report(report: Any, out_path: Path) -> int:
+    """Write the JSON report and return the process exit code for a built report.
+
+    Split out of main() so the exit-code semantics are unit-testable
+    without import-linter installed (main() imports import-linter
+    internals before it ever builds a report). Exit codes match this
+    script's module docstring: 0 = all contracts kept, 1 = at least one
+    contract broken, 2 = script error (which includes a config error).
+    """
+    if getattr(report, "could_not_run", False):
+        # Invalid contract options are a CONFIG error, not a broken contract —
+        # so this is a script error (2), not "a contract is broken" (1). But
+        # earlier contracts may have run and genuinely broken, so PRESERVE
+        # their violations (build_violations skips the invalid-option
+        # contracts, which live in report.invalid_contract_options, not in
+        # the kept/broken checks). The config errors themselves are surfaced
+        # on stderr — never written as boundary violations, since the
+        # downstream reporter treats every `violations` entry as a boundary
+        # violation (the schema's severity enum has no "ignore me" value) and
+        # would otherwise headline a false BOUNDARY_VIOLATION.
+        messages = _config_error_messages(report)
+        violations = build_violations(report)
+        write_report(out_path, violations)
+        sys.stderr.write(
+            f"error: {len(messages)} contract(s) had invalid options "
+            f"(config error, not a boundary violation):\n"
+        )
+        for m in messages:
+            sys.stderr.write(f"  - {m}\n")
+        return 2
+
+    violations = build_violations(report)
+    write_report(out_path, violations)
+    if violations:
+        sys.stderr.write(
+            f"import-linter: {len(violations)} violation(s); wrote {out_path}\n"
+        )
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description=(
@@ -278,31 +337,7 @@ def main(argv: list[str] | None = None) -> int:
         write_report(args.out, [])
         return 2
 
-    if getattr(report, "could_not_run", False):
-        # Bad contract options — surface as a violation so it's visible.
-        violations = []
-        for contract_name, exc in report.invalid_contract_options.items():
-            for field, msg in exc.errors.items():
-                violations.append({
-                    "rule": contract_name,
-                    "detail": f"invalid contract option {field}: {msg}",
-                    "severity": "error",
-                })
-        write_report(args.out, violations)
-        sys.stderr.write(
-            f"error: {len(violations)} contract(s) had invalid options; see {args.out}\n"
-        )
-        return 1
-
-    violations = build_violations(report)
-    write_report(args.out, violations)
-
-    if violations:
-        sys.stderr.write(
-            f"import-linter: {len(violations)} violation(s); wrote {args.out}\n"
-        )
-        return 1
-    return 0
+    return handle_report(report, args.out)
 
 
 if __name__ == "__main__":
