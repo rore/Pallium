@@ -27,6 +27,9 @@ the card summary.
   original context), most-relevant first, rather than distilled memory. Each
   result has a stable `source_item_id` for follow-up.
 - `pallium_expand` — see original conversation behind a memory card
+- `pallium_expand_source` — after `pallium_search_history`, pull the raw turns
+  just before/after a promising hit (pass its `source_item_id`) to read it in
+  context before acting
 - `pallium_flag_memory` — a memory contradicts what you now know is true
   (votes-based; several flags → auto-suppress)
 - `pallium_ingest` — the user explicitly asks to remember something. Pass
@@ -68,7 +71,7 @@ cited it, action changed, user confirmed, procedure outcome recorded).
 ### Required parameters for manual calls
 
 When calling `pallium_query`, `pallium_search_history`, `pallium_expand`,
-`pallium_ingest`, or `pallium_remember`:
+`pallium_expand_source`, `pallium_ingest`, or `pallium_remember`:
 
 - `container_ref` — take from the injection header
   (e.g., `git:github.com/user/repo`)

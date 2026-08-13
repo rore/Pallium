@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Callable, TypeVar
 
-from sqlalchemy import create_engine, event, func, select, text
+from sqlalchemy import and_, create_engine, event, func, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.errors import SupersessionConflictError, is_transient_error
@@ -256,6 +256,66 @@ class SQLiteStorageProvider(
                 .order_by(SourceItemRecord.created_at.asc(), SourceItemRecord.id.asc())
             ).all()
         return [self._to_source_item(record) for record in records]
+
+    def list_source_item_neighbors(
+        self,
+        container_ref: str,
+        thread_ref: str,
+        *,
+        anchor_created_at: datetime,
+        anchor_id: str,
+        before: int,
+        after: int,
+    ) -> tuple[list[SourceItem], list[SourceItem]]:
+        """Return (preceding, following) raw turns adjacent to an anchor in a thread.
+
+        Bounded two-sided window ordered by ``(created_at, id)`` — NOT by
+        ``thread_position``, which is not contiguous or unique (retention
+        hard-deletes rows and positions are ``COUNT(*)+1`` with no unique
+        constraint, so gaps and duplicate positions occur). The LIMIT is pushed
+        into SQL on each side so this never walks the whole transcript. Both
+        lists are returned in ascending ``(created_at, id)`` order.
+        """
+        preceding: list[SourceItem] = []
+        following: list[SourceItem] = []
+        with self._session_factory() as session:
+            if before > 0:
+                rows = session.scalars(
+                    select(SourceItemRecord)
+                    .where(
+                        SourceItemRecord.container_ref == container_ref,
+                        SourceItemRecord.thread_ref == thread_ref,
+                        or_(
+                            SourceItemRecord.created_at < anchor_created_at,
+                            and_(
+                                SourceItemRecord.created_at == anchor_created_at,
+                                SourceItemRecord.id < anchor_id,
+                            ),
+                        ),
+                    )
+                    .order_by(SourceItemRecord.created_at.desc(), SourceItemRecord.id.desc())
+                    .limit(before)
+                ).all()
+                preceding = [self._to_source_item(r) for r in reversed(rows)]
+            if after > 0:
+                rows = session.scalars(
+                    select(SourceItemRecord)
+                    .where(
+                        SourceItemRecord.container_ref == container_ref,
+                        SourceItemRecord.thread_ref == thread_ref,
+                        or_(
+                            SourceItemRecord.created_at > anchor_created_at,
+                            and_(
+                                SourceItemRecord.created_at == anchor_created_at,
+                                SourceItemRecord.id > anchor_id,
+                            ),
+                        ),
+                    )
+                    .order_by(SourceItemRecord.created_at.asc(), SourceItemRecord.id.asc())
+                    .limit(after)
+                ).all()
+                following = [self._to_source_item(r) for r in rows]
+        return preceding, following
 
     def list_top_level_messages_for_container(
         self,

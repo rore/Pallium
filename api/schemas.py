@@ -210,6 +210,41 @@ class MemoryExpandResponse(BaseModel):
     match_text: str | None = None
 
 
+class SourceContextItemResponse(BaseModel):
+    """One raw turn in a source-context expansion (anchor or a neighbor)."""
+    source_item_id: str
+    source_type: str
+    source_id: str
+    content: str
+    role: str | None = None
+    actor_ref: str | None = None
+    occurred_at: datetime | None = None
+    thread_ref: str | None = None
+    artifact_kind: ArtifactKind | None = None
+    thread_position: int | None = None
+    is_anchor: bool = False
+
+
+class SupportedMemoryResponse(BaseModel):
+    """A derived memory a source turn supports (opt-in, pointer only)."""
+    memory_object_id: str
+    type: str
+    visibility: str = "private"
+
+
+class SourceContextResponse(BaseModel):
+    # vNext P1 (design 015): bounded neighborhood of raw turns around an anchor.
+    source_item_id: str
+    items: list[SourceContextItemResponse]  # anchor + neighbors, chronological; anchor flagged
+    # Derived memories the anchor supports — present only when explicitly
+    # requested (include_supported_memories=true); never mixed into `items`.
+    supported_memories: list[SupportedMemoryResponse] | None = None
+    # Echoed link back to the lookup that produced the anchor id (measurement
+    # event chain). Not persisted here — persistence belongs to the deferred
+    # exposed-source-ids audit; expansions are not lookups.
+    parent_lookup_id: str | None = None
+
+
 class QueryTraceFiltersResponse(BaseModel):
     source_type: str | None = None
     role: str | None = None

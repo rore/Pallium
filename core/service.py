@@ -1409,3 +1409,133 @@ class PalliumService:
         if payload:
             payload = _redact_ingest_value(payload)
         return payload, items, match_text
+
+    def get_source_context(
+        self,
+        source_item_id: str,
+        *,
+        container_ref: str | None = None,
+        query_actor_ref: str | None = None,
+        before: int = 10,
+        after: int = 10,
+        max_chars: int = 16000,
+        include_supported_memories: bool = False,
+        parent_lookup_id: str | None = None,
+    ) -> tuple[SourceItem, list[SourceItem], list | None, str | None]:
+        """Bounded neighborhood of raw turns around an anchor source item.
+
+        Mirrors ``get_memory_expand`` for visibility/redaction/forgotten/note
+        handling, adapted for a raw anchor:
+        - Fail-closed anchor gate (mirror the caller-vs-parent container gate at
+          ``get_memory_expand``): a forgotten or not-visible anchor yields 404
+          (raises KeyError). Source items use ``"public"`` as the cross-container
+          carve-out (there is no ``"global"`` for source items).
+        - Neighbors are a two-sided, SQL-LIMIT-bounded window (never an unbounded
+          transcript walk); each neighbor is individually forgotten-skipped +
+          ``is_visible``-checked against the CALLER scope + redacted (note
+          carve-out). The anchor is always included and exempt from the size cap;
+          neighbors fill nearest-first and the farthest are dropped once the
+          ``max_chars`` budget (measured after redaction) is exhausted.
+        - Supported memories (reverse ``supported_by``) are returned only when
+          ``include_supported_memories`` and each is ``is_visible``-filtered.
+        - ``parent_lookup_id`` is echoed back (persistence belongs to the
+          deferred exposed-source-ids audit; expansions are not lookups).
+        """
+        _MAX_SIDE = 25
+        before = max(0, min(before, _MAX_SIDE))
+        after = max(0, min(after, _MAX_SIDE))
+
+        anchor = self._storage.get_source_item(source_item_id)  # KeyError -> 404
+        # Fail-closed anchor gate. Forgotten anchor -> no context. Cross-container
+        # gate mirrors get_memory_expand: a caller-supplied container_ref that
+        # doesn't match a non-public anchor's container is denied (404, no
+        # existence leak).
+        if anchor.forgotten:
+            raise KeyError(source_item_id)
+        if container_ref is not None and anchor.visibility != "public" and anchor.container_ref != container_ref:
+            raise KeyError(source_item_id)
+        effective_container = container_ref or anchor.container_ref
+        effective_actor_ref = query_actor_ref or anchor.actor_ref
+        if not is_visible(
+            anchor.visibility, anchor.container_ref, effective_container,
+            anchor.actor_ref, query_actor_ref=effective_actor_ref,
+        ):
+            raise KeyError(source_item_id)
+
+        def _redact(item: SourceItem) -> SourceItem:
+            if item.artifact_kind == "note":
+                return item
+            return dataclasses.replace(
+                item,
+                content=redact_sensitive(item.content) if item.content else item.content,
+                metadata=_redact_ingest_value(item.metadata) if item.metadata else item.metadata,
+            )
+
+        anchor_out = _redact(anchor)
+
+        neighbors: list[SourceItem] = []
+        if anchor.thread_ref is not None and anchor.container_ref is not None and (before or after):
+            preceding, following = self._storage.list_source_item_neighbors(
+                anchor.container_ref, anchor.thread_ref,
+                anchor_created_at=anchor.created_at, anchor_id=anchor.id,
+                before=before, after=after,
+            )
+
+            def _keep(item: SourceItem) -> SourceItem | None:
+                if item.forgotten:
+                    return None
+                if not is_visible(
+                    item.visibility, item.container_ref, effective_container,
+                    item.actor_ref, query_actor_ref=effective_actor_ref,
+                ):
+                    return None
+                return _redact(item)
+
+            pre = [x for x in (_keep(i) for i in preceding) if x is not None]
+            fol = [x for x in (_keep(i) for i in following) if x is not None]
+
+            # Nearest-first fill under a char budget; anchor is exempt (always
+            # returned). Once a side's next-nearest neighbor doesn't fit, that
+            # side stops (its farther neighbors are dropped).
+            budget = max_chars - len(anchor_out.content or "")
+            pre_near = list(reversed(pre))  # closest-before first
+            kept_pre: list[SourceItem] = []
+            kept_fol: list[SourceItem] = []
+            pi = fi = 0
+            while pi < len(pre_near) or fi < len(fol):
+                took = False
+                if pi < len(pre_near):
+                    c = pre_near[pi]
+                    length = len(c.content or "")
+                    if length <= budget:
+                        kept_pre.append(c)
+                        budget -= length
+                        pi += 1
+                        took = True
+                    else:
+                        pi = len(pre_near)
+                if fi < len(fol):
+                    c = fol[fi]
+                    length = len(c.content or "")
+                    if length <= budget:
+                        kept_fol.append(c)
+                        budget -= length
+                        fi += 1
+                        took = True
+                    else:
+                        fi = len(fol)
+                if not took:
+                    break
+            neighbors = list(reversed(kept_pre)) + kept_fol  # ascending order
+
+        supported: list | None = None
+        if include_supported_memories:
+            supported = [
+                m for m in self._storage.list_memory_objects_for_source_item(source_item_id)
+                if is_visible(
+                    m.visibility, m.container_ref, effective_container,
+                    getattr(m, "actor_ref", None), query_actor_ref=effective_actor_ref,
+                )
+            ]
+
+        return anchor_out, neighbors, supported, parent_lookup_id
