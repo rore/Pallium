@@ -54,6 +54,48 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         return json.dumps(result, indent=2, default=str)
 
     @server.tool()
+    async def pallium_search_history(
+        query: str,
+        limit: int = 5,
+        container_ref: str | None = None,
+        thread_ref: str | None = None,
+        actor_ref: str | None = None,
+        visibility: str | None = None,
+        source_type: str | None = None,
+        role: str | None = None,
+        artifact_kind: str | None = None,
+        work_refs: list[str] | None = None,
+    ) -> str:
+        """Search your own prior raw work — past conversation/agent turns — ranked on their own.
+
+        Use this to deliberately look back at what was actually said or done
+        before (a prior discussion, an earlier attempt, a decision's original
+        context) when you're picking up related work. Unlike pallium_query
+        (which surfaces distilled memory and can abstain), this returns the raw
+        source turns themselves, most-relevant first, so nothing gets crowded
+        out by summarized memory. Each result carries a stable source_item_id
+        you can keep for follow-up. The optional filters (source_type/role/
+        artifact_kind/work_refs) narrow the search but are not required."""
+        ctx = resolve_context(
+            container_ref=container_ref,
+            thread_ref=thread_ref,
+            actor_ref=actor_ref,
+            visibility=visibility,
+        )
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        client = PalliumMcpClient(ctx)
+        result = await client.search_history(
+            query,
+            limit=limit,
+            source_type=source_type,
+            role=role,
+            artifact_kind=artifact_kind,
+            work_refs=work_refs,
+        )
+        return json.dumps(result, indent=2, default=str)
+
+    @server.tool()
     async def pallium_query_debug(
         query: str,
         container_ref: str | None = None,
