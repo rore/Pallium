@@ -75,16 +75,25 @@ Stop conditions: if forgetting needs to interact with the TTL retention protecti
 5. Full suite unchanged → `python -m pytest tests/ -q` (real interpreter per `~/.claude/python-on-windows.md`).
 
 **Plan review:**
-Pending — clean-context agent review (High risk).
+Clean-context agent review completed (2026-08-13). Findings adopted:
+- SEV-1a: exclusion gate must live in `matches_filters` (`core/filters.py`) BEFORE the `filters is None` early return, for `target_kind == "source_item"` — mirroring the memory lifecycle gate's position. `source_item_matches_filters` runs only AFTER that early return, so gating there leaks on the reachable `filters=None` path (`core/contracts.py:281-285` → `core/query.py:127`). One unconditional gate closes BOTH lexical (`storage/sqlite_search.py:74`) and vector (`retrieval/vector.py:147`) paths.
+- SEV-1b: `get_memory_expand` (`core/service.py:1326-1344`) does NOT call `matches_filters`; add an explicit `if item.forgotten: continue` skip mirroring the per-item `is_visible` drop.
+- SEV-2a: `storage/sqlite_codec.py::_to_source_item` must map the new column(s) or the flag never loads.
+- SEV-2b: schema needs the "who" — use NULL-sentinel `forgotten_at` + `forgotten_by` + `forgotten_reason` (derive the boolean); no separate boolean column.
+- SEV-3: do NOT gate `get_source_item` — internal re-derivation (`core/thread_rebuild.py`, `semantic/agent_work_trace.py`, `core/processing.py`, `core/vector_rebuild.py`) legitimately needs raw content. Accepted boundary: forgotten raw turns still feed thread-rebuild/consolidation, so already-derived memory objects are unaffected (consistent with "distinct from pallium_forget").
+- Storage: add `forget_source_item(...)` (+ bounded `forget_source_scope`) mirroring `soft_delete_memory` idempotent shape; write ONLY the columns, no index mutation (FTS/vector entries stay, filtered at candidate time).
+- Migration: add columns to declarative `SourceItemRecord` AND `_SOURCE_ITEM_MIGRATIONS` inline ALTER; existing rows backfill to not-forgotten (NULL forgotten_at). Retention TTL still reaps forgotten rows — acceptable (soft-forget ≠ permanence).
+- Scope semantics: point-in-time bulk UPDATE (applies to turns present at forget-time), stated explicitly; standing-rule is out of scope.
+- Tests to add beyond WR list: filters=None regression; vector-path direct exclusion; expansion omission; persistence/audit (row + index entries survive); point-in-time scope.
 
 **Approvals:**
-Pending — human approval required (High risk). Re-scope also pending explicit user confirmation.
+Approved by user 2026-08-13: "approved, continue"
+Re-scope confirmed by user (2026-08-13): "ok, approved, continue" / "approved, continue" — narrow this ticket to raw-turn forgetting, fold P1-attached mechanics into P1 items, defer shared-raw revocation to P3. High-risk implementation approved by the same message. Clean-context plan review completed; findings folded into the plan above.
 
 **Exceptions:**
 —
 
-**State:** Blocked
-<!-- Blocked: awaiting re-scope confirmation + clean-context plan review + High-risk approval before implementation. -->
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Investigation findings (full — 2026-08-13, three read-only subagents)
@@ -113,4 +122,17 @@ Pending — human approval required (High risk). Re-scope also pending explicit 
 
 ## Implementation
 
-(not started — awaiting re-scope confirmation + plan review + approval)
+Shipped (branch `feat/add-raw-history-governance`):
+- `core/models.py`: `SourceItem` gains `forgotten_at`/`forgotten_by`/`forgotten_reason` + derived `forgotten` property.
+- `storage/sqlite_schema.py`: three nullable columns on `SourceItemRecord` + inline `_SOURCE_ITEM_MIGRATIONS` ALTERs (existing rows backfill to NULL = not forgotten).
+- `storage/sqlite_codec.py`: `_to_source_item` maps the new columns (getattr-safe).
+- `core/filters.py`: fail-closed forgotten gate in `matches_filters` for `target_kind == "source_item"`, placed BEFORE the `filters is None` early return (closes lexical + vector + filter-less paths via the shared chokepoint). Fetches the source item once.
+- `core/service.py`: `get_memory_expand` skips forgotten evidence turns (explicit, mirrors the per-item is_visible drop); new `forget_source(source_item_id | container_ref[/thread_ref], reason, actor_ref)` entrypoint.
+- `storage/sqlite.py`: `forget_source_item` (idempotent, auditable) + `forget_source_scope` (point-in-time bulk UPDATE, container-bounded); no index mutation.
+- `api/schemas.py` + `api/routes.py`: `ForgetSourceRequest`/`ForgetSourceResponse` + `POST /source/forget` (422 without a target, 404 unknown item; api-stays-thin).
+- `app/mcp/client.py` + `app/mcp/server.py`: `pallium_forget_source` MCP tool (scope-mode fills container from ctx; never widens a single-item forget; records actor for audit).
+- `tests/test_raw_turn_forgetting.py`: 9 tests — gate with filters + filters=None regression + active-pass; storage idempotent/auditable; point-in-time scope; independence from `pallium_forget` (both directions); expansion omission; E2E `/query` source_hit disappears (soft, row persists); API requires a target.
+
+Verification: `pytest tests/test_raw_turn_forgetting.py` → 9 passed. Full `pytest tests/` → 3387 passed, 1 failed (`test_config.py::test_prompt_variants_legacy_fallback_unaffected` — pre-existing, fails on main, unrelated to this change), 15 skipped, 2 xfailed.
+
+(previously: not started — awaiting re-scope confirmation + plan review + approval)
