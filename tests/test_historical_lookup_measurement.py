@@ -268,6 +268,20 @@ class TestDedup:
         assert inc["numerator"] == 2
         assert inc["reuse_per_100_eligible"] == pytest.approx(200.0 / 3.0)
 
+    def test_duplicate_eligible_sessions_counted_once_in_denominator(self) -> None:
+        """Duplicate eligible-session ids (e.g. from an eval-time join) must not
+        inflate the denominator; one reuse event over two unique sessions is 50%."""
+        sessions = ["s1", "s1", "s2"]  # s1 duplicated
+        events = [{"session_id": "s1", "rung": "incorporation"}]
+        result = compute_reuse_rollup(
+            sessions, events, eligibility_n=50, window={}
+        )
+        assert result["n_eligible_sessions"] == 2
+        inc = result["rungs"]["incorporation"]
+        assert inc["denominator"] == 2
+        assert inc["numerator"] == 1
+        assert inc["reuse_per_100_eligible"] == pytest.approx(50.0)
+
     def test_same_session_different_rungs_not_deduped(self) -> None:
         """One session appearing in two rungs counts independently per rung."""
         sessions = ["s1"]

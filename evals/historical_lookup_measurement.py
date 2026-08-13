@@ -157,8 +157,8 @@ def compute_reuse_rollup(
     interval are set to ``null`` with ``note: "n/a (0 eligible)"``.  No
     ZeroDivisionError is raised.
     """
-    denominator = len(eligible_sessions)
     eligible_set = set(eligible_sessions)
+    denominator = len(eligible_set)
 
     # Deduplicated per-rung session sets
     rung_sessions: dict[str, set[str]] = {r: set() for r in RUNGS}
@@ -312,7 +312,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.quiet:
         sys.stdout.write(serialised + "\n")
     else:
-        print(f"=== Historical-Lookup Reuse Rollup ===")
+        print("=== Historical-Lookup Reuse Rollup ===")
         print(f"eligibility_n={report['eligibility_n']}  "
               f"n_eligible={report['n_eligible_sessions']}  "
               f"n_events={report['n_reuse_events']}")
