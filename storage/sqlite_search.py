@@ -44,26 +44,26 @@ class SQLiteSearchMixin:
         # target_kind at the SQL level, BEFORE the LIMIT truncates the FTS
         # window. Doing it here (not as a post-fetch skip) guarantees the whole
         # `limit` budget is spent on the requested kind, so memory objects can
-        # never starve source hits. Default (None) leaves the query unchanged.
-        kind_clause = ""
-        params: dict[str, object] = {"match_expr": match_expr, "limit": limit}
-        if target_kind is not None:
-            kind_clause = "AND target_kind = :target_kind "
-            params["target_kind"] = target_kind
-
+        # never starve source hits. Two fixed statements (no string
+        # interpolation) keep the SQL static for linters; default (None) uses
+        # the unfiltered statement.
+        _SELECT = (
+            "SELECT index_entry_id, target_kind, target_id, text_view_name, "
+            "text_view, bm25(lexical_fts) AS score "
+            "FROM lexical_fts "
+            "WHERE lexical_fts MATCH :match_expr "
+        )
         with self._session_factory() as session:
-            rows = session.execute(
-                sa_text(
-                    "SELECT index_entry_id, target_kind, target_id, text_view_name, "
-                    "text_view, bm25(lexical_fts) AS score "
-                    "FROM lexical_fts "
-                    "WHERE lexical_fts MATCH :match_expr "
-                    f"{kind_clause}"
-                    "ORDER BY score "
-                    "LIMIT :limit"
-                ),
-                params,
-            ).fetchall()
+            if target_kind is not None:
+                rows = session.execute(
+                    sa_text(_SELECT + "AND target_kind = :target_kind ORDER BY score LIMIT :limit"),
+                    {"match_expr": match_expr, "limit": limit, "target_kind": target_kind},
+                ).fetchall()
+            else:
+                rows = session.execute(
+                    sa_text(_SELECT + "ORDER BY score LIMIT :limit"),
+                    {"match_expr": match_expr, "limit": limit},
+                ).fetchall()
 
         hits: list[IndexSearchHit] = []
         exclusion_counts: dict[str, int] = {}

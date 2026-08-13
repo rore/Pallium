@@ -250,7 +250,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                 stages=(
                     RetrievalStageTrace(
                         stage_name=VECTOR_STAGE_NAME,
-                        candidate_hits_considered=len(resolved_hits),
+                        candidate_hits_considered=len(all_candidate_trace_hits),
                         candidate_hits=tuple(all_candidate_trace_hits),
                         selected_hits=tuple(selected_trace_hits),
                         candidate_hits_before_visibility=hits_before_visibility,
