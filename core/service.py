@@ -1103,7 +1103,7 @@ class PalliumService:
         ranked_candidates: list[dict] | None = None,
         injection_method: str | None = None,
         trigger_origin: str | None = None,
-    ) -> None:
+    ) -> str:
         result_lookup = {}
         for item in results:
             rid = getattr(item, 'result_id', None)
@@ -1228,6 +1228,9 @@ class PalliumService:
             self._logger.warning(
                 "memory_usage_audit write failed", exc_info=True
             )
+        # vNext P0 (design 015): return the row id as the lookup_event_id so
+        # the API can surface it on the response (additive; never gates behavior).
+        return row["id"]
 
     def list_memory_usage_audit(self, query_audit_log_id: str) -> list[dict]:
         """Phase 5: list usage-audit rows for a given query.

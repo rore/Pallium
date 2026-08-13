@@ -246,6 +246,14 @@ _VALID_TRIGGER_ORIGINS: frozenset[str] = frozenset({
     "post_tool_failure",
     "retry_threshold",
     "user_explicit",
+    # vNext P0 (design 015): an agent-issued historical lookup (MCP pull).
+    # Marks *that an agent issued a lookup*, distinct from proactive
+    # injection and from user-directed lookup — it does NOT assert the agent
+    # decided independently (that is judged retrospectively). Deliberately
+    # NOT added to the abstention-bypass set (_TRIGGER_BYPASS_ORIGINS): these
+    # take the normal routing path.
+    "agent_pull",
+    "mcp_pull",
 })
 
 
@@ -271,12 +279,15 @@ def _maybe_write_query_audit(
     query_text: str,
     query_result,
     trigger_origin: str | None = None,
-) -> None:
+) -> str | None:
+    """Write the query-audit row when enabled; return its id (the
+    vNext P0 lookup_event_id) or None when audit is disabled or the write
+    fails. The id is additive on the response and never gates behavior."""
     if not audit_log_enabled:
-        return
+        return None
     try:
         ranked_candidates = getattr(query_result, '_ranked_candidates', None)
-        service.write_query_audit(
+        return service.write_query_audit(
             source_item_id=ingest_result.source_item_id,
             source_id=request.source_id,
             thread_ref=request.thread_ref,
@@ -294,6 +305,7 @@ def _maybe_write_query_audit(
         )
     except Exception:
         logger.warning("query audit log write failed", exc_info=True)
+        return None
 
 
 def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -> APIRouter:
@@ -412,10 +424,11 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             runtime_context=_deserialize_runtime_context(request.runtime_context),
             trigger_origin=_trigger_origin,
         )
+        lookup_event_id: str | None = None
         if audit_log_enabled:
             try:
                 ranked_candidates = getattr(result, '_ranked_candidates', None)
-                service.write_query_audit(
+                lookup_event_id = service.write_query_audit(
                     source_item_id="",
                     source_id="",
                     thread_ref=request.thread_ref,
@@ -438,6 +451,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             should_inject=result.should_inject,
             decision_reason=result.decision_reason,
             injectable_blocks=[_serialize_injectable_block(block) for block in result.injectable_blocks],
+            lookup_event_id=lookup_event_id,
         )
 
     @router.post("/query/debug", response_model=QueryDebugResponse)
@@ -536,7 +550,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             runtime_context=runtime_context,
             trigger_origin=_trigger_origin,
         )
-        _maybe_write_query_audit(
+        lookup_event_id = _maybe_write_query_audit(
             service, audit_log_enabled, ingest_result, request, query_text, query_result,
             trigger_origin=_trigger_origin,
         )
@@ -546,6 +560,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             should_inject=query_result.should_inject,
             decision_reason=query_result.decision_reason,
             injectable_blocks=[_serialize_injectable_block(block) for block in query_result.injectable_blocks],
+            lookup_event_id=lookup_event_id,
         )
 
     @router.post("/item-and-query/debug", response_model=ItemAndQueryDebugResponse)
@@ -589,7 +604,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             include_trace=True,
             trigger_origin=_trigger_origin,
         )
-        _maybe_write_query_audit(
+        lookup_event_id = _maybe_write_query_audit(
             service, audit_log_enabled, ingest_result, request, query_text, query_result,
             trigger_origin=_trigger_origin,
         )
@@ -602,6 +617,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             decision_reason=query_result.decision_reason,
             injectable_blocks=[_serialize_injectable_block(block) for block in query_result.injectable_blocks],
             trace=_serialize_trace(query_result.trace),
+            lookup_event_id=lookup_event_id,
         )
 
     @router.get("/memory/{memory_object_id}/expand", response_model=MemoryExpandResponse)
