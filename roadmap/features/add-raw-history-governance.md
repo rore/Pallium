@@ -1,7 +1,7 @@
 ---
 id: add-raw-history-governance
 title: Raw-turn user-requested forgetting (raw-history governance, re-scoped)
-status: in-progress
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-p0
