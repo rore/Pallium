@@ -6,8 +6,9 @@ add-historical-lookup-funnel-telemetry slice (design 015, Phase 0):
 A. E2E audit ENABLED: /item-and-query and /query return a non-null
    lookup_event_id that equals the persisted query_audit_log row id.
 B. E2E audit DISABLED (default): same endpoints return lookup_event_id=null.
-C. E2E debug: /query/debug and /item-and-query/debug return lookup_event_id=null;
-   debug paths do not write audit rows.
+C. E2E debug: lookup_event_id equals the persisted audit row id, or null when
+   no row was written. /query/debug writes no row; /item-and-query/debug does
+   when audit logging is enabled.
 D. Unit: _validate_trigger_origin accepts "agent_pull" and "mcp_pull", rejects
    unknowns with HTTP 400, returns None for None input.
 E. Guard: "agent_pull" and "mcp_pull" are NOT in _TRIGGER_BYPASS_ORIGINS (they
