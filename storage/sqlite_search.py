@@ -28,6 +28,7 @@ class SQLiteSearchMixin:
         query_visibility: str | None = None,
         query_actor_ref: str | None = None,
         include_visibility_trace: bool = False,
+        target_kind: str | None = None,
     ) -> IndexSearchResult:
         if not tokens:
             return IndexSearchResult(hits=[])
@@ -39,6 +40,17 @@ class SQLiteSearchMixin:
         quoted = ['"' + token.replace('"', '""') + '"' for token in tokens]
         match_expr = " OR ".join(quoted)
 
+        # Source-only search (vNext P1): restrict candidates to a single
+        # target_kind at the SQL level, BEFORE the LIMIT truncates the FTS
+        # window. Doing it here (not as a post-fetch skip) guarantees the whole
+        # `limit` budget is spent on the requested kind, so memory objects can
+        # never starve source hits. Default (None) leaves the query unchanged.
+        kind_clause = ""
+        params: dict[str, object] = {"match_expr": match_expr, "limit": limit}
+        if target_kind is not None:
+            kind_clause = "AND target_kind = :target_kind "
+            params["target_kind"] = target_kind
+
         with self._session_factory() as session:
             rows = session.execute(
                 sa_text(
@@ -46,13 +58,11 @@ class SQLiteSearchMixin:
                     "text_view, bm25(lexical_fts) AS score "
                     "FROM lexical_fts "
                     "WHERE lexical_fts MATCH :match_expr "
+                    f"{kind_clause}"
                     "ORDER BY score "
                     "LIMIT :limit"
                 ),
-                {
-                    "match_expr": match_expr,
-                    "limit": limit,
-                },
+                params,
             ).fetchall()
 
         hits: list[IndexSearchHit] = []

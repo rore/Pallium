@@ -70,6 +70,7 @@ class QueryExecutor:
         runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
         trigger_origin: str | None = None,
+        source_only: bool = False,
     ) -> QueryResult:
         filter_resolution = resolve_query_filters(
             source_type=source_type,
@@ -108,6 +109,52 @@ class QueryExecutor:
                 trace=trace,
                 should_inject=False,
                 decision_reason="no_relevant_memory",
+                injectable_blocks=[],
+            )
+            if self._query_stats is not None:
+                self._query_stats.record_query(result)
+            return result
+
+        # Source-only search (vNext P1): rank raw source_hits on their own so
+        # memory objects cannot starve them. Runs AFTER the visibility
+        # fail-closed guard above, reuses the shared retrieval/fusion/visibility/
+        # filter/redaction stack (candidates restricted to source_item BEFORE
+        # top-K via target_kind), and BYPASSES core_route so the memory-only
+        # abstention/injection path is never touched (should_inject stays False;
+        # injectable_blocks stays empty). The P0 forgotten-source gate applies
+        # via effective_filters -> matches_filters in the providers.
+        if source_only:
+            retrieval_limit = min(max(limit * 4, 12), 50)
+            retrieval_result = self._retrieval.query(
+                text=text,
+                limit=retrieval_limit,
+                filters=effective_filters,
+                visibility=visibility if plugin.requires_visibility_context else None,
+                query_container_ref=container_ref if plugin.requires_visibility_context else None,
+                include_trace=include_trace,
+                require_visibility=plugin.requires_visibility_context,
+                query_actor_ref=actor_ref if plugin.requires_visibility_context else None,
+                target_kind="source_item",
+            )
+            ranked = [
+                replace(item, raw_rank=rank)
+                for rank, item in enumerate(retrieval_result.results[:limit], start=1)
+            ]
+            trace = retrieval_result.trace
+            if trace is not None:
+                trace = replace(
+                    trace,
+                    requested_filters=requested_filters,
+                    filter_scope_relaxed=filter_resolution.filter_scope_relaxed,
+                    filter_scope_reason=filter_resolution.filter_scope_reason,
+                    routing={"mode": "source_only"},
+                    result_summary=_build_query_result_summary(ranked),
+                )
+            result = QueryResult(
+                results=ranked,
+                trace=trace,
+                should_inject=False,
+                decision_reason="source_only_search",
                 injectable_blocks=[],
             )
             if self._query_stats is not None:

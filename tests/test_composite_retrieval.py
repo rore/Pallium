@@ -80,6 +80,7 @@ class StubRetrievalProvider(RetrievalProvider):
         include_trace: bool = False,
         require_visibility: bool = False,
         query_actor_ref: str | None = None,
+        target_kind: str | None = None,
     ) -> RetrievalQueryResult:
         return RetrievalQueryResult(
             results=self._results[:limit],
@@ -118,7 +119,7 @@ class TestVectorNonePassthrough:
         captured = {}
 
         class CapturingProvider(RetrievalProvider):
-            def query(self, text, limit, filters=None, *, visibility=None, query_container_ref=None, include_trace=False, require_visibility=False, query_actor_ref=None):
+            def query(self, text, limit, filters=None, *, visibility=None, query_container_ref=None, include_trace=False, require_visibility=False, query_actor_ref=None, target_kind=None):
                 captured["text"] = text
                 captured["limit"] = limit
                 captured["filters"] = filters
