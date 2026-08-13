@@ -36,6 +36,39 @@ class PalliumMcpClient:
         payload.update(self._scope_params())
         return await self._post("/query", payload)
 
+    async def search_history(
+        self,
+        text: str,
+        *,
+        limit: int = 5,
+        source_type: str | None = None,
+        role: str | None = None,
+        artifact_kind: str | None = None,
+        work_refs: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Source-only history search: raw prior turns ranked on their own.
+
+        Hardcodes ``source_only=True`` and ``trigger_origin="agent_pull"`` so
+        every call through this method is unambiguously attributed as an
+        agent-issued pull in the query audit log (the measurement event chain).
+        """
+        payload: dict[str, Any] = {
+            "text": text,
+            "limit": limit,
+            "source_only": True,
+            "trigger_origin": "agent_pull",
+        }
+        payload.update(self._scope_params())
+        if source_type is not None:
+            payload["source_type"] = source_type
+        if role is not None:
+            payload["role"] = role
+        if artifact_kind is not None:
+            payload["artifact_kind"] = artifact_kind
+        if work_refs is not None:
+            payload["work_refs"] = work_refs
+        return await self._post("/query", payload)
+
     async def query_debug(self, text: str) -> dict[str, Any]:
         # Intentionally omits limit — uses API default (5).
         payload: dict[str, Any] = {"text": text}

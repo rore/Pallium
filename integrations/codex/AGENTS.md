@@ -17,6 +17,10 @@ via `pallium_expand` only when you need the original conversation to answer.
 ## Reach for these when you need them
 
 - `pallium_query` — injected context is empty or missing something specific
+- `pallium_search_history` — picking up related work and want the raw prior
+  turns themselves (a past discussion, an earlier attempt, a decision's
+  original context), most-relevant first, rather than distilled memory; each
+  result has a stable `source_item_id` for follow-up
 - `pallium_expand` — see original conversation behind a memory card
 - `pallium_flag_memory` — a memory contradicts what you now know is true
   (votes-based; several flags → auto-suppress)
