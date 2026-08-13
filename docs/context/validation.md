@@ -87,6 +87,7 @@ snapshots and applies a rule — no LLM in the harness itself.
 | Fact consolidation retrieval quality | `evals/fact_consolidation_eval.py` | Scenario-driven | Minutes |
 | Low-value promotion / churn drift | `evals/low_value_churn_benchmark.py` | Scenario-driven | Minutes |
 | Routing decision quality | `evals/memory_routing_benchmark.py` | Scenario-driven | Minutes |
+| Derivation coverage + fidelity, source-episode-first ("did an episode produce a faithful derived object at all, and how faithful?") | `evals/derivation_fidelity` | Coverage = replay, no LLM; fidelity = LLM-judge, N independent samples (stochastic) | Minutes |
 
 ### When to reach for which
 
