@@ -1,6 +1,3 @@
-# Continuous · RAW/DERIVED/HYBRID eval
-- idea-raw-derived-hybrid-shadow-eval
-
 # P2 · Work Continuity
 - idea-cross-context-work-continuity
 
@@ -23,6 +20,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- idea-raw-derived-hybrid-shadow-eval
 - idea-derivation-fidelity-eval
 - add-source-context-expansion
 - add-agent-historical-lookup-tool
