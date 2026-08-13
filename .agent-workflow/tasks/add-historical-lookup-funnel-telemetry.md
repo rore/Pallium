@@ -82,7 +82,6 @@ Approved by user 2026-08-13: "go" (approving the plan as recorded, including the
 —
 
 **State:** Ready for review
-<!-- Implementation + verification complete; independent review findings addressed. -->
 <!-- agent-workflow:end -->
 
 ## Implementation
