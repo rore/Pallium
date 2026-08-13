@@ -61,7 +61,7 @@ Target files: `docs/specs/2026-08-13-historical-lookup-measurement-contract.md`;
 
 Deviations: P0 telemetry is a deliberate contract straddle — storage schema and event population deferred to the P1 slice per design 015. Recorded as assumption 2.
 
-**P1 carry-forward decision (from plan review):** the generic `/query` audit is gated by `audit_log_enabled` (default off), so P0's `lookup_event_id` is `str | None` on that path. The P1 *dedicated historical-lookup path* must persist its lookup event **unconditionally** (not gated on the legacy `audit_log_enabled` flag) — that is the path whose events feed the reuse funnel. The measurement-contract doc must state this requirement so P1 implements it.
+P1 carry-forward (from plan review) — the generic `/query` audit is gated by `audit_log_enabled` (default off), so P0's `lookup_event_id` is `str | None` on that path. The P1 dedicated historical-lookup path must persist its lookup event unconditionally (not gated on the legacy `audit_log_enabled` flag) — that is the path whose events feed the reuse funnel. The measurement-contract doc states this requirement so P1 implements it.
 
 Stop conditions: if surfacing the id requires storage-schema changes or a new cross-boundary import → stop, re-classify (persistence-review). If the query path an agent will use does not already write an audit row → stop, reconcile scope with P1.
 
