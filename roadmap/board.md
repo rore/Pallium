@@ -1,5 +1,3 @@
-# P0 · Contract & governance
-
 # P1 · Historical Lookup
 - add-raw-historical-search-mode
 - add-agent-historical-lookup-tool
