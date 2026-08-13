@@ -33,8 +33,9 @@ eval (`idea-raw-derived-hybrid-shadow-eval`) is trying to measure against.
   redaction-aware (mirror `get_memory_expand`)
 - **per-neighbor visibility checks**: each neighbor turn is enforced individually
   (a thread can be mixed-visibility) — never widen to the whole thread
-- a **bounded expansion window** (neighbor count + token limit) so expansion can't
-  return unbounded raw context
+- a **bounded expansion window** (neighbor count + token limit) so expansion returns
+  a bounded neighborhood of surrounding turns, not an unbounded walk of the transcript
+  (the bound is a governance property, not just a UI limit)
 - accept and record a `parent_lookup_id` so an expansion links back to the lookup
   that produced the `source_item_id` (feeds the measurement event chain)
 - return the derived memories this source supports (reverse `supported_by`) only

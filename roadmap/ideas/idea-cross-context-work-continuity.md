@@ -29,11 +29,16 @@ dimension and there is no explicit handoff packaging.
 Test the simplest form first, and only invest in mechanism if it beats the manual
 baseline:
 
-- **First (validate the value):** a source session is *identified* by the user or
-  agent (no automatic session-identity solving); Pallium retrieves and packages that
-  session's relevant work; the receiving session continues from it. Measure against
-  the manual baselines (paste-a-summary / read-the-transcript) on user-orchestration
-  cost and correctness of understanding.
+- **First mechanism to test — pointers before synthesis:** a source session is
+  *identified* by the user or agent (no automatic session-identity solving); Pallium
+  hands the receiving session **compact pointers/handles** to the relevant prior work
+  (reusing the P1 lookup + source-context-expansion primitives), and the receiving
+  session **pulls the raw context it needs on demand**. Measure against the manual
+  baselines (paste-a-summary / read-the-transcript) on user-orchestration cost and
+  correctness of understanding.
+- **Then compare an eager-synthesis handoff package** as a second mechanism — tested
+  against pointer+pull rather than assuming either wins; pointer+pull is tried first
+  because it reuses primitives P1 already ships.
 - **Only if that wins (invest in mechanism):** stable work/session correlation
   across `session_id`s so resumption ranking spans sessions automatically; make
   `agent_ref` a first-class handoff dimension (Claude↔Codex); richer explicit

@@ -35,9 +35,16 @@ Industry consensus (sentence-transformers, Pinecone, Weaviate docs) is that mult
 
 ## In Scope
 
-- Chunking strategy for embedding texts that exceed `max_tokens` — split into overlapping segments at natural boundaries.
+- Chunking strategy for embedding texts that exceed `max_tokens` — split at
+  **natural / structure-aware boundaries where possible** (paragraphs, headings, and
+  keeping code blocks and list items intact) rather than a blind fixed char count.
+  Overlap remains an **implementation/evaluation parameter** (amount, or none), tuned
+  against real content types — conversations, command output, pasted logs, and code
+  differ from prose — not fixed up front.
 - Multiple vector `IndexEntry` rows per parent object, all linked to the same `target_id`.
 - Retrieval deduplication — when multiple chunks from the same object match a query, collapse them into one result (highest score wins).
+- **Surface the matching chunk's text** as the result excerpt / evidence (more precise
+  than a generic head-of-content excerpt) and record which chunk matched.
 - Warning metric: log how often truncation occurs today (already implemented) to size the actual impact before building this.
 
 ## Out of Scope

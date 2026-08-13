@@ -39,6 +39,11 @@ target is high-leverage.
   over `source_hit`s via `CompositeRetrievalProvider` (RRF is already kind-agnostic)
   so raw candidates aren't starved by memory objects, and returns them without the
   memory-only abstention gate
+- restrict eligibility to source items at the **candidate level, before top-K/fusion**
+  (not as a post-filter on a blended page), so memory objects cannot consume the
+  candidate budget; a source-only search returns **up to K eligible source results**
+  (legitimately fewer when little relevant history exists) — the requirement is that
+  memory hits never occupy source-search slots, not that K is always filled
 - **reuse** existing scope (container/thread/actor/visibility), the
   source_type/role/artifact_kind/work_refs filters, redaction, and trace — do not
   build a parallel retrieval stack

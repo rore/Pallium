@@ -42,6 +42,9 @@ Mechanics:
   quality-vs-token Pareto curve) — HYBRID must not win merely by receiving more
   context
 - store the raw fusion score + source ids/ranks so a RAW arm is reconstructable
+- construct the RAW arm as **candidate-level source-only** (derived/memory objects
+  excluded before selection, not post-filtered), so RAW-vs-DERIVED isn't confounded
+  by derived content leaking into the RAW candidate set
 - record the derivation **schema / prompt / model version** on each DERIVED arm, and
   allow evaluating *new* derivation variants — so the track can answer "can better
   derivation win?", not just score the current implementation forever

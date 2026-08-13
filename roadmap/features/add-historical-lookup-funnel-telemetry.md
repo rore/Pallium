@@ -35,6 +35,13 @@ tool exposure.
 - a stable `lookup_event_id` returned to the client on every historical lookup
 - exposed raw source ids and their raw ranks recorded per lookup (a real
   tool-exposure population, not inferred)
+- (optional, evaluated separately) a stable per-result **citation handle** the agent
+  *may* cite, as a high-confidence *attribution* signal — **not** equated with verified
+  incorporation (an agent can use history without citing, or cite without being
+  influenced, and citation covers only answer text, not a changed command / path /
+  edit) and **not required in the baseline Experiment 1 condition**, since requiring
+  citation would add a behavioral instruction that contaminates natural-pull
+  observation; builds on the existing `id_quote` reference kind
 - `parent_lookup_id` on source-context expansion, linking expansion to its lookup
 - client session + agent identity on the event
 - subsequent-turn observation links (which turns followed the lookup)
@@ -52,7 +59,9 @@ tool exposure.
 
 **Reuse ladder (three distinct rungs, not one blurred metric):**
 1. verified incorporation — retrieved history appears in the agent's reasoning, an
-   action, or the answer (observational, strongest deterministic signal)
+   action, or the answer (observational). Explicit citation of a returned handle is a
+   *separate, optional* attribution signal (see event chain), not a substitute for
+   this and not a materiality claim.
 2. judged necessity / influence — a retrospective judge assesses whether the history
    shaped the work (observational, stronger claim)
 3. downstream benefit — requires controlled exposure, user confirmation, or outcome
