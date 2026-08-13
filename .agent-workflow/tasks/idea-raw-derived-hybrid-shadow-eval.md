@@ -46,8 +46,10 @@ new storage table (see Plan — deliberate deviation from the ticket's suggested
 change to derivation/retrieval; NO synthetic benchmark to prove derived superior.
 
 **Constraints:**
-Offline + read-only: never affects live injection/output (satisfies "shadow-only"
-without a live seam). RAW arm is candidate-level source-only (`target_kind=
+Offline + data-read-only: never affects live injection/output (satisfies "shadow-only"
+without a live seam). The `SQLiteStorageProvider` constructor performs idempotent
+schema-ensure/PRAGMA on init — no row writes (same footprint as the fidelity runner).
+RAW arm is candidate-level source-only (`target_kind=
 "source_item"` — derived objects excluded BEFORE selection, not post-filtered), so
 RAW-vs-DERIVED isn't confounded by derived content leaking into the RAW pool.
 Context cost compared at EQUAL token budget (truncate each arm's rendered context to
@@ -66,18 +68,21 @@ is reconstructable. No internal/external product names in committed code/tests
 **Completion criteria:**
 1. `python -m evals.raw_derived_hybrid --db <path>` replays a set of real historical
    queries (from `query_audit_log`, filterable to agent-pull lookups) and emits, per
-   lookup + aggregate: the three arms' candidate ids/ranks/fusion scores, a
-   candidate-recovery comparison (RAW-only vs DERIVED-only recovery of a
-   relevance-labelled target), representation-quality aggregates on the DERIVED arm
-   (misleading/unsupported rate, judged relevance) vs RAW, and context cost at equal
-   token budget. → runner test against a synthetic DB with a stub judge.
+   lookup + aggregate: the three arms' candidate ids/ranks/fusion scores; an OBJECTIVE
+   evidence-link candidate-recovery comparison (for each DERIVED object, did its linked
+   source turns enter RAW and did the object enter DERIVED → RAW-only/DERIVED-only/both);
+   query-conditioned representation-quality aggregates on the DERIVED arm
+   (misleading/unsupported-vs-retrieved-RAW rate, judged usability) ; and context cost
+   at equal token budget. → runner test against a synthetic DB with a stub judge.
 2. Arms are built at CANDIDATE level via `target_kind` (RAW=source_item,
    DERIVED=memory_object, HYBRID=mixed); the RAW arm contains NO memory objects. →
    unit + runner test asserting arm purity.
 3. Equal-token-budget comparison is pure and deterministic: given per-arm rendered
    items + a token budget, it truncates by the `ceil(len/4)` estimate to the same
-   budget and reports each arm's retained item count + a quality-vs-token point. →
-   unit test.
+   budget AT ITEM BOUNDARIES (drops whole items that don't fit, never splits one) and
+   reports each arm's retained item count + tokens; a unit test covers the RAW
+   (many-small) vs DERIVED (few-dense) asymmetry. This axis is NOT fed into the
+   representation judge (which sees full retrieved RAW turns). → unit test.
 4. Representation-quality judge aggregation is pure: N independent samples (distinct
    cache key per sample), majority booleans + mean/median scores, empty-data-safe;
    the axis is "misleading/unsupported vs provided RAW turns", not a raw hallucination
@@ -143,12 +148,16 @@ equal-token-budget + representation judge + report + tests.
    including routing effects). Action: STOP; the live seam is a separate,
    guarded/High-risk item needing human approval — surface for the user rather than
    building it autonomously.
-2. Assumption: a usable relevance signal for candidate-recovery exists offline
-   (per-query: the source/derived item(s) judged relevant to the lookup). Options: reuse
-   `memory_feedback` where present, else an offline relevance judge over the query +
-   candidate. Disproof: neither yields a defensible label. Action: report
-   candidate-recovery as RAW-only-vs-DERIVED-only OVERLAP/diff (descriptive) rather than
-   recall-vs-gold, and mark relevance advisory.
+2. Assumption: candidate-recovery uses a SYMMETRIC signal across both arms — the
+   PRIMARY metric is the objective, judge-free derivation EVIDENCE LINK: for each
+   DERIVED object, resolve its linked `source_item_id`s via
+   `get_evidence_for_memory_object`, then ask "did those source turns enter the RAW
+   arm, and did the object enter the DERIVED arm?" (RAW-only vs DERIVED-only vs both
+   recovery of the same underlying episode). `memory_feedback` is DERIVED-side only
+   (no source column, `storage/sqlite_schema.py:319-334`) → demoted to a SECONDARY
+   signal, never mixed as the primary recovery label. Disproof: evidence links are too
+   sparse in the corpus to compute recovery. Action: fall back to descriptive
+   RAW-vs-DERIVED candidate-set overlap and mark recovery advisory.
 3. Assumption: equal-token-budget truncation on the `ceil(len/4)` estimate is a fair
    context-cost control. Disproof: reviewer wants real tokenizer counts. Action: note
    the estimate; the comparison is relative, not absolute.
@@ -159,30 +168,55 @@ equal-token-budget + representation judge + report + tests.
 **Plan:**
 Sequence (all under `evals/raw_derived_hybrid/` unless noted):
 1. `arms.py` — pure: `Arm`/`Candidate` structs; `partition_candidates` guarding RAW
-   purity (no memory objects); `candidate_recovery(raw, derived, relevant_ids)` →
-   RAW-only vs DERIVED-only vs both recovery of the relevance target;
-   `equal_token_budget(items, budget)` → deterministic `ceil(len/4)` truncation +
-   retained-count + total-token point (quality-vs-token).
+   purity (no memory objects in the RAW arm); `evidence_link_recovery(raw_ids,
+   derived_objs_with_evidence)` → for each DERIVED object, whether its linked source
+   turns entered RAW and whether the object entered DERIVED (RAW-only / DERIVED-only /
+   both), the objective symmetric recovery metric; `equal_token_budget(items, budget)`
+   → deterministic `ceil(len/4)` truncation at ITEM BOUNDARIES (drop whole items that
+   don't fit, never split), returning retained-count + total tokens (a
+   quality-vs-token point; the runner may sweep several budgets for a coarse curve).
 2. `represent.py` — `REPRESENTATION_SCHEMA` + `build_representation_prompt(query,
-   raw_turns, derived_text, *, sample_ordinal)` (judge: is the DERIVED text
-   misleading/unsupported vs the RAW turns, and relevant to the query?);
-   `aggregate_representation(samples)` (majority/median, agreement); reuse
-   `extract_derivation_version` from the fidelity eval. Pure.
+   raw_turns, derived_text, *, sample_ordinal)` where `raw_turns` are the FULL
+   retrieved RAW turns (generously per-turn-capped like fidelity's 800 chars), NOT the
+   token-budget-truncated set — the judge scores, query-conditioned, whether the
+   DERIVED text is a correct/non-misleading answer surface FOR THIS LOOKUP vs the
+   retrieved RAW turns (retrieval-conditioned usability), which is DISTINCT from the
+   merged fidelity eval's query-agnostic source-fidelity axis (this eval does not
+   re-publish a source-fidelity unsupported rate). `aggregate_representation(samples)`
+   (majority/median + agreement, N independent samples w/ distinct per-sample cache
+   key); reuse `extract_derivation_version`. Pure.
 3. `runner.py` — offline: `build_service`/retrieval construction from `--db`+config
    (vector optional); load historical queries from `query_audit_log`
-   (`--trigger-origin`, `--limit`, seeded sample); for each: call
+   (`--trigger-origin`, default `{agent_pull,mcp_pull}` with a report caveat that this
+   may include proactive MCP pulls; `--limit`, seeded sample); for each: call
    `retrieval.query(target_kind=...)` three times → arms with ids/ranks/fusion scores;
-   candidate-recovery (assumption 2); render each arm, equal-token-budget compare;
-   representation judge on DERIVED vs RAW (judge built directly via `build_llm_provider`
-   + optional `CachedLLMProvider`; degrade to no-judge); stamp derivation version +
-   report-time model; write JSON to `--out`. `main`/`build_parser` + `__main__.py`.
-4. `docs/context/validation.md` — one Eval Toolbox row.
-5. `tests/test_raw_derived_hybrid.py` — pure units (arm purity, candidate-recovery,
-   equal-token-budget truncation, representation aggregation incl. N-independent-draw,
-   provenance) + a runner test on a synthetic DB (real storage + lexical-only retrieval,
-   vector disabled) with a stub judge: ingest source turns + create linked memory
-   objects, replay a query, assert RAW arm has no memory objects, three arms produced,
-   seam-labelled report, no blended/downstream number, version stamped.
+   resolve DERIVED objects' evidence via `get_evidence_for_memory_object` → evidence-link
+   recovery; render each arm, equal-token-budget compare (separate axis, NOT fed to the
+   judge); representation judge on DERIVED vs FULL retrieved RAW (judge built directly
+   via `build_llm_provider` + optional `CachedLLMProvider`; degrade to no-judge); stamp
+   derivation version + report-time model; write JSON to `--out` with a header caveat
+   that arms were REPLAYED against the CURRENT index/config (not the point-in-time
+   pool). `main`/`build_parser` + `__main__.py`.
+4. `docs/context/validation.md` — one Eval Toolbox row. Also add a Notes line to the
+   roadmap ticket reconciling the deviation (new package, not a `retrieval_ablation`
+   variant, because that harness's `candidate_scores_json` data source is memory-only
+   and cannot host a RAW arm).
+5. `tests/test_raw_derived_hybrid.py` — pure units (arm purity / no memory in RAW;
+   evidence-link recovery RAW-only/DERIVED-only/both; equal-token-budget boundary
+   truncation incl. the RAW-many-small vs DERIVED-few-dense asymmetry case; empty
+   safety; representation aggregation incl. N-independent-draw-under-cache; provenance)
+   + a runner test on a synthetic DB (real storage + lexical-only retrieval, vector
+   disabled) with a stub judge: ingest source turns + linked memory objects, replay a
+   query, assert RAW arm has no memory objects, three arms produced, evidence-link
+   recovery computed, seam-labelled report with version stamp + current-index caveat,
+   and NO blended/downstream number.
+
+Scoped OUT (deliberate, consistent with downstream/consumption being out): actually
+RE-DERIVING new derivation variants and scoring them (ticket In-Scope "evaluate new
+derivation variants" / Done-When 3 second clause). This eval STAMPS the derivation
+version so variants are DISTINGUISHABLE and the harness is variant-ready, but swapping
+the DERIVED arm for freshly re-derived objects requires parameterizing the derivation
+pipeline — a separate follow-up. Recorded so Done-When 3 is not overclaimed.
 
 Conventions: seam-explicit labels (`lessons.md`); domain-neutral fixtures (AGENTS.md);
 pure-scoring + IO separation (derivation_fidelity precedent).
@@ -200,10 +234,15 @@ seam (assumption 1 disproved) → STOP, surface as a separate High-risk item.
 6. CLI parses and a `--limit 3` dry run emits a well-formed report on a local DB -> manual: non-gating smoke, numbers not asserted (real judge stochastic)
 
 **Plan review:**
-Pending — Elevated requires a clean-context agent review before implementation
-(must specifically pressure-test the offline-replay-vs-live-seam scoping decision and
-the candidate-recovery relevance signal). Verdict + reference recorded under
-`## Plan review`.
+Clean-context agent review completed — verdict APPROVE-WITH-CHANGES. CRUCIALLY it
+confirmed the offline-replay scoping is SOUND and the live `subtask_selector_shadow`
+seam is NOT required (no High-risk / human-approval stop condition; the
+RAW-not-reconstructable-from-audit claim was independently verified, as was offline
+retrieval feasibility). All seven required changes incorporated (symmetric recovery
+labeling via the derivation evidence link; representation judge sees full RAW turns
+decoupled from token-budget truncation; item-boundary truncation; axis delineation
+vs the fidelity eval; new-variant re-derivation scoped OUT with a pointer;
+current-index caveat). See `## Plan review` below.
 
 **Approvals:**
 Not required at this risk level (Elevated). Proceeding under the standing overnight
@@ -219,4 +258,42 @@ guarded/High change), that needs human approval — STOP and surface, do not sel
 
 ## Implementation
 
-(pending plan review, then implementation)
+(pending implementation)
+
+## Plan review
+
+Clean-context reviewer (fresh subagent; verified every load-bearing claim against
+source). Verdict: **APPROVE-WITH-CHANGES**. Headline: **offline-replay scoping is
+SOUND; the live seam is genuinely NOT required** for this ticket's intent, so no
+High-risk/human-approval stop condition triggers. Verified: `candidate_scores_json`
+is memory-object-only (no `source_item_id`/`raw_rank`, `core/service.py:1207-1233`);
+`source_only` writes no candidate snapshot (`core/query.py:126-162,226`); design 015
+states the same gap (`:76-79`); offline retrieval construction + candidate-level
+`target_kind` filtering all confirmed. Redline blue confirmed (reads guarded paths,
+edits none). Seven required changes — all incorporated:
+
+1. **Recovery label symmetry** — `memory_feedback` is DERIVED-only (no source column);
+   mixing it with a RAW judge biases the metric. → Primary recovery metric is the
+   objective, judge-free derivation EVIDENCE LINK (assumption 2, Plan step 1);
+   `memory_feedback` demoted to a secondary DERIVED-side signal.
+2. **Evidence-link co-recovery** — use `get_evidence_for_memory_object` to make
+   RAW-only-vs-DERIVED-only an objective correspondence. → Plan step 1 + criterion 1.
+3. **Decouple judge input from budget truncation** — judge sees FULL retrieved RAW
+   turns, never the token-budget-truncated set (else false "unsupported"). → represent.py.
+4. **Item-boundary truncation** — `equal_token_budget` drops whole items, never splits;
+   asymmetry unit test added. → criterion 3 + Plan.
+5. **Axis delineation vs fidelity eval** — this eval's axis is query-conditioned
+   usability/misleadingness vs the RETRIEVED RAW arm (retrieval-conditioned), distinct
+   from fidelity's query-agnostic source-fidelity; no re-publishing a source-fidelity
+   rate. → represent.py + reciprocal seam_note.
+6. **Done-When 3 variant-eval gap** — recording a version ≠ evaluating a re-derived
+   variant. → Actual re-derivation scoped OUT with rationale + follow-up pointer
+   (harness is variant-ready via version stamping); Done-When 3 not overclaimed.
+7. **Current-index caveat** — report header states arms were replayed against the
+   current index/config, not the point-in-time pool. → runner.py.
+
+Nice-to-haves incorporated: agent-pull filter caveat (may include proactive MCP pulls)
+in the report; "data-read-only, init ensures schema" wording softened; roadmap-ticket
+Notes line reconciling the `retrieval_ablation`-extension deviation (new package
+because that harness's data source is memory-only). "Curve" softened to equal-budget
+point(s) with an optional multi-budget sweep.
