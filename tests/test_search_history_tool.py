@@ -11,7 +11,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from app.config import AppConfig
+from app.config import AppConfig, ObservabilityConfig
 from app.main import create_app
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import PalliumContext
@@ -27,6 +27,7 @@ def asgi_app(test_db_url: str):
         default_use_case="demo_agent_memory",
         semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
+        observability=ObservabilityConfig(query_audit_log=True),  # populate lookup_event_id
     ))
     app.state._lifespan_complete = True
     return app
@@ -85,9 +86,9 @@ async def test_search_history_returns_source_hits_with_stable_ids(asgi_app, clie
 
     assert result["decision_reason"] == "source_only_search"
     assert result["should_inject"] is False
-    # Always present in the response contract (value may be None when audit
-    # logging is disabled for the deployment).
-    assert "lookup_event_id" in result
+    # Audit logging is enabled on the fixture, so the measurement event chain's
+    # anchor is populated (not just present in the schema).
+    assert result["lookup_event_id"] is not None
     source_hits = [r for r in result["results"] if r["result_kind"] == "source_hit"]
     assert source_hits, result
     top = source_hits[0]

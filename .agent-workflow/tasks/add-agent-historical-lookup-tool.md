@@ -22,12 +22,12 @@ Tool is dead-simple by default (query + limit; scope from context; advanced filt
 3. Agent guidance (CLAUDE.md/AGENTS.md block) tells the agent when to search prior work → doc bullet present.
 4. `source_item_id` round-trips through the tool (usable by expansion/forget) → asserted in the test.
 
-**Risk:** Moderate
+**Risk:** Elevated
 
 **Complexity:** Simple
 
 **Reason:**
-No guarded RED paths (`app/mcp/` is not `api/`/`core/`); the backend contract already shipped and is tested. Moderate (not Routine) because it adds a new agent-facing capability + attribution semantics that Experiment 1 depends on. Simple: ~4 files, additive, thin surface. Redline pre-edit verdict runs as the first step to confirm (may raise).
+No guarded RED paths (`app/mcp/` is not `api/`/`core/`); the backend contract already shipped and is tested. Elevated (not Routine) because it adds a new agent-facing capability + attribution semantics that Experiment 1 depends on. Simple: ~4 files, additive, thin surface. Redline pre-edit verdict runs as the first step to confirm (may raise).
 
 **Discovery:**
 (from a read-only MCP-surface investigation, 2026-08-13 — file:line cited)
@@ -61,7 +61,9 @@ Stop conditions: if attribution (`trigger_origin`) can't be set without an API c
 5. Full suite green → `python -m pytest tests/ -q` (real interpreter).
 
 **Plan review:**
-Deferred — Moderate risk, no guarded RED paths; the design was validated by a read-only investigation against shipped, tested backend. Relying on investigation + CodeRabbit + CI rather than a separate clean-context review (which the checker mandates for High risk only).
+Clean-context agent review completed (2026-08-13) — reviewed the implemented branch. Verdict: sound; no SEV-1 correctness/attribution breaks. Confirmed: client POSTs `/query` with `source_only=True` + hardcoded `trigger_origin="agent_pull"` (in `_VALID_TRIGGER_ORIGINS`, NOT in the bypass set — normal routing path), no tool↔client param drift, `pallium_query`/proactive path untouched, docstring vs CLAUDE.md guidance not duplicated. Findings adopted:
+- SEV-2: `lookup_event_id` was only asserted present (key), never non-None, because the test app didn't enable audit logging → completion criterion #2 (the measurement event chain) was unverified. FIXED: test fixture now sets `observability=ObservabilityConfig(query_audit_log=True)` and asserts `result["lookup_event_id"] is not None`. (Same as CodeRabbit's comment #2 on PR #12.)
+- SEV-3 (accepted, note only): the `@server.tool()` wrapper itself has no automated coverage because `test_mcp_integration.py` is `importorskip("mcp")` and mcp isn't installed in CI; the client method (the real logic) is covered. Manual verification confirmed all 10 tool params forward correctly. Acceptable given the CI constraint.
 
 **Approvals:**
 Approved by user 2026-08-13: "yes, auto merge if all green" — overnight mandate to complete all P1 work, auto-merging each PR when CI + review are fully green. Blocker policy: "try to resolve blockers if you can, only break if you really need me."

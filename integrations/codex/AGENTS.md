@@ -62,8 +62,8 @@ cited it, action changed, user confirmed, procedure outcome recorded).
 
 ## Required parameters for manual calls
 
-When calling `pallium_query`, `pallium_expand`, `pallium_ingest`, or
-`pallium_remember`:
+When calling `pallium_query`, `pallium_search_history`, `pallium_expand`,
+`pallium_ingest`, or `pallium_remember`:
 
 - `container_ref` — take from the injection header
   (e.g., `git:github.com/user/repo`)
