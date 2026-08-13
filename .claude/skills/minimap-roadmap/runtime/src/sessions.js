@@ -608,8 +608,23 @@ async function readJson(filePath, fallback) {
   }
 }
 
+// Atomic single-file write. Bare fs.writeFile to the live target is NOT
+// atomic on Windows: a preempted write, antivirus interception, or a second
+// writer racing against the first can leave the file with a new (shorter)
+// prefix followed by leftover bytes from the previous content past the new
+// EOF — and the next read fails JSON parsing. This bit a real session
+// (corrupted MINIMAP_HOME/session-index.json yielded HTTP 500 on attach).
+//
+// Same pattern as writeAllOrNothing for the multi-file case, kept inline so
+// any single-file write goes through it without callers having to think.
+async function writeFileAtomic(filePath, content) {
+  const tmp = `${filePath}.tmp-${process.pid}`;
+  await fs.writeFile(tmp, content, "utf8");
+  await fs.rename(tmp, filePath);
+}
+
 async function writeJson(filePath, value) {
-  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 async function readJsonLines(filePath) {
@@ -636,7 +651,7 @@ function serializeJsonLines(values) {
 }
 
 async function writeJsonLines(filePath, values) {
-  await fs.writeFile(filePath, serializeJsonLines(values), "utf8");
+  await writeFileAtomic(filePath, serializeJsonLines(values));
 }
 
 function serializeJson(value) {

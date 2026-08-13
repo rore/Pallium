@@ -286,6 +286,21 @@ export function scrollSpecTargetIntoView(target) {
 
 // ── Anchor focus / jump ────────────────────────────────────────────────
 
+// Scroll a margin card into view by activeAnchorCommentId. Used by the
+// next/prev nav buttons (and any focus path) so the card the user is
+// jumping to is always reachable, even when its body anchor is orphaned
+// or off-screen. Uses the existing minimum-delta logic so already-
+// visible cards don't trigger a pointless smooth-scroll.
+export function scrollSpecCardIntoView(activeKey) {
+  if (!activeKey || !DOM.specMarginElement) return;
+  const selector = activeKey.startsWith("suggestion:")
+    ? `[data-suggestion-id="${CSS.escape(activeKey.slice("suggestion:".length))}"]`
+    : `[data-comment-id="${CSS.escape(activeKey)}"]`;
+  const card = DOM.specMarginElement.querySelector(selector);
+  if (!card) return;
+  scrollSpecTargetIntoView(card);
+}
+
 export function focusSpecAnchorItem(item, activeKey) {
   if (!item) {
     return;
@@ -295,11 +310,22 @@ export function focusSpecAnchorItem(item, activeKey) {
   clearSpecAnchorHighlight();
   renderSpecComments();
 
+  // Always make the focused card visible in the margin column. The body
+  // anchor may be missing (orphan after a rewrite) or may be far from
+  // where the card stacked (orphans pile at the bottom of the margin),
+  // so scrolling the card itself first guarantees the user can see what
+  // they navigated to. For cards co-located with their anchor, the
+  // body-anchor scroll below refines the position; the two share a
+  // scroll container so the body-anchor pass wins for non-orphans.
+  scrollSpecCardIntoView(activeKey);
+
   if (item.anchorStatus?.status && item.anchorStatus.status !== "resolved") {
     // The anchor's quote/section is no longer in the file (often after a
-    // suggestion was applied that rewrote the anchored text). Tell the
-    // user calmly — this is expected, not an error condition.
-    HELPERS.setBanner("The anchored text is no longer in the file — nothing to jump to.", "info");
+    // suggestion was applied that rewrote the anchored text). The card
+    // itself already carries an inline "Anchor orphaned" / "Anchor
+    // ambiguous" warning, and we've scrolled the card into view above —
+    // a top-of-pane banner on top of that is redundant noise.
+    HELPERS.clearTransientBanner();
     return;
   }
 
