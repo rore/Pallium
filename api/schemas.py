@@ -171,6 +171,12 @@ class QueryResponse(BaseModel):
     should_inject: bool
     decision_reason: str
     injectable_blocks: list[InjectableBlockResponse] = Field(default_factory=list)
+    # vNext P0 (design 015): stable id for this lookup, linking the call to
+    # its recorded exposures and follow-up in the measurement event chain.
+    # Equals the persisted query_audit_log row id when a row was written for
+    # this call; None otherwise (e.g. query-audit logging disabled, or an
+    # endpoint that does not persist a row). Additive and non-breaking.
+    lookup_event_id: str | None = None
 
 
 class MemoryEvidenceItemResponse(BaseModel):
@@ -280,6 +286,8 @@ class QueryTraceResponse(BaseModel):
 
 
 class QueryDebugResponse(QueryResponse):
+    # vNext P0 (design 015): /query/debug does not persist an audit row, so the
+    # inherited `lookup_event_id` is always None here.
     trace: QueryTraceResponse
     # Phase 4A (design 014): workstream id of the query item, if assigned.
     # Per-candidate workstream ids are surfaced via the audit log; this field
@@ -328,6 +336,8 @@ class ItemAndQueryResponse(BaseModel):
     should_inject: bool
     decision_reason: str
     injectable_blocks: list[InjectableBlockResponse] = Field(default_factory=list)
+    # vNext P0 (design 015): see QueryResponse.lookup_event_id.
+    lookup_event_id: str | None = None
 
 
 class ItemAndQueryDebugResponse(BaseModel):
@@ -337,6 +347,10 @@ class ItemAndQueryDebugResponse(BaseModel):
     decision_reason: str
     injectable_blocks: list[InjectableBlockResponse] = Field(default_factory=list)
     trace: QueryTraceResponse
+    # vNext P0 (design 015): see QueryResponse.lookup_event_id. This endpoint
+    # persists an audit row when query-audit logging is enabled, so the id is
+    # non-null in that case (None otherwise).
+    lookup_event_id: str | None = None
 
 
 class QueueHealthReasonCountResponse(BaseModel):
