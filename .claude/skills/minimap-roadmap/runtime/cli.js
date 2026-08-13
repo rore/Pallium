@@ -38,12 +38,14 @@ function usage() {
   minimap attach <file> [--json]
   minimap context <file> --json [--summary] [--filter <open|resolved|all>]
   minimap comment add <file> --by <actor> --kind <kind> --text <text> [--global|--heading <path>|--quote <text>] [--json]
+                                                                              # for duplicate quotes, add: --line-start N --line-end N  OR  --quote-offset N
   minimap comment add <file> --json-stdin [--json]   # body: {by, kind, text, scope?, headingPath?, quote?, quoteOffset?, lineStart?, lineEnd?, confidence?}
   minimap comment reply <file> <comment-id> --by <actor> --text <text> [--json]
   minimap comment reply <file> <comment-id> --json-stdin [--json]   # body: {by, text}
   minimap comment resolve <file> <comment-id> --by <actor> [--json]
   minimap comment reopen <file> <comment-id> --by <actor> [--json]
   minimap suggest add <file> --by <actor> --kind <replace|insert_after|delete> --quote <text> --content <text> [--rationale <text>] [--json]
+                                                                              # for duplicate quotes, add: --line-start N --line-end N  OR  --quote-offset N
   minimap suggest add <file> --json-stdin [--json]   # body: {by, kind, content, rationale?, scope?, headingPath?, quote?, quoteOffset?, lineStart?, lineEnd?, confidence?}
   minimap suggest accept <file> <suggestion-id> --by <actor> [--json]
   minimap suggest reject <file> <suggestion-id> --by <actor> [--json]
@@ -72,6 +74,35 @@ function valueAfter(args, flag) {
     return "";
   }
   return args[index + 1] || "";
+}
+
+// Parse an optional non-negative integer from `--flag N`. Returns undefined
+// when the flag is absent OR the value isn't strictly a non-negative decimal
+// integer, so the caller can spread the result without smuggling a stray
+// NaN/string into the server's anchor disambiguation logic.
+//
+// `Number.parseInt` alone is too lenient for this job: it accepts trailing
+// junk (`"3abc"` → 3), decimals (`"3.7"` → 3), scientific notation (`"1e3"` →
+// 1, NOT 1000), `0x` prefixes, and leading whitespace. Each of those would
+// silently anchor at the wrong line. We require a pure decimal integer
+// upfront and only then call `parseInt`.
+//
+// Server enforces stricter bounds (`>0` for lineStart/lineEnd, `>=0` for
+// quoteOffset) at sessions.js:763-765, where a hint that fails the check is
+// dropped and the cascade falls through to the ambiguous-error path. We
+// permit `0` here for all three flags and let the server own per-field
+// validation; on the wire the result is identical.
+function intFlag(args, flag) {
+  const raw = valueAfter(args, flag);
+  if (raw === "") {
+    return undefined;
+  }
+  if (!/^\d+$/.test(raw)) {
+    process.stderr.write(`[minimap] ${flag}: ignoring non-integer value ${JSON.stringify(raw)}\n`);
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) ? parsed : undefined;
 }
 
 // Read all of stdin as a UTF-8 string. Used by --json-stdin, which lets the
@@ -304,6 +335,14 @@ async function main(argv) {
         quote: valueAfter(rest, "--quote"),
         scope: flags.has("--global") ? "global" : headingPath.length > 0 ? "section" : "",
         headingPath,
+        // Optional disambiguators for duplicate quotes. The server already
+        // accepts these via --json-stdin and HTTP; exposing them inline keeps
+        // the bare-flag path usable when an agent hits anchor_ambiguous from
+        // a one-line `--quote ...` invocation. intFlag() returns undefined
+        // when the flag is absent or unparseable, so the spread is a no-op.
+        quoteOffset: intFlag(rest, "--quote-offset"),
+        lineStart: intFlag(rest, "--line-start"),
+        lineEnd: intFlag(rest, "--line-end"),
       };
     }
 
@@ -381,6 +420,11 @@ async function main(argv) {
         quote: valueAfter(rest, "--quote"),
         scope: headingPath.length > 0 ? "section" : "",
         headingPath,
+        // Same duplicate-quote disambiguators as `comment add`. Suggestions
+        // can't have scope: "global", but quote anchors still need them.
+        quoteOffset: intFlag(rest, "--quote-offset"),
+        lineStart: intFlag(rest, "--line-start"),
+        lineEnd: intFlag(rest, "--line-end"),
       };
     }
 

@@ -22,6 +22,7 @@ import {
   clearSpecAnchorHighlight,
   clearSpecSuggestionPreview,
   scrollSpecTargetIntoView,
+  scrollSpecCardIntoView,
   focusSpecAnchorItem,
   renderSpecInlineSuggestionPreview,
   renderSpecParticipantsFacepile,
@@ -67,6 +68,7 @@ import { createState } from "/state.js";
 const FIXED_SECTIONS = ["Summary", "Why", "In Scope", "Out of Scope", "Done When", "Notes"];
 const SCOPE_STORAGE_KEY = "roadmap-ui.scope-collapsed";
 const SCOPE_WIDTH_STORAGE_KEY = "roadmap-ui.scope-width";
+const BOARD_WIDTH_STORAGE_KEY = "roadmap-ui.board-width";
 const SPEC_FILES_COLLAPSED_STORAGE_KEY = "spec-sessions.files-collapsed";
 // Stored as a fraction of the spec-doc width (e.g. 0.62 = body is 62% of the
 // pane, margin gets the rest). Migrated from a legacy pixel-width key on read.
@@ -75,6 +77,9 @@ const LEGACY_SPEC_BODY_WIDTH_STORAGE_KEY = "spec-sessions.body-width";
 const DEFAULT_SCOPE_WIDTH = 272;
 const MIN_SCOPE_WIDTH = 240;
 const MAX_SCOPE_WIDTH = 440;
+const DEFAULT_BOARD_WIDTH = 500;
+const MIN_BOARD_WIDTH = 320;
+const MAX_BOARD_WIDTH = 900;
 // Fraction of the doc area dedicated to the spec body. Margin column gets the
 // remainder. Tuned so a ~1100px viewport still shows margin cards in full.
 const DEFAULT_SPEC_BODY_FRAC = 0.66;
@@ -114,6 +119,19 @@ function loadStoredScopeWidth() {
   }
 }
 
+function clampBoardWidth(width) {
+  return Math.max(MIN_BOARD_WIDTH, Math.min(MAX_BOARD_WIDTH, Math.round(width)));
+}
+
+function loadStoredBoardWidth() {
+  try {
+    const value = Number(window.localStorage.getItem(BOARD_WIDTH_STORAGE_KEY));
+    return Number.isFinite(value) && value > 0 ? clampBoardWidth(value) : DEFAULT_BOARD_WIDTH;
+  } catch {
+    return DEFAULT_BOARD_WIDTH;
+  }
+}
+
 function loadStoredSpecFilesPreference() {
   try {
     const stored = window.localStorage.getItem(SPEC_FILES_COLLAPSED_STORAGE_KEY);
@@ -143,6 +161,7 @@ function loadStoredSpecBodyFrac() {
 const stateContainer = createState({
   scopeCollapsed: loadStoredScopePreference(),
   scopeWidth: loadStoredScopeWidth(),
+  boardWidth: loadStoredBoardWidth(),
   spec: {
     filesCollapsed: loadStoredSpecFilesPreference(),
     bodyFrac: loadStoredSpecBodyFrac(),
@@ -222,6 +241,7 @@ const scopeSaveButton = document.querySelector("#scope-save-button");
 const scopeCancelButton = document.querySelector("#scope-cancel-button");
 const scopeSubtitleElement = document.querySelector("#scope-subtitle");
 const scopeResizerElement = document.querySelector("#scope-resizer");
+const boardEditorResizerElement = document.querySelector("#board-editor-resizer");
 const scopeToggleButton = document.querySelector("#scope-toggle");
 const jumpToBoardButton = document.querySelector("#jump-to-board");
 const jumpToEditorButton = document.querySelector("#jump-to-editor");
@@ -341,6 +361,14 @@ function persistScopePreference() {
 function persistScopeWidth() {
   try {
     window.localStorage.setItem(SCOPE_WIDTH_STORAGE_KEY, String(state.scopeWidth));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function persistBoardWidth() {
+  try {
+    window.localStorage.setItem(BOARD_WIDTH_STORAGE_KEY, String(state.boardWidth));
   } catch {
     // Ignore storage failures.
   }
@@ -1407,6 +1435,12 @@ function renderScopeChrome() {
 
   layoutElement.dataset.scopeCollapsed = String(state.scopeCollapsed);
   layoutElement.style.setProperty("--scope-width", `${state.scopeWidth}px`);
+  layoutElement.style.setProperty("--board-width", `${state.boardWidth}px`);
+  const showBoardResizer = !setupMode && !isColumnsLayoutActive() && isDesktopScopeLayout();
+  boardEditorResizerElement.hidden = !showBoardResizer;
+  boardEditorResizerElement.setAttribute("aria-valuemin", String(MIN_BOARD_WIDTH));
+  boardEditorResizerElement.setAttribute("aria-valuemax", String(MAX_BOARD_WIDTH));
+  boardEditorResizerElement.setAttribute("aria-valuenow", String(state.boardWidth));
   scopePanelElement.classList.toggle("scope-collapsed", state.scopeCollapsed);
   scopePanelElement.classList.toggle("scope-editing", state.scopeEditMode);
   scopeSubtitleElement.textContent = "";
@@ -1591,6 +1625,32 @@ function beginScopeResize(event) {
   window.addEventListener("pointermove", handlePointerMove);
   window.addEventListener("pointerup", stopResize);
   window.addEventListener("pointercancel", stopResize);
+}
+
+function beginBoardEditorResize(event) {
+  if (isColumnsLayoutActive() || !isDesktopScopeLayout()) {
+    return;
+  }
+
+  event.preventDefault();
+  const startX = event.clientX;
+  const startWidth = state.boardWidth;
+
+  function move(nextEvent) {
+    state.boardWidth = clampBoardWidth(startWidth + nextEvent.clientX - startX);
+    renderScopeChrome();
+  }
+
+  function stop() {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", stop);
+    window.removeEventListener("pointercancel", stop);
+    persistBoardWidth();
+  }
+
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", stop);
+  window.addEventListener("pointercancel", stop);
 }
 
 function toggleGroup(name) {
@@ -2199,10 +2259,10 @@ function renderBoardColumnsMode() {
     }).join("");
 
     return `
-      <section class="board-column${allowColumnReorder ? " board-column-reorderable" : ""}${reorderAttributes ? " board-column-reorder-dropzone" : ""}" ${reorderAttributes}>
+      <section class="board-column${group.items.length >= 10 ? " board-column-dense" : ""}${allowColumnReorder ? " board-column-reorderable" : ""}${reorderAttributes ? " board-column-reorder-dropzone" : ""}" ${reorderAttributes}>
         <div class="board-column-header">
           <div class="board-column-heading">
-            <span class="board-column-name">${escapeHtml(group.name)}</span>
+            <span class="board-column-name" title="${escapeHtml(group.name)}">${escapeHtml(group.name)}</span>
             <span class="group-count">${group.items.length}</span>
           </div>
           ${allowColumnReorder
@@ -2995,6 +3055,12 @@ function focusSpecSuggestionAnchor(suggestionId) {
   clearSpecAnchorHighlight();
   renderSpecComments();
 
+  // Make the suggestion card visible first — for nav-button jumps the
+  // card may be off-screen, and even for diff-present suggestions the
+  // card sits in the same scroll container so a card scroll keeps the
+  // active card in view.
+  scrollSpecCardIntoView(`suggestion:${suggestionId}`);
+
   const diff = specFileContentElement.querySelector(
     `[data-spec-diff-suggestion-id="${CSS.escape(suggestionId)}"]`,
   );
@@ -3068,10 +3134,22 @@ function syncSpecToolbarChrome() {
   const ctx = state.spec.context;
   const comments = ctx?.comments || [];
   const suggestions = ctx?.suggestions || [];
-  const totalC = comments.length;
-  const totalS = suggestions.length;
-  document.querySelectorAll('[data-spec-count="comments"]').forEach((el) => { el.textContent = totalC; });
-  document.querySelectorAll('[data-spec-count="suggestions"]').forEach((el) => { el.textContent = totalS; });
+  // Counts reflect what's actually rendered in the margin given the
+  // current Resolved toggle — match the predicates in renderSpecComments
+  // (commentMatchesFilter for comments; pending/accepted always visible
+  // for suggestions, applied/rejected only when showResolved is on) so
+  // the chip never overcounts hidden cards. When showResolved is off,
+  // resolved items are not currently visible so they don't tick the
+  // count; toggling Resolved on flips them back into the tally.
+  const showResolved = state.spec.showResolved;
+  const visibleComments = showResolved
+    ? comments.length
+    : comments.filter((c) => c.status !== "resolved").length;
+  const visibleSuggestions = showResolved
+    ? suggestions.length
+    : suggestions.filter((s) => s.status === "pending" || s.status === "accepted").length;
+  document.querySelectorAll('[data-spec-count="comments"]').forEach((el) => { el.textContent = visibleComments; });
+  document.querySelectorAll('[data-spec-count="suggestions"]').forEach((el) => { el.textContent = visibleSuggestions; });
   renderSpecParticipantsFacepile();
   specViewSegButtons.forEach((btn) => {
     const active = btn.dataset.specView === state.spec.viewMode;
@@ -4585,6 +4663,7 @@ scopeToggleButton.addEventListener("click", () => {
 });
 
 scopeResizerElement.addEventListener("pointerdown", beginScopeResize);
+boardEditorResizerElement.addEventListener("pointerdown", beginBoardEditorResize);
 
 boardSearchInput.addEventListener("input", () => {
   state.searchQuery = normalizeSearchQuery(boardSearchInput.value);
