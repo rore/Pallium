@@ -1,5 +1,4 @@
 # P0 · Contract & governance
-- add-historical-lookup-funnel-telemetry
 - add-raw-history-governance
 
 # P1 · Historical Lookup
@@ -32,6 +31,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-historical-lookup-funnel-telemetry
 - add-operational-fact-memory
 - add-thread-near-dup-supersession
 - add-injection-policy-abstention

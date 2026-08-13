@@ -1,7 +1,7 @@
 ---
 id: add-historical-lookup-funnel-telemetry
 title: Historical-lookup measurement contract and event schema
-status: in-progress
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-p0
