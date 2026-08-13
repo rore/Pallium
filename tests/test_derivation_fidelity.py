@@ -283,7 +283,7 @@ def test_runner_segments_seams_and_makes_independent_draws(synthetic_db) -> None
     fobjs = report["fidelity"]["objects"]
     judged_ids = {o["memory_object_id"] for o in fobjs}
     assert len(judged_ids) == 2  # deduped; soft-deleted excluded
-    # Independent draws: 2 objects × 3 samples = 6 judge calls (NOT 2 cached repeats).
+    # Independent draws: 2 objects x 3 samples = 6 judge calls (NOT 2 cached repeats).
     assert judge.calls == 6
     for o in fobjs:
         assert o["fidelity"]["n_samples"] == 3
@@ -300,3 +300,55 @@ def test_runner_coverage_only_when_no_judge(synthetic_db) -> None:
     assert report["coverage"]["sampled_items"] == 5
     for o in report["fidelity"]["objects"]:
         assert o["fidelity"] is None  # judge skipped, coverage still computed
+
+
+def test_is_processed_counts_terminal_outcomes() -> None:
+    from evals.derivation_fidelity.runner import is_processed
+    # Terminal outcomes are "processed" — a FAILED item that produced nothing must
+    # stay in the coverage denominator (not be dropped as pending → inflating rate).
+    assert is_processed("completed", None) is True
+    assert is_processed("failed", None) is True
+    assert is_processed("skipped", None) is True
+    # completed-timestamp set even with a non-terminal status label → processed.
+    assert is_processed("processing", utc_now()) is True
+    # genuinely in-flight → not processed (excluded from denominator, counted pending).
+    assert is_processed("pending", None) is False
+    assert is_processed(None, None) is False
+
+
+def test_terminally_failed_item_is_processed_nothing_not_pending(tmp_path) -> None:
+    from storage.sqlite import SQLiteStorageProvider
+    db = tmp_path / "failed.db"
+    storage = SQLiteStorageProvider(database_url=f"sqlite:///{db}")
+    # One terminally-FAILED item that produced no derived object.
+    storage.create_source_item(SourceItem(
+        source_type="chat_message", source_id="f1", content_type="text/plain",
+        content="extraction crashed here", container_ref="c", thread_ref="tf",
+        visibility="public", processing_status="failed", processing_completed_at=utc_now(),
+    ))
+    report = run_eval(
+        db_path=str(db), storage=storage, judge_provider=None, report_time_model=None,
+        limit=0, seed=1, container_ref=None, thread_ref=None,
+        judge_samples=1, fidelity_limit=0, max_context=4,
+    )
+    ie = report["coverage"]["item_extraction"]
+    assert report["coverage"]["pending_items"] == 0  # NOT dropped as pending
+    assert ie["counts"][cov.PROCESSED_NOTHING] == 1  # in the denominator
+    assert ie["processed_denominator"] == 1
+    assert ie["coverage_rate"] == 0.0  # honest: attempted, produced nothing
+
+
+def test_cached_provider_gets_n_independent_misses(synthetic_db, tmp_path) -> None:
+    # Criterion 3, literal: N samples under a real CachedLLMProvider must be N cache
+    # MISSES (independent draws), not one miss + repeats.
+    from providers.llm.cached import CachedLLMProvider
+    judge = _CountingJudge()
+    cached = CachedLLMProvider(judge, tmp_path / "jcache", model_tag="test")
+    run_eval(
+        db_path=synthetic_db["db"], storage=synthetic_db["storage"], judge_provider=cached,
+        report_time_model="m", limit=0, seed=17, container_ref=None, thread_ref=None,
+        judge_samples=3, fidelity_limit=0, max_context=8,
+    )
+    # 2 active objects x 3 samples = 6 distinct prompts -> 6 misses, 0 hits.
+    assert judge.calls == 6
+    assert cached.stats == {"hits": 0, "misses": 6}

@@ -37,8 +37,11 @@ derivation pipeline itself (this measures; fixes are separate items); no retriev
 side RAW/DERIVED/HYBRID comparison (that is `idea-raw-derived-hybrid-shadow-eval`).
 
 **Constraints:**
-Read-only on the live DB — zero writes, zero production-code edits, cannot affect
-`should_inject`/injection/ranking. Coverage must be survivorship-bias-free: start
+Read-only QUERIES on the live DB (zero production-code edits, cannot affect
+`should_inject`/injection/ranking). The enumeration uses its own disposable engine;
+linkage/evidence reads go through `SQLiteStorageProvider`, whose constructor performs
+only idempotent schema-ensure + WAL PRAGMA on init — no row writes. Coverage must be
+survivorship-bias-free: start
 from source items (not from existing derived objects). **Coverage is segmented by
 linkage semantics, never blended into one rate:** per-item producers
 (`producer_kind=item_extraction`) are measured at *item* granularity; whole-thread
@@ -291,8 +294,8 @@ eval/production bugs, and are documented so the next agent doesn't re-hit them):
 ## Evidence
 
 - New: `evals/derivation_fidelity/{__init__,coverage,fidelity,runner,__main__}.py`,
-  `tests/test_derivation_fidelity.py` (14 tests), one `docs/context/validation.md` row.
-- `python -m pytest tests/test_derivation_fidelity.py -q` → **14 passed**. Covers:
+  `tests/test_derivation_fidelity.py` (17 tests), one `docs/context/validation.md` row.
+- `python -m pytest tests/test_derivation_fidelity.py -q` → **17 passed**. Covers:
   four-state classification incl. mixed active/demoted → extracted; thread-producer
   coverage measured at thread granularity (NOT inflating the item lens); thread with
   no processed item excluded from the thread denominator; empty-data safety; no
@@ -349,3 +352,37 @@ Nice-to-haves incorporated: precise "demoted" definition (`is_soft_deleted` or
 directly via `build_llm_provider` (not `build_eval_providers`) to control the cache
 key and avoid the default-package LLM-config coupling; report-time-model caveat kept
 (per-object concrete model is not recoverable from the DB).
+
+## Result review
+
+Independent clean-context reviewer (fresh subagent; read WR + ticket + all source,
+ran the tests). Verdict: **PASS-WITH-NITS** — all three plan-review changes confirmed
+landed and verifiable; coverage/fidelity math, seam separation, dedup, demoted rule,
+and judge-failure handling all verified correct. One must-fix + nits, all addressed:
+
+1. (must-fix) **`_PROCESSED_STATUSES={"completed"}` reintroduced coverage bias.**
+   Production stamps `processing_status="failed"` (and `"skipped"`) + often
+   `processing_completed_at` on terminal outcomes; mapping only `"completed"` →
+   processed dropped terminally-FAILED-produced-nothing items into `pending_items`,
+   excluding them from the denominator and inflating `coverage_rate` — the exact
+   survivorship bias this eval exists to avoid. → Fixed: `is_processed(status,
+   processing_completed_at)` counts terminal outcomes (`completed`/`failed`/`skipped`
+   or `processing_completed_at` set); documented that retriable-failed is counted at
+   snapshot time. New tests: `test_is_processed_counts_terminal_outcomes`,
+   `test_terminally_failed_item_is_processed_nothing_not_pending`.
+2. (nit) **"zero writes" slightly overclaimed** — provider `__init__` runs idempotent
+   schema-ensure + WAL PRAGMA. → Constraints reworded to "read-only queries; provider
+   init performs only idempotent schema-ensure/PRAGMA."
+3. (nit) **cache/N-sample test was indirect.** → Added
+   `test_cached_provider_gets_n_independent_misses`: wraps a real `CachedLLMProvider`
+   and asserts 6 misses / 0 hits for 2 objects × 3 samples (criterion 3, literal).
+4. (nit) **redundant evidence fetch** in the fidelity path. → Refactored to fetch
+   evidence once and pass it through (`_linked_and_context_turns`).
+5. (nit) **`by_type` vs `counts` unit mismatch.** → Documented in `coverage.py`
+   (`by_type` is per-object, `counts` per-unit; don't sum).
+
+Accepted as-is (non-blocking): the context window loads the full thread before
+slicing to `--max-context` — fine for offline use (the judge context is bounded);
+noted for a future perf pass if corpora grow.
+
+Post-fix: `tests/test_derivation_fidelity.py` = **17/17 pass**.

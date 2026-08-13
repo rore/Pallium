@@ -36,7 +36,17 @@ from evals.derivation_fidelity.fidelity import (
     parse_fidelity_response,
 )
 
-_PROCESSED_STATUSES = frozenset({"completed"})
+# A source item counts as PROCESSED (derivation was attempted and reached a terminal
+# outcome) when it completed OR terminally failed/skipped, OR the pipeline stamped
+# processing_completed_at. Using only "completed" would drop terminally-FAILED items
+# (which produced nothing) from the denominator and silently inflate coverage — the
+# exact survivorship bias this eval exists to avoid. Retriable-failed items are counted
+# as processed at snapshot time; a later successful retry shows on the next run.
+_TERMINAL_STATUSES = frozenset({"completed", "failed", "skipped"})
+
+
+def is_processed(status: str | None, processing_completed_at) -> bool:
+    return processing_completed_at is not None or status in _TERMINAL_STATUSES
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +69,8 @@ def load_source_rows(
         "SELECT id, container_ref, thread_ref, processing_status, "
         "processing_completed_at FROM source_items "
         "WHERE (:container_ref IS NULL OR container_ref = :container_ref) "
-        "AND (:thread_ref IS NULL OR thread_ref = :thread_ref)"
+        "AND (:thread_ref IS NULL OR thread_ref = :thread_ref) "
+        "ORDER BY id"  # deterministic order so the seeded shuffle+truncate is reproducible
     )
     params = {"container_ref": container_ref, "thread_ref": thread_ref}
     try:
@@ -89,25 +100,28 @@ def _to_linked_object(mem) -> LinkedObject:
 # ---------------------------------------------------------------------------
 
 
-def _thread_context_turns(storage, mem, linked_source_ids: set[str], *, max_context: int) -> tuple[list[str], list[str]]:
+def _linked_and_context_turns(storage, evidence, *, max_context: int) -> tuple[list[str], list[str]]:
     """Return (linked_turns, context_turns) text for one derived object.
 
     Linked turns come from the object's explicit evidence; context turns are other
     turns in the same thread (bounded), so the judge doesn't false-positive a claim
-    grounded in an adjacent turn.
+    grounded in an adjacent turn. ``evidence`` is passed in (fetched once by the
+    caller) to avoid a redundant lookup.
     """
-    evidence = storage.get_evidence_for_memory_object(mem.id)
+    linked_source_ids = {ev.source_item_id for ev in evidence}
     linked_turns: list[str] = []
     container = thread = None
     for ev in evidence:
-        item = storage.get_source_item(ev.source_item_id)
+        try:
+            item = storage.get_source_item(ev.source_item_id)
+        except Exception:
+            continue  # evidence turn may have been retention-deleted; skip it
         linked_turns.append(item.content or "")
         container = container or item.container_ref
         thread = thread or item.thread_ref
     context_turns: list[str] = []
     if container is not None and thread is not None:
-        neighbors = storage.list_source_items_for_thread(container, thread)
-        for it in neighbors:
+        for it in storage.list_source_items_for_thread(container, thread):
             if it.id in linked_source_ids or it.forgotten:
                 continue
             context_turns.append(it.content or "")
@@ -125,9 +139,8 @@ def judge_object(
     max_context: int,
 ) -> dict:
     evidence = storage.get_evidence_for_memory_object(mem.id)
-    linked_source_ids = {ev.source_item_id for ev in evidence}
-    linked_turns, context_turns = _thread_context_turns(
-        storage, mem, linked_source_ids, max_context=max_context
+    linked_turns, context_turns = _linked_and_context_turns(
+        storage, evidence, max_context=max_context
     )
     derived_text = derived_text_of(getattr(mem, "payload", None))
     source_chars = sum(len(t) for t in linked_turns)
@@ -204,7 +217,7 @@ def run_eval(
                 source_item_id=r["id"],
                 container_ref=r["container_ref"],
                 thread_ref=r["thread_ref"],
-                processed=(r["processing_status"] in _PROCESSED_STATUSES),
+                processed=is_processed(r["processing_status"], r["processing_completed_at"]),
                 linked=linked,
             )
         )

@@ -95,6 +95,10 @@ def _coverage_rate(counts: dict[str, int]) -> float | None:
 class _Lens:
     granularity: str
     counts: dict[str, int] = field(default_factory=_empty_state_counts)
+    # NOTE: `counts` are per unit (per source item / per thread). `by_type` is
+    # incremented per LINKED OBJECT, so a unit with multiple objects of one type
+    # contributes multiple by_type increments — by_type[type][state] can exceed the
+    # unit `counts`. Different unit; don't sum them together in a dashboard.
     by_type: dict[str, dict[str, int]] = field(default_factory=lambda: defaultdict(_empty_state_counts))
 
     def to_dict(self) -> dict:
@@ -134,6 +138,11 @@ def aggregate_coverage(records: list[ItemRecord]) -> dict:
     thread_lens = _Lens(granularity="thread")
     threads: dict[tuple, list[ItemRecord]] = defaultdict(list)
     for rec in records:
+        # Threadless items (thread_ref is None) cannot belong to a thread-aggregation
+        # episode; grouping them by a null key would collapse unrelated items into one
+        # synthetic thread. Exclude them from the thread lens entirely.
+        if rec.thread_ref is None:
+            continue
         threads[rec.thread_key].append(rec)
     for _key, recs in threads.items():
         if not any(r.processed for r in recs):
