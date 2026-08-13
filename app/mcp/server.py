@@ -174,6 +174,45 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         return json.dumps(result, indent=2, default=str)
 
     @server.tool()
+    async def pallium_expand_source(
+        source_item_id: str,
+        before: int = 10,
+        after: int = 10,
+        include_supported_memories: bool = False,
+        parent_lookup_id: str | None = None,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
+        visibility: str | None = None,
+    ) -> str:
+        """Get the surrounding thread context for a raw source turn.
+
+        Use after `pallium_search_history` when a raw hit looks promising and
+        you want to read what came just before and after it — pass the
+        `source_item_id` from that result. Returns a bounded neighborhood of
+        raw turns in the same thread (chronological, with the anchor flagged),
+        visibility-enforced. `before`/`after` set how many neighbor turns to
+        include on each side. Set `include_supported_memories=true` to also get
+        (separately) the derived memories this turn supports. If you have the
+        `lookup_event_id` from the search that produced this id, pass it as
+        `parent_lookup_id` to link the expansion to its lookup."""
+        ctx = resolve_context(
+            container_ref=container_ref,
+            actor_ref=actor_ref,
+            visibility=visibility,
+        )
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        client = PalliumMcpClient(ctx)
+        result = await client.get_source_context(
+            source_item_id,
+            before=before,
+            after=after,
+            include_supported_memories=include_supported_memories,
+            parent_lookup_id=parent_lookup_id,
+        )
+        return json.dumps(result, indent=2, default=str)
+
+    @server.tool()
     async def pallium_flag_memory(
         memory_object_id: str,
         reason: str,

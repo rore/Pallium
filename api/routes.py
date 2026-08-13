@@ -13,6 +13,9 @@ from api.schemas import (
     ForgetMemoryResponse,
     ForgetSourceRequest,
     ForgetSourceResponse,
+    SourceContextItemResponse,
+    SourceContextResponse,
+    SupportedMemoryResponse,
     ItemAndQueryDebugResponse,
     ItemAndQueryRequest,
     ItemAndQueryResponse,
@@ -655,6 +658,63 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 )
                 for item in items
             ],
+        )
+
+    @router.get("/source/{source_item_id}/context", response_model=SourceContextResponse)
+    def get_source_context(
+        source_item_id: str,
+        container_ref: str | None = None,
+        query_actor_ref: str | None = None,
+        before: int = 10,
+        after: int = 10,
+        max_chars: int = 16000,
+        include_supported_memories: bool = False,
+        parent_lookup_id: str | None = None,
+    ) -> SourceContextResponse:
+        try:
+            anchor, neighbors, supported, echoed_lookup_id = service.get_source_context(
+                source_item_id,
+                container_ref=container_ref,
+                query_actor_ref=query_actor_ref,
+                before=before,
+                after=after,
+                max_chars=max_chars,
+                include_supported_memories=include_supported_memories,
+                parent_lookup_id=parent_lookup_id,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="source item not found") from None
+        # Chronological order (by ingest time) with the anchor flagged.
+        combined = sorted([anchor, *neighbors], key=lambda i: (i.created_at, i.id))
+        items = [
+            SourceContextItemResponse(
+                source_item_id=i.id,
+                source_type=i.source_type,
+                source_id=i.source_id,
+                content=i.content,
+                role=i.role,
+                actor_ref=i.actor_ref,
+                occurred_at=i.occurred_at,
+                thread_ref=i.thread_ref,
+                artifact_kind=i.artifact_kind,  # type: ignore[arg-type]
+                thread_position=i.thread_position,
+                is_anchor=(i.id == anchor.id),
+            )
+            for i in combined
+        ]
+        supported_out = None
+        if supported is not None:
+            supported_out = [
+                SupportedMemoryResponse(
+                    memory_object_id=m.id, type=m.type, visibility=m.visibility,
+                )
+                for m in supported
+            ]
+        return SourceContextResponse(
+            source_item_id=source_item_id,
+            items=items,
+            supported_memories=supported_out,
+            parent_lookup_id=echoed_lookup_id,
         )
 
     @router.post("/memory/{memory_object_id}/flag", response_model=FlagMemoryResponse)

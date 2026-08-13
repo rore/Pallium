@@ -135,6 +135,48 @@ class PalliumMcpClient:
         except Exception as exc:
             return {"error": str(exc)}
 
+    async def get_source_context(
+        self,
+        source_item_id: str,
+        *,
+        before: int | None = None,
+        after: int | None = None,
+        include_supported_memories: bool = False,
+        parent_lookup_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch a bounded neighborhood of raw turns around a source item.
+
+        Scope (container/actor) comes from context so visibility is enforced
+        for the caller.
+        """
+        params: dict[str, Any] = {}
+        if self._ctx.container_ref:
+            params["container_ref"] = self._ctx.container_ref
+        actor = getattr(self._ctx, "actor_ref", None)
+        if actor:
+            params["query_actor_ref"] = actor
+        if before is not None:
+            params["before"] = before
+        if after is not None:
+            params["after"] = after
+        if include_supported_memories:
+            params["include_supported_memories"] = True
+        if parent_lookup_id is not None:
+            params["parent_lookup_id"] = parent_lookup_id
+        try:
+            async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
+                response = await http.get(f"/source/{source_item_id}/context", params=params)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as exc:
+            try:
+                body = exc.response.json()
+            except Exception:
+                body = exc.response.text
+            return {"error": str(exc), "detail": body}
+        except Exception as exc:
+            return {"error": str(exc)}
+
     async def get_status(self) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
