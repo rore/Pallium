@@ -55,8 +55,19 @@ class SourceItem:
     processing_error: str | None = None
     processing_next_attempt_at: datetime | None = None
     thread_position: int | None = None
+    # User-requested raw-turn forgetting (soft + auditable; distinct from the
+    # memory-object soft-delete used by pallium_forget, and from the TTL
+    # retention hard-delete). NULL forgotten_at = not forgotten; the boolean is
+    # derived. forgotten_by/reason capture the who/why for audit.
+    forgotten_at: datetime | None = None
+    forgotten_by: str | None = None
+    forgotten_reason: str | None = None
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
+
+    @property
+    def forgotten(self) -> bool:
+        return self.forgotten_at is not None
 
 
 MemoryEnvelopeKind = Literal["constraint", "finding", "episode", "next_step", "summary", "unknown"]

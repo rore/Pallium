@@ -64,10 +64,20 @@ def matches_filters(
         if filters is not None and filters.actor_ref is not None and memory_object.actor_ref is not None:
             if memory_object.actor_ref != filters.actor_ref:
                 return False
+    source_item = None
+    if target_kind == "source_item":
+        source_item = get_source_item(target_id)
+        # Fail-closed raw-turn forgetting: a forgotten source turn is never
+        # retrievable, even when no field filters are supplied. This gate runs
+        # BEFORE the `filters is None` early return (mirroring the memory
+        # lifecycle gate above) so it holds on every retrieval path —
+        # lexical (sqlite_search), vector, and any filter-less caller.
+        if source_item.forgotten:
+            return False
     if filters is None:
         return True
     if target_kind == "source_item":
-        return source_item_matches_filters(get_source_item(target_id), filters)
+        return source_item_matches_filters(source_item, filters)
     if target_kind == "memory_object":
         evidence = get_evidence_for_memory_object(target_id)
         memory_filters = replace(filters, thread_ref=None) if filters.thread_ref is not None else filters

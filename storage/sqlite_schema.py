@@ -48,6 +48,11 @@ class SourceItemRecord(Base):
     processing_error = Column(Text, nullable=True)
     processing_next_attempt_at = Column(DateTime(timezone=True), nullable=True)
     thread_position = Column(Integer, nullable=True)
+    # User-requested raw-turn forgetting (soft + auditable). NULL forgotten_at
+    # = not forgotten. Left NULL on create; set only by service.forget_source.
+    forgotten_at = Column(DateTime(timezone=True), nullable=True)
+    forgotten_by = Column(String, nullable=True)
+    forgotten_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
@@ -449,6 +454,12 @@ class SQLiteSchemaMixin:
         "processing_error": "ALTER TABLE source_items ADD COLUMN processing_error TEXT",
         "processing_next_attempt_at": "ALTER TABLE source_items ADD COLUMN processing_next_attempt_at DATETIME",
         "thread_position": "ALTER TABLE source_items ADD COLUMN thread_position INTEGER",
+        # Raw-turn forgetting columns (nullable / no backfill: existing rows
+        # keep forgotten_at NULL = not forgotten, the correct fail-open default
+        # for turns that were never forgotten).
+        "forgotten_at": "ALTER TABLE source_items ADD COLUMN forgotten_at DATETIME",
+        "forgotten_by": "ALTER TABLE source_items ADD COLUMN forgotten_by VARCHAR",
+        "forgotten_reason": "ALTER TABLE source_items ADD COLUMN forgotten_reason TEXT",
     }
     _MEMORY_OBJECT_MIGRATIONS = {
         "lifecycle": "ALTER TABLE memory_objects ADD COLUMN lifecycle VARCHAR DEFAULT 'active'",

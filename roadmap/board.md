@@ -16,6 +16,7 @@
 # P3 · Shared Knowledge
 - idea-visibility-vocab-reconciliation
 - idea-cross-user-raw-history-value
+- idea-shared-raw-revocation
 - add-bounded-memory-lifecycle-hardening
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory

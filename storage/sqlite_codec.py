@@ -65,6 +65,9 @@ class SQLiteCodecMixin:
             processing_error=record.processing_error,
             processing_next_attempt_at=SQLiteCodecMixin._normalize_datetime(record.processing_next_attempt_at),
             thread_position=getattr(record, 'thread_position', None),
+            forgotten_at=SQLiteCodecMixin._normalize_datetime(getattr(record, 'forgotten_at', None)),
+            forgotten_by=getattr(record, 'forgotten_by', None),
+            forgotten_reason=getattr(record, 'forgotten_reason', None),
             created_at=SQLiteCodecMixin._normalize_datetime(record.created_at) or utc_now(),
         )
 

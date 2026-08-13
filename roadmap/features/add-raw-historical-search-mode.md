@@ -72,6 +72,15 @@ target is high-leverage.
 
 ## Notes
 
+Governance note (2026-08-13): raw search must route through the existing redaction read
+barrier (`_redact_query_result`) and visibility enforcement — these are the P0
+governance mechanics for the search path (`add-raw-history-governance` was re-scoped to
+raw-turn forgetting and delegates reuse-verification here; add tests confirming the raw
+path is redacted + visibility-enforced). Because this mode reuses the shared retrieval
+target (`matches_filters`), the P0 forgotten-source gate already excludes forgotten raw
+turns from source-only search — add a regression test asserting a forgotten turn never
+appears as a source-only result.
+
 Guarded paths: `core/service.py` (red), `core/query.py` (watch), `retrieval/`,
 `api/`. Start the implementation slice with `/agent-workflow`.
 Execution context: `docs/designs/015-vnext-historical-work-execution.md` (Phase 1).
