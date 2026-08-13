@@ -69,6 +69,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
         include_trace: bool = False,
         require_visibility: bool = False,
         query_actor_ref: str | None = None,
+        target_kind: str | None = None,
     ) -> RetrievalQueryResult:
         tokens = list(tokenize_query(text))
         if require_visibility and query_container_ref is None:
@@ -115,6 +116,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
             query_visibility=visibility,
             include_visibility_trace=include_trace,
             query_actor_ref=query_actor_ref,
+            target_kind=target_kind,
         )
         hits = search_result.hits
         results: list[QueryResultItem] = []

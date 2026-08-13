@@ -672,6 +672,7 @@ class PalliumService:
         runtime_context: QueryRuntimeContext | None = None,
         include_trace: bool = False,
         trigger_origin: str | None = None,
+        source_only: bool = False,
     ) -> QueryResult:
         runtime_context = resolve_runtime_context(
             self._storage,
@@ -692,6 +693,7 @@ class PalliumService:
             runtime_context=runtime_context,
             include_trace=include_trace,
             trigger_origin=trigger_origin,
+            source_only=source_only,
         )
         # PR 0 step 8: retrieval barrier (defense in depth).
         # Even if a secret slips past the write barrier + LLM-response

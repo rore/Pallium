@@ -252,6 +252,9 @@ class QueryResultItem:
     retrieval_source: str | None = None
     lexical_score: float | None = None
     vector_score: int | None = None
+    # Source-only search (vNext P1): 1-based rank of this raw hit within the
+    # source-only result page (by fused order). None on the proactive path.
+    raw_rank: int | None = None
 
     def __post_init__(self) -> None:
         if self.result_id is None:

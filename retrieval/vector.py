@@ -56,6 +56,7 @@ class VectorRetrievalProvider(RetrievalProvider):
         include_trace: bool = False,
         require_visibility: bool = False,
         query_actor_ref: str | None = None,
+        target_kind: str | None = None,
     ) -> RetrievalQueryResult:
         if require_visibility and query_container_ref is None:
             trace = None
@@ -83,8 +84,13 @@ class VectorRetrievalProvider(RetrievalProvider):
         query_vectors = self._embedding_provider.embed([text], mode="query")
         query_vector = query_vectors[0]
 
-        # 2. Search vector index (overfetch limit * 4)
-        raw_hits = index.search(query_vector, k=limit * 4)
+        # 2. Search vector index (overfetch limit * 4). For source-only search
+        # the ANN index cannot filter by target_kind, so over-fetch more widely
+        # and skip non-matching kinds below — the guaranteed source coverage
+        # comes from the lexical leg's SQL push-down; this just lets the vector
+        # leg contribute source hits it would otherwise crowd out with memory.
+        search_k = limit * 8 if target_kind is not None else limit * 4
+        raw_hits = index.search(query_vector, k=search_k)
 
         # 3. Resolve entry_ids to IndexEntries, handle stale entries
         resolved_hits: list[tuple[IndexEntry, float]] = []
@@ -121,6 +127,13 @@ class VectorRetrievalProvider(RetrievalProvider):
 
         for index_entry, similarity in resolved_hits:
             score = int(similarity * 1000)
+
+            # Source-only search (vNext P1): the ANN index can't filter by
+            # target_kind, so skip non-matching kinds here (defense-in-depth
+            # alongside the lexical SQL push-down). Skips before trace/threshold
+            # so a source-only vector stage reflects only source candidates.
+            if target_kind is not None and index_entry.target_kind != target_kind:
+                continue
 
             # Build trace hit for all candidates (before filtering)
             trace_hit = RetrievalTraceHit(
@@ -237,7 +250,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                 stages=(
                     RetrievalStageTrace(
                         stage_name=VECTOR_STAGE_NAME,
-                        candidate_hits_considered=len(resolved_hits),
+                        candidate_hits_considered=len(all_candidate_trace_hits),
                         candidate_hits=tuple(all_candidate_trace_hits),
                         selected_hits=tuple(selected_trace_hits),
                         candidate_hits_before_visibility=hits_before_visibility,

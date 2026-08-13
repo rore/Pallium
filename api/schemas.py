@@ -109,6 +109,11 @@ class QueryRequest(BaseModel):
     # token set; None means "legacy / proactive default." See
     # docs/specs/2026-06-27-injection-policy-abstention.md.
     trigger_origin: str | None = None
+    # Source-only history search (vNext P1): when true, rank raw source turns
+    # (source_hit) on their own — memory objects never occupy result slots —
+    # and skip the memory injection/abstention path (should_inject=False,
+    # empty injectable_blocks). Default false = normal proactive query.
+    source_only: bool = False
 
     def visibility_kind(self) -> str | None:
         if isinstance(self.visibility, VisibilityContextModel):
@@ -153,6 +158,8 @@ class QueryResultResponse(BaseModel):
     artifact_kind: ArtifactKind | None = None
     visibility: str = "private"
     retrieval_source: str | None = None
+    # Source-only search: 1-based rank within the source-only page; None otherwise.
+    raw_rank: int | None = None
 
 
 class InjectableBlockResponse(BaseModel):

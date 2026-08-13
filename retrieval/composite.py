@@ -40,6 +40,7 @@ class CompositeRetrievalProvider(RetrievalProvider):
         include_trace: bool = False,
         require_visibility: bool = False,
         query_actor_ref: str | None = None,
+        target_kind: str | None = None,
     ) -> RetrievalQueryResult:
         lexical_result = self._lexical.query(
             text,
@@ -50,6 +51,7 @@ class CompositeRetrievalProvider(RetrievalProvider):
             include_trace=include_trace,
             require_visibility=require_visibility,
             query_actor_ref=query_actor_ref,
+            target_kind=target_kind,
         )
         if self._vector is None:
             return lexical_result
@@ -62,6 +64,7 @@ class CompositeRetrievalProvider(RetrievalProvider):
             include_trace=include_trace,
             require_visibility=require_visibility,
             query_actor_ref=query_actor_ref,
+            target_kind=target_kind,
         )
         return self._rrf_merge(lexical_result, vector_result, limit, include_trace=include_trace)
 

@@ -106,6 +106,7 @@ def _serialize_result(item: QueryResultItem) -> dict[str, object]:
         "artifact_kind": item.artifact_kind,
         "visibility": item.visibility,
         "retrieval_source": item.retrieval_source,
+        "raw_rank": item.raw_rank,
     }
 
 
@@ -425,6 +426,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             visibility=request.visibility_kind(),
             runtime_context=_deserialize_runtime_context(request.runtime_context),
             trigger_origin=_trigger_origin,
+            source_only=request.source_only,
         )
         lookup_event_id: str | None = None
         if audit_log_enabled:
@@ -472,6 +474,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             runtime_context=_deserialize_runtime_context(request.runtime_context),
             include_trace=True,
             trigger_origin=_validate_trigger_origin(request.trigger_origin),
+            source_only=request.source_only,
         )
         if result.trace is None:
             raise ValueError("debug query must include retrieval trace")

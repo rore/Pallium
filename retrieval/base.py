@@ -25,5 +25,6 @@ class RetrievalProvider(ABC):
         include_trace: bool = False,
         require_visibility: bool = False,
         query_actor_ref: str | None = None,
+        target_kind: str | None = None,
     ) -> RetrievalQueryResult:
         raise NotImplementedError
