@@ -95,6 +95,14 @@ stay reliable over time.
 
 ## Notes
 
+Scope note (revisit before picking this up): this item currently conflates several
+distinct features — staleness, contradiction, container-level reset, topic-level
+reset, and shared-object safety. It should be **split** into separate items when it
+is scheduled, not carried as one block. Also, object-level forget already ships via
+`pallium_forget`, so the user-reset scope here should build on / not duplicate that;
+raw-turn forgetting specifically lives in `add-raw-history-governance`, not here
+(this item is structured-memory only).
+
 Dependency and sequencing notes:
 
 - this feature builds on `add-memory-lifecycle-basics`

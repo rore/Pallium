@@ -1,8 +1,11 @@
+# P0 · Contract & governance
+- add-historical-lookup-funnel-telemetry
+- add-raw-history-governance
+
 # P1 · Historical Lookup
 - add-raw-historical-search-mode
 - add-agent-historical-lookup-tool
 - add-source-context-expansion
-- add-historical-lookup-funnel-telemetry
 
 # Continuous · RAW/DERIVED/HYBRID eval
 - idea-raw-derived-hybrid-shadow-eval
@@ -12,11 +15,11 @@
 - idea-cross-context-work-continuity
 
 # P3 · Shared Knowledge
-- idea-cross-user-raw-history-value
 - idea-visibility-vocab-reconciliation
+- idea-cross-user-raw-history-value
+- add-bounded-memory-lifecycle-hardening
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
-- add-bounded-memory-lifecycle-hardening
 
 # Paused
 - investigate-thread-level-interest-and-threadless-aggregation

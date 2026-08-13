@@ -58,24 +58,43 @@ experiment before the next earns significant investment. Primary KPI: confirmed
 historical-reuse events per 100 substantive sessions. Hard invariant across all
 phases: visibility violations = 0.
 
+vNext is validation-first and experiment-gated: each phase must pass its live
+experiment before the next earns significant investment. Primary KPI: confirmed
+historical-reuse events per 100 *eligible* sessions, reported as three rungs
+(verified incorporation → judged influence → downstream benefit). Hard invariant
+across all phases: visibility violations = 0, reported with attempted-disallowed-
+access counts/types.
+
+- **Phase 0 (First) — Measurement contract & raw-history governance**: before the
+  tools are exposed, land the linked event chain (`lookup_event_id`, exposed source
+  ids/ranks, expansion parentage, session/agent identity), the eligible-session
+  denominator and retrospective judge protocol, and raw-history governance (redaction
+  on search+expansion, per-neighbor visibility, bounded windows, access audit,
+  raw-turn forgetting, shared-raw revocation). Not experiment-gated; it makes
+  Experiment 1 valid and safe.
 - **Phase 1 (Now) — Historical Lookup**: expose raw-history search as a deliberate
-  agent pull (raw-ranked retrieval mode, `pallium_search_history` tool,
-  source-context expansion) plus funnel telemetry. Gate = Experiment 1: do agents
-  invoke lookup unprompted, and is retrieved history materially used? If not
-  despite strong retrieval, the core thesis is weak.
-- **Continuous — Derived-memory evaluation (RAW/DERIVED/HYBRID + fidelity)**: not a
-  sequential phase. Once raw search lands, continuously shadow RAW/DERIVED/HYBRID on
-  real lookups and separately sample source→derived fidelity (to tell a derivation
-  failure from a retrieval failure); derivation earns more responsibility only if it
-  repeatedly beats raw on a measured dimension. Gate = Experiment 3.
+  agent pull, shipped as one vertical slice (source-only retrieval target,
+  `pallium_search_history` tool, source-context expansion). Note: routing already
+  scores/selects source hits — the gap is a clean source-only target, not a second
+  stack. Gate = Experiment 1: do agents invoke lookup unprompted, and is retrieved
+  history materially used? If not despite strong retrieval, the core thesis is weak.
+- **Continuous — Derived-memory evaluation (RAW/DERIVED/HYBRID + coverage/fidelity)**:
+  not a sequential phase. Decompose why a DERIVED result loses into four seams
+  (retrieval / extraction / derived-retrieval / representation). The shadow measures
+  retrieval + representation (equal-token budgets; a shadow can't measure consumption)
+  once raw search lands; the extraction-coverage/fidelity eval starts from source
+  *episodes* (avoiding survivorship bias) and can start immediately. Gate = Experiment 3.
 - **Phase 2 (Next) — Continuity across sessions/agents**: reduce the manual
   "summarize this for the other session" / "go read that transcript" handoff. Prove
   identified-source handoff value against manual baselines *before* building
   automatic session correlation or `agent_ref` routing. Gate = Experiment 2.
-- **Phase 3 (Later) — Shared knowledge**: first test whether scoped *raw* history
-  from one user materially helps another (Experiment 4, needs a real multi-user
-  deployment); reconcile visibility vocabulary first; build the shared-derivation
-  mechanism (design-007 Phase 2/3) only if the raw-first result requires it.
+- **Phase 3 (Later) — Shared knowledge**: cross-user raw sharing is a *security
+  mechanism*, not a substrate in hand — current enforcement has no per-user grant.
+  First reconcile the authorization semantics and define an explicit raw-history
+  sharing/grant + revocation contract; then test whether *granted* raw history from
+  one user materially helps another (Experiment 4, needs a real multi-user
+  deployment); build the shared-derivation mechanism (design-007 Phase 2/3, now
+  uncommitted) only if the raw-first result requires it.
 
 Rationale (from read-only corpus studies): useful cross-session history exists for
 ~38% of real prompts and is ~88% experiential; raw hybrid search already surfaces

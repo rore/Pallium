@@ -31,6 +31,12 @@ eval (`idea-raw-derived-hybrid-shadow-eval`) is trying to measure against.
 - a `GET /source/{id}/context` endpoint + `service.get_source_context` returning
   neighboring raw turns in the same `thread_ref`, visibility-enforced and
   redaction-aware (mirror `get_memory_expand`)
+- **per-neighbor visibility checks**: each neighbor turn is enforced individually
+  (a thread can be mixed-visibility) — never widen to the whole thread
+- a **bounded expansion window** (neighbor count + token limit) so expansion can't
+  return unbounded raw context
+- accept and record a `parent_lookup_id` so an expansion links back to the lookup
+  that produced the `source_item_id` (feeds the measurement event chain)
 - return the derived memories this source supports (reverse `supported_by`) only
   behind an explicit opt-in parameter, as a clearly separate field — never mixed
   into the raw-turn payload by default
@@ -45,11 +51,13 @@ eval (`idea-raw-derived-hybrid-shadow-eval`) is trying to measure against.
 
 ## Done When
 
-1. Given a `source_item_id`, a caller can retrieve neighbor raw turns,
-   visibility-enforced; supported memories are returned only when explicitly
-   requested and as a separate field.
-2. The historical-lookup workflow can chain lookup → expand end to end.
-3. Expansion honors visibility fail-closed (0 violations).
+1. Given a `source_item_id`, a caller can retrieve neighbor raw turns within a
+   bounded window, with **per-neighbor** visibility enforcement; supported memories
+   are returned only when explicitly requested and as a separate field.
+2. The historical-lookup workflow can chain lookup → expand end to end, with
+   `parent_lookup_id` linking expansion to its lookup.
+3. Expansion honors visibility fail-closed (0 violations) per neighbor, and respects
+   the expansion window/token bound.
 
 ## Notes
 

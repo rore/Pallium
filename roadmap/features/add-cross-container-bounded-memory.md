@@ -3,7 +3,7 @@ id: add-cross-container-bounded-memory
 title: Add bounded cross-container memory
 status: queued
 priority: medium
-commitment: committed
+commitment: uncommitted
 milestone: pallium-vnext-p3
 ---
 

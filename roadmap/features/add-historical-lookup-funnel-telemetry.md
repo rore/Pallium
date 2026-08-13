@@ -1,69 +1,95 @@
 ---
 id: add-historical-lookup-funnel-telemetry
-title: Historical-lookup funnel telemetry and reuse KPI
+title: Historical-lookup measurement contract and event schema
 status: queued
 priority: high
 commitment: committed
-milestone: pallium-vnext-p1
+milestone: pallium-vnext-p0
 ---
 
 ## Summary
 
-Instrument the historical-reuse funnel so Experiment 1 is measurable: distinguish
-agent-initiated lookups (and separately, whether the user told the agent to search),
-record which lookups returned useful results, and — via retrospective evaluation on
-sampled live turns, not an online detector — estimate historical opportunity and
-material use. Seeds the primary KPI (confirmed reuse events per 100 substantive
-sessions).
+Define — before the lookup tool is exposed — the event schema, denominators, and
+evaluation protocol that make Experiment 1 valid. Establish a linked event chain
+(lookup → exposure → subsequent turn), the "eligible session" denominator, a
+retrospective judge protocol, and a three-rung reuse ladder, so the reuse KPI is a
+defensible measurement rather than a re-run of the old relevance-classification
+problem offline.
 
 ## Why
 
-The KPI and Experiment 1 cannot be computed today: MCP lookups aren't attributable
-(agent pulls are invisible and indistinguishable from user-directed ones), there is
-no "opportunity" denominator, and `referenced_in_next_turn` captures citation, not
-material use. Without this, we can't answer strategy decision-point 1 ("do agents
-actually reuse history?"). Critically, opportunity and material-use must be measured
-retrospectively by a judge over sampled turns — **not** rebuilt as a live production
-router/matcher, which would recreate the exact relevance-classification problem the
-proactive-injection path spent months fighting.
+The KPI cannot be computed today and, worse, is easy to compute *wrongly*. An MCP
+call with an `agent_pull` origin only proves an agent executed a tool — not that it
+decided independently rather than following "search our history"; that distinction
+must be judged from the preceding conversation, not recorded as a deterministic tool
+property. The audit also lacks a reliable event chain: no stable lookup id, raw
+exposures aren't represented in `memory_usage_audit`, expansion has no parent link,
+and there is no eligible-session denominator or tool-exposure population. Reporting
+"reuse events per 100 sessions" on top of that would quietly recreate the relevance
+problem. This item is the contract everything else measures against, so it precedes
+tool exposure.
 
 ## In Scope
 
-- attribute agent-initiated lookups distinctly in `query_audit_log` (an
-  `agent_pull` / `mcp_pull` origin), and record separately whether the user
-  explicitly directed the search — so "agent decided" vs "user told it to" are
-  distinguishable
-- deterministic funnel facts that are cheap and unambiguous to log online: lookup
-  issued, results returned/empty, agent origin; add funnel metric event types
-- **retrospective, sampled** evaluation for the ambiguous stages — historical
-  *opportunity* (should this turn have triggered a lookup?) and *material use* (did
-  the returned history actually shape the subsequent work?) — as an offline judge
-  over query + returned history + subsequent turns, not an online classifier
-- a reuse-events-per-100-sessions rollup (extend the `phase6_measurement.py`
-  template) computed from the deterministic facts + the retrospective sample
-- keep the visibility-violations = 0 gate observable
+**Event chain (deterministic, logged online):**
+- a stable `lookup_event_id` returned to the client on every historical lookup
+- exposed raw source ids and their raw ranks recorded per lookup (a real
+  tool-exposure population, not inferred)
+- `parent_lookup_id` on source-context expansion, linking expansion to its lookup
+- client session + agent identity on the event
+- subsequent-turn observation links (which turns followed the lookup)
+- an `agent_pull` / `mcp_pull` origin marking the call as an agent-issued lookup
+  (distinct from proactive injection) — **without** claiming it proves independent
+  agent decision
+
+**Denominators + protocol (defined before reporting):**
+- explicit definitions of "substantive session" and "eligible session" (a session
+  where historical lookup could plausibly have helped)
+- sampling plan, judge rubric, judge calibration, and reported uncertainty intervals
+- explicit treatment of empty / abandoned lookups
+- user-directed-vs-agent-decided labeled **retrospectively** by the evaluator from
+  the preceding conversation
+
+**Reuse ladder (three distinct rungs, not one blurred metric):**
+1. verified incorporation — retrieved history appears in the agent's reasoning, an
+   action, or the answer (observational, strongest deterministic signal)
+2. judged necessity / influence — a retrospective judge assesses whether the history
+   shaped the work (observational, stronger claim)
+3. downstream benefit — requires controlled exposure, user confirmation, or outcome
+   comparison (not claimable from passive logs)
+
+- historical-opportunity and missed-opportunity remain **sampled diagnostic
+  estimates**; they do not gate the thesis unless judge reliability is demonstrated
+- reuse-events-per-100-eligible-sessions rollup (extend `phase6_measurement.py`)
+- keep visibility violations observable and reported *with* the count and types of
+  attempted disallowed accesses (zero with no adversarial opportunity is not evidence)
 
 ## Out of Scope
 
 - an online "historical opportunity detector" or live material-use matcher —
-  explicitly rejected; these are retrospective sampled evaluations
+  explicitly rejected; opportunity and influence are retrospective sampled evaluations
 - RAW/DERIVED/HYBRID shadow comparison (`idea-raw-derived-hybrid-shadow-eval`)
 - continuation/handoff-success metrics (Phase 2 continuity)
 - cross-user reuse metrics (Phase 3)
 
 ## Done When
 
-1. Agent-initiated lookups are attributable and separable from proactive injection
-   *and* from user-directed lookups in the audit log.
-2. A live window produces a reuse-events-per-100-sessions number plus a
-   lookup→useful→material-use breakdown, with the ambiguous stages measured by a
-   retrospective sampled judge.
-3. Opportunity and material use are evaluated offline on sampled turns, not by a
-   production router.
-4. Visibility violations are observable and reported as 0.
+1. Every lookup returns a `lookup_event_id`; exposures (source ids + ranks),
+   expansion parentage, session/agent identity, and subsequent-turn links are
+   recorded as a linked chain.
+2. "Substantive session," "eligible session," sampling, judge rubric + calibration,
+   uncertainty treatment, and empty/abandoned handling are documented before any
+   "per 100 sessions" number is reported.
+3. The three reuse rungs are reported separately; downstream benefit is only claimed
+   where controlled exposure or confirmation exists.
+4. Visibility violations are reported with attempted-disallowed-access counts/types.
 
 ## Notes
 
+P0 contract: must land before the P1 tool is exposed. The minimal deterministic
+event-logging ships with the P1 vertical slice; this item owns the schema,
+denominators, and judge protocol.
 Guarded paths: `core/service.py` (red), `storage/`, integration hooks. Start with
-`/agent-workflow`. This telemetry is the instrument for Experiment 1's gate.
-Execution context: `docs/designs/015-vnext-historical-work-execution.md` (Phase 1 + Measurement).
+`/agent-workflow`.
+Execution context: `docs/designs/015-vnext-historical-work-execution.md`
+(P0 contract + Measurement model).

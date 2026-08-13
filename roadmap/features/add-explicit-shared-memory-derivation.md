@@ -3,7 +3,7 @@ id: add-explicit-shared-memory-derivation
 title: Add explicit shared-memory derivation
 status: queued
 priority: medium
-commitment: committed
+commitment: uncommitted
 milestone: pallium-vnext-p3
 ---
 
