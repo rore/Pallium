@@ -253,12 +253,100 @@ guarded/High change), that needs human approval — STOP and surface, do not sel
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-(pending implementation)
+Built the new offline package `evals/raw_derived_hybrid/` exactly per the Plan,
+mirroring `evals/derivation_fidelity`'s pure-scoring + IO-separation structure.
+
+- `arms.py` (pure, DB-free/LLM-free): `Candidate`/`Arm`/`DerivedObjectEvidence`
+  structs; `partition_candidates(name, candidates)` assembles an arm and HARD-ERRORS
+  if a memory object leaks into RAW (purity re-asserted, not assumed);
+  `evidence_link_recovery(raw_source_ids, derived_objs_with_evidence)` — the objective
+  symmetric metric labelling each episode both/raw_only/derived_only/neither;
+  `equal_token_budget(items, budget)` — deterministic `ceil(len/4)` truncation at item
+  boundaries (drops whole items, never splits), returns retained count + total tokens;
+  `estimate_tokens` duplicated locally (no shared helper, per Discovery).
+- `represent.py` (pure): `REPRESENTATION_SCHEMA` + system prompt;
+  `build_representation_prompt(query, raw_turns, derived_text, *, sample_ordinal)`
+  (raw_turns = FULL retrieved RAW turns, per-turn-capped 800, distinct per-sample cache
+  key); `RepresentationSample`/`parse_representation_response`;
+  `aggregate_representation` (majority bool + mean/median usability + agreement, empty
+  safe). Axis is query-conditioned answer-surface usability/misleadingness vs the
+  RETRIEVED RAW arm — NOT a source-fidelity re-measurement. `extract_derivation_version`
+  re-imported from `evals.derivation_fidelity.fidelity`.
+- `runner.py`: offline retrieval built via `build_storage_provider(config)` +
+  `build_retrieval_provider(storage)` (config pointed at `--db` via
+  `dataclasses.replace`; frozen AppConfig). Historical queries loaded read-only from
+  `query_audit_log` via a single static parameterized SELECT (expanding IN bind for
+  `--trigger-origin`, default `agent_pull/mcp_pull`; `all` disables). Per query: 3
+  replays with `target_kind` source_item/memory_object/None → arms with
+  ids/ranks/fusion scores; DERIVED evidence resolved via
+  `get_evidence_for_memory_object`; recovery universe unions DERIVED-arm objects with
+  objects linked to RAW-arm source turns (via `list_memory_objects_for_source_items`)
+  so all four recovery labels are reachable; equal-token-budget over rendered arm items
+  (separate axis, not judged); representation judge on each DERIVED object vs FULL RAW
+  turns (N samples, `--judge-samples` default 3; degrades to no-judge). Report stamps
+  derivation version per object + report-time model, seam_note, and header caveats
+  (current-index replay, agent-pull-may-include-MCP-pulls, token-estimate).
+  `main(argv)`/`build_parser()` + `__main__.py`.
+- `docs/context/validation.md`: one new Eval Toolbox row (mirrors the
+  derivation_fidelity row style).
+- `roadmap/ideas/idea-raw-derived-hybrid-shadow-eval.md`: one Notes line reconciling
+  the new-package-vs-`retrieval_ablation`-extension deviation. Frontmatter `status`
+  left `in-progress` (untouched).
+
+Discovery deltas (no Plan deviation, additive detail):
+- Retrieval `query(...)` signature/return type confirmed (see Evidence). Fusion score
+  is `QueryResultItem.score`; candidate id is `source_item_id` (source_hit) or
+  `memory_object_id` (memory_hit); rank = 1-based order in `results`.
+- `run_eval` gained an optional `queries: list[QueryRow]` param so the runner can be
+  tested without seeding `query_audit_log` (the synthetic-DB test seeds one audit row
+  via `write_query_audit_row` AND also covers the explicit-queries bypass).
+- `memory_feedback` secondary signal (WR assumption 2) intentionally NOT consumed —
+  it is a DERIVED-only signal, demoted to advisory, and is not required by any
+  Completion criterion; noted in `seam_note`/caveats rather than mixed into recovery.
+
+## Evidence
+
+Files created:
+- `evals/raw_derived_hybrid/__init__.py`
+- `evals/raw_derived_hybrid/arms.py`
+- `evals/raw_derived_hybrid/represent.py`
+- `evals/raw_derived_hybrid/runner.py`
+- `evals/raw_derived_hybrid/__main__.py`
+- `tests/test_raw_derived_hybrid.py`
+
+Files edited (allowed blue paths only):
+- `docs/context/validation.md` (one Eval Toolbox row)
+- `roadmap/ideas/idea-raw-derived-hybrid-shadow-eval.md` (one Notes line; status untouched)
+
+Tests: `tests/test_raw_derived_hybrid.py` — **19 passed** (arm purity + target_kinds;
+recovery both/raw_only/derived_only/neither + no-evidence + empty; equal-token-budget
+item-boundary + RAW-many-small-vs-DERIVED-few-dense asymmetry + empty; representation
+aggregation + parse + distinct-per-ordinal prompt + provenance; N-independent-draws
+under real `CachedLLMProvider` (misses==N/hits==0); runner three-arms/purity/recovery/
+seam-labels/no-blended-number + no-judge degrade + cached independent draws + explicit
+queries bypass). Run:
+`PYTHONPATH=".local/test-env/site-packages;." <cpython-3.13> -m pytest tests/test_raw_derived_hybrid.py -q` → `19 passed`.
+`python -m evals.raw_derived_hybrid --help` parses.
+Full suite: `3443 passed, 1 failed (pre-existing unrelated test_config), 15 skipped, 2 xfailed` — no regression.
+
+Discovered retrieval signature (P1 `target_kind`):
+```
+RetrievalProvider.query(
+    text: str, limit: int, filters: QueryFilters | None = None, *,
+    visibility: str | None = None, query_container_ref: str | None = None,
+    include_trace: bool = False, require_visibility: bool = False,
+    query_actor_ref: str | None = None, target_kind: str | None = None,
+) -> RetrievalQueryResult
+```
+Return type `RetrievalQueryResult(results: list[QueryResultItem], trace: QueryTrace | None)`.
+`target_kind="source_item"` (RAW) / `"memory_object"` (DERIVED) / `None` (HYBRID) filters
+at the SQL/candidate level (`storage/sqlite_search.py`: two fixed statements before the
+LIMIT), so arms are candidate-level, not post-filtered.
 
 ## Plan review
 
@@ -297,3 +385,30 @@ in the report; "data-read-only, init ensures schema" wording softened; roadmap-t
 Notes line reconciling the `retrieval_ablation`-extension deviation (new package
 because that harness's data source is memory-only). "Curve" softened to equal-budget
 point(s) with an optional multi-budget sweep.
+
+## Result review
+
+Independent clean-context reviewer (fresh subagent; verified every load-bearing claim
+against source, re-ran the tests). Verdict: **PASS-WITH-NITS** — all 7 plan-review
+changes verified correct, and every hard-correctness/safety check passed (pure modules
+genuinely DB/LLM-free; N-independent-draw under a real `CachedLLMProvider`; read-only
+with engine disposal; graceful judge-failure/empty degrade; scope clean; Done-When
+covered, DW3 honestly deferred). No must-fix. Three non-blocking nits — all addressed
+because two touch headline-metric fairness:
+
+1. **Inconsistent RAW rendering in the equal-token-budget axis** — RAW fed *uncapped*
+   turns to the cost axis while HYBRID capped source turns at 800, so a long source turn
+   counted with different token weight in RAW vs HYBRID, skewing the "equal budget" the
+   axis exists to guarantee. → Fixed: the cost axis now renders RAW through the SAME cap
+   as HYBRID (`_render_arm_items`); the judge still receives the full uncapped turns.
+2. **Recovery universe included soft-deleted/candidate objects** — a tombstoned object
+   linked to a RAW source can never enter the DERIVED arm, so it was always labelled
+   `raw_only`, inflating RAW's apparent recovery advantage. → Fixed:
+   `build_recovery_universe` now restricts the RAW-linked object set to retrievable
+   lifecycles (`include_candidates=False, include_soft_deleted=False`). New test
+   `test_recovery_universe_excludes_tombstoned_objects` locks this in.
+3. **`main()` didn't dispose the storage engine** — tidy-up only. → Fixed: best-effort
+   `engine.dispose()` in a `finally`.
+
+Post-fix: `tests/test_raw_derived_hybrid.py` = **19/19 pass** (added the tombstone test);
+full suite green (1 pre-existing unrelated failure).

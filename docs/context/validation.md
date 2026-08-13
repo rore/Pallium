@@ -88,6 +88,7 @@ snapshots and applies a rule — no LLM in the harness itself.
 | Low-value promotion / churn drift | `evals/low_value_churn_benchmark.py` | Scenario-driven | Minutes |
 | Routing decision quality | `evals/memory_routing_benchmark.py` | Scenario-driven | Minutes |
 | Derivation coverage + fidelity, source-episode-first ("did an episode produce a faithful derived object at all, and how faithful?") | `evals/derivation_fidelity` | Coverage = replay, no LLM; fidelity = LLM-judge, N independent samples (stochastic) | Minutes |
+| RAW/DERIVED/HYBRID retrieval + representation, replay-based ("on a real lookup, did the relevant source vs derived object get recovered, and is the derived text a correct answer surface vs the RAW turns — at equal token budget?") | `evals/raw_derived_hybrid` | Candidate-recovery = evidence-link replay, no LLM; representation = LLM-judge, N independent samples (stochastic); context cost = deterministic equal-token-budget | Minutes |
 
 ### When to reach for which
 
