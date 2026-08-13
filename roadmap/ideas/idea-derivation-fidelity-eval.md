@@ -1,7 +1,7 @@
 ---
 id: idea-derivation-fidelity-eval
 title: Source-episode derivation coverage + fidelity evaluation
-status: in-progress
+status: done
 priority: medium
 commitment: committed
 milestone: pallium-vnext-derived-eval
