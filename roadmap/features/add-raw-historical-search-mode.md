@@ -1,7 +1,7 @@
 ---
 id: add-raw-historical-search-mode
 title: Raw historical search retrieval mode
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-p1
