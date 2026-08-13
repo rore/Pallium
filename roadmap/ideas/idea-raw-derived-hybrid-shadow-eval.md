@@ -1,9 +1,9 @@
 ---
 id: idea-raw-derived-hybrid-shadow-eval
 title: RAW / DERIVED / HYBRID retrieval + representation evaluation
-status: queued
+status: in-progress
 priority: medium
-commitment: uncommitted
+commitment: committed
 milestone: pallium-vnext-derived-eval
 ---
 
