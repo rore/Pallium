@@ -62,5 +62,12 @@ eval (`idea-raw-derived-hybrid-shadow-eval`) is trying to measure against.
 
 ## Notes
 
+Governance note (2026-08-13): the per-neighbor visibility, bounded window/token cap,
+and redaction listed above ARE the P0 raw-history governance mechanics for the
+expansion path — `add-raw-history-governance` was re-scoped to raw-turn forgetting and
+delegates these to this item. The `parent_lookup_id` exposure recording here is the
+same exposed-source-ids audit deferred from `add-historical-lookup-funnel-telemetry`
+(build once; serves both the reuse funnel and the raw-read access audit).
+
 Guarded paths: `api/`, `core/service.py` (red). Start with `/agent-workflow`.
 Execution context: `docs/designs/015-vnext-historical-work-execution.md` (Phase 1).
