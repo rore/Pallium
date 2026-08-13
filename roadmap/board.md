@@ -1,6 +1,3 @@
-# P1 · Historical Lookup
-- add-source-context-expansion
-
 # Continuous · RAW/DERIVED/HYBRID eval
 - idea-raw-derived-hybrid-shadow-eval
 - idea-derivation-fidelity-eval
@@ -27,6 +24,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-source-context-expansion
 - add-agent-historical-lookup-tool
 - add-raw-historical-search-mode
 - add-raw-history-governance

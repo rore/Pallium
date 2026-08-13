@@ -1,7 +1,7 @@
 ---
 id: add-source-context-expansion
 title: Source-centric context expansion
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-p1
