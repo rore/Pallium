@@ -59,7 +59,7 @@
           ]
         }
       ],
-      "description": "Red and blue are exclusive zone classifications; at least one must be non-empty. Watch is an additive tag \u00e2\u20ac\u201d paths listed under watch are surfaced in the PR comment regardless of how they're otherwise classified (red, blue, or implicit gray). Files not matched by any zone are treated as gray (the residual bucket)."
+      "description": "Red and blue are exclusive zone classifications; at least one must be non-empty. Watch is an additive tag \u2014 paths listed under watch are surfaced in the PR comment regardless of how they're otherwise classified (red, blue, or implicit gray). Files not matched by any zone are treated as gray (the residual bucket)."
     },
     "boundaries": {
       "type": "array",
@@ -383,7 +383,7 @@
     "suppressions": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Optional. When absent, suppression detection is OFF (spec \u00c2\u00a71.4 compatibility). When present, declares overrides on the vendored marker list at .agent-redline/suppressions.yaml.",
+      "description": "Optional. When absent, suppression detection is OFF (spec \u00a71.4 compatibility). When present, declares overrides on the vendored marker list at .agent-redline/suppressions.yaml.",
       "properties": {
         "useExtensionDefaults": {
           "type": "boolean"

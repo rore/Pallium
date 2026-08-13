@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/rore/agent-workflow/blob/main/core/agent-redline/core/schema/suppressions.schema.json",
   "title": "agent-redline vendored suppressions schema v1",
-  "description": "Schema for .agent-redline/suppressions.yaml \u00e2\u20ac\u201d the vendored marker list each language extension supplies. Bootstrap copies extensions/<name>/suppressions.yaml here at setup time. The reporter reads this file from a fixed path; do not relocate.",
+  "description": "Schema for .agent-redline/suppressions.yaml \u2014 the vendored marker list each language extension supplies. Bootstrap copies extensions/<name>/suppressions.yaml here at setup time. The reporter reads this file from a fixed path; do not relocate.",
   "type": "object",
   "required": [
     "suppressions"

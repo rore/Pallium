@@ -13,8 +13,12 @@ Behaviour:
 - Markers present + already matches -> no write, print "no change" (idempotent).
 - Markers absent -> no write, print "no markers" (the caller handles the
   first-install append; this helper never inserts markers itself).
-- Malformed (end before start, only one marker) -> no write, print "malformed",
-  exit 3 so the caller/agent notices rather than silently trusting it.
+- Malformed (end before start, a lone marker, or more than one marker
+  pair) -> no write, print "malformed", exit 3 so the caller/agent notices
+  rather than silently trusting it or refreshing only the first block.
+
+The refreshed span is rewritten with the file's existing line ending
+(CRLF or LF), so surrounding prose is preserved byte-for-byte.
 
 stdlib only; safe to run repeatedly.
 
@@ -29,18 +33,42 @@ START = "<!-- agent-workflow:agents-section:start -->"
 END = "<!-- agent-workflow:agents-section:end -->"
 
 
+def _detect_newline(text):
+    """Return the file's line ending: '\\r\\n' if any CRLF is present, else '\\n'.
+
+    Used to build the refreshed marker block with the SAME EOL as the
+    surrounding prose, so a CRLF AGENTS.md keeps its bytes instead of
+    being silently rewritten to LF.
+    """
+    return "\r\n" if "\r\n" in text else "\n"
+
+
 def reconcile(text, template_body):
     """Return (new_text, status). status in {updated,no change,no markers,malformed}."""
+    start_count = text.count(START)
+    end_count = text.count(END)
+    if start_count == 0 and end_count == 0:
+        return text, "no markers"
+    # Exactly one start AND one end is the only well-formed shape. Two
+    # complete blocks (2/2), a lone marker (1/0, 0/1), or any other count
+    # is malformed — refreshing "the first" would leave a stale block
+    # behind, which is worse than refusing.
+    if start_count != 1 or end_count != 1:
+        return text, "malformed"
     s = text.find(START)
     e = text.find(END)
-    if s == -1 and e == -1:
-        return text, "no markers"
-    if s == -1 or e == -1 or e < s:
+    if e < s:
         return text, "malformed"
     before = text[:s]
     after = text[e + len(END):]
-    body = template_body.strip("\n")
-    new_block = START + "\n" + body + "\n" + END
+    eol = _detect_newline(text)
+    # strip("\r\n") (not just "\n") so a CRLF template doesn't leave a stray
+    # `\r` at the boundaries that would survive normalization below.
+    body = template_body.strip("\r\n")
+    # Normalise the template body to the file's EOL so the whole refreshed
+    # span matches the surrounding prose byte-for-byte.
+    body = body.replace("\r\n", "\n").replace("\n", eol)
+    new_block = START + eol + body + eol + END
     new_text = before + new_block + after
     if new_text == text:
         return text, "no change"
@@ -54,13 +82,16 @@ def main():
     args = ap.parse_args()
 
     try:
-        with open(args.file, encoding="utf-8") as fh:
+        # newline="" preserves the file's existing line endings (universal
+        # newline translation would turn CRLF into LF before we ever see
+        # it, defeating the byte-preservation promise).
+        with open(args.file, encoding="utf-8", newline="") as fh:
             text = fh.read()
     except Exception as exc:
         sys.stderr.write("error: cannot read %s (%s)\n" % (args.file, exc))
         return 1
     try:
-        with open(args.template, encoding="utf-8") as fh:
+        with open(args.template, encoding="utf-8", newline="") as fh:
             template_body = fh.read()
     except Exception as exc:
         sys.stderr.write("error: cannot read %s (%s)\n" % (args.template, exc))

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/rore/agent-workflow/blob/main/core/agent-redline/core/schema/boundary-violations.schema.json",
   "title": "agent-redline boundary-violations report v1",
-  "description": "Schema for the json-violations output format. An adapter (in an extension's scripts/ directory or built into the boundary-rule backend itself) emits a file matching this schema; the reporter ingests it via --boundary-format json-violations. See docs/EXTENSIONS.md \u00c2\u00a7 'Backends without machine-readable output' for the pattern.",
+  "description": "Schema for the json-violations output format. An adapter (in an extension's scripts/ directory or built into the boundary-rule backend itself) emits a file matching this schema; the reporter ingests it via --boundary-format json-violations. See docs/EXTENSIONS.md \u00a7 'Backends without machine-readable output' for the pattern.",
   "type": "object",
   "required": [
     "violations"
