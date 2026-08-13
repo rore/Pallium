@@ -268,6 +268,31 @@ class PalliumMcpClient:
             {"reason": reason},
         )
 
+    async def forget_source(
+        self,
+        *,
+        source_item_id: str | None = None,
+        container_ref: str | None = None,
+        thread_ref: str | None = None,
+        reason: str,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"reason": reason}
+        if source_item_id is not None:
+            payload["source_item_id"] = source_item_id
+        if container_ref is not None:
+            payload["container_ref"] = container_ref
+        if thread_ref is not None:
+            payload["thread_ref"] = thread_ref
+        # Scope-mode only: when neither an item id nor an explicit container is
+        # given, bound the scope forget to the context container. Never widen a
+        # single-item forget into a scope forget.
+        if source_item_id is None and payload.get("container_ref") is None and self._ctx.container_ref:
+            payload["container_ref"] = self._ctx.container_ref
+        # Record the "who" for audit when the context knows the actor.
+        if getattr(self._ctx, "actor_ref", None):
+            payload["actor_ref"] = self._ctx.actor_ref
+        return await self._post_or_error("/source/forget", payload)
+
     async def record_outcome(
         self,
         *,

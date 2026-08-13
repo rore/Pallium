@@ -1024,6 +1024,50 @@ class PalliumService:
         """
         return self._storage.soft_delete_memory(memory_object_id, reason=reason)
 
+    def forget_source(
+        self,
+        *,
+        source_item_id: str | None = None,
+        container_ref: str | None = None,
+        thread_ref: str | None = None,
+        reason: str,
+        actor_ref: str | None = None,
+    ) -> dict:
+        """User-requested forgetting of raw source turns (soft + auditable).
+
+        Distinct from ``forget_memory`` (memory objects) and from the TTL
+        retention hard-delete. After a forget, the turn no longer appears in
+        query ``source_hit``s or in source expansion, but the row + its index
+        entries persist with an auditable forgotten marker (who/when/why).
+
+        Two modes (exactly one required):
+        - ``source_item_id``: forget a single raw turn.
+        - ``container_ref`` (optional ``thread_ref``): point-in-time bulk forget
+          of the bounded scope; turns ingested later are unaffected.
+        """
+        if source_item_id is not None:
+            forgotten = self._storage.forget_source_item(
+                source_item_id, reason=reason, actor_ref=actor_ref,
+            )
+            return {
+                "source_item_id": source_item_id,
+                "forgotten": forgotten,
+                "count": 1 if forgotten else 0,
+            }
+        if container_ref is not None:
+            count = self._storage.forget_source_scope(
+                container_ref=container_ref,
+                thread_ref=thread_ref,
+                reason=reason,
+                actor_ref=actor_ref,
+            )
+            return {
+                "container_ref": container_ref,
+                "thread_ref": thread_ref,
+                "count": count,
+            }
+        raise ValueError("forget_source requires source_item_id or container_ref")
+
     def record_procedure_outcome(
         self,
         *,
@@ -1329,6 +1373,12 @@ class PalliumService:
             try:
                 item = self._storage.get_source_item(ref.source_item_id)
             except KeyError:
+                continue
+            # Fail-closed raw-turn forgetting: a forgotten source turn is never
+            # surfaced through expansion (this loop does not run matches_filters,
+            # so the exclusion is applied explicitly here, mirroring the
+            # per-item is_visible drop below).
+            if item.forgotten:
                 continue
             effective_actor_ref = query_actor_ref or memory_object.actor_ref
             if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_actor_ref=effective_actor_ref):

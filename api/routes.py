@@ -11,6 +11,8 @@ from api.schemas import (
     FlagMemoryResponse,
     ForgetMemoryRequest,
     ForgetMemoryResponse,
+    ForgetSourceRequest,
+    ForgetSourceResponse,
     ItemAndQueryDebugResponse,
     ItemAndQueryRequest,
     ItemAndQueryResponse,
@@ -865,6 +867,25 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             memory_object_id=memory_object_id,
             forgotten=forgotten,
         )
+
+    @router.post("/source/forget", response_model=ForgetSourceResponse)
+    def forget_source(request: ForgetSourceRequest) -> ForgetSourceResponse:
+        if request.source_item_id is None and request.container_ref is None:
+            raise HTTPException(
+                status_code=422,
+                detail="source_item_id or container_ref is required",
+            )
+        try:
+            result = service.forget_source(
+                source_item_id=request.source_item_id,
+                container_ref=request.container_ref,
+                thread_ref=request.thread_ref,
+                reason=request.reason,
+                actor_ref=request.actor_ref,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="source item not found")
+        return ForgetSourceResponse(**result)
 
     @router.post("/memory/record-outcome", response_model=RecordOutcomeResponse)
     def record_outcome(request: RecordOutcomeRequest) -> RecordOutcomeResponse:

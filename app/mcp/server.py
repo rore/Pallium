@@ -323,6 +323,35 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         return json.dumps(result, indent=2, default=str)
 
     @server.tool()
+    async def pallium_forget_source(
+        reason: str,
+        source_item_id: str | None = None,
+        thread_ref: str | None = None,
+    ) -> str:
+        """Forget raw source turns (prior conversation/agent turns). Soft + auditable.
+
+        Use when a user asks to forget specific raw history so it no longer
+        surfaces in search results or source-context expansion. This acts on
+        raw SOURCE TURNS — distinct from pallium_forget, which soft-deletes
+        derived MEMORY objects. Neither affects the other.
+
+        Provide `source_item_id` to forget one turn, or omit it and pass
+        `thread_ref` to forget the current container's turns in that thread
+        (point-in-time: turns added later are not affected). The row is kept
+        for audit (who/when/why); it is not hard-deleted. Idempotent per turn.
+        `reason` is required (max 500 chars)."""
+        ctx = resolve_context()
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        client = PalliumMcpClient(ctx)
+        result = await client.forget_source(
+            source_item_id=source_item_id,
+            thread_ref=thread_ref,
+            reason=reason,
+        )
+        return json.dumps(result, indent=2, default=str)
+
+    @server.tool()
     async def pallium_record_outcome(
         procedure_id: str,
         outcome: Literal["success", "failure", "inconclusive"],

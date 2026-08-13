@@ -587,6 +587,34 @@ class ForgetMemoryResponse(BaseModel):
     forgotten: bool  # False on second call (idempotent)
 
 
+class ForgetSourceRequest(BaseModel):
+    """User-requested forgetting of raw source turns (soft + auditable).
+
+    Distinct from ForgetMemoryRequest (memory objects) and from the TTL
+    retention hard-delete. Supply EITHER ``source_item_id`` (forget one turn)
+    OR ``container_ref`` (optional ``thread_ref``) for a point-in-time bulk
+    forget of that bounded scope. The row + index entries persist; the turn is
+    excluded from query ``source_hit``s and expansion. ``actor_ref`` records
+    the "who" for audit.
+
+    Idempotent per item: re-forgetting an already-forgotten turn does not
+    modify it.
+    """
+    source_item_id: str | None = None
+    container_ref: str | None = None
+    thread_ref: str | None = None
+    reason: str = Field(min_length=1, max_length=_MAX_REASON_CHARS)
+    actor_ref: str | None = None
+
+
+class ForgetSourceResponse(BaseModel):
+    count: int  # number of turns newly forgotten (0 if already forgotten)
+    source_item_id: str | None = None
+    forgotten: bool | None = None  # single-item mode only; False if idempotent no-op
+    container_ref: str | None = None
+    thread_ref: str | None = None
+
+
 class RecordOutcomeRequest(BaseModel):
     """pallium_record_outcome: link outcome to a procedure / operational memory.
 

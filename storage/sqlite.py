@@ -493,6 +493,68 @@ class SQLiteStorageProvider(
             return True
         return self._with_retry(_do)
 
+    def forget_source_item(
+        self,
+        source_item_id: str,
+        *,
+        reason: str,
+        actor_ref: str | None = None,
+        forgotten_at: datetime | None = None,
+    ) -> bool:
+        """User-requested forget of a single raw source turn.
+
+        Soft + auditable: sets forgotten_at / forgotten_by / forgotten_reason;
+        the row and its index entries persist (retrieval filters it out at
+        candidate time). Distinct from ``soft_delete_memory`` (memory objects).
+
+        Idempotent: returns False without modifying an already-forgotten row;
+        first forget returns True. Raises KeyError if the item does not exist.
+        """
+        def _do(session):
+            record = session.get(SourceItemRecord, source_item_id)
+            if record is None:
+                raise KeyError(source_item_id)
+            if record.forgotten_at is not None:
+                return False
+            record.forgotten_at = forgotten_at or utc_now()
+            record.forgotten_by = actor_ref
+            record.forgotten_reason = reason
+            return True
+        return self._with_retry(_do)
+
+    def forget_source_scope(
+        self,
+        *,
+        container_ref: str,
+        thread_ref: str | None = None,
+        reason: str,
+        actor_ref: str | None = None,
+        forgotten_at: datetime | None = None,
+    ) -> int:
+        """Point-in-time bulk forget of raw turns within a bounded scope.
+
+        Marks every currently-present, not-yet-forgotten source item in the
+        (container_ref[, thread_ref]) scope as forgotten. This is point-in-time:
+        turns ingested AFTER the call are unaffected (no standing rule).
+        Returns the number of rows newly forgotten. ``container_ref`` is
+        required so the scope is always bounded to one container.
+        """
+        def _do(session):
+            stmt = select(SourceItemRecord).where(
+                SourceItemRecord.container_ref == container_ref,
+                SourceItemRecord.forgotten_at.is_(None),
+            )
+            if thread_ref is not None:
+                stmt = stmt.where(SourceItemRecord.thread_ref == thread_ref)
+            records = session.scalars(stmt).all()
+            ts = forgotten_at or utc_now()
+            for record in records:
+                record.forgotten_at = ts
+                record.forgotten_by = actor_ref
+                record.forgotten_reason = reason
+            return len(records)
+        return self._with_retry(_do)
+
     def correct_memory_payload(
         self,
         memory_object_id: str,
