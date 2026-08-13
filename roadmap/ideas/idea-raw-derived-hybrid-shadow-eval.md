@@ -1,9 +1,9 @@
 ---
 id: idea-raw-derived-hybrid-shadow-eval
 title: RAW / DERIVED / HYBRID retrieval + representation evaluation
-status: queued
+status: in-progress
 priority: medium
-commitment: uncommitted
+commitment: committed
 milestone: pallium-vnext-derived-eval
 ---
 
@@ -75,3 +75,8 @@ seams) and a later controlled-exposure step for consumption. Feeds strategy
 decision-point 3.
 Execution context: `docs/designs/015-vnext-historical-work-execution.md`
 (Continuous evaluation track).
+
+- Built as a NEW package `evals/raw_derived_hybrid/` rather than extending
+  `evals/retrieval_ablation/`: that harness's `candidate_scores_json` data source is
+  memory-object-only (no `source_item_id`/`raw_rank`), so it cannot host a RAW arm —
+  the eval re-runs (replays) retrieval at candidate level via `target_kind` instead.
