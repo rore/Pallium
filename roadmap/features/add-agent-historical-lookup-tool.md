@@ -1,7 +1,7 @@
 ---
 id: add-agent-historical-lookup-tool
 title: Agent-facing historical lookup tool
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-p1

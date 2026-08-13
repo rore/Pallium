@@ -1,5 +1,4 @@
 # P1 · Historical Lookup
-- add-agent-historical-lookup-tool
 - add-source-context-expansion
 
 # Continuous · RAW/DERIVED/HYBRID eval
@@ -28,6 +27,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-agent-historical-lookup-tool
 - add-raw-historical-search-mode
 - add-raw-history-governance
 - add-historical-lookup-funnel-telemetry
