@@ -25,6 +25,10 @@ from sqlalchemy import text
 from tests.config_helpers import build_llm_test_config
 from tests.stub_providers import TieredMemorySemanticProvider
 
+# Drives the full ingest→search→expand→loader pipeline via TestClient +
+# drain_processing_queue. Fast (~3s) — stays in the default CI gate (NOT
+# slow-marked): this is core historical-lookup correctness, not a benchmark.
+
 CONTAINER = "chat:funnel"
 THREAD = "chat:funnel:thread-1"
 _USER = "Decision: use item event time for reservation ordering to avoid duplicate holds."
@@ -206,3 +210,171 @@ def test_forgotten_source_excluded_from_exposed(monkeypatch, test_db_url: str) -
         latest = lookups[-1]
         exposed_ids = {e["source_item_id"] for e in json.loads(latest["exposed_json"])}
         assert drop_id not in exposed_ids
+
+
+# ---------------------------------------------------------------------------
+# Gap 1: chain depth > 2 (persistence-only)
+# ---------------------------------------------------------------------------
+
+
+def test_chain_depth_greater_than_two_persistence_only(monkeypatch, test_db_url: str) -> None:
+    """A depth>2 reuse chain persists — PERSISTENCE-ONLY.
+
+    The API only ever echoes the INPUT parent_lookup_id back
+    (api/routes.py:726 → core/service.py:1609); the expansion row's own
+    minted id (core/service.py:1595) is NEVER surfaced over HTTP. So to
+    build a genuine depth>2 chain the SECOND expand must be fed the FIRST
+    expansion ROW's id read directly from storage — not any value the
+    route returns (feeding the echoed id back would just re-link the same
+    lookup, staying depth-2).
+
+    This guards only that the write ACCEPTS a chained id and persists it:
+    parent_lookup_id is an unvalidated stored string (core/service.py:1602)
+    with NO chain-walking consumer in the loader (the rollup keys on
+    lookup_event_id, never on the parent chain). It asserts nothing about
+    chain semantics, because none exist.
+    """
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="u1", content=_USER, role="user", artifact_kind="message")
+        _ingest(client, source_id="a1", content=_WORK, role="assistant", artifact_kind="assistant_output")
+
+        result = _search_history(client)
+        lookup_id = result["lookup_event_id"]
+        assert lookup_id is not None
+        source_hits = [r for r in result["results"] if r["result_kind"] == "source_hit"]
+        assert source_hits, result
+        anchor_id = source_hits[0]["source_item_id"]
+
+        # Expand #1 — parent is the lookup event (depth 2).
+        resp1 = client.get(
+            f"/source/{anchor_id}/context",
+            params={"container_ref": CONTAINER, "parent_lookup_id": lookup_id},
+        )
+        assert resp1.status_code == 200, resp1.text
+
+        # Read the first expansion ROW's own minted id from storage — the
+        # only way to obtain it (the route never returns it).
+        expansions = _events(client, "expansion")
+        assert len(expansions) == 1
+        first_expansion_row_id = expansions[0]["id"]
+        assert expansions[0]["parent_lookup_id"] == lookup_id
+        assert first_expansion_row_id != lookup_id
+
+        # Expand #2 — parent is the FIRST EXPANSION ROW's id (depth 3).
+        resp2 = client.get(
+            f"/source/{anchor_id}/context",
+            params={"container_ref": CONTAINER, "parent_lookup_id": first_expansion_row_id},
+        )
+        assert resp2.status_code == 200, resp2.text
+        # The route echoes the INPUT id, not the new row's id (regression
+        # guard for the correctness point above).
+        assert resp2.json()["parent_lookup_id"] == first_expansion_row_id
+
+        # A second expansion row persists, carrying the chained parent id.
+        expansions = _events(client, "expansion")
+        assert len(expansions) == 2
+        chained = [e for e in expansions if e["parent_lookup_id"] == first_expansion_row_id]
+        assert len(chained) == 1
+        assert chained[0]["id"] != first_expansion_row_id
+
+
+# ---------------------------------------------------------------------------
+# Gap 2: /status.historical_lookup_funnel.events_recorded increments
+# ---------------------------------------------------------------------------
+
+
+def _events_recorded(client: TestClient) -> int:
+    resp = client.get("/status")
+    assert resp.status_code == 200, resp.text
+    return resp.json()["historical_lookup_funnel"]["events_recorded"] or 0
+
+
+def test_status_events_recorded_increments(monkeypatch, test_db_url: str) -> None:
+    """GET /status.events_recorded reflects each persisted funnel event.
+
+    events_recorded is a global COUNT(*) over the reuse-event table
+    (app/main.py:419-423), so the increment across a single ingest→search
+    →expand chain is exactly the number of persisted events: 1 lookup +
+    1 expansion = 2.
+    """
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="u1", content=_USER, role="user", artifact_kind="message")
+        _ingest(client, source_id="a1", content=_WORK, role="assistant", artifact_kind="assistant_output")
+
+        before = _events_recorded(client)
+
+        result = _search_history(client)  # persists 1 "lookup"
+        lookup_id = result["lookup_event_id"]
+        assert lookup_id is not None
+        source_hits = [r for r in result["results"] if r["result_kind"] == "source_hit"]
+        assert source_hits, result
+        anchor_id = source_hits[0]["source_item_id"]
+
+        resp = client.get(  # persists 1 "expansion"
+            f"/source/{anchor_id}/context",
+            params={"container_ref": CONTAINER, "parent_lookup_id": lookup_id},
+        )
+        assert resp.status_code == 200, resp.text
+
+        after = _events_recorded(client)
+        assert after - before == 2, (before, after)
+
+
+# ---------------------------------------------------------------------------
+# Gap 3: exposed set reflects post-redaction results
+# ---------------------------------------------------------------------------
+
+
+def test_exposed_set_reflects_post_redaction_results(monkeypatch, test_db_url: str) -> None:
+    """The persisted exposed set is derived from the POST-redaction results.
+
+    The lookup event's exposed set is built from ``result.results`` AFTER
+    ``_redact_query_result`` runs (core/service.py:703-726). We prove two
+    things:
+
+    1. Redaction is live on the surface the exposed set is derived from:
+       an ingested secret in the content is redacted out of the returned
+       source-hit excerpt (the raw secret never appears; a ``[REDACTED]``
+       marker does).
+    2. The exposed source_item_ids persisted in the lookup row are exactly
+       the ids of the post-redaction, visibility-filtered result surface —
+       no leaked or extra id (exposed ⊆ visible, and here exposed == the
+       returned source-hit id set).
+
+    LIMITATION: exposed_json stores ids/raw_rank/score only, never content
+    (core/service.py:718-726). So the content-level redaction itself cannot
+    manifest as a difference in the stored exposed set — redaction mutates
+    excerpt/payload text but never drops a result or changes its id. The
+    redaction signal is therefore asserted on the returned surface (1); the
+    exposed set is asserted to reflect that same post-redaction result set
+    by id (2).
+    """
+    secret = "hunter2SuperSecretValue1234567890"  # noqa: S105 - synthetic test fixture, not a real credential
+    content = (
+        f"Deploy note: password={secret} for the reservation ordering "
+        "duplicate holds service."
+    )
+    with _build_client(monkeypatch, test_db_url) as client:
+        sid = _ingest(client, source_id="sec-1", content=content, role="user",
+                      artifact_kind="message")
+
+        result = _search_history(client)
+        source_hits = [r for r in result["results"] if r["result_kind"] == "source_hit"]
+        assert source_hits, result
+
+        # (1) The secret-bearing hit's excerpt is redacted on the surface.
+        hit = next((h for h in source_hits if h["source_item_id"] == sid), None)
+        assert hit is not None, source_hits
+        assert hit["excerpt"] is not None
+        assert secret not in hit["excerpt"]
+        assert "[REDACTED]" in hit["excerpt"]
+
+        # (2) The persisted exposed id set == the post-redaction returned
+        # source-hit id set (no leaked/extra id; exposed ⊆ visible).
+        import json
+        lookups = _events(client, "lookup")
+        assert len(lookups) == 1
+        exposed_ids = {e["source_item_id"] for e in json.loads(lookups[0]["exposed_json"])}
+        returned_ids = {h["source_item_id"] for h in source_hits}
+        assert exposed_ids == returned_ids
+        assert sid in exposed_ids
