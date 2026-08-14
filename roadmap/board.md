@@ -1,6 +1,5 @@
 # P1 · Reuse Measurement
 - idea-reuse-judge-calibration
-- idea-measurement-contract-honesty
 - idea-history-pull-decision-agent-harness
 
 # P2 · Work Continuity
@@ -26,6 +25,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- idea-measurement-contract-honesty
 - add-vnext-performance-and-e2e-validation
 - add-dashboard-operational-and-value-rework
 - add-agent-historical-lookup-exposure

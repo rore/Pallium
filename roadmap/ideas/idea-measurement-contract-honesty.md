@@ -1,9 +1,9 @@
 ---
 id: idea-measurement-contract-honesty
 title: Tighten the historical-reuse measurement contract (arm labels, KPI wording, count-gate in CI)
-status: queued
+status: done
 priority: high
-commitment: uncommitted
+commitment: committed
 milestone: pallium-vnext-p1
 ---
 
