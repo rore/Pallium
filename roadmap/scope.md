@@ -55,12 +55,6 @@ under Paused).
 
 vNext is validation-first and experiment-gated: each phase must pass its live
 experiment before the next earns significant investment. Primary KPI: fraction of
-substantive sessions with ≥1 confirmed historical-reuse × 100 (session incidence,
-capped at 100). Hard invariant across all
-phases: visibility violations = 0.
-
-vNext is validation-first and experiment-gated: each phase must pass its live
-experiment before the next earns significant investment. Primary KPI: fraction of
 *eligible* sessions with ≥1 confirmed historical-reuse × 100 (session incidence,
 capped at 100), reported as three rungs
 (verified incorporation → judged influence → downstream benefit). Hard invariant
