@@ -1,9 +1,9 @@
 ---
 id: idea-reuse-judge-calibration
 title: Reuse-ladder judge calibration (gold set + agreement threshold)
-status: in-progress
+status: done
 priority: high
-commitment: uncommitted
+commitment: committed
 milestone: pallium-vnext-p1
 ---
 
