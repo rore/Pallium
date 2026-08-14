@@ -379,6 +379,32 @@ class TestDashboardEffectivenessReports:
         # The other, unwritten report stays empty-safe
         assert body["reports"]["derivation_fidelity"]["available"] is False
 
+    def test_non_finite_floats_are_sanitized(self, tmp_path: Path, monkeypatch) -> None:
+        """A report with NaN/Infinity (json.loads accepts them) must be coerced
+        to null so the HTTP response is strictly valid JSON — otherwise a
+        browser fetch().json() would reject bare NaN and break the panel."""
+        import json as _json
+        monkeypatch.chdir(tmp_path)
+        research = tmp_path / ".local" / "research"
+        research.mkdir(parents=True)
+        # allow_nan=True (default) writes literal NaN/Infinity into the file.
+        payload = {"coverage": {"item_extraction": {"coverage_rate": float("nan")}},
+                   "fidelity": {"misleading_rate": float("inf")}, "query_count": 3}
+        (research / "derivation_fidelity_report.json").write_text(
+            _json.dumps(payload), encoding="utf-8"
+        )
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard/api/effectiveness/reports")
+        assert resp.status_code == 200
+        # Response body must be strictly-parseable JSON (no bare NaN/Infinity).
+        raw = resp.text
+        assert "NaN" not in raw and "Infinity" not in raw
+        rep = resp.json()["reports"]["derivation_fidelity"]["report"]
+        assert rep["coverage"]["item_extraction"]["coverage_rate"] is None
+        assert rep["fidelity"]["misleading_rate"] is None
+        assert rep["query_count"] == 3
+
     def test_route_ignores_arbitrary_path_param(self, tmp_path: Path, monkeypatch) -> None:
         """Traversal-proof: there is no filename/path param — an arbitrary
         query string resolves the same fixed keys, never an outside file."""

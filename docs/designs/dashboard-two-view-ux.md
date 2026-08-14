@@ -60,7 +60,7 @@ Rules:
 
 ## Constraints honored
 
-Vanilla HTML/CSS/JS, no framework/bundler/build step; single `app/dashboard.html`, JS stays inline (a split would break the HTML-substring tests and needs a build to be worthwhile). Two views via CSS `display` toggle, all elements in the DOM. New endpoint is read-only, on the dashboard router (`/dashboard/api/*`), off the RED `api/routes.py` surface. Every `/dashboard/api/*` still 501s without SQLite.
+Vanilla HTML/CSS/JS, no framework/bundler/build step; single `app/dashboard.html`, JS stays inline (a split would break the HTML-substring tests and needs a build to be worthwhile). Two views via CSS `display` toggle, all elements in the DOM. New endpoint is read-only, on the dashboard router (`/dashboard/api/*`), off the RED `api/routes.py` surface. Every `/dashboard/api/*` still 501s without SQLite — **except** the new file-backed `/dashboard/api/effectiveness/reports`, which reads report files (no DB) and returns 200 without a SQLite backend (its explicit read-only exception).
 
 ## Success = the operator can, in two glances
 

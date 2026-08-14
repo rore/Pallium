@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,6 +40,25 @@ _EFFECTIVENESS_REPORT_PATHS: dict[str, Path] = {
 }
 
 
+def _sanitize_non_finite(obj):
+    """Recursively replace non-finite floats (NaN / ±Infinity) with None.
+
+    Python's ``json.loads`` accepts ``NaN``/``Infinity`` (they can appear in an
+    eval report, e.g. a rate computed as 0/0), but FastAPI's ``JSONResponse``
+    would then re-emit bare ``NaN``/``Infinity`` — invalid JSON that a browser's
+    ``fetch().json()`` rejects, breaking the panel. Coercing to ``None`` keeps
+    the response strictly valid; the renderer already treats missing/null
+    fields as "not available".
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _sanitize_non_finite(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_non_finite(v) for v in obj]
+    return obj
+
+
 def _read_effectiveness_report(path: Path) -> dict:
     """Read one last-written eval JSON report as an empty-safe payload.
 
@@ -55,7 +75,7 @@ def _read_effectiveness_report(path: Path) -> dict:
         return {
             "available": True,
             "last_modified": mtime.isoformat(),
-            "report": data,
+            "report": _sanitize_non_finite(data),
         }
     except Exception:
         logger.warning("effectiveness report unreadable: %s", path, exc_info=True)
