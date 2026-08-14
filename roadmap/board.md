@@ -1,5 +1,7 @@
 # P1 · Reuse Measurement
 - add-historical-lookup-reuse-funnel
+- add-agent-historical-lookup-exposure
+- add-dashboard-operational-and-value-rework
 - add-vnext-performance-and-e2e-validation
 
 # P2 · Work Continuity
