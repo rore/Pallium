@@ -1,5 +1,4 @@
 # P1 · Reuse Measurement
-- add-vnext-performance-and-e2e-validation
 
 # P2 · Work Continuity
 - idea-cross-context-work-continuity
@@ -23,6 +22,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-vnext-performance-and-e2e-validation
 - add-dashboard-operational-and-value-rework
 - add-agent-historical-lookup-exposure
 - add-historical-lookup-reuse-funnel

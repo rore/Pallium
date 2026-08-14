@@ -1,7 +1,7 @@
 ---
 id: add-vnext-performance-and-e2e-validation
 title: Performance validation + end-to-end validation of the vNext work
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-p1
