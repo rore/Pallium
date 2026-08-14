@@ -105,12 +105,25 @@ class InProcessService:
         self._original_build = deps.build_llm_provider
         deps.build_llm_provider = lambda config, **_: TieredMemorySemanticProvider()
         self._deps = deps
-        config = build_llm_test_config(
-            default_use_case="agent_conversation_memory",
-            sqlite_url=f"sqlite:///{db_path}",
-        )
-        self._client = TestClient(create_app(config))
-        self._client.__enter__()
+        self._client = None
+        try:
+            config = build_llm_test_config(
+                default_use_case="agent_conversation_memory",
+                sqlite_url=f"sqlite:///{db_path}",
+            )
+            self._client = TestClient(create_app(config))
+            self._client.__enter__()
+        except BaseException:
+            # Setup failed before close() can run — restore the patched module
+            # global so the rest of the process is not left with the stub, and
+            # unwind any partially-entered client.
+            if self._client is not None:
+                try:
+                    self._client.__exit__(None, None, None)
+                except Exception:  # noqa: BLE001 - best-effort unwind
+                    pass
+            deps.build_llm_provider = self._original_build
+            raise
 
     @property
     def db_path(self) -> Path:
@@ -426,8 +439,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cache-dir", type=Path, default=None, help="LLM cache dir (real runs).")
     parser.add_argument("--no-eval-cache", action="store_true")
     parser.add_argument("--output", type=Path, default=None, help="Write the run JSON here.")
-    parser.add_argument("--keep-db", action="store_true", help="Keep the scratch DB (needed to run the judge over it).")
+    parser.add_argument("--keep-db", action="store_true", help="Keep the scratch DB (requires an explicit --db; needed to run the judge over it).")
     args = parser.parse_args(argv)
+
+    # --keep-db without an explicit --db would "keep" a TemporaryDirectory path
+    # that is deleted on exit — misleading. Require an explicit persistent path.
+    if args.keep_db and args.db is None:
+        parser.error("--keep-db requires an explicit --db PATH (a temp DB is deleted on exit).")
 
     scenarios = load_scenarios(args.scenarios)
     seeds = list(args.seeds)
@@ -451,6 +469,16 @@ def main(argv: list[str] | None = None) -> int:
     else:
         tmpdir = tempfile.TemporaryDirectory(prefix="hpd-scratch-", ignore_cleanup_errors=True)
         db_path = Path(tmpdir.name) / "hpd.db"
+
+    # An --output that resolves onto the DB (or a sidecar) would clobber the
+    # SQLite file with JSON. Reject the collision on canonicalized paths.
+    if args.output is not None:
+        out_resolved = args.output.resolve()
+        db_targets = {Path(str(db_path) + s).resolve() for s in ("", "-wal", "-shm", "-journal")}
+        if out_resolved in db_targets:
+            if tmpdir is not None:
+                tmpdir.cleanup()
+            parser.error(f"--output {args.output} collides with the scratch DB path; choose a different --output.")
 
     provider = _build_agent_provider(dry_run=args.dry_run, cache_dir=args.cache_dir, no_eval_cache=args.no_eval_cache)
     agent = DecisionAgent(provider)

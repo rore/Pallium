@@ -263,3 +263,19 @@ def test_db_reject_existing_then_overwrite(tmp_path) -> None:
     assert rc == 0
     lookups = _reuse_events(db_path, "lookup")
     assert lookups, "overwrite run should have produced fresh lookup events"
+
+
+def test_keep_db_requires_explicit_db() -> None:
+    # --keep-db without --db would "keep" a temp path deleted on exit.
+    with pytest.raises(SystemExit):
+        harness_mod.main(["--dry-run", "--seeds", "0", "--keep-db"])
+
+
+def test_output_db_collision_rejected(tmp_path) -> None:
+    # An --output that resolves onto the DB path would clobber the SQLite file.
+    db_path = tmp_path / "hpd.db"
+    with pytest.raises(SystemExit):
+        harness_mod.main(
+            ["--dry-run", "--seeds", "0", "--eligibility-n", "1",
+             "--db", str(db_path), "--output", str(db_path)]
+        )
