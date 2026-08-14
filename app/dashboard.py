@@ -25,6 +25,42 @@ _DASHBOARD_HTML_PATH = Path(__file__).parent / "dashboard.html"
 # ``_DEFAULT_VISIBLE_LIFECYCLES``; drift between the two is a bug.
 _DASHBOARD_VISIBLE_LIFECYCLES: tuple[str, ...] = ("active", "superseded", "suppressed")
 
+# "How memory helps" view — offline eval reports surfaced read-only.
+# The dashboard serves the LAST-WRITTEN report files only; it never runs the
+# rollup/loader on-request (that would scan ``source_items`` unbounded on a
+# sync handler at 10s cadence). Report keys map to HARDCODED, cwd-relative
+# ``Path`` constants — there is NO user-supplied filename/path, so the route
+# is traversal-proof. A missing dir/file yields a present-but-empty 200 state,
+# never a 404/500. Paths mirror the eval runners' default outputs
+# (``evals/raw_derived_hybrid/runner.py`` + ``evals/derivation_fidelity/runner.py``).
+_EFFECTIVENESS_REPORT_PATHS: dict[str, Path] = {
+    "raw_derived_hybrid": Path(".local") / "research" / "raw_derived_hybrid_report.json",
+    "derivation_fidelity": Path(".local") / "research" / "derivation_fidelity_report.json",
+}
+
+
+def _read_effectiveness_report(path: Path) -> dict:
+    """Read one last-written eval JSON report as an empty-safe payload.
+
+    Returns ``{"available": False, ...}`` when the dir/file is absent or the
+    file is unreadable/corrupt (HTTP stays 200 — the caller renders a friendly
+    "run this eval" empty state). When present, returns the parsed report plus
+    the file's ``last_modified`` mtime (ISO, UTC) for a stale affordance.
+    """
+    try:
+        if not path.exists():
+            return {"available": False, "last_modified": None}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        return {
+            "available": True,
+            "last_modified": mtime.isoformat(),
+            "report": data,
+        }
+    except Exception:
+        logger.warning("effectiveness report unreadable: %s", path, exc_info=True)
+        return {"available": False, "last_modified": None, "error": "unreadable"}
+
 
 def mount_dashboard(app: FastAPI) -> None:
     assets_dir = Path(__file__).resolve().parent.parent / "assets"
@@ -34,6 +70,20 @@ def mount_dashboard(app: FastAPI) -> None:
     def dashboard_page() -> HTMLResponse:
         html = _DASHBOARD_HTML_PATH.read_text(encoding="utf-8")
         return HTMLResponse(content=html)
+
+    @app.get("/dashboard/api/effectiveness/reports")
+    def dashboard_effectiveness_reports() -> JSONResponse:
+        """Serve the last-written offline eval reports for the "How memory
+        helps" view. Read-only, file-backed — does NOT require the SQLite
+        backend and NEVER runs the rollup/loader on-request. Report keys are a
+        fixed, hardcoded set (no user input), so the route is traversal-proof.
+        A missing dir/file returns a present-but-empty 200 state per report.
+        """
+        reports = {
+            key: _read_effectiveness_report(path)
+            for key, path in _EFFECTIVENESS_REPORT_PATHS.items()
+        }
+        return JSONResponse(content={"reports": reports})
 
     @app.get("/dashboard/api/containers")
     def dashboard_containers() -> JSONResponse:
