@@ -43,6 +43,32 @@
         "actor_ref": "user:branch-librarian",
         "source_ref": "memory://ch1/msg-3",
         "occurred_at": "2026-03-11T08:07:00Z"
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "ch1-msg-4",
+        "content_type": "text/plain",
+        "content": "Before the pause we also noted the delayed sync worker only reprocesses holds flagged as pending.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-source-1",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://ch1/msg-4",
+        "occurred_at": "2026-03-11T08:09:00Z"
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "ch1-msg-5",
+        "content_type": "text/plain",
+        "content": "Open follow-up: verify the item event time backfill covers holds created during the sync outage window.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-source-1",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://ch1/msg-5",
+        "occurred_at": "2026-03-11T08:11:00Z"
       }
     ],
     "current_thread_context": [

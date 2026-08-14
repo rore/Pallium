@@ -53,32 +53,75 @@ scenarios ingest and query under private visibility.
 
 ## Result
 
-Run `real-run-s3` — provider `anthropic_claude`, model `claude-sonnet-4-6`,
-3 seeds, top-K = 3, 5 scenarios (4 value + 1 no-value guard).
+Run `real-run-s3-v2` — provider `anthropic_claude`, model `claude-sonnet-4-6`,
+3 seeds, top-K = 3, 5 scenarios (4 value + 1 no-value guard). (This is the
+corrected re-run after review; see "Corrections" below.)
 
-| Arm | Mean correctness (value scenarios) | Mean user-orchestration cost (tokens) |
+| Arm | Mean correctness ± spread (value scenarios) | Mean user-orchestration cost (tokens) |
 |---|---|---|
-| `no_memory` | 0.58 | 0.0 |
-| `pull_backed` | 6.00 | 18.8 |
-| `manual_transcript` | 6.00 | 50.2 |
-| `manual_summary` | 6.00 | 47.6 |
+| `no_memory` | 0.50 ± 0.00 | 0.0 |
+| `pull_backed` | 6.00 ± 0.00 | 19.75 |
+| `manual_transcript` | 6.00 ± 0.00 | 70.75 |
+| `manual_summary` | 6.00 ± 0.00 | 55.0 |
 
-- **Consensus winner: `pull_backed` in all 4 value scenarios** (3/3 seeds each).
+Spread is the mean per-scenario standard deviation of correctness across the 3
+repeatability samples; `± 0.00` means the provider produced stable continuations
+for these inputs (measured, not omitted).
+
+- **Consensus winner: `pull_backed` in all 4 value scenarios** (3/3 samples each).
 - Pull vs `no_memory`: pull wins 4/4 (memory-free continuation loses prior-work
   understanding).
 - Pull vs each manual baseline: **tie on correctness** 4/4, with pull at
-  ~2.5–2.7× lower user-orchestration cost.
-- No-value guard (`same-thread-sufficient-no-value`): `no_memory` wins 3/3 — the
-  receiving thread was already sufficient and pull did not overreach.
+  ~2.8–3.6× lower user-orchestration cost (19.75 vs 55.0 / 70.75).
+- No-value guard (`same-thread-sufficient-no-value`): `no_memory` wins 3/3. The
+  winner rule is now identical for value and no-value scenarios, so a memory arm
+  strictly exceeding `no_memory` here *would* flip the winner — the guard is
+  falsifiable, and it held.
 
-Per-scenario, the pull arm recovered 2–3 source hits and expanded 2–6 neighbor
-turns in 3–4 agent-side round-trips.
+Per-scenario, the pull arm recovered 2–5 source hits; after de-duplicating
+overlapping expansion windows it added 0–2 *new* neighbor turns (0 when every
+in-window turn was already a ranked hit) in 3–4 agent-side round-trips.
 
-**Headline:** on these authored scenarios, pointer+pull preserved manual-baseline
-correctness at strictly lower user-orchestration cost. The shipped P1 primitives
-are sufficient to stand up the handoff without any new mechanism.
+**Headline:** on these authored scenarios, pointer+pull was at least as correct
+as the manual baselines (pull mean 6.00 vs manual mean 6.00) at strictly lower
+user-orchestration cost. The shipped P1 primitives are sufficient to stand up the
+handoff without any new mechanism.
+
+## Corrections vs the first run
+
+The first run (`real-run-s3`) reported the same *direction* of result, but a
+review surfaced methodology bugs that this run fixes; the conclusion is unchanged
+but now rests on corrected measurement:
+
+- **No-value guard made falsifiable.** The winner selection previously hard-coded
+  `no_memory` for no-value scenarios, so the guard could never fail. It now uses
+  the same rule as value scenarios (highest correctness among non-overreaching
+  arms; ties to lowest cost, which `no_memory` wins at cost 0).
+- **Expansion turns de-duplicated.** Overlapping `/source/{id}/context` windows
+  previously double-counted turns (e.g. 6 "expansions" on a 5-turn thread),
+  inflating the pull turn count and diverging from the single-copy transcript.
+  Turns are now included once; the long-thread scenario shows 2 genuine
+  expansions, others 0.
+- **Cost aggregate scoped to value scenarios**, matching the correctness column
+  (previously it averaged over all scenarios).
+- **Headline predicates tightened** to exactly match the wording: "at least as
+  correct" = pull mean ≥ manual mean (no tolerance), "strictly lower cost" = pull
+  strictly below each manual arm.
+- **Spread reported** per arm.
 
 ## What this does and does not prove
+
+- **Discriminator is cost, not correctness.** With Sonnet and faithful context,
+  every context-bearing arm saturates the rubric (6.00), so correctness does not
+  separate pull from the manual baselines — it only confirms pull does not *lose*
+  understanding. The measured advantage is the orchestration-cost proxy.
+- **Authored scenarios bound realism.** Five hand-written scenarios in a single
+  container with clean, on-topic prior turns are an upper bound on retrieval
+  quality. Messier corpora, competing topics, and larger histories would stress
+  `source_only` lexical/vector recall and the expansion window — not exercised
+  here.
+- **No session identity, no cross-agent routing.** The source is identified only
+  by shared container; this says nothing about automatic session correlation or
 
 - **Discriminator is cost, not correctness.** With Sonnet and faithful context,
   every context-bearing arm saturates the rubric (6.00), so correctness does not
@@ -102,14 +145,15 @@ are sufficient to stand up the handoff without any new mechanism.
 ## Re-run commands
 
 ```bash
-# Real CPython (SAP-IT ASR blocks *\Scripts\python.exe stubs)
-PY="C:/Users/I347041/AppData/Roaming/uv/python/cpython-3.13-windows-x86_64-none/python.exe"
+# Point PY at a real CPython interpreter (some managed environments block the
+# per-venv Scripts/python.exe stub launchers; use the interpreter directly).
+PY="/path/to/cpython/python"   # e.g. a real python3.12+ binary
 
 # Deterministic self-test (no live LLM) + reuse-regression guard
 PYTHONPATH="<repo>/.local/test-env/site-packages;." "$PY" -m pytest tests/test_continuity_handoff_benchmark.py -m slow -n0 -q
 
-# Real multi-seed run (uses the repo LLM provider config + PALLIUM_HAI_API_KEY)
-PALLIUM_CONFIG_FILE="<repo>/pallium.local.toml" PALLIUM_HAI_API_KEY="$ANTHROPIC_AUTH_TOKEN" \
+# Real multi-seed run (uses the repo LLM provider config + the provider API key)
+PALLIUM_CONFIG_FILE="<repo>/pallium.local.toml" PALLIUM_HAI_API_KEY="<provider-api-key>" \
 PYTHONPATH="<repo>/.local/test-env/site-packages;." "$PY" \
   -m evals.continuity_handoff_benchmark --seeds 3 --cache-dir .local/llm-cache
 ```

@@ -11,6 +11,9 @@ from evals.continuity_handoff_benchmark import (
     ARM_MANUAL_TRANSCRIPT,
     ARM_NO_MEMORY,
     ARM_PULL_BACKED,
+    ARMS,
+    _majority,
+    _seed_winner,
     run_continuity_handoff_benchmark,
 )
 from providers.llm.base import LLMJsonResponse
@@ -20,6 +23,11 @@ from tests.tiered_memory_stub_providers import TieredMemorySemanticProvider
 pytestmark = pytest.mark.slow
 
 SCENARIOS = Path("evals/continuity_handoff/scenarios.json")
+
+
+def _prior_event_counts() -> dict[str, int]:
+    scns = json.loads(SCENARIOS.read_text(encoding="utf-8"))
+    return {s["scenario_id"]: len(s.get("prior_events", [])) for s in scns}
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
@@ -142,10 +150,24 @@ def test_handoff_benchmark_emits_four_arms_and_consensus(monkeypatch, tmp_path: 
             assert cost[ARM_PULL_BACKED] < cost[ARM_MANUAL_TRANSCRIPT]
 
     # Pull arm actually recovered raw source context via source_only + expansion.
+    prior_counts = _prior_event_counts()
+    total_expansion = 0
     for sid, r in results.items():
         if r["should_memory_help"]:
             assert r["pull_source_hit_count"] > 0, f"{sid} recovered no source hits"
-            assert r["pull_agent_roundtrips"] >= 2  # 1 search + >=1 expansion
+            assert r["pull_agent_roundtrips"] >= 2  # 1 search + >=1 expansion call
+            total_expansion += r["pull_expansion_turn_count"]
+            # De-dup invariant: every pull turn (ranked hit + expansion) is unique
+            # and drawn from prior_events, so the total cannot exceed the thread.
+            ranked = min(r["top_k"], r["pull_source_hit_count"])
+            assert ranked + r["pull_expansion_turn_count"] <= prior_counts[sid], (
+                f"{sid} pull turns exceed thread size -> turns not de-duplicated"
+            )
+    # Expansion path genuinely returned turns somewhere (not just search excerpts).
+    assert total_expansion > 0
+    # The long-thread scenario has neighbors beyond the top-K ranked hits, so its
+    # expansion must be strictly positive (a failed expansion cannot pass this).
+    assert results["resume-investigation-after-pause"]["pull_expansion_turn_count"] > 0
 
     # On a correctness tie among memory arms the harness prefers lowest-cost pull.
     for sid, r in results.items():
@@ -158,7 +180,7 @@ def test_handoff_benchmark_emits_four_arms_and_consensus(monkeypatch, tmp_path: 
 
     # Headline booleans are computed and coherent.
     assert isinstance(summary["pull_preserves_manual_correctness"], bool)
-    assert summary["pull_cheaper_than_manual"] is True
+    assert summary["pull_strictly_cheaper_than_manual"] is True
 
 
 def test_handoff_benchmark_is_seed_stable_under_cache(monkeypatch, tmp_path: Path) -> None:
@@ -180,3 +202,52 @@ def test_handoff_benchmark_is_seed_stable_under_cache(monkeypatch, tmp_path: Pat
     second = json.loads((run("r2") / "summary.json").read_text(encoding="utf-8"))
     assert first["consensus_winner_counts"] == second["consensus_winner_counts"]
     assert first["arm_mean_correctness"] == second["arm_mean_correctness"]
+
+
+def _rubric(total: int, *, overreach: bool = False) -> dict[str, object]:
+    return {"total": total, "overreach": overreach}
+
+
+# Equal cost across arms so ties are decided purely by the fixed arm order,
+# EXCEPT no_memory which the harness always treats as cost 0.
+_EQ_COST = {a: 5 for a in ARMS}
+_EQ_COST[ARM_NO_MEMORY] = 0
+
+
+def test_seed_winner_no_value_guard_is_falsifiable() -> None:
+    # A memory arm that STRICTLY exceeds no_memory must win — otherwise the
+    # no-value guard could never fail. (Regression for CodeRabbit #2.)
+    rubrics = {
+        ARM_NO_MEMORY: _rubric(2),
+        ARM_PULL_BACKED: _rubric(4),
+        ARM_MANUAL_TRANSCRIPT: _rubric(2),
+        ARM_MANUAL_SUMMARY: _rubric(2),
+    }
+    assert _seed_winner(rubrics, _EQ_COST) == ARM_PULL_BACKED
+
+
+def test_seed_winner_ties_go_to_no_memory_by_cost() -> None:
+    # All arms tie on correctness -> lowest user-orchestration cost (no_memory).
+    rubrics = {a: _rubric(2) for a in ARMS}
+    assert _seed_winner(rubrics, _EQ_COST) == ARM_NO_MEMORY
+
+
+def test_seed_winner_excludes_overreaching_arm() -> None:
+    # An overreaching arm cannot win even with the top score; the next-best
+    # non-overreaching arm (tie -> lowest cost) wins instead.
+    rubrics = {
+        ARM_NO_MEMORY: _rubric(3),
+        ARM_PULL_BACKED: _rubric(9, overreach=True),
+        ARM_MANUAL_TRANSCRIPT: _rubric(3),
+        ARM_MANUAL_SUMMARY: _rubric(3),
+    }
+    assert _seed_winner(rubrics, _EQ_COST) == ARM_NO_MEMORY
+
+
+def test_majority_is_explicit_and_order_independent() -> None:
+    assert _majority(["a", "a", "b"])[0] == "a"
+    # A split with no strict plurality returns an explicit tie, regardless of
+    # input order (unlike Counter.most_common). (Regression for CodeRabbit #5.)
+    assert _majority(["a", "b"])[0] == "tie"
+    assert _majority(["b", "a"])[0] == "tie"
+    assert _majority([])[0] == "tie"

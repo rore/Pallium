@@ -29,10 +29,9 @@ pulled agent-side and does not count as user cost).
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import statistics
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,7 +43,8 @@ from fastapi.testclient import TestClient
 from app.config import AppConfig
 from app.dependencies import build_llm_provider
 from app.main import create_app
-from providers.llm.base import LLMJsonResponse, LLMProvider
+from providers.llm.base import LLMProvider
+from providers.llm.cached import CachedLLMProvider
 from evals.work_resumption_benchmark import (
     DIMENSION_ORDER,
     _compare_continuations,
@@ -84,41 +84,20 @@ def _with_private_default(payload: dict[str, Any]) -> dict[str, Any]:
     return updated
 
 
-class _SeededCachingProvider:
-    """Wraps a real LLM provider to (a) perturb generation per seed via a nonce
-    appended to the user prompt — so seeds are genuinely independent samples —
-    and (b) cache responses on disk keyed by the exact prompt, bounding cost
-    across re-runs. Reuses _generate_continuation unchanged (no edit to
-    work_resumption_benchmark)."""
+def _sample_provider(base: LLMProvider, *, sample_index: int, cache_dir: Path | None, model_tag: str) -> LLMProvider:
+    """Return the provider for one repeatability sample.
 
-    def __init__(self, base: LLMProvider, *, seed: int, cache_dir: Path | None) -> None:
-        self._base = base
-        self._seed = seed
-        self._cache_dir = cache_dir
-        if cache_dir is not None:
-            cache_dir.mkdir(parents=True, exist_ok=True)
-
-    def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
-        effective_user = f"{user_prompt}\nRun variant: seed-{self._seed}"
-        if self._cache_dir is not None:
-            key = hashlib.sha256(
-                "\x00".join([system_prompt, effective_user, schema_description]).encode("utf-8")
-            ).hexdigest()
-            cache_file = self._cache_dir / f"{key}.json"
-            if cache_file.exists():
-                cached = json.loads(cache_file.read_text(encoding="utf-8"))
-                return LLMJsonResponse(raw_text=cached["raw_text"], parsed_json=cached["parsed_json"])
-            response = self._base.generate_json(
-                system_prompt=system_prompt, user_prompt=effective_user, schema_description=schema_description
-            )
-            cache_file.write_text(
-                json.dumps({"raw_text": response.raw_text, "parsed_json": response.parsed_json}),
-                encoding="utf-8",
-            )
-            return response
-        return self._base.generate_json(
-            system_prompt=system_prompt, user_prompt=effective_user, schema_description=schema_description
-        )
+    Samples send the **identical** prompt (a genuine repeatability control): the
+    Anthropic API exposes no seed parameter, so any cross-sample variation
+    reflects only the provider's own sampling. When a cache dir is given, each
+    sample gets its own subdirectory so the N draws stay distinct API calls yet
+    reproducible on re-run; the underlying ``CachedLLMProvider`` scopes its key by
+    ``model_tag`` (provider/model identity), so a reused cache dir cannot serve a
+    different model's response.
+    """
+    if cache_dir is None:
+        return base
+    return CachedLLMProvider(base, cache_dir / f"sample-{sample_index}", model_tag=model_tag)
 
 
 def main() -> int:
@@ -167,6 +146,10 @@ def run_continuity_handoff_benchmark(
     else:
         base_provider = answer_provider
 
+    # Non-secret provider/model identity, scoped into the response cache key so a
+    # reused cache dir cannot serve a different model's response.
+    model_tag = f"{config.llm_provider_for_default_use_case or 'provider'}:{config.llm_model_for_default_use_case or 'model'}"
+
     run_id = run_name or _build_run_id(config, seeds)
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -182,6 +165,7 @@ def run_continuity_handoff_benchmark(
                 seeds=seeds,
                 top_k=top_k,
                 cache_dir=cache_dir,
+                model_tag=model_tag,
             )
             results.append(result)
             results_file.write(json.dumps(result) + "\n")
@@ -200,6 +184,7 @@ def _run_scenario(
     seeds: int,
     top_k: int,
     cache_dir: Path | None,
+    model_tag: str,
 ) -> dict[str, Any]:
     should_help = bool(scenario.get("should_memory_help", True))
     arm_context = _build_arm_contexts(scenario=scenario, config=config, top_k=top_k)
@@ -214,15 +199,17 @@ def _run_scenario(
         ARM_MANUAL_SUMMARY: _estimate_tokens(arm_context[ARM_MANUAL_SUMMARY]["user_supplied_text"]),
     }
 
-    # Per-arm, per-seed continuation + rubric. Rubric scorer is deterministic;
-    # only generation is stochastic, hence the multi-seed sampling.
+    # Per-arm, per-sample continuation + rubric. The rubric scorer is
+    # deterministic; only generation is stochastic. Every sample sends the
+    # identical prompt (repeatability control), so the observed spread reflects
+    # the provider's own sampling — zero spread means it was deterministic here.
     per_arm_seed_scores: dict[str, list[int]] = {arm: [] for arm in ARMS}
     per_arm_seed_rubrics: dict[str, list[dict[str, Any]]] = {arm: [] for arm in ARMS}
     per_arm_seed_continuations: dict[str, list[dict[str, Any]]] = {arm: [] for arm in ARMS}
     per_seed_winners: list[str] = []
 
     for seed in range(seeds):
-        provider = _SeededCachingProvider(base_provider, seed=seed, cache_dir=cache_dir)
+        provider = _sample_provider(base_provider, sample_index=seed, cache_dir=cache_dir, model_tag=model_tag)
         seed_rubrics: dict[str, dict[str, Any]] = {}
         for arm in ARMS:
             continuation = _generate_continuation(
@@ -243,7 +230,7 @@ def _run_scenario(
             per_arm_seed_rubrics[arm].append(rubric)
             per_arm_seed_continuations[arm].append(continuation)
             seed_rubrics[arm] = rubric
-        per_seed_winners.append(_seed_winner(seed_rubrics, orchestration_cost, should_help))
+        per_seed_winners.append(_seed_winner(seed_rubrics, orchestration_cost))
 
     consensus_winner, winner_votes = _consensus(per_seed_winners)
 
@@ -261,7 +248,8 @@ def _run_scenario(
     }
 
     # Pairwise consensus: pull vs each manual/no-memory baseline, using the
-    # reused _compare_continuations verdict, majority-voted across seeds.
+    # reused _compare_continuations verdict, with the explicit majority/tie
+    # policy (same policy as the per-scenario consensus winner).
     pairwise = {}
     for other in (ARM_NO_MEMORY, ARM_MANUAL_TRANSCRIPT, ARM_MANUAL_SUMMARY):
         verdicts = [
@@ -274,9 +262,10 @@ def _run_scenario(
         ]
         # Map _compare_continuations vocabulary (memory_backed==pull, baseline==other).
         mapped = [{"memory_backed": ARM_PULL_BACKED, "baseline": other, "tie": "tie"}[v] for v in verdicts]
+        consensus, _ = _majority(mapped)
         pairwise[f"pull_vs_{other}"] = {
             "per_seed": mapped,
-            "consensus": Counter(mapped).most_common(1)[0][0],
+            "consensus": consensus,
         }
 
     return {
@@ -299,24 +288,42 @@ def _run_scenario(
     }
 
 
-def _seed_winner(seed_rubrics: dict[str, dict[str, Any]], cost: dict[str, int], should_help: bool) -> str:
-    """Winner for a single seed: highest correctness; ties broken by LOWER
-    user-orchestration cost (the experiment's whole point). For no-value
-    scenarios the receiving thread is already sufficient, so no_memory wins
-    unless a memory arm strictly and non-overreachingly exceeds it."""
+def _seed_winner(seed_rubrics: dict[str, dict[str, Any]], cost: dict[str, int]) -> str:
+    """Winner for a single sample, computed identically for value and no-value
+    scenarios so the no-value guard is FALSIFIABLE.
+
+    Winner = the arm with the highest correctness among arms that did not
+    overreach (drag in forbidden/stale content); ties are broken by LOWER
+    user-orchestration cost (the experiment's point), then by a fixed arm order.
+    Because ``no_memory`` has cost 0 it wins any tie it is part of — so a memory
+    arm can only win by *strictly* exceeding it. In a no-value scenario, where
+    the receiving thread is already sufficient, that means a memory arm winning
+    is a real guard failure, not a foregone conclusion.
+    """
     totals = {arm: int(seed_rubrics[arm]["total"]) for arm in ARMS}
-    if not should_help:
+    eligible = [arm for arm in ARMS if not seed_rubrics[arm]["overreach"]]
+    if not eligible:
         return ARM_NO_MEMORY
-    best_score = max(totals.values())
-    tied = [arm for arm in ARMS if totals[arm] == best_score]
-    if len(tied) == 1:
-        return tied[0]
+    best_score = max(totals[arm] for arm in eligible)
+    tied = [arm for arm in eligible if totals[arm] == best_score]
     return min(tied, key=lambda a: (cost[a], ARMS.index(a)))
 
 
+def _majority(items: list[str]) -> tuple[str, dict[str, int]]:
+    """Explicit majority policy: return the strict plurality winner, or the
+    literal string ``"tie"`` when the top count is shared. Deterministic and
+    order-independent (unlike ``Counter.most_common`` on ties)."""
+    votes = Counter(items)
+    if not votes:
+        return "tie", {}
+    top = max(votes.values())
+    leaders = [value for value, count in votes.items() if count == top]
+    winner = leaders[0] if len(leaders) == 1 else "tie"
+    return winner, dict(votes)
+
+
 def _consensus(per_seed_winners: list[str]) -> tuple[str, dict[str, int]]:
-    votes = Counter(per_seed_winners)
-    return votes.most_common(1)[0][0], dict(votes)
+    return _majority(per_seed_winners)
 
 
 def _build_arm_contexts(*, scenario: dict[str, Any], config: AppConfig, top_k: int) -> dict[str, dict[str, Any]]:
@@ -398,15 +405,26 @@ def _build_pull_context(
             agent_roundtrips = 1  # the source_only search
             results: list[dict[str, Any]] = []
             expansion_turn_count = 0
-            for hit in source_hits[:top_k]:
+            top_hits = source_hits[:top_k]
+            # De-duplicate across ranked hits and their overlapping expansion
+            # windows: each raw turn is included at most once, so the pull input
+            # does not repeat evidence (which would inflate the turn count and
+            # unfairly differ from the single-copy manual transcript). Seed the
+            # seen-set with ALL ranked hit ids up front, so a ranked hit that
+            # also appears in another hit's window is never re-added as an
+            # expansion turn.
+            seen_item_ids: set[str] = {h["source_item_id"] for h in top_hits if h.get("source_item_id")}
+            for hit in top_hits:
                 # Keep the ranked source hit itself (redacted excerpt as returned).
                 results.append({
                     "result_kind": "source_hit",
+                    "source_item_id": hit.get("source_item_id"),
                     "source_type": hit.get("source_type"),
                     "source_id": hit.get("source_id"),
                     "excerpt": hit.get("excerpt", ""),
                     "raw_rank": hit.get("raw_rank"),
                 })
+            for hit in top_hits:
                 # Pointer+pull step 2: expand the neighborhood on demand.
                 params = {"before": 2, "after": 2}
                 if container_ref:
@@ -416,11 +434,14 @@ def _build_pull_context(
                 if ctx_resp.status_code != 200:
                     continue
                 for item in ctx_resp.json().get("items", []):
-                    if item.get("is_anchor"):
-                        continue  # anchor already represented by the ranked hit
+                    item_id = item.get("source_item_id")
+                    if item.get("is_anchor") or not item_id or item_id in seen_item_ids:
+                        continue  # anchor, unidentifiable, or already added
+                    seen_item_ids.add(item_id)
                     expansion_turn_count += 1
                     results.append({
                         "result_kind": "source_hit",
+                        "source_item_id": item_id,
                         "source_type": item.get("source_type"),
                         "source_id": item.get("source_id"),
                         "excerpt": item.get("content", ""),
@@ -444,11 +465,13 @@ def _build_summary(
     value_rows = [r for r in results if r["should_memory_help"]]
 
     arm_means: dict[str, float] = {}
+    arm_spread: dict[str, float] = {}
     arm_cost: dict[str, float] = {}
+    rows = value_rows or results  # same row set for correctness AND cost aggregates
     for arm in ARMS:
-        rows = value_rows or results
         arm_means[arm] = round(statistics.fmean([r["arm_summaries"][arm]["mean_correctness"] for r in rows]), 3) if rows else 0.0
-        arm_cost[arm] = round(statistics.fmean([r["orchestration_cost_tokens"][arm] for r in results]), 3) if results else 0.0
+        arm_spread[arm] = round(statistics.fmean([r["arm_summaries"][arm]["correctness_spread"] for r in rows]), 3) if rows else 0.0
+        arm_cost[arm] = round(statistics.fmean([r["orchestration_cost_tokens"][arm] for r in rows]), 3) if rows else 0.0
 
     consensus_counts = Counter(r["consensus_winner"] for r in value_rows)
     pull_vs = {other: Counter() for other in (ARM_NO_MEMORY, ARM_MANUAL_TRANSCRIPT, ARM_MANUAL_SUMMARY)}
@@ -456,11 +479,14 @@ def _build_summary(
         for other in pull_vs:
             pull_vs[other][r["pairwise"][f"pull_vs_{other}"]["consensus"]] += 1
 
-    # Headline: does pull preserve manual-arm correctness at lower user cost?
-    manual_mean = statistics.fmean([arm_means[a] for a in MANUAL_ARMS]) if value_rows else 0.0
+    # Headline predicates, matched exactly to the wording used below:
+    #  - "at least as correct as the manual baselines" = pull mean >= manual mean
+    #    (no tolerance slack).
+    #  - "strictly lower cost" = pull cost strictly below EACH manual arm.
+    manual_mean = statistics.fmean([arm_means[a] for a in MANUAL_ARMS]) if rows else 0.0
     pull_mean = arm_means[ARM_PULL_BACKED]
-    pull_preserves_correctness = pull_mean >= manual_mean - 1e-9 or pull_mean >= 0.9 * manual_mean
-    pull_cheaper_than_manual = all(arm_cost[ARM_PULL_BACKED] <= arm_cost[a] for a in MANUAL_ARMS)
+    pull_preserves_correctness = pull_mean + 1e-9 >= manual_mean
+    pull_strictly_cheaper_than_manual = all(arm_cost[ARM_PULL_BACKED] < arm_cost[a] for a in MANUAL_ARMS)
 
     return {
         "run_id": run_id,
@@ -475,24 +501,33 @@ def _build_summary(
         "value_scenarios": len(value_rows),
         "arms": list(ARMS),
         "arm_mean_correctness": arm_means,
+        "arm_correctness_spread": arm_spread,
         "arm_mean_orchestration_cost_tokens": arm_cost,
+        "pull_mean_correctness": round(pull_mean, 3),
+        "manual_mean_correctness": round(manual_mean, 3),
         "consensus_winner_counts": dict(consensus_counts),
         "pull_vs_baselines_consensus": {other: dict(counts) for other, counts in pull_vs.items()},
         "pull_preserves_manual_correctness": bool(pull_preserves_correctness),
-        "pull_cheaper_than_manual": bool(pull_cheaper_than_manual),
-        "headline": _headline(pull_preserves_correctness, pull_cheaper_than_manual),
+        "pull_strictly_cheaper_than_manual": bool(pull_strictly_cheaper_than_manual),
+        "headline": _headline(
+            preserves=pull_preserves_correctness,
+            cheaper=pull_strictly_cheaper_than_manual,
+            pull_mean=pull_mean,
+            manual_mean=manual_mean,
+        ),
     }
 
 
-def _headline(preserves: bool, cheaper: bool) -> str:
+def _headline(*, preserves: bool, cheaper: bool, pull_mean: float, manual_mean: float) -> str:
+    corr = f"(pull mean {pull_mean:.2f} vs manual mean {manual_mean:.2f})"
     if preserves and cheaper:
-        return ("Pointer+pull preserved manual-baseline correctness at strictly lower user-orchestration "
-                "cost on the authored scenarios.")
+        return (f"Pointer+pull was at least as correct as the manual baselines {corr} at strictly lower "
+                f"user-orchestration cost on the authored scenarios.")
     if preserves and not cheaper:
-        return "Pointer+pull matched manual-baseline correctness but was NOT cheaper on user-orchestration cost."
+        return f"Pointer+pull was at least as correct as the manual baselines {corr} but NOT strictly cheaper on user-orchestration cost."
     if not preserves and cheaper:
-        return "Pointer+pull was cheaper on user-orchestration cost but did NOT preserve manual-baseline correctness."
-    return "Pointer+pull neither preserved manual-baseline correctness nor reduced user-orchestration cost."
+        return f"Pointer+pull was strictly cheaper on user-orchestration cost but LESS correct than the manual baselines {corr}."
+    return f"Pointer+pull was neither at least as correct as the manual baselines {corr} nor strictly cheaper."
 
 
 def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> str:
@@ -514,17 +549,19 @@ def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> 
         "",
         f"- scenarios: {summary['scenarios_total']} ({summary['value_scenarios']} value)",
         "",
-        "| Arm | Mean correctness | Mean orchestration cost (tokens) |",
+        "| Arm | Mean correctness (± spread) | Mean orchestration cost (tokens) |",
         "|---|---|---|",
     ]
     for arm in summary["arms"]:
-        lines.append(f"| `{arm}` | {summary['arm_mean_correctness'][arm]} | {summary['arm_mean_orchestration_cost_tokens'][arm]} |")
+        mean = summary["arm_mean_correctness"][arm]
+        spread = summary["arm_correctness_spread"][arm]
+        lines.append(f"| `{arm}` | {mean:.2f} ± {spread:.2f} | {summary['arm_mean_orchestration_cost_tokens'][arm]} |")
     lines.extend([
         "",
         f"- consensus winner counts: {summary['consensus_winner_counts']}",
         f"- pull vs baselines (consensus): {summary['pull_vs_baselines_consensus']}",
-        f"- pull preserves manual correctness: {summary['pull_preserves_manual_correctness']}",
-        f"- pull cheaper than manual: {summary['pull_cheaper_than_manual']}",
+        f"- pull at least as correct as manual: {summary['pull_preserves_manual_correctness']}",
+        f"- pull strictly cheaper than manual: {summary['pull_strictly_cheaper_than_manual']}",
         "",
         f"**Headline:** {summary['headline']}",
         "",
@@ -537,10 +574,10 @@ def _build_report(*, summary: dict[str, Any], results: list[dict[str, Any]]) -> 
             f"- `{r['scenario_id']}` (value={r['should_memory_help']}): winner `{r['consensus_winner']}` "
             f"{r['winner_votes']}; pull hits={r['pull_source_hit_count']} expand={r['pull_expansion_turn_count']} "
             f"roundtrips={r['pull_agent_roundtrips']}; "
-            f"correctness no_mem={arms[ARM_NO_MEMORY]['mean_correctness']} "
-            f"pull={arms[ARM_PULL_BACKED]['mean_correctness']} "
-            f"transcript={arms[ARM_MANUAL_TRANSCRIPT]['mean_correctness']} "
-            f"summary={arms[ARM_MANUAL_SUMMARY]['mean_correctness']}"
+            f"correctness no_mem={arms[ARM_NO_MEMORY]['mean_correctness']}±{arms[ARM_NO_MEMORY]['correctness_spread']} "
+            f"pull={arms[ARM_PULL_BACKED]['mean_correctness']}±{arms[ARM_PULL_BACKED]['correctness_spread']} "
+            f"transcript={arms[ARM_MANUAL_TRANSCRIPT]['mean_correctness']}±{arms[ARM_MANUAL_TRANSCRIPT]['correctness_spread']} "
+            f"summary={arms[ARM_MANUAL_SUMMARY]['mean_correctness']}±{arms[ARM_MANUAL_SUMMARY]['correctness_spread']}"
         )
     return "\n".join(lines) + "\n"
 

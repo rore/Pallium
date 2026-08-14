@@ -63,11 +63,12 @@ replace is the smallest valuable slice, and it reuses primitives P1 already ship
 
 ## Notes
 
-Result (run `real-run-s3`, `claude-sonnet-4-6`, 3 seeds): pointer+pull tied the
-manual baselines on correctness (rubric saturates for all context-bearing arms)
-and won the consensus verdict in all value scenarios on ~2.5–2.7× lower
-user-orchestration cost; the no-value guard held. Discriminator is orchestration
-cost, not correctness. See the report for the ceiling (authored scenarios bound
-realism; no session-identity or cross-agent claim). Whether to invest in the
-deferred mechanism is decided against these results, per
+Result (run `real-run-s3-v2`, `claude-sonnet-4-6`, 3 seeds): pointer+pull tied the
+manual baselines on correctness (rubric saturates at 6.00 ± 0.00 for all
+context-bearing arms) and won the consensus verdict in all value scenarios at
+strictly lower user-orchestration cost (~19.75 vs 55.0/70.75 tokens); the
+falsifiable no-value guard held. Discriminator is orchestration cost, not
+correctness. See the report for the ceiling (authored scenarios bound realism; no
+session-identity or cross-agent claim). Whether to invest in the deferred
+mechanism is decided against these results, per
 `idea-cross-context-work-continuity`.

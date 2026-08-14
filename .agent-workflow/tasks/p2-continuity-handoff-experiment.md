@@ -114,3 +114,20 @@ Provider `hai` configured + proxy live, but this session lacks the credential. R
 
 ### Roadmap promotion decision
 DECISION: promote. Create `roadmap/features/measure-cross-context-handoff-experiment.md` scoped to Experiment 2 measurement only; move it on `board.md` via the minimap-roadmap skill; retain `idea-cross-context-work-continuity` for the deferred mechanism (session correlation / `agent_ref` / eager-synthesis packaging) with a pointer to the feature. One PR for this item.
+
+## Review response (CodeRabbit, PR #23)
+
+Addressed all 10 threads. Substantive methodology fixes + corrected re-run
+(`real-run-s3-v2`): no-value guard made falsifiable (unified winner rule);
+pull expansion turns de-duplicated across overlapping windows (seed the
+seen-set with all ranked-hit ids up front); cost aggregate scoped to value
+scenarios; headline predicates tightened to exact preservation + strict cost
+reduction; explicit consensus tie policy (`_majority`, returns "tie" on a split)
+used in both places; seed control replaced with fixed-prompt independent samples
+via the repo `CachedLLMProvider` (per-sample subdir + model_tag identity, since
+the Anthropic API exposes no seed param); self-test extended (expansion>0 +
+dedup invariant + `_seed_winner`/`_majority` unit tests); report reports
+mean ± spread and a generic re-run command (stripped machine path + product
+name). Corrected result unchanged in direction: pull ties manual correctness
+(6.00 ± 0.00) at strictly lower orchestration cost (19.75 vs 55.0/70.75), guard
+held.
