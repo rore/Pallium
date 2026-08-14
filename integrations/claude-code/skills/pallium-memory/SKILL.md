@@ -40,6 +40,9 @@ description: Use when you need to explicitly search, store, look back at prior w
    - When a hit looks promising, call `pallium_expand_source` with its
      `source_item_id` to read the surrounding thread turns (the raw neighbors
      just before/after it) in context before acting.
+   - Pass `visibility: "private"` and `container_ref` (from the injection
+     header) on both `pallium_search_history` and `pallium_expand_source` —
+     missing these returns empty results.
 
 5. **For debugging** (user says "why don't you remember X"):
    - Call `pallium_query_debug` with the expected query

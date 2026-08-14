@@ -342,6 +342,43 @@ def test_codex_reinstall_replaces_block_on_strength_change(
     assert first != second
 
 
+def test_codex_setup_deploys_and_removes_skill(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    skill_dir = tmp_path / ".codex" / "skills" / "pallium-memory"
+    monkeypatch.setattr(setup_codex, "_codex_skill_dir", lambda: skill_dir)
+
+    # Install deploys the SKILL.md into the discovery dir with expected content.
+    setup_codex._install_skill()
+    dest = skill_dir / "SKILL.md"
+    assert dest.exists()
+    content = dest.read_text(encoding="utf-8")
+    assert "Pallium Memory Workflow" in content
+    assert "pallium_search_history" in content
+
+    # Reinstall is idempotent (overwrites, no duplication/error).
+    setup_codex._install_skill()
+    assert dest.read_text(encoding="utf-8") == content
+
+    # Uninstall removes the deployed skill directory.
+    setup_codex._remove_skill()
+    assert not dest.exists()
+    assert not skill_dir.exists()
+
+
+def test_codex_skill_historical_lookup_documents_scope_params() -> None:
+    skill = Path(
+        "integrations/codex/skills/pallium-memory/SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    # The historical-lookup section names both scope params for the P1 tools
+    # and preserves the global-scope exception wording.
+    assert "`pallium_search_history` and `pallium_expand_source`" in skill
+    assert "`container_ref`" in skill
+    assert '`visibility: "private"`' in skill
+    assert '`visibility: "global"` with `actor_ref`' in skill
+
+
 @pytest.mark.parametrize(
     "hook_name,stdin_payload",
     [

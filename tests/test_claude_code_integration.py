@@ -83,3 +83,38 @@ def test_claude_reinstall_preserves_surrounding_content(
 
     assert "keep me" in content
     assert content.count("<!-- pallium:start -->") == 1
+
+
+def test_claude_setup_deploys_and_removes_skill(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    skill_dir = tmp_path / ".claude" / "skills" / "pallium-memory"
+    monkeypatch.setattr(setup_claude_code, "_claude_skill_dir", lambda: skill_dir)
+
+    # Install deploys the SKILL.md into the discovery dir with expected content.
+    setup_claude_code._install_skill()
+    dest = skill_dir / "SKILL.md"
+    assert dest.exists()
+    content = dest.read_text(encoding="utf-8")
+    assert "Pallium Memory Workflow" in content
+    assert "pallium_search_history" in content
+
+    # Reinstall is idempotent (overwrites, no duplication/error).
+    setup_claude_code._install_skill()
+    assert dest.read_text(encoding="utf-8") == content
+
+    # Uninstall removes the deployed skill directory.
+    setup_claude_code._remove_skill()
+    assert not dest.exists()
+    assert not skill_dir.exists()
+
+
+def test_claude_skill_historical_lookup_documents_scope_params() -> None:
+    skill = Path(
+        "integrations/claude-code/skills/pallium-memory/SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    # The historical-lookup section names both scope params for the P1 tools.
+    assert "`pallium_search_history` and `pallium_expand_source`" in skill
+    assert "`container_ref`" in skill
+    assert '`visibility: "private"`' in skill

@@ -41,6 +41,45 @@ def _claude_md_path() -> Path:
     return Path.home() / ".claude" / "CLAUDE.md"
 
 
+def _claude_skill_src() -> Path:
+    """Source SKILL.md for the pallium-memory skill (in-repo)."""
+    return (
+        _pallium_repo_root()
+        / "integrations"
+        / "claude-code"
+        / "skills"
+        / "pallium-memory"
+        / "SKILL.md"
+    )
+
+
+def _claude_skill_dir() -> Path:
+    """User-level skill-discovery directory for the pallium-memory skill."""
+    return Path.home() / ".claude" / "skills" / "pallium-memory"
+
+
+def _install_skill() -> None:
+    """Copy the pallium-memory SKILL.md into Claude's skill-discovery dir.
+
+    Idempotent: overwrites on reinstall so the deployed guidance always
+    matches the shipped skill.
+    """
+    dest_dir = _claude_skill_dir()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    (dest_dir / "SKILL.md").write_text(
+        _claude_skill_src().read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+
+def _remove_skill() -> None:
+    """Remove the deployed pallium-memory skill directory (if present)."""
+    skill_dir = _claude_skill_dir()
+    if skill_dir.exists():
+        import shutil
+
+        shutil.rmtree(skill_dir, ignore_errors=True)
+
+
 def _read_json(path: Path) -> dict:
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
@@ -240,6 +279,9 @@ def install(port: int = 19836, guidance_strength: str = "tool-only") -> int:
     print(f"  Appended Pallium instructions to {_claude_md_path()}")
     print(f"  Guidance-strength arm: {guidance_strength}")
 
+    _install_skill()
+    print(f"  Installed pallium-memory skill to {_claude_skill_dir()}")
+
     _ensure_state_dir()
     print("  Created hook state directory")
 
@@ -267,6 +309,9 @@ def uninstall() -> int:
 
     _remove_claude_md_block()
     print(f"  Removed Pallium instructions from {_claude_md_path()}")
+
+    _remove_skill()
+    print(f"  Removed pallium-memory skill from {_claude_skill_dir()}")
 
     state_dir = Path.home() / ".pallium" / "hooks" / "state"
     if state_dir.exists():
