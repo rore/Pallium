@@ -1,7 +1,7 @@
 ---
 id: add-agent-historical-lookup-exposure
 title: Agent exposure + guidance for historical lookup (Experiment-1 behavior lever)
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-p1

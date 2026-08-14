@@ -48,6 +48,57 @@
     display: flex; align-items: center; gap: 16px;
   }
   .header-title { font-size: 18px; font-weight: 700; color: var(--blue); letter-spacing: 0.02em; }
+
+  /* ── Top-level view tabs ─────────────────────── */
+  .view-tabs { display: flex; gap: 6px; }
+  .view-tab {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted); font-family: var(--font); font-size: 12px;
+    padding: 4px 12px; border-radius: 14px; cursor: pointer;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .view-tab:hover { border-color: var(--blue); color: var(--blue); }
+  .view-tab.active {
+    color: var(--blue); border-color: var(--blue);
+    background: rgba(102,170,255,0.12); font-weight: bold;
+  }
+
+  /* ── Funnel-armed pill (measurement on/off) ──── */
+  .funnel-pill {
+    padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: bold;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    border: 1px solid var(--border); color: var(--muted);
+  }
+  .funnel-pill.on  { color: var(--green); border-color: var(--green); background: rgba(0,255,51,0.08); }
+  .funnel-pill.off { color: var(--muted); border-color: var(--border); }
+
+  /* ── View toggle: keep BOTH views in the DOM ─── */
+  .hidden { display: none; }
+
+  /* ── How-memory-helps view ───────────────────── */
+  .framing-tag {
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 1px 7px; border-radius: 10px; border: 1px solid; margin-left: 8px;
+    vertical-align: middle;
+  }
+  .framing-tag.live         { color: var(--green);  border-color: var(--green);  background: rgba(0,255,51,0.08); }
+  .framing-tag.retrospective{ color: var(--yellow); border-color: var(--yellow); background: rgba(170,170,102,0.1); }
+  .framing-tag.shadow       { color: var(--purple); border-color: var(--purple); background: rgba(170,102,255,0.1); }
+  .hh-empty {
+    color: var(--muted); font-size: 12px; line-height: 1.5;
+    border: 1px dashed var(--border); border-radius: var(--radius);
+    padding: 10px 12px; margin-top: 6px; background: rgba(0,0,0,0.15);
+  }
+  .hh-empty code {
+    color: var(--blue); background: rgba(102,170,255,0.08);
+    padding: 1px 5px; border-radius: 3px;
+  }
+  .hh-stamp { font-size: 10.5px; color: var(--muted); margin-top: 6px; }
+  .hh-stamp .v { color: var(--text); }
+  .hh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: stretch; }
+  .hh-kv { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 12px; }
+  .hh-kv .k { color: var(--muted); }
+  .hh-kv .v { color: var(--text); font-weight: bold; }
   .health-badge {
     padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: bold;
     text-transform: uppercase; letter-spacing: 0.05em;
@@ -500,6 +551,7 @@
     .queue-grid-v2 { grid-template-columns: 1fr 1fr 1fr; }
     .iq-grid     { grid-template-columns: repeat(2, 1fr); }
     .query-grid  { grid-template-columns: repeat(2, 1fr); }
+    .hh-grid     { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -509,7 +561,12 @@
 <header class="header">
   <div class="header-inner">
     <span class="header-title">Pallium</span>
+    <nav class="view-tabs">
+      <button id="tab-operational" class="view-tab active" onclick="switchView('operational')">Operational</button>
+      <button id="tab-how-it-helps" class="view-tab" onclick="switchView('how-it-helps')">How memory helps</button>
+    </nav>
     <span id="health-badge" class="health-badge init">initializing</span>
+    <span id="funnel-pill" class="funnel-pill off" title="Historical-lookup reuse funnel — is effectiveness measurement armed?">funnel: —</span>
     <span id="header-uptime" class="header-uptime">uptime: —</span>
     <span id="header-refresh" class="header-refresh">refresh in 10s</span>
   </div>
@@ -517,6 +574,9 @@
 
 <div class="content-wrap">
   <div id="error-banner" class="error-banner">API unreachable — server may be down.</div>
+
+  <!-- ══ VIEW A · OPERATIONAL (is Pallium healthy/working?) ══════ -->
+  <div id="view-operational" class="view">
 
   <!-- ── Overview (4 dual-time tiles + 24h sparkline) ──────────── -->
   <div class="section-title">Overview <span class="scope-tag">last 24h <span style="color:var(--text)">prominent</span> · all-time <span style="color:var(--muted)">muted</span></span></div>
@@ -810,6 +870,86 @@
       <div id="debug-result"></div>
     </div>
   </div>
+
+  </div><!-- /view-operational -->
+
+  <!-- ══ VIEW B · HOW MEMORY HELPS (is Pallium effective?) ═══════ -->
+  <div id="view-how-it-helps" class="view hidden">
+
+    <!-- ── 1 · Reuse funnel headline (LIVE) ───────────────────── -->
+    <div class="section-title">
+      Reuse Funnel <span class="framing-tag live">live</span>
+      <span class="scope-tag">do agents pull prior work, and is it landing?</span>
+    </div>
+    <div class="card">
+      <div class="hh-grid">
+        <div>
+          <div class="tile-label">measurement armed</div>
+          <div class="dual"><span id="hh-funnel-armed" class="v24 muted">—</span></div>
+          <div class="tile-sub">from <span class="v" style="color:var(--text)">/status.historical_lookup_funnel</span></div>
+        </div>
+        <div>
+          <div class="tile-label">lookups recorded</div>
+          <div class="dual"><span id="hh-funnel-events" class="v24 blue">—</span></div>
+          <div class="tile-sub">historical-lookup reuse events captured</div>
+        </div>
+      </div>
+      <div id="hh-funnel-nudge" class="hh-empty" style="display:none">
+        Funnel armed, no lookups yet — agents haven't pulled history. Deploy the
+        historical-lookup guidance (<code>pallium setup claude-code</code>) so agents pull,
+        then events appear here. This is the honest "why is it zero", not a broken panel.
+      </div>
+    </div>
+
+    <!-- ── 2 · Reuse KPI rungs (RETROSPECTIVE) ────────────────── -->
+    <div class="section-title">
+      Reuse KPI <span class="framing-tag retrospective">retrospective</span>
+      <span class="scope-tag">reuse per 100 eligible — needs the judge</span>
+    </div>
+    <div class="card">
+      <div id="hh-reuse-kpi">
+        <div class="hh-empty">
+          Not measured yet — the rung-1 (verified incorporation) and rung-2 (judged
+          influence) reuse rates need the retrospective judge. Run
+          <code>python -m evals.historical_lookup_measurement</code> to populate. Sourced
+          from the last-written rollup, never computed on-request.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 3 · Derivation research (SHADOW / OFFLINE) ─────────── -->
+    <div class="section-title">
+      Derivation Research <span class="framing-tag shadow">shadow · offline</span>
+      <span class="scope-tag">is derived memory worth its place?</span>
+    </div>
+    <div class="hh-grid">
+      <div class="card">
+        <div class="queue-section-header">
+          <span>Raw / Derived / Hybrid</span>
+          <span style="text-transform:none;color:var(--muted);font-size:10px">candidate recovery + representation</span>
+        </div>
+        <div id="hh-rdh">
+          <div class="hh-empty">Loading…</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="queue-section-header">
+          <span>Derivation Fidelity</span>
+          <span style="text-transform:none;color:var(--muted);font-size:10px">coverage + fidelity</span>
+        </div>
+        <div id="hh-fidelity">
+          <div class="hh-empty">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;font-size:10.5px;color:var(--muted);line-height:1.5">
+      Reports are read from <span style="color:var(--text)">.local/research/*.json</span> (cwd-relative to
+      the server) — "populated" depends on the server's working dir matching the eval's. Shadow/offline
+      numbers reflect the last eval run, not live traffic; the timestamp above each panel says when.
+    </div>
+
+  </div><!-- /view-how-it-helps -->
 </div><!-- /content-wrap -->
 
 <script>
@@ -1388,6 +1528,37 @@ function renderStatus(data) {
   // last query timestamp from since-restart payload
   const q = data.query || {};
   document.getElementById('q-last').textContent = q.last_query_at ? timeAgo(q.last_query_at) : 'never';
+
+  // Reuse-funnel signal (header pill + "How memory helps" headline)
+  renderFunnel(data.historical_lookup_funnel || {});
+}
+
+// ──────────────────────────────────────────────────
+// Render: reuse-funnel signal (LIVE) — header pill + how-it-helps headline
+// ──────────────────────────────────────────────────
+function renderFunnel(funnel) {
+  const armed  = !!funnel.armed;
+  const events = funnel.events_recorded;
+
+  // Header pill — one glance says "measurement is on"
+  const pill = document.getElementById('funnel-pill');
+  if (pill) {
+    pill.textContent = 'funnel: ' + (armed ? 'armed' : 'off');
+    pill.className = 'funnel-pill ' + (armed ? 'on' : 'off');
+  }
+
+  // How-memory-helps headline
+  const armedEl = document.getElementById('hh-funnel-armed');
+  if (armedEl) {
+    armedEl.textContent = armed ? 'ARMED' : 'OFF';
+    armedEl.className = 'v24 ' + (armed ? 'green' : 'muted');
+  }
+  const eventsEl = document.getElementById('hh-funnel-events');
+  if (eventsEl) eventsEl.textContent = (events != null) ? fmtNum(events) : '—';
+
+  // Empty-state nudge: armed but zero lookups captured yet
+  const nudge = document.getElementById('hh-funnel-nudge');
+  if (nudge) nudge.style.display = (armed && events === 0) ? '' : 'none';
 }
 
 // ──────────────────────────────────────────────────
@@ -1987,6 +2158,108 @@ async function runQueryDebug() {
 }
 
 // ──────────────────────────────────────────────────
+// How memory helps: offline eval reports (SHADOW)
+// ──────────────────────────────────────────────────
+async function fetchEffectivenessReports() {
+  try {
+    const r = await fetch('/dashboard/api/effectiveness/reports');
+    if (!r.ok) return;
+    const data = await r.json();
+    renderEffectivenessReports(data.reports || {});
+  } catch (e) { /* non-fatal */ }
+}
+
+function _hhStamp(entry) {
+  return '<div class="hh-stamp">last generated <span class="v">' +
+    (entry.last_modified ? formatDateWithRelative(entry.last_modified) : '—') + '</span></div>';
+}
+
+function _hhKv(k, v) {
+  return '<div class="hh-kv"><span class="k">' + escapeHtml(k) +
+    '</span><span class="v">' + escapeHtml(v) + '</span></div>';
+}
+
+function renderEffectivenessReports(reports) {
+  renderRawDerivedHybrid(reports.raw_derived_hybrid || { available: false });
+  renderDerivationFidelity(reports.derivation_fidelity || { available: false });
+}
+
+function renderRawDerivedHybrid(entry) {
+  const el = document.getElementById('hh-rdh');
+  if (!el) return;
+  if (!entry.available) {
+    el.innerHTML = '<div class="hh-empty">Not generated yet — run ' +
+      '<code>python -m evals.raw_derived_hybrid</code> to produce the shadow report ' +
+      '(candidate recovery + representation quality at equal token budget).</div>';
+    return;
+  }
+  const rep = entry.report || {};
+  const rows = [];
+  if (rep.query_count != null) rows.push(_hhKv('queries replayed', fmtNum(rep.query_count)));
+  const agg = rep.candidate_recovery_aggregate || {};
+  if (agg.n_objects != null) rows.push(_hhKv('objects compared', fmtNum(agg.n_objects)));
+  if (agg.counts && typeof agg.counts === 'object') {
+    for (const [k, v] of Object.entries(agg.counts)) {
+      rows.push(_hhKv('recovery · ' + k, fmtNum(v)));
+    }
+  }
+  if (rep.report_time_model) rows.push(_hhKv('judge model', String(rep.report_time_model)));
+  const body = rows.length
+    ? rows.join('')
+    : '<div class="hh-empty">Report present but no summary fields recognized — open the JSON for detail.</div>';
+  el.innerHTML = body + _hhStamp(entry);
+}
+
+function renderDerivationFidelity(entry) {
+  const el = document.getElementById('hh-fidelity');
+  if (!el) return;
+  if (!entry.available) {
+    el.innerHTML = '<div class="hh-empty">Not generated yet — run ' +
+      '<code>python -m evals.derivation_fidelity</code> to produce the shadow report ' +
+      '(coverage + fidelity / misleading-rate).</div>';
+    return;
+  }
+  const rep = entry.report || {};
+  const cov = rep.coverage || {};
+  const rows = [];
+  const ie = cov.item_extraction || {};
+  const ta = cov.thread_aggregation || {};
+  if (ie.coverage_rate != null) rows.push(_hhKv('item coverage', String(ie.coverage_rate)));
+  if (ta.coverage_rate != null) rows.push(_hhKv('thread coverage', String(ta.coverage_rate)));
+  const fid = rep.fidelity || {};
+  if (fid.judged_object_count != null) rows.push(_hhKv('objects judged', fmtNum(fid.judged_object_count)));
+  if (rep.report_time_model) rows.push(_hhKv('judge model', String(rep.report_time_model)));
+  const body = rows.length
+    ? rows.join('')
+    : '<div class="hh-empty">Report present but no summary fields recognized — open the JSON for detail.</div>';
+  el.innerHTML = body + _hhStamp(entry);
+}
+
+// ──────────────────────────────────────────────────
+// Top-level view switch (CSS display toggle; both views stay in the DOM)
+// ──────────────────────────────────────────────────
+const _VIEWS = { 'operational': 'view-operational', 'how-it-helps': 'view-how-it-helps' };
+
+function switchView(name) {
+  if (!_VIEWS[name]) name = 'operational';
+  for (const [key, id] of Object.entries(_VIEWS)) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', key !== name);
+  }
+  document.getElementById('tab-operational').classList.toggle('active', name === 'operational');
+  document.getElementById('tab-how-it-helps').classList.toggle('active', name === 'how-it-helps');
+  if (('#' + name) !== window.location.hash) {
+    history.replaceState(null, '', '#' + name);
+  }
+}
+
+function _initViewFromHash() {
+  const h = (window.location.hash || '').replace(/^#/, '');
+  switchView(_VIEWS[h] ? h : 'operational');
+}
+window.addEventListener('hashchange', _initViewFromHash);
+
+// ──────────────────────────────────────────────────
 // Refresh countdown
 // ──────────────────────────────────────────────────
 function startCountdown() {
@@ -2006,6 +2279,7 @@ function startCountdown() {
       fetchActivityHourly();
       fetchSkipReasonStats();
       fetchExtractionFailures();
+      fetchEffectivenessReports();
     }
   }, 1000);
 }
@@ -2014,6 +2288,7 @@ function startCountdown() {
 // Init
 // ──────────────────────────────────────────────────
 (function init() {
+  _initViewFromHash();
   fetchStatus();
   fetchQueueHealth();
   fetchFeedbackStats();
@@ -2022,6 +2297,7 @@ function startCountdown() {
   fetchActivityHourly();
   fetchSkipReasonStats();
   fetchExtractionFailures();
+  fetchEffectivenessReports();
   fetchContainers();
   fetchActors();
   fetchMemories();

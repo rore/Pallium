@@ -1,5 +1,4 @@
 # P1 · Reuse Measurement
-- add-agent-historical-lookup-exposure
 - add-dashboard-operational-and-value-rework
 - add-vnext-performance-and-e2e-validation
 
@@ -25,6 +24,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-agent-historical-lookup-exposure
 - add-historical-lookup-reuse-funnel
 - idea-raw-derived-hybrid-shadow-eval
 - idea-derivation-fidelity-eval

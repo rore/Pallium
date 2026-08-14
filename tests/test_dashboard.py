@@ -320,6 +320,114 @@ class TestDashboardIntegration:
         assert "PostgreSQL" in body["memories"][0]["display_text"]
 
 
+class TestDashboardTwoViewShell:
+    """The dashboard HTML must ship the two-view shell markers so the
+    Operational / How-memory-helps switch is covered by the substring guard."""
+
+    def test_html_contains_two_view_switch(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard")
+        html = resp.text
+        # Tab buttons + switch function
+        assert 'id="tab-operational"' in html
+        assert 'id="tab-how-it-helps"' in html
+        assert "switchView(" in html
+        # Both view containers present (CSS display toggle, both in DOM)
+        assert 'id="view-operational"' in html
+        assert 'id="view-how-it-helps"' in html
+        # The "How memory helps" label + the funnel pill + report wiring
+        assert "How memory helps" in html
+        assert 'id="funnel-pill"' in html
+        assert "fetchEffectivenessReports" in html
+
+
+class TestDashboardEffectivenessReports:
+    """The read-only report endpoint: empty-safe 200 when absent, parsed
+    JSON + last_modified when present, and traversal-proof (fixed keys only)."""
+
+    def test_empty_state_when_dir_absent(self, tmp_path: Path, monkeypatch) -> None:
+        # cwd where .local/research/ does not exist → present-but-empty 200
+        monkeypatch.chdir(tmp_path)
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard/api/effectiveness/reports")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body["reports"].keys()) == {"raw_derived_hybrid", "derivation_fidelity"}
+        for entry in body["reports"].values():
+            assert entry["available"] is False
+            assert entry["last_modified"] is None
+
+    def test_serves_parsed_report_and_mtime_when_present(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        research = tmp_path / ".local" / "research"
+        research.mkdir(parents=True)
+        payload = {"eval": "raw_derived_hybrid.v1", "query_count": 7}
+        (research / "raw_derived_hybrid_report.json").write_text(
+            __import__("json").dumps(payload), encoding="utf-8"
+        )
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard/api/effectiveness/reports")
+        assert resp.status_code == 200
+        body = resp.json()
+        rdh = body["reports"]["raw_derived_hybrid"]
+        assert rdh["available"] is True
+        assert rdh["report"] == payload
+        assert rdh["last_modified"] is not None
+        # The other, unwritten report stays empty-safe
+        assert body["reports"]["derivation_fidelity"]["available"] is False
+
+    def test_non_finite_floats_are_sanitized(self, tmp_path: Path, monkeypatch) -> None:
+        """A report with NaN/Infinity (json.loads accepts them) must be coerced
+        to null so the HTTP response is strictly valid JSON — otherwise a
+        browser fetch().json() would reject bare NaN and break the panel."""
+        import json as _json
+        monkeypatch.chdir(tmp_path)
+        research = tmp_path / ".local" / "research"
+        research.mkdir(parents=True)
+        # allow_nan=True (default) writes literal NaN/Infinity into the file.
+        payload = {"coverage": {"item_extraction": {"coverage_rate": float("nan")}},
+                   "fidelity": {"misleading_rate": float("inf")}, "query_count": 3}
+        (research / "derivation_fidelity_report.json").write_text(
+            _json.dumps(payload), encoding="utf-8"
+        )
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard/api/effectiveness/reports")
+        assert resp.status_code == 200
+        # Response body must be strictly-parseable JSON (no bare NaN/Infinity).
+        raw = resp.text
+        assert "NaN" not in raw and "Infinity" not in raw
+        rep = resp.json()["reports"]["derivation_fidelity"]["report"]
+        assert rep["coverage"]["item_extraction"]["coverage_rate"] is None
+        assert rep["fidelity"]["misleading_rate"] is None
+        assert rep["query_count"] == 3
+
+    def test_route_ignores_arbitrary_path_param(self, tmp_path: Path, monkeypatch) -> None:
+        """Traversal-proof: there is no filename/path param — an arbitrary
+        query string resolves the same fixed keys, never an outside file."""
+        monkeypatch.chdir(tmp_path)
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get(
+                "/dashboard/api/effectiveness/reports?report=../../../../etc/passwd"
+            )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body["reports"].keys()) == {"raw_derived_hybrid", "derivation_fidelity"}
+
+    def test_reports_endpoint_does_not_require_sqlite(self, tmp_path: Path, monkeypatch) -> None:
+        """Unlike other /dashboard/api/* routes, the file-backed report
+        endpoint returns 200 (not 501) even without a SQLite backend."""
+        monkeypatch.chdir(tmp_path)
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            resp = client.get("/dashboard/api/effectiveness/reports")
+        assert resp.status_code == 200
+
+
 class TestDashboardContainersEndpoint:
 
     def test_returns_distinct_containers(self, tmp_path: Path) -> None:
