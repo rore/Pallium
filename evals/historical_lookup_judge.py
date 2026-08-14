@@ -26,9 +26,10 @@ intervals. Two differences, both intentional:
     blinding we keep is the deterministic, seed-driven sample order.
   * Each seed acts as an independent RATER. The LLM cache key
     (``providers/llm/cached.py``) has NO seed slot, so identical prompts would
-    collapse to one cached verdict. We fold the rater ordinal into the
-    user_prompt as an inert trailing tag so >=3 seeds yield >=3 DISTINCT cache
-    keys (hence independent verdicts) WITHOUT biasing the verdict.
+    collapse to one cached verdict. We fold the rater seed VALUE into the
+    user_prompt as an inert trailing tag so differently-seeded runs yield
+    DISTINCT cache keys (hence independent verdicts) WITHOUT biasing the
+    verdict.
 
 Per-rater rung labels are written to the append-only
 ``historical_lookup_reuse_label`` table via
@@ -145,6 +146,7 @@ class RaterLabel:
     direction: str
     evidence_span: str
     rationale: str
+    failed: bool = False
 
 
 @dataclass
@@ -163,6 +165,7 @@ class JudgeReport:
     kappa: float | None = None
     kappa_pair: tuple[str, str] | None = None
     kappa_n: int = 0
+    n_judge_failures: int = 0
     rung_rates: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -185,6 +188,7 @@ class JudgeReport:
             },
             "rung_rates": self.rung_rates,
             "n_labels_written": len(self.labels),
+            "n_judge_failures": self.n_judge_failures,
         }
 
 
@@ -209,13 +213,14 @@ def _render_history(texts: list[str], *, per: int = 400) -> str:
     return "\n".join(f"- {_excerpt(t, per)}" for t in texts)
 
 
-def _build_user_prompt(ctx: LookupContext, seed_ordinal: int) -> str:
-    """Build the blinded judge prompt for one lookup under one rater ordinal.
+def _build_user_prompt(ctx: LookupContext, seed_value: int) -> str:
+    """Build the blinded judge prompt for one lookup under one rater seed.
 
-    The trailing ``[reviewer pass #N]`` tag is INERT — it carries no verdict
-    signal — but it makes the prompt (and therefore the disk cache key) unique
-    per rater seed, so >=3 seeds produce >=3 independent verdicts instead of
-    collapsing onto one cached response. See module docstring.
+    The trailing ``[reviewer pass #N]`` tag carries the rater seed VALUE (not the
+    enumerate ordinal). It is INERT — it carries no verdict signal — but it makes
+    the prompt (and therefore the disk cache key) unique per rater seed VALUE, so
+    differently-seeded runs (e.g. ``0,1,2`` vs ``5,6,7``) produce independent
+    verdicts instead of collapsing onto one cached response. See module docstring.
     """
     body = (
         "CONTEXT BEFORE:\n"
@@ -227,7 +232,7 @@ def _build_user_prompt(ctx: LookupContext, seed_ordinal: int) -> str:
         "Judge this lookup and respond with the JSON schema."
     )
     # Inert trailing tag — defeats the seedless LLM cache key without biasing.
-    return f"{body}\n\n[reviewer pass #{seed_ordinal}]"
+    return f"{body}\n\n[reviewer pass #{seed_value}]"
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +360,12 @@ def _session_turns_around(
     for row in rows:
         created = row["created_at"]
         turn = (row["role"], row["content"] or "")
-        if pivot is not None and created is not None and created < pivot:
+        if created is None:
+            # Unknown-time turn: cannot be placed relative to the pivot. Dropping
+            # it avoids misreading a pre-lookup turn as subsequent work (a false
+            # rung-1 "incorporation").
+            continue
+        if pivot is not None and created < pivot:
             before.append(turn)
         else:
             after.append(turn)
@@ -384,8 +394,9 @@ def _coerce_bool(raw: Any) -> bool:
     return str(raw).strip().lower() in {"true", "yes", "1"}
 
 
-def _judge_once(provider, ctx: LookupContext, *, rater_seed: str, seed_ordinal: int) -> RaterLabel:
-    user_prompt = _build_user_prompt(ctx, seed_ordinal)
+def _judge_once(provider, ctx: LookupContext, *, rater_seed: str, seed_value: int) -> RaterLabel:
+    user_prompt = _build_user_prompt(ctx, seed_value)
+    failed = False
     try:
         response = provider.generate_json(
             system_prompt=JUDGE_SYSTEM_PROMPT,
@@ -399,8 +410,13 @@ def _judge_once(provider, ctx: LookupContext, *, rater_seed: str, seed_ordinal: 
         evidence = str(parsed.get("evidence_span", ""))[:300]
         rationale = f"genuine={genuine} rung={rung} dir={direction}"
     except Exception as exc:  # noqa: BLE001 — a judge error must not abort the run
+        # A provider failure is NOT a "no reuse" verdict: mark it failed so it is
+        # neither persisted nor folded into consensus / kappa (which would bias
+        # both downward). Rationale is a short error CODE — never repr(exc), which
+        # could embed prompt / endpoint fragments.
+        failed = True
         genuine, rung, direction, evidence = False, None, "agent_decided", ""
-        rationale = f"[judge error: {exc!r}]"
+        rationale = f"[judge error: {type(exc).__name__}]"
     return RaterLabel(
         lookup_event_id=ctx.lookup_event_id,
         rater_seed=rater_seed,
@@ -409,6 +425,7 @@ def _judge_once(provider, ctx: LookupContext, *, rater_seed: str, seed_ordinal: 
         direction=direction,
         evidence_span=evidence,
         rationale=rationale,
+        failed=failed,
     )
 
 
@@ -562,14 +579,20 @@ def run_judge(
 
         storage = SQLiteStorageProvider(f"sqlite:///{path}")
 
-    # Per-event rater labels, keyed for consensus + kappa.
+    # Per-event rater labels, keyed for consensus + kappa. Failed judge calls
+    # are excluded here (and from persistence) so they bias neither consensus
+    # nor kappa; they are tallied separately as n_judge_failures.
     per_event: dict[str, list[RaterLabel]] = {c.lookup_event_id: [] for c in sampled}
-    for ordinal, seed in enumerate(seeds):
+    n_judge_failures = 0
+    for seed in seeds:
         rater_seed = str(seed)
         for ctx in sampled:
             label = _judge_once(
-                provider, ctx, rater_seed=rater_seed, seed_ordinal=ordinal
+                provider, ctx, rater_seed=rater_seed, seed_value=seed
             )
+            if label.failed:
+                n_judge_failures += 1
+                continue
             report.labels.append(label)
             per_event[ctx.lookup_event_id].append(label)
             if write_labels and storage is not None:
@@ -583,6 +606,7 @@ def run_judge(
                         "created_at": utc_now(),
                     }
                 )
+    report.n_judge_failures = n_judge_failures
 
     # Consensus per event.
     for event_id, labels in per_event.items():
@@ -669,6 +693,8 @@ def _parse_seeds(raw: str) -> list[int]:
         raise argparse.ArgumentTypeError(
             "at least 3 rater seeds are required (e.g. --seeds 0,1,2)"
         )
+    if len(set(seeds)) != len(seeds):
+        raise argparse.ArgumentTypeError("rater seeds must be distinct")
     return seeds
 
 

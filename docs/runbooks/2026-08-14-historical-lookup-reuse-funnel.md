@@ -61,10 +61,17 @@ running and the agent performs lookups.
 The judge samples eligible lookups, reconstructs the surrounding session turns,
 and asks an LLM to label each: genuine-opportunity, rung, evidence span, and
 `user_directed` vs `agent_decided`. It runs **≥3 rater seeds** over the same
-sample (the rater ordinal is folded into the prompt as an inert tag so each
+sample (the rater seed VALUE is folded into the prompt as an inert tag so each
 seed is an independent verdict, not a cache hit), writes one per-rater label
 row to the append-only `historical_lookup_reuse_label` table, and reports
 Cohen's κ on the double-rated subsample.
+
+The commands below are shown in bash/POSIX form (leading `VAR=value`
+env-prefix, `\` line-continuation, `~` home). On Windows PowerShell set the
+env var on its own line first — `$env:PYTHONPATH = ".local/test-env/site-packages;."`
+— then run the command on one line with the full interpreter path; use `%USERPROFILE%`
+instead of `~`. The `python -m evals.historical_lookup_judge ...` invocation is
+identical across shells.
 
 ```bash
 PYTHONPATH=".local/test-env/site-packages;." \
@@ -85,7 +92,8 @@ call or writes.
 ## Step 3 — read the KPI
 
 The measurement loader recomputes eligible sessions, joins the labels for a
-consensus rung per event, and emits the rollup:
+consensus rung per event, and emits the rollup (same bash/POSIX conventions as
+Step 2 — see the PowerShell note above):
 
 ```bash
 PYTHONPATH=".local/test-env/site-packages;." \
@@ -98,7 +106,7 @@ PYTHONPATH=".local/test-env/site-packages;." \
 
 Output (abridged):
 
-```
+```text
 === Historical-Lookup Reuse Rollup ===
 eligibility_n=50  n_eligible=42  n_events=17
   rung-1: verified incorporation     measures=downstream-task-effect  n=9/42  per-100=21.4  95%CI=[11.7, 35.9]

@@ -345,20 +345,28 @@ def _reconstruct_eligible_sessions(
 
 
 def _consensus_rung(conn: sqlite3.Connection, lookup_event_id: str) -> str | None:
-    """Consensus rung across all rater labels for one event.
+    """Consensus rung across raters for one event — ONE VOTE PER RATER.
 
-    Consensus rule (PINNED): count only labels whose rung is a valid ladder
-    rung (NULL / unknown labels are ignored). Strict plurality wins; on a tie
-    for the top count, drop to the most CONSERVATIVE (lowest-ladder) rung among
-    the tied set. No labels -> None (the event contributes to no rung).
+    Consensus rule (PINNED): first dedup by ``rater_seed`` keeping each rater's
+    LATEST label (max ``created_at``), so re-running the judge — which appends a
+    new label row per rater rather than mutating — does not double-count a rater
+    and stale labels do not bias the plurality. Then count only labels whose rung
+    is a valid ladder rung (NULL / unknown labels are ignored). Strict plurality
+    wins; on a tie for the top count, drop to the most CONSERVATIVE (lowest-
+    ladder) rung among the tied set. No labels -> None.
     """
+    # ORDER BY created_at ascending so the LAST row seen per rater_seed is that
+    # rater's most-recent label; ``id`` is a stable tie-break for equal times.
     rows = conn.execute(
-        "SELECT rung FROM historical_lookup_reuse_label WHERE lookup_event_id = ?",
+        "SELECT rater_seed, rung, created_at FROM historical_lookup_reuse_label "
+        "WHERE lookup_event_id = ? ORDER BY created_at, id",
         (lookup_event_id,),
     ).fetchall()
-    counts: dict[str, int] = {}
+    latest_rung: dict[Any, str | None] = {}
     for r in rows:
-        rung = r["rung"]
+        latest_rung[r["rater_seed"]] = r["rung"]  # last write per rater wins
+    counts: dict[str, int] = {}
+    for rung in latest_rung.values():
         if rung in _RUNG_LADDER:
             counts[rung] = counts.get(rung, 0) + 1
     if not counts:

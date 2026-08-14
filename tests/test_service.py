@@ -258,9 +258,12 @@ class TestSeedConfig:
         assert (home / "config" / "pallium.toml").exists()
         assert not (home / "config" / ".env").exists()
 
-    def test_keeps_existing_observability_section(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        """A dev [observability] section must be KEPT (not stripped) so the
-        reuse funnel arms out of the box."""
+    def test_dev_observability_values_not_carried_into_fresh_install(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A dev [observability] section must NOT be copied verbatim: dev-only
+        values (e.g. query_audit_log = true, shadow-selector flags) must not leak
+        into a fresh install. The install seeds only the clean armed funnel."""
         home = tmp_path / "home"
         (home / "config").mkdir(parents=True)
 
@@ -270,6 +273,8 @@ class TestSeedConfig:
             'kind = "anthropic_claude"\n'
             "\n"
             "[observability]\n"
+            "query_audit_log = true\n"
+            "shadow_subtask_selector_enabled = true\n"
             "historical_lookup_funnel = false\n"
         )
 
@@ -277,9 +282,14 @@ class TestSeedConfig:
         _seed_config(home)
 
         content = (home / "config" / "pallium.toml").read_text()
-        assert "[observability]" in content
-        # The dev value is preserved verbatim (not overwritten by the seed).
-        assert "historical_lookup_funnel = false" in content
+        import tomllib
+
+        parsed = tomllib.loads(content)
+        obs = parsed["observability"]
+        # Only the clean armed signal — no dev carry-over.
+        assert obs == {"historical_lookup_funnel": True}
+        assert "query_audit_log" not in content
+        assert "shadow_subtask_selector_enabled" not in content
 
     def test_seeds_armed_observability_when_absent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         """When the dev config has no [observability] section, a fresh install

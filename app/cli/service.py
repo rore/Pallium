@@ -78,9 +78,6 @@ def _seed_config(home: Path) -> None:
             "[llm_providers.",
             "[semantic_packages.agent_conversation_memory",
             "[semantic_packages.conversational_knowledge",
-            # Keep the observability section so the historical-lookup reuse
-            # funnel is armed out of the box (see _FUNNEL_ARMED_BLOCK).
-            "[observability]",
         )
         output: list[str] = []
         in_section = False
@@ -93,8 +90,10 @@ def _seed_config(home: Path) -> None:
                 output.append("")
         while output and output[-1] == "":
             output.pop()
-        # Seed an armed [observability] block if the dev config had none — a
-        # fresh install must arm the funnel out of the box.
+        # Always seed a CLEAN armed [observability] block. We deliberately do NOT
+        # copy the dev config's [observability] section: it can carry dev-only
+        # values (e.g. query_audit_log = true, shadow-selector experiment flags)
+        # into a fresh install. A fresh install must arm only the funnel signal.
         if not any(line.strip() == "[observability]" for line in output):
             if output:
                 output.append("")

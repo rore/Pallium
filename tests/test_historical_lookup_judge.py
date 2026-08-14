@@ -13,16 +13,17 @@ The judge LLM is a deterministic in-process STUB — no network calls.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import pytest
 from sqlalchemy import text
 
-from core.models import new_id, utc_now
 from evals.historical_lookup_judge import (
     JUDGE_SCHEMA,
     JUDGE_SYSTEM_PROMPT,
     LookupContext,
     _build_user_prompt,
+    _load_lookup_contexts,
     cohens_kappa,
     run_judge,
 )
@@ -37,22 +38,29 @@ from storage.sqlite import SQLiteStorageProvider
 
 
 class _StubJudge:
-    """Returns a fixed verdict per lookup, decided by markers in WORK AFTER /
-    CONTEXT BEFORE. Ignores the trailing reviewer-pass tag, so both raters
-    agree (kappa is well-defined and, here, 1.0)."""
+    """Returns a fixed verdict per lookup, decided STRICTLY by markers in the
+    WORK AFTER block (a marker in RETRIEVED HISTORY / CONTEXT BEFORE must NOT
+    satisfy the rung — otherwise the before/after split is never exercised).
+    Direction is read from CONTEXT BEFORE. Ignores the trailing reviewer-pass
+    tag, so both raters agree (kappa is well-defined and, here, 1.0)."""
 
     def __init__(self) -> None:
         self.calls = 0
 
     def generate_json(self, *, system_prompt, user_prompt, schema_description) -> LLMJsonResponse:
         self.calls += 1
-        if "INCORP_MARKER" in user_prompt:
+        # Slice out the blocks so a marker only counts where it actually appears.
+        work_after = user_prompt.split("WORK AFTER:", 1)[-1]
+        context_before = user_prompt.split("CONTEXT BEFORE:", 1)[-1].split(
+            "RETRIEVED HISTORY:", 1
+        )[0]
+        if "INCORP_MARKER" in work_after:
             rung, genuine = "incorporation", True
-        elif "INFLU_MARKER" in user_prompt:
+        elif "INFLU_MARKER" in work_after:
             rung, genuine = "influence", True
         else:
             rung, genuine = "none", False
-        direction = "user_directed" if "please recall" in user_prompt else "agent_decided"
+        direction = "user_directed" if "please recall" in context_before else "agent_decided"
         payload = {
             "genuine_opportunity": genuine,
             "rung": rung,
@@ -94,7 +102,11 @@ def _insert_turn(storage, *, sid, role, artifact_kind, content, thread, created,
 def _write_lookup(storage, *, event_id, thread, exposed_ids, created, container="c:1"):
     storage.write_historical_lookup_event_row({
         "id": event_id,
-        "created_at": utc_now(),
+        # The event's created_at IS the pivot the before/after split turns on.
+        # The DateTime column takes a datetime; it serialises to the same
+        # "YYYY-MM-DD HH:MM:SS.ffffff" string the source_items turns use, so the
+        # lexicographic pivot comparison in the loader stays chronological.
+        "created_at": datetime.fromisoformat(created),
         "event_type": "lookup",
         "session_id": thread,
         "container_ref": container,
@@ -206,6 +218,40 @@ class TestJudgeOffline:
         assert payload["rung_rates"]["influence"]["numerator"] == 1
         wi = payload["rung_rates"]["incorporation"]["wilson_95"]
         assert 0.0 <= wi["low"] <= wi["high"] <= 100.0
+
+    def test_reconstruction_splits_before_after(self, tmp_path) -> None:
+        """The before/after split is actually exercised: the assistant work turn
+        (created AFTER the lookup pivot) lands in after_turns. Guards the bug
+        where the event's created_at was stamped at write time, dropping every
+        turn into 'before' and leaving after_turns empty."""
+        import sqlite3
+
+        storage, db = _storage(tmp_path)
+        _seed_two_lookups(storage)
+        conn = sqlite3.connect(db)
+        conn.row_factory = sqlite3.Row
+        try:
+            contexts = _load_lookup_contexts(
+                conn,
+                eligible_set={"t:1", "t:2"},
+                container_ref="c:1",
+                since=None,
+                until=None,
+                before_turns=3,
+                after_turns=4,
+            )
+        finally:
+            conn.close()
+
+        by_event = {c.lookup_event_id: c for c in contexts}
+        ev1 = by_event["ev-1"]
+        # Positive assertion: the reconstruction split the turns — the post-pivot
+        # assistant work turn is present in after_turns.
+        assert ev1.after_turns, "after_turns must be populated (split exercised)"
+        assert any("INCORP_MARKER" in content for _role, content in ev1.after_turns)
+        # And the pre-pivot user turn is on the before side.
+        assert ev1.before_turns
+        assert any("please recall" in content for _role, content in ev1.before_turns)
 
 
 # ---------------------------------------------------------------------------
