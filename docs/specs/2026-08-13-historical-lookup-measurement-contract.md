@@ -18,6 +18,23 @@ online; the three ambiguous stages — historical *opportunity*, *influence*, an
 *material use* — are evaluated **retrospectively by a sampled judge**, never by a
 new online classifier. This is a hard boundary (see Non-goals).
 
+## Guidance arms (Experiment 1)
+
+The guidance-strength lever has two arms, and **both carry a block-level permit
+nudge** to call the historical-lookup tool when resuming prior work:
+
+- **`base`** — the installed memory-guidance block as shipped. It already
+  permits/encourages a deliberate `pallium_search_history` pull; it is **not** a
+  zero-guidance or "tool-description-only" baseline.
+- **`strong`** — the `base` block plus an appended "call it first" resume
+  directive.
+
+Read the KPI delta between arms as the effect of the *call-first* directive, **not**
+as presence-vs-absence of guidance. (The arm value is recorded in setup output and
+embedded in each installed block as `<!-- pallium:guidance-strength=... -->`. The
+older `tool-only` value is a deprecated alias for `base`.) A genuine zero-guidance
+arm — stripping the base permit nudge — is a separate, out-of-scope experiment.
+
 ## Definitions
 
 **Session.** A bounded unit of agent-mediated work. Its **concrete identity key is
@@ -146,6 +163,13 @@ For each rung *r*:
 reuse_per_100_eligible[r] = 100 * (# eligible sessions with ≥1 rung-r reuse event)
                                  / (# eligible sessions)
 ```
+
+This is a **session-incidence** metric: it is the *fraction of eligible sessions
+with ≥1 confirmed rung-r reuse, × 100*, so it is **bounded at 100** — a session
+with several same-rung reuse events counts **once** in the numerator (dedup by
+session). It is deliberately **not** "reuse events per 100 sessions" (an unbounded
+event-rate), which would re-open the relevance-classification problem this contract
+exists to prevent.
 
 Reported with: N (eligibility threshold), window bounds, sample size, Wilson
 interval, and the rung label. **Empty-data-safe:** when `# eligible sessions == 0`,

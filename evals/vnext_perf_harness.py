@@ -442,19 +442,23 @@ def check_indexes(db_path: Path) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def run_measurements(*, vector: bool = False, small: bool = False) -> dict[str, Any]:
+def run_measurements(*, vector: bool = False, small: bool = False, include_latency: bool = True) -> dict[str, Any]:
     """Seed a temp DB, run all measurements, return a structured report.
 
     The temp dir (a seeded ~900-item SQLite DB) is removed on success AND
     failure via ``TemporaryDirectory``. Engines are disposed inside
     ``_run_measurements_in`` before it returns so Windows can unlink the DB
     file (an open engine handle blocks unlink there).
+
+    ``include_latency=False`` skips the advisory latency block (which is never
+    gated) so the deterministic count-compare gate can run without paying for
+    the timing-loop reps — used by the default-CI count gate.
     """
     with tempfile.TemporaryDirectory(prefix="vnext_perf_") as tmpdir:
-        return _run_measurements_in(Path(tmpdir), vector=vector, small=small)
+        return _run_measurements_in(Path(tmpdir), vector=vector, small=small, include_latency=include_latency)
 
 
-def _run_measurements_in(tmp: Path, *, vector: bool = False, small: bool = False) -> dict[str, Any]:
+def _run_measurements_in(tmp: Path, *, vector: bool = False, small: bool = False, include_latency: bool = True) -> dict[str, Any]:
     """Seed a temp DB under ``tmp``, run all measurements, return the report.
 
     The caller (``run_measurements``) owns ``tmp`` and removes it. This
@@ -550,16 +554,17 @@ def _run_measurements_in(tmp: Path, *, vector: bool = False, small: bool = False
             report["index_check"] = check_indexes(db_path)
 
             # ---- Advisory latency (NOT gated) ----
-            report["latency_advisory"] = {
-                "source_only_query": measure_latency(
-                    lambda: client.post("/query", json=_query_payload(_COMMON_TOKEN, 5)),
-                    reps=3 if small else 25,
-                ),
-                "source_context_expansion": measure_latency(
-                    lambda: client.get(f"/source/{anchor_id}/context", params={"before": 10, "after": 10}),
-                    reps=3 if small else 25,
-                ),
-            }
+            if include_latency:
+                report["latency_advisory"] = {
+                    "source_only_query": measure_latency(
+                        lambda: client.post("/query", json=_query_payload(_COMMON_TOKEN, 5)),
+                        reps=3 if small else 25,
+                    ),
+                    "source_context_expansion": measure_latency(
+                        lambda: client.get(f"/source/{anchor_id}/context", params={"before": 10, "after": 10}),
+                        reps=3 if small else 25,
+                    ),
+                }
 
             # ---- Optional vector-enabled path (opt-in, slow) ----
             if vector:
