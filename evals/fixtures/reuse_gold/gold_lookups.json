@@ -1,0 +1,198 @@
+{
+  "_meta": {
+    "purpose": "Human-labelled gold set for calibrating the historical-lookup reuse judge (rung-1 incorporation / rung-2 influence / none). Consumed by evals/reuse_judge_calibration.py, which seeds each record into a scratch DB as one lookup event + surrounding source turns and runs the real judge against it.",
+    "labelling_scheme": {
+      "incorporation": "A specific detail from retrieved_history reappears verbatim (or near-verbatim) in after_turns — an observable reuse.",
+      "influence": "after_turns build on the retrieved history's decision/direction without quoting it verbatim.",
+      "none": "retrieved history was irrelevant, or the lookup was abandoned/empty; the subsequent work does not use it."
+    },
+    "honesty_limitations": [
+      "N=12 is a deliberately small fixture (smallest set that yields a meaningful agreement read); the resulting Cohen's kappa has a WIDE confidence interval.",
+      "Labels are SINGLE-AUTHOR and SYNTHETIC: one human labeller, no second independent rater, and the scenarios are hand-written rather than sampled from real lookup traffic, so they may not mirror the real-lookup rung distribution.",
+      "Scenarios are generic software-engineering situations by design (no product-specific content)."
+    ],
+    "count": 12,
+    "distribution": {"incorporation": 4, "influence": 4, "none": 4}
+  },
+  "lookups": [
+    {
+      "id": "gold-incorp-1",
+      "container_ref": "git:example.com/acme-billing",
+      "before_turns": [
+        {"role": "user", "content": "Add retry to the invoice-sync client. What backoff did we settle on before?"},
+        {"role": "assistant", "content": "Let me check our earlier decision on retry backoff."}
+      ],
+      "retrieved_history": [
+        "Decision (billing sync): use exponential backoff with a base delay of 250ms and a hard cap of 5 retries. Jitter is full-jitter. This was chosen to avoid thundering-herd on the payments gateway."
+      ],
+      "after_turns": [
+        {"role": "assistant", "content": "Following our earlier decision, I'll use exponential backoff with a base delay of 250ms and a hard cap of 5 retries, using full-jitter. Here is the client wrapper implementing exactly that."},
+        {"role": "assistant", "content": "Added the 250ms base / 5-retry / full-jitter policy to InvoiceSyncClient.retry_policy."}
+      ],
+      "gold_rung": "incorporation",
+      "note": "The retrieved 250ms base + 5-retry + full-jitter policy reappears verbatim in the subsequent implementation — direct observable reuse."
+    },
+    {
+      "id": "gold-incorp-2",
+      "container_ref": "git:example.com/acme-catalog",
+      "before_turns": [
+        {"role": "user", "content": "Re-enable caching on the product endpoint. Reuse whatever TTL we agreed."}
+      ],
+      "retrieved_history": [
+        "Note: product-detail responses are cached with a TTL of 90 seconds; category listings use 300 seconds. We keep product-detail short because prices change intra-day."
+      ],
+      "after_turns": [
+        {"role": "assistant", "content": "Set the product-detail cache TTL to 90 seconds, matching the agreed value (category listings stay at 300s)."}
+      ],
+      "gold_rung": "incorporation",
+      "note": "The 90s product-detail TTL from history is copied verbatim into the change — clear incorporation."
+    },
+    {
+      "id": "gold-incorp-3",
+      "container_ref": "git:example.com/acme-search",
+      "before_turns": [
+        {"role": "user", "content": "The slow query is back. What index did we add last time for the tag filter?"}
+      ],
+      "retrieved_history": [
+        "We added a composite index idx_docs_tenant_tag on documents(tenant_id, tag, created_at DESC) to make the tag-filtered feed query use an index scan instead of a full scan."
+      ],
+      "after_turns": [
+        {"role": "assistant", "content": "The idx_docs_tenant_tag composite index on documents(tenant_id, tag, created_at DESC) is missing on this environment. I'll recreate idx_docs_tenant_tag exactly as before."}
+      ],
+      "gold_rung": "incorporation",
+      "note": "The exact index name and column list from history are reused verbatim."
+    },
+    {
+      "id": "gold-incorp-4",
+      "container_ref": "git:example.com/acme-platform",
+      "before_turns": [
+        {"role": "user", "content": "Gate the new export path behind the same feature flag we discussed."}
+      ],
+      "retrieved_history": [
+        "Agreed to gate bulk export behind the feature flag `bulk_export_v2_enabled`, defaulting off, resolved per-tenant via the flag service."
+      ],
+      "after_turns": [
+        {"role": "assistant", "content": "Wrapped the export handler in a check on `bulk_export_v2_enabled` (default off, per-tenant), exactly the flag we named earlier."}
+      ],
+      "gold_rung": "incorporation",
+      "note": "Flag name `bulk_export_v2_enabled` and its default-off per-tenant semantics reappear verbatim."
+    },
+    {
+      "id": "gold-influence-1",
+      "container_ref": "git:example.com/acme-api",
+      "before_turns": [
+        {"role": "user", "content": "Design pagination for the new activity endpoint."}
+      ],
+      "retrieved_history": [
+        "Discussion: we moved away from offset pagination because deep offsets got slow and items shifted between pages. We prefer opaque cursor tokens encoding the sort key + id."
+      ],
+      "after_turns": [
+        {"role": "assistant", "content": "I'll design the activity endpoint with a cursor-based scheme rather than offsets, since offsets caused the paging problems we hit before. The cursor will carry enough to resume deterministically."}
+      ],
+      "gold_rung": "influence",
+      "note": "The work clearly adopts the prior cursor-over-offset direction and reasoning, but nothing is quoted verbatim — influence, not incorporation."
+    },
+    {
+      "id": "gold-influence-2",
+      "container_ref": "git:example.com/acme-worker",
+      "before_turns": [
+        {"role": "user", "content": "How should the new consumer handle malformed messages?"}
+      ],
+      "retrieved_history": [
+        "Convention established for consumers: never crash the loop on a bad message; route unparseable payloads to a dead-letter queue and continue, with a counter metric for poison messages."
+      ],
+      "after_turns": [
+        {"role": "assistant", "content": "The consumer will follow our established error convention: it won't kill the loop on a bad payload, it'll dead-letter and keep going, and I'll wire a metric for the dropped ones."}
+      ],
+      "gold_rung": "influence",
+      "note": "Subsequent design mirrors the retrieved dead-letter convention and rationale without verbatim reuse of a concrete artifact — influence."
+    },
+    {
+      "id": "gold-influence-3",
+      "container_ref": "git:example.com/acme-data",
+      "before_turns": [
+        {"role": "user", "content": "Plan the migration to split the accounts table."}
+      ],
+      "retrieved_history": [
+        "Lesson learned: when we split a hot table we do it in expand/contract phases — add the new columns/table and backfill first, dual-write, then cut reads over, and only drop the old shape last. Doing it in one shot caused an outage."
+      ],
+      "after_turns": [
+        {"role": "assistant", "content": "I'll stage the accounts split as an expand/contract migration: create the new structure and backfill, dual-write for a while, move reads, then retire the old columns last — to avoid the kind of outage we had doing it all at once."}
+      ],
+      "gold_rung": "influence",
+      "note": "The expand/contract approach and the outage rationale shape the plan; phrasing is paraphrased, not copied — influence."
+    },
+    {
+      "id": "gold-influence-4",
+      "container_ref": "git:example.com/acme-mobile",
+      "before_turns": [
+        {"role": "user", "content": "What should we name the new events for the checkout funnel?"}
+      ],
+      "retrieved_history": [
+        "Naming convention for analytics events: lowercase snake_case, domain-prefixed, verb-last, e.g. checkout_step_viewed. Avoid vendor-specific names."
+      ],
+      "after_turns": [
+        {"role": "assistant", "content": "Keeping to our analytics naming style — domain-prefixed snake_case with the verb last — I'll propose checkout_payment_submitted and checkout_order_confirmed."}
+      ],
+      "gold_rung": "influence",
+      "note": "New names obey the retrieved convention and it visibly guided them, but the specific examples differ — influence rather than verbatim incorporation."
+    },
+    {
+      "id": "gold-none-irrelevant-1",
+      "container_ref": "git:example.com/acme-auth",
+      "before_turns": [
+        {"role": "user", "content": "Fix the token refresh race on login."}
+      ],
+      "retrieved_history": [
+        "Old thread about switching the logging library to structured JSON logs and setting log levels per module."
+      ],
+      "after_turns": [
+        {"role": "assistant", "content": "The refresh race is a double-fetch when two requests see an expired token at once. I'll add a single-flight lock around the refresh so only one network refresh happens and the others await it."}
+      ],
+      "gold_rung": "none",
+      "note": "Retrieved history (logging library) is unrelated to the token-refresh fix; the work does not use it — genuine_opportunity false, rung none."
+    },
+    {
+      "id": "gold-none-irrelevant-2",
+      "container_ref": "git:example.com/acme-reports",
+      "before_turns": [
+        {"role": "user", "content": "Speed up the nightly aggregation job."}
+      ],
+      "retrieved_history": [
+        "Past discussion of button copy and empty-state wording on the settings screen."
+      ],
+      "after_turns": [
+        {"role": "assistant", "content": "The aggregation is slow because it recomputes every partition each run. I'll make it incremental — only reprocess partitions whose source rows changed since the last watermark."}
+      ],
+      "gold_rung": "none",
+      "note": "Retrieved UI-copy history is irrelevant to a batch-job perf fix; not used — none."
+    },
+    {
+      "id": "gold-none-abandoned-1",
+      "container_ref": "git:example.com/acme-infra",
+      "before_turns": [
+        {"role": "user", "content": "Do we have prior context on the deploy rollback steps?"},
+        {"role": "assistant", "content": "Let me search our history for rollback steps."}
+      ],
+      "retrieved_history": [],
+      "after_turns": [
+        {"role": "assistant", "content": "Nothing turned up in history. I'll write the rollback steps fresh: re-point the alias to the previous release, drain connections, verify health, then scale the new version to zero."}
+      ],
+      "gold_rung": "none",
+      "note": "Abandoned/empty lookup — nothing was retrieved, so there is nothing to reuse; none."
+    },
+    {
+      "id": "gold-none-abandoned-2",
+      "container_ref": "git:example.com/acme-notify",
+      "before_turns": [
+        {"role": "user", "content": "Any earlier notes on the SMS provider limits?"}
+      ],
+      "retrieved_history": [],
+      "after_turns": [
+        {"role": "assistant", "content": "I couldn't find earlier notes. I'll proceed by reading the provider's current rate-limit docs and add a conservative client-side limiter until we confirm the real numbers."}
+      ],
+      "gold_rung": "none",
+      "note": "Empty lookup; the agent explicitly proceeds without any retrieved history — none."
+    }
+  ]
+}

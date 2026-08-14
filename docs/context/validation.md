@@ -104,6 +104,53 @@ snapshots and applies a rule — no LLM in the harness itself.
 - **Don't trust single-seed judge calls on small samples.** ~20pp variance is real (see `lessons.md`); use ≥3 seeds and a consensus rule, or pick a deterministic-replay tool instead.
 - **Don't conflate retrieval recall with end-to-end accuracy.** R@5 of 95% on LongMemEval-S is session-id-in-top-5, not QA. Pick the metric that matches the claim.
 
+## Reuse Judge Calibration
+
+The retrospective reuse KPI (the three-rung ladder) rests entirely on the
+LLM-judge's rung-1/rung-2 verdicts. Inter-seed Cohen's kappa (already reported
+by the judge) measures the judge's *stability*, not its *correctness* — a
+confidently-wrong judge can be perfectly self-consistent. Calibration closes
+that gap against a human-labelled gold set.
+
+- **Gold fixture:** `evals/fixtures/reuse_gold/gold_lookups.json` — 12
+  hand-labelled synthetic lookups (before/after turns + retrieved history +
+  correct rung), 4 incorporation / 4 influence / 4 none.
+- **Runner:** `python -m evals.reuse_judge_calibration --seeds 0,1,2` seeds the
+  fixture into a scratch DB and runs the REAL judge (`evals/historical_lookup_judge.py`)
+  with `gold_labels`, so it reports judge-vs-gold Cohen's kappa (consensus rung
+  vs gold rung) alongside the usual seed-vs-seed kappa.
+- **Threshold:** `GOLD_KAPPA_THRESHOLD = 0.6` (Landis & Koch "substantial").
+  Below it, the rollup embeds `calibration.calibrated = false`, every rung entry
+  is stamped `"calibrated": false`, and the dashboard reuse-KPI panel presents
+  rung rates as **uncalibrated** rather than confident.
+
+### Measured result (2026-08-14, seeds 0,1,2, real provider)
+
+- **judge-vs-gold Cohen's kappa = 0.50** (n = 12) → **below the 0.60 threshold →
+  UNCALIBRATED.**
+- seed-vs-seed kappa on the same run = **1.0** (perfectly self-consistent).
+- Verdict: **the reuse judge is NOT yet calibrated.** Rung rates are presented
+  as uncalibrated. The gap between a perfect 1.0 self-consistency and a 0.50
+  agreement-with-gold is exactly why inter-seed kappa alone is insufficient. The
+  observed miss: the judge assigned "incorporation" to 8/12 lookups and never
+  assigned "influence", collapsing the rung-1/rung-2 distinction the KPI depends
+  on. Fixing that is a judge-rubric change, out of scope for this calibration
+  work — the honest present state is "uncalibrated".
+
+### Honesty limitations
+
+This is a directional calibration, not a final one:
+
+- **Small N.** 12 gold lookups → a WIDE kappa confidence interval; the 0.50
+  point estimate should not be over-read.
+- **Single-author synthetic labels.** One human labeller, no second independent
+  rater (so no human-human agreement baseline), and hand-written scenarios that
+  may not mirror the rung distribution of real lookup traffic.
+- A below-threshold result is a valid, honest outcome. The fixture must not be
+  grown or tweaked to force a pass; growing it to a larger, multi-rater corpus
+  is deliberately out of scope for this pass.
+
+
 ## Confidence Gate
 
 The developer-work confidence report now rolls up by lane and tier first.

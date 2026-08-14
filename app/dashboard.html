@@ -904,15 +904,16 @@
     <!-- ── 2 · Reuse KPI rungs (RETROSPECTIVE) ────────────────── -->
     <div class="section-title">
       Reuse KPI <span class="framing-tag retrospective">retrospective</span>
-      <span class="scope-tag">reuse per 100 eligible — needs the judge</span>
+      <span class="scope-tag">reuse per 100 eligible — calibrated only when the judge agrees with gold</span>
     </div>
     <div class="card">
       <div id="hh-reuse-kpi">
         <div class="hh-empty">
-          Not measured yet — the rung-1 (verified incorporation) and rung-2 (judged
-          influence) reuse rates need the retrospective judge. Run
-          <code>python -m evals.historical_lookup_measurement</code> to populate. Sourced
-          from the last-written rollup, never computed on-request.
+          Rung rates are <strong>uncalibrated</strong> until the retrospective judge is
+          checked against the human-labelled gold set. Run
+          <code>python -m evals.reuse_judge_calibration</code> to measure judge-vs-gold
+          agreement; below the threshold, rung numbers are shown as uncalibrated, not
+          confident. Sourced from the last-written calibration report, never computed on-request.
         </div>
       </div>
     </div>
@@ -2180,8 +2181,49 @@ function _hhKv(k, v) {
 }
 
 function renderEffectivenessReports(reports) {
+  renderReuseCalibration(reports.reuse_judge_calibration || { available: false });
   renderRawDerivedHybrid(reports.raw_derived_hybrid || { available: false });
   renderDerivationFidelity(reports.derivation_fidelity || { available: false });
+}
+
+// Reuse-KPI calibration affordance. The rung-rate table is not wired to live
+// data yet; until it is, this panel's job is to say — honestly — whether the
+// judge that WOULD produce those rung rates has been shown to agree with a
+// human-labelled gold set. Until judge-vs-gold agreement clears the threshold,
+// rung rates are UNCALIBRATED and must not be read as confident.
+function renderReuseCalibration(entry) {
+  const el = document.getElementById('hh-reuse-kpi');
+  if (!el) return;
+  if (!entry.available) {
+    el.innerHTML = '<div class="hh-empty">Rung rates are <strong>uncalibrated</strong> — ' +
+      'the rung-1 (verified incorporation) and rung-2 (judged influence) rates come from ' +
+      'the retrospective judge, and the judge has not yet been checked against the ' +
+      'human-labelled gold set. Run <code>python -m evals.reuse_judge_calibration</code> ' +
+      'to measure judge-vs-gold agreement; until it clears the threshold, treat any rung ' +
+      'number as uncalibrated, not confident.</div>';
+    return;
+  }
+  const jvg = (entry.report && entry.report.judge_vs_gold) || {};
+  const kappa = (jvg.kappa != null) ? Number(jvg.kappa).toFixed(2) : 'n/a';
+  const thr = (jvg.threshold != null) ? Number(jvg.threshold).toFixed(2) : '0.60';
+  const calibrated = jvg.calibrated === true;
+  const uncalibrated = jvg.calibrated === false;
+  const verdict = calibrated ? 'CALIBRATED' : (uncalibrated ? 'UNCALIBRATED' : 'indeterminate');
+  const color = calibrated ? 'var(--green)' : (uncalibrated ? 'var(--red)' : 'var(--muted)');
+  const rows = [];
+  rows.push(_hhKv('judge-vs-gold κ', kappa + '  (threshold ' + thr + ')'));
+  if (jvg.n != null) rows.push(_hhKv('gold lookups (n)', fmtNum(jvg.n)));
+  rows.push('<div class="hh-kv"><span class="k">rung rates</span>' +
+    '<span class="v" style="color:' + color + ';font-weight:600">' + verdict + '</span></div>');
+  let note = '';
+  if (uncalibrated) {
+    note = '<div class="hh-empty">Judge-vs-gold agreement is below threshold — rung rates ' +
+      'are presented as <strong>uncalibrated</strong>, not confident.</div>';
+  } else if (calibrated) {
+    note = '<div class="hh-empty">Judge cleared the gold-agreement threshold. Note the gold ' +
+      'set is small and single-author synthetic — a substantial, not final, calibration.</div>';
+  }
+  el.innerHTML = rows.join('') + note + _hhStamp(entry);
 }
 
 function renderRawDerivedHybrid(entry) {

@@ -57,7 +57,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Discovery
@@ -119,8 +119,21 @@ Gated real run (provider; only after plan approval):
 
 ## Implementation
 
-(Not started — planning only. Awaiting architect approval of the plan before any code edit.)
+Planning committed first (commit-order predicate); WR-approval + idea->in-progress committed before code. Then, in code commits:
+
+- **Fixture** `evals/fixtures/reuse_gold/gold_lookups.json`: 12 hand-labelled synthetic lookups (4 incorporation / 4 influence / 4 none, 2 of the none abandoned/empty), generic software-engineering scenarios, `_meta.honesty_limitations` embedded.
+- **Judge** `evals/historical_lookup_judge.py`: added `GOLD_KAPPA_THRESHOLD = 0.6`; `run_judge(..., gold_labels=...)` computes judge-consensus-vs-gold kappa (reusing `cohens_kappa` + `_rung_category`), sets `JudgeReport.gold_kappa/gold_kappa_n/calibrated`, and `to_dict()` emits a `judge_vs_gold` block next to `cohens_kappa`. Rubric/prompt/model/sampling/consensus untouched.
+- **Runner** new `evals/reuse_judge_calibration.py`: loads + validates the fixture, seeds a temp scratch DB (source_items + one lookup event per record, monotonic timestamps, `eligibility_n=0`, `write_labels=False`), runs the real judge with `gold_labels`, writes `.local/research/reuse_judge_calibration.json`. Thin consumer — not a second judge.
+- **Rollup** `evals/historical_lookup_measurement.py`: `compute_reuse_rollup(..., calibration=...)` embeds the block verbatim with `_empty_calibration_report()` default; stamps each rung `"calibrated": False` ONLY on explicit `calibrated is False`. Numerator/denominator/Wilson untouched.
+- **Dashboard** `app/dashboard.py`: `reuse_judge_calibration` added to `_EFFECTIVENESS_REPORT_PATHS` (traversal-proof, empty-safe). `app/dashboard.html`: reworded the reuse-KPI empty state to "uncalibrated until judge-vs-gold clears threshold" and added `renderReuseCalibration()` showing kappa/threshold/verdict. No rung table built (none exists yet); no computation change.
+- **Tests** new `tests/test_reuse_judge_calibration.py` (10 tests): fixture structure + genericness scan, judge-vs-gold perfect-agreement->calibrated / disagreement->uncalibrated, `judge_vs_gold` block emission, no-gold path leaves calibration None, threshold constant guard, and rollup calibration embed/stamp tests (uncalibrated stamps rungs without changing numerators; calibrated does not stamp; default empty-safe).
+- **Report** `docs/context/validation.md`: new "Reuse Judge Calibration" section with the measured real-run result + honesty limitations. Roadmap idea status -> in-progress.
 
 ## Evidence
 
-(Pending implementation + the gated real run.)
+Real cpython interpreter (`PYTHONPATH="C:/Dev/rore/Pallium/.local/test-env/site-packages;."`, cpython-3.13):
+- `pytest tests/test_reuse_judge_calibration.py -q -n 0` -> **10 passed** (0.72s).
+- `pytest tests/test_historical_lookup_judge.py tests/test_historical_lookup_measurement.py -q -n 0` -> **44 passed** (1.33s) — no regression from the judge/rollup changes.
+- `python -m evals.reuse_judge_calibration --dry-run` -> loads all 12 gold lookups, `judge_vs_gold` block present (NullProvider -> kappa 0.0, plumbing only).
+- **REAL calibration run** (`--seeds 0,1,2 --cache-dir .local/llm-cache`, real provider, scratch DB): **judge-vs-gold kappa = 0.50, n = 12, threshold 0.60 -> UNCALIBRATED**; seed-vs-seed kappa on the same run = 1.0; 36 labels, 0 judge failures. Honest outcome: judge not yet calibrated -> rung rates uncalibrated. Recorded in `docs/context/validation.md`.
+- Full-lane `pytest -m 'not slow' -q` -> **3528 passed, 15 skipped, 2 xfailed** after updating two `tests/test_dashboard.py` key-set assertions to include the new `reuse_judge_calibration` report key (the only fallout of the new dashboard report path). Known-benign `test_config.py::test_prompt_variants_legacy_fallback_unaffected` not triggered this run.
