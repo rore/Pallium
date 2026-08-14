@@ -335,3 +335,115 @@ class TestLoaderStub:
         )
         for rung in result["rungs"].values():
             assert rung["reuse_per_100_eligible"] is None
+
+
+# ---------------------------------------------------------------------------
+# Visibility / governance violation reporting
+# ---------------------------------------------------------------------------
+
+
+class TestVisibilityViolationReporting:
+    """The rollup output always carries a computed visibility-violation block."""
+
+    def test_rollup_embeds_empty_report_by_default(self) -> None:
+        result = compute_reuse_rollup([], [], eligibility_n=50, window={})
+        vv = result["visibility_violations"]
+        assert vv["violations"] == 0
+        assert set(vv["by_type"]) == {"cross_container", "forgotten_exposed"}
+
+    def test_rollup_embeds_supplied_report(self) -> None:
+        report = {
+            "violations": 0,
+            "by_type": {"cross_container": 0, "forgotten_exposed": 0},
+            "events_checked": 3,
+            "exposed_ids_checked": 9,
+        }
+        result = compute_reuse_rollup(
+            [], [], eligibility_n=50, window={}, visibility_report=report
+        )
+        assert result["visibility_violations"] is report
+
+    def test_load_violations_empty_safe_no_db(self) -> None:
+        from evals.historical_lookup_measurement import load_visibility_violations
+
+        report = load_visibility_violations(None)
+        assert report["violations"] == 0
+        assert report["by_type"] == {"cross_container": 0, "forgotten_exposed": 0}
+
+    def test_load_violations_clean_exposed_set_is_zero(self, tmp_path) -> None:
+        """A clean exposed set (matching container, not forgotten) → 0 violations
+        with a non-zero exposed_ids_checked (the count is computed, not assumed)."""
+        import json
+
+        from core.models import new_id, utc_now
+        from evals.historical_lookup_measurement import load_visibility_violations
+        from sqlalchemy import text
+        from storage.sqlite import SQLiteStorageProvider
+
+        db = tmp_path / "hist.db"
+        storage = SQLiteStorageProvider(f"sqlite:///{db}")
+        with storage._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO source_items (id, source_type, source_id, "
+                    "content_type, content, container_ref, thread_ref, visibility, "
+                    "processing_status, processing_attempts, created_at) VALUES "
+                    "('s1','chat_message','ext-s1','text/plain','x','c:1','t:1',"
+                    "'private','completed',0,'2026-08-01 00:00:01.000000')"
+                )
+            )
+        storage.write_historical_lookup_event_row({
+            "id": new_id(),
+            "created_at": utc_now(),
+            "event_type": "lookup",
+            "session_id": "t:1",
+            "container_ref": "c:1",
+            "actor_ref": None,
+            "trigger_origin": "agent_pull",
+            "parent_lookup_id": None,
+            "exposed_json": json.dumps([{"source_item_id": "s1", "raw_rank": 1, "score": 0.5}]),
+            "visibility": "private",
+        })
+        report = load_visibility_violations(str(db), container_ref="c:1")
+        assert report["violations"] == 0
+        assert report["exposed_ids_checked"] == 1
+        assert report["events_checked"] == 1
+
+    def test_load_violations_detects_planted_cross_container(self, tmp_path) -> None:
+        """A planted cross-container exposed id must be COUNTED (proves the
+        field is computed, not hardcoded to 0)."""
+        import json
+
+        from core.models import new_id, utc_now
+        from evals.historical_lookup_measurement import load_visibility_violations
+        from sqlalchemy import text
+        from storage.sqlite import SQLiteStorageProvider
+
+        db = tmp_path / "hist.db"
+        storage = SQLiteStorageProvider(f"sqlite:///{db}")
+        with storage._engine.begin() as conn:
+            # The exposed source item lives in a DIFFERENT container than the event.
+            conn.execute(
+                text(
+                    "INSERT INTO source_items (id, source_type, source_id, "
+                    "content_type, content, container_ref, thread_ref, visibility, "
+                    "processing_status, processing_attempts, created_at) VALUES "
+                    "('s-other','chat_message','ext','text/plain','x','c:OTHER','t:x',"
+                    "'private','completed',0,'2026-08-01 00:00:01.000000')"
+                )
+            )
+        storage.write_historical_lookup_event_row({
+            "id": new_id(),
+            "created_at": utc_now(),
+            "event_type": "lookup",
+            "session_id": "t:1",
+            "container_ref": "c:1",
+            "actor_ref": None,
+            "trigger_origin": "agent_pull",
+            "parent_lookup_id": None,
+            "exposed_json": json.dumps([{"source_item_id": "s-other", "raw_rank": 1, "score": 0.5}]),
+            "visibility": "private",
+        })
+        report = load_visibility_violations(str(db))
+        assert report["by_type"]["cross_container"] == 1
+        assert report["violations"] == 1

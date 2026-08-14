@@ -24,6 +24,15 @@ from pathlib import Path
 
 _DEFAULT_PORT = 19836
 
+# Seeded into a fresh service config when the dev config has no [observability]
+# section, so `pallium service install` arms the historical-lookup reuse funnel
+# out of the box. Persistence itself is unconditional; this is the declared
+# "armed" signal that `pallium service status` reports.
+_FUNNEL_ARMED_BLOCK = (
+    "[observability]",
+    "historical_lookup_funnel = true",
+)
+
 
 def _pallium_home(override: str | None = None) -> Path:
     if override:
@@ -69,6 +78,9 @@ def _seed_config(home: Path) -> None:
             "[llm_providers.",
             "[semantic_packages.agent_conversation_memory",
             "[semantic_packages.conversational_knowledge",
+            # Keep the observability section so the historical-lookup reuse
+            # funnel is armed out of the box (see _FUNNEL_ARMED_BLOCK).
+            "[observability]",
         )
         output: list[str] = []
         in_section = False
@@ -81,6 +93,12 @@ def _seed_config(home: Path) -> None:
                 output.append("")
         while output and output[-1] == "":
             output.pop()
+        # Seed an armed [observability] block if the dev config had none — a
+        # fresh install must arm the funnel out of the box.
+        if not any(line.strip() == "[observability]" for line in output):
+            if output:
+                output.append("")
+            output.extend(_FUNNEL_ARMED_BLOCK)
         if output:
             config_dest.write_text("\n".join(output) + "\n", encoding="utf-8")
             print(f"  Wrote minimal config → {config_dest}")
@@ -496,6 +514,12 @@ def _cmd_status(args: argparse.Namespace) -> int:
         db_mb = storage.get("sqlite_mb")
         if db_mb is not None:
             print(f"  DB size: {db_mb} MB")
+        funnel = status_data.get("historical_lookup_funnel")
+        if isinstance(funnel, dict):
+            armed = "yes" if funnel.get("armed") else "no"
+            recorded = funnel.get("events_recorded")
+            recorded_str = f", {recorded} events recorded" if recorded is not None else ""
+            print(f"  Reuse funnel armed: {armed}{recorded_str}")
     except Exception:
         pass
 

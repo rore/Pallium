@@ -125,6 +125,7 @@ def compute_reuse_rollup(
     *,
     eligibility_n: int,
     window: dict[str, Any],
+    visibility_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compute the three-rung reuse rollup from in-memory inputs.
 
@@ -147,6 +148,12 @@ def compute_reuse_rollup(
     window:
         Arbitrary dict describing the measurement window (e.g.
         ``{"since": "...", "until": "..."}``) — serialised into the output.
+    visibility_report:
+        Optional governance report from ``load_visibility_violations`` — the
+        attempted-disallowed-access counts by type over the persisted exposed
+        sets. Embedded verbatim under ``visibility_violations`` when provided;
+        an empty-safe zeroed report is embedded otherwise so the field is
+        always present and never hardcoded at the call site.
 
     Returns
     -------
@@ -154,7 +161,8 @@ def compute_reuse_rollup(
         JSON-serialisable rollup.  Per rung: numerator, denominator,
         ``reuse_per_100_eligible`` (null when denominator == 0), Wilson 95%
         interval (low/high, null when denominator == 0), label, and measures
-        annotation.  Top level carries eligibility_n, window, and counts.
+        annotation.  Top level carries eligibility_n, window, counts, and the
+        ``visibility_violations`` governance report.
 
     Empty-data-safe
     ---------------
@@ -203,6 +211,9 @@ def compute_reuse_rollup(
         "n_eligible_sessions": denominator,
         "n_reuse_events": len(reuse_events),
         "rungs": rungs_out,
+        "visibility_violations": visibility_report
+        if visibility_report is not None
+        else _empty_visibility_report(),
     }
 
 
@@ -465,6 +476,130 @@ def load_events_from_storage(
 
 
 # ---------------------------------------------------------------------------
+# Visibility / governance violation reporting
+# ---------------------------------------------------------------------------
+
+#: The concrete, unambiguous scope-violation classes checked over persisted
+#: exposed sets. Both are "should never happen" — the persist hooks read
+#: POST-redaction / post-gate results, so the exposed ids are already filtered.
+#: The count is COMPUTED (join exposed ids to source_items), never hardcoded, so
+#: a regression that leaked a forbidden id would surface here as non-zero.
+_VIOLATION_TYPES = ("cross_container", "forgotten_exposed")
+
+
+def _empty_visibility_report() -> dict[str, Any]:
+    """Zeroed governance report — used when no DB report is supplied so the
+    ``visibility_violations`` field is always present and never hardcoded to a
+    literal 0 at the call site."""
+    return {
+        "violations": 0,
+        "by_type": {t: 0 for t in _VIOLATION_TYPES},
+        "events_checked": 0,
+        "exposed_ids_checked": 0,
+        "note": "no data (empty-safe default)",
+    }
+
+
+def load_visibility_violations(
+    db_path: Path | str | None = None,
+    *,
+    container_ref: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+) -> dict[str, Any]:
+    """Count attempted-disallowed-access over persisted reuse exposed sets.
+
+    For every persisted ``historical_lookup_reuse_event`` (lookups AND
+    expansions), each exposed ``source_item_id`` is joined back to
+    ``source_items`` and classified:
+
+      - ``cross_container``  — the exposed item's ``container_ref`` differs from
+        the event's ``container_ref`` (a scope escape).
+      - ``forgotten_exposed`` — the exposed item is forgotten
+        (``forgotten_at IS NOT NULL``) yet appears in the exposed set.
+
+    Because the persist hooks read the already-filtered results, the expected
+    count is 0 — but it is COMPUTED here, not assumed, so a leak regression is
+    detectable. Empty-safe: returns the zeroed report when the DB / tables are
+    absent.
+    """
+    report = _empty_visibility_report()
+    report["note"] = "computed from persisted exposed sets"
+    if db_path is None:
+        report["note"] = "no db (empty-safe default)"
+        return report
+    path = Path(db_path)
+    if not path.exists():
+        report["note"] = "missing db file (empty-safe default)"
+        return report
+    since = _normalize_ts_bound(since)
+    until = _normalize_ts_bound(until)
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "historical_lookup_reuse_event") or not _table_exists(
+            conn, "source_items"
+        ):
+            return report
+        where: list[str] = []
+        params: list[Any] = []
+        if container_ref is not None:
+            where.append("container_ref = ?")
+            params.append(container_ref)
+        if since is not None:
+            where.append("created_at >= ?")
+            params.append(since)
+        if until is not None:
+            where.append("created_at <= ?")
+            params.append(until)
+        sql = "SELECT id, container_ref, exposed_json FROM historical_lookup_reuse_event"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        rows = conn.execute(sql, params).fetchall()
+
+        by_type = {t: 0 for t in _VIOLATION_TYPES}
+        events_checked = 0
+        exposed_checked = 0
+        for row in rows:
+            events_checked += 1
+            try:
+                exposed = json.loads(row["exposed_json"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                exposed = []
+            if not isinstance(exposed, list):
+                continue
+            for entry in exposed:
+                if not isinstance(entry, dict):
+                    continue
+                sid = entry.get("source_item_id")
+                if not sid:
+                    continue
+                exposed_checked += 1
+                item = conn.execute(
+                    "SELECT container_ref, forgotten_at FROM source_items WHERE id = ?",
+                    (sid,),
+                ).fetchone()
+                if item is None:
+                    continue
+                if (
+                    item["container_ref"] is not None
+                    and row["container_ref"] is not None
+                    and item["container_ref"] != row["container_ref"]
+                ):
+                    by_type["cross_container"] += 1
+                if item["forgotten_at"] is not None:
+                    by_type["forgotten_exposed"] += 1
+
+        report["by_type"] = by_type
+        report["violations"] = sum(by_type.values())
+        report["events_checked"] = events_checked
+        report["exposed_ids_checked"] = exposed_checked
+        return report
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # CLI (dry-run or live)
 # ---------------------------------------------------------------------------
 
@@ -498,6 +633,7 @@ def main(argv: list[str] | None = None) -> int:
             {"session_id": "session-1", "rung": "influence"},
         ]
         window: dict[str, Any] = {"note": "dry-run synthetic data"}
+        visibility_report = _empty_visibility_report()
     else:
         sessions, events = load_events_from_storage(
             args.db,
@@ -511,12 +647,19 @@ def main(argv: list[str] | None = None) -> int:
             "until": args.until,
             "container_ref": args.container_ref,
         }
+        visibility_report = load_visibility_violations(
+            args.db,
+            container_ref=args.container_ref,
+            since=args.since,
+            until=args.until,
+        )
 
     report = compute_reuse_rollup(
         sessions,
         events,
         eligibility_n=args.eligibility_n,
         window=window,
+        visibility_report=visibility_report,
     )
 
     serialised = json.dumps(report, indent=2, sort_keys=True, default=str)
@@ -547,6 +690,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"n={rung['numerator']}/{rung['denominator']}  "
                 f"per-100={rate_str}  95%CI={ci_str}"
             )
+        vv = report["visibility_violations"]
+        print(
+            f"  visibility violations: {vv['violations']} "
+            f"(by_type={vv['by_type']}; "
+            f"events={vv.get('events_checked', 0)}, "
+            f"exposed_ids={vv.get('exposed_ids_checked', 0)})"
+        )
     return 0
 
 

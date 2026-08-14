@@ -172,8 +172,33 @@ class TestStatusResponseShape:
             "uptime_seconds",
             "query",
             "metrics_summary",
+            "historical_lookup_funnel",
         }
         assert set(body.keys()) == expected_keys
+
+    def test_status_reports_funnel_armed(self, tmp_path: Path) -> None:
+        """The reuse funnel is armed by default → status reports armed=True with
+        a computed events count."""
+        app = create_app(_file_db_config(tmp_path))
+        with TestClient(app) as client:
+            body = client.get("/status").json()
+        funnel = body["historical_lookup_funnel"]
+        assert set(funnel.keys()) == {"armed", "events_recorded"}
+        assert funnel["armed"] is True
+        assert funnel["events_recorded"] == 0
+
+    def test_status_reports_funnel_not_armed_when_disabled(self, tmp_path: Path) -> None:
+        from app.config import ObservabilityConfig
+
+        app = create_app(
+            _file_db_config(
+                tmp_path,
+                observability=ObservabilityConfig(historical_lookup_funnel=False),
+            )
+        )
+        with TestClient(app) as client:
+            body = client.get("/status").json()
+        assert body["historical_lookup_funnel"]["armed"] is False
 
     def test_status_snapshot_sub_keys(self, tmp_path: Path) -> None:
         app = create_app(_file_db_config(tmp_path))
