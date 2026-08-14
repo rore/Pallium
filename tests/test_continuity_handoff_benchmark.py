@@ -178,8 +178,10 @@ def test_handoff_benchmark_emits_four_arms_and_consensus(monkeypatch, tmp_path: 
     nv = results["same-thread-sufficient-no-value"]
     assert nv["consensus_winner"] == ARM_NO_MEMORY
 
-    # Headline booleans are computed and coherent.
-    assert isinstance(summary["pull_preserves_manual_correctness"], bool)
+    # Headline result: pull is at least as correct as the manual baselines AND
+    # strictly cheaper. Assert the actual values (True), not just their type, so
+    # a regression that loses correctness parity would fail here.
+    assert summary["pull_preserves_manual_correctness"] is True
     assert summary["pull_strictly_cheaper_than_manual"] is True
 
 
