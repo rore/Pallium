@@ -180,9 +180,14 @@ class QueryResponse(BaseModel):
     injectable_blocks: list[InjectableBlockResponse] = Field(default_factory=list)
     # vNext P0 (design 015): stable id for this lookup, linking the call to
     # its recorded exposures and follow-up in the measurement event chain.
-    # Equals the persisted query_audit_log row id when a row was written for
-    # this call; None otherwise (e.g. query-audit logging disabled, or an
-    # endpoint that does not persist a row). Additive and non-breaking.
+    # Precedence:
+    #   - source_only search → the minted historical lookup_event_id (persisted
+    #     UNCONDITIONALLY to historical_lookup_reuse_event, independent of
+    #     query-audit logging). This id wins even when audit logging is on.
+    #   - otherwise → the persisted query_audit_log row id when a row was
+    #     written for this call; None otherwise (audit logging disabled, or an
+    #     endpoint that does not persist a row).
+    # Additive and non-breaking.
     lookup_event_id: str | None = None
 
 

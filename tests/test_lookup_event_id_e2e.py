@@ -87,6 +87,19 @@ def _audit_row_id_by_event_id(client: TestClient, event_id: str) -> str | None:
         ).scalar()
 
 
+def _historical_event_row(client: TestClient, event_id: str) -> tuple | None:
+    """Return (event_type, session_id) for a historical_lookup_reuse_event row."""
+    storage = client.app.state.pallium_service._storage
+    with storage._engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT event_type, session_id FROM historical_lookup_reuse_event "
+                "WHERE id = :eid"
+            ),
+            {"eid": event_id},
+        ).one_or_none()
+
+
 # ---------------------------------------------------------------------------
 # A. E2E — audit ENABLED: non-null id matching the persisted row
 # ---------------------------------------------------------------------------
@@ -219,6 +232,52 @@ class TestLookupEventIdDebugEndpoints:
         resp = client.post("/item-and-query/debug", json=_item_and_query_payload())
         assert resp.status_code == 200
         assert resp.json()["lookup_event_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# C2. E2E — source_only path: the historical reuse funnel mints a lookup_event_id
+# UNCONDITIONALLY (not gated on audit) and it takes precedence over the audit id.
+# ---------------------------------------------------------------------------
+
+class TestSourceOnlyLookupEventId:
+    """source_only /query surfaces a minted historical lookup_event_id that is
+    persisted independently of query-audit logging and wins over the audit id."""
+
+    def test_source_only_audit_off_returns_minted_id_and_persists_event(self, test_db_url):
+        # Audit OFF (default): normal /query returns null, but a source_only
+        # search must still return a non-null minted id with a persisted event.
+        client = _make_client(test_db_url, audit_log_enabled=False)
+        resp = client.post("/query", json=_query_payload(source_only=True))
+        assert resp.status_code == 200
+        event_id = resp.json()["lookup_event_id"]
+        assert event_id is not None, (
+            "source_only search must mint a lookup_event_id even with audit off"
+        )
+        # No audit row was written (audit disabled), but a lookup event exists.
+        assert _audit_row_count(client) == 0
+        row = _historical_event_row(client, event_id)
+        assert row is not None and row[0] == "lookup", (
+            "a historical_lookup_reuse_event 'lookup' row must be persisted"
+        )
+        assert row[1] == "test:thread:lookup"  # session_id == thread_ref
+
+    def test_source_only_audit_on_response_id_is_minted_not_audit(self, test_db_url):
+        # Audit ON: an audit row is still written, but the source_only response
+        # id must be the minted historical id — NOT the audit row id.
+        client = _make_client(test_db_url, audit_log_enabled=True)
+        resp = client.post("/query", json=_query_payload(source_only=True))
+        assert resp.status_code == 200
+        event_id = resp.json()["lookup_event_id"]
+        assert event_id is not None
+        # The returned id is the minted historical id (present in the event
+        # table) and is NOT a query_audit_log row id.
+        row = _historical_event_row(client, event_id)
+        assert row is not None and row[0] == "lookup"
+        assert _audit_row_id_by_event_id(client, event_id) is None, (
+            "source_only response id must be the minted historical id, not the audit row id"
+        )
+        # An audit row was nonetheless written for the query (audit is on).
+        assert _audit_row_count(client) == 1
 
 
 # ---------------------------------------------------------------------------

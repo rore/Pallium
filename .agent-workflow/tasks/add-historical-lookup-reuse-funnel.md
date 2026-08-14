@@ -1,0 +1,119 @@
+# Work Record — add-historical-lookup-reuse-funnel
+
+Task branch: `feat/add-historical-lookup-reuse-funnel`
+Roadmap item: `roadmap/features/add-historical-lookup-reuse-funnel.md`
+
+<!-- agent-workflow:start -->
+**Outcome:**
+On a fresh local Pallium install, real agent usage produces the Phase-1 reuse KPI. Every `pallium_search_history` call persists a lookup event (unconditionally, not gated on `audit_log_enabled`) carrying a newly-minted `lookup_event_id` + exposed source ids + raw ranks (+ best-effort score) + identity (`session_id`=thread_ref, `actor_ref`, `container_ref`, `trigger_origin`); every `pallium_expand_source` persists an expansion event carrying `parent_lookup_id`. `load_events_from_storage` reconstructs eligible sessions + loads events (with consensus rung from a labels table) so `python -m evals.historical_lookup_measurement --db <db>` returns a non-empty, empty-data-safe rollup (reuse-per-100-eligible, rungs 1–2, Wilson intervals, supporting rates). A retrospective sampled judge assigns rung labels + the user-directed-vs-agent-decided split + inter-rater κ. The funnel is armed by default on install and `pallium service status` reports whether it is armed.
+
+**Target:**
+Pallium repo. Guarded: `storage/` (new event + labels tables + writers), `core/query.py`/`core/service.py` (unconditional lookup + expansion persistence hooks; surface minted `lookup_event_id` for the source_only path), `api/` (source_only response contract + schema docstring — RED api-review), `app/cli/` (install config seeding + status health check), `app/config.py`. Non-guarded: `evals/historical_lookup_measurement.py` (loader), a judge harness under `evals/`, `pallium.example.toml`, runbook doc, `tests/`.
+
+**Scope:**
+Delivered as **2 PRs**. PR-a (guarded core): new `historical_lookup_reuse_event` (write-only, no rung) + `historical_lookup_reuse_label` (append-only) tables + writers; unconditional lookup-event persistence + minted `lookup_event_id` at the `source_only` seam; expansion-event persistence carrying `parent_lookup_id`; `source_only` response returns the minted id (precedence pinned) + schema docstring update; `load_events_from_storage` (eligible-session reconstruction + event load + consensus rung) feeding `compute_reuse_rollup`; tests incl. reconciling `tests/test_lookup_event_id_e2e.py` + a `source_only`+audit-on case. PR-b (enablement + judge): retrospective sampled judge harness writing rung labels to the labels table; arm-by-default on install + `pallium service status` health check; runbook + visibility-violation reporting in the rollup output.
+MAY NOT touch: retrieval *behavior* (scoring / `source_only` candidate semantics) beyond adding persistence hooks; agent guidance/skills (separate feature `add-agent-historical-lookup-exposure`); dashboard surfacing (separate feature).
+
+**Constraints:**
+Lookup-event persistence is UNCONDITIONAL (not gated on `audit_log_enabled`). The existing normal-`/query` audit behavior (audit-gated `lookup_event_id` == audit row id, null when disabled — `tests/test_lookup_event_id_e2e.py`, all of which use the default `source_only=False`) MUST remain intact; only the `source_only` path gains an unconditional minted id, with precedence pinned (minted historical id wins for source_only; audit id otherwise). The event table is WRITE-ONLY (no in-place mutation — rung labels go to the separate append-only labels table, so multi-rater κ is possible). Rollup stays empty-data-safe. Persist hooks read POST-redaction `result.results` / post-gate neighbors (no leak of forbidden/forgotten ids). Visibility invariant tests must use a visibility-ENFORCING plugin (the demo plugin does not require visibility context → vacuous). New tables follow the `SubtaskSelectorShadowRecord` side-table pattern via ORM `create_all` + `_ensure_*` index migration — no migration framework. No internal/external product names in committed artifacts.
+
+**Completion criteria:**
+Feature "Done When" 1–6: (1) fresh install persists lookup + expansion events with required fields, audit-independent; (2) `python -m evals.historical_lookup_measurement --db <db>` returns non-empty rollup with Wilson intervals + supporting rates (rungs populated once the judge has labelled — a PR-b outcome), still empty-safe; (3) judge harness emits rung-1/2 labels + user-directed-vs-agent split + κ; (4) visibility-violation report emits 0 violations with attempted-disallowed-access counts; (5) `pallium service status` reports funnel-armed state; (6) runbook documents enable/use/read-KPI. Plus `python -m pytest tests/ -q` green (modulo known-benign `test_config.py::test_prompt_variants_legacy_fallback_unaffected`).
+
+**Risk:** High
+
+**Complexity:** Large
+
+**Reason:**
+Red persistence surface (new `storage/` tables) + `core/service.py` (architecture-review RED, orchestrator wiring) + a `source_only` **response-contract change** in `api/` (api-review RED: `lookup_event_id` becomes unconditional for that path). High because persistence + contract surfaces. Large: storage + core + api + cli + evals + judge harness as independently-verifiable outcomes across 2 PRs.
+
+**Discovery:**
+Recorded under `## Discovery`. Five contract gotchas confirmed (no distinct `lookup_event_id`; `source_only` mints/writes nothing; `parent_lookup_id` only echoed; rollup table absent; seedless LLM cache key). Clean-context plan review (`## Plan review`) added: rung write-back is unsound for κ → labels table; `agent_ref` unavailable at seam → drop; response precedence must be pinned for source_only+audit-on; eligibility predicate must be pinned to real nullable columns; hooks read post-redaction results.
+
+**Material assumptions:**
+- A1: `compute_reuse_rollup` consumes `{session_id, rung}`, rungs `incorporation`/`influence`/`downstream`, denominator = eligible sessions, empty-safe, and SKIPS events whose rung ∉ that set (null tolerated). CONFIRMED (`evals/historical_lookup_measurement.py:117-201`, skip at :165-169).
+- A2: `storage/` = declarative ORM + `create_all` + `_ensure_*` index migrations; `SubtaskSelectorShadowRecord` = write-only side-table template. CONFIRMED (`storage/sqlite_schema.py:253-306,756-780`).
+- A3: lookup persist hook goes in `PalliumService.query` immediately before `return self._redact_query_result(result)` (`core/service.py:703`), guarded by `if source_only`, reading POST-redaction results (no source_only branch exists there today — the branch is in `core/query.py:126-162`). Expansion hook goes in `get_source_context` after the `raise KeyError` gates (:1454/1456/1463) and `_keep` filter, before `return` at :1541. CONFIRMED by review.
+- A4 (REVISED): rung labels are NOT stored on the event row. PR-a persists events with no rung; a separate append-only `historical_lookup_reuse_label(lookup_event_id, rater_seed, rung, …)` table holds per-rater labels (PR-b judge writes them). The loader computes the consensus rung per event and emits `{session_id, rung}`. This keeps the event table write-only AND enables Cohen's κ on a double-rated subsample. Disproof: consensus rule proves ambiguous → record the rule explicitly in the loader + judge and pin it.
+
+**Plan:**
+See `## Plan` (revised per review). PR-a: two tables+writers → unconditional lookup persistence + minted id at the source_only seam (post-redaction) → expansion parentage persistence (post-gate) → response surfaces minted id for source_only with pinned precedence + schema docstring → `load_events_from_storage` (pinned eligibility predicate + consensus rung) → tests (reconcile contract test + source_only+audit-on). PR-b: retrospective judge (seed folded into prompt) writing per-rater rung labels → arm-by-default + status health check → runbook + visibility-violation reporting. Stop condition: if the source_only contract change forces a change to normal `/query` audit behavior, stop and re-review.
+
+**Verification plan:**
+See `## Verification plan` — each completion criterion → method.
+
+**Plan review:**
+Clean-context technical review COMPLETE — verdict **APPROVE-WITH-CHANGES**; 1 BLOCKER + 4 SHOULD + 3 NIT, all folded into this plan (labels table; response precedence + docstring + source_only+audit-on test; drop `agent_ref`; pin eligibility predicate; post-redaction hooks + visibility-enforcing plugin in tests; seed-in-prompt; PR-b delivers live rung population). Human approval recorded in Approvals.
+
+**Approvals:**
+Approved by user 2026-08-14: "ok, so continue on all the features design, including the tool registration feature, then go into a nightly developemrn process. you have my ok for high risk changes"
+
+**Exceptions:**
+—
+
+**State:** Ready for review
+<!-- agent-workflow:end -->
+
+## Discovery
+
+Full seam map from the read-only discovery agent (`path:line`):
+
+**Rollup contract** — `evals/historical_lookup_measurement.py`: `load_events_from_storage(db_path, *, container_ref, since, until, eligibility_n=50) -> (eligible_session_ids: list[str], reuse_events: list[dict])`, stub returns `([], [])` (:209-247). `compute_reuse_rollup(eligible_sessions, reuse_events, *, eligibility_n, window)` (:117-201) consumes `{session_id, rung}`; rungs `incorporation`/`influence`/`downstream` (:49-79); **skips events with rung ∉ set incl. null** (:165-169); dedup per session per rung; denominator = eligible sessions; empty-safe (:181-192). `__main__` argparse (:255-337).
+
+**Storage** — ORM on `declarative_base()` (`storage/sqlite_schema.py`); `Base.metadata.create_all` in `_initialize_schema` (:756-780); additive via `_ensure_*` + `_*_MIGRATIONS`. `SubtaskSelectorShadowRecord` (:253-306) = write-only side table, eval-time `(thread_ref, container_ref, created_at)` join; index `idx_source_items_thread_lookup` (:596-599). `QueryAuditLogRecord` (:180-205) via `write_query_audit_row` (`storage/sqlite.py:1246-1248`), row built in `core/service.py:write_query_audit` (:1143-1287, returns id), gated by `observability.query_audit_log` (default False). `SourceItemRecord` cols incl. `role`, `artifact_kind`, `thread_ref`, `container_ref`, `actor_ref`, `created_at`, `processing_completed_at` (:34-56) — role/artifact_kind NULLABLE.
+
+**Lookup + expansion** — `core/query.py` source_only branch (:126-162): `target_kind="source_item"`, 1-based `raw_rank` (`core/models.py:255-257`), `should_inject=False`, `decision_reason="source_only_search"`; fusion score only in trace when `include_trace=True`. `core/service.py`: `query(..., source_only)` (:659-703) returns `_redact_query_result(result)` at :703 (NO source_only branch — add hook before return); `get_source_context(..., parent_lookup_id)` (:1413-1541) — gates raise KeyError (:1454/1456/1463), `_keep` forgotten/visibility/redact filter (:1484-1492), echoes `parent_lookup_id` at :1541. `api/routes.py`: `/query` sets `lookup_event_id` only from `write_query_audit`, gated audit-only, fires for all queries incl. source_only (:432-461); source-context endpoint (:663, :672-717). `api/schemas.py`: `QueryRequest.source_only` defaults False (:116); `QueryResponse.lookup_event_id` docstring says "Equals the persisted query_audit_log row id" (:183-186) — becomes false for source_only, UPDATE it. `app/mcp/client.py` hardcodes `source_only=True` + `trigger_origin="agent_pull"` (:55-60).
+
+**Local enablement** — `query_audit_log=False` (`app/config.py:80`). `_seed_config` (`app/cli/service.py:54-96`) keeps only `keep_prefixes` → strips `[observability]`. `pallium service status`=`_cmd_status` (:454-502); `setup_claude_code._verify_service` (:210-214), port 19836. `pallium.example.toml:13-14` `[observability]` = only `integration_debug=false`.
+
+**Judge reuse** — `evals/anchor_probe/subagent_audit.py:182-280` (`audit_rule`, blinded A/B `_build_user_prompt`, `generate_json`, de-blind, rates). `evals/eval_common.py` wires `CachedLLMProvider` (:628-637). Cache key `providers/llm/cached.py:106-116` = `sha256(model_tag\x00system\x00user\x00schema)[:24]`, NO seed slot → fold seed ordinal into user_prompt as an inert trailing tag.
+
+**Tests** — `tests/test_historical_lookup_measurement.py`, `tests/test_lookup_event_id_e2e.py` (all normal-path), `tests/test_source_context.py`, `tests/test_search_history_tool.py`, metrics/schema templates, fixtures `tests/conftest.py:13-38`.
+
+## Plan
+
+**PR-a — funnel persistence + loader + rollup (guarded/High):**
+1. **Storage.** (a) `HistoricalLookupReuseEventRecord` ORM (`storage/sqlite_schema.py`, after `SubtaskSelectorShadowRecord`): `id` (PK = `lookup_event_id`), `created_at`, `event_type` ("lookup"|"expansion"), `session_id` (=thread_ref), `container_ref`, `actor_ref`, `trigger_origin`, `parent_lookup_id` (nullable), `exposed_json` (Text: `[{source_id, raw_rank, score}]`), `visibility`. **No rung, no agent_ref.** WRITE-ONLY. (b) `HistoricalLookupReuseLabelRecord` ORM (append-only): `id`, `lookup_event_id` (FK-by-value), `rater_seed` (str), `rung`, `rationale`, `created_at`. (c) `_HISTORICAL_LOOKUP_INDEX_MIGRATIONS` + `_ensure_historical_lookup_indexes` (event: `(container_ref, session_id, created_at)`; label: `(lookup_event_id)`) called in `_initialize_schema`. (d) `write_historical_lookup_event_row(row)` + `write_historical_lookup_label_row(row)` on `SqliteStorageProvider` + `StorageProvider` base.
+2. **Lookup persistence (unconditional).** In `PalliumService.query` immediately before `return self._redact_query_result(result)` (`core/service.py:703`): `if source_only:` mint `lookup_event_id = new_id()`; build `exposed` from the POST-redaction `result.results` (`source_id`, `raw_rank`, item score if present); persist a "lookup" row via the new writer, NOT gated on audit; attach the minted id onto the returned result so the response surfaces it. Normal path untouched.
+3. **Expansion parentage.** In `get_source_context` (`:1413-1541`), after the gates + `_keep` filter and before the return: persist an "expansion" row (own minted id, `parent_lookup_id`=incoming, `exposed`=the filtered neighbor ids) unconditionally.
+4. **Response contract + precedence.** `api/routes.py` `/query`: for `source_only`, return the minted historical `lookup_event_id` (precedence: minted id wins for source_only; audit row id otherwise — audit row may still be written when audit is on, but the response id for source_only is the minted one). Update `QueryResponse.lookup_event_id` docstring (`api/schemas.py:183-186`). Reconcile `tests/test_lookup_event_id_e2e.py`: keep all normal-path assertions; add (i) source_only + audit-OFF → non-null minted id + persisted event row; (ii) source_only + audit-ON → response id == minted historical id (not the audit row id).
+5. **Loader** (`load_events_from_storage`): reconstruct eligible sessions — group `source_items` by `thread_ref` within `container_ref`; **pinned predicate**: user turn = `role='user'`; assistant work turn = `role='assistant' AND artifact_kind IN ('assistant_output','tool_use_summary','todo_snapshot')`; "prior indexed turn" = `processing_completed_at IS NOT NULL`; rows with NULL role/artifact_kind don't classify; substantive = ≥1 user + ≥1 assistant-work turn; eligible = container held ≥ `eligibility_n` prior indexed turns at session start via `(container_ref, created_at)` join. Load persisted "lookup" events; join `historical_lookup_reuse_label` and compute **consensus rung** per event (majority; ties → drop to null/lower rung — rule pinned in code). Return `(eligible_session_ids, [{session_id, rung}])`. Empty-safe.
+6. **Tests** (PR-a): schema test (both tables + indexes); writer round-trips; loader eligible-reconstruction (pinned predicate) + empty-safe; e2e ingest→search_history (audit OFF)→"lookup" row w/ minted id→expand→"expansion" row w/ parent_lookup_id→**manually seed label rows**→loader→`compute_reuse_rollup` non-empty; forgotten-source excluded + cross-container non-leak **under a visibility-enforcing plugin** (0 violations + attempted-access count). Note in WR: live non-empty rungs are a PR-b outcome (loader has no build-order dependency on PR-b — it reads a possibly-empty labels table).
+
+**PR-b — enablement + judge + runbook:**
+7. **Retrospective judge harness** (`evals/`, reuse `anchor_probe` + `eval_common`): sample lookups + eligible sessions; per lookup label genuine-opportunity, rung-1 verified incorporation + evidence span, rung-2 judged influence, user-directed-vs-agent-decided (subsequent-turn `(thread_ref, container_ref, created_at)` join); blinded A/B; **≥3 seeds, seed ordinal folded into the user_prompt as an inert trailing tag** (defeats seedless cache key, doesn't bias verdict); consensus; Cohen's κ on a double-rated subsample (two rater_seeds per event → the labels table holds both); Wilson intervals; empty/abandoned handling. Writes per-rater rung labels to `historical_lookup_reuse_label`.
+8. **Arm by default.** Persistence already unconditional (step 2). Additionally seed the funnel flag in `pallium.example.toml` + keep/seed `[observability]` in `_seed_config` (rather than stripping); add "funnel armed?" to `pallium service status` + `setup_claude_code` verify.
+9. **Runbook + reporting.** `docs/` runbook (enable/use/read-KPI); wire visibility-violation reporting (0 violations WITH attempted-disallowed-access counts/types) into the rollup output.
+
+## Verification plan
+
+- **C1 (persist, audit-independent):** e2e with `ObservabilityConfig(query_audit_log=False)` asserts a "lookup" row after `search_history` + an "expansion" row with `parent_lookup_id` after `expand_source`. Manual fresh-install smoke.
+- **C2 (rollup):** unit seeds events + label rows + eligible sessions → `compute_reuse_rollup` non-empty with Wilson + supporting rates; zero-event test → empty-safe. `python -m evals.historical_lookup_measurement --db <tmp>` smoke.
+- **C3 (judge):** dry-run over a tiny fixture emits rung-1/2 labels + user-directed-vs-agent split + κ from a double-rated subsample; assert ≥3 seeds → distinct cache keys.
+- **C4 (visibility):** invariant test UNDER A VISIBILITY-ENFORCING PLUGIN — forgotten source excluded from exposure + eligibility; cross-container → 0 leaked events + attempted-disallowed-access count.
+- **C5 (health check):** `pallium service status` includes funnel-armed state (CLI test).
+- **C6 (runbook):** doc present + reporting format emitted by the rollup.
+- **Regression:** `python -m pytest tests/ -q` green (modulo known-benign `test_config.py::test_prompt_variants_legacy_fallback_unaffected`); existing `test_lookup_event_id_e2e.py` normal-path assertions pass.
+
+## Plan review
+
+Clean-context technical review (Plan agent, fresh context, read the seams directly). **Verdict: APPROVE-WITH-CHANGES.** Confirmed the source_only minted-id change does NOT break existing `test_lookup_event_id_e2e.py` (all tests use default `source_only=False`). Findings folded in:
+- **[BLOCKER] rung write-back unsound for κ + violates write-only constraint** → separate append-only `historical_lookup_reuse_label` table; loader computes consensus rung (assumption A4 revised).
+- **[SHOULD] response-field precedence** for source_only+audit-on (two id sources) → pin precedence, update `api/schemas.py:183-186` docstring, add a source_only+audit-on test.
+- **[SHOULD] `agent_ref` unavailable at `/query` seam** → dropped from the row; identity = actor_ref + trigger_origin + session_id + container_ref (Outcome reworded).
+- **[SHOULD] eligibility predicate not pinned** → pinned to real nullable columns (role/artifact_kind/processing_completed_at) in loader step 5.
+- **[SHOULD] PR ordering** → live non-empty rungs are a PR-b outcome; PR-a e2e seeds labels manually; no build-order deadlock (documented).
+- **[NIT] hook file:line** → `service.query` has no source_only branch; hook added before `return` at :703, post-redaction, guarded `if source_only`.
+- **[NIT] visibility test vacuous under demo plugin** → C4 uses a visibility-enforcing plugin; expansion hook after gates.
+- **[NIT] seed collapse** confirmed → seed folded into user_prompt as inert trailing tag.
+
+## Implementation
+
+State `Ready to implement`. Next: implement PR-a on this branch (`feat/add-historical-lookup-reuse-funnel`), verify, open PR, drive to green + merge; then PR-b. Standing High-risk approval recorded.
+
+**PR-a implemented (2026-08-14):**
+- Storage: added `HistoricalLookupReuseEventRecord` (write-only) + `HistoricalLookupReuseLabelRecord` (append-only) ORM tables, `_HISTORICAL_LOOKUP_INDEX_MIGRATIONS` + `_ensure_historical_lookup_indexes` (wired into `_initialize_schema`), and `write_historical_lookup_event_row` / `write_historical_lookup_label_row` on both `SQLiteStorageProvider` and the `StorageProvider` ABC (new abstract methods). No migration framework — declarative `create_all` + `_ensure_*` only.
+- Hooks: `PalliumService.query` mints `lookup_event_id` and persists a "lookup" event UNCONDITIONALLY (guarded `if source_only`, POST-redaction `result.results`, best-effort write, attaches id to the returned `QueryResult` via a new `lookup_event_id` field). `get_source_context` persists an "expansion" event after the gates + `_keep` filter carrying `parent_lookup_id` (post-gate neighbor ids only). Normal `/query` audit path untouched.
+- Response/contract: `/query` returns the minted historical id for `source_only` (precedence: minted wins for source_only, audit id otherwise); `QueryResponse.lookup_event_id` docstring updated to record the precedence rule.
+- Loader: `load_events_from_storage` reconstructs eligible sessions via the pinned predicate (user=`role='user'`; assistant-work=`role='assistant' AND artifact_kind IN (assistant_output,tool_use_summary,todo_snapshot)`; prior-indexed=`processing_completed_at IS NOT NULL`; NULL role/artifact_kind don't classify; forgotten excluded; eligible = ≥N prior-indexed turns before session start via `(container_ref, created_at)`), joins the labels table for a consensus rung (plurality; tie → most-conservative ladder rung), empty-safe (None db / missing file / missing tables → `([], [])`).
+- Tests: `test_historical_lookup_storage.py` (schema + writer round-trips + loader reconstruction/consensus/empty-safe), `test_historical_lookup_funnel_e2e.py` (full chain under the visibility-enforcing `agent_conversation_memory` plugin: ingest→search_history audit-OFF→lookup row→expand→expansion row→seed labels→loader→non-empty rollup; cross-container non-leak; forgotten exclusion), and two `source_only` cases added to `test_lookup_event_id_e2e.py` (audit-OFF minted id + persisted event; audit-ON minted id wins over audit id). Full suite: 3466 passed, 15 skipped, 2 xfailed; only the known-benign `test_config.py::test_prompt_variants_legacy_fallback_unaffected` fails locally (passes CI).

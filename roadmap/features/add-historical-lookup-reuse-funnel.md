@@ -69,22 +69,16 @@ whether the new Pallium is effective.
    `[observability]` / adjust the default / `pallium.example.toml`) so agent-pull
    events are captured out of the box. Add a health check (in `pallium setup
    claude-code` / `pallium service status`) that confirms the funnel is armed.
-6. **Agent exposure that permits unprompted pulls + an Experiment-1 guidance lever.**
-   The tools are registered and auto-discovered (mounted at `/mcp`, `claude mcp add`
-   via `pallium setup claude-code`; Codex `.mcp.json`) — verified in place. BUT the
-   current CLAUDE.md/AGENTS.md guidance actively *discourages* proactive querying
-   ("don't query every turn; injection handles ~90%"), suppressing the exact
-   unprompted-pull behavior the funnel measures. Refine the historical-lookup guidance
-   so it permits/encourages a deliberate pull when history may matter, and provide a
-   **guidance-strength lever** — a Pallium historical-lookup skill (Claude Code +
-   Codex) and/or a toggle in the block generation — so Experiment 1 can compare
-   *tool-description-only* vs *stronger-guidance* arms. Refresh the stale Codex
-   `pallium-memory` skill to include `pallium_search_history`/`pallium_expand_source`
-   (and add the missing Claude Code skill). (Minor: reconcile the no-op `--stdio` arg
-   in `integrations/codex/.mcp.json`.)
-7. **Runbook.** Document how to enable, use, and read the KPI on a local service, and
+6. **Runbook.** Document how to enable, use, and read the KPI on a local service, and
    wire the visibility-violation reporting format (0 violations *with* attempted-
    disallowed-access counts) into the rollup output.
+
+> **Agent exposure / guidance moved out.** Making agents actually *pull* history
+> (guidance that permits unprompted pulls + the Experiment-1 guidance-strength lever +
+> refreshed Claude/Codex skills) is split into a dedicated feature —
+> `add-agent-historical-lookup-exposure`. This feature owns the *pipes* (events land,
+> KPI computes); that feature owns the *behavior* (agents produce the events). Both are
+> required for a live Experiment-1 window.
 
 ## Out of Scope
 
@@ -113,9 +107,7 @@ whether the new Pallium is effective.
    access counts/types (adversarial coverage referenced from the search/expansion
    items).
 5. `pallium setup claude-code` / `pallium service status` reports whether the funnel is
-   armed; the historical-lookup guidance permits unprompted pulls and an Experiment-1
-   guidance-strength lever (skill/toggle) exists, with the P1 tools present in the
-   refreshed skill(s).
+   armed (agent-pull events captured out of the box on a fresh install).
 6. A short runbook documents how to enable, use, and read the KPI on a local service.
 
 ## Notes
@@ -136,12 +128,14 @@ claude-code` → `claude mcp add`; Codex `.mcp.json`); hooks are registered via
 `_seed_config` stripping `[observability]`), and *guidance* that suppresses proactive
 pulls with no Experiment-1 lever.
 
-**Risk: guarded / likely High.** Touches `storage/` (new persistence table), the
+**Risk: guarded / High.** Touches `storage/` (new persistence table), the
 `source_only` path in `core/query.py`, `core/service.py` (RED — orchestrator wiring /
 architecture-review), the expansion path, and `app/cli/` (service config seeding +
-setup health check) — plus `evals/` (loader + judge), `integrations/` (guidance +
-skill; not guarded), config defaults, and a runbook doc. Per the agent-workflow, High
-risk requires recorded human approval before implementation; the Work Record's plan
-will be brought for sign-off before any code edit. Likely delivered as **2 PRs** (a:
-funnel persistence + rollup + judge; b: local enablement + agent exposure/skill) to
-keep the guarded surface reviewable — sequencing to be set in the Work Record.
+setup health check) — plus `evals/` (loader + judge), config defaults, and a runbook
+doc. High risk normally requires recorded human approval before implementation; the
+user gave a **standing overnight approval** for High-risk changes in this package
+(recorded verbatim in the Work Record). Likely delivered as **2 PRs** (a: funnel
+persistence + rollup loader; b: retrospective judge + local enablement +
+armed-by-default + health check) to
+keep the guarded surface reviewable — sequencing to be set in the Work Record. Agent
+exposure/guidance is a separate feature (`add-agent-historical-lookup-exposure`).

@@ -453,6 +453,15 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 )
             except Exception:
                 logger.warning("query audit log write failed", exc_info=True)
+        # Historical-lookup reuse funnel precedence: for a source_only search
+        # the response surfaces the minted historical lookup_event_id (persisted
+        # unconditionally in service.query), which WINS over any audit row id.
+        # The proactive path is unchanged: source_only defaults False, so the
+        # audit row id (or None) is returned exactly as before.
+        if request.source_only:
+            minted = getattr(result, "lookup_event_id", None)
+            if minted is not None:
+                lookup_event_id = minted
         return QueryResponse(
             results=[_serialize_result(item) for item in result.results],
             should_inject=result.should_inject,

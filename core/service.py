@@ -25,7 +25,7 @@ from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
 from core.vector_index_holder import VectorIndexHolder
-from core.models import FlagResult, InjectableBlock, MemoryFlag, MemoryObject, QueryRuntimeContext, Relation, SourceItem, utc_now
+from core.models import FlagResult, InjectableBlock, MemoryFlag, MemoryObject, QueryRuntimeContext, Relation, SourceItem, new_id, utc_now
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
@@ -700,7 +700,50 @@ class PalliumService:
         # wrapper (e.g. was persisted before PR 0, or a redaction miss),
         # it never reaches the LLM prompt. Redact injectable_blocks and
         # results before returning.
-        return _redact_query_result(result)
+        result = _redact_query_result(result)
+        # Historical-lookup reuse funnel: persist a "lookup" event for every
+        # source_only search, UNCONDITIONALLY (not gated on query_audit_log).
+        # Reads the POST-redaction results so forbidden/forgotten/out-of-scope
+        # ids never reach the exposed set, and mints a lookup_event_id that the
+        # response surfaces for this path. Best-effort — a telemetry write
+        # failure must never fail the query.
+        if source_only:
+            lookup_event_id: str | None = new_id()
+            try:
+                # Stable internal source_item_id (joins to source_items.id and
+                # matches the expansion path) — NOT the caller-supplied
+                # source_id, which is only unique per source_type/container.
+                # Built inside the try so a malformed result can never fail the
+                # query; getattr keeps it defensive.
+                exposed = [
+                    {
+                        "source_item_id": item.source_item_id,
+                        "raw_rank": getattr(item, "raw_rank", None),
+                        "score": getattr(item, "score", None),
+                    }
+                    for item in result.results
+                    if getattr(item, "source_item_id", None) is not None
+                ]
+                self._storage.write_historical_lookup_event_row({
+                    "id": lookup_event_id,
+                    "created_at": utc_now(),
+                    "event_type": "lookup",
+                    "session_id": thread_ref,
+                    "container_ref": container_ref,
+                    "actor_ref": actor_ref,
+                    "trigger_origin": trigger_origin,
+                    "parent_lookup_id": None,
+                    "exposed_json": json.dumps(exposed),
+                    "visibility": visibility,
+                })
+            except Exception:
+                self._logger.warning("historical lookup event write failed", exc_info=True)
+                # Do not surface an id whose event was never persisted — a
+                # caller passing it back as parent_lookup_id (or the PR-b judge
+                # joining labels) would reference a non-existent event.
+                lookup_event_id = None
+            result = dataclasses.replace(result, lookup_event_id=lookup_event_id)
+        return result
 
     def run_consolidation_pass(
         self,
@@ -1438,8 +1481,10 @@ class PalliumService:
           ``max_chars`` budget (measured after redaction) is exhausted.
         - Supported memories (reverse ``supported_by``) are returned only when
           ``include_supported_memories`` and each is ``is_visible``-filtered.
-        - ``parent_lookup_id`` is echoed back (persistence belongs to the
-          deferred exposed-source-ids audit; expansions are not lookups).
+        - ``parent_lookup_id`` is carried onto a persisted "expansion" reuse
+          event (own minted id) after the visibility/forgotten gates + the
+          post-filter neighbor set is known, linking the expansion back to the
+          lookup that produced the anchor id. Persisted unconditionally.
         """
         _MAX_SIDE = 25
         before = max(0, min(before, _MAX_SIDE))
@@ -1537,5 +1582,28 @@ class PalliumService:
                     getattr(m, "actor_ref", None), query_actor_ref=effective_actor_ref,
                 )
             ]
+
+        # Historical-lookup reuse funnel: persist an "expansion" event
+        # carrying the incoming parent_lookup_id. Runs AFTER the anchor gates
+        # and the per-neighbor visibility/forgotten/redaction filter, so the
+        # exposed set is the post-gate neighbor ids only (no leak). Mints its
+        # own id; persisted unconditionally. Best-effort — a telemetry write
+        # failure must never fail the expansion.
+        exposed = [{"source_item_id": n.id, "raw_rank": None, "score": None} for n in neighbors]
+        try:
+            self._storage.write_historical_lookup_event_row({
+                "id": new_id(),
+                "created_at": utc_now(),
+                "event_type": "expansion",
+                "session_id": anchor.thread_ref,
+                "container_ref": effective_container,
+                "actor_ref": effective_actor_ref,
+                "trigger_origin": None,
+                "parent_lookup_id": parent_lookup_id,
+                "exposed_json": json.dumps(exposed),
+                "visibility": anchor.visibility,
+            })
+        except Exception:
+            self._logger.warning("historical expansion event write failed", exc_info=True)
 
         return anchor_out, neighbors, supported, parent_lookup_id

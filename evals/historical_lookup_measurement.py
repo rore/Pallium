@@ -12,8 +12,11 @@ distinguished by claim strength:
   rung-3 (downstream)      — downstream-task-effect, controlled
 
 P0 scope: the pure rollup function is fully testable on synthetic inputs.
-P1 scope: load_events_from_storage will be populated once the dedicated
-          historical-lookup path and its event/exposure tables exist.
+P1 scope: load_events_from_storage reconstructs eligible sessions and loads
+          persisted historical-lookup reuse events (with a consensus rung from
+          the append-only labels table). Rungs populate once the retrospective
+          judge has written labels (a PR-b outcome); the loader is empty-safe
+          until then.
 
 Run (dry, no DB needed):
     python -m evals.historical_lookup_measurement --dry-run
@@ -25,8 +28,10 @@ Run against a live DB (P1 — will emit empty results today):
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import math
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -202,8 +207,198 @@ def compute_reuse_rollup(
 
 
 # ---------------------------------------------------------------------------
-# P1 seam — storage loader stub
+# Storage loader
 # ---------------------------------------------------------------------------
+
+#: Assistant "work" turns for the substantive-session predicate. A raw
+#: assistant message alone does not make a session substantive; a work
+#: artifact does.
+_ASSISTANT_WORK_ARTIFACT_KINDS = frozenset(
+    {"assistant_output", "tool_use_summary", "todo_snapshot"}
+)
+
+#: Reuse ladder in ascending strength. Used for the consensus tie-break.
+_RUNG_LADDER = ("incorporation", "influence", "downstream")
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+def _count_strictly_before(sorted_values: list[str], pivot: str) -> int:
+    """Count entries in ``sorted_values`` strictly less than ``pivot``."""
+    return bisect.bisect_left(sorted_values, pivot)
+
+
+def _normalize_ts_bound(value: str | None) -> str | None:
+    """Normalize a CLI ``--since`` / ``--until`` bound so lexicographic
+    comparison against the stored ``created_at`` text is chronological.
+
+    SQLite stores a SQLAlchemy ``DateTime`` with a space separator
+    (``2026-08-01 00:00:01.000000``). An ISO-8601 bound with a ``T`` separator
+    would compare wrong (``' '`` sorts before ``'T'``), silently dropping a
+    whole day from the denominator. We swap a single leading date/time ``T``
+    for a space; other text is left unchanged.
+    """
+    if value is None:
+        return None
+    # Only the date<->time separator (position 10) matters for the comparison.
+    if len(value) > 10 and value[10] == "T":
+        return value[:10] + " " + value[11:]
+    return value
+
+
+def _reconstruct_eligible_sessions(
+    conn: sqlite3.Connection,
+    *,
+    container_ref: str | None,
+    since: str | None,
+    until: str | None,
+    eligibility_n: int,
+) -> list[str]:
+    """Reconstruct eligible session ids from ``source_items`` (pinned predicate).
+
+    PINNED eligibility predicate (against the real nullable columns):
+      - user turn        = ``role = 'user'``
+      - assistant-work   = ``role = 'assistant' AND artifact_kind IN
+                             {'assistant_output','tool_use_summary','todo_snapshot'}``
+      - prior-indexed    = ``processing_completed_at IS NOT NULL``
+      - NULL ``role`` / ``artifact_kind`` rows do NOT classify (fail-closed).
+      - substantive      = >=1 user turn AND >=1 assistant-work turn.
+      - eligible         = the container held >= ``eligibility_n`` prior-indexed
+                           turns at session start, via a ``(container_ref,
+                           created_at)`` ordering join (turns created strictly
+                           before the session's earliest turn).
+    Forgotten turns (``forgotten_at IS NOT NULL``) are excluded everywhere.
+    """
+    where = ["forgotten_at IS NULL"]
+    params: list[Any] = []
+    if container_ref is not None:
+        where.append("container_ref = ?")
+        params.append(container_ref)
+    sql = (
+        "SELECT container_ref, thread_ref, role, artifact_kind, created_at, "
+        "processing_completed_at FROM source_items WHERE " + " AND ".join(where)
+    )
+    rows = conn.execute(sql, params).fetchall()
+
+    # Per-(container, thread) session aggregation + per-container sorted list
+    # of prior-indexed turn timestamps.
+    sessions: dict[tuple[Any, Any], dict[str, Any]] = {}
+    prior_indexed: dict[Any, list[str]] = {}
+    for r in rows:
+        container = r["container_ref"]
+        thread = r["thread_ref"]
+        role = r["role"]
+        artifact_kind = r["artifact_kind"]
+        created = r["created_at"]
+        completed = r["processing_completed_at"]
+        if completed is not None and created is not None:
+            prior_indexed.setdefault(container, []).append(created)
+        if thread is None:
+            continue
+        key = (container, thread)
+        session = sessions.setdefault(
+            key, {"has_user": False, "has_work": False, "start": created}
+        )
+        if created is not None and (
+            session["start"] is None or created < session["start"]
+        ):
+            session["start"] = created
+        if role == "user":
+            session["has_user"] = True
+        elif role == "assistant" and artifact_kind in _ASSISTANT_WORK_ARTIFACT_KINDS:
+            session["has_work"] = True
+
+    for values in prior_indexed.values():
+        values.sort()
+
+    eligible: list[str] = []
+    for (container, thread), session in sessions.items():
+        if not (session["has_user"] and session["has_work"]):
+            continue
+        start = session["start"]
+        if since is not None and start is not None and start < since:
+            continue
+        if until is not None and start is not None and start > until:
+            continue
+        values = prior_indexed.get(container, [])
+        prior = _count_strictly_before(values, start) if start is not None else len(values)
+        if prior >= eligibility_n:
+            eligible.append(thread)
+    return eligible
+
+
+def _consensus_rung(conn: sqlite3.Connection, lookup_event_id: str) -> str | None:
+    """Consensus rung across all rater labels for one event.
+
+    Consensus rule (PINNED): count only labels whose rung is a valid ladder
+    rung (NULL / unknown labels are ignored). Strict plurality wins; on a tie
+    for the top count, drop to the most CONSERVATIVE (lowest-ladder) rung among
+    the tied set. No labels -> None (the event contributes to no rung).
+    """
+    rows = conn.execute(
+        "SELECT rung FROM historical_lookup_reuse_label WHERE lookup_event_id = ?",
+        (lookup_event_id,),
+    ).fetchall()
+    counts: dict[str, int] = {}
+    for r in rows:
+        rung = r["rung"]
+        if rung in _RUNG_LADDER:
+            counts[rung] = counts.get(rung, 0) + 1
+    if not counts:
+        return None
+    top = max(counts.values())
+    # Iterate the ladder in ascending order so the first tied rung is the
+    # most conservative.
+    for rung in _RUNG_LADDER:
+        if counts.get(rung, 0) == top:
+            return rung
+    return None
+
+
+def _load_reuse_events(
+    conn: sqlite3.Connection,
+    *,
+    eligible_set: set[str],
+    container_ref: str | None,
+    since: str | None,
+    until: str | None,
+) -> list[dict[str, Any]]:
+    if not _table_exists(conn, "historical_lookup_reuse_event"):
+        return []
+    where = ["event_type = 'lookup'"]
+    params: list[Any] = []
+    if container_ref is not None:
+        where.append("container_ref = ?")
+        params.append(container_ref)
+    if since is not None:
+        where.append("created_at >= ?")
+        params.append(since)
+    if until is not None:
+        where.append("created_at <= ?")
+        params.append(until)
+    sql = (
+        "SELECT id, session_id FROM historical_lookup_reuse_event WHERE "
+        + " AND ".join(where)
+    )
+    rows = conn.execute(sql, params).fetchall()
+
+    has_labels = _table_exists(conn, "historical_lookup_reuse_label")
+    events: list[dict[str, Any]] = []
+    for r in rows:
+        session_id = r["session_id"]
+        if session_id not in eligible_set:
+            continue
+        rung = _consensus_rung(conn, r["id"]) if has_labels else None
+        events.append(
+            {"session_id": session_id, "rung": rung, "lookup_event_id": r["id"]}
+        )
+    return events
 
 
 def load_events_from_storage(
@@ -216,35 +411,57 @@ def load_events_from_storage(
 ) -> tuple[list[str], list[dict[str, Any]]]:
     """Load eligible sessions and reuse events from the Pallium DB.
 
-    P1 SEAM — returns empty lists today.
+    Reconstructs eligible sessions from ``source_items`` (see
+    ``_reconstruct_eligible_sessions`` for the pinned predicate), then loads
+    persisted ``historical_lookup_reuse_event`` "lookup" rows whose
+    ``session_id`` is eligible, joining the append-only
+    ``historical_lookup_reuse_label`` table to compute a consensus rung per
+    event (``_consensus_rung``). Events with no labels carry ``rung=None`` and
+    are skipped by ``compute_reuse_rollup``.
 
-    Once the Phase 1 vertical slice ships, this function will:
+    Lookup events are persisted UNCONDITIONALLY (not gated on the legacy
+    ``audit_log_enabled`` flag), so this loader finds events on fresh DBs. Live
+    non-empty rungs require the retrospective judge to have written labels (a
+    PR-b outcome); this loader has no build-order dependency on the judge — it
+    reads a possibly-empty labels table.
 
-    1. Query ``source_items`` (grouped by ``thread_ref`` within
-       ``container_ref``) to reconstruct eligible sessions: substantive
-       sessions (>=1 user turn + >=1 assistant work turn) whose
-       ``container_ref`` held >= ``eligibility_n`` prior indexed source turns
-       at the time the session started.  Computed via a
-       ``(container_ref, created_at)`` join — the same eval-time
-       reconstruction pattern used by the subtask_selector_shadow table.
-
-    2. Query the ``historical_lookup_reuse_event`` table (to be created in
-       P1) for events with ``session_id IN <eligible_set>``.  Each row will
-       carry at minimum ``session_id`` (thread_ref) and ``rung`` in
-       {"incorporation", "influence", "downstream"}.
-
-    Unconditional logging requirement (P1): the dedicated historical-lookup
-    path must persist its lookup event unconditionally — NOT gated on the
-    legacy ``audit_log_enabled`` flag — so this loader finds events on fresh
-    DBs.  See the measurement contract for the full P1 event schema.
+    Empty-safe: returns ``([], [])`` when ``db_path`` is None, the file does
+    not exist, or the required tables are absent.
 
     Returns
     -------
     tuple[list[str], list[dict]]
-        (eligible_session_ids, reuse_events) — both empty in P0.
+        (eligible_session_ids, reuse_events).
     """
-    # P0: no tables to query yet; return empty so the module runs end-to-end.
-    return [], []
+    if db_path is None:
+        return [], []
+    path = Path(db_path)
+    if not path.exists():
+        return [], []
+    since = _normalize_ts_bound(since)
+    until = _normalize_ts_bound(until)
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "source_items"):
+            return [], []
+        eligible = _reconstruct_eligible_sessions(
+            conn,
+            container_ref=container_ref,
+            since=since,
+            until=until,
+            eligibility_n=eligibility_n,
+        )
+        events = _load_reuse_events(
+            conn,
+            eligible_set=set(eligible),
+            container_ref=container_ref,
+            since=since,
+            until=until,
+        )
+        return eligible, events
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
