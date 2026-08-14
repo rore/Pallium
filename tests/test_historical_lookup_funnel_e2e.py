@@ -349,7 +349,7 @@ def test_exposed_set_reflects_post_redaction_results(monkeypatch, test_db_url: s
     exposed set is asserted to reflect that same post-redaction result set
     by id (2).
     """
-    secret = "hunter2SuperSecretValue1234567890"
+    secret = "hunter2SuperSecretValue1234567890"  # noqa: S105 - synthetic test fixture, not a real credential
     content = (
         f"Deploy note: password={secret} for the reservation ordering "
         "duplicate holds service."

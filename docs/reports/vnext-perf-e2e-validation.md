@@ -2,13 +2,16 @@
 
 Validation of the cumulative vNext work (raw-history governance + measurement
 contract, the historical-lookup vertical — `source_only` search,
-`pallium_search_history`, source-context expansion — the reuse-funnel
-population, and the dashboard rework) for **no performance regression** and
-**end-to-end correctness**. This is a *measure-and-flag* report: it establishes
-deterministic query-count baselines, times the hot paths, flags N+1 shapes, and
-proves the vertical correct end to end incl. the live production service. It does
-**not** change product behavior; any fix implied by a finding below is a separate
-change with its own Work Record.
+`pallium_search_history`, source-context expansion — and the reuse-funnel
+population) for **no query-count regression** (latency is advisory only) and
+**end-to-end historical-lookup correctness**. This is a *measure-and-flag*
+report: it establishes deterministic query-count baselines, times the hot paths,
+flags N+1 shapes, and proves the historical-lookup vertical correct end to end
+including a read-only check of the live production service. It does **not**
+establish full vNext correctness or the installed binary's write-path
+correctness (see §4 for the precise live-service scope), and it does **not**
+change product behavior; any fix implied by a finding below is a separate change
+with its own Work Record.
 
 Re-run commands are at the bottom. All harnesses are read-only against product
 code (timing/counting via external SQLAlchemy + `sqlite3` trace seams).
@@ -96,10 +99,11 @@ deploy/restart, **without polluting the real KPI**:
    the search→expand→persist chain and the `events_recorded` increment are observed
    on the copy, never on the real DB.
 
-Latest run (2026-08-14) against the live service: **OVERALL PASS** — real service
-armed with `events_recorded=0` observed *after* the run (proving the smoke never
-incremented the real count), while the copy went 0→2 (1 lookup + 1 expansion, the
-expansion linking the lookup), 5 source hits recovered.
+Latest run (2026-08-14) against the live service: **OVERALL PASS** — the real
+service was read (read-only `GET /status`) before and after the scratch run and
+its `events_recorded` was **unchanged** (proving the smoke never incremented the
+real count), while the copy went 0→2 (1 lookup + 1 expansion, the expansion
+linking the lookup), 5 source hits recovered.
 
 **Honest scope:** the scratch server runs **repo code**, so the write-chain portion
 is functionally equivalent to the in-process e2e — it does **not** exercise the
@@ -110,8 +114,18 @@ write-path verification of the deployed binary.
 
 ## Re-run commands
 
-Real interpreter + PYTHONPATH are required on the dev box (venv python stubs are
-blocked); on CI/other machines use the environment's Python.
+The commands below use a bare `python`. On a standard checkout that is the
+project's environment Python. **On the locked-down dev box** (venv python stubs
+are blocked) set `PY` to the real interpreter and export `PYTHONPATH` for the
+test environment first — note the path separator is `:` on POSIX and `;` on
+Windows:
+
+```bash
+# dev-box prefix (Windows path separator ';'); on POSIX use ':' and your venv python
+export PY="C:/Users/<you>/AppData/Roaming/uv/python/cpython-3.13-windows-x86_64-none/python.exe"
+export PYTHONPATH=".local/test-env/site-packages;."   # POSIX: ".local/test-env/site-packages:."
+# then substitute "$PY" for "python" in the commands below
+```
 
 ```bash
 # E2E vertical (in the default gate; fast)

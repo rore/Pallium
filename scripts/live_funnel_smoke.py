@@ -292,7 +292,14 @@ class ScratchServer:
     def __enter__(self) -> "ScratchServer":
         self._thread = threading.Thread(target=self._server.run, name="scratch-server", daemon=True)
         self._thread.start()
-        self._wait_healthy()
+        try:
+            self._wait_healthy()
+        except BaseException:
+            # Health wait failed (or was interrupted): stop the server and join
+            # the background thread before re-raising, so a failed startup never
+            # leaks a running uvicorn thread.
+            self.__exit__(*sys.exc_info())
+            raise
         return self
 
     def _wait_healthy(self, timeout: float = 30.0) -> None:
@@ -395,13 +402,17 @@ def run_smoke(
         return result
     result.record("live-db-exists", True, str(live_db))
 
-    # Scratch artifacts live next to a unique temp name so parallel runs never clash.
+    # Scratch artifacts live next to a unique temp name so parallel runs never
+    # clash. The prefix deliberately does NOT start with "pallium-": /status,
+    # snapshot selection and pruning glob "pallium-*.db" in the data dir, so a
+    # "pallium-"-prefixed scratch copy could be mistaken for a real snapshot.
     tag = uuid.uuid4().hex[:8]
-    scratch_db = live_db.parent / f"pallium-smoke-{tag}.db"
-    vector_path = live_db.parent / f"pallium-smoke-{tag}.vector.index"
+    scratch_db = live_db.parent / f"scratch-smoke-{tag}.db"
+    vector_path = live_db.parent / f"scratch-smoke-{tag}.vector.index"
     app: Any = None
 
     # (a) READ-ONLY armed check against the real installed service.
+    real_events_before: Any = None
     if skip_real_status:
         result.record("real-status-armed", True, "skipped (--skip-real-status)")
     else:
@@ -409,6 +420,7 @@ def run_smoke(
             status = http_get_json(f"{real_url}/status", timeout=10.0)
             funnel = status.get("historical_lookup_funnel") or {}
             armed = bool(funnel.get("armed"))
+            real_events_before = funnel.get("events_recorded")
             result.record(
                 "real-status-armed",
                 armed,
@@ -509,12 +521,41 @@ def run_smoke(
         if app is not None:
             dispose_app_engines(app)
         cleanup_scratch_files(scratch_db, vector_path)
-        # Confirm the copy is gone — the disposable snapshot must not linger.
+        # Confirm every disposable artifact is gone — not just the main DB file.
+        # A surviving -wal/-shm/-journal/.schema.lock sidecar or the vector path
+        # would otherwise let cleanup report PASS while leaking state.
+        candidates = [
+            scratch_db,
+            *(Path(str(scratch_db) + suffix) for suffix in ("-wal", "-shm", "-journal", ".schema.lock")),
+            vector_path,
+        ]
+        leftovers = [p for p in candidates if p.exists()]
         result.record(
             "scratch-cleanup",
-            not scratch_db.exists(),
-            f"removed {scratch_db.name}" if not scratch_db.exists() else f"LEFTOVER {scratch_db}",
+            not leftovers,
+            f"removed {scratch_db.name} (+ sidecars/vector)"
+            if not leftovers
+            else f"LEFTOVER {[str(p) for p in leftovers]}",
         )
+
+    # Post-run READ-ONLY re-read of the installed service: the real, unscoped
+    # events_recorded KPI must be UNCHANGED from the pre-run read. This makes
+    # the "real KPI never incremented" claim empirical (all writes landed on the
+    # disposable copy). Never POSTs to the real service; skipped alongside the
+    # pre-run read when --skip-real-status.
+    if not skip_real_status:
+        try:
+            status_after = http_get_json(f"{real_url}/status", timeout=10.0)
+            funnel_after = status_after.get("historical_lookup_funnel") or {}
+            real_events_after = funnel_after.get("events_recorded")
+            result.record(
+                "real-kpi-unchanged",
+                real_events_before == real_events_after,
+                f"real events_recorded {real_events_before} -> {real_events_after} "
+                f"(must be equal; READ-ONLY)",
+            )
+        except Exception as exc:  # noqa: BLE001
+            result.record("real-kpi-unchanged", False, f"GET {real_url}/status failed: {exc}")
 
     return result
 

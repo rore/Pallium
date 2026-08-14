@@ -41,18 +41,21 @@
   ],
   "n1_loader_per_exposed_id": [
     {
+      "events": 10,
       "cumulative_events": 11,
       "exposed_ids_checked": 70,
       "visibility_loader_queries": 73,
       "load_events_loader_queries": 5
     },
     {
+      "events": 30,
       "cumulative_events": 31,
       "exposed_ids_checked": 170,
       "visibility_loader_queries": 173,
       "load_events_loader_queries": 5
     },
     {
+      "events": 70,
       "cumulative_events": 71,
       "exposed_ids_checked": 370,
       "visibility_loader_queries": 373,

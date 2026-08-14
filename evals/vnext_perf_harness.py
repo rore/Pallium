@@ -443,8 +443,25 @@ def check_indexes(db_path: Path) -> list[dict[str, Any]]:
 
 
 def run_measurements(*, vector: bool = False, small: bool = False) -> dict[str, Any]:
-    """Seed a temp DB, run all measurements, return a structured report."""
-    tmp = Path(tempfile.mkdtemp(prefix="vnext_perf_"))
+    """Seed a temp DB, run all measurements, return a structured report.
+
+    The temp dir (a seeded ~900-item SQLite DB) is removed on success AND
+    failure via ``TemporaryDirectory``. Engines are disposed inside
+    ``_run_measurements_in`` before it returns so Windows can unlink the DB
+    file (an open engine handle blocks unlink there).
+    """
+    with tempfile.TemporaryDirectory(prefix="vnext_perf_") as tmpdir:
+        return _run_measurements_in(Path(tmpdir), vector=vector, small=small)
+
+
+def _run_measurements_in(tmp: Path, *, vector: bool = False, small: bool = False) -> dict[str, Any]:
+    """Seed a temp DB under ``tmp``, run all measurements, return the report.
+
+    The caller (``run_measurements``) owns ``tmp`` and removes it. This
+    function disposes the storage engine (the metrics store shares its
+    session_factory) on the way out so the DB file handle is released before
+    the caller's cleanup runs.
+    """
     db_path = tmp / "perf.db"
     vector_dir = tmp / "vector"
     config = build_app_config(db_path, vector=vector, vector_dir=vector_dir)
@@ -453,91 +470,130 @@ def run_measurements(*, vector: bool = False, small: bool = False) -> dict[str, 
     from fastapi.testclient import TestClient
 
     report: dict[str, Any] = {"schema_version": BASELINE_SCHEMA_VERSION}
-    with TestClient(app) as client:
-        service = client.app.state.pallium_service
-        engine = service._storage._engine
+    engine = None
+    metrics_store = None
+    try:
+        with TestClient(app) as client:
+            service = client.app.state.pallium_service
+            engine = service._storage._engine
+            metrics_store = getattr(client.app.state, "metrics_store", None)
 
-        if small:
-            seed_meta = seed_source_items(service, containers=1, threads_per_container=1, turns_per_thread=30)
-        else:
-            seed_meta = seed_source_items(service)
-        report["seed"] = seed_meta
-        anchor_id = seed_meta["anchor_id"]
+            if small:
+                seed_meta = seed_source_items(service, containers=1, threads_per_container=1, turns_per_thread=30)
+            else:
+                seed_meta = seed_source_items(service)
+            report["seed"] = seed_meta
+            anchor_id = seed_meta["anchor_id"]
 
-        # Warm up: establish the connection pool + run connect-time PRAGMAs so
-        # per-op engine counts are stable (not polluted by first-connect setup).
-        client.post("/query", json=_query_payload(_COMMON_TOKEN, 5))
+            # Warm up: establish the connection pool + run connect-time PRAGMAs so
+            # per-op engine counts are stable (not polluted by first-connect setup).
+            client.post("/query", json=_query_payload(_COMMON_TOKEN, 5))
 
-        # ---- Request-path counts (seam 1) ----
-        counts: dict[str, Any] = {}
-        counts["source_only_query"] = measure_source_only(client, engine, text=_COMMON_TOKEN, limit=5)
-        counts["source_only_query_no_match"] = measure_source_only(
-            client, engine, text="tokenthatmatchesnothingxyzzy", limit=5
-        )
-        counts["source_context_expansion"] = measure_source_context(
-            client, engine, anchor_id, before=10, after=10
-        )
-        report["counts"] = counts
-
-        # ---- N+1 #1: double get_source_item per candidate (seam 1) ----
-        # retrieval_limit = min(max(limit*4, 12), 50); each FTS candidate incurs
-        # TWO get_source_item calls (matches_filters + target_visibility). Show
-        # engine queries scale ~linearly with the candidate window.
-        n1_double_get: list[dict[str, Any]] = []
-        for limit in ([2, 5] if small else [2, 5, 10, 12]):
-            m = measure_source_only(client, engine, text=_COMMON_TOKEN, limit=limit)
-            retrieval_limit = min(max(limit * 4, 12), 50)
-            n1_double_get.append(
-                {
-                    "limit": limit,
-                    "retrieval_limit": retrieval_limit,
-                    "candidates": m["results"],
-                    "engine_queries": m["engine_queries"],
-                }
+            # ---- Request-path counts (seam 1) ----
+            counts: dict[str, Any] = {}
+            counts["source_only_query"] = measure_source_only(client, engine, text=_COMMON_TOKEN, limit=5)
+            counts["source_only_query_no_match"] = measure_source_only(
+                client, engine, text="tokenthatmatchesnothingxyzzy", limit=5
             )
-        report["n1_double_get_source_item"] = n1_double_get
-
-        # ---- N+1 #2: loader per-exposed-id scan (seam 2) ----
-        # Seed reuse events with exposed sets and show loader queries scale with
-        # the number of exposed ids across events.
-        n1_loader: list[dict[str, Any]] = []
-        exposed_per_event = 3 if small else 5
-        for n_events in ([2, 4] if small else [10, 20, 40]):
-            # Fresh events each step so the exposed-id total grows monotonically.
-            seed_reuse_events(service, events=n_events, exposed_per_event=exposed_per_event)
-            loader_m = measure_loader(db_path, container_ref="container-0")
-            n1_loader.append(
-                {
-                    "cumulative_events": loader_m["visibility_events_checked"],
-                    "exposed_ids_checked": loader_m["visibility_exposed_ids_checked"],
-                    "visibility_loader_queries": loader_m["visibility_loader_queries"],
-                    "load_events_loader_queries": loader_m["load_events_loader_queries"],
-                }
+            counts["source_context_expansion"] = measure_source_context(
+                client, engine, anchor_id, before=10, after=10
             )
-        report["n1_loader_per_exposed_id"] = n1_loader
-        # Final loader snapshot (proves seam reports NON-ZERO).
-        report["loader"] = measure_loader(db_path, container_ref="container-0")
+            report["counts"] = counts
 
-        # ---- DB index check ----
-        report["index_check"] = check_indexes(db_path)
+            # ---- N+1 #1: double get_source_item per candidate (seam 1) ----
+            # retrieval_limit = min(max(limit*4, 12), 50); each FTS candidate incurs
+            # TWO get_source_item calls (matches_filters + target_visibility). Show
+            # engine queries scale ~linearly with the candidate window.
+            n1_double_get: list[dict[str, Any]] = []
+            for limit in ([2, 5] if small else [2, 5, 10, 12]):
+                m = measure_source_only(client, engine, text=_COMMON_TOKEN, limit=limit)
+                retrieval_limit = min(max(limit * 4, 12), 50)
+                n1_double_get.append(
+                    {
+                        "limit": limit,
+                        "retrieval_limit": retrieval_limit,
+                        "candidates": m["results"],
+                        "engine_queries": m["engine_queries"],
+                    }
+                )
+            report["n1_double_get_source_item"] = n1_double_get
 
-        # ---- Advisory latency (NOT gated) ----
-        report["latency_advisory"] = {
-            "source_only_query": measure_latency(
-                lambda: client.post("/query", json=_query_payload(_COMMON_TOKEN, 5)),
-                reps=3 if small else 25,
-            ),
-            "source_context_expansion": measure_latency(
-                lambda: client.get(f"/source/{anchor_id}/context", params={"before": 10, "after": 10}),
-                reps=3 if small else 25,
-            ),
-        }
+            # ---- N+1 #2: loader per-exposed-id scan (seam 2) ----
+            # Seed reuse events with exposed sets and show loader queries scale with
+            # the number of exposed ids across events. Each entry is keyed on the
+            # cumulative count of SEEDED events ("events"), which is stable
+            # regardless of any request-path lookup events written above; the
+            # advisory "cumulative_events" (measured, includes request-path rows)
+            # is retained for the report only.
+            n1_loader: list[dict[str, Any]] = []
+            exposed_per_event = 3 if small else 5
+            seeded_events = 0
+            for n_events in ([2, 4] if small else [10, 20, 40]):
+                # Fresh events each step so the exposed-id total grows monotonically.
+                seed_reuse_events(service, events=n_events, exposed_per_event=exposed_per_event)
+                seeded_events += n_events
+                loader_m = measure_loader(db_path, container_ref="container-0")
+                n1_loader.append(
+                    {
+                        "events": seeded_events,
+                        "cumulative_events": loader_m["visibility_events_checked"],
+                        "exposed_ids_checked": loader_m["visibility_exposed_ids_checked"],
+                        "visibility_loader_queries": loader_m["visibility_loader_queries"],
+                        "load_events_loader_queries": loader_m["load_events_loader_queries"],
+                    }
+                )
+            report["n1_loader_per_exposed_id"] = n1_loader
+            # Final loader snapshot (proves seam reports NON-ZERO).
+            report["loader"] = measure_loader(db_path, container_ref="container-0")
 
-        # ---- Optional vector-enabled path (opt-in, slow) ----
-        if vector:
-            report["vector"] = _measure_vector_path(client, engine)
+            # ---- DB index check ----
+            report["index_check"] = check_indexes(db_path)
 
-    return report
+            # ---- Advisory latency (NOT gated) ----
+            report["latency_advisory"] = {
+                "source_only_query": measure_latency(
+                    lambda: client.post("/query", json=_query_payload(_COMMON_TOKEN, 5)),
+                    reps=3 if small else 25,
+                ),
+                "source_context_expansion": measure_latency(
+                    lambda: client.get(f"/source/{anchor_id}/context", params={"before": 10, "after": 10}),
+                    reps=3 if small else 25,
+                ),
+            }
+
+            # ---- Optional vector-enabled path (opt-in, slow) ----
+            if vector:
+                report["vector"] = _measure_vector_path(client, engine)
+
+        return report
+    finally:
+        # Dispose BOTH SQLAlchemy engines bound to the temp DB so Windows
+        # releases the file handle before the caller's TemporaryDirectory
+        # removes it. ``create_app`` builds a separate ``early_storage`` engine
+        # for the metrics store (app/main.py) in addition to the service's
+        # storage engine; disposing only one leaves an open handle.
+        if engine is not None:
+            with contextlib.suppress(Exception):
+                engine.dispose()
+        _dispose_metrics_engine(metrics_store)
+
+
+def _dispose_metrics_engine(metrics_store: Any) -> None:
+    """Dispose the SQLAlchemy engine backing the metrics store's session
+    factory, if any (a distinct engine from the service storage engine)."""
+    session_factory = getattr(metrics_store, "_session_factory", None)
+    if session_factory is None:
+        return
+    bind = None
+    with contextlib.suppress(Exception):
+        bind = session_factory.kw.get("bind")
+    if bind is None:
+        with contextlib.suppress(Exception):
+            with session_factory() as s:
+                bind = s.get_bind()
+    if bind is not None:
+        with contextlib.suppress(Exception):
+            bind.dispose()
 
 
 def _measure_vector_path(client, engine) -> dict[str, Any]:
@@ -579,6 +635,11 @@ def build_count_baseline(report: dict[str, Any]) -> dict[str, Any]:
         ],
         "n1_loader_per_exposed_id": [
             {
+                # "events" is the cumulative count of SEEDED reuse events — a
+                # stable key that does NOT shift if request-path/query
+                # measurements change. "cumulative_events" (measured) is kept
+                # for the human report only, never used as a match key.
+                "events": e["events"],
                 "cumulative_events": e["cumulative_events"],
                 "exposed_ids_checked": e["exposed_ids_checked"],
                 "visibility_loader_queries": e["visibility_loader_queries"],
@@ -611,6 +672,9 @@ def compare_to_baseline(report: dict[str, Any], baseline: dict[str, Any]) -> lis
     for key, base in baseline.get("counts", {}).items():
         cur = fresh["counts"].get(key)
         if cur is None:
+            problems.append(
+                f"counts.{key}: present in baseline, missing from measurement"
+            )
             continue
         if _regressed(base["engine_queries"], cur["engine_queries"]):
             problems.append(
@@ -620,18 +684,31 @@ def compare_to_baseline(report: dict[str, Any], baseline: dict[str, Any]) -> lis
     base_map = {e["limit"]: e for e in baseline.get("n1_double_get_source_item", [])}
     for e in fresh["n1_double_get_source_item"]:
         b = base_map.get(e["limit"])
-        if b and _regressed(b["engine_queries"], e["engine_queries"]):
+        if b is None:
+            problems.append(f"n1_double_get_source_item[limit={e['limit']}]: no baseline entry")
+            continue
+        if _regressed(b["engine_queries"], e["engine_queries"]):
             problems.append(
                 f"n1_double_get_source_item[limit={e['limit']}].engine_queries: "
                 f"baseline={b['engine_queries']} measured={e['engine_queries']}"
             )
 
-    base_loader = {b["cumulative_events"]: b for b in baseline.get("n1_loader_per_exposed_id", [])}
-    for e in fresh["n1_loader_per_exposed_id"]:
-        b = base_loader.get(e["cumulative_events"])
-        if b and _regressed(b["visibility_loader_queries"], e["visibility_loader_queries"]):
+    # Key loader entries on the STABLE seeded-events count, not the measured
+    # "cumulative_events" (which shifts with request-path lookup writes). Walk
+    # the baseline so a baseline entry with no measured counterpart is flagged
+    # rather than silently passing.
+    fresh_loader = {e["events"]: e for e in fresh["n1_loader_per_exposed_id"]}
+    for b in baseline.get("n1_loader_per_exposed_id", []):
+        key_events = b.get("events")
+        e = fresh_loader.get(key_events)
+        if e is None:
             problems.append(
-                f"n1_loader_per_exposed_id[events={e['cumulative_events']}].visibility_loader_queries: "
+                f"n1_loader_per_exposed_id[events={key_events}]: present in baseline, no measured counterpart"
+            )
+            continue
+        if _regressed(b["visibility_loader_queries"], e["visibility_loader_queries"]):
+            problems.append(
+                f"n1_loader_per_exposed_id[events={key_events}].visibility_loader_queries: "
                 f"baseline={b['visibility_loader_queries']} measured={e['visibility_loader_queries']}"
             )
 
@@ -739,6 +816,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--small", action="store_true", help="Tiny/fast mode (for the guard test).")
     parser.add_argument("--json", action="store_true", help="Print the full report as JSON.")
     args = parser.parse_args(argv)
+
+    if args.baseline and args.small:
+        parser.error("--baseline cannot be combined with --small (small mode has a different report shape).")
 
     report = run_measurements(vector=args.vector, small=args.small)
 
