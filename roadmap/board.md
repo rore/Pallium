@@ -1,3 +1,6 @@
+# P1 · Reuse Measurement
+- add-historical-lookup-reuse-funnel
+
 # P2 · Work Continuity
 - idea-cross-context-work-continuity
 
