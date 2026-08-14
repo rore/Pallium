@@ -307,6 +307,33 @@ class TestDedup:
         )
         assert result["n_reuse_events"] == 2
 
+    def test_session_incidence_capped_at_100(self) -> None:
+        """Pins the KPI SEMANTICS the design + contract now state: the metric is
+        session-incidence (fraction of eligible sessions with >=1 reuse x 100),
+        NOT an unbounded events-per-100 rate. Even with many same-rung events in
+        every eligible session, the numerator caps at the session count, so the
+        reported value never exceeds 100. Guards against a silent drift back to
+        an event-rate reading of the number.
+        """
+        sessions = ["s1", "s2"]
+        # 5 raw incorporation events per session (10 total) over 2 eligible
+        # sessions — an event-rate reading would give 500 per 100.
+        events = [
+            {"session_id": sid, "rung": "incorporation"}
+            for sid in sessions
+            for _ in range(5)
+        ]
+        result = compute_reuse_rollup(
+            sessions, events, eligibility_n=50, window={}
+        )
+        inc = result["rungs"]["incorporation"]
+        assert inc["numerator"] == 2  # both sessions counted once each
+        assert inc["denominator"] == 2
+        assert inc["reuse_per_100_eligible"] == pytest.approx(100.0)
+        assert inc["reuse_per_100_eligible"] <= 100.0
+        # The raw event tally is retained separately and is NOT the KPI.
+        assert result["n_reuse_events"] == 10
+
 
 # ---------------------------------------------------------------------------
 # Loader stub

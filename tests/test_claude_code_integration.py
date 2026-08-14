@@ -10,7 +10,7 @@ from app.cli import setup_claude_code
 
 
 def _base_block() -> str:
-    return setup_claude_code._get_claude_md_block("tool-only")
+    return setup_claude_code._get_claude_md_block("base")
 
 
 def test_claude_block_permits_deliberate_historical_pull() -> None:
@@ -29,20 +29,33 @@ def test_claude_block_permits_deliberate_historical_pull() -> None:
 
 
 def test_claude_guidance_strength_selects_block_variant() -> None:
-    tool_only = setup_claude_code._get_claude_md_block("tool-only")
+    base = setup_claude_code._get_claude_md_block("base")
     strong = setup_claude_code._get_claude_md_block("strong")
 
-    assert "<!-- pallium:guidance-strength=tool-only -->" in tool_only
+    assert "<!-- pallium:guidance-strength=base -->" in base
     assert "<!-- pallium:guidance-strength=strong -->" in strong
 
     assert "### Resuming prior work" in strong
-    assert "### Resuming prior work" not in tool_only
-    assert strong != tool_only
+    assert "### Resuming prior work" not in base
+    assert strong != base
 
     # `pallium_query`/`pallium_expand` remain present in both variants.
-    for variant in (tool_only, strong):
+    for variant in (base, strong):
         assert "`pallium_query`" in variant
         assert "`pallium_expand`" in variant
+
+
+def test_claude_tool_only_alias_normalizes_to_base(capsys: pytest.CaptureFixture) -> None:
+    # The deprecated `tool-only` alias resolves to `base` (non-breaking for
+    # scripts) and emits a deprecation note.
+    assert setup_claude_code._normalize_guidance_strength("tool-only") == "base"
+    assert setup_claude_code._normalize_guidance_strength("strong") == "strong"
+    assert setup_claude_code._normalize_guidance_strength("base") == "base"
+    out = capsys.readouterr().out
+    assert "deprecated" in out
+    # The alias produces the same block as `base`.
+    aliased = setup_claude_code._normalize_guidance_strength("tool-only")
+    assert setup_claude_code._get_claude_md_block(aliased) == _base_block()
 
 
 def test_claude_get_block_rejects_unknown_strength() -> None:
@@ -56,9 +69,9 @@ def test_claude_reinstall_replaces_block_on_strength_change(
     claude_md = tmp_path / "CLAUDE.md"
     monkeypatch.setattr(setup_claude_code, "_claude_md_path", lambda: claude_md)
 
-    setup_claude_code._append_claude_md_block("tool-only")
+    setup_claude_code._append_claude_md_block("base")
     first = claude_md.read_text(encoding="utf-8")
-    assert "<!-- pallium:guidance-strength=tool-only -->" in first
+    assert "<!-- pallium:guidance-strength=base -->" in first
     assert "### Resuming prior work" not in first
 
     setup_claude_code._append_claude_md_block("strong")
@@ -77,7 +90,7 @@ def test_claude_reinstall_preserves_surrounding_content(
     claude_md.write_text("# My notes\n\nkeep me\n", encoding="utf-8")
     monkeypatch.setattr(setup_claude_code, "_claude_md_path", lambda: claude_md)
 
-    setup_claude_code._append_claude_md_block("tool-only")
+    setup_claude_code._append_claude_md_block("base")
     setup_claude_code._append_claude_md_block("strong")
     content = claude_md.read_text(encoding="utf-8")
 

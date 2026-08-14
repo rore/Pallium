@@ -20,8 +20,9 @@ success gates, and architecture rationale**. Item-level scope lives in the
 2. **Raw history is the baseline; derived memory is an evaluated optimization
    layer.** We do not remove derivation and we do not assume it. It earns
    responsibility only where it beats RAW/HYBRID on a measured dimension.
-3. **Primary KPI: confirmed historical-reuse events per 100 substantive
-   sessions** (history retrieved *and* materially used). Retrieval Recall@K is an
+3. **Primary KPI: fraction of eligible sessions with ≥1 confirmed
+   historical-reuse × 100** (session incidence, capped at 100; history retrieved
+   *and* materially used). Retrieval Recall@K is an
    offline capability metric, not the product-success metric.
 4. **Hard invariant across every phase: visibility violations = 0.**
 5. **Corpus analysis is exhausted for these questions; the open questions are
@@ -175,7 +176,8 @@ can measure whether agents actually do this unprompted.
 
 **Success gate.** Over a live window: agents invoke lookup at appropriate moments
 without explicit user prompting at a non-trivial rate; the funnel yields a first
-**reuse-events-per-100-eligible-sessions** number and the three-rung breakdown.
+**reuse-per-100-eligible-sessions** number (session incidence: fraction of eligible
+sessions with ≥1 confirmed reuse × 100) and the three-rung breakdown.
 **Decision:** if agents don't pull despite strong retrieval, the core thesis is weak
 (strategy decision-point 1) — stop and reassess before Phase 2/3.
 
@@ -286,8 +288,10 @@ mechanism.
 
 ## Measurement model
 
-**Primary KPI:** confirmed historical-reuse events per 100 *eligible* sessions
-(with "substantive" and "eligible" session defined in the P0 measurement contract).
+**Primary KPI:** fraction of *eligible* sessions with ≥1 confirmed historical-reuse
+× 100 — a **session-incidence** metric (capped at 100; a session with multiple
+same-rung reuse events counts once), NOT an unbounded "events per 100 sessions"
+rate (with "substantive" and "eligible" session defined in the P0 measurement contract).
 
 **Reuse is reported as three distinct rungs, not one blurred number:**
 1. verified incorporation — history appears in the agent's reasoning, action, or answer;

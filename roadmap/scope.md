@@ -54,13 +54,15 @@ Contract milestone is wound down (W2/W3/W4/W6 shipped; W1/W5/W7 parked as residu
 under Paused).
 
 vNext is validation-first and experiment-gated: each phase must pass its live
-experiment before the next earns significant investment. Primary KPI: confirmed
-historical-reuse events per 100 substantive sessions. Hard invariant across all
+experiment before the next earns significant investment. Primary KPI: fraction of
+substantive sessions with ≥1 confirmed historical-reuse × 100 (session incidence,
+capped at 100). Hard invariant across all
 phases: visibility violations = 0.
 
 vNext is validation-first and experiment-gated: each phase must pass its live
-experiment before the next earns significant investment. Primary KPI: confirmed
-historical-reuse events per 100 *eligible* sessions, reported as three rungs
+experiment before the next earns significant investment. Primary KPI: fraction of
+*eligible* sessions with ≥1 confirmed historical-reuse × 100 (session incidence,
+capped at 100), reported as three rungs
 (verified incorporation → judged influence → downstream benefit). Hard invariant
 across all phases: visibility violations = 0, reported with attempted-disallowed-
 access counts/types.

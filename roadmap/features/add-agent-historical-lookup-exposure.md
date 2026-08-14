@@ -24,8 +24,10 @@ the deployed guidance says "don't query every turn; injection handles ~90%," age
 rarely call the lookup tools and the funnel will read a near-zero rate that reflects the
 *guidance*, not the *value* of history. To measure honestly we must (a) permit/encourage
 a deliberate historical pull when prior work may exist, and (b) be able to vary guidance
-strength as an experimental arm (tool-description-only vs. a stronger skill/guidance
-prompt) so the KPI difference is attributable. The tools also need to be *discoverable
+strength as an experimental arm (*base* permit-nudge vs. a stronger skill/guidance
+prompt that adds a "call it first" directive — both arms carry a block-level permit,
+so the delta measures the call-first directive, not guidance presence) so the KPI
+difference is attributable. The tools also need to be *discoverable
 and self-explanatory enough* that an agent reaches for them at the right moment — this is
 prompt/skill/description work, not new capability.
 
@@ -39,8 +41,9 @@ prompt/skill/description work, not new capability.
    recall" framing for injection, but carve out the deliberate-historical-pull case).
    Distinguish the two behaviors clearly so the change is targeted.
 2. **Experiment-1 guidance-strength lever.** Provide a toggle so a run can select
-   *tool-description-only* (tools present, minimal prompting) vs *stronger-guidance*
-   (an explicit skill / stronger block text that prompts a lookup at task start). The
+   *base* (the block-level permit nudge; NOT a zero-guidance baseline) vs *strong*
+   (base plus an explicit "call it first" resume directive at task start). Both arms
+   carry a block-level permit — the delta measures the call-first directive. The
    lever should be a config/flag or a skill that can be installed or not — something the
    experiment harness can flip and record as the arm label, so the KPI delta is
    attributable to guidance strength.
@@ -73,7 +76,7 @@ prompt/skill/description work, not new capability.
    integrations (Claude Code + Codex) expose `pallium_search_history` /
    `pallium_expand_source` with clear when-to-use text.
 2. A guidance-strength lever exists (toggle or install-or-not skill) that an experiment
-   run can set to *tool-description-only* vs *stronger-guidance* and record as an arm
+   run can set to *base* (permit-nudge) vs *strong* (permit-nudge + call-first) and record as an arm
    label.
 3. The stale Codex skill is refreshed with the P1 tools; the Claude Code equivalent
    exists; tool descriptions read as self-explanatory for unprompted use; the

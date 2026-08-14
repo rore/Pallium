@@ -358,16 +358,43 @@ _STRONG_DIRECTIVE = (
 )
 
 
-def _build_agents_md_block(strength: str = "tool-only") -> str:
+#: Deprecated guidance-strength aliases -> canonical arm. ``tool-only`` was a
+#: misnomer: the base block already carries a block-level permit nudge, so the
+#: arm is not "tool description only". Kept as a non-breaking alias.
+_GUIDANCE_STRENGTH_ALIASES = {"tool-only": "base"}
+_GUIDANCE_STRENGTH_CHOICES = ["base", "strong", "tool-only"]
+
+
+def _normalize_guidance_strength(strength: str) -> str:
+    """Map a deprecated guidance-strength alias to its canonical arm.
+
+    Prints a one-line deprecation note when an alias is used so existing
+    scripts passing ``tool-only`` keep working (they now install the ``base``
+    arm) while surfacing the rename.
+    """
+    canonical = _GUIDANCE_STRENGTH_ALIASES.get(strength)
+    if canonical is not None:
+        print(
+            f"  NOTE: --guidance-strength '{strength}' is deprecated; "
+            f"using '{canonical}' (both arms carry a block-level permit nudge)."
+        )
+        return canonical
+    return strength
+
+
+def _build_agents_md_block(strength: str = "base") -> str:
     """Return the AGENTS.md block variant for the given guidance strength.
 
-    - ``"tool-only"`` (default): the neutral-permit block as-is.
-    - ``"strong"``: the base block plus an appended resume directive.
+    - ``"base"`` (default): the block as-is. It already carries a block-level
+      permit nudge; it is NOT a zero-guidance baseline.
+    - ``"strong"``: the base block plus an appended "call it first" resume
+      directive. The measured contrast is *permit-nudge* vs *permit-nudge +
+      call-first*, not presence-vs-absence of guidance.
 
     An arm-marker comment recording the chosen arm is embedded inside the
     marker-bounded block so an operator can read which arm was installed.
     """
-    if strength not in ("tool-only", "strong"):
+    if strength not in ("base", "strong"):
         raise ValueError(f"unknown guidance strength: {strength!r}")
 
     block = _get_agents_md_block()
@@ -386,7 +413,7 @@ def _build_agents_md_block(strength: str = "tool-only") -> str:
     return block
 
 
-def _append_agents_md_block(strength: str = "tool-only") -> None:
+def _append_agents_md_block(strength: str = "base") -> None:
     path = _codex_agents_md_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -462,7 +489,7 @@ def _verify_service(port: int) -> bool:
 # -- Main install/uninstall --
 
 
-def install(port: int = 19836, guidance_strength: str = "tool-only") -> int:
+def install(port: int = 19836, guidance_strength: str = "base") -> int:
     print(f"Setting up Pallium Codex integration (port {port})...")
 
     # 1. Feature flag + MCP in config.toml
@@ -559,16 +586,20 @@ def main(args: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--guidance-strength",
-        choices=["tool-only", "strong"],
-        default="tool-only",
+        choices=_GUIDANCE_STRENGTH_CHOICES,
+        default="base",
         help=(
-            "Which memory-guidance block variant to install: 'tool-only' "
-            "(neutral permit, default) or 'strong' (adds a resume directive). "
-            "Records the arm in setup output and inside the installed block."
+            "Which memory-guidance block variant to install: 'base' "
+            "(block-level permit nudge, default) or 'strong' (base plus a "
+            "'call it first' resume directive). Both arms carry a permit "
+            "nudge — the contrast is call-first, not guidance presence. "
+            "'tool-only' is a deprecated alias for 'base'. Records the arm in "
+            "setup output and inside the installed block."
         ),
     )
     parsed = parser.parse_args(args)
 
     if parsed.uninstall:
         return uninstall()
-    return install(port=parsed.port, guidance_strength=parsed.guidance_strength)
+    guidance_strength = _normalize_guidance_strength(parsed.guidance_strength)
+    return install(port=parsed.port, guidance_strength=guidance_strength)

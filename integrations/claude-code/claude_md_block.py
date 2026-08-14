@@ -123,16 +123,21 @@ context of a decision) and read them before acting, rather than starting cold.
 """
 
 
-def get_claude_md_block(strength: str = "tool-only") -> str:
+def get_claude_md_block(strength: str = "base") -> str:
     """Return the CLAUDE.md block variant for the given guidance strength.
 
-    - ``"tool-only"`` (default): the neutral-permit block as-is.
-    - ``"strong"``: the base block plus an appended resume directive.
+    - ``"base"`` (default): the block as-is. It already carries a block-level
+      permit nudge to call ``pallium_search_history`` when resuming prior work;
+      it is NOT a zero-guidance baseline.
+    - ``"strong"``: the base block plus an appended "call it first" resume
+      directive. The measured contrast between the two arms is therefore
+      *permit-nudge* vs *permit-nudge + call-first*, not presence-vs-absence of
+      guidance.
 
     An arm-marker comment recording the chosen arm is embedded inside the
     marker-bounded block so an operator can read which arm was installed.
     """
-    if strength not in ("tool-only", "strong"):
+    if strength not in ("base", "strong"):
         raise ValueError(f"unknown guidance strength: {strength!r}")
 
     arm_marker = f"<!-- pallium:guidance-strength={strength} -->"

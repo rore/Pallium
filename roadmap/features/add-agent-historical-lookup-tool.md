@@ -63,8 +63,10 @@ adoption (tool too hard) with the real question (history not useful).
 
 ## Experiment note
 
-Experiment 1 should compare **tool-description-only** against **stronger skill/
-CLAUDE.md guidance**: heavy "when to search" prompting measures instruction
+Experiment 1 should compare the **base** arm (block-level permit nudge) against
+**strong** guidance (base plus a "call it first" directive): both arms carry a
+permit, so the delta isolates the call-first directive. Heavy "when to search"
+prompting measures instruction
 adherence as much as genuine agent recognition, so the guidance level is itself a
 variable to control, not a fixed given.
 

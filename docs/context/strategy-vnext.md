@@ -154,7 +154,7 @@ Any proactive behavior must justify itself separately through live precision/use
 
 Primary KPI:
 
-> **Confirmed historical reuse events per 100 substantive sessions**
+> **Fraction of substantive sessions with ≥1 confirmed historical reuse × 100** (session incidence, capped at 100)
 
 A reuse event means historical agent work was retrieved and materially used in subsequent work.
 

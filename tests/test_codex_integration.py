@@ -298,23 +298,36 @@ def test_codex_mcp_json_has_no_stdio_noop() -> None:
 
 
 def test_codex_guidance_strength_selects_block_variant() -> None:
-    tool_only = setup_codex._build_agents_md_block("tool-only")
+    base = setup_codex._build_agents_md_block("base")
     strong = setup_codex._build_agents_md_block("strong")
 
     # Arm marker recorded inside each installed block.
-    assert "<!-- pallium:guidance-strength=tool-only -->" in tool_only
+    assert "<!-- pallium:guidance-strength=base -->" in base
     assert "<!-- pallium:guidance-strength=strong -->" in strong
 
-    # The strong variant appends the resume directive; tool-only does not.
+    # The strong variant appends the resume directive; base does not.
     assert "## Resuming prior work" in strong
-    assert "## Resuming prior work" not in tool_only
-    assert strong != tool_only
+    assert "## Resuming prior work" not in base
+    assert strong != base
 
     # Both variants preserve the Codex block invariants.
-    for variant in (tool_only, strong):
+    for variant in (base, strong):
         assert "MANDATORY" not in variant
         assert "`pallium_query`" in variant
         assert "`pallium_expand`" in variant
+
+
+def test_codex_tool_only_alias_normalizes_to_base(capsys: pytest.CaptureFixture) -> None:
+    # The deprecated `tool-only` alias resolves to `base` (non-breaking for
+    # scripts) and emits a deprecation note.
+    assert setup_codex._normalize_guidance_strength("tool-only") == "base"
+    assert setup_codex._normalize_guidance_strength("strong") == "strong"
+    assert setup_codex._normalize_guidance_strength("base") == "base"
+    out = capsys.readouterr().out
+    assert "deprecated" in out
+    # The alias produces the same block as `base`.
+    aliased = setup_codex._normalize_guidance_strength("tool-only")
+    assert setup_codex._build_agents_md_block(aliased) == setup_codex._build_agents_md_block("base")
 
 
 def test_codex_build_block_rejects_unknown_strength() -> None:
@@ -328,9 +341,9 @@ def test_codex_reinstall_replaces_block_on_strength_change(
     agents_path = tmp_path / "AGENTS.md"
     monkeypatch.setattr(setup_codex, "_codex_agents_md_path", lambda: agents_path)
 
-    setup_codex._append_agents_md_block("tool-only")
+    setup_codex._append_agents_md_block("base")
     first = agents_path.read_text(encoding="utf-8")
-    assert "<!-- pallium:guidance-strength=tool-only -->" in first
+    assert "<!-- pallium:guidance-strength=base -->" in first
     assert "## Resuming prior work" not in first
 
     setup_codex._append_agents_md_block("strong")

@@ -43,7 +43,7 @@ See `## Plan` below (decision-complete: S1 = rename+alias; S3 = new fast default
 See `## Verification plan` below. Real-interpreter commands for: the two integration test files (arm rename + alias), the measurement test (session-incidence pin), the new count-gate test (passes; and fails on a perturbed baseline to prove it gates), a `--guidance-strength tool-only` deprecation-alias smoke, and the full default-lane `pytest -m 'not slow'`.
 
 **Plan review:**
-Pending — architect (human) review requested per task instructions before any code edit. (Elevated normally takes a clean-context agent review; the architect is the designated reviewer here.)
+Approved by architect (coordinator message, 2026-08-14): "Plan APPROVED — implement it. It's decision-complete." Guardrails: keep diff tight to S1/S2/S3; `tool-only` alias must still work across both CLIs; no guidance-block content or KPI computation change.
 
 **Approvals:**
 Not required at this risk level.
@@ -51,12 +51,29 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Discovery
 
 (Recorded in the marker block Discovery field above; file:line verified during planning. No code edited.)
+
+## Implementation
+
+Planning committed first (commit-order predicate). Then, in one code commit:
+
+- **S1 (arm rename + alias).** Renamed the weak arm `tool-only` -> `base` in `integrations/claude-code/claude_md_block.py`, `app/cli/setup_claude_code.py`, `app/cli/setup_codex.py` (validation sets, internal fn defaults, argparse `default="base"`). Kept `tool-only` in argparse `choices` as a DEPRECATED ALIAS via a `_normalize_guidance_strength` helper in each CLI that maps `tool-only`->`base` and prints a one-line deprecation note (non-breaking for scripts). Arm marker for the base arm is now `<!-- pallium:guidance-strength=base -->`; `strong` unchanged. Guidance-block CONTENT unchanged. Updated the two integration test files (marker assertions -> `base`, added alias-normalisation tests). Relabelled roadmap docs and added a "Guidance arms" section to the measurement-contract spec stating both arms carry a block-level permit.
+- **S2 (KPI wording + test).** Reworded design 015 (`:23,178,289`), `roadmap/scope.md`, `docs/context/strategy-vnext.md`, and added a clarifying paragraph to the contract rollup formula — all now state the metric is *session incidence* (fraction of eligible sessions with >=1 confirmed reuse x 100, capped at 100), not an unbounded events-per-100 rate. Computation untouched. Added `TestDedup::test_session_incidence_capped_at_100`.
+- **S3 (count-gate in default CI).** Added `include_latency: bool = True` to `run_measurements`/`_run_measurements_in` in `evals/vnext_perf_harness.py` (skips only the advisory-latency block when False; counts untouched). New non-slow `tests/test_vnext_perf_count_gate.py`: (1) full-mode count-compare vs committed baseline == PASS; (2) a perturbed in-memory baseline is detected as a regression (committed baseline file untouched). Left `tests/test_vnext_perf_harness.py` slow.
+
+## Evidence
+
+Real-interpreter (`PYTHONPATH=".local/test-env/site-packages;."`, cpython-3.13) runs:
+- `pytest tests/test_claude_code_integration.py tests/test_codex_integration.py tests/test_historical_lookup_measurement.py -q -n 0` -> **59 passed** (4.68s).
+- `pytest tests/test_vnext_perf_count_gate.py -q -n 0` -> **2 passed** (6.36s).
+- `--collect-only` on the two perf files under default addopts -> count-gate's 2 tests collected, the slow harness test deselected.
+- Full default lane `pytest -q` -> **3518 passed, 15 skipped, 2 xfailed** (76.8s); no failures.
+- Measured earlier: full `run_measurements()` = 4.72s incl. latency; `compare_to_baseline` = 0.0007s.
 
 ## Plan
 
@@ -90,6 +107,4 @@ Real-interpreter form (from repo root):
 - S3 pass: `pytest tests/test_vnext_perf_count_gate.py -q`; and prove it GATES by temporarily perturbing an in-memory baseline copy in the test-run and asserting `compare_to_baseline` returns problems (kept inside the test, baseline file untouched).
 - Full lane: `pytest -m 'not slow' -q` green (modulo the known-benign config test). Confirm the new count-gate test is collected in this lane and the harness slow test is not.
 
-## Implementation
-
-(Not started — planning only. Awaiting architect plan review.)
+(Implementation notes, evidence, and plan-review outcome are recorded in the sections above.)

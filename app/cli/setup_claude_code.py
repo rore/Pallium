@@ -169,7 +169,31 @@ def _unregister_hooks(settings: dict) -> dict:
     return settings
 
 
-def _get_claude_md_block(strength: str = "tool-only") -> str:
+#: Deprecated guidance-strength aliases -> canonical arm. ``tool-only`` was a
+#: misnomer: the base block already carries a block-level permit nudge, so the
+#: arm is not "tool description only". Kept as a non-breaking alias.
+_GUIDANCE_STRENGTH_ALIASES = {"tool-only": "base"}
+_GUIDANCE_STRENGTH_CHOICES = ["base", "strong", "tool-only"]
+
+
+def _normalize_guidance_strength(strength: str) -> str:
+    """Map a deprecated guidance-strength alias to its canonical arm.
+
+    Prints a one-line deprecation note when an alias is used so existing
+    scripts passing ``tool-only`` keep working (they now install the ``base``
+    arm) while surfacing the rename.
+    """
+    canonical = _GUIDANCE_STRENGTH_ALIASES.get(strength)
+    if canonical is not None:
+        print(
+            f"  NOTE: --guidance-strength '{strength}' is deprecated; "
+            f"using '{canonical}' (both arms carry a block-level permit nudge)."
+        )
+        return canonical
+    return strength
+
+
+def _get_claude_md_block(strength: str = "base") -> str:
     block_file = _pallium_repo_root() / "integrations" / "claude-code" / "claude_md_block.py"
     ns: dict = {}
     exec(compile(block_file.read_text(encoding="utf-8"), block_file, "exec"), ns)
@@ -200,7 +224,7 @@ def _replace_claude_md_block(content: str, block: str) -> str:
     return before + separator_before + block + separator_after + after
 
 
-def _append_claude_md_block(strength: str = "tool-only") -> None:
+def _append_claude_md_block(strength: str = "base") -> None:
     block = _get_claude_md_block(strength)
 
     path = _claude_md_path()
@@ -263,7 +287,7 @@ def _verify_service(port: int) -> bool:
         return False
 
 
-def install(port: int = 19836, guidance_strength: str = "tool-only") -> int:
+def install(port: int = 19836, guidance_strength: str = "base") -> int:
     print(f"Setting up Pallium Claude Code integration (port {port})...")
 
     _register_mcp(port)
@@ -343,16 +367,20 @@ def main(args: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--guidance-strength",
-        choices=["tool-only", "strong"],
-        default="tool-only",
+        choices=_GUIDANCE_STRENGTH_CHOICES,
+        default="base",
         help=(
-            "Which memory-guidance block variant to install: 'tool-only' "
-            "(neutral permit, default) or 'strong' (adds a resume directive). "
-            "Records the arm in setup output and inside the installed block."
+            "Which memory-guidance block variant to install: 'base' "
+            "(block-level permit nudge, default) or 'strong' (base plus a "
+            "'call it first' resume directive). Both arms carry a permit "
+            "nudge — the contrast is call-first, not guidance presence. "
+            "'tool-only' is a deprecated alias for 'base'. Records the arm in "
+            "setup output and inside the installed block."
         ),
     )
     parsed = parser.parse_args(args)
 
     if parsed.uninstall:
         return uninstall()
-    return install(port=parsed.port, guidance_strength=parsed.guidance_strength)
+    guidance_strength = _normalize_guidance_strength(parsed.guidance_strength)
+    return install(port=parsed.port, guidance_strength=guidance_strength)
