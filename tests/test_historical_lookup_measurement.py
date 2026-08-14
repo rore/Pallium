@@ -335,3 +335,213 @@ class TestLoaderStub:
         )
         for rung in result["rungs"].values():
             assert rung["reuse_per_100_eligible"] is None
+
+
+# ---------------------------------------------------------------------------
+# Visibility / governance violation reporting
+# ---------------------------------------------------------------------------
+
+
+class TestVisibilityViolationReporting:
+    """The rollup output always carries a computed visibility-violation block."""
+
+    def test_rollup_embeds_empty_report_by_default(self) -> None:
+        result = compute_reuse_rollup([], [], eligibility_n=50, window={})
+        vv = result["visibility_violations"]
+        assert vv["violations"] == 0
+        assert set(vv["by_type"]) == {"cross_container", "forgotten_exposed"}
+
+    def test_rollup_embeds_supplied_report(self) -> None:
+        report = {
+            "violations": 0,
+            "by_type": {"cross_container": 0, "forgotten_exposed": 0},
+            "events_checked": 3,
+            "exposed_ids_checked": 9,
+        }
+        result = compute_reuse_rollup(
+            [], [], eligibility_n=50, window={}, visibility_report=report
+        )
+        assert result["visibility_violations"] is report
+
+    def test_load_violations_empty_safe_no_db(self) -> None:
+        from evals.historical_lookup_measurement import load_visibility_violations
+
+        report = load_visibility_violations(None)
+        assert report["violations"] == 0
+        assert report["by_type"] == {"cross_container": 0, "forgotten_exposed": 0}
+
+    def test_load_violations_clean_exposed_set_is_zero(self, tmp_path) -> None:
+        """A clean exposed set (matching container, not forgotten) → 0 violations
+        with a non-zero exposed_ids_checked (the count is computed, not assumed)."""
+        import json
+
+        from core.models import new_id, utc_now
+        from evals.historical_lookup_measurement import load_visibility_violations
+        from sqlalchemy import text
+        from storage.sqlite import SQLiteStorageProvider
+
+        db = tmp_path / "hist.db"
+        storage = SQLiteStorageProvider(f"sqlite:///{db}")
+        with storage._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO source_items (id, source_type, source_id, "
+                    "content_type, content, container_ref, thread_ref, visibility, "
+                    "processing_status, processing_attempts, created_at) VALUES "
+                    "('s1','chat_message','ext-s1','text/plain','x','c:1','t:1',"
+                    "'private','completed',0,'2026-08-01 00:00:01.000000')"
+                )
+            )
+        storage.write_historical_lookup_event_row({
+            "id": new_id(),
+            "created_at": utc_now(),
+            "event_type": "lookup",
+            "session_id": "t:1",
+            "container_ref": "c:1",
+            "actor_ref": None,
+            "trigger_origin": "agent_pull",
+            "parent_lookup_id": None,
+            "exposed_json": json.dumps([{"source_item_id": "s1", "raw_rank": 1, "score": 0.5}]),
+            "visibility": "private",
+        })
+        report = load_visibility_violations(str(db), container_ref="c:1")
+        assert report["violations"] == 0
+        assert report["exposed_ids_checked"] == 1
+        assert report["events_checked"] == 1
+
+    def test_load_violations_detects_planted_cross_container(self, tmp_path) -> None:
+        """A planted cross-container exposed id must be COUNTED (proves the
+        field is computed, not hardcoded to 0)."""
+        import json
+
+        from core.models import new_id, utc_now
+        from evals.historical_lookup_measurement import load_visibility_violations
+        from sqlalchemy import text
+        from storage.sqlite import SQLiteStorageProvider
+
+        db = tmp_path / "hist.db"
+        storage = SQLiteStorageProvider(f"sqlite:///{db}")
+        with storage._engine.begin() as conn:
+            # The exposed source item lives in a DIFFERENT container than the event.
+            conn.execute(
+                text(
+                    "INSERT INTO source_items (id, source_type, source_id, "
+                    "content_type, content, container_ref, thread_ref, visibility, "
+                    "processing_status, processing_attempts, created_at) VALUES "
+                    "('s-other','chat_message','ext','text/plain','x','c:OTHER','t:x',"
+                    "'private','completed',0,'2026-08-01 00:00:01.000000')"
+                )
+            )
+        storage.write_historical_lookup_event_row({
+            "id": new_id(),
+            "created_at": utc_now(),
+            "event_type": "lookup",
+            "session_id": "t:1",
+            "container_ref": "c:1",
+            "actor_ref": None,
+            "trigger_origin": "agent_pull",
+            "parent_lookup_id": None,
+            "exposed_json": json.dumps([{"source_item_id": "s-other", "raw_rank": 1, "score": 0.5}]),
+            "visibility": "private",
+        })
+        report = load_visibility_violations(str(db))
+        assert report["by_type"]["cross_container"] == 1
+        assert report["violations"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Consensus rung — one vote per rater, robust to re-runs
+# ---------------------------------------------------------------------------
+
+
+class TestConsensusRungDedup:
+    """A re-run appends a new label row per rater (labels are append-only). The
+    consensus must count each rater ONCE, using that rater's LATEST label."""
+
+    def _seed_event(self, storage):
+        import json
+
+        from core.models import utc_now
+
+        storage.write_historical_lookup_event_row({
+            "id": "ev-1",
+            "created_at": utc_now(),
+            "event_type": "lookup",
+            "session_id": "t:1",
+            "container_ref": "c:1",
+            "actor_ref": None,
+            "trigger_origin": "agent_pull",
+            "parent_lookup_id": None,
+            "exposed_json": json.dumps([{"source_item_id": "s1", "raw_rank": 1, "score": 0.5}]),
+            "visibility": "private",
+        })
+
+    def _write_label(self, storage, *, rater_seed, rung, created):
+        from datetime import datetime
+
+        from core.models import new_id
+
+        storage.write_historical_lookup_label_row({
+            "id": new_id(),
+            "lookup_event_id": "ev-1",
+            "rater_seed": rater_seed,
+            "rung": rung,
+            "rationale": f"seed={rater_seed}",
+            "created_at": datetime.fromisoformat(created),
+        })
+
+    def test_rerun_relabel_does_not_double_count(self, tmp_path) -> None:
+        """One rater relabels on a re-run (incorporation → influence). With
+        one-vote-per-rater dedup the latest label wins → influence. Double-
+        counting would tie both rungs and fall back to incorporation."""
+        import sqlite3
+
+        from evals.historical_lookup_measurement import _consensus_rung
+        from storage.sqlite import SQLiteStorageProvider
+
+        db = tmp_path / "consensus.db"
+        storage = SQLiteStorageProvider(f"sqlite:///{db}")
+        self._seed_event(storage)
+        # First run.
+        self._write_label(storage, rater_seed="0", rung="incorporation",
+                          created="2026-08-10 00:00:01.000000")
+        # Re-run: same rater, changed verdict, later timestamp.
+        self._write_label(storage, rater_seed="0", rung="influence",
+                          created="2026-08-11 00:00:01.000000")
+
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        try:
+            assert _consensus_rung(conn, "ev-1") == "influence"
+        finally:
+            conn.close()
+
+    def test_rerun_preserves_plurality_per_rater(self, tmp_path) -> None:
+        """Three raters; one flips on a re-run. Latest-per-rater plurality:
+        {0:influence, 1:incorporation, 2:influence} → influence. Counting every
+        row (double-count) would make incorporation tie/win instead."""
+        import sqlite3
+
+        from evals.historical_lookup_measurement import _consensus_rung
+        from storage.sqlite import SQLiteStorageProvider
+
+        db = tmp_path / "consensus2.db"
+        storage = SQLiteStorageProvider(f"sqlite:///{db}")
+        self._seed_event(storage)
+        # First run: two incorporation, one influence.
+        self._write_label(storage, rater_seed="0", rung="incorporation",
+                          created="2026-08-10 00:00:01.000000")
+        self._write_label(storage, rater_seed="1", rung="incorporation",
+                          created="2026-08-10 00:00:02.000000")
+        self._write_label(storage, rater_seed="2", rung="influence",
+                          created="2026-08-10 00:00:03.000000")
+        # Re-run: rater 0 flips to influence with a later timestamp.
+        self._write_label(storage, rater_seed="0", rung="influence",
+                          created="2026-08-11 00:00:01.000000")
+
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        try:
+            assert _consensus_rung(conn, "ev-1") == "influence"
+        finally:
+            conn.close()

@@ -184,7 +184,17 @@ def _verify_service(port: int) -> bool:
     url = f"http://localhost:{port}/status"
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
-            return resp.status == 200
+            if resp.status != 200:
+                return False
+            try:
+                status_data = json.loads(resp.read())
+                funnel = status_data.get("historical_lookup_funnel")
+                if isinstance(funnel, dict):
+                    armed = "armed" if funnel.get("armed") else "not armed"
+                    print(f"  Historical-lookup reuse funnel: {armed}")
+            except Exception:
+                pass
+            return True
     except Exception:
         return False
 

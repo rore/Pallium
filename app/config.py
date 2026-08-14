@@ -88,6 +88,13 @@ class ObservabilityConfig:
     # the runner + table + this flag with no other behaviour change.
     shadow_subtask_selector_enabled: bool = False
     shadow_subtask_selector_timeout_ms: int = 10000
+    # Historical-lookup reuse funnel. Persistence of lookup/expansion events is
+    # UNCONDITIONAL (see HistoricalLookupReuseEventRecord) so the Phase-1 reuse
+    # KPI is measurable on a fresh install; this flag is the declared "armed"
+    # signal that `pallium service status` and `pallium setup claude-code`
+    # report. Default True = armed out of the box. Set False to advertise the
+    # funnel as intentionally disabled (does NOT stop the write-only telemetry).
+    historical_lookup_funnel: bool = True
 
 
 @dataclass(frozen=True)
@@ -325,6 +332,12 @@ class AppConfig:
                     env_values,
                     _read_nested(config_data, "observability", "shadow_subtask_selector_timeout_ms"),
                     10000,
+                ),
+                historical_lookup_funnel=_resolve_bool_value(
+                    "PALLIUM_OBSERVABILITY_HISTORICAL_LOOKUP_FUNNEL",
+                    env_values,
+                    _read_nested(config_data, "observability", "historical_lookup_funnel"),
+                    True,
                 ),
             ),
             retention=RetentionConfig(

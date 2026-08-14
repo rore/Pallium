@@ -25,7 +25,11 @@ from core.service import PalliumService
 from semantic.agent_conversation_memory_routing import RoutingOverrides
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider
-from storage.sqlite_schema import MemoryObjectRecord, SourceItemRecord
+from storage.sqlite_schema import (
+    HistoricalLookupReuseEventRecord,
+    MemoryObjectRecord,
+    SourceItemRecord,
+)
 
 if TYPE_CHECKING:
     from core.rebuild_coordinator import RebuildCoordinator
@@ -406,6 +410,20 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             except Exception:
                 logger.warning("status: metrics summary failed", exc_info=True)
 
+        # --- Historical-lookup reuse funnel (armed state + telemetry count) ---
+        funnel_info: dict = {
+            "armed": resolved_config.observability.historical_lookup_funnel,
+            "events_recorded": None,
+        }
+        try:
+            session_factory = storage._session_factory
+            with session_factory() as session:
+                funnel_info["events_recorded"] = session.scalar(
+                    select(func.count()).select_from(HistoricalLookupReuseEventRecord)
+                ) or 0
+        except Exception:
+            logger.warning("status: funnel count failed", exc_info=True)
+
         return JSONResponse(content={
             "pending_items": pending_count,
             "oldest_pending_age_seconds": oldest_pending_age,
@@ -419,6 +437,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "uptime_seconds": uptime,
             "query": query_info,
             "metrics_summary": metrics_summary,
+            "historical_lookup_funnel": funnel_info,
         })
 
     mount_dashboard(app)

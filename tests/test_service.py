@@ -258,6 +258,60 @@ class TestSeedConfig:
         assert (home / "config" / "pallium.toml").exists()
         assert not (home / "config" / ".env").exists()
 
+    def test_dev_observability_values_not_carried_into_fresh_install(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A dev [observability] section must NOT be copied verbatim: dev-only
+        values (e.g. query_audit_log = true, shadow-selector flags) must not leak
+        into a fresh install. The install seeds only the clean armed funnel."""
+        home = tmp_path / "home"
+        (home / "config").mkdir(parents=True)
+
+        dev_toml = tmp_path / "pallium.local.toml"
+        dev_toml.write_text(
+            "[llm_providers.my_llm]\n"
+            'kind = "anthropic_claude"\n'
+            "\n"
+            "[observability]\n"
+            "query_audit_log = true\n"
+            "shadow_subtask_selector_enabled = true\n"
+            "historical_lookup_funnel = false\n"
+        )
+
+        monkeypatch.chdir(tmp_path)
+        _seed_config(home)
+
+        content = (home / "config" / "pallium.toml").read_text()
+        import tomllib
+
+        parsed = tomllib.loads(content)
+        obs = parsed["observability"]
+        # Only the clean armed signal — no dev carry-over.
+        assert obs == {"historical_lookup_funnel": True}
+        assert "query_audit_log" not in content
+        assert "shadow_subtask_selector_enabled" not in content
+
+    def test_seeds_armed_observability_when_absent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """When the dev config has no [observability] section, a fresh install
+        seeds one that arms the funnel."""
+        home = tmp_path / "home"
+        (home / "config").mkdir(parents=True)
+
+        dev_toml = tmp_path / "pallium.local.toml"
+        dev_toml.write_text("[llm_providers.x]\nkind = \"test\"\n")
+
+        monkeypatch.chdir(tmp_path)
+        _seed_config(home)
+
+        content = (home / "config" / "pallium.toml").read_text()
+        assert "[observability]" in content
+        assert "historical_lookup_funnel = true" in content
+        # The seeded config must parse and resolve to armed=True.
+        import tomllib
+
+        parsed = tomllib.loads(content)
+        assert parsed["observability"]["historical_lookup_funnel"] is True
+
 
 class TestPalliumLockRetry:
     def test_acquire_retries_once_on_transient_failure(self, tmp_path: Path):

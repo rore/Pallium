@@ -12,6 +12,11 @@ sqlite_url = "sqlite:///./pallium.db"
 
 [observability]
 integration_debug = false
+# Historical-lookup reuse funnel. Lookup/expansion events are recorded
+# unconditionally so the reuse KPI is measurable on a fresh install; this flag
+# is the declared "armed" signal surfaced by `pallium service status`. Leave
+# true to arm the funnel out of the box.
+historical_lookup_funnel = true
 
 [llm_providers.openai]
 kind = "openai_compatible"
