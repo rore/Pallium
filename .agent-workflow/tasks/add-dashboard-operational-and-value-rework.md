@@ -15,7 +15,7 @@ Delivered as **1 PR**. (0) UX-design doc (planning deliverable) defining both vi
 MAY NOT touch: computing new metrics (funnel loader/evals are merged features); scheduling eval runs; auth/multi-user/remote; `core/`/`api/routes.py` behavior.
 
 **Constraints:**
-No JS framework, bundler, or build step (keep vanilla, edit-and-refresh). If the single 2,032-line `app/dashboard.html` must be split, that is a deliberate recorded choice, not framework adoption. Preserve all current operational panels + the existing `/dashboard/api/*` contract; keep the literal endpoint strings `tests/test_dashboard.py` asserts (or update the tests). Every `/dashboard/api/*` route 501s without SQLite — keep that. "How memory helps" data that isn't live must show a friendly empty/stale state, never imply live when it's a stale offline report. No internal/external product names. Any new endpoint is read-only and lives on the dashboard router (`/dashboard/api/*`), not `api/routes.py` (avoid the RED api surface).
+No JS framework, bundler, or build step (keep vanilla, edit-and-refresh). If the single 2,032-line `app/dashboard.html` must be split, that is a deliberate recorded choice, not framework adoption. Preserve all current operational panels + the existing `/dashboard/api/*` contract; keep the literal endpoint strings `tests/test_dashboard.py` asserts (or update the tests). Every `/dashboard/api/*` route 501s without SQLite — keep that. "How memory helps" data that isn't live must show a friendly empty/stale state, never imply live when it's a stale offline report. No internal/external product names. Any new endpoint is read-only, lives on the dashboard router (`/dashboard/api/*`, not `api/routes.py` — avoid the RED api surface), maps to HARDCODED report `Path` constants (no user-supplied filename/path — traversal-proof), and never runs the rollup/loader on-request (serve last-written report files + `/status` counts only).
 
 **Completion criteria:**
 Feature "Done When" 1–5: (1) recorded UX-design pass (what/why/priority + empty-data strategy) BEFORE layout code; (2) two separated views, no framework/build, operational view preserves all current panels + APIs work; (3) "how memory helps" view surfaces the funnel signal (empty-safe) + the eval reports (friendly stale/empty states) with honest framing; (4) iterated live with before/after screenshots in the WR; (5) `tests/test_dashboard.py` passes (updated for moved/added wiring) + any new endpoint has coverage. Plus `python -m pytest tests/ -q` green (modulo known-benign `test_config.py::test_prompt_variants_legacy_fallback_unaffected`).
@@ -31,8 +31,8 @@ Guarded (`app/dashboard.py` + `app/dashboard.html`, possibly a small read-only d
 Grounded on the earlier read-only dashboard investigation (recorded under `## Discovery`), refreshed for the now-merged funnel. Key: single `app/dashboard.html` (2,032 lines, all inline CSS/JS), served from disk per request (edit-and-refresh, no restart/build); route `/dashboard` via `mount_dashboard()` (`app/dashboard.py`) wired at `app/main.py:424`; data from `/dashboard/api/*` (`MetricsStore` + direct record selects) + `/status` + `/debug/queue/health` + `/query/debug` + `/memory/{id}/expand`; NO tab structure today (only two collapsible sections); `tests/test_dashboard.py` asserts literal endpoint strings (`/dashboard/api/memories`, `/dashboard/api/metrics/totals`). NEW since investigation: `/status` now returns `historical_lookup_funnel {armed, events_recorded}` (live), and the merged evals write JSON reports to `.local/research/{raw_derived_hybrid,derivation_fidelity}_report.json`. So the "how memory helps" view has real (if partly manual-run) data sources — not empty.
 
 **Material assumptions:**
-- A1: The 2-view shell can be built in-place in `app/dashboard.html` with vanilla JS (a tab switch over existing sections) without a framework/build. Disproof: the file is unmaintainable to extend in place → a deliberate split (recorded), still no framework.
-- A2: "How memory helps" live data = `/status.historical_lookup_funnel` (already served) + a NEW read-only `/dashboard/api/*` endpoint that runs/serves the rollup and reads the offline eval JSON reports. Disproof: running the rollup on-request is too heavy for a dashboard call → serve last-written report files + the `/status` funnel counts only, with a "run the eval" affordance.
+- A1: The 2-view shell is built IN-PLACE in `app/dashboard.html` with a vanilla **CSS `display` toggle over two container divs — all elements stay in the DOM** (the 10s auto-refresh loop at `:1995-2009` + `init()` call `getElementById(...).innerHTML` unconditionally; removing panels → `null.innerHTML` throws → the per-fetch try/catch flips the header to "unreachable" every 10s). JS stays INLINE (no split, no framework); a split would also break the HTML-substring test assertions. CONFIRMED feasible by review.
+- A2 (REVISED): "How memory helps" live data = `/status.historical_lookup_funnel` (already served, `app/main.py:415-423,440`) for the headline + a NEW read-only `/dashboard/api/*` endpoint that serves the **last-written eval JSON report files** (with `last_modified` mtime for a stale affordance). Do NOT run `compute_reuse_rollup`/`load_events_from_storage` on-request — the loader opens its own `sqlite3.connect` and scans `source_items` unbounded on a sync handler at 10s cadence. Serving report files is the primary design (the plan's former fallback, promoted). CONFIRMED by review.
 - A3: `tests/test_dashboard.py` string-presence assertions can be preserved or updated without breaking behavior. Disproof: moving panels drops asserted strings → update the tests in the same PR.
 
 **Plan:**
@@ -50,7 +50,7 @@ Not required at this risk level (Elevated). Standing overnight package mandate c
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Discovery
@@ -58,7 +58,7 @@ Not required at this risk level (Elevated). Standing overnight package mandate c
 From the earlier read-only dashboard investigation (still accurate for structure), refreshed for the merged funnel:
 
 - **One file:** `app/dashboard.html` (2,032 lines), inline `<style>` (dark theme, CSS vars) + inline vanilla JS (hand-rolled SVG sparklines/bars). No framework/bundler/`package.json`.
-- **Serving:** `app/dashboard.py` `mount_dashboard(app)` — `GET /dashboard` reads the HTML from disk per request (`:33-36`); edits are live on refresh, no restart/build. Wired at `app/main.py:424`.
+- **Serving:** `app/dashboard.py` `mount_dashboard(app)` — `GET /dashboard` reads the HTML from disk per request (`:33-36`); edits are live on refresh, no restart/build. Wired at `app/main.py:443` (the funnel block shifted it from the earlier :424).
 - **Sections today (single scroll, no tabs):** header/health, Overview cards, System Health (storage/queue/extraction), Query Activity + Skip Reasons trend, Memory Browser (collapsible), Query Debug (collapsible).
 - **Data:** `/dashboard/api/{containers,actors,activity,memories,memories/{id}/feedback,flags,metrics/query,metrics/aggregate,metrics/totals,feedback/stats}` (backed by `MetricsStore` `storage/metrics.py` + direct `MemoryObjectRecord`/feedback/flag selects); plus `/status`, `/debug/queue/health`, `POST /query/debug`, `/memory/{id}/expand`. Every `/dashboard/api/*` route 501s without SQLite.
 - **Tests:** `tests/test_dashboard.py` (388 lines) — JSON-API tests + literal-string presence assertions (`/dashboard/api/memories` at :152, `/dashboard/api/metrics/totals` at :162). `tests/test_metrics_api.py`. No browser/DOM tests.
@@ -69,11 +69,11 @@ From the earlier read-only dashboard investigation (still accurate for structure
 Single PR on `feat/add-dashboard-operational-and-value-rework`.
 
 0. **UX-design doc (planning deliverable, FIRST).** `docs/design/` (or `docs/`) short doc: the two views, what goes in each and WHY, panel priority order, what the "how memory helps" view must show to answer *is memory effective?* at a glance (headline: reuse funnel armed + events_recorded + rung KPI when available; supporting: injection rate, block-count, skip reasons; honest caveats), what stays operational, how the memory browser fits, and the empty/"run this eval"/"stale report" strategy for not-yet-live metrics. Recorded in the WR and surfaced for the user to review/adjust.
-1. **Two-view shell.** Add a vanilla tab/view switch in `app/dashboard.html` (net-new; no framework). Operational | How memory helps. Preserve deep-link/hash state if cheap. If a file split is warranted, record the rationale (still no framework).
-2. **Operational view.** Re-home existing panels (overview, system health, query activity + skip reasons, memory browser, query-debug). No backend change; keep the asserted endpoint strings.
-3. **"How memory helps" view.** (a) Funnel signal from `/status.historical_lookup_funnel` (live) — armed state + events_recorded, with a "0 events yet — agents haven't pulled" empty state. (b) Reuse KPI + RAW/DERIVED/HYBRID + derivation-fidelity via a NEW read-only `/dashboard/api/*` endpoint that serves the last-written eval JSON reports (and, if cheap/bounded, the rollup) — friendly "run this eval to populate / last generated at" states; 404/missing file → empty state, not error. Honest measured-vs-shadow labels.
-4. **Live iteration.** Run `python -m app.run --host 127.0.0.1 --port 8000` → `http://localhost:8000/dashboard`; iterate both views in a browser (Playwright) until they read clearly; before/after screenshots into the WR. (Iterate against the DEV instance on :8000, NOT the production service on :19836.)
-5. **Tests.** Update `tests/test_dashboard.py` for moved/added wiring (keep or update the literal-string assertions); add coverage for the new report/KPI endpoint (empty-file → empty state; served report shape).
+1. **Two-view shell.** Add a vanilla view switch in `app/dashboard.html` — **CSS `display:none/block` (or a `.hidden` class) over two container divs; ALL elements remain in the DOM** so the 10s auto-refresh loop never hits a missing node. Operational | How memory helps. In-place, JS stays inline, no framework, no split. Preserve deep-link/hash state if cheap.
+2. **Operational view.** Re-home existing panels (overview, system health, query activity + skip reasons, memory browser, query-debug). No backend change; the `fetch*/render*` fn names + endpoint strings that `tests/test_dashboard.py` asserts stay present (they still exist), so an in-place re-home keeps every assertion green.
+3. **"How memory helps" view.** (a) Funnel signal from `/status.historical_lookup_funnel` (live) — armed state + events_recorded, with a "0 events yet — agents haven't pulled" empty state. (b) The eval report summaries (RAW/DERIVED/HYBRID + derivation-fidelity) via a NEW read-only `/dashboard/api/*` endpoint that serves the **last-written JSON report files** + their `last_modified` mtime — NO on-request rollup/loader compute. **Path safety:** the endpoint maps a fixed set (e.g. `?report=raw_derived_hybrid|derivation_fidelity`, or two no-arg routes) to two HARDCODED `Path` constants; no user-supplied filename/path. Missing dir/file (`.local/research/` does not exist today; paths are cwd-relative) → 200 with a friendly "run this eval to populate" empty state, never 404/500. Honest measured-vs-shadow labels.
+4. **Live iteration.** Run `python -m app.run --host 127.0.0.1 --port 8000` → `http://localhost:8000/dashboard` **against a SQLite-backed dev DB** (else every `/dashboard/api/*` 501s and panels render empty/error — screenshots must not be taken against an all-501 instance). Iterate both views in a browser (Playwright) until they read clearly; before/after screenshots into the WR. Iterate on :8000 (dev), NOT the production service on :19836.
+5. **Tests.** In-place re-home keeps the existing `tests/test_dashboard.py` string assertions green (verify); add coverage for the new report endpoint (missing dir/file → empty state; populated → served report shape + mtime). If any asserted string moves, update the test in this PR.
 
 ## Verification plan
 
@@ -86,7 +86,15 @@ Single PR on `feat/add-dashboard-operational-and-value-rework`.
 
 ## Plan review
 
-Clean-context review requested (Elevated) — reference recorded here on completion.
+Clean-context technical review (Plan agent, fresh context). **Verdict: APPROVE-WITH-CHANGES**; risk stays Elevated (only `app/dashboard.py` + `app/dashboard.html` + one new dashboard-router route; correctly off the RED `api/routes.py` surface). Findings folded in:
+- **[SHOULD] tab switch = CSS `display` toggle, all elements stay in DOM** (auto-refresh loop `:1995-2009` would `null.innerHTML`-throw and flash "unreachable" every 10s if panels are removed). → Plan step 1 + A1.
+- **[SHOULD] in-place, JS inline, no split** (a split breaks the `test_dashboard.py` HTML-substring assertions; in-place keeps them green). → steps 1/2/5 + A1.
+- **[SHOULD] serve last-written report files + `/status` counts only; NO on-request rollup/loader** (loader opens its own sqlite scan of `source_items`, unbounded, on a sync handler at 10s). → step 3 + A2.
+- **[SHOULD] missing `.local/research/` dir/file → empty 200** (dir absent today; paths cwd-relative — note in UX doc). → step 3.
+- **[SHOULD] path safety — hardcoded report paths, no filename param.** → step 3 + Constraints.
+- **[NIT] `mount_dashboard` is at `app/main.py:443`** (funnel block shifted it from :424). → Discovery corrected.
+- **[NIT] iterate against a SQLite-backed dev DB** (else all `/dashboard/api/*` 501 → screenshots against an empty instance). → step 4.
+- **[NIT] keep eval-only operational rates fenced** (empty/"run this eval", not a live panel). → UX doc note.
 
 ## Implementation
 
