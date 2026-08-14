@@ -1,7 +1,7 @@
 ---
 id: measure-cross-context-handoff-experiment
 title: Measure cross-context handoff (Experiment 2)
-status: in-progress
+status: done
 priority: medium
 commitment: committed
 milestone: pallium-vnext-p2

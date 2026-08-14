@@ -1,9 +1,9 @@
 ---
 id: idea-history-pull-decision-agent-harness
 title: Decision-making agent harness for unprompted history-pull (non-circular Experiment 1)
-status: in-progress
+status: done
 priority: high
-commitment: uncommitted
+commitment: committed
 milestone: pallium-vnext-p1
 ---
 
