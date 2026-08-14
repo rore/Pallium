@@ -52,7 +52,7 @@ Not required at this risk level (Elevated). Standing overnight package mandate c
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Discovery
@@ -99,4 +99,21 @@ Clean-context technical review (Plan agent, fresh context). **Verdict: APPROVE-W
 
 ## Implementation
 
-_Not started._
+Delivered on `feat/add-vnext-performance-and-e2e-validation` (three implementation subagents on independent files; manager owns WR + report + live validation + CI-marker synthesis). NO product-code edits — all timing/counting is external (SQLAlchemy `after_cursor_execute` + `sqlite3` trace seams); measure-and-flag only.
+
+- **E2E extension** — `tests/test_historical_lookup_funnel_e2e.py`: added chain-depth>2 (persistence-only; reads the first expansion row's own id **from storage** and feeds it as the next `parent_lookup_id`, since the HTTP surface only echoes the input id — `api/routes.py:726`/`core/service.py:1609`); `/status.events_recorded` +N increment assertion; explicit redaction assertion (redaction on the returned surface + exposed==visible-by-id — the exposed set stores ids only, never content, so content-redaction is asserted on the returned surface). Cross-container + forgotten 0-leak retained.
+- **Perf + DB-count harness** — `evals/vnext_perf_harness.py` + committed `evals/vnext_perf_baseline.json` + guard `tests/test_vnext_perf_harness.py`. Two counting seams (SQLAlchemy engine listener for request-path hot paths; `sqlite3.set_trace_callback` for the loader's raw-sqlite3 queries — the SQLAlchemy listener sees zero of those). Deterministic per-path counts (gated vs baseline, compare exits 0); latency advisory-only. N+1 evidence: #1 per-candidate source fetch ≈9 queries/retrieval-slot (FTS window 4× + triple `get_source_item` per hit — worse than the "double" the plan predicted); #2 loader per-exposed-id ≈1 query/id. Index check: neighbor window uses covering `idx_source_items_thread_lookup`; **flagged report-only** `_load_reuse_events WHERE event_type='lookup'` = full scan (index leads with `container_ref`). All report-only (fixes = separate WR).
+- **Live-service smoke** — `scripts/live_funnel_smoke.py` + guard `tests/test_live_funnel_smoke_selftest.py`. WAL-safe `VACUUM INTO` snapshot → short-lived scratch server (own DB copy, vector disabled, scratch port 19940 hard-guarded ≠ 19836) → drives `POST /query`(source_only, agent_pull)→`GET /source/{id}/context`(parent_lookup_id) on the copy → asserts events persist + `events_recorded` increments **on the copy**; real :19836 touched READ-ONLY (`GET /status.armed`). Honest framing: does not exercise the installed binary's write path (scratch runs repo code).
+- **Report** — `docs/reports/vnext-perf-e2e-validation.md`: baseline/counts/latency, N+1 + index findings, e2e invariants, live-smoke result, re-run commands.
+- **CI-marker correction (manager)** — the e2e subagent module-marked `test_historical_lookup_funnel_e2e.py` slow, which would have silently dropped it from the CI gate (origin/main had no such mark; `addopts = -m 'not slow'` excludes slow in ALL CI lanes). Removed the module mark (+ unused `import pytest`) so this core-correctness e2e stays gated; kept the perf-harness + live-smoke guards slow (eval-harness/server-spin, matches the marker's documented intent — on-demand, not in the PR gate).
+
+**Verification (manager-run):**
+- `tests/test_historical_lookup_funnel_e2e.py` in the DEFAULT lane → **6 passed** (now in the CI gate).
+- `tests/test_vnext_perf_harness.py` + `tests/test_live_funnel_smoke_selftest.py -m slow` → **2 passed**.
+- `evals.vnext_perf_harness` compare vs committed baseline → **PASS (exit 0)**.
+- Full `pytest tests/ -q` → **3512 passed, 15 skipped, 2 xfailed, 1 failed** — the 1 failure is the known-benign `test_config.py::test_prompt_variants_legacy_fallback_unaffected` (fails local, passes CI).
+- **Live :19836 (real service)** → smoke OVERALL PASS: real service armed, `events_recorded=0` observed AFTER the run (real KPI never incremented); copy 0→2, expansion links lookup, 5 source hits. Done-When 5 confirmed on the live service.
+
+See `## Evidence` (report doc) — `docs/reports/vnext-perf-e2e-validation.md`.
+
+**State:** Ready for review

@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "seed": {
+    "source_items": 900,
+    "containers": 2,
+    "threads_per_container": 3,
+    "turns_per_thread": 150
+  },
+  "counts": {
+    "source_only_query": {
+      "engine_queries": 182
+    },
+    "source_only_query_no_match": {
+      "engine_queries": 2
+    },
+    "source_context_expansion": {
+      "engine_queries": 4
+    }
+  },
+  "n1_double_get_source_item": [
+    {
+      "limit": 2,
+      "candidates": 2,
+      "engine_queries": 110
+    },
+    {
+      "limit": 5,
+      "candidates": 5,
+      "engine_queries": 182
+    },
+    {
+      "limit": 10,
+      "candidates": 10,
+      "engine_queries": 362
+    },
+    {
+      "limit": 12,
+      "candidates": 12,
+      "engine_queries": 434
+    }
+  ],
+  "n1_loader_per_exposed_id": [
+    {
+      "cumulative_events": 11,
+      "exposed_ids_checked": 70,
+      "visibility_loader_queries": 73,
+      "load_events_loader_queries": 5
+    },
+    {
+      "cumulative_events": 31,
+      "exposed_ids_checked": 170,
+      "visibility_loader_queries": 173,
+      "load_events_loader_queries": 5
+    },
+    {
+      "cumulative_events": 71,
+      "exposed_ids_checked": 370,
+      "visibility_loader_queries": 373,
+      "load_events_loader_queries": 5
+    }
+  ],
+  "loader": {
+    "load_events_loader_queries": 5,
+    "visibility_loader_queries": 373
+  }
+}
