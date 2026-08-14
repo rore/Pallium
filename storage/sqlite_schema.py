@@ -325,7 +325,7 @@ class HistoricalLookupReuseEventRecord(Base):
     Not foreign-keyed to query_audit_log: the write happens inside the query /
     source-context path (before any API-layer audit row) and audit logging may
     be disabled independently. ``exposed_json`` holds the POST-redaction /
-    post-gate exposed source ids (``[{source_id, raw_rank, score}]``);
+    post-gate exposed source ids (``[{source_item_id, raw_rank, score}]``);
     forbidden/forgotten ids never reach it because the hooks read the
     already-filtered results.
     """
@@ -343,8 +343,9 @@ class HistoricalLookupReuseEventRecord(Base):
     # For expansions: the lookup_event_id of the lookup that produced the
     # expanded id. NULL for lookups.
     parent_lookup_id = Column(String, nullable=True)
-    # Post-redaction / post-gate exposed source ids:
-    # [{"source_id", "raw_rank", "score"}].
+    # Post-redaction / post-gate exposed source ids (stable internal
+    # source_item_id, joins to source_items.id):
+    # [{"source_item_id", "raw_rank", "score"}].
     exposed_json = Column(Text, nullable=False, default="[]")
     visibility = Column(String, nullable=True, default="private")
 

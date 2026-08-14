@@ -234,6 +234,24 @@ def _count_strictly_before(sorted_values: list[str], pivot: str) -> int:
     return bisect.bisect_left(sorted_values, pivot)
 
 
+def _normalize_ts_bound(value: str | None) -> str | None:
+    """Normalize a CLI ``--since`` / ``--until`` bound so lexicographic
+    comparison against the stored ``created_at`` text is chronological.
+
+    SQLite stores a SQLAlchemy ``DateTime`` with a space separator
+    (``2026-08-01 00:00:01.000000``). An ISO-8601 bound with a ``T`` separator
+    would compare wrong (``' '`` sorts before ``'T'``), silently dropping a
+    whole day from the denominator. We swap a single leading date/time ``T``
+    for a space; other text is left unchanged.
+    """
+    if value is None:
+        return None
+    # Only the date<->time separator (position 10) matters for the comparison.
+    if len(value) > 10 and value[10] == "T":
+        return value[:10] + " " + value[11:]
+    return value
+
+
 def _reconstruct_eligible_sessions(
     conn: sqlite3.Connection,
     *,
@@ -420,6 +438,8 @@ def load_events_from_storage(
     path = Path(db_path)
     if not path.exists():
         return [], []
+    since = _normalize_ts_bound(since)
+    until = _normalize_ts_bound(until)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     try:

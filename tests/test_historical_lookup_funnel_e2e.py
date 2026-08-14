@@ -169,19 +169,20 @@ def test_cross_container_non_leak_in_persisted_event(monkeypatch, test_db_url: s
     import json
     with _build_client(monkeypatch, test_db_url) as client:
         # Private turn in container A.
-        _ingest(client, source_id="priv-a", content=_WORK, role="user", artifact_kind="message",
-                container_ref="chat:room-a", thread_ref="chat:room-a:t1")
+        priv_internal = _ingest(client, source_id="priv-a", content=_WORK, role="user",
+                                artifact_kind="message",
+                                container_ref="chat:room-a", thread_ref="chat:room-a:t1")
         # Search a DIFFERENT container B.
         result = _search_history(client, container_ref="chat:room-b", thread_ref="chat:room-b:t1")
         returned = {r.get("source_id") for r in result["results"]}
         assert "priv-a" not in returned  # not surfaced
 
         # The persisted lookup event for the B-scoped search must not leak the
-        # A-container source id into its exposed set (0 violations).
+        # A-container source item id into its exposed set (0 violations).
         lookups = _events(client, "lookup")
         assert len(lookups) == 1
-        exposed_ids = {e["source_id"] for e in json.loads(lookups[0]["exposed_json"])}
-        assert "priv-a" not in exposed_ids
+        exposed_ids = {e["source_item_id"] for e in json.loads(lookups[0]["exposed_json"])}
+        assert priv_internal not in exposed_ids
 
 
 def test_forgotten_source_excluded_from_exposed(monkeypatch, test_db_url: str) -> None:
@@ -199,9 +200,9 @@ def test_forgotten_source_excluded_from_exposed(monkeypatch, test_db_url: str) -
         returned = {r.get("source_id") for r in result["results"]}
         assert "drop" not in returned
 
-        # The persisted lookup event must not carry the forgotten source id.
+        # The persisted lookup event must not carry the forgotten source item id.
         lookups = _events(client, "lookup")
         assert lookups, "expected a persisted lookup event"
         latest = lookups[-1]
-        exposed_ids = {e["source_id"] for e in json.loads(latest["exposed_json"])}
-        assert "drop" not in exposed_ids
+        exposed_ids = {e["source_item_id"] for e in json.loads(latest["exposed_json"])}
+        assert drop_id not in exposed_ids

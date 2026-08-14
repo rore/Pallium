@@ -708,17 +708,22 @@ class PalliumService:
         # response surfaces for this path. Best-effort — a telemetry write
         # failure must never fail the query.
         if source_only:
-            lookup_event_id = new_id()
-            exposed = [
-                {
-                    "source_id": item.source_id,
-                    "raw_rank": item.raw_rank,
-                    "score": item.score,
-                }
-                for item in result.results
-                if getattr(item, "source_id", None) is not None
-            ]
+            lookup_event_id: str | None = new_id()
             try:
+                # Stable internal source_item_id (joins to source_items.id and
+                # matches the expansion path) — NOT the caller-supplied
+                # source_id, which is only unique per source_type/container.
+                # Built inside the try so a malformed result can never fail the
+                # query; getattr keeps it defensive.
+                exposed = [
+                    {
+                        "source_item_id": item.source_item_id,
+                        "raw_rank": getattr(item, "raw_rank", None),
+                        "score": getattr(item, "score", None),
+                    }
+                    for item in result.results
+                    if getattr(item, "source_item_id", None) is not None
+                ]
                 self._storage.write_historical_lookup_event_row({
                     "id": lookup_event_id,
                     "created_at": utc_now(),
@@ -733,6 +738,10 @@ class PalliumService:
                 })
             except Exception:
                 self._logger.warning("historical lookup event write failed", exc_info=True)
+                # Do not surface an id whose event was never persisted — a
+                # caller passing it back as parent_lookup_id (or the PR-b judge
+                # joining labels) would reference a non-existent event.
+                lookup_event_id = None
             result = dataclasses.replace(result, lookup_event_id=lookup_event_id)
         return result
 
@@ -1580,7 +1589,7 @@ class PalliumService:
         # exposed set is the post-gate neighbor ids only (no leak). Mints its
         # own id; persisted unconditionally. Best-effort — a telemetry write
         # failure must never fail the expansion.
-        exposed = [{"source_id": n.id, "raw_rank": None, "score": None} for n in neighbors]
+        exposed = [{"source_item_id": n.id, "raw_rank": None, "score": None} for n in neighbors]
         try:
             self._storage.write_historical_lookup_event_row({
                 "id": new_id(),

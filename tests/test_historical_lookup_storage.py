@@ -93,7 +93,7 @@ def _write_lookup(storage, *, container_ref, session_id, event_id=None) -> str:
         "actor_ref": None,
         "trigger_origin": "agent_pull",
         "parent_lookup_id": None,
-        "exposed_json": json.dumps([{"source_id": "s1", "raw_rank": 1, "score": 0.5}]),
+        "exposed_json": json.dumps([{"source_item_id": "s1", "raw_rank": 1, "score": 0.5}]),
         "visibility": "private",
     })
     return event_id
@@ -162,7 +162,7 @@ class TestWriters:
         assert row[2] == "c:1"
         assert row[3] == "agent_pull"
         assert row[4] is None
-        assert json.loads(row[5])[0]["source_id"] == "s1"
+        assert json.loads(row[5])[0]["source_item_id"] == "s1"
 
     def test_expansion_row_carries_parent(self, tmp_path) -> None:
         storage, _ = _storage(tmp_path)
@@ -177,7 +177,7 @@ class TestWriters:
             "actor_ref": None,
             "trigger_origin": None,
             "parent_lookup_id": parent,
-            "exposed_json": json.dumps([{"source_id": "n1", "raw_rank": None, "score": None}]),
+            "exposed_json": json.dumps([{"source_item_id": "n1", "raw_rank": None, "score": None}]),
             "visibility": "private",
         })
         with storage._engine.connect() as conn:
@@ -310,7 +310,7 @@ class TestLoader:
         storage, db_file = _storage(tmp_path)
         # A lookup event whose session was never substantive → not loaded.
         _write_lookup(storage, container_ref="c:1", session_id="t:ghost")
-        eligible, events = load_events_from_storage(db_file, container_ref="c:1", eligibility_n=0)
+        _eligible, events = load_events_from_storage(db_file, container_ref="c:1", eligibility_n=0)
         assert events == []
 
 

@@ -135,6 +135,7 @@ setup health check) — plus `evals/` (loader + judge), config defaults, and a r
 doc. High risk normally requires recorded human approval before implementation; the
 user gave a **standing overnight approval** for High-risk changes in this package
 (recorded verbatim in the Work Record). Likely delivered as **2 PRs** (a: funnel
-persistence + rollup + judge; b: local enablement + armed-by-default + health check) to
+persistence + rollup loader; b: retrospective judge + local enablement +
+armed-by-default + health check) to
 keep the guarded surface reviewable — sequencing to be set in the Work Record. Agent
 exposure/guidance is a separate feature (`add-agent-historical-lookup-exposure`).
