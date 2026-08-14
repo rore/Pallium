@@ -354,7 +354,7 @@ class TestDashboardEffectivenessReports:
             resp = client.get("/dashboard/api/effectiveness/reports")
         assert resp.status_code == 200
         body = resp.json()
-        assert set(body["reports"].keys()) == {"raw_derived_hybrid", "derivation_fidelity"}
+        assert set(body["reports"].keys()) == {"raw_derived_hybrid", "derivation_fidelity", "reuse_judge_calibration"}
         for entry in body["reports"].values():
             assert entry["available"] is False
             assert entry["last_modified"] is None
@@ -416,7 +416,7 @@ class TestDashboardEffectivenessReports:
             )
         assert resp.status_code == 200
         body = resp.json()
-        assert set(body["reports"].keys()) == {"raw_derived_hybrid", "derivation_fidelity"}
+        assert set(body["reports"].keys()) == {"raw_derived_hybrid", "derivation_fidelity", "reuse_judge_calibration"}
 
     def test_reports_endpoint_does_not_require_sqlite(self, tmp_path: Path, monkeypatch) -> None:
         """Unlike other /dashboard/api/* routes, the file-backed report

@@ -112,6 +112,18 @@ JUDGE_SCHEMA = (
 _JUDGE_RUNGS = frozenset({"incorporation", "influence"})
 _DIRECTIONS = frozenset({"user_directed", "agent_decided"})
 
+#: Minimum judge-vs-gold Cohen's kappa below which the reuse KPI is presented as
+#: UNCALIBRATED. 0.60 is a PROJECT-DEFINED minimum agreement threshold (it sits
+#: just below the Landis & Koch "substantial" boundary of 0.61, used only as a
+#: rough reference point — not a claim that 0.60 IS "substantial"). The repo
+#: already requires >=3 rater seeds + a consensus rule because single-seed judge
+#: verdicts carry ~20pp variance (docs/context/validation.md); calibration raises
+#: that bar from self-consistency to CORRECTNESS — the judge's consensus must
+#: reach this agreement with a human-labelled gold set before rung rates are
+#: shown as confident. Point estimate on a small gold fixture; see the fixture's
+#: honesty_limitations (wide CI, single-author synthetic labels).
+GOLD_KAPPA_THRESHOLD = 0.6
+
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -167,6 +179,13 @@ class JudgeReport:
     kappa_n: int = 0
     n_judge_failures: int = 0
     rung_rates: dict[str, Any] = field(default_factory=dict)
+    # Judge-vs-gold calibration (populated only when run_judge is given
+    # gold_labels). gold_kappa is Cohen's kappa between the per-event CONSENSUS
+    # rung and the human gold rung, over the events present in gold_labels;
+    # calibrated is gold_kappa >= GOLD_KAPPA_THRESHOLD. None when uncomputed.
+    gold_kappa: float | None = None
+    gold_kappa_n: int = 0
+    calibrated: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -185,6 +204,13 @@ class JudgeReport:
                 "kappa": self.kappa,
                 "rater_pair": list(self.kappa_pair) if self.kappa_pair else None,
                 "n_double_rated": self.kappa_n,
+            },
+            "judge_vs_gold": {
+                "kappa": self.gold_kappa,
+                "n": self.gold_kappa_n,
+                "threshold": GOLD_KAPPA_THRESHOLD,
+                "calibrated": self.calibrated,
+                "categories": ["incorporation", "influence", "none"],
             },
             "rung_rates": self.rung_rates,
             "n_labels_written": len(self.labels),
@@ -512,6 +538,7 @@ def run_judge(
     before_turns: int = 3,
     after_turns: int = 4,
     write_labels: bool = True,
+    gold_labels: dict[str, str | None] | None = None,
 ) -> JudgeReport:
     """Run the retrospective reuse judge and (optionally) persist rung labels.
 
@@ -520,6 +547,15 @@ def run_judge(
     rater over the SAME sampled events (sampling is fixed by ``sample_seed``),
     so the report can compute both a per-event consensus rung and Cohen's kappa
     on the double-rated subsample.
+
+    ``gold_labels`` (optional): a ``{lookup_event_id -> gold_rung}`` map of
+    human labels (gold_rung in {"incorporation", "influence", "none"}, or None
+    treated as "none"). When supplied, the report also carries judge-vs-gold
+    Cohen's kappa (the per-event CONSENSUS rung vs the gold rung, over the
+    events present in the map) and a ``calibrated`` verdict against
+    ``GOLD_KAPPA_THRESHOLD``. This measures judge CORRECTNESS, not just
+    inter-seed stability. It does not change the rubric, the sampling, or the
+    persisted labels.
     """
     seeds = seeds if seeds is not None else [0, 1, 2]
     since_norm = _normalize_ts_bound(since)
@@ -643,6 +679,32 @@ def run_judge(
         report.kappa = cohens_kappa(vec_a, vec_b)
         report.kappa_pair = (seed_a, seed_b)
         report.kappa_n = len(vec_a)
+
+    # Judge-vs-gold calibration: compare the per-event CONSENSUS rung against
+    # the human gold rung over the events present in gold_labels. Reuses the
+    # same cohens_kappa + _rung_category machinery as the seed-vs-seed kappa, so
+    # both agreement numbers are computed identically (only the second rater
+    # differs: gold instead of another seed).
+    if gold_labels:
+        judge_vec: list[str] = []
+        gold_vec: list[str] = []
+        for ctx in sampled:
+            if ctx.lookup_event_id not in gold_labels:
+                continue
+            # Exclude events with NO successful judge label (every rater call
+            # failed): their consensus is None, which _rung_category would map to
+            # the "none" category and silently bias gold_kappa/gold_kappa_n. An
+            # all-failed event is missing data, not a "none" verdict.
+            if not per_event.get(ctx.lookup_event_id):
+                continue
+            judge_vec.append(_rung_category(report.consensus_rung.get(ctx.lookup_event_id)))
+            gold_vec.append(_rung_category(gold_labels.get(ctx.lookup_event_id)))
+        report.gold_kappa = cohens_kappa(judge_vec, gold_vec)
+        report.gold_kappa_n = len(judge_vec)
+        report.calibrated = (
+            report.gold_kappa is not None
+            and report.gold_kappa >= GOLD_KAPPA_THRESHOLD
+        )
 
     report.rung_rates = _rung_rates_from_consensus(
         report.consensus_rung, denominator=len(sampled)

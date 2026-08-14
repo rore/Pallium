@@ -37,6 +37,9 @@ _DASHBOARD_VISIBLE_LIFECYCLES: tuple[str, ...] = ("active", "superseded", "suppr
 _EFFECTIVENESS_REPORT_PATHS: dict[str, Path] = {
     "raw_derived_hybrid": Path(".local") / "research" / "raw_derived_hybrid_report.json",
     "derivation_fidelity": Path(".local") / "research" / "derivation_fidelity_report.json",
+    # Judge-vs-gold calibration for the reuse KPI (evals/reuse_judge_calibration.py).
+    # Drives the "calibrated vs uncalibrated" affordance on the reuse-KPI panel.
+    "reuse_judge_calibration": Path(".local") / "research" / "reuse_judge_calibration.json",
 }
 
 

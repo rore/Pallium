@@ -126,6 +126,7 @@ def compute_reuse_rollup(
     eligibility_n: int,
     window: dict[str, Any],
     visibility_report: dict[str, Any] | None = None,
+    calibration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compute the three-rung reuse rollup from in-memory inputs.
 
@@ -154,6 +155,16 @@ def compute_reuse_rollup(
         sets. Embedded verbatim under ``visibility_violations`` when provided;
         an empty-safe zeroed report is embedded otherwise so the field is
         always present and never hardcoded at the call site.
+    calibration:
+        Optional judge-vs-gold calibration summary (from the reuse-judge
+        calibration run: ``{"kappa", "n", "threshold", "calibrated", ...}``).
+        Embedded verbatim under ``calibration``; an empty-safe default
+        (``calibrated: None``) is embedded otherwise so the field is always
+        present. PRESENTATION ONLY — it never changes any numerator,
+        denominator, or Wilson interval. When ``calibrated`` is explicitly
+        ``False``, each rung entry is additionally stamped ``"calibrated":
+        False`` so a consumer that renders one rung in isolation still knows
+        the rate is uncalibrated.
 
     Returns
     -------
@@ -172,6 +183,18 @@ def compute_reuse_rollup(
     """
     eligible_set = set(eligible_sessions)
     denominator = len(eligible_set)
+
+    calibration_block = (
+        calibration if calibration is not None else _empty_calibration_report()
+    )
+    # Presentation stamp: only when calibration was run AND failed the threshold
+    # do we mark every rung uncalibrated. None (not yet run) leaves rungs
+    # unstamped — "unknown", not "uncalibrated". The calibrated flag is read via
+    # a shape-tolerant extractor so BOTH the flat block ({"calibrated": ...}) and
+    # the calibration runner's nested output ({"judge_vs_gold": {"calibrated":
+    # ...}}) work — otherwise the uncalibrated stamp would silently no-op on the
+    # runner's actual serialized report.
+    stamp_uncalibrated = _calibration_calibrated_flag(calibration_block) is False
 
     # Deduplicated per-rung session sets
     rung_sessions: dict[str, set[str]] = {r: set() for r in RUNGS}
@@ -202,6 +225,8 @@ def compute_reuse_rollup(
                 "low": 100.0 * low_frac,
                 "high": 100.0 * high_frac,
             }
+        if stamp_uncalibrated:
+            entry["calibrated"] = False
         rungs_out[rung_key] = entry
 
     return {
@@ -211,6 +236,7 @@ def compute_reuse_rollup(
         "n_eligible_sessions": denominator,
         "n_reuse_events": len(reuse_events),
         "rungs": rungs_out,
+        "calibration": calibration_block,
         "visibility_violations": visibility_report
         if visibility_report is not None
         else _empty_visibility_report(),
@@ -506,6 +532,37 @@ def _empty_visibility_report() -> dict[str, Any]:
         "exposed_ids_checked": 0,
         "note": "no data (empty-safe default)",
     }
+
+
+def _empty_calibration_report() -> dict[str, Any]:
+    """Empty-safe judge-vs-gold calibration block — used when no calibration
+    summary is supplied so the ``calibration`` field is always present.
+    ``calibrated: None`` means "not yet run" (distinct from ``False`` =
+    "run and failed the threshold"); rung rates are stamped uncalibrated only on
+    an explicit ``False``."""
+    return {
+        "kappa": None,
+        "n": 0,
+        "threshold": None,
+        "calibrated": None,
+        "note": "no calibration report (empty-safe default)",
+    }
+
+
+def _calibration_calibrated_flag(calibration: dict[str, Any] | None) -> bool | None:
+    """Read the ``calibrated`` verdict from a calibration block, tolerant of
+    both shapes: the flat block (``{"calibrated": ...}``) and the calibration
+    runner's serialized summary that nests it under ``judge_vs_gold``
+    (``{"judge_vs_gold": {"calibrated": ...}}``). Returns None when neither
+    carries an explicit flag (i.e. calibration not yet run)."""
+    if not isinstance(calibration, dict):
+        return None
+    if "calibrated" in calibration:
+        return calibration["calibrated"]
+    nested = calibration.get("judge_vs_gold")
+    if isinstance(nested, dict):
+        return nested.get("calibrated")
+    return None
 
 
 def load_visibility_violations(
