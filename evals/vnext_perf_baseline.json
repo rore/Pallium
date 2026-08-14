@@ -8,7 +8,7 @@
   },
   "counts": {
     "source_only_query": {
-      "engine_queries": 4
+      "engine_queries": 5
     },
     "source_only_query_no_match": {
       "engine_queries": 2
@@ -21,22 +21,22 @@
     {
       "limit": 2,
       "candidates": 2,
-      "engine_queries": 4
+      "engine_queries": 5
     },
     {
       "limit": 5,
       "candidates": 5,
-      "engine_queries": 4
+      "engine_queries": 5
     },
     {
       "limit": 10,
       "candidates": 10,
-      "engine_queries": 4
+      "engine_queries": 5
     },
     {
       "limit": 12,
       "candidates": 12,
-      "engine_queries": 4
+      "engine_queries": 5
     }
   ],
   "n1_loader_per_exposed_id": [

@@ -2,7 +2,7 @@
 
 <!-- agent-workflow:start -->
 **Outcome:**
-The shared lexical retrieval path fetches each source_item candidate once (batched) instead of up to 3x, dropping the per-slot engine-query slope from O(candidates) (~9/slot) to a small constant, with the committed deterministic count baseline regenerated (lower) and the default-lane count gate still green. Zero behavior change to retrieval results, visibility enforcement, forgotten-source exclusion, and redaction.
+The shared lexical retrieval path replaces the per-candidate source_item N+1 (up to 3 reads per candidate) with batched reads — one batched read at the candidate gate (`storage/sqlite_search.py`) and one at hydration (`retrieval/lexical.py`), plus one batched emission-time revalidation read of the final result ids — dropping the per-slot engine-query slope from O(candidates) (~9/slot) to a small constant. The committed deterministic count baseline is regenerated (lower) and the default-lane count gate stays green. Zero behavior change to retrieval results, visibility enforcement, forgotten-source exclusion, and redaction; a source item forgotten/deleted mid-query is never emitted (emission-time revalidation).
 
 **Target:**
 Pallium storage + retrieval layers (watch-zone): `storage/sqlite_search.py`, `storage/sqlite.py`, `storage/base.py`, `retrieval/lexical.py`. Plus regenerated `evals/vnext_perf_baseline.json`.
@@ -98,21 +98,24 @@ Real interpreter prefix:
 
 Real interpreter (`.local/test-env` + cpython-3.13).
 
-Before/after per-path engine-query counts (regenerated `evals/vnext_perf_baseline.json`):
+Before/after per-path engine-query counts (regenerated `evals/vnext_perf_baseline.json`). "After" is the final value including the emission-time revalidation read added to close the mid-query forget TOCTOU (batching-only was 4; revalidation adds one O(1) batched read -> 5):
 
 | Path | Before | After |
 |---|---|---|
-| `source_only_query` | 182 | **4** |
-| `n1_double_get_source_item` limit=2 | 110 | **4** |
-| `n1_double_get_source_item` limit=5 | 182 | **4** |
-| `n1_double_get_source_item` limit=10 | 362 | **4** |
-| `n1_double_get_source_item` limit=12 | 434 | **4** |
+| `source_only_query` | 182 | **5** |
+| `n1_double_get_source_item` limit=2 | 110 | **5** |
+| `n1_double_get_source_item` limit=5 | 182 | **5** |
+| `n1_double_get_source_item` limit=10 | 362 | **5** |
+| `n1_double_get_source_item` limit=12 | 434 | **5** |
 | `source_context_expansion` | 4 | 4 (unchanged) |
 | loader (`visibility_loader_queries` etc.) | — | unchanged (N+1 #2 deferred) |
 
-Per-candidate slope collapsed from ~9/slot (O(candidates)) to a flat constant 4 (O(1)).
+Per-candidate slope collapsed from ~9/slot (O(candidates)) to a flat constant 5 (O(1)).
+
+Forget guarantee: `retrieval/lexical.py` re-reads the FINAL emitted source ids once at emission time and drops any that became forgotten/deleted mid-query. Covers both snapshot windows (candidate gate + hydration) at the single output boundary. New regression test `tests/test_retrieval_forget_revalidation.py::test_forget_landing_mid_query_is_not_emitted` deterministically commits a forget after the gate snapshot and asserts the item is not emitted.
 
 Test results:
-- Invariance set (89 tests): `test_historical_lookup_funnel_e2e`, `test_source_only_search`, `test_visibility_scope`, `test_soft_deleted_visibility`, `test_global_visibility`, `test_raw_turn_forgetting`, `test_storage_sqlite` — all PASS. Forgotten-source exclusion + cross-container non-leak invariants green (proves results unchanged).
+- New forget-race test (2 tests): `tests/test_retrieval_forget_revalidation.py` PASS.
+- Invariance set (89 tests): `test_historical_lookup_funnel_e2e`, `test_source_only_search`, `test_visibility_scope`, `test_soft_deleted_visibility`, `test_global_visibility`, `test_raw_turn_forgetting`, `test_storage_sqlite` — all PASS.
 - `test_vnext_perf_count_gate` (incl. seeded-regression self-test): PASS against regenerated baseline.
-- Full default lane: 3517 passed, 15 skipped, 2 xfailed. Only failure is the pre-existing, unrelated `tests/test_config.py::test_prompt_variants_legacy_fallback_unaffected` (config/prompt-variants; independent of storage/retrieval).
+- Full default lane (round 1): 3517 passed, 15 skipped, 2 xfailed. Only failure is the pre-existing, unrelated `tests/test_config.py::test_prompt_variants_legacy_fallback_unaffected`.

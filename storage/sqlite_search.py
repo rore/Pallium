@@ -77,12 +77,15 @@ class SQLiteSearchMixin:
         # shared retrieval path (previously up to 2 get_source_item reads per
         # candidate here + 1 more at hydration in retrieval/lexical.py).
         #
-        # Snapshot semantics: a dict HIT returns the item as of prefetch, so a
-        # forget/edit that lands mid-query (after this prefetch) is not observed
-        # on this path. Acceptable for the local single-user model. A dict MISS
-        # (id absent — e.g. hard-deleted between the FTS read and here) falls
-        # back to self.get_source_item, preserving the exact prior behaviour
-        # including KeyError propagation on a genuine race.
+        # Snapshot semantics: this prefetch is a point-in-time view, so an item
+        # forgotten/deleted AFTER it is taken can still pass this gate. That is
+        # NOT the forget-guarantee boundary — the retrieval layer re-reads the
+        # FINAL emitted source ids at emission time (see the revalidation step in
+        # retrieval/lexical.py) and drops any that became forgotten/deleted
+        # mid-query, so such an item is never emitted. A dict MISS here (id
+        # absent — e.g. hard-deleted between the FTS read and this prefetch)
+        # falls back to self.get_source_item, preserving the exact prior
+        # behaviour including KeyError propagation on a genuine race.
         _prefetched = self.get_source_items(
             [row.target_id for row in rows if row.target_kind == "source_item"]
         )
