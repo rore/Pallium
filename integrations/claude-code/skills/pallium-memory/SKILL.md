@@ -1,6 +1,6 @@
 ---
 name: pallium-memory
-description: Use when you need to explicitly search, store, or debug Pallium memory beyond what automatic injection provides. Triggers on: "remember this", "why don't you remember", "what do you know about", memory debugging, or when injected context is insufficient.
+description: Use when you need to explicitly search, store, look back at prior work, or debug Pallium memory beyond what automatic injection provides. Triggers on: "remember this", "why don't you remember", "what do you know about", resuming or continuing prior work, memory debugging, or when injected context is insufficient.
 ---
 
 # Pallium Memory Workflow
@@ -42,8 +42,7 @@ description: Use when you need to explicitly search, store, or debug Pallium mem
      just before/after it) in context before acting.
    - Pass `visibility: "private"` and `container_ref` (from the injection
      header) on both `pallium_search_history` and `pallium_expand_source` —
-     missing these returns empty results. If the work spans all projects, use
-     `visibility: "global"` with `actor_ref`.
+     missing these returns empty results.
 
 5. **For debugging** (user says "why don't you remember X"):
    - Call `pallium_query_debug` with the expected query

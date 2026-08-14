@@ -46,6 +46,52 @@ def _codex_agents_md_path() -> Path:
     return Path.home() / ".codex" / "AGENTS.md"
 
 
+def _codex_skill_src() -> Path:
+    """Source SKILL.md for the pallium-memory skill (in-repo)."""
+    return (
+        _pallium_repo_root()
+        / "integrations"
+        / "codex"
+        / "skills"
+        / "pallium-memory"
+        / "SKILL.md"
+    )
+
+
+def _codex_skill_dir() -> Path:
+    """User-level skill-discovery directory for the pallium-memory skill.
+
+    ``pallium setup codex`` is the primary install path and does not install
+    the Codex plugin (the plugin channel is experimental — see
+    docs/codex-integration.md), so the plugin's declared ``skills`` dir is not
+    deployed by this path. Copy the skill here so the guidance reference in
+    AGENTS.md resolves on a plain ``setup codex`` install.
+    """
+    return Path.home() / ".codex" / "skills" / "pallium-memory"
+
+
+def _install_skill() -> None:
+    """Copy the pallium-memory SKILL.md into Codex's skill-discovery dir.
+
+    Idempotent: overwrites on reinstall so the deployed guidance always
+    matches the shipped skill.
+    """
+    dest_dir = _codex_skill_dir()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    (dest_dir / "SKILL.md").write_text(
+        _codex_skill_src().read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+
+def _remove_skill() -> None:
+    """Remove the deployed pallium-memory skill directory (if present)."""
+    skill_dir = _codex_skill_dir()
+    if skill_dir.exists():
+        import shutil
+
+        shutil.rmtree(skill_dir, ignore_errors=True)
+
+
 def _hook_command(script_name: str) -> str:
     python = _python_executable().replace("\\", "/")
     script = str(_hooks_dir() / script_name).replace("\\", "/")
@@ -299,7 +345,48 @@ def _get_agents_md_block() -> str:
     return block_path.read_text(encoding="utf-8")
 
 
-def _append_agents_md_block() -> None:
+# Appended to the base AGENTS.md block for the "strong" guidance-strength arm.
+# Authored to avoid the token "MANDATORY" and the banned legacy strings so the
+# Codex block invariants still hold on the strong variant.
+_STRONG_DIRECTIVE = (
+    "\n## Resuming prior work\n\n"
+    "When you resume or continue prior work on this task, call\n"
+    "`pallium_search_history` first — before assuming that earlier context is\n"
+    "gone. Pull the raw prior turns (a past discussion, an earlier attempt, the\n"
+    "original context of a decision) and read them before acting, rather than\n"
+    "starting cold.\n\n"
+)
+
+
+def _build_agents_md_block(strength: str = "tool-only") -> str:
+    """Return the AGENTS.md block variant for the given guidance strength.
+
+    - ``"tool-only"`` (default): the neutral-permit block as-is.
+    - ``"strong"``: the base block plus an appended resume directive.
+
+    An arm-marker comment recording the chosen arm is embedded inside the
+    marker-bounded block so an operator can read which arm was installed.
+    """
+    if strength not in ("tool-only", "strong"):
+        raise ValueError(f"unknown guidance strength: {strength!r}")
+
+    block = _get_agents_md_block()
+    arm_marker = f"<!-- pallium:guidance-strength={strength} -->"
+    block = block.replace(
+        "<!-- pallium:start -->\n",
+        f"<!-- pallium:start -->\n{arm_marker}\n",
+        1,
+    )
+    if strength == "strong":
+        block = block.replace(
+            "<!-- pallium:end -->",
+            _STRONG_DIRECTIVE + "<!-- pallium:end -->",
+            1,
+        )
+    return block
+
+
+def _append_agents_md_block(strength: str = "tool-only") -> None:
     path = _codex_agents_md_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -307,7 +394,7 @@ def _append_agents_md_block() -> None:
     if path.exists():
         existing = path.read_text(encoding="utf-8")
 
-    block = _get_agents_md_block()
+    block = _build_agents_md_block(strength)
     if "<!-- pallium:start -->" in existing:
         path.write_text(_replace_agents_md_block(existing, block), encoding="utf-8")
         return
@@ -375,7 +462,7 @@ def _verify_service(port: int) -> bool:
 # -- Main install/uninstall --
 
 
-def install(port: int = 19836) -> int:
+def install(port: int = 19836, guidance_strength: str = "tool-only") -> int:
     print(f"Setting up Pallium Codex integration (port {port})...")
 
     # 1. Feature flag + MCP in config.toml
@@ -395,8 +482,13 @@ def install(port: int = 19836) -> int:
     print(f"  Registered hooks in {hooks_path}")
 
     # 3. Append AGENTS.md block
-    _append_agents_md_block()
+    _append_agents_md_block(guidance_strength)
     print(f"  Appended Pallium instructions to {_codex_agents_md_path()}")
+    print(f"  Guidance-strength arm: {guidance_strength}")
+
+    # 3b. Deploy the pallium-memory skill referenced by the guidance block
+    _install_skill()
+    print(f"  Installed pallium-memory skill to {_codex_skill_dir()}")
 
     # 4. Create hook state directory
     _ensure_state_dir()
@@ -437,6 +529,10 @@ def uninstall() -> int:
     _remove_agents_md_block()
     print(f"  Removed Pallium instructions from {_codex_agents_md_path()}")
 
+    # Remove the deployed pallium-memory skill
+    _remove_skill()
+    print(f"  Removed pallium-memory skill from {_codex_skill_dir()}")
+
     # Clean hook state directory
     state_dir = Path.home() / ".pallium" / "hooks" / "state"
     if state_dir.exists():
@@ -461,8 +557,18 @@ def main(args: list[str] | None = None) -> int:
         default=19836,
         help="Pallium service port (default: 19836)",
     )
+    parser.add_argument(
+        "--guidance-strength",
+        choices=["tool-only", "strong"],
+        default="tool-only",
+        help=(
+            "Which memory-guidance block variant to install: 'tool-only' "
+            "(neutral permit, default) or 'strong' (adds a resume directive). "
+            "Records the arm in setup output and inside the installed block."
+        ),
+    )
     parsed = parser.parse_args(args)
 
     if parsed.uninstall:
         return uninstall()
-    return install(port=parsed.port)
+    return install(port=parsed.port, guidance_strength=parsed.guidance_strength)

@@ -1,7 +1,7 @@
 ---
 id: add-historical-lookup-reuse-funnel
 title: Historical-reuse funnel population + local live measurement
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-p1

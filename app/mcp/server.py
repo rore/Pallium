@@ -68,14 +68,16 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     ) -> str:
         """Search your own prior raw work — past conversation/agent turns — ranked on their own.
 
-        Use this to deliberately look back at what was actually said or done
-        before (a prior discussion, an earlier attempt, a decision's original
-        context) when you're picking up related work. Unlike pallium_query
-        (which surfaces distilled memory and can abstain), this returns the raw
-        source turns themselves, most-relevant first, so nothing gets crowded
-        out by summarized memory. Each result carries a stable source_item_id
-        you can keep for follow-up. The optional filters (source_type/role/
-        artifact_kind/work_refs) narrow the search but are not required."""
+        Reach for this when you resume or pick up related/prior work — at the
+        start of a task, before assuming earlier context is gone. Use it to
+        deliberately look back at what was actually said or done before (a prior
+        discussion, an earlier attempt, a decision's original context). Unlike
+        pallium_query (which surfaces distilled memory and can abstain), this
+        returns the raw source turns themselves, most-relevant first, so nothing
+        gets crowded out by summarized memory. Each result carries a stable
+        source_item_id you can keep for follow-up. The optional filters
+        (source_type/role/artifact_kind/work_refs) narrow the search but are not
+        required."""
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,

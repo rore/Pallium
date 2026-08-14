@@ -6,6 +6,11 @@ Pallium remembers decisions, constraints, and context across sessions.
 **Automatic:** hooks inject relevant memories every turn. Trust this — it
 handles ~90% of cases. Don't duplicate with manual queries.
 
+**Picking up prior work?** When you resume or build on earlier work on a task,
+deliberately call `pallium_search_history` to pull the raw prior turns — don't
+assume that context is gone. See the `pallium-memory` skill for the full
+historical-lookup workflow.
+
 **Feedback (non-blocking):** when an injected memory is clearly useful or
 clearly off-topic and the MCP tool is available, call `pallium_rate_memory`
 with `container_ref` from the injection header and the user's message as
@@ -78,7 +83,7 @@ only need them for manual calls.
 
 ## Do not
 
-- Query every turn or re-query for something already in the injected block
+- Don't re-query for something already in the injected block
 - Ingest routine conversation (hooks do this)
 - Flag speculatively — only on concrete contrary evidence
 - Call `pallium_remember` on every turn — deliberate writes only
