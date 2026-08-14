@@ -299,7 +299,48 @@ def _get_agents_md_block() -> str:
     return block_path.read_text(encoding="utf-8")
 
 
-def _append_agents_md_block() -> None:
+# Appended to the base AGENTS.md block for the "strong" guidance-strength arm.
+# Authored to avoid the token "MANDATORY" and the banned legacy strings so the
+# Codex block invariants still hold on the strong variant.
+_STRONG_DIRECTIVE = (
+    "\n## Resuming prior work\n\n"
+    "When you resume or continue prior work on this task, call\n"
+    "`pallium_search_history` first — before assuming that earlier context is\n"
+    "gone. Pull the raw prior turns (a past discussion, an earlier attempt, the\n"
+    "original context of a decision) and read them before acting, rather than\n"
+    "starting cold.\n\n"
+)
+
+
+def _build_agents_md_block(strength: str = "tool-only") -> str:
+    """Return the AGENTS.md block variant for the given guidance strength.
+
+    - ``"tool-only"`` (default): the neutral-permit block as-is.
+    - ``"strong"``: the base block plus an appended resume directive.
+
+    An arm-marker comment recording the chosen arm is embedded inside the
+    marker-bounded block so an operator can read which arm was installed.
+    """
+    if strength not in ("tool-only", "strong"):
+        raise ValueError(f"unknown guidance strength: {strength!r}")
+
+    block = _get_agents_md_block()
+    arm_marker = f"<!-- pallium:guidance-strength={strength} -->"
+    block = block.replace(
+        "<!-- pallium:start -->\n",
+        f"<!-- pallium:start -->\n{arm_marker}\n",
+        1,
+    )
+    if strength == "strong":
+        block = block.replace(
+            "<!-- pallium:end -->",
+            _STRONG_DIRECTIVE + "<!-- pallium:end -->",
+            1,
+        )
+    return block
+
+
+def _append_agents_md_block(strength: str = "tool-only") -> None:
     path = _codex_agents_md_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -307,7 +348,7 @@ def _append_agents_md_block() -> None:
     if path.exists():
         existing = path.read_text(encoding="utf-8")
 
-    block = _get_agents_md_block()
+    block = _build_agents_md_block(strength)
     if "<!-- pallium:start -->" in existing:
         path.write_text(_replace_agents_md_block(existing, block), encoding="utf-8")
         return
@@ -375,7 +416,7 @@ def _verify_service(port: int) -> bool:
 # -- Main install/uninstall --
 
 
-def install(port: int = 19836) -> int:
+def install(port: int = 19836, guidance_strength: str = "tool-only") -> int:
     print(f"Setting up Pallium Codex integration (port {port})...")
 
     # 1. Feature flag + MCP in config.toml
@@ -395,8 +436,9 @@ def install(port: int = 19836) -> int:
     print(f"  Registered hooks in {hooks_path}")
 
     # 3. Append AGENTS.md block
-    _append_agents_md_block()
+    _append_agents_md_block(guidance_strength)
     print(f"  Appended Pallium instructions to {_codex_agents_md_path()}")
+    print(f"  Guidance-strength arm: {guidance_strength}")
 
     # 4. Create hook state directory
     _ensure_state_dir()
@@ -461,8 +503,18 @@ def main(args: list[str] | None = None) -> int:
         default=19836,
         help="Pallium service port (default: 19836)",
     )
+    parser.add_argument(
+        "--guidance-strength",
+        choices=["tool-only", "strong"],
+        default="tool-only",
+        help=(
+            "Which memory-guidance block variant to install: 'tool-only' "
+            "(neutral permit, default) or 'strong' (adds a resume directive). "
+            "Records the arm in setup output and inside the installed block."
+        ),
+    )
     parsed = parser.parse_args(args)
 
     if parsed.uninstall:
         return uninstall()
-    return install(port=parsed.port)
+    return install(port=parsed.port, guidance_strength=parsed.guidance_strength)

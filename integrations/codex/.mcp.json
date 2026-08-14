@@ -2,7 +2,6 @@
   "mcp_servers": {
     "pallium": {
       "command": "pallium-mcp",
-      "args": ["--stdio"],
       "env": {
         "PALLIUM_MCP_TRANSPORT": "stdio",
         "PALLIUM_BASE_URL": "http://localhost:19836"

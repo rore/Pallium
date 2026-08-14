@@ -9,6 +9,11 @@ Pallium remembers decisions, constraints, and context across sessions.
 **Automatic:** hooks inject relevant memories every turn. Trust this — it
 handles ~90% of cases. Don't duplicate with manual queries.
 
+**Picking up prior work?** When you resume or build on earlier work on a task,
+deliberately call `pallium_search_history` to pull the raw prior turns — don't
+assume that context is gone. See the `pallium-memory` skill for the full
+historical-lookup workflow.
+
 **MANDATORY on every injected memory:** call `pallium_rate_memory` before or
 alongside your response. Rate "relevant" if it informed your work,
 "not_relevant" if off-topic. Pass a brief `reason`, the user's message as
@@ -83,7 +88,7 @@ only need them for manual calls.
 
 ### Do not
 
-- Query every turn or re-query for something already in the injected block
+- Don't re-query for something already in the injected block
 - Ingest routine conversation (hooks do this)
 - Flag speculatively — only on concrete contrary evidence
 - Call `pallium_remember` on every turn — deliberate writes only
@@ -101,3 +106,46 @@ this before"). PostToolUse hooks handle some of this automatically.
 the policy. See `docs/specs/2026-06-27-injection-policy-abstention.md`.
 <!-- pallium:end -->
 """
+
+
+# Appended to the base block for the "strong" guidance-strength arm. Authored
+# to avoid the token "MANDATORY" and the banned legacy strings so the block
+# invariants still hold on the strong variant.
+_STRONG_DIRECTIVE = """\
+
+### Resuming prior work
+
+When you resume or continue prior work on this task, call
+`pallium_search_history` first — before assuming that earlier context is gone.
+Pull the raw prior turns (a past discussion, an earlier attempt, the original
+context of a decision) and read them before acting, rather than starting cold.
+
+"""
+
+
+def get_claude_md_block(strength: str = "tool-only") -> str:
+    """Return the CLAUDE.md block variant for the given guidance strength.
+
+    - ``"tool-only"`` (default): the neutral-permit block as-is.
+    - ``"strong"``: the base block plus an appended resume directive.
+
+    An arm-marker comment recording the chosen arm is embedded inside the
+    marker-bounded block so an operator can read which arm was installed.
+    """
+    if strength not in ("tool-only", "strong"):
+        raise ValueError(f"unknown guidance strength: {strength!r}")
+
+    arm_marker = f"<!-- pallium:guidance-strength={strength} -->"
+    block = CLAUDE_MD_BLOCK.replace(
+        "<!-- pallium:start -->\n",
+        f"<!-- pallium:start -->\n{arm_marker}\n",
+        1,
+    )
+    if strength == "strong":
+        block = block.replace(
+            "<!-- pallium:end -->",
+            _STRONG_DIRECTIVE + "<!-- pallium:end -->",
+            1,
+        )
+    return block
+

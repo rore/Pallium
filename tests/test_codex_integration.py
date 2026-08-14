@@ -276,6 +276,72 @@ def test_codex_agents_block_keeps_manual_memory_tools_optional() -> None:
     assert "`pallium_expand`" in agents_block
 
 
+def test_codex_agents_block_permits_deliberate_historical_pull() -> None:
+    agents_block = Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")
+
+    # Permit/encourage line for a deliberate historical pull, and the P1 tools
+    # are exposed.
+    assert "Picking up prior work?" in agents_block
+    assert "`pallium_search_history`" in agents_block
+    assert "`pallium_expand_source`" in agents_block
+
+    # The blanket "Query every turn" discouragement is gone, but the anti-dup
+    # clause is retained.
+    assert "Query every turn" not in agents_block
+    assert "re-query for something already in the injected block" in agents_block
+
+
+def test_codex_mcp_json_has_no_stdio_noop() -> None:
+    mcp_json = json.loads(Path("integrations/codex/.mcp.json").read_text(encoding="utf-8"))
+    args = mcp_json["mcp_servers"]["pallium"].get("args", [])
+    assert "--stdio" not in args
+
+
+def test_codex_guidance_strength_selects_block_variant() -> None:
+    tool_only = setup_codex._build_agents_md_block("tool-only")
+    strong = setup_codex._build_agents_md_block("strong")
+
+    # Arm marker recorded inside each installed block.
+    assert "<!-- pallium:guidance-strength=tool-only -->" in tool_only
+    assert "<!-- pallium:guidance-strength=strong -->" in strong
+
+    # The strong variant appends the resume directive; tool-only does not.
+    assert "## Resuming prior work" in strong
+    assert "## Resuming prior work" not in tool_only
+    assert strong != tool_only
+
+    # Both variants preserve the Codex block invariants.
+    for variant in (tool_only, strong):
+        assert "MANDATORY" not in variant
+        assert "`pallium_query`" in variant
+        assert "`pallium_expand`" in variant
+
+
+def test_codex_build_block_rejects_unknown_strength() -> None:
+    with pytest.raises(ValueError):
+        setup_codex._build_agents_md_block("aggressive")
+
+
+def test_codex_reinstall_replaces_block_on_strength_change(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    agents_path = tmp_path / "AGENTS.md"
+    monkeypatch.setattr(setup_codex, "_codex_agents_md_path", lambda: agents_path)
+
+    setup_codex._append_agents_md_block("tool-only")
+    first = agents_path.read_text(encoding="utf-8")
+    assert "<!-- pallium:guidance-strength=tool-only -->" in first
+    assert "## Resuming prior work" not in first
+
+    setup_codex._append_agents_md_block("strong")
+    second = agents_path.read_text(encoding="utf-8")
+    assert "<!-- pallium:guidance-strength=strong -->" in second
+    assert "## Resuming prior work" in second
+    # Marker block is replaced, not duplicated.
+    assert second.count("<!-- pallium:start -->") == 1
+    assert first != second
+
+
 @pytest.mark.parametrize(
     "hook_name,stdin_payload",
     [

@@ -1,6 +1,6 @@
 ---
 name: pallium-memory
-description: Use when you need to explicitly search, store, or debug Pallium memory beyond what automatic injection provides. Triggers on: "remember this", "why don't you remember", "what do you know about", memory debugging, or when injected context is insufficient.
+description: Use when you need to explicitly search, store, look back at prior work, or debug Pallium memory beyond what automatic injection provides. Triggers on: "remember this", "why don't you remember", "what do you know about", resuming or continuing prior work, memory debugging, or when injected context is insufficient.
 ---
 
 # Pallium Memory Workflow

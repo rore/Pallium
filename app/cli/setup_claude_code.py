@@ -130,15 +130,39 @@ def _unregister_hooks(settings: dict) -> dict:
     return settings
 
 
-def _get_claude_md_block() -> str:
+def _get_claude_md_block(strength: str = "tool-only") -> str:
     block_file = _pallium_repo_root() / "integrations" / "claude-code" / "claude_md_block.py"
     ns: dict = {}
     exec(compile(block_file.read_text(encoding="utf-8"), block_file, "exec"), ns)
-    return ns["CLAUDE_MD_BLOCK"]
+    return ns["get_claude_md_block"](strength)
 
 
-def _append_claude_md_block() -> None:
-    CLAUDE_MD_BLOCK = _get_claude_md_block()
+def _replace_claude_md_block(content: str, block: str) -> str:
+    """Replace the marker-bounded Pallium block in ``content`` with ``block``.
+
+    Appends the block if no existing markers are found. Mirrors the Codex
+    replace behaviour so re-installing with a different --guidance-strength
+    rewrites the block instead of silently no-op'ing.
+    """
+    start_marker = "<!-- pallium:start -->"
+    end_marker = "<!-- pallium:end -->"
+
+    start_idx = content.find(start_marker)
+    end_idx = content.find(end_marker)
+    if start_idx == -1 or end_idx == -1:
+        separator = "\n\n" if content.strip() else ""
+        return content + separator + block
+
+    end_idx += len(end_marker)
+    before = content[:start_idx].rstrip("\n")
+    after = content[end_idx:].lstrip("\n")
+    separator_before = "\n\n" if before else ""
+    separator_after = "\n\n" if after else ""
+    return before + separator_before + block + separator_after + after
+
+
+def _append_claude_md_block(strength: str = "tool-only") -> None:
+    block = _get_claude_md_block(strength)
 
     path = _claude_md_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -148,10 +172,11 @@ def _append_claude_md_block() -> None:
         existing = path.read_text(encoding="utf-8")
 
     if "<!-- pallium:start -->" in existing:
+        path.write_text(_replace_claude_md_block(existing, block), encoding="utf-8")
         return
 
     separator = "\n\n" if existing.strip() else ""
-    path.write_text(existing + separator + CLAUDE_MD_BLOCK, encoding="utf-8")
+    path.write_text(existing + separator + block, encoding="utf-8")
 
 
 def _remove_claude_md_block() -> None:
@@ -199,7 +224,7 @@ def _verify_service(port: int) -> bool:
         return False
 
 
-def install(port: int = 19836) -> int:
+def install(port: int = 19836, guidance_strength: str = "tool-only") -> int:
     print(f"Setting up Pallium Claude Code integration (port {port})...")
 
     _register_mcp(port)
@@ -211,8 +236,9 @@ def install(port: int = 19836) -> int:
     _write_json(settings_path, settings)
     print(f"  Registered hooks in {settings_path}")
 
-    _append_claude_md_block()
+    _append_claude_md_block(guidance_strength)
     print(f"  Appended Pallium instructions to {_claude_md_path()}")
+    print(f"  Guidance-strength arm: {guidance_strength}")
 
     _ensure_state_dir()
     print("  Created hook state directory")
@@ -270,8 +296,18 @@ def main(args: list[str] | None = None) -> int:
         default=19836,
         help="Pallium service port (default: 19836)",
     )
+    parser.add_argument(
+        "--guidance-strength",
+        choices=["tool-only", "strong"],
+        default="tool-only",
+        help=(
+            "Which memory-guidance block variant to install: 'tool-only' "
+            "(neutral permit, default) or 'strong' (adds a resume directive). "
+            "Records the arm in setup output and inside the installed block."
+        ),
+    )
     parsed = parser.parse_args(args)
 
     if parsed.uninstall:
         return uninstall()
-    return install(port=parsed.port)
+    return install(port=parsed.port, guidance_strength=parsed.guidance_strength)

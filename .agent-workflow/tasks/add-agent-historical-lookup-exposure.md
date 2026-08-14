@@ -50,7 +50,7 @@ Not required at this risk level (Elevated). Standing overnight package mandate c
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Discovery
@@ -105,4 +105,11 @@ Clean-context technical review (Plan agent, fresh context). **Verdict: APPROVE-W
 
 ## Implementation
 
-Not started. State `Blocked` (in planning) until the clean-context review returns and State flips to `Ready to implement`.
+- Phase 1 (guidance): added a "Picking up prior work?" permit line encouraging a deliberate `pallium_search_history` pull to both deployed blocks (`claude_md_block.py`, `codex/AGENTS.md`); reworked the Do-not bullet to drop the blanket "Query every turn" clause while retaining the anti-dup "re-query for something already in the injected block" clause.
+- Phase 2 (skills): refreshed `codex/skills/pallium-memory/SKILL.md` with a historical-lookup step (`pallium_search_history` + `pallium_expand_source`), fixed `[+source]`→`[+expand]`, and aligned the Do-not framing; created the mirror Claude skill at `integrations/claude-code/skills/pallium-memory/SKILL.md` (noted in the CLAUDE.md block since Claude setup does not auto-reference skills).
+- Phase 3 (lever + replace): added `--guidance-strength {tool-only,strong}` (default `tool-only`) to both setup entrypoints; `get_claude_md_block(strength)` / `setup_codex._build_agents_md_block(strength)` compose the variant (base + appended resume directive for strong) and embed a `<!-- pallium:guidance-strength=... -->` arm marker; arm printed to setup stdout. 3b: `_append_claude_md_block` now replaces the marker-bounded block on reinstall (mirrors Codex), so flipping arms is not a silent no-op.
+- Phase 4 (descriptions): tightened `pallium_search_history` docstring with a resume/task-start trigger phrase (description-only, no behavior change).
+- Phase 5 (`--stdio`): removed the no-op `"--stdio"` arg from `integrations/codex/.mcp.json`.
+- Phase 6 (tests): reconciled `test_mcp_server.py` exact-7-set assertion to a subset check (incl. the 2 P1 tools); added block-content, guidance-strength, replace-on-reinstall, strong-variant-invariant, and `.mcp.json` tests across `test_codex_integration.py` + new `test_claude_code_integration.py`. Targeted tests pass; full `tests/ -q` = 3499 passed, 15 skipped, 2 xfailed, 1 failed (known-benign `test_config.py::test_prompt_variants_legacy_fallback_unaffected`). `test_mcp_server.py` skips in this env (mcp not importable — missing `pywintypes`), as expected.
+
+**State:** Ready for review

@@ -120,9 +120,22 @@ class TestToolsWithMockedClient:
 
 class TestToolDescriptions:
     @pytest.mark.asyncio
-    async def test_all_three_tools_registered(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_expected_tools_are_registered(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
         server = create_server()
         tools = await server.list_tools()
         tool_names = {t.name for t in tools}
-        assert tool_names == {"pallium_query", "pallium_query_debug", "pallium_ingest", "pallium_expand", "pallium_flag_memory", "pallium_status", "pallium_rate_memory"}
+        # Subset assertion (not exact-set): future tool additions must not
+        # re-break this. Includes the P1 historical-lookup tools.
+        expected = {
+            "pallium_query",
+            "pallium_query_debug",
+            "pallium_ingest",
+            "pallium_expand",
+            "pallium_flag_memory",
+            "pallium_status",
+            "pallium_rate_memory",
+            "pallium_search_history",
+            "pallium_expand_source",
+        }
+        assert expected <= tool_names
