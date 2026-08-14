@@ -203,6 +203,18 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_source_items(self, ids) -> dict[str, SourceItem]:
+        """Batch-fetch source items by id in a single query.
+
+        Returns a ``{id: SourceItem}`` map containing only the ids that exist
+        (missing ids are simply absent from the map — callers decide how to
+        treat them). Semantically equivalent to calling ``get_source_item`` for
+        each id, but collapses the per-id round-trips into one; used to remove
+        the per-candidate N+1 on the shared retrieval path.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def claim_next_source_item(
         self,
         *,

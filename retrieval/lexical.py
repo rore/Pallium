@@ -123,6 +123,15 @@ class LexicalRetrievalProvider(RetrievalProvider):
         selected_hits: list[RetrievalTraceHit] = []
         seen: set[tuple[str, str]] = set()
 
+        # Batch-hydrate source_item hits in one query rather than one
+        # get_source_item read per hit. This prefetch is a point-in-time
+        # snapshot; the forget guarantee is enforced by the emission-time
+        # revalidation after the loop, not here. A dict MISS falls back to the
+        # per-id read below, preserving the deleted-between-read skip behaviour.
+        source_hit_items = self._storage.get_source_items(
+            [hit.target_id for hit in hits if hit.target_kind == "source_item"]
+        )
+
         for hit in hits:
             key = (hit.target_kind, hit.target_id)
             if key in seen:
@@ -150,11 +159,13 @@ class LexicalRetrievalProvider(RetrievalProvider):
                     )
                 )
             elif hit.target_kind == "source_item":
-                try:
-                    source_item = self._storage.get_source_item(hit.target_id)
-                except KeyError:
-                    logger.debug("Skipping deleted source_item %s during hydration", hit.target_id)
-                    continue
+                source_item = source_hit_items.get(hit.target_id)
+                if source_item is None:
+                    try:
+                        source_item = self._storage.get_source_item(hit.target_id)
+                    except KeyError:
+                        logger.debug("Skipping deleted source_item %s during hydration", hit.target_id)
+                        continue
                 results.append(
                     QueryResultItem(
                         result_kind="source_hit",
@@ -183,6 +194,45 @@ class LexicalRetrievalProvider(RetrievalProvider):
 
             if len(results) >= limit:
                 break
+
+        # Emission-time forget-guarantee revalidation.
+        #
+        # The batched prefetches above (the candidate gate in
+        # storage/sqlite_search.py AND the hydration prefetch here) are
+        # point-in-time SNAPSHOTS. Without this step, a source item forgotten or
+        # hard-deleted DURING the query — after its snapshot was taken but before
+        # it is emitted — would be served from stale state, defeating the forget
+        # guarantee (the pre-batch code re-read every candidate and so observed
+        # the change). Re-read the FINAL emitted source_item ids ONCE from
+        # storage and drop any that are now forgotten or missing (deleted). This
+        # is O(1) extra queries (a single batched read of <= limit ids), not
+        # O(candidates), and it is the single output boundary that covers both
+        # snapshot windows.
+        emitted_source_ids = [
+            item.source_item_id for item in results if item.result_kind == "source_hit"
+        ]
+        if emitted_source_ids:
+            revalidated = self._storage.get_source_items(emitted_source_ids)
+            dropped = {
+                sid
+                for sid in emitted_source_ids
+                if sid not in revalidated or revalidated[sid].forgotten
+            }
+            if dropped:
+                for sid in dropped:
+                    logger.debug(
+                        "Dropping source_item %s at emission: forgotten/deleted mid-query", sid
+                    )
+                results = [
+                    item
+                    for item in results
+                    if item.result_kind != "source_hit" or item.source_item_id not in dropped
+                ]
+                selected_hits = [
+                    hit
+                    for hit in selected_hits
+                    if not (hit.target_kind == "source_item" and hit.target_id in dropped)
+                ]
 
         trace = None
         if include_trace:

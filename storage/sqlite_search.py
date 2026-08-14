@@ -71,6 +71,31 @@ class SQLiteSearchMixin:
         total_hits_before_visibility = 0
         total_hits_after_visibility = 0
 
+        # Batch-prefetch every source_item candidate ONCE, then serve the
+        # forgotten-gate + visibility checks below from this snapshot instead of
+        # re-reading each id per gate. This removes the per-candidate N+1 on the
+        # shared retrieval path (previously up to 2 get_source_item reads per
+        # candidate here + 1 more at hydration in retrieval/lexical.py).
+        #
+        # Snapshot semantics: this prefetch is a point-in-time view, so an item
+        # forgotten/deleted AFTER it is taken can still pass this gate. That is
+        # NOT the forget-guarantee boundary — the retrieval layer re-reads the
+        # FINAL emitted source ids at emission time (see the revalidation step in
+        # retrieval/lexical.py) and drops any that became forgotten/deleted
+        # mid-query, so such an item is never emitted. A dict MISS here (id
+        # absent — e.g. hard-deleted between the FTS read and this prefetch)
+        # falls back to self.get_source_item, preserving the exact prior
+        # behaviour including KeyError propagation on a genuine race.
+        _prefetched = self.get_source_items(
+            [row.target_id for row in rows if row.target_kind == "source_item"]
+        )
+
+        def _get_source_item(source_item_id: str):
+            item = _prefetched.get(source_item_id)
+            if item is None:
+                return self.get_source_item(source_item_id)
+            return item
+
         for row in rows:
             # Negate BM25 score: FTS5 returns negative (lower = better),
             # we want higher = better to match existing codebase convention.
@@ -83,7 +108,7 @@ class SQLiteSearchMixin:
             # Lifecycle and field filtering.
             if not matches_filters(
                 self.get_memory_object,
-                self.get_source_item,
+                _get_source_item,
                 self.get_evidence_for_memory_object,
                 row.target_kind,
                 row.target_id,
@@ -100,7 +125,7 @@ class SQLiteSearchMixin:
             # Visibility filtering.
             candidate_visibility, candidate_container_ref, candidate_actor_ref = (
                 target_visibility_and_container(
-                    self.get_source_item,
+                    _get_source_item,
                     self.get_memory_object,
                     row.target_kind,
                     row.target_id,
