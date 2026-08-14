@@ -24,6 +24,7 @@ from evals.historical_lookup_measurement import (
 )
 from evals.reuse_judge_calibration import (
     DEFAULT_FIXTURE_PATH,
+    _calibration_summary,
     load_gold_fixture,
     seed_scratch_db,
 )
@@ -49,6 +50,19 @@ class _StubJudge:
             "direction": "agent_decided",
         }
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
+
+
+class _FailingStub(_StubJudge):
+    """Like _StubJudge, but raises on any lookup whose prompt contains
+    FAIL_MARKER — models an event where every judge call fails."""
+
+    def generate_json(self, *, system_prompt, user_prompt, schema_description) -> LLMJsonResponse:
+        if "FAIL_MARKER" in user_prompt:
+            raise RuntimeError("simulated judge failure")
+        return super().generate_json(
+            system_prompt=system_prompt, user_prompt=user_prompt,
+            schema_description=schema_description,
+        )
 
 
 def _inline_gold() -> list[dict]:
@@ -153,6 +167,33 @@ class TestJudgeVsGold:
         # Guards accidental drift of the documented calibration bar.
         assert GOLD_KAPPA_THRESHOLD == 0.6
 
+    def test_all_failed_event_excluded_from_gold_vectors(self, tmp_path) -> None:
+        # 6 clean records + 1 whose judge calls always fail (FAIL_MARKER). The
+        # failing event must be dropped from the gold comparison, not folded in
+        # as a "none" consensus (which would skew gold_kappa/gold_kappa_n).
+        recs = _inline_gold()
+        recs.append({
+            "id": "fail-x",
+            "container_ref": "git:example.com/acme-x",
+            "before_turns": [{"role": "user", "content": "help please"}],
+            "retrieved_history": ["some past decision"],
+            "after_turns": [{"role": "assistant", "content": "attempted. FAIL_MARKER"}],
+            "gold_rung": "incorporation",
+        })
+        db = tmp_path / "cal.db"
+        gold_labels = seed_scratch_db(recs, db)
+        report = run_judge(
+            db, provider=_FailingStub(), container_ref=None, eligibility_n=0,
+            sample_size=500, seeds=[0, 1, 2], write_labels=False,
+            gold_labels=gold_labels,
+        )
+        # 7 gold events seeded, 1 all-failed → only 6 contribute to the vectors.
+        assert report.gold_kappa_n == 6
+        assert report.n_judge_failures == 3  # 3 seeds x 1 failing event
+        # The 6 remaining agree perfectly with gold → still calibrated.
+        assert report.gold_kappa == pytest.approx(1.0)
+        assert report.calibrated is True
+
 
 # ---------------------------------------------------------------------------
 # Rollup calibration flag — presentation only, never touches numerators
@@ -193,3 +234,30 @@ class TestRollupCalibration:
         assert out["calibration"]["calibrated"] is True
         for rung in out["rungs"].values():
             assert "calibrated" not in rung  # calibrated → no uncalibrated stamp
+
+    def test_stamps_from_runner_actual_serialized_output(self, tmp_path) -> None:
+        # Regression for the shape mismatch: the calibration RUNNER nests the
+        # verdict under judge_vs_gold, so the rollup must stamp rungs when passed
+        # that ACTUAL serialized summary — not only a hand-built flat block.
+        db = tmp_path / "cal.db"
+        true_labels = seed_scratch_db(_inline_gold(), db)
+        rotate = {"incorporation": "none", "influence": "incorporation", None: "influence"}
+        wrong_labels = {ev: rotate[v] for ev, v in true_labels.items()}
+        report = run_judge(
+            db, provider=_StubJudge(), container_ref=None, eligibility_n=0,
+            sample_size=500, seeds=[0, 1, 2], write_labels=False,
+            gold_labels=wrong_labels,
+        )
+        summary = _calibration_summary(report, fixture_path="inline")
+        # Sanity: this is the nested shape the runner writes to disk.
+        assert summary["judge_vs_gold"]["calibrated"] is False
+        assert "calibrated" not in summary  # not flat
+
+        out = self._rollup(calibration=summary)
+        for rung in out["rungs"].values():
+            assert rung["calibrated"] is False  # stamped despite nested shape
+
+    def test_nested_calibrated_true_does_not_stamp(self) -> None:
+        out = self._rollup(calibration={"judge_vs_gold": {"calibrated": True}})
+        for rung in out["rungs"].values():
+            assert "calibrated" not in rung

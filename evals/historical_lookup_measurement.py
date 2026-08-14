@@ -189,8 +189,12 @@ def compute_reuse_rollup(
     )
     # Presentation stamp: only when calibration was run AND failed the threshold
     # do we mark every rung uncalibrated. None (not yet run) leaves rungs
-    # unstamped — "unknown", not "uncalibrated".
-    stamp_uncalibrated = calibration_block.get("calibrated") is False
+    # unstamped — "unknown", not "uncalibrated". The calibrated flag is read via
+    # a shape-tolerant extractor so BOTH the flat block ({"calibrated": ...}) and
+    # the calibration runner's nested output ({"judge_vs_gold": {"calibrated":
+    # ...}}) work — otherwise the uncalibrated stamp would silently no-op on the
+    # runner's actual serialized report.
+    stamp_uncalibrated = _calibration_calibrated_flag(calibration_block) is False
 
     # Deduplicated per-rung session sets
     rung_sessions: dict[str, set[str]] = {r: set() for r in RUNGS}
@@ -543,6 +547,22 @@ def _empty_calibration_report() -> dict[str, Any]:
         "calibrated": None,
         "note": "no calibration report (empty-safe default)",
     }
+
+
+def _calibration_calibrated_flag(calibration: dict[str, Any] | None) -> bool | None:
+    """Read the ``calibrated`` verdict from a calibration block, tolerant of
+    both shapes: the flat block (``{"calibrated": ...}``) and the calibration
+    runner's serialized summary that nests it under ``judge_vs_gold``
+    (``{"judge_vs_gold": {"calibrated": ...}}``). Returns None when neither
+    carries an explicit flag (i.e. calibration not yet run)."""
+    if not isinstance(calibration, dict):
+        return None
+    if "calibrated" in calibration:
+        return calibration["calibrated"]
+    nested = calibration.get("judge_vs_gold")
+    if isinstance(nested, dict):
+        return nested.get("calibrated")
+    return None
 
 
 def load_visibility_violations(

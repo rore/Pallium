@@ -239,20 +239,28 @@ def run_calibration(
         tmp.close()
         db_path = tmp.name
 
-    gold_labels = seed_scratch_db(gold, db_path)
-    # container_ref=None → judge loads every record's container; sample_size
-    # large enough to include the whole fixture; eligibility_n=0 → every
-    # synthetic session is eligible.
-    report = run_judge(
-        db_path,
-        provider=provider,
-        container_ref=None,
-        eligibility_n=0,
-        sample_size=sample_size,
-        seeds=seeds,
-        write_labels=False,
-        gold_labels=gold_labels,
-    )
+    try:
+        gold_labels = seed_scratch_db(gold, db_path)
+        # container_ref=None → judge loads every record's container; sample_size
+        # large enough to include the whole fixture; eligibility_n=0 → every
+        # synthetic session is eligible.
+        report = run_judge(
+            db_path,
+            provider=provider,
+            container_ref=None,
+            eligibility_n=0,
+            sample_size=sample_size,
+            seeds=seeds,
+            write_labels=False,
+            gold_labels=gold_labels,
+        )
+    finally:
+        # Remove the scratch DB we created; never touch a caller-supplied path.
+        if owns_tmp:
+            try:
+                Path(db_path).unlink(missing_ok=True)
+            except OSError:
+                pass
     return report
 
 
@@ -312,7 +320,12 @@ def main(argv: list[str] | None = None) -> int:
             config, cache_dir=args.cache_dir, no_eval_cache=args.no_eval_cache
         )
 
-    report = run_calibration(provider=provider, fixture_path=args.fixture, seeds=seeds)
+    report = run_calibration(
+        provider=provider,
+        fixture_path=args.fixture,
+        seeds=seeds,
+        sample_size=args.sample_size,
+    )
     summary = _calibration_summary(report, fixture_path=args.fixture)
 
     serialised = json.dumps(summary, indent=2, sort_keys=True, default=str)

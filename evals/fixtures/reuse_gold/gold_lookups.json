@@ -117,10 +117,10 @@
         "Lesson learned: when we split a hot table we do it in expand/contract phases — add the new columns/table and backfill first, dual-write, then cut reads over, and only drop the old shape last. Doing it in one shot caused an outage."
       ],
       "after_turns": [
-        {"role": "assistant", "content": "I'll stage the accounts split as an expand/contract migration: create the new structure and backfill, dual-write for a while, move reads, then retire the old columns last — to avoid the kind of outage we had doing it all at once."}
+        {"role": "assistant", "content": "Given that lesson, I won't do this as a single cutover — I'll stage the accounts split as a phased migration so we don't risk the outage we hit last time. I'll write up the concrete phases next."}
       ],
       "gold_rung": "influence",
-      "note": "The expand/contract approach and the outage rationale shape the plan; phrasing is paraphrased, not copied — influence."
+      "note": "The subsequent work adopts the DIRECTION (phased rather than one-shot, motivated by the prior outage) without restating the concrete expand/backfill/dual-write/cut/drop sequence from the retrieved history — genuine influence, not verbatim incorporation."
     },
     {
       "id": "gold-influence-4",

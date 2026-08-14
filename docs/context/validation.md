@@ -119,23 +119,34 @@ that gap against a human-labelled gold set.
   fixture into a scratch DB and runs the REAL judge (`evals/historical_lookup_judge.py`)
   with `gold_labels`, so it reports judge-vs-gold Cohen's kappa (consensus rung
   vs gold rung) alongside the usual seed-vs-seed kappa.
-- **Threshold:** `GOLD_KAPPA_THRESHOLD = 0.6` (Landis & Koch "substantial").
+- **Threshold:** `GOLD_KAPPA_THRESHOLD = 0.6` — a project-defined minimum
+  agreement threshold (it sits just below the Landis & Koch "substantial"
+  boundary of 0.61, cited only as a rough reference, not a claim that 0.6 is
+  itself "substantial").
   Below it, the rollup embeds `calibration.calibrated = false`, every rung entry
   is stamped `"calibrated": false`, and the dashboard reuse-KPI panel presents
   rung rates as **uncalibrated** rather than confident.
 
 ### Measured result (2026-08-14, seeds 0,1,2, real provider)
 
-- **judge-vs-gold Cohen's kappa = 0.50** (n = 12) → **below the 0.60 threshold →
-  UNCALIBRATED.**
+Re-run after correcting a gold-set taxonomy error (`gold-influence-3` had
+restated the retrieved sequence near-verbatim, which is incorporation, not
+influence; its after_turns were rewritten to carry only high-level direction)
+and after fixing the gold-kappa math (all-failed events are now excluded from
+the comparison vectors).
+
+- **judge-vs-gold Cohen's kappa = 0.50** (n = 12, 0 judge failures) → **below the
+  0.60 threshold → UNCALIBRATED.**
 - seed-vs-seed kappa on the same run = **1.0** (perfectly self-consistent).
+- The gold-set and math corrections did **not** move the aggregate kappa: the
+  judge assigned "incorporation" to 8/12 lookups and never assigned "influence",
+  collapsing the rung-1/rung-2 distinction the KPI depends on — the miss is in
+  the judge, not the fixture.
 - Verdict: **the reuse judge is NOT yet calibrated.** Rung rates are presented
   as uncalibrated. The gap between a perfect 1.0 self-consistency and a 0.50
-  agreement-with-gold is exactly why inter-seed kappa alone is insufficient. The
-  observed miss: the judge assigned "incorporation" to 8/12 lookups and never
-  assigned "influence", collapsing the rung-1/rung-2 distinction the KPI depends
-  on. Fixing that is a judge-rubric change, out of scope for this calibration
-  work — the honest present state is "uncalibrated".
+  agreement-with-gold is exactly why inter-seed kappa alone is insufficient.
+  Fixing the rung-1/rung-2 collapse is a judge-rubric change, out of scope for
+  this calibration work — the honest present state is "uncalibrated".
 
 ### Honesty limitations
 

@@ -113,13 +113,15 @@ _JUDGE_RUNGS = frozenset({"incorporation", "influence"})
 _DIRECTIONS = frozenset({"user_directed", "agent_decided"})
 
 #: Minimum judge-vs-gold Cohen's kappa below which the reuse KPI is presented as
-#: UNCALIBRATED. 0.60 is the Landis & Koch "substantial agreement" boundary. The
-#: repo already requires >=3 rater seeds + a consensus rule because single-seed
-#: judge verdicts carry ~20pp variance (docs/context/validation.md); calibration
-#: raises that bar from self-consistency to CORRECTNESS — the judge's consensus
-#: must reach substantial agreement with a human-labelled gold set before rung
-#: rates are shown as confident. Point estimate on a small gold fixture; see the
-#: fixture's honesty_limitations (wide CI, single-author synthetic labels).
+#: UNCALIBRATED. 0.60 is a PROJECT-DEFINED minimum agreement threshold (it sits
+#: just below the Landis & Koch "substantial" boundary of 0.61, used only as a
+#: rough reference point — not a claim that 0.60 IS "substantial"). The repo
+#: already requires >=3 rater seeds + a consensus rule because single-seed judge
+#: verdicts carry ~20pp variance (docs/context/validation.md); calibration raises
+#: that bar from self-consistency to CORRECTNESS — the judge's consensus must
+#: reach this agreement with a human-labelled gold set before rung rates are
+#: shown as confident. Point estimate on a small gold fixture; see the fixture's
+#: honesty_limitations (wide CI, single-author synthetic labels).
 GOLD_KAPPA_THRESHOLD = 0.6
 
 
@@ -688,6 +690,12 @@ def run_judge(
         gold_vec: list[str] = []
         for ctx in sampled:
             if ctx.lookup_event_id not in gold_labels:
+                continue
+            # Exclude events with NO successful judge label (every rater call
+            # failed): their consensus is None, which _rung_category would map to
+            # the "none" category and silently bias gold_kappa/gold_kappa_n. An
+            # all-failed event is missing data, not a "none" verdict.
+            if not per_event.get(ctx.lookup_event_id):
                 continue
             judge_vec.append(_rung_category(report.consensus_rung.get(ctx.lookup_event_id)))
             gold_vec.append(_rung_category(gold_labels.get(ctx.lookup_event_id)))
