@@ -58,6 +58,16 @@ was used during P1). This feature closes both gaps and is the package's final ga
 4. **Report + thresholds.** A perf/e2e report (and a documented command to re-run it)
    that states baseline, current, delta, and pass/fail per path; e2e pass/fail with the
    invariant checks. Any regression is reported honestly (not silently absorbed).
+5. **Live production-service validation (the actual running service).** In addition to
+   the in-process TestClient suite, validate the **installed, running** local service
+   (Windows scheduled task on port 19836): confirm `/status` reports the funnel armed,
+   drive a `pallium_search_history` → `pallium_expand_source` chain against the live
+   service, and confirm a lookup + expansion event actually persist and
+   `events_recorded` increments — end to end on the real service, not just an in-process
+   client. Use a **scratch / clearly-tagged container** (or a disposable DB copy) so the
+   smoke does NOT pollute the real measurement DB / KPI. Document how to run it after a
+   deploy/restart — this is the check that confirms a restart actually deployed the new
+   behavior live.
 
 ## Out of Scope
 
@@ -80,6 +90,10 @@ was used during P1). This feature closes both gaps and is the package's final ga
    (0 leaks under adversarial cases).
 4. A documented command re-runs the perf + e2e validation, and the report is
    reproducible.
+5. The live production service (port 19836) is validated end to end after a
+   deploy/restart: `/status` shows the funnel armed and a search→expand chain persists
+   events (verified WITHOUT polluting the real KPI — scratch container or disposable DB
+   copy), with a documented re-run command.
 
 ## Notes
 
