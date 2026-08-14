@@ -1,4 +1,7 @@
 # P1 · Reuse Measurement
+- idea-reuse-judge-calibration
+- idea-measurement-contract-honesty
+- idea-history-pull-decision-agent-harness
 
 # P2 · Work Continuity
 - idea-cross-context-work-continuity
@@ -16,6 +19,7 @@
 - milestone-shaped-memory-contract
 
 # Ideas
+- idea-retrieval-source-fetch-batching
 - idea-operational-scale-hardening
 - idea-optional-reranker-support
 - idea-document-schema-evolution-strategy
