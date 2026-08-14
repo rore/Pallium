@@ -49,7 +49,7 @@ See `## Plan` (decision-complete: fixture format/size/authoring, agreement metri
 See `## Verification plan` — deterministic stub-judge self-test (agreement math + uncalibrated gating, no live LLM), fixture structural/generic test, rollup calibration-embed tests, then the gated real multi-seed run + committed number.
 
 **Plan review:**
-PENDING — architect (coordinator) review required before any code edit (Elevated). This WR is the review artifact.
+APPROVED by architect (coordinator message, 2026-08-14): "Plan APPROVED — implement it, and the real calibration run is a GO. It's decision-complete." Guardrails: keep diff to fixture + runner + judge gold-param + rollup presentation flag + minimal dashboard status line + tests + validation.md subsection (NO rung-table build, NO computation change); the committed report subsection MUST state the honesty limitations — (a) N=12 → wide kappa CI / small-N, (b) gold labels are SINGLE-AUTHOR SYNTHETIC (no second human rater, may not mirror real-lookup distributions); if measured kappa < 0.6 ship "uncalibrated" and do NOT grow/tweak the fixture to force a pass.
 
 **Approvals:**
 Not required at this risk level.
