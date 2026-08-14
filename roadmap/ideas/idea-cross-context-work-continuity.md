@@ -67,3 +67,12 @@ identified-source handoff before building automatic session correlation or
 `agent_ref` routing — don't start by solving session identity.
 Execution context: `docs/designs/015-vnext-historical-work-execution.md` (Phase 2).
 Related shipped work: `add-work-ref-cross-surface-continuity`, design 013.
+
+**Experiment 2 promoted + delivered:** the measurement slice is now the committed
+feature `measure-cross-context-handoff-experiment` (harness + authored scenarios
++ report `docs/reports/vnext-p2-continuity-handoff-experiment.md`). On authored
+scenarios, identified-source **pointer+pull** matched the manual baselines on
+correctness at markedly lower user-orchestration cost. This idea now tracks only
+the **deferred mechanism** (stable session/work correlation across `session_id`s,
+`agent_ref` as a first-class handoff dimension, eager-synthesis continuation
+packaging), to be invested in only if that value signal holds under harder inputs.

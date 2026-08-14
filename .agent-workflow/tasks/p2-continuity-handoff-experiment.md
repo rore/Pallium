@@ -64,12 +64,26 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Not started — planning only. Awaiting architect approval of the plan below before any code edit. Branch: worktree-agent-a4188e223eb42b23c. Real-provider run is gated on the operator supplying `PALLIUM_CONFIG_FILE` (main `pallium.local.toml`) + `PALLIUM_HAI_API_KEY`; proxy at localhost:6655 confirmed reachable (401).
+- Branch renamed to `feat/p2-continuity-handoff-experiment`; Work Record committed before code.
+- New harness `evals/continuity_handoff_benchmark.py`: four context-source arms (`no_memory`, `pull_backed`, `manual_transcript`, `manual_summary`) feeding the reused `_generate_continuation`/`_score_continuation`/`_compare_continuations` from `work_resumption_benchmark` (imported, NOT modified). Arms differ only in context source (apples-to-apples). Pull arm assembled from the actual API response surface: `source_only` `/query` → top-K source hits → `GET /source/{id}/context` (before/after=2) neighbor turns. Seeding via an in-module `_SeededCachingProvider` wrapper (per-seed prompt nonce + on-disk cache) so no edit to the reused module.
+- Orchestration-cost proxy = deterministic chars/4 tokens of user-supplied context per arm (pull = query text only; manual = summary / full transcript). Consensus winner over ≥3 seeds; tie broken by lower cost.
+- Discovery correction: cross-session continuity is private + container-scoped — raw turns carry `actor_ref` and public retrieval requires `actor_ref is None`, so the harness ingests + queries under private visibility (was the cause of an initial 0-hit pull arm; verified fix restores 3 hits). Assumption A1 held after this fix.
+- `evals/continuity_handoff/scenarios.json`: 5 authored scenarios (4 value + 1 no-value guard), private/container-scoped, with `handoff_summary` for the paste-a-summary arm.
+- Deterministic self-test `tests/test_continuity_handoff_benchmark.py` (2 tests): no live LLM; asserts 4 arms, cost ordering, pull source-recovery, tie-break-to-pull consensus, no-value guard, cache stability.
+- `.gitignore`: added `evals/continuity_handoff/output/` (matches per-eval convention); run output stays local, numbers captured in the committed report.
+- Real run `real-run-s3` (`claude-sonnet-4-6`, 3 seeds) executed in-process via TestClient with scratch temp DB + scratch vector index (never touched the live service/DB). Report at `docs/reports/vnext-p2-continuity-handoff-experiment.md`.
+- Roadmap: promoted to `roadmap/features/measure-cross-context-handoff-experiment.md`; `idea-cross-context-work-continuity` updated to track only the deferred mechanism. `board.md` intentionally NOT edited (coordinator drives the board move post-merge).
+
+## Evidence
+
+- Self-test + cache-stability: `pytest tests/test_continuity_handoff_benchmark.py -m slow -n0` → 2 passed.
+- Reuse-regression guard `tests/test_work_resumption_benchmark.py`: 4 pre-existing failures on this checkout, independent of this change — `work_resumption_benchmark.py` and its test are byte-identical to HEAD (empty diff), run in isolation (this change's code uninvolved), and the first failure is a committed scenario-count drift (`assert 19 == 13`) plus downstream semantic drift. Non-regression of the reused functions is additionally shown by this change's own passing self-test, which exercises those exact functions. Flagged to the coordinator.
+- Real run `real-run-s3`: mean correctness no_memory 0.58 vs pull/transcript/summary 6.00; mean user-orchestration cost tokens no_memory 0 / pull 18.8 / transcript 50.2 / summary 47.6; consensus winner `pull_backed` in all 4 value scenarios (3/3 seeds); no-value guard kept `no_memory`.
 
 ## Plan
 
