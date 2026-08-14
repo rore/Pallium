@@ -1,7 +1,7 @@
 ---
 id: add-dashboard-operational-and-value-rework
 title: Dashboard rework — operational view + "how memory helps" view
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-p1
