@@ -136,8 +136,52 @@ architect's authorization of this plan.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
+
+## Implementation
+
+New harness, all under non-guarded trees (no guarded-path edits):
+- `evals/history_pull_decision/scenarios.json` — 7 authored scenarios (5 with
+  relevant history, 2 self-contained; mix of user-directed / undirected).
+- `evals/history_pull_decision/agent.py` — `DecisionAgent` (JSON decision
+  protocol over `LLMProvider.generate_json`) + `ScriptedDecisionProvider` stub.
+- `evals/history_pull_decision/harness.py` — `InProcessService` (TestClient over
+  a scratch SQLite DB, stubbed extraction LLM, no bound port), orchestration,
+  behavioural metrics, CLI (`--dry-run`, `--seeds`, `--cache-dir`, `--db`,
+  `--keep-db`, `--output`).
+- `tests/test_history_pull_decision_harness.py` — 6 deterministic tests.
+- `docs/reports/history-pull-decision-harness-validation.md` — real-run report.
+
+Decision log:
+- Service driven in-process via `TestClient` (no bound port) instead of a scratch
+  uvicorn server on :19942. Rationale in the report §6: binds no port, so the
+  live service/DB is unreachable by construction (stronger isolation), and avoids
+  Windows uvicorn-thread teardown fragility. Flagged as a deliberate deviation
+  for the architect.
+- Service extraction LLM stubbed (`TieredMemorySemanticProvider`); only the agent
+  decisions + reuse judge use the real provider. Source-only retrieval is
+  extraction-independent, so the measured path is unaffected.
+- `--eligibility-n` defaulted low (1) so small scenarios are eligible without 50
+  seeded prior turns.
+
+## Evidence
+
+- Self-test: `pytest tests/test_history_pull_decision_harness.py` → **6 passed**
+  (real interpreter, no live LLM).
+- `--dry-run` harness: clean exit; scripted chain persists lookup + linked
+  expansion; lookup_rate=1.0.
+- REAL run (seeds 0,1,2; 7 scenarios; 21 trials; 0 errors): lookup_rate 0.714,
+  unprompted-pull 0.60, opportunity-pull 1.00, no-opportunity-pull 0.00,
+  lookup→non-empty 1.00.
+- Reuse judge (3 rater seeds over 15 lookups): 15/15 genuine, kappa 1.0,
+  incorporation 40.0% [19.8, 64.3], 0 failures.
+- Eligibility rollup (eligibility_n=1): 21 eligible / 15 events; rung-1 28.6 per
+  100 eligible [13.8, 50.0]; **visibility violations = 0** (72 exposed ids
+  checked). Artifacts under `.local/hpd/` (gitignored).
+- Honest finding recorded in the report: the judge labels all 15 lookups
+  user_directed while 9 were on tag-undirected tasks — soft convention cues read
+  as user-directed; the unprompted signal needs cleaner scenarios + rubric.
 
 ## Plan
 
