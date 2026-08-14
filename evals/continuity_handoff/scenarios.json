@@ -1,0 +1,261 @@
+[
+  {
+    "scenario_id": "resume-investigation-after-pause",
+    "scenario_family": "cross_context_handoff",
+    "description": "A new session resumes a paused investigation; the source session is identified only by shared container.",
+    "should_memory_help": true,
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "ch1-msg-1",
+        "content_type": "text/plain",
+        "content": "Why are duplicate holds appearing after the delayed catalog sync?",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-source-1",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://ch1/msg-1",
+        "occurred_at": "2026-03-11T08:00:00Z"
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "ch1-msg-2",
+        "content_type": "text/plain",
+        "content": "I traced it: arrival-time ordering reused stale hold state, so the delayed sync recreated holds already released.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-source-1",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://ch1/msg-2",
+        "occurred_at": "2026-03-11T08:05:00Z"
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "ch1-msg-3",
+        "content_type": "text/plain",
+        "content": "We concluded to switch ordering from arrival time to item event time to stop the duplicate holds.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-source-1",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://ch1/msg-3",
+        "occurred_at": "2026-03-11T08:07:00Z"
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "ch1-msg-4",
+        "content_type": "text/plain",
+        "content": "Before the pause we also noted the delayed sync worker only reprocesses holds flagged as pending.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-source-1",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://ch1/msg-4",
+        "occurred_at": "2026-03-11T08:09:00Z"
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "ch1-msg-5",
+        "content_type": "text/plain",
+        "content": "Open follow-up: verify the item event time backfill covers holds created during the sync outage window.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:library-help",
+        "thread_ref": "chat:library-help:thread-source-1",
+        "actor_ref": "user:branch-librarian",
+        "source_ref": "memory://ch1/msg-5",
+        "occurred_at": "2026-03-11T08:11:00Z"
+      }
+    ],
+    "current_thread_context": [
+      {"role": "user", "artifact_kind": "message", "content": "I am resuming the delayed catalog sync investigation after a pause."}
+    ],
+    "current_query": {"text": "What did we previously conclude about the delayed catalog sync duplicate-hold investigation?", "limit": 6, "container_ref": "chat:library-help"},
+    "target_question": "What did the prior session conclude about the delayed catalog sync duplicate-hold investigation, and how should I continue?",
+    "expected_dimensions": {
+      "task_orientation": ["delayed catalog sync", "duplicate holds"],
+      "key_findings": ["arrival-time ordering reused stale hold state", "item event time"]
+    },
+    "must_preserve": ["task_orientation", "key_findings", "evidence"],
+    "forbidden_terms": [],
+    "handoff_summary": "Investigation into duplicate holds after the delayed catalog sync: root cause is that arrival-time ordering reused stale hold state, so the delayed sync recreated already-released holds. Conclusion: switch ordering from arrival time to item event time."
+  },
+  {
+    "scenario_id": "resume-after-tool-failure",
+    "scenario_family": "cross_context_handoff",
+    "description": "A new session resumes a sync retry that failed on an expired token; must recover the blocker and the resume point.",
+    "should_memory_help": true,
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "ch2-msg-1",
+        "content_type": "text/plain",
+        "content": "Running the catalog sync retry now; it refreshed 312 reservation records before failing.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:sync-ops",
+        "thread_ref": "chat:sync-ops:thread-source-2",
+        "actor_ref": "user:ops-engineer",
+        "source_ref": "memory://ch2/msg-1",
+        "occurred_at": "2026-03-12T09:00:00Z"
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "ch2-msg-2",
+        "content_type": "text/plain",
+        "content": "It stopped with a 401 because the catalog service token expired. Refresh the token and resume the sync from batch 313.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:sync-ops",
+        "thread_ref": "chat:sync-ops:thread-source-2",
+        "actor_ref": "user:ops-engineer",
+        "source_ref": "memory://ch2/msg-2",
+        "occurred_at": "2026-03-12T09:03:00Z"
+      }
+    ],
+    "current_thread_context": [
+      {"role": "user", "artifact_kind": "message", "content": "Picking the catalog sync retry back up in a fresh session."}
+    ],
+    "current_query": {"text": "Where should I resume the catalog sync retry and what blocked it last time?", "limit": 6, "container_ref": "chat:sync-ops"},
+    "target_question": "Where should the catalog sync retry resume, and what was the blocker?",
+    "expected_dimensions": {
+      "blocker_state": ["401", "token expired"],
+      "preserved_progress": ["312 reservation records"],
+      "next_step_guidance": ["refresh the token", "batch 313"]
+    },
+    "must_preserve": ["blocker_state", "preserved_progress", "next_step_guidance"],
+    "forbidden_terms": [],
+    "handoff_summary": "Catalog sync retry refreshed 312 reservation records, then stopped with a 401 because the catalog service token expired. Next step: refresh the token and resume the sync from batch 313."
+  },
+  {
+    "scenario_id": "resume-implementation-ticket",
+    "scenario_family": "cross_context_handoff",
+    "description": "A new session resumes an implementation ticket; needs preserved progress and the next step.",
+    "should_memory_help": true,
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "ch3-msg-1",
+        "content_type": "text/plain",
+        "content": "On ticket LIB-241 the reservation-ordering fix is gated behind the use_item_event_time flag.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:lib-241",
+        "thread_ref": "chat:lib-241:thread-source-3",
+        "actor_ref": "user:backend-dev",
+        "source_ref": "memory://ch3/msg-1",
+        "occurred_at": "2026-03-13T10:00:00Z"
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "ch3-msg-2",
+        "content_type": "text/plain",
+        "content": "The schema change and the backfill are done. Next step is wiring the admin toggle and adding retry-path coverage before enabling the flag.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:lib-241",
+        "thread_ref": "chat:lib-241:thread-source-3",
+        "actor_ref": "user:backend-dev",
+        "source_ref": "memory://ch3/msg-2",
+        "occurred_at": "2026-03-13T10:04:00Z"
+      }
+    ],
+    "current_thread_context": [
+      {"role": "user", "artifact_kind": "message", "content": "Continuing ticket LIB-241 in a new session."}
+    ],
+    "current_query": {"text": "What is the next step on ticket LIB-241 and what is already done?", "limit": 6, "container_ref": "chat:lib-241"},
+    "target_question": "What is done on ticket LIB-241 and what is the next step?",
+    "expected_dimensions": {
+      "task_orientation": ["LIB-241", "use_item_event_time"],
+      "preserved_progress": ["schema change", "backfill"],
+      "next_step_guidance": ["admin toggle", "retry-path coverage"]
+    },
+    "must_preserve": ["task_orientation", "preserved_progress", "next_step_guidance"],
+    "forbidden_terms": [],
+    "handoff_summary": "Ticket LIB-241: reservation-ordering fix is gated behind the use_item_event_time flag. Done: schema change and backfill. Next step: wire the admin toggle and add retry-path coverage before enabling the flag."
+  },
+  {
+    "scenario_id": "parallel-session-debugging-handoff",
+    "scenario_family": "cross_context_handoff",
+    "description": "A parallel session picks up debugging from another session's partial findings.",
+    "should_memory_help": true,
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "ch4-msg-1",
+        "content_type": "text/plain",
+        "content": "Local replay confirmed the duplicate-hold bug and narrowed it to cache invalidation on the delayed sync workers.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:hold-bug",
+        "thread_ref": "chat:hold-bug:thread-source-4",
+        "actor_ref": "user:debugger",
+        "source_ref": "memory://ch4/msg-1",
+        "occurred_at": "2026-03-14T11:00:00Z"
+      },
+      {
+        "source_type": "chat_message",
+        "source_id": "ch4-msg-2",
+        "content_type": "text/plain",
+        "content": "The reservation cache is warm, so next compare cache invalidation between the delayed and immediate sync workers.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:hold-bug",
+        "thread_ref": "chat:hold-bug:thread-source-4",
+        "actor_ref": "user:debugger",
+        "source_ref": "memory://ch4/msg-2",
+        "occurred_at": "2026-03-14T11:05:00Z"
+      }
+    ],
+    "current_thread_context": [
+      {"role": "user", "artifact_kind": "message", "content": "Taking over the duplicate-hold debugging in a separate session."}
+    ],
+    "current_query": {"text": "Continue the duplicate-hold debugging: what did the prior session find and what is next?", "limit": 6, "container_ref": "chat:hold-bug"},
+    "target_question": "What did the prior debugging session find, and what should the next step be?",
+    "expected_dimensions": {
+      "key_findings": ["cache invalidation", "reservation cache is warm"],
+      "preserved_progress": ["local replay confirmed"],
+      "next_step_guidance": ["compare cache invalidation", "delayed and immediate"]
+    },
+    "must_preserve": ["key_findings", "preserved_progress", "next_step_guidance"],
+    "forbidden_terms": [],
+    "handoff_summary": "Duplicate-hold debugging: local replay confirmed the bug and narrowed it to cache invalidation on the delayed sync workers; the reservation cache is warm. Next step: compare cache invalidation between the delayed and immediate sync workers."
+  },
+  {
+    "scenario_id": "same-thread-sufficient-no-value",
+    "scenario_family": "cross_context_handoff",
+    "description": "The receiving thread already contains the answer; pulling stale prior context should not help or override.",
+    "should_memory_help": false,
+    "prior_events": [
+      {
+        "source_type": "chat_message",
+        "source_id": "ch5-msg-1",
+        "content_type": "text/plain",
+        "content": "Earlier we thought the fix was to increase the retry timeout to 90 seconds.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "chat:retry-tuning",
+        "thread_ref": "chat:retry-tuning:thread-source-5",
+        "actor_ref": "user:ops-engineer",
+        "source_ref": "memory://ch5/msg-1",
+        "occurred_at": "2026-03-15T12:00:00Z"
+      }
+    ],
+    "current_thread_context": [
+      {"role": "user", "artifact_kind": "message", "content": "In this same thread we already decided to cap retries at 3 attempts and page on the third failure."},
+      {"role": "assistant", "artifact_kind": "message", "content": "Right, the plan is a 3-attempt retry cap with a page on the third failure. Proceeding with that."}
+    ],
+    "current_query": {"text": "Remind me of the retry plan we just agreed on in this thread.", "limit": 6, "container_ref": "chat:retry-tuning"},
+    "target_question": "What is the retry plan just agreed in this thread?",
+    "expected_dimensions": {
+      "next_step_guidance": ["3-attempt retry cap", "page on the third failure"]
+    },
+    "must_preserve": ["next_step_guidance"],
+    "forbidden_terms": ["90 seconds", "retry timeout to 90"],
+    "handoff_summary": "Earlier discussion suggested increasing the retry timeout to 90 seconds."
+  }
+]
