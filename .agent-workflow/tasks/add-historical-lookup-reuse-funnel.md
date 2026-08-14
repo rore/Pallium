@@ -51,7 +51,7 @@ Approved by user 2026-08-14: "ok, so continue on all the features design, includ
 **Exceptions:**
 —
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Discovery
@@ -117,3 +117,7 @@ State `Ready to implement`. Next: implement PR-a on this branch (`feat/add-histo
 - Response/contract: `/query` returns the minted historical id for `source_only` (precedence: minted wins for source_only, audit id otherwise); `QueryResponse.lookup_event_id` docstring updated to record the precedence rule.
 - Loader: `load_events_from_storage` reconstructs eligible sessions via the pinned predicate (user=`role='user'`; assistant-work=`role='assistant' AND artifact_kind IN (assistant_output,tool_use_summary,todo_snapshot)`; prior-indexed=`processing_completed_at IS NOT NULL`; NULL role/artifact_kind don't classify; forgotten excluded; eligible = ≥N prior-indexed turns before session start via `(container_ref, created_at)`), joins the labels table for a consensus rung (plurality; tie → most-conservative ladder rung), empty-safe (None db / missing file / missing tables → `([], [])`).
 - Tests: `test_historical_lookup_storage.py` (schema + writer round-trips + loader reconstruction/consensus/empty-safe), `test_historical_lookup_funnel_e2e.py` (full chain under the visibility-enforcing `agent_conversation_memory` plugin: ingest→search_history audit-OFF→lookup row→expand→expansion row→seed labels→loader→non-empty rollup; cross-container non-leak; forgotten exclusion), and two `source_only` cases added to `test_lookup_event_id_e2e.py` (audit-OFF minted id + persisted event; audit-ON minted id wins over audit id). Full suite: 3466 passed, 15 skipped, 2 xfailed; only the known-benign `test_config.py::test_prompt_variants_legacy_fallback_unaffected` fails locally (passes CI).
+- Review fixes (cb43599, CodeRabbit): built `exposed` inside the try; clear `lookup_event_id` to None when the write fails; standardized both exposed sets on the internal `source_item_id` (joins `source_items.id`, matches the expansion path); normalized `--since/--until` (`T`→space) for chronological lexicographic comparison; corrected the PR-split note; RUF059/fixture-key alignment. Two comments declined with rationale (bound-the-scan — offline eval loader, feature-3 covers hot-path perf; consensus rule already pinned in `_consensus_rung`).
+- **PR-a MERGED as #16 (squashed → main `9d9b928`), all CI green + review threads resolved.**
+
+**PR-b (in progress — same task, second PR):** judge harness (steps 7) + local enablement/arm-by-default + `pallium service status` health check (step 8) + runbook + visibility-violation reporting in the rollup output (step 9). Branch recreated from `origin/main` (same slug → this WR). State flipped back to `Ready to implement` for the PR-b scope.
