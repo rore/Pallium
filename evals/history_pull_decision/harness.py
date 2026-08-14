@@ -215,6 +215,7 @@ class Trial:
     expanded: bool
     answer_preview: str
     error: str | None = None
+    note: str | None = None
 
 
 def _run_trial(
@@ -234,25 +235,56 @@ def _run_trial(
     source_hits: list[dict[str, Any]] = []
     expanded = False
     answer = ""
+    note: str | None = None
 
     if decision.search:
         result = service.search_history(query=decision.query, container_ref=container, thread_ref=session_thread)
         lookup_event_id = result.get("lookup_event_id")
         source_hits = [r for r in result.get("results", []) if r.get("result_kind") == "source_hit"]
-        after = agent.decide_after_results(
-            scenario_id=scenario.id, task=scenario.current_task, results=source_hits, seed=seed
-        )
-        answer = after.answer
-        if after.expand and after.expand_index is not None and after.expand_index < len(source_hits) and lookup_event_id:
-            anchor_id = source_hits[after.expand_index]["source_item_id"]
-            service.expand_source(source_item_id=anchor_id, container_ref=container, parent_lookup_id=lookup_event_id)
-            expanded = True
+        try:
+            after = agent.decide_after_results(
+                scenario_id=scenario.id, task=scenario.current_task, results=source_hits, seed=seed
+            )
+            context_parts = [str(h.get("excerpt") or "") for h in source_hits]
+            if after.expand and after.expand_index is not None and after.expand_index < len(source_hits) and lookup_event_id:
+                anchor_id = source_hits[after.expand_index]["source_item_id"]
+                ctx = service.expand_source(
+                    source_item_id=anchor_id, container_ref=container, parent_lookup_id=lookup_event_id
+                )
+                expanded = True
+                context_parts.extend(str(i.get("content") or "") for i in ctx.get("items", []))
+            # Guarantee a real, history-incorporating work turn: use the after-
+            # results answer only when it is non-empty AND no expansion happened;
+            # otherwise finalize with the (expanded) retrieved context.
+            answer = after.answer
+            if expanded or not answer:
+                answer = agent.finalize_answer(
+                    scenario_id=scenario.id, task=scenario.current_task,
+                    context_text="\n".join(p for p in context_parts if p)[:4000], seed=seed,
+                )
+        except LLMProviderError as exc:
+            # Post-decision failure: the pull decision (searched=True + the
+            # persisted lookup) is already valid and counted; only the answer
+            # generation failed. Record a soft note, not a hard error.
+            note = f"after_results_failed: {type(exc).__name__}"
+    else:
+        # No-search completion: the agent does the task from its own knowledge.
+        # Persisting a REAL answer (not a placeholder) makes a no-pull session
+        # legitimately substantive — the agent chose not to pull, but still did
+        # the work — so it counts in the eligibility denominator correctly.
+        try:
+            answer = agent.complete_without_history(
+                scenario_id=scenario.id, task=scenario.current_task, seed=seed
+            )
+        except LLMProviderError as exc:
+            note = f"completion_failed: {type(exc).__name__}"
 
-    if not answer:
-        answer = "(no answer produced)"
-    # The agent's answer — a work turn AFTER the lookup (judge WORK AFTER) and the
-    # assistant-work turn that makes the session substantive.
-    service.ingest(container_ref=container, thread_ref=session_thread, role="assistant", content=answer)
+    # Ingest the assistant work turn ONLY when a real answer was produced. On a
+    # post-decision failure we deliberately do NOT persist a placeholder turn:
+    # that would make a session look substantive without real work and pollute
+    # the eligibility denominator. The pull decision itself is still recorded.
+    if answer:
+        service.ingest(container_ref=container, thread_ref=session_thread, role="assistant", content=answer)
 
     return Trial(
         scenario_id=scenario.id,
@@ -265,6 +297,7 @@ def _run_trial(
         n_source_hits=len(source_hits),
         expanded=expanded,
         answer_preview=answer[:160],
+        note=note,
     )
 
 
@@ -331,6 +364,7 @@ def compute_behavioural_metrics(trials: list[Trial]) -> dict[str, Any]:
         "n_trials": len(trials),
         "n_trials_ok": n,
         "n_errors": len(trials) - n,
+        "n_soft_notes": sum(1 for t in ok if t.note),
         "lookup_rate": rate(len(searched), n),
         "unprompted_pull_rate": rate(len(undirected_searched), len(undirected)),
         "user_directed_pull_rate": rate(len(directed_searched), len(directed)),
@@ -381,7 +415,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="Deterministic scripted stub; no network.")
     parser.add_argument("--seeds", type=_parse_seeds, default=[0, 1, 2], help="Comma-separated agent seeds (default 0,1,2).")
     parser.add_argument("--scenarios", type=Path, default=_SCENARIOS_PATH)
-    parser.add_argument("--db", type=Path, default=None, help="Scratch DB path (default: temp dir).")
+    parser.add_argument("--db", type=Path, default=None, help="Scratch DB path (default: temp dir). Rejected if it already exists unless --overwrite.")
+    parser.add_argument("--overwrite", action="store_true", help="Delete an existing --db (and its -wal/-shm/-journal sidecars) before starting, so reruns do not accumulate events.")
+    parser.add_argument(
+        "--eligibility-n", type=int, default=1,
+        help="Prior-indexed-turns threshold for an eligible session. Default 1 "
+        "(these scenarios seed few prior turns; the judge/rollup default of 50 "
+        "would yield 0 eligible). Recorded and echoed into the judge command.",
+    )
     parser.add_argument("--cache-dir", type=Path, default=None, help="LLM cache dir (real runs).")
     parser.add_argument("--no-eval-cache", action="store_true")
     parser.add_argument("--output", type=Path, default=None, help="Write the run JSON here.")
@@ -390,10 +431,22 @@ def main(argv: list[str] | None = None) -> int:
 
     scenarios = load_scenarios(args.scenarios)
     seeds = list(args.seeds)
+    eligibility_n = args.eligibility_n
 
     tmpdir: tempfile.TemporaryDirectory | None = None
     if args.db is not None:
         db_path = args.db
+        sidecars = [Path(str(db_path) + s) for s in ("", "-wal", "-shm", "-journal")]
+        if db_path.exists():
+            if not args.overwrite:
+                parser.error(
+                    f"{db_path} already exists; reusing it would mix events across runs. "
+                    "Pass --overwrite to replace it (removes the db + -wal/-shm/-journal), "
+                    "or choose a fresh --db path."
+                )
+            for p in sidecars:
+                if p.exists():
+                    p.unlink()
         db_path.parent.mkdir(parents=True, exist_ok=True)
     else:
         tmpdir = tempfile.TemporaryDirectory(prefix="hpd-scratch-", ignore_cleanup_errors=True)
@@ -413,6 +466,7 @@ def main(argv: list[str] | None = None) -> int:
         "harness": "history_pull_decision",
         "mode": "dry-run" if args.dry_run else "real",
         "seeds": seeds,
+        "eligibility_n": eligibility_n,
         "n_scenarios": len(scenarios),
         "scratch_db": str(db_path),
         "behavioural_metrics": metrics,
@@ -430,7 +484,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Wrote run report -> {args.output}", file=sys.stderr)
 
     print("=== History-Pull Decision Harness ===")
-    print(f"mode={report['mode']} seeds={seeds} scenarios={len(scenarios)}")
+    print(f"mode={report['mode']} seeds={seeds} scenarios={len(scenarios)} eligibility_n={eligibility_n}")
     m = metrics
     print(f"  lookup_rate                     = {m['lookup_rate']}")
     print(f"  unprompted_pull_rate            = {m['unprompted_pull_rate']}")
@@ -438,9 +492,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  no_opportunity_pull_rate        = {m['no_opportunity_pull_rate']}")
     print(f"  lookup_to_nonempty_result_rate  = {m['lookup_to_nonempty_result_rate']}")
     print(f"  errors                          = {m['n_errors']}")
+    print(f"  soft_notes (post-decision)      = {m['n_soft_notes']}")
     if args.keep_db or args.db is not None:
+        seeds_csv = ",".join(str(s) for s in seeds)
         print(f"  scratch DB (kept)               = {db_path}")
-        print(f"  run the judge:  python -m evals.historical_lookup_judge --db {db_path} --seeds 0,1,2")
+        print(
+            f"  run the judge:  python -m evals.historical_lookup_judge "
+            f"--db {db_path} --seeds {seeds_csv} --eligibility-n {eligibility_n}"
+        )
     elif tmpdir is not None:
         tmpdir.cleanup()
     return 0

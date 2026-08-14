@@ -13,6 +13,9 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
+from evals.history_pull_decision import harness as harness_mod
 from evals.history_pull_decision.agent import DecisionAgent, ScriptedDecisionProvider
 from evals.history_pull_decision.harness import (
     InProcessService,
@@ -66,6 +69,21 @@ def test_after_decision_guards_out_of_range_index() -> None:
     assert after.expand_index == 0
     empty = agent.decide_after_results(scenario_id="s", task="t", results=[], seed=0)
     assert empty.expand is False and empty.expand_index is None
+
+
+def test_after_decision_missing_index_disables_expand() -> None:
+    # Finding 1: expand=true with a missing/non-integer index must NOT claim an
+    # expansion the harness cannot perform.
+    def handler(_sys: str, user: str) -> dict:
+        if "step=search" in user:
+            return {"search": True, "query": "q"}
+        return {"expand": True, "answer": "a"}  # no expand_index
+
+    agent = DecisionAgent(ScriptedDecisionProvider(handler))
+    after = agent.decide_after_results(
+        scenario_id="s", task="t", results=[{"source_item_id": "x", "excerpt": "e"}], seed=0
+    )
+    assert after.expand is False and after.expand_index is None
 
 
 def test_behavioural_metrics_empty_safe() -> None:
@@ -171,3 +189,77 @@ def test_judge_wiring_smoke_null_provider(tmp_path) -> None:
     # Null provider yields "none" rungs, but the pipeline must run and shape out.
     assert report.n_lookups >= 1
     assert set(report.rung_rates) == {"incorporation", "influence", "downstream"}
+
+
+def _declining_handler(_sys: str, user: str) -> dict:
+    """Scripted agent that never searches and completes from 'own knowledge'."""
+    if "step=search" in user:
+        return {"search": False, "query": "", "reason": "scripted: no search"}
+    if "step=complete" in user:
+        return {"answer": "A real, self-contained answer written without history."}
+    return {"expand": False, "expand_index": 0, "answer": "unused"}
+
+
+def test_no_search_completion_persists_real_work_and_is_eligible(tmp_path) -> None:
+    # Finding 2: a no-search trial must persist a REAL answer (not a placeholder)
+    # so the session is legitimately substantive and counts in the denominator.
+    db_path = tmp_path / "hpd.db"
+    scenarios = [
+        Scenario(
+            id="unit-nosrch", user_directed=False, opportunity=False,
+            prior_turns=[
+                {"role": "user", "content": "Unrelated prior chatter about lunch plans."},
+                {"role": "assistant", "content": "Acknowledged the lunch plans."},
+            ],
+            current_task="Write a pure function; do not consult project history.",
+        )
+    ]
+    service = InProcessService(db_path)
+    try:
+        trials = run_harness(
+            service=service, agent=DecisionAgent(ScriptedDecisionProvider(_declining_handler)),
+            scenarios=scenarios, seeds=[0],
+        )
+    finally:
+        service.close()
+
+    assert len(trials) == 1 and trials[0].error is None
+    assert trials[0].searched is False
+    assert trials[0].lookup_event_id is None
+
+    # No lookup event persisted for a no-search trial.
+    assert _reuse_events(db_path, "lookup") == []
+
+    # The persisted assistant turn is the real answer, not the placeholder.
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = [
+            r[0] for r in conn.execute(
+                "SELECT content FROM source_items WHERE role='assistant'"
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+    assert any("self-contained answer" in c for c in rows)
+    assert all("(no answer produced)" not in c for c in rows)
+
+    # Session is substantive → eligible (user turn + real assistant-work turn).
+    eligible, _events = load_events_from_storage(db_path, eligibility_n=1)
+    assert eligible, "no-search session must still count as eligible"
+
+
+def test_db_reject_existing_then_overwrite(tmp_path) -> None:
+    # Finding 4: an existing --db is rejected unless --overwrite (so reruns do
+    # not accumulate events into a mixed set).
+    db_path = tmp_path / "existing.db"
+    db_path.write_text("stale")  # pre-existing file
+    argv = ["--dry-run", "--db", str(db_path), "--seeds", "0", "--eligibility-n", "1"]
+
+    with pytest.raises(SystemExit):
+        harness_mod.main(argv)
+
+    # With --overwrite it proceeds (the stale file is replaced by a real DB).
+    rc = harness_mod.main(argv + ["--overwrite"])
+    assert rc == 0
+    lookups = _reuse_events(db_path, "lookup")
+    assert lookups, "overwrite run should have produced fresh lookup events"

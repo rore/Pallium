@@ -60,6 +60,26 @@ the JSON schema.
 
 AFTER_SCHEMA = '{"expand":"boolean","expand_index":"integer","answer":"string"}'
 
+COMPLETE_SYSTEM_PROMPT = """\
+You decided NOT to search your prior work. Complete the task below using only
+your own general knowledge — you have no project history to draw on. Keep the
+answer brief: a few sentences DESCRIBING your solution or approach in prose. Do
+NOT paste a full code listing (long code with braces breaks the response
+format). Return exactly the JSON schema.
+"""
+
+COMPLETE_SCHEMA = '{"answer":"string"}'
+
+FINALIZE_SYSTEM_PROMPT = """\
+You searched your prior work (and may have expanded a result) and now have the
+retrieved context below. Write your FINAL answer to the task. Use the retrieved
+context where it is genuinely relevant and ignore it where it is not — decide for
+yourself. Keep it brief: a few sentences in prose, no long code listing. Return
+exactly the JSON schema.
+"""
+
+FINALIZE_SCHEMA = '{"answer":"string"}'
+
 
 # ---------------------------------------------------------------------------
 # Decision types
@@ -161,16 +181,53 @@ class DecisionAgent:
         parsed = response.parsed_json if isinstance(response.parsed_json, dict) else {}
         expand = _coerce_bool(parsed.get("expand"))
         idx = _coerce_index(parsed.get("expand_index")) if expand else None
-        # Guard the index against the actual result set.
-        if idx is not None and idx >= len(results):
-            idx = 0 if results else None
-            expand = idx is not None
+        if expand:
+            # Clamp an out-of-range index onto the first result; if no valid
+            # index remains (missing/non-integer, or empty result set), the
+            # harness cannot expand — so the decision must NOT claim it did.
+            if idx is not None and idx >= len(results):
+                idx = 0 if results else None
+            if idx is None:
+                expand = False
         return AfterDecision(
             expand=expand,
             expand_index=idx,
             answer=str(parsed.get("answer") or "").strip(),
             raw=parsed,
         )
+
+    def complete_without_history(self, *, scenario_id: str, task: str, seed: int) -> str:
+        """No-search completion: the agent answers the task from its own general
+        knowledge. Persisting THIS as the assistant-work turn makes a no-pull
+        session legitimately substantive (real work, agent chose not to pull)
+        rather than a placeholder that pollutes the eligibility denominator."""
+        user_prompt = f"Task:\n{task}{_seed_tag(scenario_id, seed, 'complete')}"
+        response = self._provider.generate_json(
+            system_prompt=COMPLETE_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            schema_description=COMPLETE_SCHEMA,
+        )
+        parsed = response.parsed_json if isinstance(response.parsed_json, dict) else {}
+        return str(parsed.get("answer") or "").strip()
+
+    def finalize_answer(self, *, scenario_id: str, task: str, context_text: str, seed: int) -> str:
+        """Produce the final answer given the retrieved (and expanded) context.
+
+        Called whenever the agent expanded a result or left the after-results
+        answer empty, so every searched session ends with a real, history-
+        incorporating work turn (the judge's WORK AFTER) rather than an empty or
+        placeholder one."""
+        user_prompt = (
+            f"Task:\n{task}\n\nRetrieved context:\n{context_text}"
+            f"{_seed_tag(scenario_id, seed, 'finalize')}"
+        )
+        response = self._provider.generate_json(
+            system_prompt=FINALIZE_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            schema_description=FINALIZE_SCHEMA,
+        )
+        parsed = response.parsed_json if isinstance(response.parsed_json, dict) else {}
+        return str(parsed.get("answer") or "").strip()
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +269,10 @@ def _default_scripted_handler(system_prompt: str, user_prompt: str) -> dict[str,
             "query": "prior decision convention policy",
             "reason": "scripted: always search",
         }
+    if "step=complete" in user_prompt:
+        return {"answer": "Scripted no-search answer from general knowledge."}
+    if "step=finalize" in user_prompt:
+        return {"answer": "Scripted final answer incorporating the expanded prior decision."}
     # after-results step
     return {
         "expand": True,

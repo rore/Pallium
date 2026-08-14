@@ -167,21 +167,34 @@ Decision log:
 
 ## Evidence
 
-- Self-test: `pytest tests/test_history_pull_decision_harness.py` → **6 passed**
-  (real interpreter, no live LLM).
+- Self-test: `pytest tests/test_history_pull_decision_harness.py` → **9 passed**
+  (real interpreter, no live LLM) — includes no-search-completion + db-reject.
 - `--dry-run` harness: clean exit; scripted chain persists lookup + linked
   expansion; lookup_rate=1.0.
-- REAL run (seeds 0,1,2; 7 scenarios; 21 trials; 0 errors): lookup_rate 0.714,
-  unprompted-pull 0.60, opportunity-pull 1.00, no-opportunity-pull 0.00,
-  lookup→non-empty 1.00.
-- Reuse judge (3 rater seeds over 15 lookups): 15/15 genuine, kappa 1.0,
-  incorporation 40.0% [19.8, 64.3], 0 failures.
-- Eligibility rollup (eligibility_n=1): 21 eligible / 15 events; rung-1 28.6 per
-  100 eligible [13.8, 50.0]; **visibility violations = 0** (72 exposed ids
-  checked). Artifacts under `.local/hpd/` (gitignored).
-- Honest finding recorded in the report: the judge labels all 15 lookups
-  user_directed while 9 were on tag-undirected tasks — soft convention cues read
-  as user-directed; the unprompted signal needs cleaner scenarios + rubric.
+- REAL run (seeds 0,1,2; 7 scenarios; 21 trials; 0 errors; 0 soft-notes):
+  lookup_rate 0.714, unprompted-pull 0.60, opportunity-pull 1.00,
+  no-opportunity-pull 0.00, lookup→non-empty 1.00.
+- Reuse judge (3 rater seeds over 15 lookups, `--eligibility-n 1`): 15/15
+  genuine, kappa 1.0, incorporation 15/15 = 100% [79.6, 100.0], 0 failures,
+  direction 14 user_directed / 1 agent_decided.
+- Eligibility rollup (eligibility_n=1): 21 eligible / 15 events; rung-1 71.4 per
+  100 eligible [50.0, 86.2]; **visibility violations = 0** (72 exposed ids).
+  Artifacts under `.local/hpd/` (gitignored).
+
+CodeRabbit round (PR #22) — all 4 findings fixed + re-run:
+1. after-results: `expand=true` with a missing/non-integer index now sets
+   `expand=false` (no phantom expansion).
+2. no-search trials complete the task from the agent's own knowledge and persist
+   THAT as the work turn (no placeholder inflating eligibility); a finalize step
+   guarantees searched sessions also persist a real, history-using answer.
+3. `--eligibility-n` option (default 1), recorded in the run JSON and echoed into
+   the printed judge command.
+4. `--db` rejects an existing file; `--overwrite` replaces it (removes
+   `-wal`/`-shm`/`-journal`).
+- Before/after: the answer-completion fix raised judge incorporation from 6/15 to
+  15/15 (per-100-eligible 28.6 → 71.4); eligible denominator unchanged at 21.
+- Honest finding retained: judge labels 14/15 lookups user_directed while 9 were
+  on tag-undirected tasks — soft convention cues read as user-directed.
 
 ## Plan
 
