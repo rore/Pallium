@@ -17,6 +17,7 @@
 
 # Ideas
 - idea-retrieval-source-fetch-batching
+- fix-work-resumption-benchmark-scenario-count-drift
 - idea-operational-scale-hardening
 - idea-optional-reranker-support
 - idea-document-schema-evolution-strategy
