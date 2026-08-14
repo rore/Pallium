@@ -306,6 +306,71 @@ class SubtaskSelectorShadowRecord(Base):
     total_latency_ms = Column(Float, nullable=True)
 
 
+class HistoricalLookupReuseEventRecord(Base):
+    """Historical-lookup reuse funnel event (write-only telemetry).
+
+    One row per source-only history lookup (``event_type="lookup"``) or per
+    source-context expansion (``event_type="expansion"``). Persisted
+    UNCONDITIONALLY — NOT gated on ``observability.query_audit_log`` — so the
+    Phase-1 reuse KPI is measurable on a fresh install.
+
+    WRITE-ONLY: never mutated in place and never read by the injection
+    pipeline. Rung labels live in the separate append-only
+    ``historical_lookup_reuse_label`` table, so a double-rated subsample can
+    yield Cohen's kappa without mutating this row. Correlation to subsequent
+    session behaviour happens at eval time via
+    ``(container_ref, session_id, created_at)`` joined to source_items — the
+    same reconstruction pattern used by subtask_selector_shadow.
+
+    Not foreign-keyed to query_audit_log: the write happens inside the query /
+    source-context path (before any API-layer audit row) and audit logging may
+    be disabled independently. ``exposed_json`` holds the POST-redaction /
+    post-gate exposed source ids (``[{source_id, raw_rank, score}]``);
+    forbidden/forgotten ids never reach it because the hooks read the
+    already-filtered results.
+    """
+
+    __tablename__ = "historical_lookup_reuse_event"
+
+    id = Column(String, primary_key=True)  # == lookup_event_id
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    # "lookup" (source-only search) | "expansion" (source-context expand).
+    event_type = Column(String, nullable=False)
+    session_id = Column(String, nullable=True)  # == thread_ref
+    container_ref = Column(String, nullable=True)
+    actor_ref = Column(String, nullable=True)
+    trigger_origin = Column(String, nullable=True)
+    # For expansions: the lookup_event_id of the lookup that produced the
+    # expanded id. NULL for lookups.
+    parent_lookup_id = Column(String, nullable=True)
+    # Post-redaction / post-gate exposed source ids:
+    # [{"source_id", "raw_rank", "score"}].
+    exposed_json = Column(Text, nullable=False, default="[]")
+    visibility = Column(String, nullable=True, default="private")
+
+
+class HistoricalLookupReuseLabelRecord(Base):
+    """Per-rater rung label for a historical-lookup reuse event (append-only).
+
+    Kept separate from the event row so multiple raters (``rater_seed``) can
+    label the same ``lookup_event_id`` — enabling Cohen's kappa on a
+    double-rated subsample. The PR-b judge harness writes these rows; the
+    loader computes a consensus rung per event. Never mutated in place — a
+    re-label is a new row. No FK — labels are matched by value and survive
+    event-table churn.
+    """
+
+    __tablename__ = "historical_lookup_reuse_label"
+
+    id = Column(String, primary_key=True)
+    lookup_event_id = Column(String, nullable=False)
+    rater_seed = Column(String, nullable=False)
+    # "incorporation" | "influence" | "downstream" | NULL (no genuine reuse).
+    rung = Column(String, nullable=True)
+    rationale = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+
 class MemoryFlagRecord(Base):
     __tablename__ = "memory_flags"
 
@@ -740,6 +805,17 @@ class SQLiteSchemaMixin:
             "WHERE populated_at IS NULL"
         ),
     }
+    # Phase 1 historical-lookup reuse funnel indexes.
+    _HISTORICAL_LOOKUP_INDEX_MIGRATIONS = {
+        "idx_historical_lookup_event_container_session": (
+            "CREATE INDEX IF NOT EXISTS idx_historical_lookup_event_container_session "
+            "ON historical_lookup_reuse_event (container_ref, session_id, created_at)"
+        ),
+        "idx_historical_lookup_label_event": (
+            "CREATE INDEX IF NOT EXISTS idx_historical_lookup_label_event "
+            "ON historical_lookup_reuse_label (lookup_event_id)"
+        ),
+    }
     _MEMORY_FEEDBACK_COLUMN_MIGRATIONS = {
         "memory_type": "ALTER TABLE memory_feedback ADD COLUMN memory_type VARCHAR",
         "memory_text": "ALTER TABLE memory_feedback ADD COLUMN memory_text TEXT",
@@ -774,6 +850,7 @@ class SQLiteSchemaMixin:
             # Phase 5: memory_usage_audit indexes (table is created
             # declaratively by Base.metadata.create_all above).
             self._ensure_memory_usage_audit_indexes()
+            self._ensure_historical_lookup_indexes()
             self._ensure_fts5_table()
             self._backfill_legacy_memory_freshness()
             self._backfill_thread_position()
@@ -997,6 +1074,11 @@ class SQLiteSchemaMixin:
     def _ensure_memory_usage_audit_indexes(self) -> None:
         with self._engine.begin() as connection:
             for _index_name, create_sql in self._MEMORY_USAGE_AUDIT_INDEX_MIGRATIONS.items():
+                connection.execute(text(create_sql))
+
+    def _ensure_historical_lookup_indexes(self) -> None:
+        with self._engine.begin() as connection:
+            for _index_name, create_sql in self._HISTORICAL_LOOKUP_INDEX_MIGRATIONS.items():
                 connection.execute(text(create_sql))
 
     def _ensure_fts5_available(self, connection) -> None:

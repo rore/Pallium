@@ -21,6 +21,8 @@ from storage.sqlite_retention import SQLiteRetentionMixin
 from storage.sqlite_schema import (
     Base,
     IndexEntryRecord,
+    HistoricalLookupReuseEventRecord,
+    HistoricalLookupReuseLabelRecord,
     MaintenanceStateRecord,
     MemoryFeedbackRecord,
     MemoryFlagRecord,
@@ -1254,6 +1256,25 @@ class SQLiteStorageProvider(
         read by the injection pipeline. See SubtaskSelectorShadowRecord.
         """
         record = SubtaskSelectorShadowRecord(**row)
+        self._with_retry(lambda session: session.add(record))
+
+    def write_historical_lookup_event_row(self, row: dict[str, Any]) -> None:
+        """Persist one historical-lookup reuse funnel event (write-only).
+
+        Unconditional telemetry — NOT gated on query_audit_log. Never mutated
+        after write and never read by the injection pipeline. See
+        HistoricalLookupReuseEventRecord.
+        """
+        record = HistoricalLookupReuseEventRecord(**row)
+        self._with_retry(lambda session: session.add(record))
+
+    def write_historical_lookup_label_row(self, row: dict[str, Any]) -> None:
+        """Append one per-rater rung label (append-only).
+
+        A re-label is a new row; existing rows are never mutated. See
+        HistoricalLookupReuseLabelRecord.
+        """
+        record = HistoricalLookupReuseLabelRecord(**row)
         self._with_retry(lambda session: session.add(record))
 
     # ── Phase 5: memory_usage_audit ──────────────────────────────────

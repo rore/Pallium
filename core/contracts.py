@@ -159,6 +159,10 @@ class QueryResult:
     decision_reason: str = "injection_policy_unavailable"
     injectable_blocks: list[InjectableBlock] = field(default_factory=list)
     injection_method: str | None = None
+    # Historical-lookup reuse funnel: the minted lookup_event_id for a
+    # source_only query, attached after the reuse-event row is persisted.
+    # None on the proactive/injection path. See PalliumService.query.
+    lookup_event_id: str | None = None
 
 
 @dataclass(frozen=True)

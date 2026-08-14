@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from core.contracts import MemoryRetentionPolicy, ProcessResult
 from core.models import EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
@@ -650,6 +651,21 @@ class StorageProvider(ABC):
         Does not raise KeyError for missing memory_object_id — feedback survives
         memory deletion.
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    def write_historical_lookup_event_row(self, row: dict[str, Any]) -> None:
+        """Persist one historical-lookup reuse funnel event (write-only).
+
+        Unconditional telemetry — NOT gated on query_audit_log — so the
+        Phase-1 reuse KPI is measurable on a fresh install. Never mutated
+        after write; rung labels live in the append-only label table.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def write_historical_lookup_label_row(self, row: dict[str, Any]) -> None:
+        """Append one per-rater rung label for a reuse event (append-only)."""
         raise NotImplementedError
 
     @abstractmethod

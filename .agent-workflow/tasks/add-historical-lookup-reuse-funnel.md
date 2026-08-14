@@ -51,7 +51,7 @@ Approved by user 2026-08-14: "ok, so continue on all the features design, includ
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Discovery
@@ -110,3 +110,10 @@ Clean-context technical review (Plan agent, fresh context, read the seams direct
 ## Implementation
 
 State `Ready to implement`. Next: implement PR-a on this branch (`feat/add-historical-lookup-reuse-funnel`), verify, open PR, drive to green + merge; then PR-b. Standing High-risk approval recorded.
+
+**PR-a implemented (2026-08-14):**
+- Storage: added `HistoricalLookupReuseEventRecord` (write-only) + `HistoricalLookupReuseLabelRecord` (append-only) ORM tables, `_HISTORICAL_LOOKUP_INDEX_MIGRATIONS` + `_ensure_historical_lookup_indexes` (wired into `_initialize_schema`), and `write_historical_lookup_event_row` / `write_historical_lookup_label_row` on both `SQLiteStorageProvider` and the `StorageProvider` ABC (new abstract methods). No migration framework — declarative `create_all` + `_ensure_*` only.
+- Hooks: `PalliumService.query` mints `lookup_event_id` and persists a "lookup" event UNCONDITIONALLY (guarded `if source_only`, POST-redaction `result.results`, best-effort write, attaches id to the returned `QueryResult` via a new `lookup_event_id` field). `get_source_context` persists an "expansion" event after the gates + `_keep` filter carrying `parent_lookup_id` (post-gate neighbor ids only). Normal `/query` audit path untouched.
+- Response/contract: `/query` returns the minted historical id for `source_only` (precedence: minted wins for source_only, audit id otherwise); `QueryResponse.lookup_event_id` docstring updated to record the precedence rule.
+- Loader: `load_events_from_storage` reconstructs eligible sessions via the pinned predicate (user=`role='user'`; assistant-work=`role='assistant' AND artifact_kind IN (assistant_output,tool_use_summary,todo_snapshot)`; prior-indexed=`processing_completed_at IS NOT NULL`; NULL role/artifact_kind don't classify; forgotten excluded; eligible = ≥N prior-indexed turns before session start via `(container_ref, created_at)`), joins the labels table for a consensus rung (plurality; tie → most-conservative ladder rung), empty-safe (None db / missing file / missing tables → `([], [])`).
+- Tests: `test_historical_lookup_storage.py` (schema + writer round-trips + loader reconstruction/consensus/empty-safe), `test_historical_lookup_funnel_e2e.py` (full chain under the visibility-enforcing `agent_conversation_memory` plugin: ingest→search_history audit-OFF→lookup row→expand→expansion row→seed labels→loader→non-empty rollup; cross-container non-leak; forgotten exclusion), and two `source_only` cases added to `test_lookup_event_id_e2e.py` (audit-OFF minted id + persisted event; audit-ON minted id wins over audit id). Full suite: 3466 passed, 15 skipped, 2 xfailed; only the known-benign `test_config.py::test_prompt_variants_legacy_fallback_unaffected` fails locally (passes CI).
