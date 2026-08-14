@@ -61,7 +61,7 @@ Not required at Elevated.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Plan
@@ -89,8 +89,30 @@ Real interpreter prefix:
 
 ## Implementation
 
-(to be filled during Implement)
+- Added abstract `get_source_items(ids) -> dict[str, SourceItem]` to `storage/base.py` and implemented it in `storage/sqlite.py` as a single `select(...).where(id.in_(...))` (dedupes ids, empty -> `{}`, reuses `_to_source_item` so objects are identical to `get_source_item`).
+- `storage/sqlite_search.py`: prefetch all source_item candidate ids once before the loop; introduced `_get_source_item` (dict-hit else fallback to `self.get_source_item`, preserving KeyError-on-race) and passed it into both `matches_filters` and `target_visibility_and_container`. Memory-object getters unchanged. Prefetch-snapshot semantics documented in a code comment at the prefetch site.
+- `retrieval/lexical.py`: batch-hydrate source_item hit ids once; hydrate from the map with a per-id fallback that preserves the deleted-between-read debug-skip. Memory-object hydration unchanged.
+- No edits to `core/filters.py`, `core/query.py`, `core/visibility.py`, or `storage/sqlite_schema.py`. N+1 #2 remains deferred.
 
 ## Evidence
 
-(to be filled during Verify — before/after per-path counts + invariant results)
+Real interpreter (`.local/test-env` + cpython-3.13).
+
+Before/after per-path engine-query counts (regenerated `evals/vnext_perf_baseline.json`):
+
+| Path | Before | After |
+|---|---|---|
+| `source_only_query` | 182 | **4** |
+| `n1_double_get_source_item` limit=2 | 110 | **4** |
+| `n1_double_get_source_item` limit=5 | 182 | **4** |
+| `n1_double_get_source_item` limit=10 | 362 | **4** |
+| `n1_double_get_source_item` limit=12 | 434 | **4** |
+| `source_context_expansion` | 4 | 4 (unchanged) |
+| loader (`visibility_loader_queries` etc.) | — | unchanged (N+1 #2 deferred) |
+
+Per-candidate slope collapsed from ~9/slot (O(candidates)) to a flat constant 4 (O(1)).
+
+Test results:
+- Invariance set (89 tests): `test_historical_lookup_funnel_e2e`, `test_source_only_search`, `test_visibility_scope`, `test_soft_deleted_visibility`, `test_global_visibility`, `test_raw_turn_forgetting`, `test_storage_sqlite` — all PASS. Forgotten-source exclusion + cross-container non-leak invariants green (proves results unchanged).
+- `test_vnext_perf_count_gate` (incl. seeded-regression self-test): PASS against regenerated baseline.
+- Full default lane: 3517 passed, 15 skipped, 2 xfailed. Only failure is the pre-existing, unrelated `tests/test_config.py::test_prompt_variants_legacy_fallback_unaffected` (config/prompt-variants; independent of storage/retrieval).

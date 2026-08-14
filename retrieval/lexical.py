@@ -123,6 +123,14 @@ class LexicalRetrievalProvider(RetrievalProvider):
         selected_hits: list[RetrievalTraceHit] = []
         seen: set[tuple[str, str]] = set()
 
+        # Batch-hydrate source_item hits in one query rather than one
+        # get_source_item read per hit. Snapshot semantics match the gate
+        # prefetch in storage/sqlite_search.py; a dict MISS falls back to the
+        # per-id read below, preserving the deleted-between-read skip behaviour.
+        source_hit_items = self._storage.get_source_items(
+            [hit.target_id for hit in hits if hit.target_kind == "source_item"]
+        )
+
         for hit in hits:
             key = (hit.target_kind, hit.target_id)
             if key in seen:
@@ -150,11 +158,13 @@ class LexicalRetrievalProvider(RetrievalProvider):
                     )
                 )
             elif hit.target_kind == "source_item":
-                try:
-                    source_item = self._storage.get_source_item(hit.target_id)
-                except KeyError:
-                    logger.debug("Skipping deleted source_item %s during hydration", hit.target_id)
-                    continue
+                source_item = source_hit_items.get(hit.target_id)
+                if source_item is None:
+                    try:
+                        source_item = self._storage.get_source_item(hit.target_id)
+                    except KeyError:
+                        logger.debug("Skipping deleted source_item %s during hydration", hit.target_id)
+                        continue
                 results.append(
                     QueryResultItem(
                         result_kind="source_hit",

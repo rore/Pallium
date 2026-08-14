@@ -247,6 +247,19 @@ class SQLiteStorageProvider(
                 raise KeyError(source_item_id)
             return self._to_source_item(record)
 
+    def get_source_items(self, ids) -> dict[str, SourceItem]:
+        # Batched counterpart to get_source_item: one `WHERE id IN (...)` for the
+        # whole set, so the shared retrieval path stops re-reading each candidate
+        # per gate. Missing ids are simply absent from the returned map.
+        id_list = list(dict.fromkeys(ids))  # dedupe, preserve order
+        if not id_list:
+            return {}
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(SourceItemRecord).where(SourceItemRecord.id.in_(id_list))
+            ).all()
+            return {record.id: self._to_source_item(record) for record in records}
+
     def list_source_items_for_thread(self, container_ref: str, thread_ref: str) -> list[SourceItem]:
         with self._session_factory() as session:
             records = session.scalars(
