@@ -1,0 +1,115 @@
+# pull-applicability-judgment-experiment
+
+Phase 3 of the pull-contamination experiment. Phases 1-2 found no contamination but never
+stressed filtering (baseline was cue-determined, ~0.90 A). This phase tests the CORE pull
+proposition per the sharpened review: can historical context supply knowledge the current task
+CANNOT reconstruct (an arbitrary project-specific convention), while the agent still reasons
+correctly about whether that knowledge APPLIES here (scope/provenance judgment)?
+
+<!-- agent-workflow:start -->
+**Outcome:**
+A rerunnable eval over scenarios where (a) the correct convention A is ARBITRARY — not inferable
+from best practice, so the no-history baseline is genuinely uncertain; (b) the task carries subtle
+SCOPE/PROVENANCE cues (e.g. checkout-v2 vs v1, Project Y vs X) sufficient to judge whether a given
+history applies, but NOT enough to reconstruct the convention; (c) relevant history gives the
+correct in-scope convention (A); (d) contaminating history gives a REAL convention from a DIFFERENT
+scope (B). Measures: baseline uncertainty, relevant_lift (applicable history should improve
+materially), and contamination_harm (non-applicable history should be REJECTED, not adopted). This
+finally tests applicability judgment, not impossible truth detection. No production behaviour change.
+
+**Target:**
+Pallium — `evals/pull_contamination/`. New `scenarios_applicability.json`; a small harness tweak so
+the decision-first detector is primary for ANY non-explicit case; extend tests.
+
+**Scope:**
+- NEW `evals/pull_contamination/scenarios_applicability.json` (`case: "applicability-judgment"`),
+  10 scenarios across scope-difference types (version, project, subsystem, superseded/older-state,
+  environment).
+- `evals/pull_contamination/harness.py` — generalise the CLI "primary detector" label so leading
+  is primary for any case != "explicit-task" (currently hardcoded to "ambiguous-task"). No metric
+  logic change.
+- `tests/test_pull_contamination.py` — invariants for the applicability set + the primary-label rule.
+
+**Constraints:**
+- Deterministic marker scan stays primary (both detectors reported); no LLM judge as a gate.
+- The convention must be genuinely arbitrary (no strong best-practice default), so baseline is not
+  pinned. The task must contain the SCOPE cue but not the convention value.
+- Do NOT assert a pinned baseline for this set.
+- No production retrieval/injection change; offline; scratch only; no internal/product names.
+- Backward compatible: explicit + ambiguous sets and their tests keep passing.
+
+**Completion criteria:**
+Harness runs the 3 conditions over the applicability set and reports baseline / relevant_lift /
+contamination_harm with bands under the decision-first detector; tests cover the applicability
+invariants + the primary-label rule; one real LLM pass yields a first read of (1) baseline
+uncertainty, (2) whether applicable history materially lifts A, (3) whether non-applicable
+(different-scope) history is rejected or adopted (the contamination/applicability signal).
+
+**Risk:** Routine
+
+**Complexity:** Moderate
+
+**Reason:** `evals/**` + `tests/**` + `.agent-workflow/**` + `roadmap/**` all blue (offline,
+scratch-only, no production surface) → Routine. Judgment-heavy scenario authoring (arbitrary
+convention + scope provenance, baseline must stay unpinned) + a small harness tweak + tests →
+Moderate, so expanded shape.
+
+**Discovery:**
+Harness already scenario-file-agnostic and emits both detectors + the differential (relevant_lift,
+contamination_harm). The ambiguous pass proved the decision-first detector is the correct instrument
+(strict over-counts ambiguity from comparative prose). The only harness gap is cosmetic: the CLI
+labels the leading detector "PRIMARY for ambiguous-task" via a hardcoded case check; generalise to
+"primary for any non-explicit case". This set differs from phase 2 in the MECHANISM of A's
+correctness: not "cues imply A" (which let the agent reconstruct A and pinned the baseline) but "A
+is arbitrary and only history carries it" — so baseline should finally be uncertain and history has
+room to be decisive. Contamination here = adopting a convention from a demonstrably DIFFERENT scope.
+
+**Material assumptions:**
+- ASSUMPTION: conventions can be chosen arbitrary enough that the no-history baseline is genuinely
+  uncertain (not pinned to A or B by a language/ecosystem default). DISPROVED BY: baseline A-rate or
+  B-rate ~1.0. ACTION: pick conventions with no dominant default, or frame the task to state that a
+  project-specific convention EXISTS and must be determined (so the no-history agent knows it is
+  guessing).
+- ASSUMPTION: the task's scope cue is sufficient for a careful agent to judge applicability (reject
+  a different-scope convention). DISPROVED BY: relevant and contaminating conditions move the answer
+  identically (agent ignores scope). ACTION: that is itself the finding — the hard problem is
+  scope/applicability, not retrieval/triggering; report it.
+- ASSUMPTION: the A/B convention stays deterministically detectable. Mitigated by the decision-first
+  detector already shipped; both detectors reported.
+
+**Plan:**
+1. Author `scenarios_applicability.json`: 10 scenarios. Each task names a scope (service/version/
+   project/subsystem/environment) and asks for an ARBITRARY convention value without stating it;
+   relevant_history gives A scoped to the task's scope (applicable); contaminating_history gives B
+   scoped to a DIFFERENT scope (non-applicable but real). marker_a/marker_b are the two convention
+   values. Add `case: "applicability-judgment"`.
+2. Harness: generalise the primary-detector label (leading primary when case != "explicit-task").
+3. Tests: applicability invariants (marker containment; scope labels present in task + both
+   histories) + the primary-label rule. Do NOT assert a pinned baseline.
+4. Adversarial clean-context review of the set BEFORE the LLM run (catch baseline leaks / scope that
+   is too obvious or too absent), then a real pass (seeds 0,1,2 → 30/condition).
+5. Interpret: strong relevant_lift + low contamination_harm = pull proposition validated (stop
+   synthetic, go real-corpus). High contamination_harm = the real hard problem is scope/applicability.
+
+**Verification plan:**
+- Applicability invariants → unit test (marker containment; task + both histories carry scope labels;
+  10 scenarios; 5 scope types).
+- Primary-label rule → unit test (leading primary for non-explicit case; strict primary for explicit).
+- Backward compatibility → explicit + ambiguous tests still pass.
+- First read → real LLM pass reports baseline (expect uncertain), relevant_lift (expect materially
+  positive — the discriminating result phases 1-2 could not produce), contamination_harm.
+- CI: agent-workflow, redline (BLUE), test lanes.
+
+**Plan review:** Self (Routine). Design from the user-relayed sharpened review (applicability
+judgment via scope/provenance, not impossible truth detection). Recorded here.
+
+**Approvals:** Not required at this risk level (Routine).
+
+**Exceptions:** —
+
+**State:** Ready to implement
+<!-- agent-workflow:end -->
+
+## Implementation
+
+_(pending)_
