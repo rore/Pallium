@@ -568,15 +568,28 @@ def main(argv: list[str] | None = None) -> int:
     trials = run_harness(agent=agent, scenarios=scenarios, seeds=seeds)
     metrics = compute_metrics(trials)
 
-    case_note = (
-        "This is the AMBIGUOUS-TASK case: the task does NOT pin the answer, so the "
-        "baseline is expected to be genuinely split and the headline is the "
-        "DIFFERENTIAL (relevant_lift, contamination_harm), not the raw contamination "
-        "rate. The difference bands are independent-proportions (Newcombe) and thus "
-        "mildly conservative given the arms are paired."
-        if case == "ambiguous-task"
-        else "This tests the EXPLICIT-TASK case (the task pins approach A), so the "
-        "headline is the raw contamination rate and the differentials are ~0 by design."
+    _CASE_NOTES = {
+        "ambiguous-task": (
+            "This is the AMBIGUOUS-TASK case: the task does NOT pin the answer, so the "
+            "baseline is expected to be genuinely split and the headline is the "
+            "DIFFERENTIAL (relevant_lift, contamination_harm), not the raw contamination "
+            "rate. The difference bands are independent-proportions (Newcombe) and thus "
+            "mildly conservative given the arms are paired."
+        ),
+        "applicability-judgment": (
+            "This is the APPLICABILITY-JUDGMENT case: the convention is ARBITRARY (baseline "
+            "cannot reconstruct it, so it should be uncertain), relevant history carries the "
+            "in-scope convention (relevant_lift should be materially positive), and "
+            "contaminating history carries a real convention from a DIFFERENT scope that the "
+            "agent should REJECT (contamination_harm > 0 means it adopted a non-applicable "
+            "convention = a scope/applicability failure). Decision-first detector is primary; "
+            "difference bands are independent-proportions (Newcombe), mildly conservative."
+        ),
+    }
+    case_note = _CASE_NOTES.get(
+        case,
+        "This tests the EXPLICIT-TASK case (the task pins approach A), so the "
+        "headline is the raw contamination rate and the differentials are ~0 by design.",
     )
     report = {
         "harness": "pull_contamination",
@@ -605,9 +618,12 @@ def main(argv: list[str] | None = None) -> int:
         args.output.write_text(serialised, encoding="utf-8")
         print(f"Wrote run report -> {args.output}", file=sys.stderr)
 
-    ambiguous_case = report["case"] == "ambiguous-task"
-    strict_tag = "" if ambiguous_case else "  [PRIMARY for explicit-task]"
-    leading_tag = "  [PRIMARY for ambiguous-task]" if ambiguous_case else ""
+    # The strict detector is primary only for the explicit-task case; for every
+    # other case (ambiguous-task, applicability-judgment, ...) the decision-first
+    # detector is primary, since comparative prose inflates the strict ambiguous rate.
+    leading_primary = report["case"] != "explicit-task"
+    strict_tag = "" if leading_primary else "  [PRIMARY for explicit-task]"
+    leading_tag = f"  [PRIMARY for {report['case']}]" if leading_primary else ""
     print("=== Pull-Contamination Filtering Harness ===")
     print(f"case={report['case']} mode={report['mode']} seeds={seeds} scenarios={len(scenarios)} trials={metrics['n_trials']}")
     print(f"-- strict detector (both markers -> ambiguous; conservative){strict_tag} --")

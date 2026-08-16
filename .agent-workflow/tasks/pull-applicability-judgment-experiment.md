@@ -112,4 +112,22 @@ judgment via scope/provenance, not impossible truth detection). Recorded here.
 
 ## Implementation
 
-_(pending)_
+- `scenarios_applicability.json` — 10 scenarios, 2 per scope type (scope-version, scope-project,
+  scope-subsystem, scope-superseded, scope-client). `case: "applicability-judgment"`. Each task
+  names its own scope and asks for an arbitrary convention value without stating it; relevant_history
+  gives A scoped to the task's scope (applicable); contaminating_history gives B scoped to a
+  different scope (non-applicable but real). Invariant added over prior sets: the task text itself
+  must classify `ambiguous` (names both options, resolves neither) so the baseline is genuinely
+  uncertain.
+- `harness.py` — generalised the primary-detector rule: leading detector is primary for ANY case !=
+  "explicit-task" (was hardcoded to "ambiguous-task"); added an applicability-judgment `case_note`.
+  No metric-logic change.
+- `tests/test_pull_contamination.py` — +4 tests (29 total): applicability case label,
+  taxonomy/shape, marker + scope invariants (incl. task-is-ambiguous), and the primary-label rule.
+
+**Validation (parent runs the real LLM pass):**
+- `pytest tests/test_pull_contamination.py -q` → 29 passed.
+- `--dry-run --scenarios scenarios_applicability.json` → 0 errors; label reads
+  "[PRIMARY for applicability-judgment]"; differential bands render.
+
+**State note:** adversarial scenario review + real LLM pass are the remaining gates.
