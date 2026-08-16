@@ -1,0 +1,45 @@
+{
+  "note": "OVER-PULL control set for the history-pull decision harness. All scenarios are opportunity=false (prior_turns are IRRELEVANT to current_task), but current_task is a plausible, NEUTRAL engineering task with NO anti-cues (no 'no dependencies' / 'no project state' / 'self-contained'). The agent only sees current_task. Question: does the agent pull history anyway? If no_opportunity_pull_rate is high here, the agent over-probes (fires regardless of whether relevant history exists), which means the pull trigger is NOT the bottleneck and retrieval quality/cost is. Contrast with scenarios_cold.json, whose no-opportunity controls carried explicit anti-cues.",
+  "scenarios": [
+    {
+      "id": "health-endpoint-neutral",
+      "user_directed": false,
+      "opportunity": false,
+      "prior_turns": [
+        {"role": "user", "content": "Team offsite is next Thursday; please book the larger conference room."},
+        {"role": "assistant", "content": "Booked the large conference room for next Thursday."}
+      ],
+      "current_task": "Add a /health endpoint to the service that returns HTTP 200 with the current build version."
+    },
+    {
+      "id": "pagination-neutral",
+      "user_directed": false,
+      "opportunity": false,
+      "prior_turns": [
+        {"role": "user", "content": "The coffee machine on the third floor is being replaced tomorrow morning."},
+        {"role": "assistant", "content": "Thanks for the heads up about the coffee machine."}
+      ],
+      "current_task": "Add pagination to the list-users API response."
+    },
+    {
+      "id": "cli-flag-neutral",
+      "user_directed": false,
+      "opportunity": false,
+      "prior_turns": [
+        {"role": "user", "content": "Reminder: submit your quarterly expense report by Friday."},
+        {"role": "assistant", "content": "Noted — I'll keep the expense-report deadline in mind."}
+      ],
+      "current_task": "Add a --dry-run flag to the CLI that prints what would happen without making changes."
+    },
+    {
+      "id": "hex-color-neutral",
+      "user_directed": false,
+      "opportunity": false,
+      "prior_turns": [
+        {"role": "user", "content": "The parking garage will be closed this weekend for maintenance."},
+        {"role": "assistant", "content": "Understood, noting the parking garage closure."}
+      ],
+      "current_task": "Add a helper that converts a hex color string like #1a2b3c into an (r, g, b) tuple."
+    }
+  ]
+}

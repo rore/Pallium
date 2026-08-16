@@ -17,9 +17,11 @@
 
 # Ideas
 - idea-reconcile-unprompted-pull-direction-signal
+- idea-measure-pull-filtering-accuracy-and-cost
 - idea-retrieval-source-fetch-batching
 - idea-reuse-judge-evidence-span-enforcement
 - fix-redline-self-protection-path-mismatch
+- fix-add-limit-to-injection-replay-simulation
 - fix-work-resumption-benchmark-scenario-count-drift
 - idea-operational-scale-hardening
 - idea-optional-reranker-support

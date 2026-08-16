@@ -45,5 +45,5 @@ add both to board Ideas. Separately (not in the PR): delete the 451 MB scratch s
 JSON files parse; doc contains no disallowed names (grep); CI: agent-workflow, redline
 (expect BLUE), test lanes (trivially pass — no code).
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
