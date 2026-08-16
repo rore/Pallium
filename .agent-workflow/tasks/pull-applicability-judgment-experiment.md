@@ -92,8 +92,7 @@ room to be decisive. Contamination here = adopting a convention from a demonstra
    synthetic, go real-corpus). High contamination_harm = the real hard problem is scope/applicability.
 
 **Verification plan:**
-- Applicability invariants → unit test (marker containment; task + both histories carry scope labels;
-  10 scenarios; 5 scope types).
+- Applicability invariants → unit test for marker containment + scope labels in task and both histories, 10 scenarios across 5 scope types.
 - Primary-label rule → unit test (leading primary for non-explicit case; strict primary for explicit).
 - Backward compatibility → explicit + ambiguous tests still pass.
 - First read → real LLM pass reports baseline (expect uncertain), relevant_lift (expect materially
