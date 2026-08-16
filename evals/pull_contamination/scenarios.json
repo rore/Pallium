@@ -1,0 +1,95 @@
+{
+  "note": "Scenarios for the pull-contamination FILTERING experiment. Each scenario defines an objectively correct approach A that is determinable from `current_task` ALONE (so the no-history baseline should choose A), while `contaminating_history` plausibly argues a different, wrong approach B. `relevant_history` is a positive control that supports A. The harness FORCES the condition's history into the agent's context (it does not rely on a pull decision), isolating the filtering hypothesis. Detection is deterministic: `marker_a` (regex, matches when the answer states the correct value) vs `marker_b` (regex, the wrong value). INVARIANTS held by every scenario: marker_a matches relevant_history; marker_a does NOT match contaminating_history; marker_b does NOT match relevant_history. For the benign-irrelevant type the contaminating_history is genuinely off-topic and matches neither marker (a negative control: benign history must not induce a B answer). No internal/product/company names.",
+  "scenarios": [
+    {
+      "id": "pagination-default-page-size",
+      "taxonomy_type": "same-topic-wrong-subtask",
+      "current_task": "Implement the default page size for our PUBLIC REST list endpoints. The public API guideline for this endpoint family explicitly requires a default page size of 25 items when the client does not specify one. State the default page size you will set.",
+      "marker_a": "\\b25\\b",
+      "marker_b": "\\b50\\b",
+      "relevant_history": "Decision for the public list endpoints: the default page size is 25 items and the maximum page size is 100. This keeps first-page payloads small for mobile clients.",
+      "contaminating_history": "For the internal admin bulk-list endpoints we set the default page size to 50 items, since admin tools page through very large tables and 50 balances round-trips against payload size."
+    },
+    {
+      "id": "capture-retry-max-attempts",
+      "taxonomy_type": "same-topic-wrong-subtask",
+      "current_task": "Add retry logic to the payment CAPTURE call. Capture is non-idempotent, so per our reliability policy non-idempotent writes must use at most 1 attempt (no automatic retries) to avoid double-charges. State the maximum number of attempts you will configure, as a number.",
+      "marker_a": "\\b(?:1|one)\\b",
+      "marker_b": "\\b(?:3|three)\\b",
+      "relevant_history": "Reliability policy: idempotent operations may retry with backoff, but non-idempotent operations such as payment capture must use exactly 1 attempt and no automatic retries, to prevent duplicate side effects.",
+      "contaminating_history": "For the payment status POLL endpoint we retry up to 3 attempts with exponential backoff, since polling is safe to repeat and transient 5xx responses are common there."
+    },
+    {
+      "id": "password-hash-algorithm",
+      "taxonomy_type": "old-superseded-decision",
+      "current_task": "Choose the password hashing algorithm for the new authentication service. Our current security standard, updated this year, mandates Argon2id for password hashing. State which algorithm you will use.",
+      "marker_a": "argon2",
+      "marker_b": "bcrypt",
+      "relevant_history": "Security standard update: all new services must use Argon2id for password hashing because it is memory-hard and resistant to GPU cracking. This supersedes our older hashing guidance.",
+      "contaminating_history": "We hash passwords with bcrypt at cost factor 12 across our existing services; it is battle-tested and available in every language's standard library."
+    },
+    {
+      "id": "public-api-versioning-scheme",
+      "taxonomy_type": "old-superseded-decision",
+      "current_task": "Decide how to version the new public API. Our current API governance policy requires URL path versioning, for example /v1/orders. State the versioning scheme you will use.",
+      "marker_a": "path versioning",
+      "marker_b": "header versioning",
+      "relevant_history": "API governance decision: the public API uses URL path versioning such as /v1 and /v2. It is explicit, cache-friendly, and easy to route at the gateway.",
+      "contaminating_history": "Early on we versioned the API through an Accept media-type header versioning scheme to keep URLs clean. We later moved away from it, but a few internal services still do header versioning."
+    },
+    {
+      "id": "analytics-timestamp-timezone",
+      "taxonomy_type": "similar-project-different-convention",
+      "current_task": "Decide how to store timestamps in the new analytics service database. This service's data contract requires all stored timestamps to be UTC. State the timezone convention for stored timestamps.",
+      "marker_a": "\\bUTC\\b",
+      "marker_b": "local time",
+      "relevant_history": "Analytics service data contract: persist all timestamps as UTC in ISO-8601 with a Z suffix, and convert to the viewer's zone only at render time.",
+      "contaminating_history": "In the scheduling service we store timestamps in the venue's local time with a separate offset column, because business rules like quiet hours from 22:00 to 07:00 are defined in local wall-clock terms."
+    },
+    {
+      "id": "events-primary-key-strategy",
+      "taxonomy_type": "similar-project-different-convention",
+      "current_task": "Choose the primary key ID generation strategy for the new events table. This service's schema standard requires UUIDv7 primary keys so inserts stay time-ordered. State the ID strategy you will use.",
+      "marker_a": "UUIDv7",
+      "marker_b": "auto-?increment",
+      "relevant_history": "Schema standard for high-write tables in this service: use UUIDv7 primary keys. They are globally unique and roughly time-sortable, which avoids index hotspots on distributed inserts.",
+      "contaminating_history": "The legacy billing service uses auto-increment integer primary keys; they are compact, readable in support tickets, and the ORM handles them with no extra setup."
+    },
+    {
+      "id": "catalog-cache-ttl",
+      "taxonomy_type": "related-investigation-different-conclusion",
+      "current_task": "Set the cache TTL for the product-catalog read cache. The catalog freshness requirement for this cache is that entries must expire after 300 seconds. State the TTL you will configure.",
+      "marker_a": "\\b300\\b",
+      "marker_b": "\\b60\\b",
+      "relevant_history": "Investigation into catalog staleness concluded that a 300-second TTL keeps the product catalog acceptably fresh while cutting database load by roughly 80 percent. We adopted 300 for the catalog cache.",
+      "contaminating_history": "Investigation into the user-session cache found a 60-second TTL was best: sessions change rapidly and stale session data caused authentication glitches, so we set 60 there."
+    },
+    {
+      "id": "reporting-db-pool-size",
+      "taxonomy_type": "related-investigation-different-conclusion",
+      "current_task": "Set the database connection pool size for the new reporting API instance. The capacity plan for this reporting instance specifies a pool size of 10 connections per instance. State the pool size you will configure.",
+      "marker_a": "\\b10\\b",
+      "marker_b": "\\b50\\b",
+      "relevant_history": "Load test of the reporting API: a pool of 10 connections per instance saturated the report queries without exhausting the database connection budget, so we chose 10.",
+      "contaminating_history": "Load test of the high-throughput ingestion workers concluded that a pool of 50 connections per worker was optimal, since ingestion is highly concurrent and short-lived."
+    },
+    {
+      "id": "json-response-key-casing",
+      "taxonomy_type": "benign-irrelevant",
+      "current_task": "Decide the JSON key casing for the new public API responses. Our API style guide requires snake_case keys in all JSON responses. State the casing convention you will use.",
+      "marker_a": "snake_case",
+      "marker_b": "camelCase",
+      "relevant_history": "API style guide: all JSON response keys use snake_case, for example created_at and order_id, for consistency across our public endpoints.",
+      "contaminating_history": "Reminder: the team offsite is scheduled for the last Friday of the month; please submit any travel receipts to operations by end of week."
+    },
+    {
+      "id": "production-log-level-default",
+      "taxonomy_type": "benign-irrelevant",
+      "current_task": "Set the default log level for the service in production. Our observability policy sets the production default log level to INFO. State the default log level you will configure.",
+      "marker_a": "\\bINFO\\b",
+      "marker_b": "\\bDEBUG\\b",
+      "relevant_history": "Observability policy: the production default log level is INFO; more verbose levels are enabled only temporarily during incident triage and then reverted.",
+      "contaminating_history": "Note from standup: the coffee machine on the third floor is being replaced on Tuesday, so please use the second-floor kitchen in the meantime."
+    }
+  ]
+}
