@@ -628,6 +628,27 @@
 
   </div>
 
+  <!-- ── Historical Lookups (agent pull path — operational) ─── -->
+  <div class="section-title">Historical Lookups <span class="scope-tag">the pull path: are agents fetching past work, and is tracking on</span></div>
+  <div class="card">
+    <div class="hh-grid">
+      <div>
+        <div class="tile-label">tracking</div>
+        <div class="dual"><span id="op-lookup-armed" class="v24 muted">—</span></div>
+        <div class="tile-sub">whether pull activity is being recorded</div>
+      </div>
+      <div>
+        <div class="tile-label">lookups recorded</div>
+        <div class="dual"><span id="op-lookup-events" class="v24 blue">—</span></div>
+        <div class="tile-sub">times an agent pulled up its own past work</div>
+      </div>
+    </div>
+    <div id="op-lookup-nudge" class="hh-empty" style="display:none">
+      Tracking is on, but no agent has pulled past work yet. Once agents use the history-pull tool,
+      the count climbs here — this is the honest zero, not a broken panel.
+    </div>
+  </div>
+
   <!-- ── System Health (Storage · Ingestion · Extraction Health) ─── -->
   <div class="section-title">System Health</div>
   <div class="sh-row">
@@ -886,7 +907,7 @@
         <div>
           <div class="tile-label">measurement armed</div>
           <div class="dual"><span id="hh-funnel-armed" class="v24 muted">—</span></div>
-          <div class="tile-sub">from <span class="v" style="color:var(--text)">/status.historical_lookup_funnel</span></div>
+          <div class="tile-sub">is reuse tracking switched on</div>
         </div>
         <div>
           <div class="tile-label">lookups recorded</div>
@@ -903,17 +924,17 @@
 
     <!-- ── 2 · Reuse KPI rungs (RETROSPECTIVE) ────────────────── -->
     <div class="section-title">
-      Reuse KPI <span class="framing-tag retrospective">retrospective</span>
-      <span class="scope-tag">reuse per 100 eligible — calibrated only when the judge agrees with gold</span>
+      Did it help? <span class="framing-tag retrospective">looks back at past work</span>
+      <span class="scope-tag">how often a pulled memory actually got used in the work that followed</span>
     </div>
     <div class="card">
       <div id="hh-reuse-kpi">
         <div class="hh-empty">
-          Rung rates are <strong>uncalibrated</strong> until the retrospective judge is
-          checked against the human-labelled gold set. Run
-          <code>python -m evals.reuse_judge_calibration</code> to measure judge-vs-gold
-          agreement; below the threshold, rung numbers are shown as uncalibrated, not
-          confident. Sourced from the last-written calibration report, never computed on-request.
+          We measure how often past work that an agent pulled up actually gets used again — either
+          <strong>reused directly</strong> (the agent copied a specific detail) or used to
+          <strong>shape the approach</strong>. An automatic check scores this, but we don't trust its
+          numbers until it has been compared against a person reviewing the same cases. That
+          human comparison hasn't been run yet, so these numbers aren't shown as confident.
         </div>
       </div>
     </div>
@@ -1560,6 +1581,17 @@ function renderFunnel(funnel) {
   // Empty-state nudge: armed but zero lookups captured yet
   const nudge = document.getElementById('hh-funnel-nudge');
   if (nudge) nudge.style.display = (armed && events === 0) ? '' : 'none';
+
+  // Operational tab — same funnel data as an operational health signal.
+  const opArmed = document.getElementById('op-lookup-armed');
+  if (opArmed) {
+    opArmed.textContent = armed ? 'ON' : 'OFF';
+    opArmed.className = 'v24 ' + (armed ? 'green' : 'muted');
+  }
+  const opEvents = document.getElementById('op-lookup-events');
+  if (opEvents) opEvents.textContent = (events != null) ? fmtNum(events) : '—';
+  const opNudge = document.getElementById('op-lookup-nudge');
+  if (opNudge) opNudge.style.display = (armed && events === 0) ? '' : 'none';
 }
 
 // ──────────────────────────────────────────────────
@@ -2186,21 +2218,20 @@ function renderEffectivenessReports(reports) {
   renderDerivationFidelity(reports.derivation_fidelity || { available: false });
 }
 
-// Reuse-KPI calibration affordance. The rung-rate table is not wired to live
-// data yet; until it is, this panel's job is to say — honestly — whether the
-// judge that WOULD produce those rung rates has been shown to agree with a
-// human-labelled gold set. Until judge-vs-gold agreement clears the threshold,
-// rung rates are UNCALIBRATED and must not be read as confident.
+// Reuse-KPI calibration affordance. The reuse-rate table is not wired to live
+// data yet; until it is, this panel's job is to say — honestly, in plain words —
+// whether the automatic check that WOULD produce those rates has been compared
+// against a person reviewing the same cases. Until that agreement is good enough,
+// the rates are not shown as confident.
 function renderReuseCalibration(entry) {
   const el = document.getElementById('hh-reuse-kpi');
   if (!el) return;
   if (!entry.available) {
-    el.innerHTML = '<div class="hh-empty">Rung rates are <strong>uncalibrated</strong> — ' +
-      'the rung-1 (verified incorporation) and rung-2 (judged influence) rates come from ' +
-      'the retrospective judge, and the judge has not yet been checked against the ' +
-      'human-labelled gold set. Run <code>python -m evals.reuse_judge_calibration</code> ' +
-      'to measure judge-vs-gold agreement; until it clears the threshold, treat any rung ' +
-      'number as uncalibrated, not confident.</div>';
+    el.innerHTML = '<div class="hh-empty">We track how often pulled-up past work actually gets ' +
+      'used again — <strong>reused directly</strong> (a specific detail is copied) or used to ' +
+      '<strong>shape the approach</strong>. An automatic check scores this, but its numbers ' +
+      'aren\'t shown as confident until they\'ve been compared against a person reviewing the ' +
+      'same cases. That comparison hasn\'t been run yet.</div>';
     return;
   }
   const jvg = (entry.report && entry.report.judge_vs_gold) || {};
@@ -2208,20 +2239,22 @@ function renderReuseCalibration(entry) {
   const thr = (jvg.threshold != null) ? Number(jvg.threshold).toFixed(2) : '0.60';
   const calibrated = jvg.calibrated === true;
   const uncalibrated = jvg.calibrated === false;
-  const verdict = calibrated ? 'CALIBRATED' : (uncalibrated ? 'UNCALIBRATED' : 'indeterminate');
+  const verdict = calibrated ? 'checked against human review'
+    : (uncalibrated ? 'not yet checked against human review' : 'in progress');
   const color = calibrated ? 'var(--green)' : (uncalibrated ? 'var(--red)' : 'var(--muted)');
   const rows = [];
-  rows.push(_hhKv('judge-vs-gold κ', kappa + '  (threshold ' + thr + ')'));
-  if (jvg.n != null) rows.push(_hhKv('gold lookups (n)', fmtNum(jvg.n)));
-  rows.push('<div class="hh-kv"><span class="k">rung rates</span>' +
+  rows.push(_hhKv('agreement with human review', kappa + '  (needs ' + thr + '+ to trust)'));
+  if (jvg.n != null) rows.push(_hhKv('cases reviewed', fmtNum(jvg.n)));
+  rows.push('<div class="hh-kv"><span class="k">these numbers are</span>' +
     '<span class="v" style="color:' + color + ';font-weight:600">' + verdict + '</span></div>');
   let note = '';
   if (uncalibrated) {
-    note = '<div class="hh-empty">Judge-vs-gold agreement is below threshold — rung rates ' +
-      'are presented as <strong>uncalibrated</strong>, not confident.</div>';
+    note = '<div class="hh-empty">The automatic check doesn\'t yet agree closely enough with ' +
+      'human review, so these reuse numbers are <strong>not shown as confident</strong>.</div>';
   } else if (calibrated) {
-    note = '<div class="hh-empty">Judge cleared the gold-agreement threshold. Note the gold ' +
-      'set is small and single-author synthetic — a substantial, not final, calibration.</div>';
+    note = '<div class="hh-empty">The automatic check agrees closely enough with human review to ' +
+      'trust these numbers. Note the review set is small and hand-built — solid, but not the ' +
+      'final word.</div>';
   }
   el.innerHTML = rows.join('') + note + _hhStamp(entry);
 }
