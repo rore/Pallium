@@ -44,5 +44,5 @@ for the fair numbers. No code.
 **Verification:**
 Doc name-scan clean; cross-refs resolve; CI: agent-workflow, redline (BLUE), test lanes.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->

@@ -1,6 +1,6 @@
 ---
 id: idea-measure-pull-filtering-accuracy-and-cost
-title: Measure agent filtering accuracy on irrelevant pull returns + per-task probe cost
+title: Experiment 1 (sharpened) — is indiscriminate-but-agent-filtered pull net-positive?
 status: queued
 priority: high
 commitment: uncommitted
@@ -8,53 +8,74 @@ commitment: uncommitted
 
 ## Summary
 
-The 2026-08-16 injection-vs-pull validation showed the vNext pull trigger is NOT the
-bottleneck — a guided agent readily (over-)probes history even on cold tasks
-(opportunity_pull_rate 1.0; no_opportunity_pull_rate 0.75). It also showed raw search
-returns non-empty results even when nothing relevant exists (`lookup_to_nonempty=1.0` on
-no-opportunity tasks). So the pull model's advantage over injection is NOT better ranking
-— it is **agent-in-the-loop filtering**: the agent must reliably discard irrelevant
-returns. That filtering accuracy, and the cost of probing on ~every task, are the new
-make-or-break — and are currently UNMEASURED.
+The 2026-08-16 validation reframed the vNext make-or-break. It is NOT "will agents pull?"
+— a guided agent readily (over-)probes: opportunity_pull_rate 1.0, and no_opportunity_pull_
+rate 0.75 on neutral tasks. And raw search returns non-empty results even when nothing is
+relevant. So the pull model's distinctive hypothesis is **agent-in-the-loop filtering**:
+the agent, not a Pallium-side score, decides what to keep. The open question becomes:
+
+> **Is indiscriminate-but-agent-filtered pull actually good product behavior — does its
+> benefit exceed its context/latency cost, and does irrelevant history contaminate the
+> agent's reasoning?**
+
+This replaces the old Experiment-1 framing.
 
 ## Why
 
-If the agent over-pulls (which it does) and raw retrieval is non-discriminative (returns
-top-k regardless of true relevance, same as injection), then the entire value of the pivot
-rests on the agent correctly ignoring irrelevant raw turns. If it instead gets misled by
-plausible-but-irrelevant returns, we have merely moved the injection noise problem into the
-pull path — while adding a per-task search+expand token/latency cost. Neither the filtering
-accuracy nor the probe cost was measured in the validation cycle; they are the load-bearing
-unknowns for whether pure-pull actually beats injection end-to-end.
+The proactive-injection score is non-discriminative (relevant vs not-relevant vector score
+878 vs 877), so a Pallium-side confidence threshold is a dead route — do NOT build one yet.
+The distinctive bet of pull is that the agent filters noise better than a background gate
+did. If it does, pull solves the old relevance problem. If plausible historical noise
+contaminates the agent's work, we have merely moved the relevance problem one step
+downstream while adding per-task cost. That contamination outcome is the thing to catch.
 
-## In Scope
+## In Scope — measure four things
 
-- Extend the decision-agent harness (or a sibling) to measure, on no-opportunity scenarios
-  where search returns irrelevant turns: does the agent's FINAL answer correctly ignore
-  them (filtering accuracy / false-incorporation rate)? Use realistic neutral tasks (see
-  `evals/history_pull_decision/scenarios_overpull_control.json`).
-- Measure the per-task cost of the probe: added tokens (search + expand + filtering
-  reasoning) and round-trips, on both opportunity and no-opportunity tasks.
-- Report filtering accuracy + cost alongside the existing behavioural metrics, with Wilson
-  bands; scale the scenario set beyond the current small n.
+1. **Pull selectivity** — opportunity pull rate vs no-opportunity pull rate (does the agent
+   pull discriminately, or on ~everything?).
+2. **Returned-result precision** — when the pull returns history, is any of it actually
+   useful for the task?
+3. **Agent filtering** — when the returned results are irrelevant, does the agent's FINAL
+   answer correctly discard them (rather than let them shape the work)?
+4. **Cost** — extra context tokens, tool calls, and latency per substantive session.
+
+Plus an explicitly tracked **dangerous outcome**:
+
+> **irrelevant historical result → materially influences the agent's work** (the pull
+> equivalent of bad proactive injection).
+
+## Constraints / method
+
+- **Run against REAL history, not only synthetic scenarios.** The contamination risk only
+  shows up against genuinely-ambiguous real noise; hand-seeded relevant/irrelevant history
+  cannot stress the agent's filter honestly. Use the decision-agent harness for discovery
+  (see `evals/history_pull_decision/scenarios_cold.json` + `scenarios_overpull_control.json`)
+  but validate on real containers.
+- **Do NOT build a new Pallium-side confidence threshold** as part of this — first establish
+  whether agent-in-the-loop filtering works. That is the distinctive hypothesis under test.
+- Report with Wilson bands; scale beyond the current small (n=4–30) synthetic sets.
 
 ## Out of Scope
 
-- Changing production retrieval/injection behavior.
-- The reuse-ladder rung labelling (separate signal).
+- Any production retrieval/injection change.
+- Reuse-ladder rung labelling (separate signal).
+- Re-litigating raw-vs-derived representation quality — prior FAIR studies already cover it
+  (~29% misleading; raw≈derived tied at top-5); this run's larger magnitudes were biased.
 
 ## Done When
 
-1. A rerunnable measurement of agent filtering accuracy on irrelevant pull returns exists
-   (does the final answer avoid using them), on a non-trivial scenario set.
-2. Per-task probe cost (tokens + round-trips) is reported for opportunity and
-   no-opportunity tasks.
-3. The result is stated as a clear go/no-go input: does agent filtering + cost make
-   pull-from-raw a net win over injection.
+1. Pull selectivity, returned-result precision, agent filtering accuracy, and per-session
+   cost are all measured and reported (with bands), on REAL history.
+2. The contamination outcome (irrelevant result materially influencing the agent) has an
+   explicit measured rate.
+3. The result is a clear go/no-go on: is indiscriminate-but-agent-filtered pull net-positive
+   vs the (now-deprecated) proactive injection?
 
 ## Notes
 
-Surfaced by the injection-vs-pull validation cycle (see
-`docs/research/2026-08-16-injection-vs-pull-validation.md`). Related:
-`idea-reconcile-unprompted-pull-direction-signal`,
-`idea-history-pull-decision-agent-harness` (Done).
+Surfaced + reframed by the injection-vs-pull validation cycle
+(`docs/research/2026-08-16-injection-vs-pull-validation.md`) and a follow-up review. Fair
+prior context: `docs/context/strategy-vnext.md`, `docs/designs/015-vnext-historical-work-
+execution.md`, `docs/designs/006-vector-retrieval-validation-report.md`. Related:
+`idea-reconcile-unprompted-pull-direction-signal`, `idea-history-pull-decision-agent-harness`
+(Done).

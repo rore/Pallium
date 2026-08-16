@@ -13,10 +13,12 @@ sharing one container).
 ## Summary
 
 The data supports the pivot, and **relocates the risk**. Proactive derived-injection is
-broken (noisy, mostly absent, and low-quality when present). Raw retrieval is a better
-surface. A guided agent readily pulls — so the *trigger* is not the bottleneck. The new
-open risks are the **cost of probing on nearly every task** and the **unsolved retrieval
-precision inside the pull** (the win depends on the agent filtering irrelevant returns,
+broken (noisy, mostly absent). Raw history is *findable* (strong absolute recall in prior
+studies), which makes pull feasible — but this run does NOT establish raw-vs-derived
+superiority (see #3). A guided agent readily pulls — so the *trigger* is not the
+bottleneck. The new open risks are the **cost of probing on nearly every task** and the
+**unsolved retrieval precision inside the pull** (the win depends on the agent filtering
+irrelevant returns,
 not on better ranking).
 
 ## Findings
@@ -41,14 +43,28 @@ not on better ranking).
   inject rate — the system suppresses hard there). Precision is not fixable in the first;
   coverage is near-zero in the second.
 
-### 3. Raw retrieval beats derived memory (the payload)
+### 3. Raw retrieval is findable; raw-vs-derived *superiority* is NOT established here
 
-- Candidate recovery on real lookups: raw-only vs derived-only recovery ≈ **16:1**
-  (`neither` = 0). Raw representation recovers far more relevant candidates.
-- Representation quality (LLM judge, 30 queries, 148 derived objects), scoring the derived
-  object against the full raw turns: derived usability **0.08 / 1.0**, **74% flagged
-  misleading**, 65% unsupported. Derived memory's only advantage is packing density (more
-  small units per token budget).
+This run's raw-vs-derived magnitudes are **biased and should not be used** to argue raw
+beats derived — they conflict with cleaner prior FAIR studies:
+
+- Candidate recovery on real lookups showed raw-only ≫ derived-only recovery, but this is
+  structurally biased (a raw turn literally contains the matched text). Treat it only as
+  weak evidence that **raw turns are findable/retrievable** (relevant to pull *feasibility*),
+  NOT as evidence of raw > derived quality. A prior debiased retrieval study found raw vs
+  curated/derived **essentially tied at top-5**
+  (`docs/designs/006-vector-retrieval-validation-report.md`).
+- The representation judge here flagged a high "misleading" rate for derived objects, but
+  that judge is **uncalibrated** and structurally treats raw as the reference. The fair
+  prior number is **~29% misleading / ~29% fully-complete** for derived compression
+  (`docs/context/strategy-vnext.md`, `docs/designs/015-vnext-historical-work-execution.md`).
+  Trust ~29%, not this run's magnitude.
+
+Bottom line for this axis: **directionally derived memory has quality problems, but the
+magnitude is not trustworthy here and this run does not change the derived-memory position.**
+Raw's established strength is its absolute recall (~83% top-5, ~97% top-10 on clear
+historical queries per the prior studies), which supports pull *feasibility* — not a
+raw-vs-derived verdict.
 
 ### 4. The pull trigger is not the bottleneck — the agent over-probes
 
@@ -63,9 +79,12 @@ not on better ranking).
 
 ## Implications
 
-- **Deprecating proactive derived-injection is well-justified**: broken precision, mostly
-  absent, low-quality representation.
-- **Pull-from-raw is supported** on both retrieval quality and agent trigger behavior.
+- **Deprecating proactive derived-injection is well-justified**: broken precision (38%,
+  non-discriminative score) and mostly absent (81% nothing). This is the solid result.
+- **Pull-from-raw is *feasible*** — raw history has strong absolute recall (prior studies)
+  and a guided agent readily pulls. Whether it is *net-better* than injection is NOT settled
+  here; it hinges on the make-or-break questions below, not on this run's biased raw-vs-derived
+  magnitudes.
 - **New make-or-break questions** (not yet measured): (a) how reliably the agent discards
   irrelevant pull returns, and the token/latency cost of probing on ~every task; (b) raw
   ranking is still non-discriminative (returns top-k regardless of true relevance) — the
