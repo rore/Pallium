@@ -605,15 +605,18 @@ def main(argv: list[str] | None = None) -> int:
         args.output.write_text(serialised, encoding="utf-8")
         print(f"Wrote run report -> {args.output}", file=sys.stderr)
 
+    ambiguous_case = report["case"] == "ambiguous-task"
+    strict_tag = "" if ambiguous_case else "  [PRIMARY for explicit-task]"
+    leading_tag = "  [PRIMARY for ambiguous-task]" if ambiguous_case else ""
     print("=== Pull-Contamination Filtering Harness ===")
     print(f"case={report['case']} mode={report['mode']} seeds={seeds} scenarios={len(scenarios)} trials={metrics['n_trials']}")
-    print("-- strict detector (both markers -> ambiguous; conservative) --")
+    print(f"-- strict detector (both markers -> ambiguous; conservative){strict_tag} --")
     print(f"  baseline_choose_A_rate       = {_fmt(metrics['baseline_choose_A_rate'])}")
     print(f"  control_choose_A_rate        = {_fmt(metrics['control_choose_A_rate'])}")
     print(f"  contamination_rate (chose_B) = {_fmt(metrics['contamination_rate'])}")
     print(f"  ambiguous[no_hist/rel/contam]= {metrics['ambiguous_rate'][CONDITION_NO_HISTORY]['rate']}/{metrics['ambiguous_rate'][CONDITION_RELEVANT]['rate']}/{metrics['ambiguous_rate'][CONDITION_CONTAMINATING]['rate']}")
     lead = metrics["leading_choice"]
-    print("-- leading (decision-first) detector [PRIMARY for ambiguous-task] --")
+    print(f"-- leading (decision-first) detector{leading_tag} --")
     print(f"  baseline_choose_A_rate       = {_fmt(lead['baseline_choose_A_rate'])}")
     print(f"  control_choose_A_rate        = {_fmt(lead['control_choose_A_rate'])}")
     print(f"  control_used_history_rate    = {_fmt(lead['control_used_history_rate'])}")

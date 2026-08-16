@@ -137,12 +137,13 @@ task; three conditions; measure contamination-vs-baseline, relevant-helps, wrong
   `contamination_harm` = B_rate(contaminating) − B_rate(baseline). Added `load_case` + threaded the
   `case` label into the report/CLI with a case-aware honesty note and a `_fmt_diff` printer. Keys
   ADDED only — the explicit set + its tests are untouched.
-- `tests/test_pull_contamination.py` — +7 tests (23 total): ambiguous case label, ambiguous
+- `tests/test_pull_contamination.py` — +9 tests (25 total): ambiguous case label, ambiguous
   taxonomy/shape, ambiguous four-way marker invariants (every contaminating_history argues B here),
-  and differential math (empty-safe, sign + zero-exclusion, directional block).
+  differential math (empty-safe, sign + zero-exclusion, directional block), the decision-first
+  detector, and the leading_choice metric block.
 
 **Validation (parent runs the real LLM pass):**
-- `pytest tests/test_pull_contamination.py -x -q` → 23 passed.
+- `pytest tests/test_pull_contamination.py -x -q` → 25 passed.
 - `--dry-run --scenarios scenarios_ambiguous.json` completes, 0 errors; differential bands render
   with the `*excludes 0*` flag. (Dry-run baseline reads ambiguous because the stub echoes the task,
   which names both options; the real agent picks one — stub artifact, not a signal.)
