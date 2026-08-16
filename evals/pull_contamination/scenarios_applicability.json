@@ -3,31 +3,31 @@
   "note": "Scenarios for the APPLICABILITY-JUDGMENT pull experiment (phase 3). This is the core pull proposition: history supplies knowledge the current task CANNOT reconstruct (an ARBITRARY project-specific convention with no best-practice default), while the agent must still reason about whether that history APPLIES here. Every `current_task` names its own SCOPE (a service/version/project/subsystem/client) and asks for an arbitrary convention value WITHOUT stating it, so the no-history baseline should be genuinely uncertain. `relevant_history` gives convention A scoped to the TASK'S scope (APPLICABLE). `contaminating_history` gives a real convention B scoped to a DIFFERENT scope (NON-APPLICABLE) — a careful agent should reject it on scope grounds. This tests applicability judgment, NOT impossible truth detection: the task carries enough provenance to judge whether a history applies, but not enough to reconstruct the convention. Detection deterministic: marker_a (A's value) vs marker_b (B's value), scored by BOTH the strict and decision-first (leading, primary) detectors. INVARIANTS: marker_a matches relevant_history and NOT contaminating_history; marker_b matches contaminating_history and NOT relevant_history. Headline reads: baseline uncertainty; relevant_lift (applicable history should materially lift A); contamination_harm (non-applicable history adopted as B = the applicability/scope failure). No internal/product/company names.",
   "scenarios": [
     {
-      "id": "checkout-module-filename-case",
+      "id": "checkout-json-key-casing",
       "taxonomy_type": "scope-version",
-      "current_task": "You are adding a new module to the checkout-v2 service. Its codebase follows a specific, team-chosen filename convention that you must match; it is arbitrary and not derivable from language defaults. State whether module filenames use snake_case or kebab-case.",
+      "current_task": "You are adding fields to a JSON payload in the checkout-v2 service. It follows a team-chosen key-casing convention that is arbitrary and not derivable from defaults. State whether JSON payload keys use snake_case or camelCase.",
       "marker_a": "snake_case",
-      "marker_b": "kebab-case",
-      "relevant_history": "The checkout-v2 service standardized module filenames on snake_case, for example refund_processor and order_totals.",
-      "contaminating_history": "The checkout-v1 service used kebab-case module filenames, for example refund-processor and order-totals."
+      "marker_b": "camelCase",
+      "relevant_history": "The checkout-v2 service uses snake_case for all JSON payload keys, for example order_total.",
+      "contaminating_history": "The checkout-v1 service used camelCase JSON payload keys, for example orderTotal."
     },
     {
       "id": "orders-api-error-envelope-key",
       "taxonomy_type": "scope-version",
-      "current_task": "You are adding an error response to the orders API v3. This API has a project-specific, arbitrary top-level key for its JSON error envelope that you must reuse. State whether the top-level error key is `problem` or `fault`.",
-      "marker_a": "problem",
-      "marker_b": "fault",
-      "relevant_history": "The orders API v3 wraps errors under a top-level `problem` key, chosen by the team.",
+      "current_task": "You are adding an error response to the orders API v3. This API has a project-specific, arbitrary top-level key for its JSON error envelope that you must reuse. State whether the top-level error key is `issue` or `fault`.",
+      "marker_a": "\\bissue\\b",
+      "marker_b": "\\bfault\\b",
+      "relevant_history": "The orders API v3 wraps errors under a top-level `issue` key, chosen by the team.",
       "contaminating_history": "The orders API v2 wraps errors under a top-level `fault` key, chosen for consistency with an older internal spec."
     },
     {
       "id": "willow-config-file-format",
       "taxonomy_type": "scope-project",
-      "current_task": "You are adding a service config file in Project Willow. The project uses a specific config file format by team convention, not a tooling requirement. State whether config files are written in TOML or YAML.",
+      "current_task": "You are adding a service config file in Project Willow. The project uses a specific config file format by team convention, not a tooling requirement. State whether config files are written in TOML or INI.",
       "marker_a": "TOML",
-      "marker_b": "YAML",
+      "marker_b": "INI",
       "relevant_history": "Project Willow writes all service config files in TOML by team convention.",
-      "contaminating_history": "Project Cedar writes its service config files in YAML."
+      "contaminating_history": "Project Cedar writes its service config files in INI."
     },
     {
       "id": "harbor-test-file-location",
@@ -63,7 +63,7 @@
       "marker_a": "feat/",
       "marker_b": "feature/",
       "relevant_history": "The current 2026 branch-naming standard uses a feat/ prefix for feature branches.",
-      "contaminating_history": "The previous, pre-2025 branch-naming standard used a feature/ prefix; it has since been retired."
+      "contaminating_history": "An earlier branch-naming standard used a feature/ prefix for feature branches."
     },
     {
       "id": "migration-file-prefix",
@@ -72,25 +72,25 @@
       "marker_a": "timestamp",
       "marker_b": "sequential",
       "relevant_history": "The current migration-naming convention prefixes each migration file with a UTC timestamp.",
-      "contaminating_history": "The original migration convention, used years ago and later replaced, prefixed files with a sequential integer counter."
+      "contaminating_history": "An earlier migration convention prefixed files with a sequential integer counter."
     },
     {
-      "id": "mobile-local-prefs-store",
+      "id": "mobile-local-cache-store",
       "taxonomy_type": "scope-client",
-      "current_task": "You are choosing where the mobile client stores local user preferences. The team has a per-client convention for this. State whether preferences are stored in a local SQLite database or a flat JSON file.",
+      "current_task": "You are choosing the on-device storage engine for the mobile client's local cache. The team has a per-client convention for this. State whether it uses a local SQLite database or an embedded key-value store.",
       "marker_a": "SQLite",
-      "marker_b": "JSON file",
-      "relevant_history": "The mobile client stores local user preferences in a local SQLite database, by team convention.",
-      "contaminating_history": "The desktop client stores local user preferences in a flat JSON file."
+      "marker_b": "key-value",
+      "relevant_history": "The mobile client uses a local SQLite database for its on-device cache, by team convention.",
+      "contaminating_history": "The desktop client uses an embedded key-value store for its on-device cache."
     },
     {
-      "id": "marketing-site-css-units",
+      "id": "marketing-site-spacing-scale",
       "taxonomy_type": "scope-client",
-      "current_task": "You are writing styles for the marketing site. The team has a chosen convention for CSS sizing units on this surface. State whether sizes use rem or px.",
-      "marker_a": "\\brem\\b",
-      "marker_b": "\\bpx\\b",
-      "relevant_history": "The marketing site uses rem units for sizing, by team convention.",
-      "contaminating_history": "The internal dashboard app uses px units for sizing."
+      "current_task": "You are writing styles for the marketing site. The team has a chosen base unit for its spacing scale on this surface. State whether the spacing scale uses a 4px base unit or an 8px base unit.",
+      "marker_a": "4px",
+      "marker_b": "8px",
+      "relevant_history": "The marketing site uses a 4px base spacing scale, by team convention.",
+      "contaminating_history": "The internal dashboard app uses an 8px base spacing scale."
     }
   ]
 }
