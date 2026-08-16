@@ -52,7 +52,7 @@ real re-calibration run `python -m evals.reuse_judge_calibration --seeds 0,1,2`
 (scratch DB) with before/after κ recorded in Evidence. CI: test(3.12/3.13),
 agent-workflow, redline.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -66,3 +66,29 @@ agent-workflow, redline.
   verbatim/near-verbatim in after_turns" — a stricter test the rubric never stated.
   All 4 gold influence cases map to incorporation (κ=0.50). A prior cleaner gold
   label (#24 rewrite) did not move it → rubric, not gold.
+- Applied 3 coordinated `JUDGE_SYSTEM_PROMPT` wording changes (rung selection now
+  neutral + tie-break preferring influence; incorporation anchored to a reproduced
+  RETRIEVED-HISTORY detail; evidence_span must overlap BOTH blocks). Also aligned
+  the module-docstring summary. No code/schema/logic change.
+
+## Evidence
+
+Unit tests: `pytest tests/ -k "reuse_judge_calibration or historical_lookup"` →
+82 passed, 3 skipped (wording change breaks nothing).
+
+Real re-calibration, same-day before/after under identical conditions (seeds 0,1,2,
+scratch DB, `.local/llm-cache`; OLD via `git stash` of the uncommitted rubric edits):
+
+| rubric | judge-vs-gold κ | calibrated | incorporation / influence | seed-vs-seed κ | failures |
+|---|---|---|---|---|---|
+| OLD | 0.50 | False | 8 / 0 (all 4 influence collapsed up) | 1.0 | 0 |
+| NEW | 0.75 | True  | 6 / 2 (2 of 4 influence recovered)   | 1.0 | 0 |
+
+**Honesty caveat (unchanged, load-bearing):** κ=0.75 on n=12 single-author synthetic
+gold is *necessary-not-sufficient* — the CI is wide, and 2 of 4 influence cases still
+collapse to incorporation. This PR aligns the judge's rubric to the gold's
+incorporation definition (a real consistency fix) and moves κ past the project
+threshold, but does NOT constitute full calibration. The real remedy remains a larger,
+multi-rater gold set with a genuine second human rater (needs the user; tracked in
+`idea-reuse-judge-calibration`). Rung rates must continue to carry the uncalibrated/
+provisional framing until that lands.
