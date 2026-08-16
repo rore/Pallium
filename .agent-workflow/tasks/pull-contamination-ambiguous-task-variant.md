@@ -110,4 +110,36 @@ task; three conditions; measure contamination-vs-baseline, relevant-helps, wrong
 
 ## Implementation
 
-_(pending)_
+- `scenarios_ambiguous.json` — 10 ambiguous-task scenarios, 2 per type (two-reasonable-patterns,
+  old-decision-pre-architecture-change, similar-subsystem-different-constraint,
+  investigation-not-transferable, user-preference-non-universal). Top-level `"case":
+  "ambiguous-task"`. Each task states a SITUATION (cues favour A) and forces a concrete A-vs-B
+  choice without stating the answer.
+- **Clean-context adversarial design review** (delegated to a general-purpose subagent, read-only,
+  before the LLM run) caught the dominant failure mode: 4 tasks embedded the *textbook trigger
+  keyword* for A directly in the task text, which pins the baseline and collapses the scenario back
+  to the explicit-task case. Fixed per the reviewer's pattern — keep the situational cue, delete
+  the clause stating A's mechanism/justification — on: service-integration-style (dropped "must not
+  block"/"delay acceptable"), session-storage (dropped "no sticky sessions"), read-after-write
+  (softened "ALWAYS…no visible staleness" → "generally expect…right away"), logging-format (dropped
+  "indexes structured fields"). Also re-keyed batch-processing-parallelism OFF magic-number markers
+  (`\b500\b`/`\b8\b` would miss correct-direction answers naming other numbers) ONTO concept markers,
+  and lightly softened concurrency-locking. id-generation-strategy-distributed was flagged the gold
+  template (genuinely-split baseline). Marker invariants re-verified after every edit.
+- `harness.py` — added `_diff_with_band` (Newcombe method-10 difference of two proportions, composed
+  from the two Wilson intervals — no new dependency, paired-arms caveat documented) and a
+  `differential` metrics block: `relevant_lift` = A_rate(relevant) − A_rate(baseline),
+  `contamination_harm` = B_rate(contaminating) − B_rate(baseline). Added `load_case` + threaded the
+  `case` label into the report/CLI with a case-aware honesty note and a `_fmt_diff` printer. Keys
+  ADDED only — the explicit set + its tests are untouched.
+- `tests/test_pull_contamination.py` — +7 tests (23 total): ambiguous case label, ambiguous
+  taxonomy/shape, ambiguous four-way marker invariants (every contaminating_history argues B here),
+  and differential math (empty-safe, sign + zero-exclusion, directional block).
+
+**Validation (parent runs the real LLM pass):**
+- `pytest tests/test_pull_contamination.py -x -q` → 23 passed.
+- `--dry-run --scenarios scenarios_ambiguous.json` completes, 0 errors; differential bands render
+  with the `*excludes 0*` flag. (Dry-run baseline reads ambiguous because the stub echoes the task,
+  which names both options; the real agent picks one — stub artifact, not a signal.)
+
+**State note:** real adversarial-synthetic LLM pass is the remaining gate before Ready for review.

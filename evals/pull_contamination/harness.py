@@ -125,6 +125,17 @@ def load_scenarios(path: Path | str = _SCENARIOS_PATH) -> list[Scenario]:
     return out
 
 
+def load_case(path: Path | str = _SCENARIOS_PATH) -> str:
+    """The scenario file's ``case`` label ('explicit-task' / 'ambiguous-task').
+
+    Controls only reporting framing (the ``honesty`` note + a printed line), not
+    the harness logic. Defaults to 'explicit-task' for the original scenarios.json
+    which predates the field.
+    """
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return str(data.get("case", "explicit-task"))
+
+
 # ---------------------------------------------------------------------------
 # Deterministic A/B detection (the PRIMARY signal)
 # ---------------------------------------------------------------------------
@@ -359,6 +370,33 @@ def _rate_with_band(numerator: int, denominator: int) -> dict[str, Any]:
     }
 
 
+def _diff_with_band(k1: int, n1: int, k2: int, n2: int) -> dict[str, Any]:
+    """95% band for the difference of two proportions p1 - p2 (Newcombe method 10).
+
+    Composes the two Wilson score intervals (the same ``_wilson_95`` used
+    everywhere else) into a difference interval, so no new dependency and no
+    normal approximation on small counts. Empty-data safe: ``diff`` and band are
+    ``None`` when either arm has n == 0.
+
+    Direction convention for this harness: arm 1 is the treatment (relevant or
+    contaminating), arm 2 is the baseline, so a positive ``diff`` whose band
+    excludes 0 means the treatment moved the rate up relative to baseline.
+
+    NOTE: the arms are PAIRED (same scenarios/repetitions across conditions);
+    this independent-proportions interval is therefore mildly conservative, which
+    is the safe direction for a first read. Recorded in the report ``honesty``.
+    """
+    if n1 == 0 or n2 == 0:
+        return {"diff": None, "wilson_95": None, "excludes_zero": None}
+    p1, p2 = k1 / n1, k2 / n2
+    l1, u1 = _wilson_95(k1, n1)
+    l2, u2 = _wilson_95(k2, n2)
+    diff = p1 - p2
+    low = diff - ((p1 - l1) ** 2 + (u2 - p2) ** 2) ** 0.5
+    high = diff + ((u1 - p1) ** 2 + (p2 - l2) ** 2) ** 0.5
+    return {"diff": diff, "wilson_95": [low, high], "excludes_zero": low > 0 or high < 0}
+
+
 def _condition_counts(trials: list[Trial], condition: str) -> dict[str, Any]:
     ok = [t for t in trials if t.condition == condition and t.error is None]
     n = len(ok)
@@ -384,6 +422,16 @@ def compute_metrics(trials: list[Trial]) -> dict[str, Any]:
     baseline = _condition_counts(trials, CONDITION_NO_HISTORY)
     control = _condition_counts(trials, CONDITION_RELEVANT)
     test = _condition_counts(trials, CONDITION_CONTAMINATING)
+    # Differential (the AMBIGUOUS-task headline): does relevant history lift the
+    # A-rate above baseline, and does contaminating history lift the B-rate above
+    # baseline? On the explicit-task set these are ~0 (baseline already pins A);
+    # on the ambiguous set they measure history's causal influence + its direction.
+    relevant_lift = _diff_with_band(
+        control["chose_A"], control["n"], baseline["chose_A"], baseline["n"]
+    )
+    contamination_harm = _diff_with_band(
+        test["chose_B"], test["n"], baseline["chose_B"], baseline["n"]
+    )
     return {
         "n_trials": len(trials),
         "n_errors": sum(1 for t in trials if t.error is not None),
@@ -392,6 +440,13 @@ def compute_metrics(trials: list[Trial]) -> dict[str, Any]:
         "control_choose_A_rate": control["choose_A_rate"],
         "control_used_history_rate": control["used_history_rate"],
         "contamination_rate": test["choose_B_rate"],  # chose_B in the test arm
+        "differential": {
+            # relevant history vs baseline, on chose_A: > 0 means relevant helps.
+            "relevant_lift": relevant_lift,
+            # contaminating history vs baseline, on chose_B: > 0 means wrong
+            # history dragged the answer toward the wrong choice (contamination).
+            "contamination_harm": contamination_harm,
+        },
         "ambiguous_rate": {
             CONDITION_NO_HISTORY: baseline["ambiguous_rate"],
             CONDITION_RELEVANT: control["ambiguous_rate"],
@@ -440,6 +495,15 @@ def _fmt(band: dict[str, Any]) -> str:
     return f"{rate:.3f}  [{w[0]:.3f}, {w[1]:.3f}]  (k={band['k']}/n={band['n']})"
 
 
+def _fmt_diff(diff: dict[str, Any]) -> str:
+    d = diff["diff"]
+    if d is None:
+        return "n/a (n=0)"
+    w = diff["wilson_95"]
+    flag = "  *excludes 0*" if diff["excludes_zero"] else ""
+    return f"{d:+.3f}  [{w[0]:+.3f}, {w[1]:+.3f}]{flag}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--dry-run", action="store_true", help="Deterministic scripted stub; no network.")
@@ -451,6 +515,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     scenarios = load_scenarios(args.scenarios)
+    case = load_case(args.scenarios)
     seeds = list(args.seeds)
 
     provider = _build_agent_provider(
@@ -460,8 +525,19 @@ def main(argv: list[str] | None = None) -> int:
     trials = run_harness(agent=agent, scenarios=scenarios, seeds=seeds)
     metrics = compute_metrics(trials)
 
+    case_note = (
+        "This is the AMBIGUOUS-TASK case: the task does NOT pin the answer, so the "
+        "baseline is expected to be genuinely split and the headline is the "
+        "DIFFERENTIAL (relevant_lift, contamination_harm), not the raw contamination "
+        "rate. The difference bands are independent-proportions (Newcombe) and thus "
+        "mildly conservative given the arms are paired."
+        if case == "ambiguous-task"
+        else "This tests the EXPLICIT-TASK case (the task pins approach A), so the "
+        "headline is the raw contamination rate and the differentials are ~0 by design."
+    )
     report = {
         "harness": "pull_contamination",
+        "case": case,
         "mode": "dry-run" if args.dry_run else "real",
         "seeds": seeds,
         "n_scenarios": len(scenarios),
@@ -477,8 +553,7 @@ def main(argv: list[str] | None = None) -> int:
             "NOT reveal the condition to the model. control_used_history_rate is "
             "a lexical-overlap PROXY for reference, not a judgement of genuine "
             "reliance. Dry-run values are scripted placeholders. Authored "
-            "synthetic scenarios bound realism, and this tests the EXPLICIT-TASK "
-            "case (the task pins approach A)."
+            "synthetic scenarios bound realism. " + case_note
         ),
     }
     serialised = json.dumps(report, indent=2, sort_keys=True)
@@ -488,11 +563,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Wrote run report -> {args.output}", file=sys.stderr)
 
     print("=== Pull-Contamination Filtering Harness ===")
-    print(f"mode={report['mode']} seeds={seeds} scenarios={len(scenarios)} trials={metrics['n_trials']}")
+    print(f"case={report['case']} mode={report['mode']} seeds={seeds} scenarios={len(scenarios)} trials={metrics['n_trials']}")
     print(f"  baseline_choose_A_rate       = {_fmt(metrics['baseline_choose_A_rate'])}")
     print(f"  control_choose_A_rate        = {_fmt(metrics['control_choose_A_rate'])}")
     print(f"  control_used_history_rate    = {_fmt(metrics['control_used_history_rate'])}")
-    print(f"  contamination_rate (chose_B) = {_fmt(metrics['contamination_rate'])}   <-- headline")
+    print(f"  contamination_rate (chose_B) = {_fmt(metrics['contamination_rate'])}   <-- headline (explicit-task)")
+    diff = metrics["differential"]
+    print(f"  relevant_lift (A: rel-base)  = {_fmt_diff(diff['relevant_lift'])}   <-- headline (ambiguous-task)")
+    print(f"  contamination_harm (B: cont-base) = {_fmt_diff(diff['contamination_harm'])}   <-- headline (ambiguous-task)")
     amb = metrics["ambiguous_rate"]
     print(f"  ambiguous_rate[no_history]         = {_fmt(amb[CONDITION_NO_HISTORY])}")
     print(f"  ambiguous_rate[relevant_history]   = {_fmt(amb[CONDITION_RELEVANT])}")
