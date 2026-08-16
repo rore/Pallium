@@ -32,9 +32,10 @@ not on better ranking).
 
 ### 2. Injection is mostly absent
 
-- Of 7,276 query decisions, only **19%** inject anything; **81% surface nothing** — 51%
-  suppressed because the current thread already had the context, 29% because no relevant
-  memory existed.
+- Of 7,276 query decisions, only ~19% (1,377) inject anything; ~81% (5,899) surface
+  nothing. The two dominant reasons across all queries are: the current thread already
+  had the context (3,719; 51%) and no relevant memory existed (2,103; 29%) — together
+  ~80% of all queries; the remainder are other inject/no-inject reasons.
 - The failure is two-sided by container type: the **focused repo** over-injects (~45%, and
   ~52% of those not-relevant), while the **multi-topic monorepo** is already sparse (~6%
   inject rate — the system suppresses hard there). Precision is not fixable in the first;
