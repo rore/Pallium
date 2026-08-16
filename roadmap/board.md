@@ -16,8 +16,11 @@
 - milestone-shaped-memory-contract
 
 # Ideas
+- idea-arbitrary-convention-contamination-scenarios
 - idea-reconcile-unprompted-pull-direction-signal
 - idea-measure-pull-filtering-accuracy-and-cost
+- idea-contamination-detector-negation-robustness
+- idea-contamination-differential-paired-inference
 - idea-retrieval-source-fetch-batching
 - idea-reuse-judge-evidence-span-enforcement
 - fix-redline-self-protection-path-mismatch
