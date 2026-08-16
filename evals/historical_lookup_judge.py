@@ -9,9 +9,10 @@ telemetry), reconstructs the surrounding session turns from ``source_items``,
 and asks an LLM judge — per lookup — for four labels:
 
   (a) genuine_opportunity — was the retrieved history genuinely relevant?
-  (b) rung-1 "incorporation" — retrieved history verifiably appears in the
-      subsequent work (+ an evidence span).
-  (c) rung-2 "influence" — no verbatim incorporation, but the history plausibly
+  (b) rung-1 "incorporation" — a specific detail from the retrieved history
+      reappears verbatim/near-verbatim in the subsequent work (+ an evidence
+      span that overlaps both).
+  (c) rung-2 "influence" — no reproduced detail, but the history plausibly
       shaped the subsequent work.
   (d) direction — "user_directed" vs "agent_decided", read from the turns
       PRECEDING the lookup (a ``(thread_ref, container_ref, created_at)`` join
@@ -83,22 +84,29 @@ Decide:
 1. genuine_opportunity (boolean): was the RETRIEVED HISTORY genuinely relevant
    to the task the agent was working on? false when the lookup surfaced nothing
    useful, or was empty / abandoned.
-2. rung (string): the strongest supportable reuse claim —
-   - "incorporation": the retrieved history verifiably appears in WORK AFTER
-     (a reasoning step, an action, or the answer). Observational.
-   - "influence": no verbatim incorporation, but the retrieved history plausibly
-     shaped the subsequent work. Weaker, observational.
+2. rung (string): the reuse claim best supported by the evidence. When both
+   "incorporation" and "influence" seem arguable, PREFER "influence": only pick
+   "incorporation" when a concrete detail from RETRIEVED HISTORY is actually
+   reproduced in WORK AFTER, not merely when the two are topically related.
+   - "incorporation": a specific detail from RETRIEVED HISTORY — a value, name,
+     decision, or phrase — reappears verbatim or near-verbatim in WORK AFTER. An
+     observable reuse you can point to in BOTH blocks.
+   - "influence": WORK AFTER builds on the retrieved history's decision or
+     direction WITHOUT reproducing a specific detail from it verbatim or
+     near-verbatim. Weaker, observational.
    - "none": no evidence the history was used.
-3. evidence_span (string): a short verbatim quote (<=200 chars) copied from
-   WORK AFTER that demonstrates the incorporation; empty string when rung is
-   "none".
+3. evidence_span (string): a short verbatim quote (<=200 chars) of the specific
+   detail that appears in BOTH RETRIEVED HISTORY and WORK AFTER — the overlap
+   itself, not just any WORK AFTER text. Required (non-empty) only when rung is
+   "incorporation"; empty string for "influence" and "none".
 4. direction (string): who initiated the lookup, read from CONTEXT BEFORE —
    - "user_directed": the user explicitly asked the agent to recall or look up
      past context.
    - "agent_decided": the agent chose to consult history on its own.
 
-Do not invent quotes; evidence_span must be copied verbatim from WORK AFTER or
-be empty. Return the JSON schema.
+Do not invent quotes; evidence_span must be copied verbatim and must be text
+that appears in BOTH RETRIEVED HISTORY and WORK AFTER, or be empty. Return the
+JSON schema.
 """
 
 JUDGE_SCHEMA = (
