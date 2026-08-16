@@ -107,7 +107,7 @@ judgment via scope/provenance, not impossible truth detection). Recorded here.
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -131,3 +131,57 @@ judgment via scope/provenance, not impossible truth detection). Recorded here.
   "[PRIMARY for applicability-judgment]"; differential bands render.
 
 **State note:** adversarial scenario review + real LLM pass are the remaining gates.
+
+## Evidence (real LLM pass)
+
+Real pass (seeds/reps 0,1,2; 10 scenarios × 3 conditions = 90 trials;
+`.local/research/pull_contamination_applicability_run.json`), decision-first detector (primary):
+
+| metric | value | 95% band |
+|---|---|---|
+| baseline chose A | 0.433 | [0.27, 0.61] |
+| relevant chose A | 1.000 | [0.89, 1.00] |
+| **relevant_lift (A: rel−base)** | **+0.567** | **[+0.36, +0.73] — excludes 0** |
+| contamination chose B | 0.500 | [0.33, 0.67] |
+| **contamination_harm (B: cont−base)** | **−0.067** | **[−0.30, +0.18] — includes 0** |
+
+**Two findings, one clean and one nuanced:**
+
+1. **The core pull proposition is VALIDATED.** For the first time the baseline is genuinely split
+   (0.43 A — the convention is arbitrary and unknowable without history), and APPLICABLE (in-scope)
+   history reliably supplies it: relevant went **3/3 to the correct answer in all 10 scenarios**,
+   lifting A from 0.43 → 1.00 (relevant_lift +0.57, excludes 0). History provides otherwise-
+   unavailable knowledge and the agent uses it — the discriminating result phases 1–2 could not
+   produce (there baseline was cue-determined, so history had no room to move the answer).
+
+2. **Applicability/scope judgment WORKS ON AVERAGE BUT IS IMPERFECT AND TYPE-DEPENDENT.** Aggregate
+   contamination_harm ≈ 0, but that is a NET of real per-scenario structure (harm = contaminating B
+   − baseline B, n=3/arm):
+   - `branch-naming-prefix` (**scope-superseded**): harm **+3** — baseline 3/3 CORRECT (feat/) →
+     contaminating 3/3 WRONG (feature/). A plausible out-of-scope "earlier standard" FLIPPED a
+     correct answer to wrong every time. Clean contamination.
+   - `checkout-json-key-casing` (scope-version): harm +1 (mild).
+   - `harbor`, `billing`, `marketing`: harm **−2** each — seeing "another scope does B" pushed the
+     agent AWAY from B (it used the out-of-scope signal as evidence NOT to apply it). Genuine
+     scope-reasoning.
+   - Remainder: harm 0 (baseline already at that value, or agent rejected the out-of-scope value).
+
+**Interpretation for the pivot:** the reviewer's either/or ("works → real-corpus; fails → the hard
+problem is scope/applicability") resolves to BOTH. The pull VALUE is real and strong; the RISK is
+real but concentrated in superseded/older-state conventions, where plausible out-of-scope history
+can flip a correct answer to wrong. The agent's scope-reasoning is inconsistent, not absent.
+
+**Honest scope / caveats:**
+- n=30/condition (10 scenarios × 3 reps), single model, synthetic; "seeds" are repetition indices,
+  not provider sampling seeds; CIs over scenario × repetition. Per-scenario n=3 → the branch-naming
+  +3 is a striking SIGNAL, not a calibrated rate.
+- `control_used_history_rate` (lexical proxy) is ~0.03 and uninformative here — the +0.57 lift is the
+  real evidence history was used.
+- The strong, uniform relevant_lift is the robust headline; the superseded-contamination edge is the
+  actionable finding for real-corpus validation to confirm.
+
+Verdict: **core pull proposition validated (applicable history materially and reliably helps);
+scope/applicability is the real hard edge, concentrated in superseded conventions.** Recommend
+proceeding to real-corpus validation with a targeted watch on superseded/older-state scope.
+
+**State:** Ready for review
