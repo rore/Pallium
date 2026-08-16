@@ -39,5 +39,5 @@ same frontmatter shape (id/title/status/priority/commitment); add both slugs to
 Minimap/board consistency by inspection; CI: agent-workflow, redline (expect all-blue →
 Routine), test lanes (trivially pass — no code touched).
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
