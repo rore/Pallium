@@ -1,0 +1,96 @@
+{
+  "case": "ambiguous-task",
+  "note": "Scenarios for the AMBIGUOUS-TASK pull-contamination FILTERING experiment (phase 2). Unlike the explicit-task set (scenarios.json), the `current_task` here does NOT state the answer. It describes a SITUATION whose cues make approach A the defensible best fit. The DESIGN INTENT was a genuinely-split no-history baseline (history the deciding signal). EMPIRICAL RESULT (see .agent-workflow/tasks/pull-contamination-ambiguous-task-variant.md Evidence): the baseline came out ~0.90 A under the decision-first detector — the agent reasons to the situationally-correct answer from the task cues ALONE, so these realistic judgment calls turned out CUE-determined, not history-determined. Treat this set as a demonstration that the genuinely-split regime is HARD to author from general-knowledge situations; the true history-decisive regime needs scenarios whose answer is a PROJECT-SPECIFIC arbitrary convention not inferable from best practice (a separate, follow-up set). Do NOT read the raw rates here as established evidence of filtering strength. `relevant_history` argues A; `contaminating_history` is a plausible-but-non-transferring situation arguing B. The harness FORCES the condition's history into context, isolating filtering. Detection is deterministic: marker_a vs marker_b, scored by BOTH the strict and the decision-first (leading) detector. INVARIANTS held by every scenario: marker_a matches relevant_history and does NOT match contaminating_history; marker_b matches contaminating_history and does NOT match relevant_history. No internal/product/company names.",
+  "scenarios": [
+    {
+      "id": "concurrency-locking-strategy",
+      "taxonomy_type": "two-reasonable-patterns",
+      "current_task": "Add concurrency control to a collaborative whiteboard where multiple users can edit the same objects during a session. Two established patterns are available: optimistic concurrency (version check at commit, retry on conflict) and pessimistic concurrency (acquire a lock before editing). State which concurrency approach you will use.",
+      "marker_a": "pessimistic",
+      "marker_b": "optimistic",
+      "relevant_history": "On the shared-canvas feature, where the same objects are edited concurrently and conflicts were frequent, we adopted pessimistic locking; lock-free retry approaches livelocked under heavy contention and wasted work.",
+      "contaminating_history": "On the account-settings form, where two people almost never edit the same record at once, we used optimistic concurrency with a version column and skipped locking overhead entirely."
+    },
+    {
+      "id": "service-integration-style",
+      "taxonomy_type": "two-reasonable-patterns",
+      "current_task": "Service A, which handles live user-facing requests, needs to kick off a job in service B that typically runs for a couple of minutes. State whether you will integrate via a message queue or a synchronous REST call.",
+      "marker_a": "message queue",
+      "marker_b": "synchronous REST",
+      "relevant_history": "For kicking off the nightly re-indexing job, we integrated via a message queue: the caller enqueues and returns immediately, and the worker processes minutes later. This decoupled the slow job from the request path.",
+      "contaminating_history": "For the address-autocomplete lookup, which needs an answer within tens of milliseconds, we used a synchronous REST call; queuing would have added unacceptable latency to an interactive request."
+    },
+    {
+      "id": "session-storage-after-stateless-move",
+      "taxonomy_type": "old-decision-pre-architecture-change",
+      "current_task": "Decide where to store user session state for the API. The platform recently moved from a single application server to a horizontally-scaled, multi-instance deployment behind a load balancer. State whether you will keep sessions in an external store or in in-process memory.",
+      "marker_a": "external store",
+      "marker_b": "in-process",
+      "relevant_history": "After we moved to multiple stateless instances behind the load balancer, we migrated session state to a shared external store so any instance can serve any request; keeping sessions on a single node broke as soon as requests landed elsewhere.",
+      "contaminating_history": "Back when the service ran on one application server, we kept sessions in local in-process memory - it was the simplest, fastest option and there was only one node to worry about."
+    },
+    {
+      "id": "pagination-after-dataset-growth",
+      "taxonomy_type": "old-decision-pre-architecture-change",
+      "current_task": "Choose the pagination strategy for listing records in an API endpoint. Context: this table has grown to tens of millions of rows and clients frequently page deep into results. State whether you will use keyset (cursor) pagination or offset/limit pagination.",
+      "marker_a": "keyset",
+      "marker_b": "offset",
+      "relevant_history": "When the events table grew large and clients paged deep, deep scans got pathologically slow, so we switched that endpoint to keyset pagination keyed on (created_at, id).",
+      "contaminating_history": "Early on, when this same table held only a few thousand rows, we chose offset/limit pagination; it was the simplest approach and deep paging was perfectly fine at that size."
+    },
+    {
+      "id": "id-generation-strategy-distributed",
+      "taxonomy_type": "similar-subsystem-different-constraint",
+      "current_task": "Choose the primary-key ID strategy for a new table in a service that runs as many concurrent writers inserting at high rate across instances. State whether you will use a time-ordered UUID (UUIDv7) or a database auto-increment integer.",
+      "marker_a": "UUIDv7",
+      "marker_b": "auto-?increment",
+      "relevant_history": "For the high-write telemetry table with many concurrent writers, we used UUIDv7 keys so IDs are generated without a central sequence and stay roughly time-sortable; a single sequence would have been a write bottleneck.",
+      "contaminating_history": "For the low-volume reference/config table, we used a database auto-increment integer key: it is compact, human-readable in support tickets, and the single-writer pattern never contends on the sequence."
+    },
+    {
+      "id": "read-after-write-consistency",
+      "taxonomy_type": "similar-subsystem-different-constraint",
+      "current_task": "A user updates their profile and is then shown the profile page. Users generally expect to see their own change reflected right away. A read replica is available but runs slightly behind the primary. State whether reads on this path should go to the primary or to the read replica.",
+      "marker_a": "primary",
+      "marker_b": "replica",
+      "relevant_history": "On the edit-then-view-your-own-post flow, where users must see their own change immediately, we route the read to the primary to avoid lag-induced staleness on read-after-write.",
+      "contaminating_history": "On the public analytics dashboard, where a few seconds of staleness is harmless, we serve reads from the read replica to offload the write database."
+    },
+    {
+      "id": "rate-limit-algorithm",
+      "taxonomy_type": "investigation-not-transferable",
+      "current_task": "Choose the rate-limiting algorithm for a public API endpoint that must allow short bursts (clients legitimately send a quick batch) but cap the sustained average rate. State whether you will use a token-bucket or a fixed-window counter.",
+      "marker_a": "token[- ]?bucket",
+      "marker_b": "fixed[- ]?window",
+      "relevant_history": "Our investigation into API abuse found that a token-bucket limiter best fit clients that burst then idle: it permits a short burst up to the bucket size while enforcing the long-run refill rate.",
+      "contaminating_history": "Our investigation into a login endpoint concluded a fixed-window counter was sufficient: the traffic was steady, and a simple per-minute count was easy to reason about and cheap to store."
+    },
+    {
+      "id": "batch-processing-parallelism",
+      "taxonomy_type": "investigation-not-transferable",
+      "current_task": "You are processing a large batch of jobs where each job is I/O-bound (mostly waiting on remote network calls). Choose the concurrency model. State whether you will use high concurrency with many in-flight asynchronous tasks, or a small worker pool sized to the CPU core count.",
+      "marker_a": "in-flight|asynchronous|high concurrency",
+      "marker_b": "core count|cpu core|small (worker )?pool|pool sized|matched to (the )?core",
+      "relevant_history": "Profiling the webhook fan-out job (each task waits on a remote HTTP call) showed throughput scaled with the number of in-flight requests; we ran high concurrency with many asynchronous tasks and the processors sat mostly idle waiting on the network.",
+      "contaminating_history": "Profiling the image-resize job (heavy per-pixel compute) showed that going past the CPU core count just thrashed the cores, so we capped it at a small worker pool sized to the cores."
+    },
+    {
+      "id": "logging-format-preference",
+      "taxonomy_type": "user-preference-non-universal",
+      "current_task": "Choose the log output format for a new backend service that runs in a containerized platform and ships its logs to a centralized log aggregator. State whether logs will be structured JSON or human-readable plain text.",
+      "marker_a": "JSON",
+      "marker_b": "plain[- ]?text",
+      "relevant_history": "For services running under the log-aggregation pipeline, we standardized on structured JSON logs so fields are indexed and queryable downstream.",
+      "contaminating_history": "For the local developer command-line tool, the maintainer prefers human-readable plain text logs - they are read directly in a terminal, and structured output would be noise there."
+    },
+    {
+      "id": "dependency-version-pinning",
+      "taxonomy_type": "user-preference-non-universal",
+      "current_task": "Decide the dependency version policy for a new deployable production SERVICE. Context: reproducible builds and predictable deploys matter for this service. State whether you will pin exact dependency versions or allow flexible caret version ranges.",
+      "marker_a": "\\bexact\\b",
+      "marker_b": "caret|flexible",
+      "relevant_history": "For deployable services we pin exact dependency versions in the lockfile so a redeploy months later builds identically; a surprise minor bump once broke a production deploy.",
+      "contaminating_history": "For our shared utility library, the author prefers flexible caret version ranges so downstream apps can dedupe and pick up compatible patches without lockfile churn."
+    }
+  ]
+}

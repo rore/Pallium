@@ -14,15 +14,20 @@ from evals.pull_contamination.harness import (
     ContaminationAgent,
     ScriptedDecisionProvider,
     Scenario,
+    _diff_with_band,
     _scripted_contamination_handler,
     _trial_tag,
     classify_answer,
+    classify_answer_leading,
     compute_metrics,
+    load_case,
     load_scenarios,
     references_history,
     run_harness,
     run_trial,
 )
+
+_AMBIGUOUS_PATH = "evals/pull_contamination/scenarios_ambiguous.json"
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +75,22 @@ def test_classify_covers_number_and_word_answer_forms() -> None:
     assert classify_answer("3", a, b) == "chose_B"
     assert classify_answer("up to 3 attempts", a, b) == "chose_B"
     assert classify_answer("three attempts with backoff", a, b) == "chose_B"
+
+
+def test_leading_detector_uses_first_marker_on_decision_first_answers() -> None:
+    # The real failure mode found in the ambiguous run: a decisive answer that
+    # names the rejected option to justify itself. Strict scores it ambiguous;
+    # leading recovers the true (decision-first) choice.
+    a, b = "UUIDv7", "auto-?increment"
+    decisive = "UUIDv7. An auto-increment integer would bottleneck on a central sequence."
+    assert classify_answer(decisive, a, b) == "ambiguous"          # strict under-reports
+    assert classify_answer_leading(decisive, a, b) == "chose_A"    # leading recovers it
+    # Symmetric: leads with B, mentions A.
+    other = "Auto-increment is fine here; UUIDv7 would waste space."
+    assert classify_answer_leading(other, a, b) == "chose_B"
+    # Single marker / neither behave like the strict detector.
+    assert classify_answer_leading("UUIDv7 all the way.", a, b) == "chose_A"
+    assert classify_answer_leading("It depends on the write pattern.", a, b) == "ambiguous"
 
 
 def test_trial_tag_is_opaque_and_leaks_no_condition() -> None:
@@ -149,6 +170,61 @@ def test_scenario_marker_invariants_keep_detection_clean() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Ambiguous-task scenario set (phase 2) — invariants
+# ---------------------------------------------------------------------------
+
+
+def test_ambiguous_case_label() -> None:
+    assert load_case(_AMBIGUOUS_PATH) == "ambiguous-task"
+    # The original set predates the field and defaults to explicit-task.
+    assert load_case() == "explicit-task"
+
+
+def test_ambiguous_scenarios_shape_and_taxonomy() -> None:
+    scenarios = load_scenarios(_AMBIGUOUS_PATH)
+    assert len(scenarios) == 10, "expected 10 ambiguous scenarios"
+    ids = {s.id for s in scenarios}
+    assert len(ids) == len(scenarios), "ids must be unique"
+    from collections import Counter
+
+    taxonomy = {
+        "two-reasonable-patterns",
+        "old-decision-pre-architecture-change",
+        "similar-subsystem-different-constraint",
+        "investigation-not-transferable",
+        "user-preference-non-universal",
+    }
+    counts = Counter(s.taxonomy_type for s in scenarios)
+    assert set(counts) == taxonomy, f"unexpected taxonomy: {set(counts)}"
+    assert all(counts[t] == 2 for t in taxonomy), f"expected 2 per type: {counts}"
+
+
+def test_ambiguous_scenario_marker_invariants() -> None:
+    # Unlike the explicit set, EVERY ambiguous contaminating_history genuinely
+    # argues B (matches marker_b) — there is no benign-irrelevant negative control
+    # here. So the full four-way containment invariant must hold for every scenario:
+    # marker_a in relevant only; marker_b in contaminating only.
+    import re
+
+    for s in load_scenarios(_AMBIGUOUS_PATH):
+        assert re.search(s.marker_a, s.relevant_history, re.IGNORECASE), (
+            f"{s.id}: marker_a should match relevant_history"
+        )
+        assert re.search(s.marker_a, s.contaminating_history, re.IGNORECASE) is None, (
+            f"{s.id}: marker_a leaked into contaminating_history"
+        )
+        assert re.search(s.marker_b, s.contaminating_history, re.IGNORECASE), (
+            f"{s.id}: marker_b should match contaminating_history"
+        )
+        assert re.search(s.marker_b, s.relevant_history, re.IGNORECASE) is None, (
+            f"{s.id}: marker_b leaked into relevant_history"
+        )
+        # The two histories classify cleanly in opposite directions.
+        assert classify_answer(s.relevant_history, s.marker_a, s.marker_b) == "chose_A", s.id
+        assert classify_answer(s.contaminating_history, s.marker_a, s.marker_b) == "chose_B", s.id
+
+
+# ---------------------------------------------------------------------------
 # Metric shaping — empty-safe and Wilson bands present
 # ---------------------------------------------------------------------------
 
@@ -183,6 +259,84 @@ def test_metrics_on_crafted_trials() -> None:
     # 1 of 2 contaminating trials chose B.
     assert m["contamination_rate"]["rate"] == 0.5
     assert m["contamination_rate"]["wilson_95"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Differential metrics (the AMBIGUOUS-task headline)
+# ---------------------------------------------------------------------------
+
+
+def test_diff_with_band_empty_safe() -> None:
+    d = _diff_with_band(0, 0, 0, 0)
+    assert d["diff"] is None and d["wilson_95"] is None and d["excludes_zero"] is None
+    d2 = _diff_with_band(3, 5, 0, 0)
+    assert d2["diff"] is None
+
+
+def test_diff_with_band_sign_and_zero_exclusion() -> None:
+    # Big, well-separated proportions -> positive diff whose band excludes 0.
+    d = _diff_with_band(20, 20, 2, 20)  # 1.0 vs 0.1
+    assert d["diff"] == 1.0 - 0.1
+    lo, hi = d["wilson_95"]
+    assert lo > 0 and hi > 0 and d["excludes_zero"] is True
+    # Equal proportions -> zero diff, band spans 0.
+    d0 = _diff_with_band(10, 20, 10, 20)
+    assert d0["diff"] == 0.0 and d0["excludes_zero"] is False
+    lo0, hi0 = d0["wilson_95"]
+    assert lo0 < 0 < hi0
+    # Negative direction is reported as negative.
+    dn = _diff_with_band(2, 20, 20, 20)
+    assert dn["diff"] < 0 and dn["excludes_zero"] is True
+
+
+def test_differential_block_present_and_directional() -> None:
+    from evals.pull_contamination.harness import Trial
+
+    def mk(condition: str, classification: str) -> Trial:
+        return Trial(
+            scenario_id="s", taxonomy_type="t", seed=0, condition=condition,
+            classification=classification, used_history=False, answer_preview="",
+        )
+
+    # Ambiguous-style shape: baseline split, relevant lifts A, contaminating lifts B.
+    trials = [
+        mk(CONDITION_NO_HISTORY, "chose_A"), mk(CONDITION_NO_HISTORY, "chose_B"),
+        mk(CONDITION_RELEVANT, "chose_A"), mk(CONDITION_RELEVANT, "chose_A"),
+        mk(CONDITION_CONTAMINATING, "chose_B"), mk(CONDITION_CONTAMINATING, "chose_B"),
+    ]
+    m = compute_metrics(trials)
+    diff = m["differential"]
+    # relevant A-rate 1.0 vs baseline 0.5 -> positive lift.
+    assert diff["relevant_lift"]["diff"] == 0.5
+    # contaminating B-rate 1.0 vs baseline B-rate 0.5 -> positive harm.
+    assert diff["contamination_harm"]["diff"] == 0.5
+
+
+def test_differential_empty_safe() -> None:
+    m = compute_metrics([])
+    diff = m["differential"]
+    assert diff["relevant_lift"]["diff"] is None
+    assert diff["contamination_harm"]["diff"] is None
+    # leading_choice block is present and also empty-safe.
+    assert m["leading_choice"]["differential"]["relevant_lift"]["diff"] is None
+
+
+def test_leading_choice_block_reads_decision_first_field() -> None:
+    from evals.pull_contamination.harness import Trial
+
+    # Strict says ambiguous (both markers), leading says chose_A (decision-first).
+    trials = [
+        Trial(
+            scenario_id="s", taxonomy_type="t", seed=i, condition=CONDITION_NO_HISTORY,
+            classification="ambiguous", used_history=False, answer_preview="",
+            classification_leading="chose_A",
+        )
+        for i in range(4)
+    ]
+    m = compute_metrics(trials)
+    # Strict headline sees no A; leading headline sees all A.
+    assert m["baseline_choose_A_rate"]["rate"] == 0.0
+    assert m["leading_choice"]["baseline_choose_A_rate"]["rate"] == 1.0
 
 
 # ---------------------------------------------------------------------------
