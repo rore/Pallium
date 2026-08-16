@@ -1,10 +1,16 @@
 ---
 id: idea-arbitrary-convention-contamination-scenarios
 title: Contamination probe — arbitrary-convention scenario set (the history-decisive regime)
-status: queued
+status: done
 priority: high
 commitment: uncommitted
 ---
+
+> DONE (PR #33): realized as the **applicability-judgment** set
+> (`evals/pull_contamination/scenarios_applicability.json`). The sharpened design tests
+> applicability judgment (scope/provenance), not impossible truth detection. Result: pull value
+> validated (relevant_lift +0.57); scope/applicability is the hard edge (superseded type
+> contaminated). Follow-up: `idea-pull-real-corpus-validation`.
 
 ## Summary
 
