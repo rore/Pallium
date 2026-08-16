@@ -157,6 +157,32 @@ def classify_answer(answer: str, marker_a: str, marker_b: str) -> str:
     return "ambiguous"
 
 
+def classify_answer_leading(answer: str, marker_a: str, marker_b: str) -> str:
+    """Decision-first classifier: whichever marker appears FIRST wins.
+
+    On ambiguous/judgment tasks the strict ``classify_answer`` (both markers →
+    ambiguous) systematically UNDER-reports the choice, because the agent names
+    the rejected option to justify its pick ("UUIDv7 — auto-increment would
+    bottleneck..."). Real answers are decision-first (the choice leads the
+    sentence), so the earliest marker match is the actual decision. Only one
+    marker → that one; neither → ambiguous. This is the primary detector for the
+    ambiguous-task case; the strict one is retained as a conservative cross-check.
+
+    Caveat: mis-scores an answer that leads with the rejected option ("Unlike
+    bcrypt, use Argon2id"); inspection of the real run showed the agent leads with
+    its choice, and both detectors are reported so the divergence is visible.
+    """
+    ma = re.search(marker_a, answer, re.IGNORECASE)
+    mb = re.search(marker_b, answer, re.IGNORECASE)
+    if ma and mb:
+        return "chose_A" if ma.start() < mb.start() else "chose_B"
+    if ma:
+        return "chose_A"
+    if mb:
+        return "chose_B"
+    return "ambiguous"
+
+
 _STOPWORDS = frozenset(
     {
         "about", "after", "again", "against", "along", "another", "because",
@@ -284,9 +310,10 @@ class Trial:
     taxonomy_type: str
     seed: int
     condition: str
-    classification: str  # chose_A | chose_B | ambiguous | error
+    classification: str  # chose_A | chose_B | ambiguous | error  (strict detector)
     used_history: bool
     answer_preview: str
+    classification_leading: str = "ambiguous"  # decision-first detector
     error: str | None = None
 
 
@@ -320,6 +347,7 @@ def run_trial(agent: ContaminationAgent, scenario: Scenario, seed: int, conditio
             error=f"{type(exc).__name__}: {str(exc)[:200]}",
         )
     classification = classify_answer(answer, scenario.marker_a, scenario.marker_b)
+    classification_leading = classify_answer_leading(answer, scenario.marker_a, scenario.marker_b)
     used = (
         references_history(answer, scenario.relevant_history, scenario.current_task)
         if condition == CONDITION_RELEVANT
@@ -333,6 +361,7 @@ def run_trial(agent: ContaminationAgent, scenario: Scenario, seed: int, conditio
         classification=classification,
         used_history=used,
         answer_preview=answer[:160],
+        classification_leading=classification_leading,
     )
 
 
@@ -397,12 +426,12 @@ def _diff_with_band(k1: int, n1: int, k2: int, n2: int) -> dict[str, Any]:
     return {"diff": diff, "wilson_95": [low, high], "excludes_zero": low > 0 or high < 0}
 
 
-def _condition_counts(trials: list[Trial], condition: str) -> dict[str, Any]:
+def _condition_counts(trials: list[Trial], condition: str, attr: str = "classification") -> dict[str, Any]:
     ok = [t for t in trials if t.condition == condition and t.error is None]
     n = len(ok)
-    chose_a = sum(1 for t in ok if t.classification == "chose_A")
-    chose_b = sum(1 for t in ok if t.classification == "chose_B")
-    ambiguous = sum(1 for t in ok if t.classification == "ambiguous")
+    chose_a = sum(1 for t in ok if getattr(t, attr) == "chose_A")
+    chose_b = sum(1 for t in ok if getattr(t, attr) == "chose_B")
+    ambiguous = sum(1 for t in ok if getattr(t, attr) == "ambiguous")
     used = sum(1 for t in ok if t.used_history)
     return {
         "n": n,
@@ -418,14 +447,11 @@ def _condition_counts(trials: list[Trial], condition: str) -> dict[str, Any]:
     }
 
 
-def compute_metrics(trials: list[Trial]) -> dict[str, Any]:
-    baseline = _condition_counts(trials, CONDITION_NO_HISTORY)
-    control = _condition_counts(trials, CONDITION_RELEVANT)
-    test = _condition_counts(trials, CONDITION_CONTAMINATING)
-    # Differential (the AMBIGUOUS-task headline): does relevant history lift the
-    # A-rate above baseline, and does contaminating history lift the B-rate above
-    # baseline? On the explicit-task set these are ~0 (baseline already pins A);
-    # on the ambiguous set they measure history's causal influence + its direction.
+def _headline(trials: list[Trial], attr: str) -> dict[str, Any]:
+    """Baseline/control/contamination + differential for one detector (attr)."""
+    baseline = _condition_counts(trials, CONDITION_NO_HISTORY, attr)
+    control = _condition_counts(trials, CONDITION_RELEVANT, attr)
+    test = _condition_counts(trials, CONDITION_CONTAMINATING, attr)
     relevant_lift = _diff_with_band(
         control["chose_A"], control["n"], baseline["chose_A"], baseline["n"]
     )
@@ -433,18 +459,12 @@ def compute_metrics(trials: list[Trial]) -> dict[str, Any]:
         test["chose_B"], test["n"], baseline["chose_B"], baseline["n"]
     )
     return {
-        "n_trials": len(trials),
-        "n_errors": sum(1 for t in trials if t.error is not None),
-        # Headline metrics.
         "baseline_choose_A_rate": baseline["choose_A_rate"],
         "control_choose_A_rate": control["choose_A_rate"],
         "control_used_history_rate": control["used_history_rate"],
-        "contamination_rate": test["choose_B_rate"],  # chose_B in the test arm
+        "contamination_rate": test["choose_B_rate"],
         "differential": {
-            # relevant history vs baseline, on chose_A: > 0 means relevant helps.
             "relevant_lift": relevant_lift,
-            # contaminating history vs baseline, on chose_B: > 0 means wrong
-            # history dragged the answer toward the wrong choice (contamination).
             "contamination_harm": contamination_harm,
         },
         "ambiguous_rate": {
@@ -457,6 +477,29 @@ def compute_metrics(trials: list[Trial]) -> dict[str, Any]:
             CONDITION_RELEVANT: control,
             CONDITION_CONTAMINATING: test,
         },
+    }
+
+
+def compute_metrics(trials: list[Trial]) -> dict[str, Any]:
+    # Primary (strict) detector: both-markers -> ambiguous. Conservative; on
+    # judgment tasks it UNDER-reports the choice (agent names the rejected option).
+    strict = _headline(trials, "classification")
+    # Decision-first detector: earliest marker wins. The correct instrument for
+    # the ambiguous-task case; retained alongside strict so divergence is visible.
+    leading = _headline(trials, "classification_leading")
+    return {
+        "n_trials": len(trials),
+        "n_errors": sum(1 for t in trials if t.error is not None),
+        # Strict headline (kept at top level for backward compatibility).
+        "baseline_choose_A_rate": strict["baseline_choose_A_rate"],
+        "control_choose_A_rate": strict["control_choose_A_rate"],
+        "control_used_history_rate": strict["control_used_history_rate"],
+        "contamination_rate": strict["contamination_rate"],
+        "differential": strict["differential"],
+        "ambiguous_rate": strict["ambiguous_rate"],
+        "per_condition": strict["per_condition"],
+        # Decision-first re-analysis (primary for ambiguous-task reads).
+        "leading_choice": leading,
     }
 
 
@@ -564,17 +607,19 @@ def main(argv: list[str] | None = None) -> int:
 
     print("=== Pull-Contamination Filtering Harness ===")
     print(f"case={report['case']} mode={report['mode']} seeds={seeds} scenarios={len(scenarios)} trials={metrics['n_trials']}")
+    print("-- strict detector (both markers -> ambiguous; conservative) --")
     print(f"  baseline_choose_A_rate       = {_fmt(metrics['baseline_choose_A_rate'])}")
     print(f"  control_choose_A_rate        = {_fmt(metrics['control_choose_A_rate'])}")
-    print(f"  control_used_history_rate    = {_fmt(metrics['control_used_history_rate'])}")
-    print(f"  contamination_rate (chose_B) = {_fmt(metrics['contamination_rate'])}   <-- headline (explicit-task)")
-    diff = metrics["differential"]
-    print(f"  relevant_lift (A: rel-base)  = {_fmt_diff(diff['relevant_lift'])}   <-- headline (ambiguous-task)")
-    print(f"  contamination_harm (B: cont-base) = {_fmt_diff(diff['contamination_harm'])}   <-- headline (ambiguous-task)")
-    amb = metrics["ambiguous_rate"]
-    print(f"  ambiguous_rate[no_history]         = {_fmt(amb[CONDITION_NO_HISTORY])}")
-    print(f"  ambiguous_rate[relevant_history]   = {_fmt(amb[CONDITION_RELEVANT])}")
-    print(f"  ambiguous_rate[contaminating]      = {_fmt(amb[CONDITION_CONTAMINATING])}")
+    print(f"  contamination_rate (chose_B) = {_fmt(metrics['contamination_rate'])}")
+    print(f"  ambiguous[no_hist/rel/contam]= {metrics['ambiguous_rate'][CONDITION_NO_HISTORY]['rate']}/{metrics['ambiguous_rate'][CONDITION_RELEVANT]['rate']}/{metrics['ambiguous_rate'][CONDITION_CONTAMINATING]['rate']}")
+    lead = metrics["leading_choice"]
+    print("-- leading (decision-first) detector [PRIMARY for ambiguous-task] --")
+    print(f"  baseline_choose_A_rate       = {_fmt(lead['baseline_choose_A_rate'])}")
+    print(f"  control_choose_A_rate        = {_fmt(lead['control_choose_A_rate'])}")
+    print(f"  control_used_history_rate    = {_fmt(lead['control_used_history_rate'])}")
+    print(f"  contamination_rate (chose_B) = {_fmt(lead['contamination_rate'])}")
+    print(f"  relevant_lift (A: rel-base)  = {_fmt_diff(lead['differential']['relevant_lift'])}")
+    print(f"  contamination_harm (B: cont-base) = {_fmt_diff(lead['differential']['contamination_harm'])}")
     print(f"  errors                       = {metrics['n_errors']}")
     return 0
 

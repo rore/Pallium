@@ -60,15 +60,20 @@ type is dropped here — every ambiguous contaminating_history genuinely argues 
 **Material assumptions:**
 - ASSUMPTION: tasks can be authored so A is the defensible best-fit given situational cues, yet
   NOT stated as a rule, so the no-history baseline is genuinely split (not ~1.0 A and not ~1.0 B).
-  DISPROVED BY: baseline choose_A_rate ~1.0 (task still self-pins) or ~0.0 (cues point at B).
-  ACTION: soften the situational cue / rebalance the two options so baseline spreads.
+  **DISPROVED by the first real pass**: under the correct decision-first detector the baseline is
+  ~0.90 A — the agent reasons to the situationally-correct answer from task cues ALONE, leaving
+  little room for history to be decisive. These realistic engineering judgment calls are
+  cue-determined, not history-determined. The genuinely-split regime needs scenarios whose answer
+  is a PROJECT-SPECIFIC arbitrary convention NOT inferable from general best practice (surfaced to
+  the user as a fork before investing in a third scenario set).
 - ASSUMPTION: history exerts measurable causal influence — relevant_lift > 0 and
-  contamination_harm interpretable. DISPROVED BY: relevant_lift band includes 0 AND
-  contamination_harm band includes 0 (history moves nothing → scenarios too weak or agent ignores
-  all history). ACTION: strengthen history specificity, or report the null honestly.
+  contamination_harm interpretable. Partially blocked by the ceiling above: baseline ~0.90 A caps
+  relevant_lift; contamination_harm ~0 (no push to B). Reported honestly, not forced.
 - ASSUMPTION: the A/B choice stays deterministically detectable on ambiguous tasks.
-  DISPROVED BY: high ambiguous-rate across conditions. ACTION: force a concrete stated value
-  (named option / number) as the explicit set does.
+  **FIRED**: the strict "both markers present -> ambiguous" rule over-counted ambiguity (60-93%)
+  because on judgment tasks the agent names the REJECTED option to justify its pick. ACTION TAKEN:
+  added a decision-first `classify_answer_leading` (first marker occurrence wins) as the correct
+  instrument for this case; report BOTH detectors and treat leading as primary for ambiguous tasks.
 
 **Plan:**
 1. Author `scenarios_ambiguous.json`: 10 scenarios, 2 per type — two-reasonable-patterns,
@@ -105,7 +110,7 @@ task; three conditions; measure contamination-vs-baseline, relevant-helps, wrong
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -143,3 +148,49 @@ task; three conditions; measure contamination-vs-baseline, relevant-helps, wrong
   which names both options; the real agent picks one — stub artifact, not a signal.)
 
 **State note:** real adversarial-synthetic LLM pass is the remaining gate before Ready for review.
+
+## Evidence (real LLM pass)
+
+Real adversarial-synthetic run (seeds/repetitions 0,1,2; 10 scenarios × 3 conditions = 90 trials;
+`.local/research/pull_contamination_ambiguous_run.json`). Two detectors reported; the **decision-first
+(leading)** detector is primary for the ambiguous-task case.
+
+| metric | strict detector | **leading (decision-first)** |
+|---|---|---|
+| baseline chose A | 0.300 [0.17, 0.48] | **0.900 [0.74, 0.97]** |
+| relevant chose A | 0.133 | **1.000 [0.89, 1.00]** |
+| contamination (chose B) | 0.033 | **0.100 [0.04, 0.26]** |
+| ambiguous (no/rel/contam) | 0.60 / 0.87 / 0.93 | ~0 |
+| relevant_lift (A: rel−base) | — | **+0.100 [−0.031, +0.256]** (band includes 0) |
+| contamination_harm (B: contam−base) | — | **+0.000 [−0.169, +0.169]** (band includes 0) |
+
+**Detector artifact found and corrected.** The strict "both-markers → ambiguous" rule read 60–93%
+ambiguous — but inspection showed the agent was decisive and simply named the rejected option to
+justify its pick ("UUIDv7 — auto-increment would bottleneck…"). The decision-first detector (earliest
+marker wins) recovers the true choice; it is now the primary instrument, with the strict detector
+retained as a conservative cross-check.
+
+**Findings (leading detector):**
+1. **No contamination.** Plausible-but-wrong history did not move the wrong-answer rate
+   (contamination_harm +0.00, band [−0.17, +0.17]). Consistent with the explicit-task result — the
+   agent did not adopt B even when the task was less prescriptive.
+2. **Baseline is NOT genuinely split — it is ~0.90 A.** Even after the review hardening, the agent
+   reasons to the situationally-correct answer from task cues ALONE. So these realistic engineering
+   judgment calls are cue-determined, not history-determined, and history has little room to be
+   decisive (relevant_lift +0.10 into a 0.90 ceiling, band includes 0).
+
+**Honest scope / caveats:**
+- The intended "genuinely ambiguous, history-is-the-main-signal" regime was NOT reached: the true
+  hard case needs scenarios whose answer is a PROJECT-SPECIFIC arbitrary convention NOT inferable
+  from general best practice (so baseline is a coin-flip and history is the only tie-breaker).
+  Building that third set is a fork surfaced to the user, not done here.
+- n=30/condition (10 scenarios × 3 repetitions), single model, synthetic; "seeds" are repetition
+  indices (cache-key variation), not provider sampling seeds; CIs over scenario × repetition.
+- The leading detector assumes decision-first phrasing (validated by inspection); both detectors are
+  reported so any divergence is visible.
+
+Verdict: **contamination remains unobserved even as the task grew less prescriptive (reinforces the
+filtering signal), but the causal-influence test is inconclusive because the scenarios stayed
+cue-determined (baseline ~0.90 A).** The genuinely-split regime + real-corpus pass remain.
+
+**State:** Ready for review

@@ -18,6 +18,7 @@ from evals.pull_contamination.harness import (
     _scripted_contamination_handler,
     _trial_tag,
     classify_answer,
+    classify_answer_leading,
     compute_metrics,
     load_case,
     load_scenarios,
@@ -74,6 +75,22 @@ def test_classify_covers_number_and_word_answer_forms() -> None:
     assert classify_answer("3", a, b) == "chose_B"
     assert classify_answer("up to 3 attempts", a, b) == "chose_B"
     assert classify_answer("three attempts with backoff", a, b) == "chose_B"
+
+
+def test_leading_detector_uses_first_marker_on_decision_first_answers() -> None:
+    # The real failure mode found in the ambiguous run: a decisive answer that
+    # names the rejected option to justify itself. Strict scores it ambiguous;
+    # leading recovers the true (decision-first) choice.
+    a, b = "UUIDv7", "auto-?increment"
+    decisive = "UUIDv7. An auto-increment integer would bottleneck on a central sequence."
+    assert classify_answer(decisive, a, b) == "ambiguous"          # strict under-reports
+    assert classify_answer_leading(decisive, a, b) == "chose_A"    # leading recovers it
+    # Symmetric: leads with B, mentions A.
+    other = "Auto-increment is fine here; UUIDv7 would waste space."
+    assert classify_answer_leading(other, a, b) == "chose_B"
+    # Single marker / neither behave like the strict detector.
+    assert classify_answer_leading("UUIDv7 all the way.", a, b) == "chose_A"
+    assert classify_answer_leading("It depends on the write pattern.", a, b) == "ambiguous"
 
 
 def test_trial_tag_is_opaque_and_leaks_no_condition() -> None:
@@ -300,6 +317,26 @@ def test_differential_empty_safe() -> None:
     diff = m["differential"]
     assert diff["relevant_lift"]["diff"] is None
     assert diff["contamination_harm"]["diff"] is None
+    # leading_choice block is present and also empty-safe.
+    assert m["leading_choice"]["differential"]["relevant_lift"]["diff"] is None
+
+
+def test_leading_choice_block_reads_decision_first_field() -> None:
+    from evals.pull_contamination.harness import Trial
+
+    # Strict says ambiguous (both markers), leading says chose_A (decision-first).
+    trials = [
+        Trial(
+            scenario_id="s", taxonomy_type="t", seed=i, condition=CONDITION_NO_HISTORY,
+            classification="ambiguous", used_history=False, answer_preview="",
+            classification_leading="chose_A",
+        )
+        for i in range(4)
+    ]
+    m = compute_metrics(trials)
+    # Strict headline sees no A; leading headline sees all A.
+    assert m["baseline_choose_A_rate"]["rate"] == 0.0
+    assert m["leading_choice"]["baseline_choose_A_rate"]["rate"] == 1.0
 
 
 # ---------------------------------------------------------------------------
