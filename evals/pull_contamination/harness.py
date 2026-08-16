@@ -199,7 +199,7 @@ def _trial_tag(scenario_id: str, seed: int, condition: str) -> str:
     which history is the wrong one and bias the filtering result. ``seed`` here is
     a REPETITION index used only for cache-key variation, not a provider sampling
     seed."""
-    key = hashlib.sha1(f"{scenario_id}|{seed}|{condition}".encode()).hexdigest()[:12]
+    key = hashlib.sha256(f"{scenario_id}|{seed}|{condition}".encode()).hexdigest()[:12]
     return f"\n\n[trial: {key}]"
 
 
