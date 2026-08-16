@@ -16,7 +16,7 @@
 - milestone-shaped-memory-contract
 
 # Ideas
-- idea-arbitrary-convention-contamination-scenarios
+- idea-pull-real-corpus-validation
 - idea-reconcile-unprompted-pull-direction-signal
 - idea-measure-pull-filtering-accuracy-and-cost
 - idea-contamination-detector-negation-robustness
@@ -32,6 +32,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- idea-arbitrary-convention-contamination-scenarios
 - idea-reuse-judge-calibration
 - idea-history-pull-decision-agent-harness
 - measure-cross-context-handoff-experiment

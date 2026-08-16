@@ -28,6 +28,7 @@ from evals.pull_contamination.harness import (
 )
 
 _AMBIGUOUS_PATH = "evals/pull_contamination/scenarios_ambiguous.json"
+_APPLICABILITY_PATH = "evals/pull_contamination/scenarios_applicability.json"
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +223,60 @@ def test_ambiguous_scenario_marker_invariants() -> None:
         # The two histories classify cleanly in opposite directions.
         assert classify_answer(s.relevant_history, s.marker_a, s.marker_b) == "chose_A", s.id
         assert classify_answer(s.contaminating_history, s.marker_a, s.marker_b) == "chose_B", s.id
+
+
+# ---------------------------------------------------------------------------
+# Applicability-judgment scenario set (phase 3) — invariants
+# ---------------------------------------------------------------------------
+
+
+def test_applicability_case_label() -> None:
+    assert load_case(_APPLICABILITY_PATH) == "applicability-judgment"
+
+
+def test_applicability_scenarios_shape_and_taxonomy() -> None:
+    scenarios = load_scenarios(_APPLICABILITY_PATH)
+    assert len(scenarios) == 10, "expected 10 applicability scenarios"
+    assert len({s.id for s in scenarios}) == 10, "ids must be unique"
+    from collections import Counter
+
+    taxonomy = {
+        "scope-version",
+        "scope-project",
+        "scope-subsystem",
+        "scope-superseded",
+        "scope-client",
+    }
+    counts = Counter(s.taxonomy_type for s in scenarios)
+    assert set(counts) == taxonomy, f"unexpected taxonomy: {set(counts)}"
+    assert all(counts[t] == 2 for t in taxonomy), f"expected 2 per type: {counts}"
+
+
+def test_applicability_scenario_marker_and_scope_invariants() -> None:
+    import re
+
+    for s in load_scenarios(_APPLICABILITY_PATH):
+        # Same four-way marker containment as the ambiguous set: A in relevant only,
+        # B in contaminating only. Every contaminating_history argues B (no benign here).
+        assert re.search(s.marker_a, s.relevant_history, re.IGNORECASE), s.id
+        assert re.search(s.marker_a, s.contaminating_history, re.IGNORECASE) is None, s.id
+        assert re.search(s.marker_b, s.contaminating_history, re.IGNORECASE), s.id
+        assert re.search(s.marker_b, s.relevant_history, re.IGNORECASE) is None, s.id
+        # The convention value must NOT be recoverable from the task text alone —
+        # otherwise it degrades to the ambiguous/explicit case. The task names both
+        # options (it asks "A or B"), but neither marker may resolve to a single
+        # choice there; classify_answer on the task must be 'ambiguous'.
+        assert classify_answer(s.current_task, s.marker_a, s.marker_b) == "ambiguous", (
+            f"{s.id}: task text resolves the convention; baseline would not be uncertain"
+        )
+
+
+def test_leading_is_primary_for_non_explicit_cases() -> None:
+    # The CLI/report primary-detector rule: strict for explicit-task, leading for
+    # every other case. Verified through the case label the report would carry.
+    assert load_case() == "explicit-task"                       # strict primary
+    assert load_case(_AMBIGUOUS_PATH) == "ambiguous-task"       # leading primary
+    assert load_case(_APPLICABILITY_PATH) == "applicability-judgment"  # leading primary
 
 
 # ---------------------------------------------------------------------------
