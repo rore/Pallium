@@ -77,9 +77,32 @@ conversation ("Blue-list .agent-workflow/** - yes").
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- (pending) add the blue entry, run redline/tests, record verdict.
+- Added `- path: ".agent-workflow/**"` to `zones.blue` in `agent-redline-policy.yaml`
+  (lines 108-109). YAML re-parsed clean; red (16) and watch (9) zones untouched. Verified
+  `.agent-workflow/` holds only `tasks/*.md` (Work Record markdown) — no config/hooks/
+  executable content, so the `**` glob is exactly WR bookkeeping.
+
+## Plan review
+
+Clean-context Explore subagent (read-only; read the WR and diffed the working-tree
+`agent-redline-policy.yaml` against `HEAD~1`). **Verdict: correctly scoped, correct, and
+safe to apply.**
+
+1. **Scope — OK.** Diff adds exactly one blue entry (+2 lines) and nothing else; no
+   red/watch/boundary/modes/default touched. Policy edit fully isolated from the WR commit.
+2. **Correctness — OK.** Blue (no checkpoint) is right — `.agent-workflow/` is pure Work
+   Record markdown, strictly less risky than the already-blue `docs/**`/`roadmap/**`/`scripts/**`.
+3. **Unintended breadth — OK.** Dir contains only `tasks/*.md` + a README today; nothing
+   risky. Forward-looking note: `**` is recursive, so future non-doc content under
+   `.agent-workflow/` would inherit blue — none exists now.
+4. **YAML validity — OK.** Entry at lines 108-109 under `blue:`, correct indentation,
+   well-formed.
+5. **Governance note — CONFIRMED (out of scope).** The red self-protection entry is
+   `path: "agent-policy.yaml"` but the real file is `agent-redline-policy.yaml`, so the glob
+   does NOT match — this policy file is not actually self-protected, which is also why it
+   falls through to gray. Deferred to a follow-up ticket (see WR Discovery).

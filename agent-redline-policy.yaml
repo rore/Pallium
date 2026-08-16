@@ -105,6 +105,8 @@ zones:
       reason: dependency lockfile
 
   blue:
+    - path: ".agent-workflow/**"
+      reason: agent-workflow Work Record bookkeeping — workflow metadata, not a code/runtime surface
     - path: "tests/**"
       reason: tests
     - path: "**/test_*.py"
