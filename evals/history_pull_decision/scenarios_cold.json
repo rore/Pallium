@@ -1,0 +1,75 @@
+{
+  "note": "COLD-FRAMED variant of scenarios.json for the history-pull decision harness. Same prior_turns (identical opportunity), but current_task is phrased as a PURE new task with ZERO continuation cues — no 'consistent with', 'established', 'elsewhere', 'we agreed', 'our approach'. This isolates FRAMING as the only variable vs scenarios.json: it measures whether the agent proactively searches its own history on an ordinary task prompt that silently continues prior work, WITHOUT being told a prior convention exists. This is the realistic vNext case (a fresh task that relates to past work but never announces it). Compare opportunity_pull_rate here against scenarios.json (cued). Authored scenarios bound realism.",
+  "scenarios": [
+    {
+      "id": "reservation-ordering-cold",
+      "user_directed": false,
+      "opportunity": true,
+      "prior_turns": [
+        {"role": "user", "content": "How should we order reservation holds so we do not create duplicate holds under concurrency?"},
+        {"role": "assistant", "content": "Decision: use the item event time (not receipt time) for reservation ordering, so replays and out-of-order delivery cannot produce duplicate holds. We also add an idempotency key per reservation attempt."}
+      ],
+      "current_task": "Add an endpoint that creates reservation holds. It needs to behave correctly when several requests arrive at the same time."
+    },
+    {
+      "id": "retry-backoff-policy-cold",
+      "user_directed": false,
+      "opportunity": true,
+      "prior_turns": [
+        {"role": "user", "content": "What retry policy did we settle on for the payment gateway calls?"},
+        {"role": "assistant", "content": "We standardised on exponential backoff with full jitter, max 3 attempts, base 250ms, cap 3s, and we only retry on 429/5xx — never on 4xx client errors. This lives in the shared http client wrapper."}
+      ],
+      "current_task": "Wire up the refunds client so it calls the payment gateway and retries when a call fails transiently."
+    },
+    {
+      "id": "feature-flag-cold",
+      "user_directed": false,
+      "opportunity": true,
+      "prior_turns": [
+        {"role": "user", "content": "Where do we register feature flags and what naming convention do we use?"},
+        {"role": "assistant", "content": "Flags are registered in config/flags.yaml using the convention `area.subarea.behaviour` (all lowercase, dot-separated). The loader validates the prefix against the known area list at startup."}
+      ],
+      "current_task": "Add a feature flag that gates the new batch-export path."
+    },
+    {
+      "id": "timezone-format-cold",
+      "user_directed": false,
+      "opportunity": true,
+      "prior_turns": [
+        {"role": "user", "content": "Should timestamps in the export be local or UTC?"},
+        {"role": "assistant", "content": "Decision: all exported timestamps are UTC in ISO-8601 with an explicit Z suffix; the UI converts to local for display only. This avoids the daylight-saving ambiguity we hit last quarter."}
+      ],
+      "current_task": "Add a created-at timestamp column to the export output."
+    },
+    {
+      "id": "error-taxonomy-cold",
+      "user_directed": false,
+      "opportunity": true,
+      "prior_turns": [
+        {"role": "user", "content": "How do we classify errors returned from the ingestion pipeline?"},
+        {"role": "assistant", "content": "We use a three-way taxonomy: `transient` (retry), `permanent` (drop + alert), and `poison` (quarantine to the dead-letter table). The classifier maps provider error codes onto these three buckets."}
+      ],
+      "current_task": "Add error handling to the new export pipeline stage."
+    },
+    {
+      "id": "greenfield-parser",
+      "user_directed": false,
+      "opportunity": false,
+      "prior_turns": [
+        {"role": "user", "content": "Team lunch is booked for Friday at the Thai place near the office."},
+        {"role": "assistant", "content": "Noted — I've added the lunch reminder for Friday noon."}
+      ],
+      "current_task": "Write a small standalone function that parses an RFC-3339 duration string into total seconds. No dependencies on the rest of the codebase."
+    },
+    {
+      "id": "self-contained-math",
+      "user_directed": false,
+      "opportunity": false,
+      "prior_turns": [
+        {"role": "user", "content": "The office wifi password rotated to a new value this morning."},
+        {"role": "assistant", "content": "Thanks for the heads up about the wifi password change."}
+      ],
+      "current_task": "Implement a pure function that returns the nth Fibonacci number iteratively. It should not read any project state."
+    }
+  ]
+}
