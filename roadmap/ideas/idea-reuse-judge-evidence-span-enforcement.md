@@ -29,14 +29,19 @@ That trade-off needs its own design + eval, not a drive-by add to a wording PR.
 
 ## In Scope
 
-- Post-parse validation in `_judge_once`: for "incorporation", `evidence_span` non-empty,
-  ≤200 chars, and substring-present (normalised) in BOTH the retrieved history and the
-  work-after text; for "influence"/"none", empty. Invalid → route through the existing
+- Post-parse validation in `_judge_once`, applied to the RAW `parsed["evidence_span"]`
+  BEFORE any coercion or truncation: require a string type (reject non-string), enforce
+  the ≤200-char limit on the ORIGINAL value (not the post-`[:300]` value), and — for
+  "incorporation" — require it be substring-present in BOTH the retrieved history and the
+  work-after text under ONE clearly-defined normalization (e.g. casefold + whitespace
+  collapse). For "influence"/"none", require empty. Invalid → route through the existing
   `failed=True` handling.
-- Reconcile the `[:300]` truncation with the prompt's ≤200 contract.
-- Tests: valid shared-evidence incorporation accepted; work-only / empty evidence on an
-  "incorporation" verdict rejected (the current `_StubJudge` returns a work-only
-  "marker").
+- Reconcile the `[:300]` truncation with the prompt's ≤200 contract (validate the
+  pre-truncation length; truncate only for storage after the check passes).
+- Tests: valid shared-evidence incorporation accepted; rejected cases — work-only /
+  empty evidence on "incorporation" (current `_StubJudge` returns a work-only "marker"),
+  a non-string evidence_span, an overlong (>200-char) span, and a non-empty span on an
+  "influence"/"none" verdict.
 
 ## Out of Scope
 
@@ -45,9 +50,11 @@ That trade-off needs its own design + eval, not a drive-by add to a wording PR.
 
 ## Done When
 
-1. `_judge_once` validates evidence_span against the rung + cross-text overlap and routes
-   invalid output through the failure path.
-2. Tests cover the valid and invalid evidence_span shapes.
+1. `_judge_once` validates the raw evidence_span (type, pre-truncation length, rung
+   consistency, and cross-text overlap under a defined normalization) and routes invalid
+   output through the failure path.
+2. Tests cover the valid and invalid evidence_span shapes (work-only, empty-on-incorp,
+   non-string, overlong, non-empty-on-influence/none).
 3. The judge-failure-rate impact is measured (does enforcement materially change rung
    rates on the gold set / a replay window?) and noted, so the measurement-bias risk is
    quantified rather than assumed benign.
