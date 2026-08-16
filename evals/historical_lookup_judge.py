@@ -92,8 +92,8 @@ Decide:
      decision, or phrase — reappears verbatim or near-verbatim in WORK AFTER. An
      observable reuse you can point to in BOTH blocks.
    - "influence": WORK AFTER builds on the retrieved history's decision or
-     direction WITHOUT reproducing a specific detail from it verbatim. Weaker,
-     observational.
+     direction WITHOUT reproducing a specific detail from it verbatim or
+     near-verbatim. Weaker, observational.
    - "none": no evidence the history was used.
 3. evidence_span (string): a short verbatim quote (<=200 chars) of the specific
    detail that appears in BOTH RETRIEVED HISTORY and WORK AFTER — the overlap

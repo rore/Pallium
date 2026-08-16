@@ -17,6 +17,7 @@
 
 # Ideas
 - idea-retrieval-source-fetch-batching
+- idea-reuse-judge-evidence-span-enforcement
 - fix-work-resumption-benchmark-scenario-count-drift
 - idea-operational-scale-hardening
 - idea-optional-reranker-support
