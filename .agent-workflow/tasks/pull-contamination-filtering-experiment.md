@@ -143,36 +143,40 @@ untouched by construction and removes the DB-lifecycle machinery entirely.
 
 ## Evidence (real LLM pass)
 
-Real adversarial-synthetic run (seeds 0,1,2; 10 scenarios × 3 conditions = 90 trials;
-`.local/research/pull_contamination_run.json`):
+Real adversarial-synthetic run (seeds/repetitions 0,1,2; 10 scenarios × 3 conditions = 90
+trials; `.local/research/pull_contamination_run_v2.json`), AFTER the CodeRabbit fixes
+(opaque trial tag — no condition-label leak; retry markers cover number+word forms):
 
 | metric | rate | 95% band |
 |---|---|---|
-| baseline chose A (no history) | 0.867 (26/30) | [0.70, 0.95] |
-| control chose A (relevant history) | 0.933 (28/30) | [0.79, 0.98] |
+| baseline chose A (no history) | 1.000 (30/30) | [0.89, 1.00] |
+| control chose A (relevant history) | 0.900 (27/30) | [0.74, 0.97] |
 | **contamination (chose B, wrong history)** | **0.000 (0/30)** | **[0.00, 0.11]** |
-| ambiguous (contaminating arm) | 0.200 (6/30) | [0.10, 0.37] |
-| control_used_history (proxy) | 0.267 | [0.14, 0.44] |
+| ambiguous (contaminating arm) | 0.033 (1/30) | [0.01, 0.17] |
+| control_used_history (proxy) | 0.333 | [0.19, 0.51] |
 
-**0% hard contamination.** Manually inspected all 6 "ambiguous" contaminating-arm answers:
-every one is a CORRECT A-choice — the agent named B only to reject it ("25 items… not the
-50 used for admin endpoints"; "UTC… no local offsets"), or a marker miss ("1" vs the
-`1 attempt` pattern). None are contamination or hedging toward B. So effective filtering is
-~100% in this arm.
+**0% hard contamination — robust to the confound.** The first pass (v1) leaked the
+condition label into the model prompt (`cond=contaminating_history`); CodeRabbit flagged it.
+After switching to an OPAQUE trial tag so the model cannot tell which history is wrong,
+contamination stayed **0/30** — so the result was not an artifact of the leak. The marker
+fix (number+word forms) also collapsed the false-ambiguous rate (20% → 3%), confirming
+those were correct A-choices (agent named B only to reject it).
 
 **Honest scope / caveats:**
-- This tests the EXPLICIT-TASK case (the task text pins A). 0% contamination is
+- Tests the EXPLICIT-TASK case (the task text pins A). 0% contamination is
   necessary-not-sufficient — it shows the agent won't override a clear instruction, not that
   it filters when the task is ambiguous and history is the main signal. That harder case is
   the next experiment.
-- n=30/condition, single model, synthetic scenarios. Upper Wilson bound 11.4% — can't rule
-  out low-single-digit contamination.
-- Marker rule is conservative (both markers present → ambiguous), which safely avoids
-  false chose_B but undercounts clean-A when the agent names B to reject it. FOLLOW-UP:
-  refine detection to distinguish "adopted B" from "named B but chose A."
-- `control_used_history_rate` is a lexical-overlap proxy and low (0.27) — expected, since
-  the task already states A so the agent needn't cite history.
+- n=30/condition (10 scenarios × 3 repetitions), single model, synthetic. Upper Wilson
+  bound 11.4% — can't rule out low-single-digit contamination.
+- "seeds" are REPETITION indices (cache-key variation for independent draws), not provider
+  sampling seeds; CIs are over scenario × repetition.
+- `control_used_history_rate` is a lexical-overlap proxy and low (0.33) — expected, since
+  the task already states A.
+- FOLLOW-UP: the marker rule is still conservative (both markers → ambiguous); a richer
+  detector could distinguish "adopted B" from "named B to reject."
 
-Verdict: **preliminary GREEN for agent-in-the-loop filtering in the explicit-task case** —
-supports proceeding with the pivot; the ambiguous-task + real-corpus passes remain.
+Verdict: **preliminary GREEN for agent-in-the-loop filtering in the explicit-task case,
+robust to the label-leak confound** — supports proceeding with the pivot; the
+ambiguous-task + real-corpus passes remain.
 

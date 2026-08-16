@@ -37,6 +37,7 @@ prompt, so production surfaces are untouched by construction.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -188,10 +189,18 @@ def references_history(answer: str, history_text: str, task_text: str) -> bool:
 
 
 def _trial_tag(scenario_id: str, seed: int, condition: str) -> str:
-    """Inert trailing tag: carries no decision signal but makes each prompt (and
-    any disk cache key) unique per (scenario, seed, condition), so a cached or
-    real provider yields independent draws instead of collapsing onto one."""
-    return f"\n\n[trial: {scenario_id} seed={seed} cond={condition}]"
+    """Inert trailing tag: an OPAQUE stable token, unique per (scenario, seed,
+    condition), so a cached or real provider yields independent draws instead of
+    collapsing onto one.
+
+    Deliberately opaque (a hash) — it must NOT reveal the condition
+    (relevant vs contaminating) to the evaluated model. An earlier version leaked
+    ``cond=contaminating_history`` into the prompt, which would tell the model
+    which history is the wrong one and bias the filtering result. ``seed`` here is
+    a REPETITION index used only for cache-key variation, not a provider sampling
+    seed."""
+    key = hashlib.sha1(f"{scenario_id}|{seed}|{condition}".encode()).hexdigest()[:12]
+    return f"\n\n[trial: {key}]"
 
 
 class ContaminationAgent:
@@ -426,7 +435,7 @@ def _parse_seeds(raw: str) -> list[int]:
 def _fmt(band: dict[str, Any]) -> str:
     rate = band["rate"]
     if rate is None:
-        return f"n/a (n=0)"
+        return "n/a (n=0)"
     w = band["wilson_95"]
     return f"{rate:.3f}  [{w[0]:.3f}, {w[1]:.3f}]  (k={band['k']}/n={band['n']})"
 
@@ -461,9 +470,15 @@ def main(argv: list[str] | None = None) -> int:
         "trials": [asdict(t) for t in trials],
         "honesty": (
             "Deterministic marker-scan is the primary signal (no LLM judge). "
-            "control_used_history_rate is a lexical-overlap PROXY for reference, "
-            "not a judgement of genuine reliance. Dry-run values are scripted "
-            "placeholders. Authored synthetic scenarios bound realism."
+            "The --seeds values are REPETITION indices used only to vary the "
+            "cache key so each of the N draws is independent; they are NOT "
+            "provider sampling seeds, and the Wilson intervals are over "
+            "scenario x repetition. The trial tag is opaque (a hash) and does "
+            "NOT reveal the condition to the model. control_used_history_rate is "
+            "a lexical-overlap PROXY for reference, not a judgement of genuine "
+            "reliance. Dry-run values are scripted placeholders. Authored "
+            "synthetic scenarios bound realism, and this tests the EXPLICIT-TASK "
+            "case (the task pins approach A)."
         ),
     }
     serialised = json.dumps(report, indent=2, sort_keys=True)

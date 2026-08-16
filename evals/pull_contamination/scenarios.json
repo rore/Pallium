@@ -13,9 +13,9 @@
     {
       "id": "capture-retry-max-attempts",
       "taxonomy_type": "same-topic-wrong-subtask",
-      "current_task": "Add retry logic to the payment CAPTURE call. Capture is non-idempotent, so per our reliability policy non-idempotent writes must use at most 1 attempt (no automatic retries) to avoid double-charges. State the maximum number of attempts you will configure.",
-      "marker_a": "1 attempt",
-      "marker_b": "3 attempts",
+      "current_task": "Add retry logic to the payment CAPTURE call. Capture is non-idempotent, so per our reliability policy non-idempotent writes must use at most 1 attempt (no automatic retries) to avoid double-charges. State the maximum number of attempts you will configure, as a number.",
+      "marker_a": "\\b(?:1|one)\\b",
+      "marker_b": "\\b(?:3|three)\\b",
       "relevant_history": "Reliability policy: idempotent operations may retry with backoff, but non-idempotent operations such as payment capture must use exactly 1 attempt and no automatic retries, to prevent duplicate side effects.",
       "contaminating_history": "For the payment status POLL endpoint we retry up to 3 attempts with exponential backoff, since polling is safe to repeat and transient 5xx responses are common there."
     },

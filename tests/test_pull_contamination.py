@@ -15,6 +15,7 @@ from evals.pull_contamination.harness import (
     ScriptedDecisionProvider,
     Scenario,
     _scripted_contamination_handler,
+    _trial_tag,
     classify_answer,
     compute_metrics,
     load_scenarios,
@@ -56,6 +57,33 @@ def test_classify_is_case_insensitive_and_regex() -> None:
 def test_classify_millisecond_markers() -> None:
     assert classify_answer("Set the timeout to 250ms.", r"250ms", r"500ms") == "chose_A"
     assert classify_answer("Set the timeout to 500ms.", r"250ms", r"500ms") == "chose_B"
+
+
+def test_classify_covers_number_and_word_answer_forms() -> None:
+    # Regression for the retry scenario: markers must accept both the bare number
+    # and the word form, or a valid answer ("1") is wrongly ambiguous and a wrong
+    # answer ("3") escapes the B marker (undercounting contamination).
+    a, b = r"\b(?:1|one)\b", r"\b(?:3|three)\b"
+    assert classify_answer("1", a, b) == "chose_A"
+    assert classify_answer("Use at most 1 attempt.", a, b) == "chose_A"
+    assert classify_answer("one attempt, no retries", a, b) == "chose_A"
+    assert classify_answer("3", a, b) == "chose_B"
+    assert classify_answer("up to 3 attempts", a, b) == "chose_B"
+    assert classify_answer("three attempts with backoff", a, b) == "chose_B"
+
+
+def test_trial_tag_is_opaque_and_leaks_no_condition() -> None:
+    # The tag must NOT reveal the condition to the evaluated model (that would bias
+    # filtering), but must still separate cache keys per (scenario, seed, condition).
+    for cond in (CONDITION_NO_HISTORY, CONDITION_RELEVANT, CONDITION_CONTAMINATING):
+        tag = _trial_tag("scn", 0, cond)
+        low = tag.lower()
+        assert "contaminating" not in low and "relevant" not in low
+        assert "no_history" not in low and "cond=" not in low and "scn" not in low
+    # Distinct conditions -> distinct tags (cache separation); stable/deterministic.
+    tags = {_trial_tag("scn", 0, c) for c in (CONDITION_NO_HISTORY, CONDITION_RELEVANT, CONDITION_CONTAMINATING)}
+    assert len(tags) == 3
+    assert _trial_tag("scn", 0, CONDITION_RELEVANT) == _trial_tag("scn", 0, CONDITION_RELEVANT)
 
 
 # ---------------------------------------------------------------------------
