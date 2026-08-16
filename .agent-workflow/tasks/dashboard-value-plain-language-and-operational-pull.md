@@ -91,9 +91,35 @@ signal will show a non-zero value.
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-_(pending)_
+- Value tab ("How memory helps"): rewrote the Reuse-KPI section into plain language — title "Did it
+  help?", scope-tag "how often a pulled memory actually got used in the work that followed"; the
+  empty-state and the `renderReuseCalibration` JS strings now say "reused directly (copied a specific
+  detail)" / "shaped the approach" (was rung-1/rung-2), "agreement with human review" + "needs 0.60+
+  to trust" (was judge-vs-gold κ / threshold), and "checked / not yet checked against human review"
+  (was CALIBRATED/UNCALIBRATED). Dropped the raw `python -m evals...` command and the
+  `/status.historical_lookup_funnel` endpoint path from user-facing copy. All `judge_vs_gold` field
+  reads unchanged (display-only).
+- Operational tab: added a compact "Historical Lookups" section (tracking ON/OFF + lookups recorded +
+  an honest empty-state nudge) after Overview, so the newly-activated agent-pull path is visible as an
+  operational signal. Wired by extending `renderFunnel` to populate `op-lookup-armed`,
+  `op-lookup-events`, `op-lookup-nudge` from the already-loaded `/status.historical_lookup_funnel` — no
+  new fetch, no `app/dashboard.py` change.
+
+## Evidence
+
+- Jargon scan: `grep -E "rung-1|rung-2|CALIBRATED|UNCALIBRATED|judge-vs-gold|reuse_judge_calibration|/status\.historical|κ"`
+  → only remaining hit is the JS object key `reports.reuse_judge_calibration` (a data key, not
+  user-facing). No leaked terms in displayed copy.
+- JS syntax: extracted the inline `<script>` (56.5k chars) → `node --check` PASS.
+- Functional smoke (node + stub DOM): `renderFunnel({armed:true,events_recorded:1})` → op-lookup-armed
+  "ON", op-lookup-events "1", nudge hidden; `renderReuseCalibration({available:false})` → plain
+  "reused directly", no jargon; `renderReuseCalibration({available:true, ...calibrated})` → plain
+  "checked against human review", no jargon. SMOKE OK.
+- Live check deferred to PR (dashboard served by the running service; edits are static HTML/JS).
+
+**State:** Ready for review
