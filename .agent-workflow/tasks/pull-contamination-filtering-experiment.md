@@ -91,9 +91,88 @@ isolate filtering we ensure the condition's history is what gets returned.
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- (pending) build harness + scenarios, deterministic detection, adversarial run.
+Built the offline filtering harness under `evals/pull_contamination/`:
+
+- `harness.py` — runner + metrics + CLI. Per scenario × seed × condition it
+  **forces** the condition's history into the agent's context (no pull decision)
+  to isolate the FILTERING hypothesis. History is presented the same way a real
+  pull result would be: rendered via `history_pull_decision.agent._render_results`
+  behind a FINALIZE/AFTER-style system prompt. `classify_answer` is the primary
+  deterministic signal (case-insensitive regex marker scan → chose_A / chose_B /
+  ambiguous). `references_history` is a documented lexical-overlap PROXY for the
+  control's used-history metric. Metrics: `baseline_choose_A_rate`,
+  `control_choose_A_rate`, `control_used_history_rate`, `contamination_rate`
+  (chose_B in the test arm — headline), and per-condition ambiguous rates, each
+  with a Wilson 95% band (imported `_wilson_95` from
+  `historical_lookup_measurement`, not reimplemented). CLI: `--scenarios`,
+  `--seeds` (default 0,1,2), `--dry-run` (scripted stub, no network),
+  `--cache-dir`, `--no-eval-cache`, `--output`.
+- `scenarios.json` — 10 scenarios, 2 per taxonomy type (same-topic-wrong-subtask,
+  old-superseded-decision, similar-project-different-convention,
+  related-investigation-different-conclusion, benign-irrelevant). Each task pins
+  A from the task text alone; contaminating_history plausibly argues B. Invariants
+  (tested): marker_a matches relevant_history and NOT contaminating_history;
+  marker_b does NOT match relevant_history. Benign scenarios are true negative
+  controls (contaminating text matches neither marker). No internal/product names.
+- `__init__.py`, `__main__.py` (delegates to `harness.main`).
+- `tests/test_pull_contamination.py` — 14 fast, network-free unit tests over the
+  A/B detection (A-only→chose_A, B-only→chose_B, both/neither→ambiguous, regex +
+  word-boundary + ms markers), the used-history proxy, scenario invariants, metric
+  shaping (empty-safe + Wilson bands), and a full scripted dry-run chain.
+
+**Design deviation from the mirror plan:** the harness does NOT use
+`InProcessService`/a scratch DB. Because the refined design FORCES history into
+the prompt (rather than measuring a pull), no retrieval/service/DB is needed — the
+experiment reduces to an LLM call per condition, which keeps production surfaces
+untouched by construction and removes the DB-lifecycle machinery entirely.
+
+**Validation (parent to run the real LLM pass):**
+- `pytest tests/test_pull_contamination.py -x -q` → 14 passed.
+- `python -m evals.pull_contamination.harness --dry-run --seeds 0,1,2` completes
+  and prints metrics. Scripted stub simulates a maximally-contaminatable agent
+  (echoes the salient guidance), giving the expected wiring demonstration:
+  baseline_choose_A=1.000, control_choose_A=1.000, control_used_history=1.000,
+  contamination_rate=0.800 (24/30 = the 8 non-benign scenarios chose_B),
+  ambiguous[contaminating]=0.200 (the 2 benign scenarios), 0 errors. Dry-run
+  values are scripted placeholders; the real LLM pass is left to the parent.
+
+## Evidence (real LLM pass)
+
+Real adversarial-synthetic run (seeds 0,1,2; 10 scenarios × 3 conditions = 90 trials;
+`.local/research/pull_contamination_run.json`):
+
+| metric | rate | 95% band |
+|---|---|---|
+| baseline chose A (no history) | 0.867 (26/30) | [0.70, 0.95] |
+| control chose A (relevant history) | 0.933 (28/30) | [0.79, 0.98] |
+| **contamination (chose B, wrong history)** | **0.000 (0/30)** | **[0.00, 0.11]** |
+| ambiguous (contaminating arm) | 0.200 (6/30) | [0.10, 0.37] |
+| control_used_history (proxy) | 0.267 | [0.14, 0.44] |
+
+**0% hard contamination.** Manually inspected all 6 "ambiguous" contaminating-arm answers:
+every one is a CORRECT A-choice — the agent named B only to reject it ("25 items… not the
+50 used for admin endpoints"; "UTC… no local offsets"), or a marker miss ("1" vs the
+`1 attempt` pattern). None are contamination or hedging toward B. So effective filtering is
+~100% in this arm.
+
+**Honest scope / caveats:**
+- This tests the EXPLICIT-TASK case (the task text pins A). 0% contamination is
+  necessary-not-sufficient — it shows the agent won't override a clear instruction, not that
+  it filters when the task is ambiguous and history is the main signal. That harder case is
+  the next experiment.
+- n=30/condition, single model, synthetic scenarios. Upper Wilson bound 11.4% — can't rule
+  out low-single-digit contamination.
+- Marker rule is conservative (both markers present → ambiguous), which safely avoids
+  false chose_B but undercounts clean-A when the agent names B to reject it. FOLLOW-UP:
+  refine detection to distinguish "adopted B" from "named B but chose A."
+- `control_used_history_rate` is a lexical-overlap proxy and low (0.27) — expected, since
+  the task already states A so the agent needn't cite history.
+
+Verdict: **preliminary GREEN for agent-in-the-loop filtering in the explicit-task case** —
+supports proceeding with the pivot; the ambiguous-task + real-corpus passes remain.
+
