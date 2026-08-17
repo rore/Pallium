@@ -2,6 +2,33 @@
 
 ## Accepted
 
+### 2026-08-17 - Caller visibility threaded into source-context expansion
+
+`get_source_context` (pallium_expand_source / `GET /source/{id}/context`) now
+authorizes the anchor, every neighbor, and supported memories against the
+CALLER's resolved `query_visibility`, mirroring the `/query` scope path. The
+value is threaded MCP client -> HTTP route -> service -> all three `is_visible`
+calls.
+
+- Missing visibility (`None`) maps to private/container read context (current
+  single-user read behavior — same-container turns visible). NOT deny-all,
+  which would break normal reads and existing green tests.
+- Invalid/unknown values are rejected at the BOUNDARY: the route param is typed
+  as the `Visibility` literal, so FastAPI returns 422 automatically. A defensive
+  `ValueError` guard in the service protects non-route callers (mapped to 400).
+  `is_visible` is NOT relied on for rejection — it treats unknown strings as
+  permissive private-context.
+
+Why:
+
+- before this fix the MCP client dropped the caller's visibility and the service
+  never passed `query_visibility` into `is_visible`, so a public-context query
+  fell through the permissive same-container branch and received PRIVATE
+  same-container neighbor turns (privacy leak).
+
+The sibling `get_memory_expand` / `pallium_expand` has the identical defect and
+is tracked as a separate follow-up (out of scope here).
+
 ### 2026-05-30 - Derived topic and workstream signals must be language-agnostic
 
 Pallium's derived grouping signals must remain language-agnostic. Workstream,

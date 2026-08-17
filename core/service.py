@@ -1509,6 +1509,7 @@ class PalliumService:
         *,
         container_ref: str | None = None,
         query_actor_ref: str | None = None,
+        query_visibility: str | None = None,
         before: int = 10,
         after: int = 10,
         max_chars: int = 16000,
@@ -1536,6 +1537,15 @@ class PalliumService:
           post-filter neighbor set is known, linking the expansion back to the
           lookup that produced the anchor id. Persisted unconditionally.
         """
+        # Defensive boundary guard: the HTTP route already rejects unknown
+        # visibility values (typed as the Visibility literal -> 422). This
+        # protects direct (non-route) service callers from a junk value
+        # silently falling through is_visible as permissive private-context.
+        if query_visibility is not None and query_visibility not in (
+            "public", "container", "private", "global",
+        ):
+            raise ValueError(f"invalid query_visibility: {query_visibility!r}")
+
         _MAX_SIDE = 25
         before = max(0, min(before, _MAX_SIDE))
         after = max(0, min(after, _MAX_SIDE))
@@ -1553,7 +1563,8 @@ class PalliumService:
         effective_actor_ref = query_actor_ref or anchor.actor_ref
         if not is_visible(
             anchor.visibility, anchor.container_ref, effective_container,
-            anchor.actor_ref, query_actor_ref=effective_actor_ref,
+            anchor.actor_ref, query_visibility=query_visibility,
+            query_actor_ref=effective_actor_ref,
         ):
             raise KeyError(source_item_id)
 
@@ -1581,7 +1592,8 @@ class PalliumService:
                     return None
                 if not is_visible(
                     item.visibility, item.container_ref, effective_container,
-                    item.actor_ref, query_actor_ref=effective_actor_ref,
+                    item.actor_ref, query_visibility=query_visibility,
+                    query_actor_ref=effective_actor_ref,
                 ):
                     return None
                 return _redact(item)
@@ -1629,7 +1641,8 @@ class PalliumService:
                 m for m in self._storage.list_memory_objects_for_source_item(source_item_id)
                 if is_visible(
                     m.visibility, m.container_ref, effective_container,
-                    getattr(m, "actor_ref", None), query_actor_ref=effective_actor_ref,
+                    getattr(m, "actor_ref", None), query_visibility=query_visibility,
+                    query_actor_ref=effective_actor_ref,
                 )
             ]
 

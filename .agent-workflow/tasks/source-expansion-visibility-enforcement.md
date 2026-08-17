@@ -18,10 +18,11 @@ are rejected. No change to redaction, forgotten-skip, window/order, or the priva
 
 **Target:**
 `core/service.py` (`get_source_context`: add `query_visibility` param; pass into all 3 `is_visible`
-calls), `app/mcp/client.py` (send caller visibility), `api/routes.py` + `api/schemas.py` (accept/forward
-`query_visibility` on `/source/{id}/context`), `app/mcp/server.py` (pallium_expand_source already
-resolves `visibility` in context — forward it), tests (E2E visibility matrix HTTP + MCP),
-`docs/context/decisions.md`.
+calls), `app/mcp/client.py` (send caller visibility on get_source_context), `api/routes.py`
+(`/source/{id}/context` GET: add a `query_visibility: Visibility | None = None` route param — query
+param, NOT a body; the `Visibility` literal gives 422-on-invalid for free), tests (E2E visibility matrix
+HTTP + MCP), `docs/context/decisions.md`. NOTE: no new Pydantic request model — the route is GET/query
+params (`SourceContextResponse` is response-only).
 
 **Scope:**
 - `core/service.py` `get_source_context`: add `query_visibility: str | None = None`; pass
@@ -98,12 +99,65 @@ Expanded shape; clean-context plan review required.
 - CI: full suite, agent-workflow, redline.
 
 **Plan review:**
-<!-- Clean-context review pending. -->
+<!-- Clean-context review DONE (Explore agent). Verdict: sound, minimal, no new red passthrough.
+CONFIRMED: None→private-context mirrors /query exactly (deny-all would break green source-context tests +
+single-user reads); "public" closes the leak because is_visible's branch order short-circuits before the
+permissive same-container fallthrough; anchor-scope inheritance is NOT a leak once visibility is threaded
+— leave it. CRITICAL: reject invalid visibility at the BOUNDARY (type route param as Visibility literal →
+422); do NOT rely on is_visible (it treats unknown strings as private-context). Route is GET/query-params
+— no new Pydantic model. Fix ALL THREE is_visible calls (anchor :1554, neighbor :1582, supported :1630).
+MCP client must add query_visibility from ctx.visibility (server already resolves it). Sibling defect:
+get_memory_expand/pallium_expand has the identical leak — tracked as a separate follow-up. Full report
+under ## Plan review. -->
 
 **Approvals:** High task — clean-context plan review required; will record human approval before merge
 per the red-zone architecture-review checkpoint.
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
+
+## Implementation
+
+- `core/service.py` `get_source_context`: added `query_visibility: str | None =
+  None` param. Threaded `query_visibility=query_visibility` into all THREE
+  `is_visible(...)` calls — anchor gate, neighbor `_keep`, and the
+  supported-memories block. Added a defensive boundary guard: if
+  `query_visibility` is not None and not one of `public/container/private/global`
+  it raises `ValueError`. Did NOT change `effective_container` /
+  `effective_actor_ref` anchor inheritance.
+- `api/routes.py` `GET /source/{source_item_id}/context`: added
+  `query_visibility: Visibility | None = None` route/query param (imported
+  `Visibility` from `core.visibility`) — typing it as the literal gives 422 on
+  unknown values for free. Forwarded it to `service.get_source_context(...)` and
+  added a `ValueError -> HTTPException(400)` handler alongside the existing
+  `KeyError -> 404`.
+- `app/mcp/client.py` `get_source_context`: forward the caller's resolved
+  visibility — `if self._ctx.visibility: params["query_visibility"] =
+  self._ctx.visibility`. Server-side `pallium_expand_source` already resolves
+  visibility into ctx; unchanged.
+- `tests/test_source_context_visibility.py` (new): E2E visibility matrix over an
+  ordered same-container thread (public / actor-A private / public anchor /
+  actor-B private / public) plus MCP client payload assertions.
+- `docs/context/decisions.md`: added 2026-08-17 entry.
+
+## Evidence
+
+- `pytest tests/test_source_context_visibility.py tests/test_source_context.py
+  tests/test_visibility_scope.py -x -q` -> 35 passed, 1 skipped (the skip was the
+  mcp[cli] importorskip, since removed — see below).
+- `pytest tests/test_source_context_visibility.py -q` -> 10 passed (includes both
+  MCP client payload tests; importorskip removed because `PalliumMcpClient`
+  depends only on httpx + PalliumContext, not the `mcp` package).
+- `pytest tests/test_source_context_visibility.py tests/test_source_context.py
+  tests/test_visibility_scope.py tests/test_source_forget_authorization.py
+  tests/test_mcp_client.py tests/test_search_history_tool.py -q` -> 74 passed,
+  1 skipped.
+- `pytest tests/ -q -k "source or visib or query or expand or retriev or route
+  or mcp"` -> 680 passed, 3 skipped.
+
+Invalid-value rejection is wired at the boundary: the route param is typed as the
+`Visibility` literal (FastAPI 422 on unknown value), backed by a defensive
+`ValueError` guard in the service method (mapped to 400 in the route). `is_visible`
+is NOT relied on to reject unknown strings.
