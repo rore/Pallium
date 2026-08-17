@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class BuildResult:
     service: PalliumService
+    storage: StorageProvider
     index_holder: VectorIndexHolder
     rebuild_needed: bool
     rebuild_reason: str
@@ -473,6 +474,7 @@ def build_service(
 
     return BuildResult(
         service=service,
+        storage=storage,
         index_holder=index_holder or VectorIndexHolder(),
         rebuild_needed=rebuild_needed,
         rebuild_reason=rebuild_reason,

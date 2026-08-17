@@ -98,15 +98,45 @@ running `incremental_vacuum` outside a transaction.
 - CI: agent-workflow, redline, test lanes.
 
 **Plan review:**
-<!-- clean-context review in flight (agent); verdict recorded under ## Plan review before implement -->
+<!-- Clean-context review (agent) done. Verdict: overall zone = watch, avoids red (core/service.py NOT touched); boundaries clean. Load-bearing correctness fixes adopted: (1) auto_vacuum=INCREMENTAL MUST precede journal_mode=WAL in the connect hook or the new-DB default is silently ignored; (2) run incremental_vacuum in an AUTOCOMMIT connection, not via _with_retry, and follow with wal_checkpoint(TRUNCATE) since WAL defers the physical shrink; (3) reach storage via BuildResult.storage, never a core/service.py passthrough (red trap); (4) existing DBs stay auto_vacuum=NONE until a one-time VACUUM — document. Full report under ## Plan review. -->
 
 **Approvals:** Not required at this risk level (Elevated needs clean-context plan review, not human approval). User approved the design direction (INCREMENTAL + stop/vacuum/restart) in-conversation.
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
+
+## Plan review
+
+Clean-context agent review (redline + SQLite correctness). Verdict: overall zone **watch**, red zone
+avoided (`core/service.py` not touched); boundaries clean. Correctness fixes adopted before coding:
+(1) `auto_vacuum=INCREMENTAL` set **before** `journal_mode=WAL` in the connect hook (else the new-DB
+default is silently ignored); (2) reclaim runs in an AUTOCOMMIT connection (not `_with_retry`) and
+follows with `wal_checkpoint(TRUNCATE)`; (3) storage reached via `BuildResult.storage`, never a
+`core/service.py` passthrough; (4) existing DBs stay NONE until a one-time VACUUM — documented.
 
 ## Implementation
 
-_(pending clean-context review)_
+- `storage/sqlite.py`: connect hook now sets `PRAGMA auto_vacuum=INCREMENTAL` **first** (before WAL);
+  added `reclaim_free_pages()` — AUTOCOMMIT `PRAGMA incremental_vacuum` + `wal_checkpoint(TRUNCATE)`,
+  returns `{freelist_before, freelist_after, reclaimed_pages}`; no-op on non-SQLite / NONE DBs.
+- `storage/base.py`: concrete no-op `reclaim_free_pages()` default on the `StorageProvider` ABC.
+- `app/dependencies.py`: `BuildResult` now carries `storage` (so callers reach it without a service
+  passthrough).
+- `app/cleaner.py`: grabs `built.storage`; after a retention pass that actually deleted rows, calls
+  `reclaim_free_pages()` (best-effort, never fails the loop) and logs reclaimed pages.
+- `tests/test_sqlite_auto_vacuum.py`: fresh DB → `auto_vacuum==2`; reclaim drops the freelist after
+  mass deletion; legacy NONE DB is a no-op; empty freelist reclaims 0.
+- `tests/test_runtime_logging.py`: updated the `build_service` stub to include `storage`.
+- `docs/context/decisions.md`: recorded the default + rationale + existing-DB caveat.
+
+## Evidence
+
+- `pytest tests/test_sqlite_auto_vacuum.py` → 4 passed (ordering fix confirms fresh DB is INCREMENTAL).
+- Full suite: **3576 passed**, 15 skipped, 2 xfailed. The single failure
+  (`test_config.py::test_prompt_variants_legacy_fallback_unaffected`) is **pre-existing** — it fails
+  identically on clean main with these changes stashed (env-var leakage on this box), unrelated.
+- Operational live-DB reclaim recorded below once run.
+
+**State:** Ready for review

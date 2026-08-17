@@ -40,7 +40,9 @@ def run_cleaner(
 ) -> int:
     parsed = build_parser().parse_args(args)
     resolved_config = config or AppConfig.from_env()
-    service = build_service(resolved_config, enable_vector=False).service
+    built = build_service(resolved_config, enable_vector=False)
+    service = built.service
+    storage = built.storage
     cleaner_id = parsed.cleaner_id or default_cleaner_id()
     run_interval_seconds = parsed.run_interval_seconds if parsed.run_interval_seconds is not None else resolved_config.retention.run_interval_seconds
     lease_seconds = parsed.lease_seconds if parsed.lease_seconds is not None else resolved_config.retention.lease_seconds
@@ -94,6 +96,30 @@ def run_cleaner(
                 consecutive_transient_errors = 0
                 if stats is not None:
                     _log_retention_stats(cleaner_id, stats)
+                    # Return the freed pages to the OS after a pass that actually
+                    # deleted rows (INCREMENTAL auto-vacuum reclaim; no-op on
+                    # legacy auto_vacuum=NONE DBs). Best-effort: never let a reclaim
+                    # hiccup fail the cleaner loop.
+                    deleted = (
+                        stats.deleted_source_items
+                        + stats.deleted_memory_objects
+                        + stats.deleted_relations
+                        + stats.deleted_index_entries
+                    )
+                    if deleted:
+                        try:
+                            reclaimed = storage.reclaim_free_pages()
+                            if reclaimed.get("reclaimed_pages"):
+                                emit_runtime_log(
+                                    "cleaner",
+                                    f"cleaner_id={cleaner_id} reclaimed_pages={reclaimed['reclaimed_pages']}",
+                                )
+                        except Exception as exc:
+                            emit_runtime_log(
+                                "cleaner",
+                                f"cleaner_id={cleaner_id} reclaim_free_pages_error={exc}",
+                                stderr=True,
+                            )
                     if parsed.once:
                         return 0
                 elif parsed.once:
