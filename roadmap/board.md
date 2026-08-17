@@ -3,6 +3,7 @@
 - fix-source-expansion-visibility-enforcement
 - fix-reuse-kpi-artifact-taxonomy
 - fix-lookup-and-expansion-active-attribution
+- idea-authenticated-principal-for-mutation-authz
 - fix-continuous-eval-lookup-population
 - idea-visibility-violation-metric-completeness
 - fix-vector-source-only-starvation

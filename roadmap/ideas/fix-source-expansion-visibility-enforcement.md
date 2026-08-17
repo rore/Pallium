@@ -30,6 +30,8 @@ other." This is the Phase-0 governance requirement "per-neighbor visibility" shi
 
 - Thread resolved query visibility through client → HTTP route → `get_source_context`, and pass it into
   every `is_visible()` call (anchor, each neighbor, supported memories).
+- Fail closed: when query visibility cannot be resolved (missing or invalid), DENY rather than fall
+  through to the permissive same-container branch. Absent visibility must not silently widen access.
 - Each neighbor authorized independently on the full current query context (actor, visibility,
   container, sharing rules, forgotten/lifecycle state). An authorized anchor never confers access on
   adjacent records. Window/order stays correct after unauthorized neighbors are removed.
