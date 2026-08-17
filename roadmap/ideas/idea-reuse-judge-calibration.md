@@ -1,11 +1,18 @@
 ---
 id: idea-reuse-judge-calibration
 title: Reuse-ladder judge calibration (gold set + agreement threshold)
-status: done
+status: queued
 priority: high
 commitment: committed
 milestone: pallium-vnext-p1
 ---
+
+> **Reopened 2026-08-17 (external review item 12):** the calibration harness landed, but measured
+> judge-vs-gold agreement is Cohen's κ ≈ 0.50 — below the stated ≥0.70 confidence threshold. The KPI it
+> backs must not be labeled "confirmed" until κ passes. Remaining work: improve rubric + calibration
+> corpus; report per-class precision/recall (not only κ); ≥2 human labels per ambiguous example with
+> adjudication; record judge prompt/version; repeated-run stability. Keep deterministic facts (lookup,
+> exposure, expansion, citation) separate from judged use.
 
 ## Summary
 

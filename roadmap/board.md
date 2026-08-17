@@ -1,4 +1,18 @@
 # P1 · Reuse Measurement
+- fix-source-forget-scope-authorization
+- fix-source-expansion-visibility-enforcement
+- fix-reuse-kpi-artifact-taxonomy
+- fix-lookup-and-expansion-active-attribution
+- fix-continuous-eval-lookup-population
+- idea-visibility-violation-metric-completeness
+- fix-vector-source-only-starvation
+- idea-raw-duplicate-ingestion-and-result-diversity
+- idea-pull-real-corpus-validation
+- idea-measure-pull-filtering-accuracy-and-cost
+- idea-reconcile-unprompted-pull-direction-signal
+- idea-reuse-judge-calibration
+- idea-reuse-judge-evidence-span-enforcement
+- fix-roadmap-and-evidence-status-drift
 
 # P2 · Work Continuity
 - idea-cross-context-work-continuity
@@ -16,13 +30,9 @@
 - milestone-shaped-memory-contract
 
 # Ideas
-- idea-pull-real-corpus-validation
-- idea-reconcile-unprompted-pull-direction-signal
-- idea-measure-pull-filtering-accuracy-and-cost
 - idea-contamination-detector-negation-robustness
 - idea-contamination-differential-paired-inference
 - idea-retrieval-source-fetch-batching
-- idea-reuse-judge-evidence-span-enforcement
 - fix-redline-self-protection-path-mismatch
 - fix-add-limit-to-injection-replay-simulation
 - fix-work-resumption-benchmark-scenario-count-drift
@@ -33,7 +43,6 @@
 
 # Done
 - idea-arbitrary-convention-contamination-scenarios
-- idea-reuse-judge-calibration
 - idea-history-pull-decision-agent-harness
 - measure-cross-context-handoff-experiment
 - idea-measurement-contract-honesty
