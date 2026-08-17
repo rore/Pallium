@@ -41,11 +41,12 @@ sound behind a trusted transport. The loopback-bind guard is the current compens
 
 ## Done When
 
-1. In strict mode, caller scope for forget (and other scope-sensitive mutations) is derived from a
-   server-verified principal; a request body cannot assert another container's scope.
+1. In strict mode, the caller actor and container scope for forget (and other scope-sensitive
+   mutations) are derived from a server-verified principal; request-body values cannot override
+   either identity or scope.
 2. Unauthenticated strict-mode mutation fails closed with a defined error.
-3. E2E: a remote caller asserting a foreign container in the request body is denied (the PR #38 exploit
-   path is closed under strict mode).
+3. E2E: a remote caller asserting a foreign actor or container in the request body is denied (the
+   PR #38 exploit path is closed under strict mode).
 4. `decisions.md` threat-model note updated from "seam only" to "authenticated boundary."
 
 ## Notes
