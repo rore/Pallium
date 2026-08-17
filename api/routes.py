@@ -47,7 +47,7 @@ from core.errors import ForgetAuthorizationError, SupersessionConflictError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
 from core.turn_inference import resolve_runtime_context
-from core.visibility import QueryVisibilityTrace, VisibilityExclusion
+from core.visibility import QueryVisibilityTrace, Visibility, VisibilityExclusion
 
 
 def _normalize_query_work_refs(raw: list[str] | None) -> tuple[str, ...]:
@@ -674,6 +674,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
         source_item_id: str,
         container_ref: str | None = None,
         query_actor_ref: str | None = None,
+        query_visibility: Visibility | None = None,
         before: int = 10,
         after: int = 10,
         max_chars: int = 16000,
@@ -685,6 +686,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 source_item_id,
                 container_ref=container_ref,
                 query_actor_ref=query_actor_ref,
+                query_visibility=query_visibility,
                 before=before,
                 after=after,
                 max_chars=max_chars,
@@ -693,6 +695,8 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             )
         except KeyError:
             raise HTTPException(status_code=404, detail="source item not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
         # Chronological order (by ingest time) with the anchor flagged.
         combined = sorted([anchor, *neighbors], key=lambda i: (i.created_at, i.id))
         items = [
