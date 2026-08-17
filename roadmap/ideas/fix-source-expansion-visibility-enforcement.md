@@ -1,7 +1,7 @@
 ---
 id: fix-source-expansion-visibility-enforcement
 title: Source-context expansion must enforce caller visibility per neighbor
-status: queued
+status: done
 priority: high
 commitment: uncommitted
 ---

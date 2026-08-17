@@ -1,7 +1,7 @@
 ---
 id: fix-source-forget-scope-authorization
 title: Single-source forgetting must be scope-authorized (IDOR)
-status: queued
+status: done
 priority: high
 commitment: uncommitted
 ---

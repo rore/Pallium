@@ -1,6 +1,4 @@
 # P1 · Reuse Measurement
-- fix-source-forget-scope-authorization
-- fix-source-expansion-visibility-enforcement
 - fix-reuse-kpi-artifact-taxonomy
 - fix-lookup-and-expansion-active-attribution
 - idea-authenticated-principal-for-mutation-authz
@@ -43,6 +41,8 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- fix-source-forget-scope-authorization
+- fix-source-expansion-visibility-enforcement
 - idea-arbitrary-convention-contamination-scenarios
 - idea-history-pull-decision-agent-harness
 - measure-cross-context-handoff-experiment
