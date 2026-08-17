@@ -17,3 +17,19 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     combined = sum(len(ast.get_docstring(node) or "") for node in ast.walk(tree)
                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names)
     assert combined <= 980
+
+def test_all_guidance_surfaces_preserve_search_to_expansion_telemetry_link() -> None:
+    spec = importlib.util.spec_from_file_location("claude_block_linkage", "integrations/claude-code/claude_md_block.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    linkage = ("After a promising search hit, call `pallium_expand_source` with its "
+               "`source_item_id` and pass the search result's `lookup_event_id` as "
+               "`parent_lookup_id`.")
+    surfaces = (
+        module.get_claude_md_block("base"),
+        module.get_claude_md_block("strong"),
+        Path("integrations/codex/AGENTS.md").read_text(),
+        Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(),
+        Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(),
+    )
+    assert all(linkage in rendered for rendered in surfaces)

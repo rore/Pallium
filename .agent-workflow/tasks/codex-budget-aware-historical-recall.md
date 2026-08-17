@@ -71,6 +71,8 @@ When documentation is read, it shall match the shipped contract -> docs/roadmap 
 - Corrective pass: added query-aware retrieval excerpts and explicit context canonicalization seam; hook reversion was attempted but blocked by the execution safety gate, so this remains an unmet cleanup item. Full allocator edge matrix remains for Verify.
 - Verification complete; 80 focused public-surface, 23 context/excerpt, 28 integration/guidance, 34 vector/rebuild; import-linter zero; final redline GRAY/no checkpoints or boundary/contract changes; roadmap entry added.
 - Skill feedback trigger 3 fired; source repository for the installed GitHub plugin is not accessible, so the report is recorded below as unsent.
+- PR #43 review opened four threads; three in-scope fixes are underway (neighbor omission metadata, lookup-link guidance, Unicode casefold index mapping). Global HTTP write-path canonicalization is under scope/architecture assessment.
+- PR #43 corrective pass: added budget-accounted items_omitted metadata, reused the shared excerpt builder with index-preserving Unicode casefold mapping, and restored explicit search lookup_event_id -> expansion parent_lookup_id guidance across all surfaces. Focused review suite: 61 passed; import-linter and diff check passed. The direct-HTTP canonicalization request was declined as a cross-core policy/migration expansion; MCP reads and writes already share resolved canonical context.
 - Completed the MCP boundary hardening: total escaped-JSON trimming, error preservation, sub-minimum/over-max expansion validation, anchor-first deterministic clipping, and earliest literal match centering. Focused pytest was unavailable because the environment lacks pytest and mcp; venv py_compile, projection assertions, and git diff checks passed. apply_patch hit Windows 1385, so the authorized deterministic local fallback was used.
 - Corrective pass: search now defaults and projects at most three hits with efficient escaped-budget trimming; expansion budgets skeleton metadata, omits supported-memory metadata before turns, flags all clipped items, allocates anchor then every nearest neighbor, clamps over-max to 4000, and bounds errors. Added focused direct projection assertions.
 - Scope correction: restored pallium_query default limit=5 while retaining historical search limit=3. Expansion preflight now serializes the exact output skeleton (including empty content and truncation flags), then mutates the same output list during farthest-neighbor dropping and allocation; venv py_compile, skeleton assertions, and diff checks passed.
@@ -93,6 +95,7 @@ No implementation files were edited during review.
 ## Result review
 
 APPROVED after corrective review. The reviewer found two P1 budget leaks (structured error detail and empty-expansion metadata); both were fixed at app/mcp/server.py and covered through public call_tool tests. Re-review confirmed both resolved, no new blocker, no scope/risk expansion, and the final redline remains GRAY with no checkpoints or boundary/contract changes.
+PR review produced four threads: three fixed and reverified; one architectural scope-expansion request declined with an explicit rationale.
 ## Skill feedback (unsent)
 
 **Trigger fired:** 3 — a skill instruction told me to use a helper that did not work.

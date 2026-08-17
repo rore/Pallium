@@ -14,6 +14,7 @@ from mcp.server.fastmcp import FastMCP
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_context
+from retrieval.common import build_excerpt
 
 
 _MCP_SEARCH_MAX_CHARS = 2000
@@ -44,23 +45,6 @@ def _bounded_error(result: dict, budget: int) -> dict:
     compact = {"error": error[:low]}
     return compact if len(_json_text(compact)) <= budget else {}
 
-def _excerpt(text: str, query: str, width: int = 240) -> str:
-    text = " ".join((text or "").split())
-    if width <= 1:
-        return text[:max(0, width)]
-    if len(text) <= width:
-        return text
-    tokens = [t for t in " ".join((query or "").split()).split() if t]
-    lower = text.casefold()
-    positions = [lower.find(t.casefold()) for t in tokens if lower.find(t.casefold()) >= 0]
-    pos = min(positions, default=-1)
-    if pos < 0:
-        return text[:width].rstrip() + "…"
-    start = max(0, min(pos - width // 3, len(text) - width))
-    end = min(len(text), start + width)
-    return ("…" if start else "") + text[start:end].strip() + ("…" if end < len(text) else "")
-
-
 def _compact_history(result: dict, query: str, limit: int = 3) -> dict:
     if "error" in result:
         return _bounded_error(result, _MCP_SEARCH_MAX_CHARS)
@@ -68,7 +52,7 @@ def _compact_history(result: dict, query: str, limit: int = 3) -> dict:
     for item in result.get("results", [])[:max(0, limit)]:
         if item.get("source_item_id") is None:
             continue
-        hit = {"source_item_id": item["source_item_id"], "excerpt": _excerpt(item.get("excerpt") or "", query)}
+        hit = {"source_item_id": item["source_item_id"], "excerpt": build_excerpt(item.get("excerpt") or "", max_length=240, query=query)}
         for key in ("role", "occurred_at"):
             if item.get(key) is not None:
                 hit[key] = item[key]
@@ -120,6 +104,7 @@ def _bounded_expansion(result: dict, max_chars: int = _MCP_EXPANSION_MAX_CHARS) 
         if full_content[id(item)]:
             item["content_truncated"] = True
     out = {"items": projected, "supported_memories": result.get("supported_memories"), "parent_lookup_id": result.get("parent_lookup_id")}
+    omitted = 0
     if len(_json_text(out)) > max_chars:
         out["supported_memories"] = None
     while len(_json_text(out)) > max_chars and len(projected) > 1:
@@ -132,6 +117,8 @@ def _bounded_expansion(result: dict, max_chars: int = _MCP_EXPANSION_MAX_CHARS) 
         if farthest is None:
             break
         projected.remove(farthest)
+        omitted += 1
+        out["items_omitted"] = omitted
     if len(_json_text(out)) > max_chars:
         return {"error": "max_chars is too small for the expansion anchor", "min_max_chars": _MCP_EXPANSION_MIN_CHARS}
 

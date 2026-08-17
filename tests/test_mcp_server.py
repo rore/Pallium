@@ -386,3 +386,27 @@ async def test_expand_source_bounds_empty_oversized_metadata_at_default_and_requ
     assert len(capped_content[0].text) <= 256
     assert json.loads(default_content[0].text)["error"] == "expansion exceeds the response budget"
     assert json.loads(capped_content[0].text)["error"] == "expansion exceeds the response budget"
+
+
+def test_bounded_expansion_counts_dropped_neighbors_inside_budget() -> None:
+    result = _bounded_expansion({
+        "items": [
+            {"source_item_id": "n0", "is_anchor": False, "content": "before"},
+            {"source_item_id": "anchor", "is_anchor": True, "content": "anchor"},
+            {"source_item_id": "n2", "is_anchor": False, "content": "after"},
+        ],
+        "supported_memories": None,
+        "parent_lookup_id": "parent",
+    }, 256)
+    assert len(_json_text(result)) <= 256
+    assert result["items_omitted"] > 0
+    assert result["items_omitted"] == 3 - len(result["items"])
+
+
+def test_compact_history_preserves_unicode_casefold_match_offset() -> None:
+    result = _compact_history({
+        "results": [{"source_item_id": "s", "excerpt": ("prefix " * 30) + "Straße " + ("suffix " * 30)}],
+        "lookup_event_id": "lookup",
+    }, "STRASSE")
+    assert "Straße" in result["results"][0]["excerpt"]
+    assert len(_json_text(result)) <= 2000
