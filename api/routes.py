@@ -43,7 +43,7 @@ from api.schemas import (
     SupersedeMemoryRequest,
     SupersedeMemoryResponse,
 )
-from core.errors import ForgetAuthorizationError, SupersessionConflictError
+from core.errors import SupersessionConflictError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
 from core.turn_inference import resolve_runtime_context
@@ -958,10 +958,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 thread_ref=request.thread_ref,
                 reason=request.reason,
                 actor_ref=request.actor_ref,
-                caller_container_ref=request.caller_container_ref,
             )
-        except ForgetAuthorizationError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except KeyError:
             raise HTTPException(status_code=404, detail="source item not found") from None
         except ValueError as exc:

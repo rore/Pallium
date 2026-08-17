@@ -39,20 +39,3 @@ class SupersessionConflictError(Exception):
     Not a transient error — do not retry via _with_retry.
     """
 
-
-class ForgetAuthorizationError(PermissionError):
-    """Raised when a caller is not authorized to forget a raw source turn.
-
-    Raw-turn forgetting is a destructive mutation. Authorization is
-    workspace/container-scoped: the caller's container scope must match the
-    target turn's container. Missing caller scope is allowed only in
-    single-user trusted (compatibility) mode; a *supplied-but-mismatched*
-    scope is always denied. Storage enforces the predicate atomically inside
-    its write transaction (raising the builtin ``PermissionError`` before any
-    ``forgotten_at`` is written); the service re-raises that as this defined
-    domain error and the HTTP/MCP boundary surfaces it as 403.
-
-    Subclasses ``PermissionError`` so a storage-level ``PermissionError`` is
-    caught uniformly. Not a transient error — never retried by _with_retry.
-    """
-

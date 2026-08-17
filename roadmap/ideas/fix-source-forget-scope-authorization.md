@@ -1,72 +1,15 @@
 ---
 id: fix-source-forget-scope-authorization
-title: Single-source forgetting must be scope-authorized (IDOR)
+title: Align raw-turn forgetting with the trusted-local boundary
 status: done
-priority: high
+priority: medium
 commitment: uncommitted
 ---
 
-## Summary
+## Completed alignment outcome
 
-The single-item raw-turn forget path mutates a source by primary-key `source_item_id` with **no
-ownership check**. Any caller holding an id (from search results, logs, or a shared/public turn) can
-soft-delete that turn from any container. The supplied `actor_ref` is written as an audit stamp, never
-compared. This is a classic missing-authorization / IDOR on a destructive mutation.
+The earlier caller-scope change was removed after review: Pallium has no authentication or authorization layer, so self-asserted caller/container fields and a strict-mode switch were not a real security boundary. The product contract is explicitly trusted-local; connected callers may invoke raw-turn forgetting without pseudo-authorization. Pallium must not be exposed to untrusted or shared clients.
 
-## Why
+The underlying lifecycle remains intact: raw turns are soft-forgotten, idempotent, auditable on successful mutation, excluded from retrieval and source-context expansion, and missing targets retain their existing behavior. Source-context visibility enforcement from `45900c4` remains in place for anchors, neighbors, and supported memories.
 
-Verified against the code (external review + independent confirmation):
-- `core/service.py:1101-1104` — single-item branch calls `self._storage.forget_source_item(id, reason, actor_ref)` with no container/actor verification.
-- `storage/sqlite.py:616-643` — `forget_source_item` does `session.get(SourceItemRecord, id)` (global PK lookup), checks only `forgotten_at` for idempotency, writes `forgotten_by = actor_ref` (**audit only**).
-- Contrast: the *scoped* branch (`core/service.py:1110-1116` → `storage/sqlite.py:645-675`) **requires** `container_ref` and filters `WHERE container_ref == ...`. The single-item path has no equivalent gate.
-- HTTP (`api/routes.py:943-962`) and MCP (`app/mcp/server.py:409-435`, `app/mcp/client.py:346-368`) add no auth.
-
-Only mitigation today is UUID obscurity — obscurity, not authorization. This is a Phase-0 raw-history
-governance requirement (scope.md: "raw-turn forgetting") that shipped without the authorization half.
-
-## In Scope
-
-- Load-and-authorize the source before mutation in the service layer: validate caller actor vs owning
-  actor / permitted-admin role, container, and visibility scope, and expected source lifecycle state.
-- Define the trusted-local policy explicitly (missing actor identity → rejected, or an explicit
-  local-trust allowance) rather than silently allowing.
-- Storage must not be the first layer deciding solely by id.
-
-## Out of Scope
-
-- Bulk/scope forget already container-bounded (only close any gaps the audit reveals).
-- A general RBAC system — minimal actor/container/visibility gate only.
-
-## Done When
-
-1. Cross-actor / cross-container forget by raw `source_id` is **denied** through both HTTP and MCP, verified by an E2E permission-error test (not only a unit test).
-2. Owner-forgets-own (private and public) succeeds; wrong-container-with-correct-id is denied.
-3. Observable state: after allowed forget, source is gone from source-only search and cannot be an expansion anchor/neighbor; after denied forget, source stays retrievable by its owner and **no `forgotten_at` is written**; audit distinguishes denied attempts from successful mutations.
-4. Lifecycle cases covered: nonexistent, already-forgotten (idempotent), concurrent double-forget, forget during in-flight lookup/expansion.
-
-## Notes
-
-External-review register item 5 (severity High). Touches red `core/service.py` — clean-context plan
-review required. Related: `add-raw-history-governance`, `fix-source-expansion-visibility-enforcement`.
-
-## Additional DoD detail (external review item 5 — full matrix)
-
-**Authorization E2E matrix** (verify denial through BOTH HTTP and MCP):
-- owner forgets own private source: success;
-- owner forgets own public source: success;
-- another actor forgets private source: denied;
-- another actor forgets public source: denied unless policy explicitly allows it;
-- container administrator forgets source: success only if that role exists;
-- caller presents correct source ID but wrong container: denied;
-- missing actor identity: rejected or handled per an explicit trusted-local policy (never a silent allow).
-
-**Observable state — after success:** source-only search cannot return the source; expansion cannot
-return it as anchor or neighbor; derived retrieval handles linked material per the documented policy;
-audit records who requested and why; the source cannot be reintroduced by a stale cache.
-**After denial:** the source remains retrievable by its authorized owner; no `forgotten_at` written;
-audit distinguishes denied attempts from successful mutations.
-
-**State / lifecycle cases:** nonexistent source; already-forgotten source; retry of the same request;
-concurrent double-forget; forget during an in-flight lookup; forget between lookup and expansion; bulk
-forgetting mixed with single-source; chain length greater than two where raw sources support derived
-objects.
+This record is complete as an alignment/review correction; it does not claim that authentication shipped.

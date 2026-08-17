@@ -325,3 +325,42 @@ class TestMcpStatelessTransport:
                 f"got Session-not-found error: {body}"
             )
             assert "result" in body, f"expected result, got: {body}"
+
+@pytest.mark.asyncio
+async def test_identity_free_mcp_forget_single_and_bulk_lifecycle(pallium_asgi_app) -> None:
+    transport = httpx.ASGITransport(app=pallium_asgi_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:
+        single_client = PalliumMcpClient(PalliumContext(base_url="http://testserver"))
+        bulk_client = PalliumMcpClient(
+            PalliumContext(base_url="http://testserver", container_ref="mcp-forget")
+        )
+
+        async def post(path, payload):
+            response = await http.post(path, json=payload)
+            response.raise_for_status()
+            return response.json()
+
+        single_client._post = post
+        bulk_client._post = post
+        single_client._post_or_error = post
+        bulk_client._post_or_error = post
+        one = await single_client.ingest(
+            "single forget", source_type="chat_message", source_id="mcp-single"
+        )
+        two = await bulk_client.ingest(
+            "bulk forget", source_type="chat_message", source_id="mcp-bulk"
+        )
+        single_id = one["source_item_id"]
+        bulk_id = two["source_item_id"]
+        assert (
+            await single_client.forget_source(
+                source_item_id=single_id, reason="cleanup"
+            )
+        )["forgotten"] is True
+        assert (await bulk_client.forget_source(reason="cleanup", thread_ref=None))["count"] >= 1
+        assert (await http.get(f"/source/{single_id}/context")).status_code == 404
+        assert (
+            await http.get(
+                f"/source/{bulk_id}/context", params={"container_ref": "mcp-forget"}
+            )
+        ).status_code == 404

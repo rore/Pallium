@@ -652,11 +652,6 @@ class ForgetSourceRequest(BaseModel):
     thread_ref: str | None = None
     reason: str = Field(min_length=1, max_length=_MAX_REASON_CHARS)
     actor_ref: str | None = None
-    # Caller's container-scoped authorization scope (distinct from
-    # ``container_ref``, the bulk-scope target). Forwarded to the service, which
-    # denies a single-item OR bulk forget whose target container does not match
-    # this scope. Absent scope is allowed only in single-user trusted mode.
-    caller_container_ref: str | None = None
 
 
 class ForgetSourceResponse(BaseModel):
