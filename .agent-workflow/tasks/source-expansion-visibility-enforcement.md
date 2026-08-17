@@ -110,8 +110,9 @@ MCP client must add query_visibility from ctx.visibility (server already resolve
 get_memory_expand/pallium_expand has the identical leak — tracked as a separate follow-up. Full report
 under ## Plan review. -->
 
-**Approvals:** High task — clean-context plan review required; will record human approval before merge
-per the red-zone architecture-review checkpoint.
+**Approvals:** Approved by user 2026-08-17: "after this feature, stop and don't continue" — authorizes
+completing and merging this feature (the second of the two security fixes the user directed). Clean-context
+plan review also done; see ## Plan review.
 
 **Exceptions:** —
 
