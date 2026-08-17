@@ -470,6 +470,10 @@ def build_service(
         # docs/specs/2026-06-27-injection-policy-abstention.md.
         injection_policy=resolved_config.injection.policy,
         shadow_subtask_selector=shadow_subtask_selector,
+        # Container-scoped authorization on raw-turn forgetting. True (default)
+        # relaxes only the missing-caller-scope case for single-user installs;
+        # a supplied-but-mismatched scope is always denied. False = strict.
+        single_user_trusted_mode=resolved_config.single_user_trusted_mode,
     )
 
     return BuildResult(

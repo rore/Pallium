@@ -620,6 +620,7 @@ class SQLiteStorageProvider(
         reason: str,
         actor_ref: str | None = None,
         forgotten_at: datetime | None = None,
+        expected_container_ref: str | None = None,
     ) -> bool:
         """User-requested forget of a single raw source turn.
 
@@ -629,11 +630,23 @@ class SQLiteStorageProvider(
 
         Idempotent: returns False without modifying an already-forgotten row;
         first forget returns True. Raises KeyError if the item does not exist.
+
+        Authorization (optional, atomic): when ``expected_container_ref`` is
+        provided, the freshly-loaded record's ``container_ref`` must equal it or
+        a ``PermissionError`` is raised INSIDE the write transaction, before any
+        ``forgotten_at`` is written (no TOCTOU double-read; SQLite serializes
+        writes). ``None`` (the default) means no check, so direct-storage callers
+        and the bulk lifecycle stay unaffected. The service layer computes the
+        expectation from the caller's scope + trust mode.
         """
         def _do(session):
             record = session.get(SourceItemRecord, source_item_id)
             if record is None:
                 raise KeyError(source_item_id)
+            if expected_container_ref is not None and record.container_ref != expected_container_ref:
+                raise PermissionError(
+                    "forget denied: caller container scope does not match target turn"
+                )
             if record.forgotten_at is not None:
                 return False
             record.forgotten_at = forgotten_at or utc_now()
@@ -650,6 +663,7 @@ class SQLiteStorageProvider(
         reason: str,
         actor_ref: str | None = None,
         forgotten_at: datetime | None = None,
+        expected_container_ref: str | None = None,
     ) -> int:
         """Point-in-time bulk forget of raw turns within a bounded scope.
 
@@ -658,8 +672,20 @@ class SQLiteStorageProvider(
         turns ingested AFTER the call are unaffected (no standing rule).
         Returns the number of rows newly forgotten. ``container_ref`` is
         required so the scope is always bounded to one container.
+
+        Authorization (optional, atomic): when ``expected_container_ref`` is
+        provided it must equal the requested ``container_ref`` or a
+        ``PermissionError`` is raised INSIDE the write transaction before any
+        row is mutated. Because the scope is bounded by ``WHERE container_ref ==
+        container_ref``, matching the caller's scope against the requested scope
+        is sufficient and cannot straddle containers. ``None`` (the default)
+        means no check — parity with ``forget_source_item``.
         """
         def _do(session):
+            if expected_container_ref is not None and expected_container_ref != container_ref:
+                raise PermissionError(
+                    "forget denied: caller container scope does not match requested scope"
+                )
             stmt = select(SourceItemRecord).where(
                 SourceItemRecord.container_ref == container_ref,
                 SourceItemRecord.forgotten_at.is_(None),
