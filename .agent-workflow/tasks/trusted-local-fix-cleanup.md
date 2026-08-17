@@ -74,7 +74,7 @@ Approved by user 2026-08-17: "ok, go"
 
 - Discovery and pre-edit redline classification complete. Clean-context review complete; no guarded code edits made. Selective removal is required due to overlap with the preserved `45900c4` visibility changes.
 - Trigger 3 apply_patch 1385 did not pass the actionability filter (environment/tool flake).
-- Trigger 6 fired and is actionable: the official expanded template post-State HTML hint is parsed as part of state by the checker; file an upstream issue after commit for a stable SHA.
+- Skill feedback issue filed: https://github.com/rore/agent-workflow/issues/9
 
 - Completed selective live-code deletion of pseudo-authorization; preserved all 45900c4 query_visibility behavior. Updated the named docs/roadmap files and added minimal MCP lifecycle/tool and supported-memory visibility coverage.
 
