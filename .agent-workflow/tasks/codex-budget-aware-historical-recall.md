@@ -80,10 +80,13 @@ When documentation is read, it shall match the shipped contract -> docs/roadmap 
 - Final context/excerpt pass: GitHub canonicalization now accepts case-insensitive prefix/host with optional trailing slash and .git while preserving unknown refs exactly; retrieval excerpt matching selects the earliest textual occurrence across query tokens. Added 23 focused tests; all passed, plus venv py_compile and diff checks.
 - Guidance regression pass: repaired Claude/Codex rendered blocks and both skill templates with exact compatibility/tool/lifecycle semantics, single builder-owned strength markers, and anti-dup/rating/retrieval-is-not-use wording. Exact guidance suite passed 28 tests; rendered sizes are Claude 1486/1809, Codex AGENTS 1444, and both skills 1422 characters, all under ceilings.
 - Final budget corrective pass: empty expansion responses now enforce the complete escaped-JSON budget after oversized supported-memory/parent metadata, and structured error payloads preserve fitting detail or fall back to a bounded valid error object. Added two public call_tool regressions; focused MCP server/integration suite passed 34 tests with one existing warning.
+- Review follow-up: guidance budget tests now assert the exact collected pallium_search_history/pallium_expand_source function-name set and read guidance files as UTF-8; focused guidance/integration suite passed.
 
 ## Evidence
 
-Staged tree based on `77bf897d465a3f7175f5e70c74e733899b75574a`; results above; full non-slow 3637 passed, 23 skipped, 168 deselected, 2 xfailed, one unrelated local-config failure `tests/test_config.py::test_prompt_variants_legacy_fallback_unaffected` because machine Pallium TOML supplies `qar_v1_compact_contract`; action confirm clean PR CI and do not change feature; `git diff --check` passed; skill-feedback all N.
+Staged tree based on `77bf897d465a3f7175f5e70c74e733899b75574a`; results above; full non-slow 3637 passed, 23 skipped, 168 deselected, 2 xfailed, one unrelated local-config failure `tests/test_config.py::test_prompt_variants_legacy_fallback_unaffected` because machine Pallium TOML supplies `qar_v1_compact_contract`; action confirm clean PR CI and do not change feature; `git diff --check` passed; skill feedback recorded below.
+
+Follow-up evidence: `tests/test_guidance_budget.py`, `tests/test_claude_code_integration.py`, and `tests/test_codex_integration.py` passed (29 tests); `git diff --check` passed.
 
 ## Plan review
 

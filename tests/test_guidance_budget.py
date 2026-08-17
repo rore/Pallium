@@ -9,11 +9,14 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     spec.loader.exec_module(module)
     assert len(module.get_claude_md_block("base")) <= 3736
     assert len(module.get_claude_md_block("strong")) <= 3962
-    assert len(Path("integrations/codex/AGENTS.md").read_text()) <= 3620
-    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text()) <= 2112
-    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text()) <= 2127
-    tree = ast.parse(Path("app/mcp/server.py").read_text())
-    names = {"pallium_search_history", "pallium_expand_source"}
+    assert len(Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")) <= 3620
+    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2112
+    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2127
+    tree = ast.parse(Path("app/mcp/server.py").read_text(encoding="utf-8"))
+    names = {node.name for node in ast.walk(tree)
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+             and node.name in {"pallium_search_history", "pallium_expand_source"}}
+    assert names == {"pallium_search_history", "pallium_expand_source"}
     combined = sum(len(ast.get_docstring(node) or "") for node in ast.walk(tree)
                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names)
     assert combined <= 980
@@ -28,8 +31,8 @@ def test_all_guidance_surfaces_preserve_search_to_expansion_telemetry_link() -> 
     surfaces = (
         module.get_claude_md_block("base"),
         module.get_claude_md_block("strong"),
-        Path("integrations/codex/AGENTS.md").read_text(),
-        Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(),
-        Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(),
+        Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8"),
+        Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8"),
+        Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8"),
     )
     assert all(linkage in rendered for rendered in surfaces)
