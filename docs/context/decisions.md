@@ -633,6 +633,42 @@ Why:
 - the backup API produces a raw page copy (no defragmentation), which is acceptable — the goal is
   consistent snapshot, not compaction
 
+### 2026-08-17 - SQLite auto_vacuum=INCREMENTAL default + cleaner reclaim
+
+New SQLite databases are created with `auto_vacuum=INCREMENTAL`, and the background retention
+cleaner runs an incremental reclaim after any pass that deleted rows, so the DB file tracks live
+data instead of only growing. The default is set in the connection hook
+(`storage/sqlite.py` `_set_sqlite_pragma`); reclaim is `SQLiteStorageProvider.reclaim_free_pages()`,
+called from `app/cleaner.py` via `BuildResult.storage` (never through `core/service.py`).
+
+Why:
+
+- retention deletes rows but SQLite keeps the freed pages inside the file (a delete-heavy history
+  left the live DB at 430 MB with ~27% free pages); auto_vacuum + incremental reclaim returns them
+- `INCREMENTAL` (not `FULL`): freed pages are reclaimed on demand from the cleaner, avoiding FULL's
+  per-commit page-moving cost on the hot write path
+- `auto_vacuum` must be set **before** `journal_mode=WAL` in the connect hook — on a fresh DB the
+  first WAL write commits the header and locks in the current mode, so setting it afterward is
+  silently ignored (the new-DB default would never take effect)
+- reclaim runs in AUTOCOMMIT (a VACUUM-family pragma must not be inside a transaction) and follows
+  with `wal_checkpoint(TRUNCATE)`, since in WAL mode the physical file shrink is deferred to a checkpoint
+
+Deferred-truncation note:
+
+- `incremental_vacuum` removes pages from the freelist (that reduction is what `reclaimed_pages`
+  reports), but the physical `.db` shrink only lands when the WAL is truncated at a checkpoint. The
+  `wal_checkpoint(TRUNCATE)` can return **busy** (without raising) when another connection holds a WAL
+  read snapshot — the common case when the API server is live — so the file may not shrink on that
+  exact call. This is surfaced as `checkpoint_busy`; SQLite's automatic checkpointing and the next
+  reclaim pass complete the truncation, so file size is eventually- not immediately-consistent.
+
+Caveat:
+
+- the connect-hook pragma is a **no-op on existing databases** (the persisted mode only changes via a
+  one-time `VACUUM`). Databases created before this change stay `auto_vacuum=NONE`; converting an
+  existing install requires a one-time `PRAGMA auto_vacuum=INCREMENTAL; VACUUM;` (full rewrite,
+  exclusive lock) as a separate maintenance step — which is how the live DB was migrated.
+
 ### 2026-04-14 - Work reference (work_ref) for cross-surface work continuity
 
 External work identifiers (ticket IDs, PR numbers, incident keys) extracted

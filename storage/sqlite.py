@@ -84,11 +84,11 @@ class SQLiteStorageProvider(
     def _register_sqlite_connect_hooks(engine) -> None:
         """Register connection-level hooks for SQLite engines.
 
-        Sets WAL journal mode and busy timeout on every new connection so
-        concurrent readers and writers (API server, processors, cleaners)
-        can operate without blocking each other.  The busy timeout lets
-        writers wait briefly instead of failing immediately when another
-        writer holds the lock.
+        Sets auto-vacuum mode, WAL journal mode and busy timeout on every new
+        connection so concurrent readers and writers (API server, processors,
+        cleaners) can operate without blocking each other.  The busy timeout lets
+        writers wait briefly instead of failing immediately when another writer
+        holds the lock.
         """
         if engine.url.get_backend_name() != "sqlite":
             return
@@ -96,6 +96,13 @@ class SQLiteStorageProvider(
         @event.listens_for(engine, "connect")
         def _set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
+            # auto_vacuum MUST be set before journal_mode=WAL: on a brand-new DB
+            # the first journal_mode=WAL write commits the header and locks in the
+            # current auto_vacuum value, so setting it afterward is silently
+            # ignored. Setting it first makes new DBs adopt INCREMENTAL before any
+            # table page is written. On an EXISTING DB this is a harmless no-op —
+            # the persisted mode only changes via a one-time VACUUM.
+            cursor.execute("PRAGMA auto_vacuum=INCREMENTAL")
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA busy_timeout=15000")
             cursor.close()
@@ -120,6 +127,44 @@ class SQLiteStorageProvider(
                 )
                 time.sleep(self._LOCKED_BACKOFF_BASE * (2 ** attempt))
         raise AssertionError("unreachable: loop must return or raise")
+
+    def reclaim_free_pages(self) -> dict[str, int]:
+        """Return free pages to the OS via incremental auto-vacuum.
+
+        Runs ``PRAGMA incremental_vacuum`` in AUTOCOMMIT — a VACUUM-family pragma
+        must not run inside a transaction, so this deliberately does NOT go
+        through ``_with_retry`` (which wraps everything in a ``begin()``).
+
+        ``incremental_vacuum`` removes pages from the freelist (that reduction is
+        what ``reclaimed_pages`` reports). In WAL mode the *physical* file shrink
+        only happens when the WAL is truncated at a checkpoint, so a
+        ``wal_checkpoint(TRUNCATE)`` follows. That checkpoint can return **busy**
+        (without raising) when another connection holds a WAL read snapshot — the
+        common case when the API server is live — in which case the WAL is NOT
+        truncated yet and the ``.db`` file has not physically shrunk. That is not
+        an error: SQLite's automatic checkpointing and the next reclaim pass
+        complete the truncation. ``checkpoint_busy`` surfaces that state.
+
+        No-op on DBs created with ``auto_vacuum=NONE`` (legacy installs, whose
+        freelist is not reclaimable this way) and on non-SQLite backends; reports
+        ``reclaimed_pages=0`` there. Idempotent and safe to call every cleaner
+        cycle (cheap when the freelist is empty).
+        """
+        if self._engine.url.get_backend_name() != "sqlite":
+            return {"freelist_before": 0, "freelist_after": 0, "reclaimed_pages": 0, "checkpoint_busy": 0}
+        with self._engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            before = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
+            conn.exec_driver_sql("PRAGMA incremental_vacuum")
+            after = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
+            # (busy, wal_pages, checkpointed_pages); busy==1 → truncation deferred.
+            row = conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            checkpoint_busy = int(row[0]) if row is not None else 0
+        return {
+            "freelist_before": before,
+            "freelist_after": after,
+            "reclaimed_pages": max(0, before - after),
+            "checkpoint_busy": checkpoint_busy,
+        }
 
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
         with self._session_factory() as session:

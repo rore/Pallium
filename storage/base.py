@@ -175,6 +175,15 @@ class QueueHealthSnapshot:
 
 
 class StorageProvider(ABC):
+    def reclaim_free_pages(self) -> dict[str, int]:
+        """Return free pages left by deletions to the OS, if the backend supports it.
+
+        Concrete (non-abstract) no-op default so backends that don't reclaim (or
+        DBs not configured for it) need no override. The SQLite provider overrides
+        this to run an incremental auto-vacuum. Returns pages reclaimed.
+        """
+        return {"freelist_before": 0, "freelist_after": 0, "reclaimed_pages": 0, "checkpoint_busy": 0}
+
     @abstractmethod
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
         raise NotImplementedError
