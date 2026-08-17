@@ -41,6 +41,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- fix-budget-aware-historical-recall-hardening
 - fix-source-forget-scope-authorization
 - fix-source-expansion-visibility-enforcement
 - idea-arbitrary-convention-contamination-scenarios

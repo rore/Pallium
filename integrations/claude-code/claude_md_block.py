@@ -4,109 +4,17 @@ CLAUDE_MD_BLOCK = """\
 <!-- pallium:start -->
 ## Memory (Pallium)
 
-Pallium remembers decisions, constraints, and context across sessions.
+Use Pallium for deliberate memory work; automatic injection handles routine retrieval.
 
-**Automatic:** hooks inject relevant memories every turn. Trust this — it
-handles ~90% of cases. Don't duplicate with manual queries.
-
-**Picking up prior work?** When you resume or build on earlier work on a task,
-deliberately call `pallium_search_history` to pull the raw prior turns — don't
-assume that context is gone. See the `pallium-memory` skill for the full
-historical-lookup workflow.
-
-**MANDATORY on every injected memory:** call `pallium_rate_memory` before or
-alongside your response. Rate "relevant" if it informed your work,
-"not_relevant" if off-topic. Pass a brief `reason`, the user's message as
-`query_context`, and `container_ref` from the injection header. This is the
-feedback loop that trains retrieval — do not skip.
-
-**Also mandatory:** if an injected card shows `[+expand]` and you rated it
-relevant, call `pallium_expand` before responding — the source is richer than
-the card summary.
-
-### Reach for these when you need them
-
-- `pallium_query` — injected context is empty or missing something specific
-- `pallium_search_history` — you're picking up related work and want the raw
-  prior turns themselves (a past discussion, an earlier attempt, a decision's
-  original context), most-relevant first, rather than distilled memory. Each
-  result has a stable `source_item_id` for follow-up.
-- `pallium_expand` — see original conversation behind a memory card
-- `pallium_expand_source` — after `pallium_search_history`, pull the raw turns
-  just before/after a promising hit (pass its `source_item_id`) to read it in
-  context before acting
-- `pallium_flag_memory` — a memory contradicts what you now know is true
-  (votes-based; several flags → auto-suppress)
-- `pallium_ingest` — the user explicitly asks to remember something. Pass
-  `artifact_kind="note"` to preserve their words verbatim; omit it to let
-  extraction produce typed memory objects. Do not use for routine
-  conversation — hooks handle that.
-
-### Deliberate memory writes (use sparingly, high confidence only)
-
-These tools let you shape memory directly. Only use when a fact is worth
-keeping AND automatic extraction may miss it. Do not call them on every
-turn — the hook pipeline is already capturing conversation.
-
-- `pallium_remember(text, type, ...)` — durable fact. `type` is one of:
-  `decision`, `investigation_outcome`, `constraint_memory`,
-  `operational_fact`, `note`. Use when the user has just stated an
-  architectural decision, hard constraint, or investigation conclusion that
-  should survive compaction.
-- `pallium_correct(memory_id, corrected_text, reason)` — fix a wrong memory
-  in place (extraction was mislabeled or partial). For fully obsolete
-  memories, use `pallium_supersede` instead. Returns 409 if the memory is
-  already superseded — walk the chain via `pallium_expand` and correct the
-  head.
-- `pallium_supersede(new_text, supersedes_id, reason?)` — replace an
-  obsolete memory. Both rows persist; retrieval hides the old. Use when the
-  old was correct at the time but a different fact now applies. Returns 409
-  on double-supersede.
-- `pallium_forget(memory_id, reason)` — soft-delete. Retrieval hides it;
-  audit trail preserved. Use when a memory is misleading or no longer
-  relevant. This is agent-decisive and immediate — use `pallium_flag_memory`
-  instead when you're one voter among many. Idempotent.
-- `pallium_record_outcome(procedure_id, outcome, ...)` — record success /
-  failure / inconclusive for an operational_fact procedure.
-
-Confidence you pass to `pallium_remember` is audit-only. It does not boost
-retrieval ranking — ranking updates need evidence of downstream use (you
-cited it, action changed, user confirmed, procedure outcome recorded).
-
-### Required parameters for manual calls
-
-When calling `pallium_query`, `pallium_search_history`, `pallium_expand`,
-`pallium_expand_source`, `pallium_ingest`, or `pallium_remember`:
-
-- `container_ref` — take from the injection header
-  (e.g., `git:github.com/user/repo`)
-- `visibility` — `"private"` (project-scoped, default) or `"global"` when
-  the user asks to remember across all projects (requires `actor_ref`)
-
-Missing these → empty results. Automatic hooks pass them correctly; you
-only need them for manual calls.
-
-### Do not
-
-- Don't re-query for something already in the injected block
-- Ingest routine conversation (hooks do this)
-- Flag speculatively — only on concrete contrary evidence
-- Call `pallium_remember` on every turn — deliberate writes only
-- Use `pallium_forget` for votes-based suppression — that's `pallium_flag_memory`
-
-### Abstention policy (opt-in, TOML)
-
-An `[injection.policy]` config can demote types like `task_checkpoint`,
-`investigation_outcome`, `thread_summary`, `fact_summary` from proactive
-injection to event- or on-demand mode. When enabled you'll see fewer cards
-auto-injected — by design, not by failure. Reach for `pallium_query` more
-aggressively when stuck (failed tool calls, repeated retries, "have we hit
-this before"). PostToolUse hooks handle some of this automatically.
-`pallium_rate_memory` remains mandatory. Default install does NOT enable
-the policy. See `docs/specs/2026-06-27-injection-policy-abstention.md`.
+Picking up prior work? Call `pallium_search_history` first, then `pallium_expand_source` for a promising `source_item_id`.
+- Search distilled memory with `pallium_query`; use `pallium_search_history` for raw turns and `pallium_expand_source` for bounded context.
+- Store turns with `pallium_ingest` (`artifact_kind="note"`, `visibility: "private"`, and the injected `container_ref`). Use global visibility only when explicitly requested, with `actor_ref`.
+- Use `pallium_query_debug` to distinguish filtered, missing, and low-relevance results; use `pallium_expand` when a memory card offers expansion.
+- Use `pallium_flag_memory` for incorrect or obsolete memories. `pallium_rate_memory` is optional, non-blocking feedback; never require a rating for every injected block.
+- Explicit writes are compact and deliberate: `pallium_remember` stores a durable fact; `pallium_correct` fixes it; `pallium_supersede` replaces an obsolete fact; `pallium_forget` hides it; `pallium_record_outcome` records a procedure result. Retrieval is not use: these writes do not update accessibility or ranking from retrieval alone.
+- Do not ingest routine turns or re-query for something already in the injected block; use forget only for direct hiding, not vote suppression; use `pallium_flag_memory` for that.
 <!-- pallium:end -->
 """
-
 
 # Appended to the base block for the "strong" guidance-strength arm. Authored
 # to avoid the token "MANDATORY" and the banned legacy strings so the block

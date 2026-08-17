@@ -7,7 +7,11 @@ needing a real HTTP server.
 
 from __future__ import annotations
 
+import dataclasses
+import json
+
 import httpx
+from sqlalchemy import text
 import pytest
 
 pytest.importorskip("mcp", reason="mcp[cli] not installed")
@@ -16,6 +20,7 @@ from app.main import create_app
 from app.config import AppConfig
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import PalliumContext
+from app.mcp.server import create_server
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
@@ -364,3 +369,121 @@ async def test_identity_free_mcp_forget_single_and_bulk_lifecycle(pallium_asgi_a
                 f"/source/{bulk_id}/context", params={"container_ref": "mcp-forget"}
             )
         ).status_code == 404
+@pytest.mark.asyncio
+async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory_state(
+    pallium_asgi_app, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    container = "git:github.com/rore/pallium"
+    thread = "mcp:e2e:historical"
+    transport = httpx.ASGITransport(app=pallium_asgi_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:
+        source_ids = []
+        for source_id, content in (
+            ("before", "Context before the anchor turn."),
+            ("anchor", "Decision: preserve the distinctive lookup anchor phrase."),
+            ("after", "Context after the anchor turn."),
+        ):
+            response = await http.post("/items", json=[{
+                "source_type": "chat_message",
+                "source_id": source_id,
+                "content_type": "text/plain",
+                "content": content,
+                "artifact_kind": "message",
+                "role": "user",
+                "container_ref": container,
+                "thread_ref": thread,
+                "visibility": "private",
+            }])
+            assert response.status_code == 200, response.text
+            source_ids.append(response.json()[0]["source_item_id"])
+        pallium_asgi_app.state.pallium_service.drain_processing_queue(worker_id="mcp-e2e")
+
+        baseline = [
+            dataclasses.asdict(memory)
+            for memory in sorted(
+                pallium_asgi_app.state.pallium_service._storage.list_memory_objects(),
+                key=lambda memory: memory.id,
+            )
+        ]
+        direct = await http.post("/query", json={
+            "text": "distinctive lookup anchor phrase",
+            "limit": 3,
+            "source_only": True,
+            "trigger_origin": "agent_pull",
+            "container_ref": container,
+            "thread_ref": thread,
+            "visibility": "private",
+        })
+        assert direct.status_code == 200, direct.text
+
+        async def asgi_post(client: PalliumMcpClient, path: str, payload: object) -> dict:
+            response = await http.post(path, json=payload)
+            response.raise_for_status()
+            return response.json()
+
+        async def asgi_context(
+            client: PalliumMcpClient, source_item_id: str, **kwargs: object,
+        ) -> dict:
+            params: dict[str, object] = {"container_ref": client._ctx.container_ref}
+            for key in ("before", "after", "max_chars", "parent_lookup_id"):
+                if kwargs.get(key) is not None:
+                    params[key] = kwargs[key]
+            response = await http.get(f"/source/{source_item_id}/context", params=params)
+            response.raise_for_status()
+            return response.json()
+
+        monkeypatch.setattr(PalliumMcpClient, "_post", asgi_post)
+        monkeypatch.setattr(PalliumMcpClient, "get_source_context", asgi_context)
+        monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
+        server = create_server()
+        search_content, _ = await server.call_tool("pallium_search_history", {
+            "query": "distinctive lookup anchor phrase",
+            "container_ref": "git:github.com/Rore/Pallium",
+            "thread_ref": thread,
+            "visibility": "private",
+        })
+        search = json.loads(search_content[0].text)
+        assert len(search_content[0].text) <= 2000
+        assert search["lookup_event_id"]
+        anchor_id = search["results"][0]["source_item_id"]
+        assert anchor_id == source_ids[1]
+
+        expand_content, _ = await server.call_tool("pallium_expand_source", {
+            "source_item_id": anchor_id,
+            "before": 1,
+            "after": 1,
+            "max_chars": 4000,
+            "parent_lookup_id": search["lookup_event_id"],
+            "container_ref": "git:github.com/Rore/Pallium",
+            "visibility": "private",
+        })
+        expanded = json.loads(expand_content[0].text)
+        assert len(expand_content[0].text) <= 4000
+        assert expanded["parent_lookup_id"] == search["lookup_event_id"]
+        assert [item["source_item_id"] for item in expanded["items"]] == source_ids
+        assert sum(item["is_anchor"] for item in expanded["items"]) == 1
+
+        direct_context = await http.get(
+            f"/source/{anchor_id}/context",
+            params={"container_ref": container, "before": 1, "after": 1},
+        )
+        assert direct_context.status_code == 200, direct_context.text
+        assert [item["source_item_id"] for item in direct_context.json()["items"]] == source_ids
+
+        storage = pallium_asgi_app.state.pallium_service._storage
+        with storage._engine.connect() as connection:
+            rows = connection.execute(text(
+                "SELECT id, event_type, parent_lookup_id, exposed_json "
+                "FROM historical_lookup_reuse_event ORDER BY created_at"
+            )).mappings().all()
+        lookup = next(row for row in rows if row["id"] == search["lookup_event_id"])
+        assert anchor_id in {item["source_item_id"] for item in json.loads(lookup["exposed_json"])}
+        assert any(
+            row["event_type"] == "expansion" and row["parent_lookup_id"] == search["lookup_event_id"]
+            for row in rows
+        )
+        after = [
+            dataclasses.asdict(memory)
+            for memory in sorted(storage.list_memory_objects(), key=lambda memory: memory.id)
+        ]
+        assert after == baseline

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.mcp.context import resolve_context, PalliumContext
+from app.mcp.context import PalliumContext, _canonicalize_container_ref, resolve_context
 
 
 class TestResolveContext:
@@ -69,3 +69,38 @@ class TestPalliumContext:
     def test_not_configured_when_base_url_none(self) -> None:
         ctx = PalliumContext(base_url=None)
         assert ctx.is_configured is False
+@pytest.mark.parametrize(
+    "value",
+    [
+        "git:github.com/Owner/Repo",
+        "GIT:GITHUB.COM/Owner/Repo/",
+        "Git:GitHub.Com/Owner/Repo.git",
+        "git:github.com/Owner/Repo.git/",
+    ],
+)
+def test_github_container_forms_canonicalize(value: str) -> None:
+    assert _canonicalize_container_ref(value) == "git:github.com/owner/repo"
+
+
+def test_github_container_canonicalization_is_idempotent() -> None:
+    canonical = "git:github.com/owner/repo"
+    assert _canonicalize_container_ref(_canonicalize_container_ref(canonical)) == canonical
+
+
+def test_github_container_canonicalization_applies_to_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", "GIT:GITHUB.COM/Owner/Repo.GIT/")
+    assert resolve_context().container_ref == "git:github.com/owner/repo"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "git:gitlab.com/Owner/Repo.git",
+        "GitHub:Owner/Repo.git",
+        "git:github.com/Owner/Repo/extra",
+        "slack:Channel:CaseSensitive",
+    ],
+)
+def test_unknown_container_refs_are_preserved(value: str) -> None:
+    assert _canonicalize_container_ref(value) == value

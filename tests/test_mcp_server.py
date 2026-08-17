@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("mcp", reason="mcp[cli] not installed")
 
-from app.mcp.server import create_server
+from app.mcp.server import _bounded_expansion, _compact_history, _json_text, create_server
 
 
 class TestSelfGating:
@@ -198,3 +198,191 @@ async def test_expand_source_tool_forwards_visibility(
 
     assert init.call_args.args[0].visibility == "public"
     assert captured == {"source_item_id": "s-1"}
+
+@pytest.mark.asyncio
+async def test_historical_tools_project_bounded_payloads(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    raw = {"results": [{"result_kind": "source_hit", "source_item_id": "s1", "excerpt": "prefix match middle suffix", "role": None, "occurred_at": None, "score": 99}], "lookup_event_id": "lookup-1"}
+    expansion = {"items": [{"source_item_id": "s1", "is_anchor": True, "content": "anchor content"}], "supported_memories": None, "parent_lookup_id": "lookup-1"}
+    with patch("app.mcp.client.PalliumMcpClient.search_history", new=AsyncMock(return_value=raw)), patch("app.mcp.client.PalliumMcpClient.get_source_context", new=AsyncMock(return_value=expansion)):
+        server = create_server()
+        search, _ = await server.call_tool("pallium_search_history", {"query": "match"})
+        expanded, _ = await server.call_tool("pallium_expand_source", {"source_item_id": "s1", "parent_lookup_id": "lookup-1"})
+    search_text, expand_text = search[0].text, expanded[0].text
+    assert len(search_text) <= 2000
+    assert "score" not in search_text and "role" not in search_text and "occurred_at" not in search_text
+    assert len(expand_text) <= 4000
+    assert "s1" in expand_text and "lookup-1" in expand_text
+@pytest.mark.asyncio
+async def test_historical_search_compacts_unicode_and_omits_null_optionals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    raw = {
+        "results": [
+            {
+                "result_kind": "source_hit",
+                "source_item_id": "unicode-1",
+                "excerpt": "quoted \\\"line\\\" \\ path\nעברית 中文 😀 match middle",
+                "role": None,
+                "occurred_at": None,
+                "score": 9,
+            }
+        ],
+        "lookup_event_id": "lookup-unicode",
+    }
+    with patch(
+        "app.mcp.client.PalliumMcpClient.search_history",
+        new=AsyncMock(return_value=raw),
+    ):
+        server = create_server()
+        content, _ = await server.call_tool(
+            "pallium_search_history", {"query": "match"}
+        )
+
+    payload = json.loads(content[0].text)
+    assert len(content[0].text) <= 2000
+    assert payload["results"][0]["source_item_id"] == "unicode-1"
+    assert "role" not in payload["results"][0]
+    assert "occurred_at" not in payload["results"][0]
+    assert "\\\"" in payload["results"][0]["excerpt"]
+    assert "😀" in payload["results"][0]["excerpt"]
+
+
+@pytest.mark.asyncio
+async def test_historical_expansion_reports_small_budget_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    expansion = {
+        "items": [
+            {
+                "source_item_id": "anchor-1",
+                "is_anchor": True,
+                "content": "anchor content",
+            }
+        ],
+        "supported_memories": None,
+        "parent_lookup_id": "lookup-1",
+    }
+    with patch(
+        "app.mcp.client.PalliumMcpClient.get_source_context",
+        new=AsyncMock(return_value=expansion),
+    ):
+        server = create_server()
+        content, _ = await server.call_tool(
+            "pallium_expand_source",
+            {"source_item_id": "anchor-1", "max_chars": 1},
+        )
+
+    payload = json.loads(content[0].text)
+    assert len(content[0].text) <= 4000
+    assert payload["error"] == "max_chars is too small for the expansion anchor"
+    assert payload["min_max_chars"] == 256
+
+def test_compact_history_defaults_to_three_hits_and_bounds_escaped_json() -> None:
+    result = _compact_history({
+        "results": [
+            {"source_item_id": f"s-{i}", "excerpt": ('\\"' * 1500) + "needle"}
+            for i in range(8)
+        ],
+        "lookup_event_id": "lookup-1",
+    }, "needle")
+    assert len(result["results"]) <= 3
+    assert len(_json_text(result)) <= 2000
+    assert result["lookup_event_id"] == "lookup-1"
+
+
+def test_bounded_expansion_clips_anchor_and_flags_every_clipped_item() -> None:
+    result = _bounded_expansion({
+        "items": [
+            {"source_item_id": "a", "is_anchor": True, "content": "A" * 10000},
+            {"source_item_id": "b", "is_anchor": False, "content": "B" * 10000},
+            {"source_item_id": "c", "is_anchor": False, "content": "C" * 10000},
+        ],
+        "supported_memories": None,
+        "parent_lookup_id": "lookup-1",
+    }, 800)
+    assert len(_json_text(result)) <= 800
+    assert result["items"][0]["is_anchor"] is True
+    assert all(item.get("content_truncated") is True for item in result["items"])
+
+
+def test_bounded_expansion_drops_farthest_preserves_order_and_omits_supports_first() -> None:
+    result = _bounded_expansion({
+        "items": [
+            {"source_item_id": "n0", "is_anchor": False, "content": "before"},
+            {"source_item_id": "anchor", "is_anchor": True, "content": "anchor"},
+            {"source_item_id": "n2", "is_anchor": False, "content": "after"},
+        ],
+        "supported_memories": [{"memory_object_id": "m" * 1000}],
+        "parent_lookup_id": "parent",
+    }, 256)
+    assert len(_json_text(result)) <= 256
+    assert result["supported_memories"] is None
+    ids = [item["source_item_id"] for item in result["items"]]
+    assert ids == sorted(ids, key={"n0": 0, "anchor": 1, "n2": 2}.get)
+    assert "anchor" in ids
+
+
+def test_bounded_expansion_overmax_clamps_to_four_thousand_and_errors_are_bounded() -> None:
+    result = _bounded_expansion({"items": [{"source_item_id": "a", "is_anchor": True, "content": "x" * 10000}]}, 50000)
+    assert len(_json_text(result)) <= 4000
+    assert len(_json_text(_compact_history({"error": "e" * 5000, "detail": "d" * 5000}, "q"))) <= 2000
+    assert len(_json_text(_bounded_expansion({"error": "e" * 5000, "detail": "d" * 5000}, 4000))) <= 4000
+
+@pytest.mark.asyncio
+async def test_expand_source_bounds_structured_validation_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    result = {
+        "error": "validation failed",
+        "detail": {
+            "loc": ["query", "max_chars"],
+            "msg": "must be at least 256",
+            "type": "greater_than_equal",
+        },
+    }
+    with patch(
+        "app.mcp.client.PalliumMcpClient.get_source_context",
+        new=AsyncMock(return_value=result),
+    ):
+        server = create_server()
+        content, _ = await server.call_tool(
+            "pallium_expand_source",
+            {"source_item_id": "missing", "max_chars": 256},
+        )
+
+    payload = json.loads(content[0].text)
+    assert len(content[0].text) <= 256
+    assert payload["detail"]["loc"] == ["query", "max_chars"]
+
+
+@pytest.mark.asyncio
+async def test_expand_source_bounds_empty_oversized_metadata_at_default_and_requested_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    result = {
+        "items": [],
+        "supported_memories": [{"memory_object_id": "m" * 10000}],
+        "parent_lookup_id": "p" * 10000,
+    }
+    with patch(
+        "app.mcp.client.PalliumMcpClient.get_source_context",
+        new=AsyncMock(return_value=result),
+    ):
+        server = create_server()
+        default_content, _ = await server.call_tool(
+            "pallium_expand_source", {"source_item_id": "empty"},
+        )
+        capped_content, _ = await server.call_tool(
+            "pallium_expand_source",
+            {"source_item_id": "empty", "max_chars": 256},
+        )
+
+    assert len(default_content[0].text) <= 4000
+    assert len(capped_content[0].text) <= 256
+    assert json.loads(default_content[0].text)["error"] == "expansion exceeds the response budget"
+    assert json.loads(capped_content[0].text)["error"] == "expansion exceeds the response budget"
