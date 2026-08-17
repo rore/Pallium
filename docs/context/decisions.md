@@ -653,6 +653,15 @@ Why:
 - reclaim runs in AUTOCOMMIT (a VACUUM-family pragma must not be inside a transaction) and follows
   with `wal_checkpoint(TRUNCATE)`, since in WAL mode the physical file shrink is deferred to a checkpoint
 
+Deferred-truncation note:
+
+- `incremental_vacuum` removes pages from the freelist (that reduction is what `reclaimed_pages`
+  reports), but the physical `.db` shrink only lands when the WAL is truncated at a checkpoint. The
+  `wal_checkpoint(TRUNCATE)` can return **busy** (without raising) when another connection holds a WAL
+  read snapshot — the common case when the API server is live — so the file may not shrink on that
+  exact call. This is surfaced as `checkpoint_busy`; SQLite's automatic checkpointing and the next
+  reclaim pass complete the truncation, so file size is eventually- not immediately-consistent.
+
 Caveat:
 
 - the connect-hook pragma is a **no-op on existing databases** (the persisted mode only changes via a

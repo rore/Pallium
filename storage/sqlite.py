@@ -133,10 +133,17 @@ class SQLiteStorageProvider(
 
         Runs ``PRAGMA incremental_vacuum`` in AUTOCOMMIT — a VACUUM-family pragma
         must not run inside a transaction, so this deliberately does NOT go
-        through ``_with_retry`` (which wraps everything in a ``begin()``). In WAL
-        mode the freed-page work lands in the WAL and the main ``.db`` file is not
-        physically truncated until a checkpoint, so a ``wal_checkpoint(TRUNCATE)``
-        follows to actually return bytes to the filesystem.
+        through ``_with_retry`` (which wraps everything in a ``begin()``).
+
+        ``incremental_vacuum`` removes pages from the freelist (that reduction is
+        what ``reclaimed_pages`` reports). In WAL mode the *physical* file shrink
+        only happens when the WAL is truncated at a checkpoint, so a
+        ``wal_checkpoint(TRUNCATE)`` follows. That checkpoint can return **busy**
+        (without raising) when another connection holds a WAL read snapshot — the
+        common case when the API server is live — in which case the WAL is NOT
+        truncated yet and the ``.db`` file has not physically shrunk. That is not
+        an error: SQLite's automatic checkpointing and the next reclaim pass
+        complete the truncation. ``checkpoint_busy`` surfaces that state.
 
         No-op on DBs created with ``auto_vacuum=NONE`` (legacy installs, whose
         freelist is not reclaimable this way) and on non-SQLite backends; reports
@@ -144,16 +151,19 @@ class SQLiteStorageProvider(
         cycle (cheap when the freelist is empty).
         """
         if self._engine.url.get_backend_name() != "sqlite":
-            return {"freelist_before": 0, "freelist_after": 0, "reclaimed_pages": 0}
+            return {"freelist_before": 0, "freelist_after": 0, "reclaimed_pages": 0, "checkpoint_busy": 0}
         with self._engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             before = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
             conn.exec_driver_sql("PRAGMA incremental_vacuum")
-            conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
             after = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
+            # (busy, wal_pages, checkpointed_pages); busy==1 → truncation deferred.
+            row = conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            checkpoint_busy = int(row[0]) if row is not None else 0
         return {
             "freelist_before": before,
             "freelist_after": after,
             "reclaimed_pages": max(0, before - after),
+            "checkpoint_busy": checkpoint_busy,
         }
 
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:

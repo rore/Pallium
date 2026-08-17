@@ -182,7 +182,7 @@ class StorageProvider(ABC):
         DBs not configured for it) need no override. The SQLite provider overrides
         this to run an incremental auto-vacuum. Returns pages reclaimed.
         """
-        return {"freelist_before": 0, "freelist_after": 0, "reclaimed_pages": 0}
+        return {"freelist_before": 0, "freelist_after": 0, "reclaimed_pages": 0, "checkpoint_busy": 0}
 
     @abstractmethod
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:

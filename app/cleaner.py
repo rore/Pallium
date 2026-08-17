@@ -109,10 +109,11 @@ def run_cleaner(
                     if deleted:
                         try:
                             reclaimed = storage.reclaim_free_pages()
-                            if reclaimed.get("reclaimed_pages"):
+                            if reclaimed.get("reclaimed_pages") or reclaimed.get("checkpoint_busy"):
+                                deferred = " checkpoint_deferred=1" if reclaimed.get("checkpoint_busy") else ""
                                 emit_runtime_log(
                                     "cleaner",
-                                    f"cleaner_id={cleaner_id} reclaimed_pages={reclaimed['reclaimed_pages']}",
+                                    f"cleaner_id={cleaner_id} reclaimed_pages={reclaimed['reclaimed_pages']}{deferred}",
                                 )
                         except Exception as exc:
                             emit_runtime_log(

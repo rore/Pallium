@@ -73,3 +73,34 @@ def test_reclaim_is_noop_on_legacy_none_auto_vacuum(tmp_path: Path) -> None:
 def test_reclaim_free_pages_empty_freelist_is_zero(test_db_url: str) -> None:
     provider = SQLiteStorageProvider(test_db_url)
     assert provider.reclaim_free_pages()["reclaimed_pages"] == 0
+
+
+def test_reclaim_reports_deferred_checkpoint_when_reader_holds_snapshot(test_db_url: str) -> None:
+    # A concurrent reader holding a WAL snapshot makes wal_checkpoint(TRUNCATE)
+    # return busy (deferred) — reclaim must surface that, still report the logical
+    # freelist reduction, and not raise. Mirrors the real "API server live" case.
+    provider = SQLiteStorageProvider(test_db_url)
+    db_path = _path(test_db_url)
+    with provider._engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE _scratch (id INTEGER PRIMARY KEY, blob TEXT)")
+        conn.exec_driver_sql(
+            "INSERT INTO _scratch (blob) "
+            "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 4000) "
+            "SELECT hex(randomblob(2000)) FROM c"
+        )
+        conn.exec_driver_sql("DELETE FROM _scratch")
+
+    reader = sqlite3.connect(db_path)
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM _scratch").fetchone()  # pins a WAL snapshot
+
+        result = provider.reclaim_free_pages()
+        assert result["reclaimed_pages"] > 0, "freelist reduction is independent of the checkpoint"
+        assert result["checkpoint_busy"] == 1, "reader snapshot should defer the TRUNCATE checkpoint"
+    finally:
+        reader.rollback()
+        reader.close()
+
+    # With the reader gone, a subsequent reclaim can complete the checkpoint.
+    assert provider.reclaim_free_pages()["checkpoint_busy"] == 0

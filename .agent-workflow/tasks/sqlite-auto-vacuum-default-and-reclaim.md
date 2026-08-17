@@ -2,9 +2,9 @@
 
 Make SQLite space-reclaim systematic: new DBs are born with `auto_vacuum=INCREMENTAL`, and the
 background cleaner reclaims free pages (`PRAGMA incremental_vacuum`) after a retention pass that
-deleted rows — so the file shrinks instead of only growing. Plus a one-time operational reclaim of
-the live DB (currently 430 MB with ~118 MB / 27% free pages after retention). User-approved design:
-INCREMENTAL (not FULL) so the hot write path isn't taxed.
+deleted rows — so the file shrinks instead of only growing. A one-time operational reclaim of the
+live DB (currently 430 MB with ~118 MB / 27% free pages after retention) is the final step, recorded
+under ## Evidence when run. User-approved design: INCREMENTAL (not FULL) so the hot write path isn't taxed.
 
 <!-- agent-workflow:start -->
 **Outcome:**
