@@ -58,3 +58,23 @@ Evidence: `.agent-workflow/tasks/pull-applicability-judgment-experiment.md` Evid
 `.local/research/pull_contamination_applicability_run.json`. Depends on the merged applicability
 harness. Related: `idea-arbitrary-convention-contamination-scenarios` (superseded by this — the
 arbitrary-convention set was built and run in #33), `idea-measure-pull-filtering-accuracy-and-cost`.
+
+## Product DoD (external review item 11 — ranking precision)
+
+Build a real-corpus validation set from anonymized historical sessions that includes: long-running
+projects; stale decisions; reversed decisions; duplicated turns; unrelated sessions with shared
+vocabulary; Unicode; ambiguous terms; private and public data; source/derived disagreement.
+
+**Per query, label:** whether useful history exists; every relevant source episode; harmful or
+misleading results; the minimum context needed to answer correctly.
+
+**Measure separately** (do not conflate): candidate recovery at K; precision at K; reciprocal rank;
+duplicate-adjusted diversity; stale/contradicted result rate; downstream task effect with and without
+retrieved context; total context tokens.
+
+**Required lifecycle cases:** decision made → later superseded → old wording queried; source forgotten
+after derivation; multiple similar projects; same phrase with different meanings; relevant raw source
+ranked below many derived objects; chain length greater than two.
+
+Every output must state whether it measures candidate recovery, injection precision, or downstream
+effect — a shadow replay must never be labeled observed downstream improvement.

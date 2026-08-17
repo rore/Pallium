@@ -55,3 +55,23 @@ This is the Phase-0 "linked event chain — session/agent identity, expansion pa
 External-review register items 2 + 3 (severity High) — merged; the code fix is one coherent telemetry
 contract change. Touches red `core/service.py` — clean-context plan review required. Related:
 `add-historical-lookup-funnel-telemetry`, `add-agent-event-contract-and-compact-query-results`.
+
+## Additional DoD detail (external review items 2 + 3 — full matrix)
+
+**Cross-agent / actor matrix** (beyond the base cross-agent case): same agent, different session;
+different agent, same actor; different actor, authorized shared scope; different actor, private scope
+denied.
+
+**Expansion invalid-chaining cases:** nonexistent parent lookup; expansion attached to a lookup from
+another actor; expansion attached to another container's lookup; expansion attached to a completed or
+expired lookup (if expiry exists); repeated expansion of the same source; expansion of two results from
+one lookup (funnel counts correctly).
+
+**Concurrency:** two agents concurrently against the same historical source get distinct lookup events,
+each with the correct active session; expansions and downstream-use events attach to the correct lookup;
+no last-writer or server-global context contamination.
+
+**Missing-identity contract (test the chosen one explicitly):** absent session identity is rejected with
+a defined error; OR a generated installation-scoped identity is persisted consistently; OR the event is
+marked `unattributed`, excluded from the KPI, and counted in a visible data-quality metric. Silent NULL
+is disallowed.

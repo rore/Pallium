@@ -41,3 +41,24 @@ precondition for the reviewer's core ask: prove Pallium retrieves selectively en
 ## Notes
 
 External-review register item 14 (Low–Medium). Related: `idea-measurement-contract-honesty`.
+
+## Release gate — vNext complete when (cross-cutting DoD)
+
+The external reviewer's release bar. vNext is not "complete" until ALL hold — this is the gate that
+keeps P2/P3 parked:
+
+- All High-severity issues resolved.
+- E2E coverage through real Codex/Claude hooks, MCP, and HTTP — not only direct service calls.
+- Full visibility and permission matrix tested.
+- Active session, agent, actor, and source provenance verified from lookup through downstream-use rollup.
+- Default configuration produces a complete evaluation population.
+- Source-only retrieval cannot be starved by other target kinds.
+- Duplicate ingestion and result diversity have an explicit contract.
+- Judge calibration passes its predefined threshold.
+- Real-corpus pull evaluation demonstrates both retrieval recall AND abstention.
+- Net usefulness includes task quality, tokens, and latency.
+- Full suite, workflow checker, and redline checks pass.
+- Roadmap and evidence documents reflect the remaining uncertainty honestly.
+
+Target product claim: *Pallium retrieves prior work when it materially helps, abstains when it does not,
+and produces a measurable net reduction in user orchestration cost.*

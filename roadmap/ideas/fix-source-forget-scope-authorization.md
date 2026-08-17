@@ -48,3 +48,25 @@ governance requirement (scope.md: "raw-turn forgetting") that shipped without th
 
 External-review register item 5 (severity High). Touches red `core/service.py` — clean-context plan
 review required. Related: `add-raw-history-governance`, `fix-source-expansion-visibility-enforcement`.
+
+## Additional DoD detail (external review item 5 — full matrix)
+
+**Authorization E2E matrix** (verify denial through BOTH HTTP and MCP):
+- owner forgets own private source: success;
+- owner forgets own public source: success;
+- another actor forgets private source: denied;
+- another actor forgets public source: denied unless policy explicitly allows it;
+- container administrator forgets source: success only if that role exists;
+- caller presents correct source ID but wrong container: denied;
+- missing actor identity: rejected or handled per an explicit trusted-local policy (never a silent allow).
+
+**Observable state — after success:** source-only search cannot return the source; expansion cannot
+return it as anchor or neighbor; derived retrieval handles linked material per the documented policy;
+audit records who requested and why; the source cannot be reintroduced by a stale cache.
+**After denial:** the source remains retrievable by its authorized owner; no `forgotten_at` written;
+audit distinguishes denied attempts from successful mutations.
+
+**State / lifecycle cases:** nonexistent source; already-forgotten source; retry of the same request;
+concurrent double-forget; forget during an in-flight lookup; forget between lookup and expansion; bulk
+forgetting mixed with single-source; chain length greater than two where raw sources support derived
+objects.

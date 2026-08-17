@@ -50,3 +50,19 @@ other." This is the Phase-0 governance requirement "per-neighbor visibility" shi
 
 External-review register item 4 (severity High, privacy). Touches red `core/service.py` — clean-context
 plan review required. Related: `add-source-context-expansion`, `add-raw-history-governance`.
+
+## Additional DoD detail (external review item 4 — full matrix)
+
+**Visibility matrix** — over an ordered source sequence [public / actor-A private / public anchor /
+actor-B private / public], exercise expansion as: actor A private; actor A public; actor B private;
+unrelated actor public. Assert every returned neighbor independently satisfies the caller's visibility
+context. In particular: a public query never returns private neighbors; an actor-A private query does
+not return actor-B private turns; an authorized public anchor does not widen neighbor access; order and
+window size remain correct after unauthorized neighbors are removed.
+
+**Lifecycle combinations** — repeat with neighbors that are: forgotten; superseded (if applicable);
+outside the requested container; deleted between lookup and expansion; forgotten concurrently with
+expansion.
+
+**Surface coverage** — identical authorization behavior asserted on: direct HTTP expansion; MCP
+`pallium_expand_source`; any SDK wrapper.

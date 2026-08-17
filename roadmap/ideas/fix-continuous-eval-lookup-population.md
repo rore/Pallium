@@ -46,3 +46,13 @@ treats a missing population as "no activity" instead of reporting coverage.
 
 External-review register item 6 (reviewer said High; downgraded to Medium/P2 on verification). Related:
 `idea-raw-derived-hybrid-shadow-eval` (Done), `idea-measurement-contract-honesty`.
+
+## Additional DoD detail (external review item 6 — population integrity)
+
+Cover: empty population; one lookup; repeated identical query; retried request; lookup with zero
+results; lookup followed by expansion; lookup with missing session attribution; malformed or legacy
+event; Unicode query; maximum query length; over-maximum query rejected or safely truncated.
+
+**Measurement honesty:** every output states whether it measures candidate recovery, injection
+precision, or downstream task effect. A shadow replay must not be labeled observed downstream
+improvement.
