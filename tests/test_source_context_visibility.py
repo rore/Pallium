@@ -84,8 +84,13 @@ def test_public_context_expansion_drops_private_neighbors(client: TestClient) ->
 
 
 def test_public_context_private_anchor_denied(client: TestClient) -> None:
-    anchor = _ingest(client, source_id="v-priv-anchor",
-                     content="private anchor ordering", visibility="private", actor_ref="actor-A")
+    anchor = _ingest(
+        client,
+        source_id="v-priv-anchor",
+        content="private anchor ordering",
+        visibility="private",
+        actor_ref="actor-A",
+    )
     resp = _context(client, anchor, before=1, after=1, query_visibility="public")
     # A private anchor is not visible under a public query -> 404 (no leak).
     assert resp.status_code == 404
@@ -207,3 +212,51 @@ async def test_mcp_client_forwards_empty_visibility_for_boundary_rejection() -> 
         await client.get_source_context("si-1")
         params = mock_get.call_args.kwargs.get("params")
         assert params["query_visibility"] == ""
+
+
+def test_public_context_filters_same_container_supported_memories(
+    client: TestClient,
+) -> None:
+    from core.models import MemoryObject, Relation
+
+    anchor = _ingest(
+        client,
+        source_id="v-supported-anchor",
+        content="public anchor",
+        visibility="public",
+    )
+    storage = client.app.state.pallium_service._storage
+    ids = {}
+    for name, visibility in (("private", "private"), ("public", "public")):
+        memory = MemoryObject(
+            type="decision",
+            schema_id="test",
+            schema_version="v1",
+            payload={"decision": name},
+            container_ref=CT,
+            visibility=visibility,
+        )
+        storage.create_memory_object(memory)
+        storage.create_relation(
+            Relation(
+                from_kind="memory_object",
+                from_id=memory.id,
+                relation_type="supported_by",
+                to_kind="source_item",
+                to_id=anchor,
+            )
+        )
+        ids[name] = memory.id
+
+    response = _context(
+        client,
+        anchor,
+        query_visibility="public",
+        include_supported_memories=True,
+    )
+    assert response.status_code == 200, response.text
+    returned = {
+        item["memory_object_id"]
+        for item in response.json()["supported_memories"]
+    }
+    assert returned == {ids["public"]}

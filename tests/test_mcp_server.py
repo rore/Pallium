@@ -139,3 +139,62 @@ class TestToolDescriptions:
             "pallium_expand_source",
         }
         assert expected <= tool_names
+
+
+@pytest.mark.asyncio
+async def test_forget_source_tool_forwards_identity_free_single_and_bulk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    calls: list[dict] = []
+
+    async def fake_forget_source(**kwargs):
+        calls.append(kwargs)
+        return {"forgotten": True, "count": 1}
+
+    with patch(
+        "app.mcp.client.PalliumMcpClient.forget_source",
+        new=AsyncMock(side_effect=fake_forget_source),
+    ):
+        server = create_server()
+        await server.call_tool(
+            "pallium_forget_source",
+            {"source_item_id": "s-1", "reason": "r"},
+        )
+        await server.call_tool(
+            "pallium_forget_source",
+            {"thread_ref": "t-1", "reason": "r"},
+        )
+
+    assert calls == [
+        {"source_item_id": "s-1", "thread_ref": None, "reason": "r"},
+        {"source_item_id": None, "thread_ref": "t-1", "reason": "r"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_expand_source_tool_forwards_visibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    captured: dict[str, str] = {}
+
+    async def fake_get_source_context(source_item_id: str, **kwargs):
+        captured["source_item_id"] = source_item_id
+        return {"items": []}
+
+    with (
+        patch("app.mcp.client.PalliumMcpClient.__init__", return_value=None) as init,
+        patch(
+            "app.mcp.client.PalliumMcpClient.get_source_context",
+            new=AsyncMock(side_effect=fake_get_source_context),
+        ),
+    ):
+        server = create_server()
+        await server.call_tool(
+            "pallium_expand_source",
+            {"source_item_id": "s-1", "visibility": "public"},
+        )
+
+    assert init.call_args.args[0].visibility == "public"
+    assert captured == {"source_item_id": "s-1"}

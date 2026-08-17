@@ -1,7 +1,6 @@
 # P1 · Reuse Measurement
 - fix-reuse-kpi-artifact-taxonomy
 - fix-lookup-and-expansion-active-attribution
-- idea-authenticated-principal-for-mutation-authz
 - fix-continuous-eval-lookup-population
 - idea-visibility-violation-metric-completeness
 - fix-vector-source-only-starvation
@@ -25,6 +24,7 @@
 - add-cross-container-bounded-memory
 
 # Paused
+- idea-authenticated-principal-for-mutation-authz
 - investigate-thread-level-interest-and-threadless-aggregation
 - milestone-shaped-memory-contract
 

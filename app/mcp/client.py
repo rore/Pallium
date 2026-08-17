@@ -365,16 +365,6 @@ class PalliumMcpClient:
         # single-item forget into a scope forget.
         if source_item_id is None and payload.get("container_ref") is None and self._ctx.container_ref:
             payload["container_ref"] = self._ctx.container_ref
-        # Caller's container-scoped AUTHORIZATION scope. Distinct from the
-        # scope-mode ``container_ref`` above: this is threaded on BOTH paths
-        # (single-item and bulk) so the service can deny a forget whose target
-        # container does not match the caller's context. On the single-item
-        # path this is the only signal that closes the id-only IDOR; on the
-        # bulk path it matches the scope container so the strict-mode check
-        # still fires. Absent (ctx has no container) → deferred to the server's
-        # single-user trusted-mode policy.
-        if self._ctx.container_ref:
-            payload["caller_container_ref"] = self._ctx.container_ref
         # Record the "who" for audit when the context knows the actor.
         if getattr(self._ctx, "actor_ref", None):
             payload["actor_ref"] = self._ctx.actor_ref
