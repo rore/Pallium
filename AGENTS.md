@@ -43,6 +43,7 @@ This repository uses [agent-workflow](https://github.com/rore/agent-workflow) â€
 | `.claude/hooks/` | Claude Code hooks that keep the workflow engaged in plan mode (see below). |
 
 **To start a task:** invoke the `/agent-workflow` slash command. The skill walks the checkpoints and validates the Work Record at each transition.
+If the runtime does not expose `/agent-workflow`, read `.claude/skills/agent-workflow/SKILL.md` directly and follow it, resolving referenced resources relative to that skill directory.
 
 **Plan mode:** when you produce an implementation plan for a change that touches a **guarded path** (configured in `agent-workflow.yaml` under `hooks.guardedPaths`; defaults to `src/`), the plan's **first implementation step must be** *"Invoke the `/agent-workflow` skill to create the Work Record and classify risk, before any code edit."* On approval, do that step first, before editing any guarded file. A repo hook (`.claude/hooks/check-plan.sh`) validates this at plan-approval time; it is a nudge, not a substitute for the CI gate.
 
