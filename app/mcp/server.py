@@ -14,7 +14,148 @@ from mcp.server.fastmcp import FastMCP
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_context
+from retrieval.common import build_excerpt
 
+
+_MCP_SEARCH_MAX_CHARS = 2000
+_MCP_SEARCH_EMPTY_MAX_CHARS = 300
+_MCP_EXPANSION_MAX_CHARS = 4000
+_MCP_EXPANSION_MIN_CHARS = 256
+
+
+def _json_text(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def _bounded_error(result: dict, budget: int) -> dict:
+    payload = {key: result[key] for key in ("error", "detail") if key in result}
+    if len(_json_text(payload)) <= budget:
+        return payload
+    payload.pop("detail", None)
+    if len(_json_text(payload)) <= budget:
+        return payload
+    error = str(payload.get("error") or "request failed")
+    low, high = 0, len(error)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if len(_json_text({"error": error[:mid]})) <= budget:
+            low = mid
+        else:
+            high = mid - 1
+    compact = {"error": error[:low]}
+    return compact if len(_json_text(compact)) <= budget else {}
+
+def _compact_history(result: dict, query: str, limit: int = 3) -> dict:
+    if "error" in result:
+        return _bounded_error(result, _MCP_SEARCH_MAX_CHARS)
+    hits = []
+    for item in result.get("results", [])[:max(0, limit)]:
+        if item.get("source_item_id") is None:
+            continue
+        hit = {"source_item_id": item["source_item_id"], "excerpt": build_excerpt(item.get("excerpt") or "", max_length=240, query=query)}
+        for key in ("role", "occurred_at"):
+            if item.get(key) is not None:
+                hit[key] = item[key]
+        hits.append(hit)
+    payload = {"results": hits, "lookup_event_id": result.get("lookup_event_id")}
+    budget = _MCP_SEARCH_EMPTY_MAX_CHARS if not hits else _MCP_SEARCH_MAX_CHARS
+    while len(_json_text(payload)) > budget and hits:
+        longest = max(hits, key=lambda hit: len(hit.get("excerpt", "")))
+        excerpt = longest.get("excerpt", "")
+        if not excerpt:
+            hits.pop()
+            payload["results"] = hits
+            continue
+        excess = len(_json_text(payload)) - budget
+        longest["excerpt"] = excerpt[:max(0, len(excerpt) - excess - 1)]
+    while len(_json_text(payload)) > budget and hits:
+        hits.pop()
+        payload["results"] = hits
+    if len(_json_text(payload)) > budget:
+        return {"error": "historical search result exceeds the response budget"}
+    return payload
+
+
+def _bounded_expansion(result: dict, max_chars: int = _MCP_EXPANSION_MAX_CHARS) -> dict:
+    max_chars = min(_MCP_EXPANSION_MAX_CHARS, max_chars)
+    if max_chars < _MCP_EXPANSION_MIN_CHARS:
+        return {"error": "max_chars is too small for the expansion anchor", "min_max_chars": _MCP_EXPANSION_MIN_CHARS}
+    if "error" in result:
+        return _bounded_error(result, max_chars)
+    projected = []
+    for item in result.get("items") or []:
+        projected.append({
+            "source_item_id": item.get("source_item_id"),
+            "is_anchor": bool(item.get("is_anchor")),
+            **{k: item[k] for k in ("role", "occurred_at") if item.get(k) is not None},
+            "content": item.get("content") or "",
+        })
+    anchor = next((item for item in projected if item.get("is_anchor")), projected[0] if projected else None)
+    if anchor is None:
+        out = {"items": [], "supported_memories": result.get("supported_memories"), "parent_lookup_id": result.get("parent_lookup_id")}
+        if len(_json_text(out)) > max_chars:
+            out["supported_memories"] = None
+        if len(_json_text(out)) > max_chars:
+            return {"error": "expansion exceeds the response budget", "min_max_chars": _MCP_EXPANSION_MIN_CHARS}
+        return out
+    full_content = {id(item): item["content"] for item in projected}
+    for item in projected:
+        item["content"] = ""
+        if full_content[id(item)]:
+            item["content_truncated"] = True
+    out = {"items": projected, "supported_memories": result.get("supported_memories"), "parent_lookup_id": result.get("parent_lookup_id")}
+    omitted = 0
+    if len(_json_text(out)) > max_chars:
+        out["supported_memories"] = None
+    while len(_json_text(out)) > max_chars and len(projected) > 1:
+        anchor_index = projected.index(anchor)
+        farthest = max(
+            (item for item in projected if not item.get("is_anchor")),
+            key=lambda item: (abs(projected.index(item) - anchor_index), projected.index(item)),
+            default=None,
+        )
+        if farthest is None:
+            break
+        projected.remove(farthest)
+        omitted += 1
+        out["items_omitted"] = omitted
+    if len(_json_text(out)) > max_chars:
+        return {"error": "max_chars is too small for the expansion anchor", "min_max_chars": _MCP_EXPANSION_MIN_CHARS}
+
+    anchor_index = projected.index(anchor)
+    order = [anchor_index]
+    order.extend(sorted((i for i in range(len(projected)) if i != anchor_index), key=lambda i: (abs(i - anchor_index), i)))
+    for index in order:
+        original = projected[index]
+        content = full_content[id(original)]
+        if not content:
+            continue
+        candidate = dict(original)
+        candidate["content"] = content
+        candidate.pop("content_truncated", None)
+        projected[index] = candidate
+        if len(_json_text(out)) <= max_chars:
+            continue
+        projected[index] = original
+        low, high = 0, len(content)
+        while low < high:
+            mid = (low + high + 1) // 2
+            candidate = dict(original)
+            candidate["content"] = content[:mid]
+            candidate["content_truncated"] = True
+            projected[index] = candidate
+            if len(_json_text(out)) <= max_chars:
+                low = mid
+            else:
+                high = mid - 1
+            projected[index] = original
+        candidate = dict(original)
+        candidate["content"] = content[:low]
+        candidate["content_truncated"] = True
+        projected[index] = candidate
+    if len(_json_text(out)) > max_chars:
+        return {"error": "expansion exceeds the response budget", "min_max_chars": _MCP_EXPANSION_MIN_CHARS}
+    return out
 NOT_CONFIGURED_MSG = (
     "Pallium memory system is not configured. "
     "No memory tools available. "
@@ -56,7 +197,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     @server.tool()
     async def pallium_search_history(
         query: str,
-        limit: int = 5,
+        limit: int = 3,
         container_ref: str | None = None,
         thread_ref: str | None = None,
         actor_ref: str | None = None,
@@ -66,18 +207,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         artifact_kind: str | None = None,
         work_refs: list[str] | None = None,
     ) -> str:
-        """Search your own prior raw work — past conversation/agent turns — ranked on their own.
-
-        Reach for this when you resume or pick up related/prior work — at the
-        start of a task, before assuming earlier context is gone. Use it to
-        deliberately look back at what was actually said or done before (a prior
-        discussion, an earlier attempt, a decision's original context). Unlike
-        pallium_query (which surfaces distilled memory and can abstain), this
-        returns the raw source turns themselves, most-relevant first, so nothing
-        gets crowded out by summarized memory. Each result carries a stable
-        source_item_id you can keep for follow-up. The optional filters
-        (source_type/role/artifact_kind/work_refs) narrow the search but are not
-        required."""
+        """Search prior raw turns for historical context. Returns compact match-centred excerpts with stable source_item_id values and lookup_event_id for optional expansion linkage."""
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,
@@ -95,7 +225,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             artifact_kind=artifact_kind,
             work_refs=work_refs,
         )
-        return json.dumps(result, indent=2, default=str)
+        return _json_text(_compact_history(result, query, limit))
 
     @server.tool()
     async def pallium_query_debug(
@@ -178,25 +308,16 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     @server.tool()
     async def pallium_expand_source(
         source_item_id: str,
-        before: int = 10,
-        after: int = 10,
+        before: int = 1,
+        after: int = 1,
+        max_chars: int = 4000,
         include_supported_memories: bool = False,
         parent_lookup_id: str | None = None,
         container_ref: str | None = None,
         actor_ref: str | None = None,
         visibility: str | None = None,
     ) -> str:
-        """Get the surrounding thread context for a raw source turn.
-
-        Use after `pallium_search_history` when a raw hit looks promising and
-        you want to read what came just before and after it — pass the
-        `source_item_id` from that result. Returns a bounded neighborhood of
-        raw turns in the same thread (chronological, with the anchor flagged),
-        visibility-enforced. `before`/`after` set how many neighbor turns to
-        include on each side. Set `include_supported_memories=true` to also get
-        (separately) the derived memories this turn supports. If you have the
-        `lookup_event_id` from the search that produced this id, pass it as
-        `parent_lookup_id` to link the expansion to its lookup."""
+        """Expand a raw source hit into a bounded chronological neighborhood. The anchor is always represented; pass parent_lookup_id from search to preserve lookup linkage."""
         ctx = resolve_context(
             container_ref=container_ref,
             actor_ref=actor_ref,
@@ -204,16 +325,19 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         )
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
+        if max_chars < _MCP_EXPANSION_MIN_CHARS:
+            return _json_text(_bounded_expansion({}, max_chars))
+        max_chars = min(_MCP_EXPANSION_MAX_CHARS, max_chars)
         client = PalliumMcpClient(ctx)
         result = await client.get_source_context(
             source_item_id,
             before=before,
             after=after,
+            max_chars=max_chars,
             include_supported_memories=include_supported_memories,
             parent_lookup_id=parent_lookup_id,
         )
-        return json.dumps(result, indent=2, default=str)
-
+        return _json_text(_bounded_expansion(result, max_chars))
     @server.tool()
     async def pallium_flag_memory(
         memory_object_id: str,

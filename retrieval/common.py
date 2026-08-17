@@ -10,10 +10,30 @@ from storage.base import IndexSearchHit
 MAX_EXCERPT_LENGTH = 160
 
 
-def build_excerpt(text: str, *, max_length: int = MAX_EXCERPT_LENGTH) -> str:
+def build_excerpt(text: str, *, max_length: int = MAX_EXCERPT_LENGTH, query: str | None = None) -> str:
     normalized = " ".join(text.split())
     if len(normalized) <= max_length:
         return normalized
+    if query:
+        folded = normalized.casefold()
+        positions = [folded.find(token.casefold()) for token in " ".join(query.split()).split()]
+        positions = [position for position in positions if position >= 0]
+        if positions:
+            folded_pos = min(positions)
+            folded_offset = 0
+            pos = len(normalized)
+            for index, character in enumerate(normalized):
+                if folded_offset >= folded_pos:
+                    pos = index
+                    break
+                folded_offset += len(character.casefold())
+            left = max(0, min(pos - max_length // 3, len(normalized) - max_length))
+            right = min(len(normalized), left + max_length)
+            prefix = "..." if left else ""
+            suffix = "..." if right < len(normalized) else ""
+            body = normalized[left:right]
+            room = max_length - len(prefix) - len(suffix)
+            return prefix + body[:room] + suffix
     return normalized[: max_length - 3].rstrip() + "..."
 
 

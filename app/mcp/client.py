@@ -141,6 +141,7 @@ class PalliumMcpClient:
         *,
         before: int | None = None,
         after: int | None = None,
+        max_chars: int | None = None,
         include_supported_memories: bool = False,
         parent_lookup_id: str | None = None,
     ) -> dict[str, Any]:
@@ -161,6 +162,8 @@ class PalliumMcpClient:
             params["before"] = before
         if after is not None:
             params["after"] = after
+        if max_chars is not None:
+            params["max_chars"] = max_chars
         if include_supported_memories:
             params["include_supported_memories"] = True
         if parent_lookup_id is not None:

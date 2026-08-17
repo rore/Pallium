@@ -172,7 +172,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         source_item_id=source_item.id,
                         source_type=source_item.source_type,
                         source_id=source_item.source_id,
-                        excerpt=build_excerpt(source_item.content),
+                        excerpt=build_excerpt(source_item.content, query=text),
                         occurred_at=source_item.occurred_at,
                         actor_ref=source_item.actor_ref,
                         agent_ref=source_item.agent_ref,
