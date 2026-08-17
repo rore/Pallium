@@ -155,7 +155,7 @@ class PalliumMcpClient:
         actor = getattr(self._ctx, "actor_ref", None)
         if actor:
             params["query_actor_ref"] = actor
-        if self._ctx.visibility:
+        if self._ctx.visibility is not None:
             params["query_visibility"] = self._ctx.visibility
         if before is not None:
             params["before"] = before

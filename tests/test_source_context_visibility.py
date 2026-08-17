@@ -194,3 +194,16 @@ async def test_mcp_client_omits_query_visibility_when_unset() -> None:
         await client.get_source_context("si-1")
         params = mock_get.call_args.kwargs.get("params")
         assert "query_visibility" not in params
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_forwards_empty_visibility_for_boundary_rejection() -> None:
+    # An empty (falsy but non-None) visibility is invalid; it must be FORWARDED
+    # so the route/service rejects it, not silently dropped to the permissive
+    # missing-visibility private-context default.
+    ctx = PalliumContext(base_url="http://localhost:8000", container_ref="c", visibility="")
+    with patch("httpx.AsyncClient.get", return_value=_mock_get_response()) as mock_get:
+        client = PalliumMcpClient(ctx)
+        await client.get_source_context("si-1")
+        params = mock_get.call_args.kwargs.get("params")
+        assert params["query_visibility"] == ""
