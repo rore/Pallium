@@ -139,4 +139,21 @@ follows with `wal_checkpoint(TRUNCATE)`; (3) storage reached via `BuildResult.st
   identically on clean main with these changes stashed (env-var leakage on this box), unrelated.
 - Operational live-DB reclaim recorded below once run.
 
+## Evidence — operational live-DB reclaim (done 2026-08-17)
+
+One-time conversion + reclaim of the live DB (`C:/Users/I347041/.pallium/data/pallium.db`) via the
+approved runbook: stop `Pallium` scheduled task → kill process tree (port 19836 released) →
+`PRAGMA integrity_check` (ok) → `PRAGMA auto_vacuum=INCREMENTAL; VACUUM; PRAGMA wal_checkpoint(TRUNCATE)`
+→ verify → `Start-ScheduledTask` → `/status` healthy.
+
+| | before | after |
+|---|---|---|
+| file size | 430.34 MB | **282.31 MB** (−148 MB) |
+| auto_vacuum | 0 (NONE) | **2 (INCREMENTAL)** |
+| freelist_count | 29960 | 0 |
+| integrity_check | ok | ok |
+
+VACUUM took 3.1s. Service came back up on 19836 with `active_memory_objects=8935` (data intact) and
+the funnel still armed. From here the cleaner keeps it lean automatically after deleting passes.
+
 **State:** Ready for review
