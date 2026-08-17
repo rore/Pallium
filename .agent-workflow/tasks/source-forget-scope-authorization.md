@@ -9,11 +9,13 @@ authorize the caller's scope against it, deny on mismatch. The container-bounded
 
 <!-- agent-workflow:start -->
 **Outcome:**
-Single-item `forget_source` authorizes the caller before mutating: a caller may forget a raw turn only
-when it is in the caller's container scope and (for actor-owned turns) the caller is that actor. Cross-
-actor / cross-container forget by raw `source_id` is denied through both HTTP and MCP with a defined
-error, no `forgotten_at` written on denial. Legitimate owner-forgets-own still works. Scope-forget
-behavior unchanged. No query/ingest correctness change.
+`forget_source` authorizes the caller before mutating, on BOTH the single-item and bulk paths, by
+CONTAINER scope only (no actor-ownership overlay): when the caller supplies a container scope it must
+match the target, else the forget is denied through both HTTP and MCP with a defined error and no
+`forgotten_at` is written. Missing caller scope is allowed only in single-user trusted mode
+(`single_user_trusted_mode`, default True); denied in strict multi-user mode. A supplied-but-mismatched
+scope is always denied, even in trusted mode. Legitimate owner-forgets-own still works. No query/ingest
+correctness change.
 
 **Target:**
 `core/service.py` (forget_source single-item branch: compute authorization + missing-identity policy),
