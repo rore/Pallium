@@ -12,6 +12,7 @@ from capabilities.consolidation import ConsolidationRunResult
 from capabilities.workstreams import WorkstreamCapability
 from core.consolidation_runner import ConsolidationRunner
 from core.contracts import IngestResult, ItemProcessingResult, MemoryRetentionPolicy, ProcessResult, QueryResult, build_source_item
+from core.errors import ForgetAuthorizationError
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
 from core.processing import (
     DEFAULT_PROCESSING_LEASE_SECONDS,
@@ -176,8 +177,10 @@ class PalliumService:
         metrics_retention_days: int = 0,
         injection_policy=None,
         shadow_subtask_selector=None,
+        single_user_trusted_mode: bool = True,
     ) -> None:
         self._storage = storage
+        self._single_user_trusted_mode = single_user_trusted_mode
         self._retrieval = retrieval
         self._semantic_plugins = semantic_plugins
         self._default_use_case = default_use_case
@@ -1077,6 +1080,7 @@ class PalliumService:
         thread_ref: str | None = None,
         reason: str,
         actor_ref: str | None = None,
+        caller_container_ref: str | None = None,
     ) -> dict:
         """User-requested forgetting of raw source turns (soft + auditable).
 
@@ -1090,6 +1094,19 @@ class PalliumService:
         - ``container_ref`` (optional ``thread_ref``): point-in-time bulk forget
           of the bounded scope; turns ingested later are unaffected.
 
+        Authorization (both modes, identical rules): ``caller_container_ref`` is
+        the caller's authorization scope (distinct from ``container_ref``, the
+        bulk-scope target). Forgetting a raw turn is a destructive mutation, so
+        the caller's container must match the target:
+        - PRESENT caller scope → the target's container must match, else DENY
+          (raises :class:`ForgetAuthorizationError`). A supplied-but-mismatched
+          scope is ALWAYS denied, even in trusted mode.
+        - MISSING caller scope → allowed ONLY in single-user trusted
+          (compatibility) mode (the default); DENIED in strict multi-user mode.
+        The predicate is enforced atomically inside storage (no ``forgotten_at``
+        is written on denial). Untagged (NULL-container) targets are therefore
+        deletable only via the missing-scope compatibility path.
+
         Raises ValueError if neither target is given, or if a single-item
         target is combined with a scope target (the request is ambiguous and
         could silently leave the scope unforgotten).
@@ -1098,28 +1115,61 @@ class PalliumService:
             raise ValueError(
                 "forget_source accepts source_item_id OR container_ref/thread_ref, not both"
             )
+        # Resolve the container-scoped authorization expectation shared by both
+        # paths. None ⇒ no storage-level check (only reachable via the trusted
+        # missing-scope path); a value ⇒ storage enforces the match atomically.
+        expected_container_ref = self._resolve_forget_scope(caller_container_ref)
         if source_item_id is not None:
-            forgotten = self._storage.forget_source_item(
-                source_item_id, reason=reason, actor_ref=actor_ref,
-            )
+            try:
+                forgotten = self._storage.forget_source_item(
+                    source_item_id,
+                    reason=reason,
+                    actor_ref=actor_ref,
+                    expected_container_ref=expected_container_ref,
+                )
+            except PermissionError as exc:
+                raise ForgetAuthorizationError(str(exc)) from exc
             return {
                 "source_item_id": source_item_id,
                 "forgotten": forgotten,
                 "count": 1 if forgotten else 0,
             }
         if container_ref is not None:
-            count = self._storage.forget_source_scope(
-                container_ref=container_ref,
-                thread_ref=thread_ref,
-                reason=reason,
-                actor_ref=actor_ref,
-            )
+            try:
+                count = self._storage.forget_source_scope(
+                    container_ref=container_ref,
+                    thread_ref=thread_ref,
+                    reason=reason,
+                    actor_ref=actor_ref,
+                    expected_container_ref=expected_container_ref,
+                )
+            except PermissionError as exc:
+                raise ForgetAuthorizationError(str(exc)) from exc
             return {
                 "container_ref": container_ref,
                 "thread_ref": thread_ref,
                 "count": count,
             }
         raise ValueError("forget_source requires source_item_id or container_ref")
+
+    def _resolve_forget_scope(self, caller_container_ref: str | None) -> str | None:
+        """Resolve the container the caller is authorized to forget within.
+
+        Returns the container to enforce against storage, or ``None`` when no
+        storage-level check applies (trusted-mode missing-scope path). Raises
+        :class:`ForgetAuthorizationError` when caller scope is missing and the
+        deployment is in strict multi-user mode. A PRESENT-but-mismatched scope
+        is NOT decided here — it is enforced atomically against the target
+        inside storage so there is no TOCTOU window.
+        """
+        if caller_container_ref is None:
+            if not self._single_user_trusted_mode:
+                raise ForgetAuthorizationError(
+                    "forget denied: caller container scope is required in strict "
+                    "multi-user mode (single_user_trusted_mode is disabled)"
+                )
+            return None
+        return caller_container_ref
 
     def record_procedure_outcome(
         self,

@@ -219,6 +219,16 @@ class AppConfig:
     storage_backend: str = "sqlite"
     sqlite_url: str = "sqlite:///./pallium.db"
     default_use_case: str = "agent_conversation_memory"
+    # Trusted single-user compatibility mode. This is NOT "auth optional":
+    # container-scoped authorization on raw-turn forgetting is ALWAYS enforced
+    # when the caller supplies a scope (a supplied-but-mismatched scope is
+    # always denied). This flag relaxes ONLY the *missing caller scope* case —
+    # the single-user local install where the invocation context has no
+    # container. True (default) = allow forget when caller scope is absent
+    # (matches the historical single-user behaviour). False = strict
+    # multi-user: a scoped caller identity is required or the forget is denied.
+    # Enabling True while binding beyond loopback is guarded at serve startup.
+    single_user_trusted_mode: bool = True
     llm_providers: dict[str, LLMProviderConfig] = field(default_factory=dict)
     embedding_providers: dict[str, EmbeddingProviderConfig] = field(default_factory=dict)
     semantic_packages: dict[str, SemanticPackageConfig] = field(default_factory=_default_semantic_packages)
@@ -302,6 +312,12 @@ class AppConfig:
                 env_values,
                 config_data.get("default_use_case") or "agent_conversation_memory",
             ) or "agent_conversation_memory",
+            single_user_trusted_mode=_resolve_bool_value(
+                "PALLIUM_SINGLE_USER_TRUSTED_MODE",
+                env_values,
+                config_data.get("single_user_trusted_mode"),
+                True,
+            ),
             observability=ObservabilityConfig(
                 integration_debug=_resolve_bool_value(
                     "PALLIUM_OBSERVABILITY_INTEGRATION_DEBUG",
