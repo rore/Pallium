@@ -124,17 +124,16 @@ forget_source_item (avoid TOCTOU); container-primary gate (actor overlay optiona
 explicit trust flag not NULL-equality; document self-asserted-field residual threat model. Full report
 under ## Plan review. -->
 
-**Approvals:** Clean-context plan review done. Product decision RESOLVED by user (relayed reviewer
-guidance): option 1 — container-scoped auth on BOTH paths + off-by-default single-user compatibility
-setting + loopback guard; no author-only overlay; wrong-identity always denied; honest seam caveat.
+**Approvals:** Approved by user 2026-08-17: "Go with option 1. Implement workspace/container-scoped
+deletion consistently for both single-turn and bulk deletion. When trusted caller identity and
+workspace/container scope are present, always enforce them—even in compatibility mode. Add an explicit
+backward-compatibility setting for identity-less local use, off-by-default enforcement so my current
+single-user setup remains unchanged. Do not add author-only deletion now." (Clean-context plan review
+also done; see ## Plan review.)
 
 **Exceptions:** —
 
 **State:** Ready for review
-<!-- Implemented: container-scoped auth on both forget paths, atomic in storage;
-single_user_trusted_mode flag (default True); loopback refuse-startup guard;
-E2E permission-matrix + parity + MCP-client + guard tests green. See
-## Implementation and ## Evidence. -->
 <!-- agent-workflow:end -->
 
 ## Plan review
