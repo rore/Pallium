@@ -76,3 +76,25 @@ correctness at markedly lower user-orchestration cost. This idea now tracks only
 the **deferred mechanism** (stable session/work correlation across `session_id`s,
 `agent_ref` as a first-class handoff dimension, eager-synthesis continuation
 packaging), to be invested in only if that value signal holds under harder inputs.
+
+## Harder-scenario DoD (external review item 13)
+
+The authored Experiment-2 scenarios were easy enough that all context-bearing arms saturated
+correctness — that proves context helps, NOT that a new continuity mechanism is necessary. Before any
+mechanism proceeds, add scenarios that expose a repeatable failure ordinary pull cannot solve:
+
+- several plausible prior sessions;
+- stale handoff summary plus a newer corrective raw turn;
+- unfinished work with ambiguous status;
+- a failed earlier approach that must not be repeated;
+- renamed files or changed architecture;
+- two agents with divergent partial work;
+- task resumed after substantial unrelated activity;
+- private prior context that must not cross actors;
+- very long history where only a small episode matters.
+
+**Compare arms:** (1) no historical context; (2) raw historical pull; (3) derived-memory injection;
+(4) raw plus derived; (5) any proposed continuity mechanism.
+
+**Gate:** a new mechanism proceeds only if it produces a meaningful downstream improvement over ordinary
+pull, after accounting for token cost, latency, and contamination.

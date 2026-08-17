@@ -79,3 +79,28 @@ prior context: `docs/context/strategy-vnext.md`, `docs/designs/015-vnext-histori
 execution.md`, `docs/designs/006-vector-retrieval-validation-report.md`. Related:
 `idea-reconcile-unprompted-pull-direction-signal`, `idea-history-pull-decision-agent-harness`
 (Done).
+
+## Product DoD (external review item 10)
+
+Treat the pull decision as a distinct evaluated capability, separate from retrieval-quality eval:
+"given a task and cheap local signals, should the agent look up history?"
+
+**Blinded, real-corpus suite with ≥4 task classes** (the agent must NOT know which class it receives):
+1. history required;
+2. history helpful but optional;
+3. related history exists but is irrelevant;
+4. no relevant history exists.
+
+**Measure:** opportunity recall; no-opportunity abstention; false-pull cost; false-abstention cost;
+downstream task effect; total added and saved tokens; latency. Plus the explicit dangerous outcome:
+irrelevant returned context materially influencing the agent's work.
+
+**Predeclared minimum release gate** (choose before running; reasonable initial values):
+- ≥90% pull rate when history is required;
+- ≥75% abstention when history is irrelevant or absent;
+- no statistically meaningful downstream-quality regression on controls;
+- positive median net token savings on required/helpful tasks;
+- bounded p95 lookup latency;
+- irrelevant returned context below an agreed contamination threshold.
+
+Report confidence intervals and corpus composition — not only aggregate averages.
