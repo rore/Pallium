@@ -26,29 +26,43 @@ caller scope on single-item forget), `app/config.py` (new trust flag), `tests` (
 identity) must be updated or covered by the local-trust default.
 
 **Scope:**
-- Add a service-layer authorization check in `forget_source` single-item branch: load the target via
-  `storage.get_source_item`, compare its `container_ref`/`actor_ref`/`visibility` against the caller's
-  authorization context, raise a defined authorization error (not KeyError) on mismatch.
-- Thread the caller's authorization scope (`actor_ref` + container) to the single-item forget path:
-  MCP client sends the context container as a caller-scope field (distinct from the scope-forget
-  `container_ref` target); HTTP route accepts + forwards it.
-- Preserve idempotency + KeyError-on-missing semantics for authorized calls.
-- Tests: HTTP + MCP E2E permission matrix; observable state after allow/deny; lifecycle cases.
+- Enforce the SAME workspace/container-scoped authorization on BOTH delete paths — single-item
+  (`forget_source_item`) AND bulk (`forget_source_scope`) — so bulk is not a bypass. Enforced atomically
+  inside the storage `_do(session)` closures via optional `expected_container_ref`/`expected_actor_ref`.
+- Trust-mode policy (computed in `core/service.py.forget_source`): container match required when caller
+  identity/scope is present; MISSING caller identity is allowed ONLY in single-user compatibility mode
+  (default), denied in strict multi-user mode; supplied-but-mismatched identity/scope is ALWAYS denied,
+  even in compatibility mode.
+- New config setting named to mean "trusted single-user compatibility" (not "auth optional"), default =
+  compatibility ON. Strict mode = require scoped identity.
+- Startup/loopback guard: warn — preferably refuse startup — if the service binds beyond loopback while
+  compatibility mode is enabled.
+- Thread caller scope to the single-item path: MCP client sends ctx container as a caller-scope field
+  (distinct from scope-mode `container_ref`); HTTP route + `api/schemas.py` accept/forward it.
+- Preserve idempotency + KeyError-on-missing for authorized calls. Untagged (NULL-container) turns:
+  deletable in compatibility mode; denied in strict mode (admin migration path deferred/documented).
+- Tests: HTTP + MCP E2E permission matrix (production-shaped identity); single==bulk parity; loopback
+  guard; observable allow/deny state; audit distinguishes denied vs successful.
 
 **Constraints:**
-- Touches red `core/service.py` — reach nothing through a new red passthrough beyond the forget method
-  already there; keep the storage layer unchanged (authorize in service, before calling storage).
-- Do NOT weaken scope-forget (already container-bounded).
-- Deny must be observable (defined error surfaced on HTTP + MCP) and must write no `forgotten_at`.
+- Touches red `core/service.py` — no new red passthrough beyond the existing forget method. Policy is
+  computed in the service; storage enforces the predicate atomically (no TOCTOU double-read).
+- Bulk and single-item MUST enforce identical scope rules (bulk is not exempt).
+- Compatibility mode relaxes ONLY missing identity — never a supplied-but-wrong identity, never a blanket
+  auth-optional.
+- Deny must be observable (defined error on HTTP + MCP) and must write no `forgotten_at`.
+- Honest boundary: strict mode still trusts client-supplied identity — this builds the authorization
+  SEAM; real authentication feeding it is a later piece. Record this in decisions.md.
 - No internal/product names. No query/ingest behavior change.
-- Missing caller identity must follow an explicit, documented policy — never a silent allow.
 
 **Completion criteria:**
-Cross-actor and cross-container single-item forget are denied through both HTTP and MCP (E2E, not just
-unit); owner-forgets-own (private + public) succeeds; wrong-container-with-correct-id denied; after a
-denied forget the source stays retrievable by its owner and no `forgotten_at` is written; audit
-distinguishes denied from successful; idempotent re-forget and nonexistent-id behavior preserved; full
-suite + redline + workflow checks green.
+Owner's workspace can delete its turn; different workspace denied; supplied-wrong-workspace denied even
+in compatibility mode; no-identity allowed only in compatibility mode and denied in strict mode; untagged
+legacy turns deletable in compatibility, denied in strict; single AND bulk enforce identical scope rules;
+unauthorized attempts mutate nothing and are audited distinctly from successes; successful delete
+disappears from search + expansion; repeat delete idempotent; non-loopback + compatibility mode produces
+a prominent warning or startup failure; HTTP + MCP E2E use production-shaped identity; full suite +
+redline + workflow checks green.
 
 **Risk:** High
 
@@ -110,13 +124,17 @@ forget_source_item (avoid TOCTOU); container-primary gate (actor overlay optiona
 explicit trust flag not NULL-equality; document self-asserted-field residual threat model. Full report
 under ## Plan review. -->
 
-**Approvals:** Clean-context plan review done. One product decision (trust-mode / policy strictness)
-routed to the user before implementation.
+**Approvals:** Clean-context plan review done. Product decision RESOLVED by user (relayed reviewer
+guidance): option 1 — container-scoped auth on BOTH paths + off-by-default single-user compatibility
+setting + loopback guard; no author-only overlay; wrong-identity always denied; honest seam caveat.
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
-<!-- Blocked on the user's trust-mode/policy decision (see ## Plan review "Open decision"). -->
+**State:** Ready for review
+<!-- Implemented: container-scoped auth on both forget paths, atomic in storage;
+single_user_trusted_mode flag (default True); loopback refuse-startup guard;
+E2E permission-matrix + parity + MCP-client + guard tests green. See
+## Implementation and ## Evidence. -->
 <!-- agent-workflow:end -->
 
 ## Plan review
@@ -169,3 +187,74 @@ How strict should single-item forget be, given local-trust vs multi-tenant tensi
 posed alongside this review. Recommended: container-primary gate + `require_scoped_identity` flag
 (default False = local-trust, no change to the live box; True = multi-tenant fail-closed) + actor overlay
 deferred/documented.
+
+## Implementation
+
+Container-scoped authorization on BOTH raw-turn forget paths, enforced atomically in storage. Per-file:
+
+- `core/errors.py`: added `ForgetAuthorizationError(PermissionError)` — the defined domain error for a
+  denied forget. Subclasses `PermissionError` so a storage-raised `PermissionError` is caught uniformly.
+- `app/config.py`: added top-level `AppConfig.single_user_trusted_mode: bool = True` (env
+  `PALLIUM_SINGLE_USER_TRUSTED_MODE`, standard `_resolve_bool_value` pattern). Named for "trusted
+  single-user compatibility", NOT "auth optional". True (default) relaxes ONLY the missing-caller-scope
+  case; False = strict multi-user.
+- `storage/sqlite.py`: `forget_source_item` and `forget_source_scope` each gain optional
+  `expected_container_ref` (default None ⇒ no check, keeps direct-storage tests green). Enforced inside the
+  existing `_with_retry` `_do(session)`: for single-item, the freshly-loaded record's `container_ref` must
+  equal `expected_container_ref` or `PermissionError` is raised BEFORE `forgotten_at` is written; for bulk,
+  `expected_container_ref` must equal the requested `container_ref` (the scope is already `WHERE
+  container_ref == …`, so this is the parity guard) before any row is mutated. No TOCTOU double-read.
+- `core/service.py`: `PalliumService.__init__` gains `single_user_trusted_mode: bool = True` (stored on
+  `self._single_user_trusted_mode`). `forget_source` gains `caller_container_ref`. New helper
+  `_resolve_forget_scope` computes the trust-mode policy: missing scope → allowed (return None) in trusted
+  mode, else raise `ForgetAuthorizationError`; present scope → returned as the storage expectation (the
+  mismatch verdict is deferred to storage for atomicity). Both branches wrap the storage call and re-raise
+  a storage `PermissionError` as `ForgetAuthorizationError`.
+- `app/dependencies.py`: threads `single_user_trusted_mode=resolved_config.single_user_trusted_mode` into
+  the `PalliumService(...)` build (no new red passthrough — one existing call site).
+- `api/schemas.py`: `ForgetSourceRequest` gains `caller_container_ref: str | None = None` (Pydantic would
+  otherwise drop it).
+- `api/routes.py`: `/source/forget` forwards `caller_container_ref`; maps `ForgetAuthorizationError` → HTTP
+  403. Denied calls write no `forgotten_at`.
+- `app/mcp/client.py`: `forget_source` injects `self._ctx.container_ref` as `caller_container_ref` on BOTH
+  paths (distinct from the scope-mode `container_ref`). Single-item still never widens into a scope forget.
+- `app/mcp/server.py`: `pallium_forget_source` detects the 403 error dict from the client and raises
+  `ToolError` (imported from `mcp.server.fastmcp.exceptions`) — deny surfaced as a defined tool error.
+- `app/run.py`: added `_is_loopback_host` + `_guard_loopback_bind`. CHOSE REFUSE-STARTUP (exit code 2 with
+  a clear message) when `single_user_trusted_mode` is on AND the bind host is non-loopback. Guard runs in
+  the `serve` branch AND the default `all`/supervisor branch (which spawns `app.run serve --host`), so it
+  fires before any off-box bind.
+- `docs/context/decisions.md`: recorded the policy, the trust flag, the refuse-startup guard, and the
+  self-asserted-field residual threat model (2026-08-17 entry).
+- `tests/test_source_forget_authorization.py`: new E2E permission-matrix + parity + MCP-client-threading +
+  loopback-guard suite (see Evidence).
+
+Deviations from the plan (noted, not scope expansion):
+- Config flag NAMED `single_user_trusted_mode` (default True) per the manager's directive, instead of the
+  plan's `require_scoped_identity` (default False). Same semantics, inverted polarity; the chosen name
+  reads as "compatibility", not "auth optional".
+- `storage/base.py` was listed in Target, but `StorageProvider` (ABC) does NOT declare
+  `forget_source_item`/`forget_source_scope` (they exist only on the SQLite impl; `soft_delete_memory` is
+  the same). No abstract signature to update, so `storage/base.py` was left untouched. Reduction, not
+  expansion.
+
+## Evidence
+
+Sanctioned Python invocation (SAP-IT ASR blocks Scripts\python.exe stubs):
+`PYTHONPATH=".local/test-env/site-packages;." "C:/Users/I347041/AppData/Roaming/uv/python/cpython-3.13-windows-x86_64-none/python.exe" -m pytest …`
+
+- `pytest tests/test_source_forget_authorization.py -x -q` → **26 passed** (permission matrix: owner/
+  different-workspace/no-identity/untagged for both trusted & strict; single==bulk parity; denied-writes-
+  nothing + audit-distinct; idempotent + nonexistent-404 + search/expansion exclusion; MCP client threads
+  caller scope on both paths & omits when ctx has none; loopback guard refuse/allow/strict).
+- `pytest tests/test_raw_turn_forgetting.py -x -q` → **11 passed** (existing suite incl. the no-identity
+  happy-path formerly at :221 — still green under the compatibility default, unchanged).
+- `pytest tests/test_raw_turn_forgetting.py tests/test_source_forget_authorization.py
+  tests/test_retrieval_forget_revalidation.py tests/test_source_context.py tests/test_source_only_search.py
+  tests/test_historical_lookup_funnel_e2e.py -q` → **61 passed**.
+- `pytest tests/test_mcp_client.py -q` → 1 skipped (skips because the MCP server import needs `pywintypes`,
+  absent in the test env — pre-existing environment limitation, not this change).
+- `pytest tests/test_config.py -q` → 29 passed, **1 failed**: `test_prompt_variants_legacy_fallback_unaffected`.
+  Confirmed PRE-EXISTING via `git stash` (fails identically without this change): the test doesn't override
+  `PALLIUM_CONFIG_FILE`, so the developer's local `pallium.local.toml` (which sets `prompt_variants`) leaks
+  into `AppConfig.from_env`. Unrelated to this task and out of scope.

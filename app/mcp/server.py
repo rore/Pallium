@@ -11,6 +11,7 @@ import os
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_context
@@ -432,6 +433,17 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             thread_ref=thread_ref,
             reason=reason,
         )
+        # Surface an authorization denial as a defined, unambiguous tool error
+        # rather than a bare JSON blob. The HTTP boundary returns 403 when the
+        # caller's container scope does not match the target turn (or is absent
+        # under strict multi-user mode); the client maps that to an error dict.
+        if isinstance(result, dict) and result.get("status_code") == 403:
+            detail = result.get("detail")
+            reason_text = detail.get("detail") if isinstance(detail, dict) else detail
+            raise ToolError(
+                f"Forget denied: not authorized to forget this raw turn "
+                f"({reason_text or 'container scope mismatch'})."
+            )
         return json.dumps(result, indent=2, default=str)
 
     @server.tool()

@@ -14,6 +14,47 @@ from app.supervisor import run_supervisor
 logger = logging.getLogger(__name__)
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"})
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True when ``host`` binds only the loopback interface.
+
+    ``0.0.0.0`` / ``::`` (bind-all) and any concrete LAN/public address are
+    NOT loopback. Comparison is done on the normalized string; hostnames other
+    than ``localhost`` are treated as non-loopback (conservative — a bare
+    hostname can resolve to a routable address).
+    """
+    return host.strip().lower() in _LOOPBACK_HOSTS
+
+
+def _guard_loopback_bind(host: str) -> int | None:
+    """Refuse to serve beyond loopback while single-user trusted mode is on.
+
+    Single-user trusted mode relaxes raw-turn-forget authorization for callers
+    without a container scope. That is safe only when the API is not reachable
+    off-box. If the operator binds a routable interface while trusted mode is
+    still enabled, REFUSE startup with a clear message. Returns a non-zero exit
+    code to refuse, or ``None`` to proceed.
+    """
+    if _is_loopback_host(host):
+        return None
+    from app.config import AppConfig
+
+    if not AppConfig.from_env().single_user_trusted_mode:
+        return None
+    logger.error(
+        "REFUSING to start: binding a non-loopback host (%s) while "
+        "single_user_trusted_mode is enabled. Trusted mode relaxes raw-turn "
+        "forget authorization for callers without a container scope, which is "
+        "unsafe to expose off-box. Either bind 127.0.0.1/::1/localhost, or "
+        "disable trusted mode for strict multi-user authorization "
+        "(set PALLIUM_SINGLE_USER_TRUSTED_MODE=false).",
+        host,
+    )
+    return 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Pallium locally")
     parser.add_argument(
@@ -48,6 +89,9 @@ def run(args: list[str] | None = None) -> int:
     if parsed.mode not in ("setup", "service") and remaining:
         build_parser().error(f"unrecognized arguments: {' '.join(remaining)}")
     if parsed.mode == "serve":
+        guard_exit = _guard_loopback_bind(parsed.host)
+        if guard_exit is not None:
+            return guard_exit
         # Auto-set PALLIUM_BASE_URL if not already set — needed by the MCP endpoint
         # which is mounted on this server and calls back to the HTTP API
         import os
@@ -114,6 +158,12 @@ def run(args: list[str] | None = None) -> int:
     if parsed.mode == "service":
         from app.cli.service import service_main
         return service_main(remaining)
+    # Default 'all' mode supervises an 'app.run serve' child that binds
+    # parsed.host; refuse early with the same guard instead of letting the
+    # child crash-loop under the supervisor.
+    guard_exit = _guard_loopback_bind(parsed.host)
+    if guard_exit is not None:
+        return guard_exit
     supervisor_args = [
         "--host",
         parsed.host,
