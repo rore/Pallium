@@ -249,7 +249,9 @@ def compute_reuse_rollup(
 
 #: Assistant "work" turns for the substantive-session predicate. A raw
 #: assistant message alone does not make a session substantive; a work
-#: artifact does.
+#: artifact does. These are the simulation-harness kinds; production hooks
+#: emit ``artifact_kind="message"`` (handled separately, gated on non-empty
+#: content) — see ``_reconstruct_eligible_sessions``.
 _ASSISTANT_WORK_ARTIFACT_KINDS = frozenset(
     {"assistant_output", "tool_use_summary", "todo_snapshot"}
 )
@@ -301,8 +303,12 @@ def _reconstruct_eligible_sessions(
 
     PINNED eligibility predicate (against the real nullable columns):
       - user turn        = ``role = 'user'``
-      - assistant-work   = ``role = 'assistant' AND artifact_kind IN
+      - assistant-work   = ``role = 'assistant'`` AND either ``artifact_kind IN
                              {'assistant_output','tool_use_summary','todo_snapshot'}``
+                             (simulation kinds) OR ``artifact_kind = 'message'``
+                             with non-empty content (production Claude/Codex hooks
+                             write real assistant turns as ``message``; an
+                             empty-content tool-only ``message`` does NOT qualify).
       - prior-indexed    = ``processing_completed_at IS NOT NULL``
       - NULL ``role`` / ``artifact_kind`` rows do NOT classify (fail-closed).
       - substantive      = >=1 user turn AND >=1 assistant-work turn.
@@ -319,6 +325,7 @@ def _reconstruct_eligible_sessions(
         params.append(container_ref)
     sql = (
         "SELECT container_ref, thread_ref, role, artifact_kind, created_at, "
+        "length(content) AS content_len, "
         "processing_completed_at FROM source_items WHERE " + " AND ".join(where)
     )
     rows = conn.execute(sql, params).fetchall()
@@ -334,6 +341,7 @@ def _reconstruct_eligible_sessions(
         artifact_kind = r["artifact_kind"]
         created = r["created_at"]
         completed = r["processing_completed_at"]
+        content_len = r["content_len"]
         if completed is not None and created is not None:
             prior_indexed.setdefault(container, []).append(created)
         if thread is None:
@@ -348,7 +356,14 @@ def _reconstruct_eligible_sessions(
             session["start"] = created
         if role == "user":
             session["has_user"] = True
-        elif role == "assistant" and artifact_kind in _ASSISTANT_WORK_ARTIFACT_KINDS:
+        elif role == "assistant" and (
+            artifact_kind in _ASSISTANT_WORK_ARTIFACT_KINDS
+            # Production Claude/Codex hooks write assistant turns as
+            # artifact_kind="message"; a non-empty one is substantive work.
+            # A tool-only turn writes an EMPTY-content "message" (see codex
+            # stop.py), which must NOT qualify -> guard on content length.
+            or (artifact_kind == "message" and (content_len or 0) > 0)
+        ):
             session["has_work"] = True
 
     for values in prior_indexed.values():
