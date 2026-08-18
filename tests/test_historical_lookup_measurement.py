@@ -572,3 +572,52 @@ class TestConsensusRungDedup:
             assert _consensus_rung(conn, "ev-1") == "influence"
         finally:
             conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Substantive predicate — production assistant "message" artifacts
+# ---------------------------------------------------------------------------
+
+
+class TestSubstantivePredicateProductionMessage:
+    """Real Claude/Codex hooks write assistant turns as artifact_kind='message'.
+    A non-empty one must make a session substantive; an empty-content one (a
+    tool-only turn) must NOT."""
+
+    def _insert(self, conn, *, sid, thread, role, kind, content):
+        conn.execute(
+            "INSERT INTO source_items (id, source_type, source_id, content_type, "
+            "content, role, artifact_kind, container_ref, thread_ref, visibility, "
+            "processing_status, processing_attempts, created_at) VALUES "
+            "(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (sid, "chat_message", "ext-" + sid, "text/plain", content, role, kind,
+             "c:1", thread, "private", "completed", 0, "2026-08-01 00:00:01.000000"),
+        )
+
+    def test_production_message_eligibility(self, tmp_path) -> None:
+        import sqlite3
+
+        from evals.historical_lookup_measurement import _reconstruct_eligible_sessions
+        from storage.sqlite import SQLiteStorageProvider
+
+        db = tmp_path / "hist.db"
+        SQLiteStorageProvider(f"sqlite:///{db}")  # create schema
+
+        conn = sqlite3.connect(db)
+        conn.row_factory = sqlite3.Row
+        try:
+            # Good: user + non-empty assistant "message" -> substantive.
+            self._insert(conn, sid="u1", thread="t:good", role="user", kind="message", content="hi")
+            self._insert(conn, sid="a1", thread="t:good", role="assistant", kind="message", content="a real answer")
+            # Anti-case: user + EMPTY assistant "message" (tool-only turn) -> not substantive.
+            self._insert(conn, sid="u2", thread="t:toolonly", role="user", kind="message", content="hi")
+            self._insert(conn, sid="a2", thread="t:toolonly", role="assistant", kind="message", content="")
+            conn.commit()
+
+            eligible = _reconstruct_eligible_sessions(
+                conn, container_ref=None, since=None, until=None, eligibility_n=0
+            )
+            assert "t:good" in eligible
+            assert "t:toolonly" not in eligible
+        finally:
+            conn.close()
