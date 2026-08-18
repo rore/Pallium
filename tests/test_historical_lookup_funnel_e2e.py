@@ -378,3 +378,154 @@ def test_exposed_set_reflects_post_redaction_results(monkeypatch, test_db_url: s
         returned_ids = {h["source_item_id"] for h in source_hits}
         assert exposed_ids == returned_ids
         assert sid in exposed_ids
+
+
+# ---------------------------------------------------------------------------
+# Active-session attribution (fix-lookup-and-expansion-active-attribution)
+# ---------------------------------------------------------------------------
+
+_SESSION_A = "chat:funnel:A"
+_SESSION_B = "chat:funnel:B"
+
+
+def _events_attr(client: TestClient, event_type: str) -> list[dict]:
+    """Like _events but also reads the attribution columns."""
+    storage = client.app.state.pallium_service._storage
+    with storage._engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT id, session_id, source_session_ref, actor_ref, "
+                "parent_lookup_id FROM historical_lookup_reuse_event "
+                "WHERE event_type = :et"
+            ),
+            {"et": event_type},
+        ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def test_expansion_attributed_to_requesting_session_not_anchor(monkeypatch, test_db_url: str) -> None:
+    """Source ingested in session A, searched + expanded from session B: the
+    expansion event records B as the active session and A only as
+    source_session_ref — never A as the active session (the mis-attribution
+    this fixes). Completion criteria 1 + 2."""
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="u1", content=_USER, role="user",
+                artifact_kind="message", thread_ref=_SESSION_A)
+        _ingest(client, source_id="a1", content=_WORK, role="assistant",
+                artifact_kind="assistant_output", thread_ref=_SESSION_A)
+
+        # Search from session B (same container, different session).
+        result = _search_history(client, thread_ref=_SESSION_B)
+        lookup_id = result["lookup_event_id"]
+        assert lookup_id is not None
+        source_hits = [r for r in result["results"] if r["result_kind"] == "source_hit"]
+        assert source_hits, result
+        anchor_id = source_hits[0]["source_item_id"]
+
+        lk = _events_attr(client, "lookup")
+        assert len(lk) == 1
+        assert lk[0]["session_id"] == _SESSION_B  # active requesting session
+        assert lk[0]["source_session_ref"] is None  # a lookup has no single source session
+
+        # Expand from session B, passing the active session explicitly.
+        resp = client.get(
+            f"/source/{anchor_id}/context",
+            params={
+                "container_ref": CONTAINER,
+                "parent_lookup_id": lookup_id,
+                "active_session_ref": _SESSION_B,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        ex = _events_attr(client, "expansion")
+        assert len(ex) == 1
+        assert ex[0]["session_id"] == _SESSION_B  # requester, NOT the anchor's session A
+        assert ex[0]["source_session_ref"] == _SESSION_A  # anchor's session, recorded separately
+        assert ex[0]["parent_lookup_id"] == lookup_id
+
+
+def test_expansion_without_active_identity_is_unattributed_not_anchor(monkeypatch, test_db_url: str) -> None:
+    """When the caller supplies no active session, the expansion event is
+    unattributed (session_id NULL) — it must NOT fall back to the anchor's or
+    the parent lookup's session. This is the exact bug being fixed. The
+    parent_lookup_id belongs to session A; the event must still be NULL, never A."""
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="u1", content=_USER, role="user",
+                artifact_kind="message", thread_ref=_SESSION_A)
+        _ingest(client, source_id="a1", content=_WORK, role="assistant",
+                artifact_kind="assistant_output", thread_ref=_SESSION_A)
+
+        result = _search_history(client, thread_ref=_SESSION_A)
+        lookup_id = result["lookup_event_id"]
+        source_hits = [r for r in result["results"] if r["result_kind"] == "source_hit"]
+        assert source_hits, result
+        anchor_id = source_hits[0]["source_item_id"]
+
+        # Expand with NO active_session_ref (route default None).
+        resp = client.get(
+            f"/source/{anchor_id}/context",
+            params={"container_ref": CONTAINER, "parent_lookup_id": lookup_id},
+        )
+        assert resp.status_code == 200, resp.text
+
+        ex = _events_attr(client, "expansion")
+        assert len(ex) == 1
+        assert ex[0]["session_id"] is None  # unattributed — NOT the anchor's session A
+        assert ex[0]["source_session_ref"] == _SESSION_A
+
+
+def test_expansion_write_failure_does_not_fail_the_request(monkeypatch, test_db_url: str) -> None:
+    """Telemetry stays best-effort: a raising event write must not fail the
+    expansion. Completion criterion 5."""
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="u1", content=_USER, role="user",
+                artifact_kind="message", thread_ref=_SESSION_A)
+        _ingest(client, source_id="a1", content=_WORK, role="assistant",
+                artifact_kind="assistant_output", thread_ref=_SESSION_A)
+        result = _search_history(client, thread_ref=_SESSION_A)
+        source_hits = [r for r in result["results"] if r["result_kind"] == "source_hit"]
+        assert source_hits, result
+        anchor_id = source_hits[0]["source_item_id"]
+
+        storage = client.app.state.pallium_service._storage
+
+        def _boom(_row):
+            raise RuntimeError("telemetry down")
+
+        monkeypatch.setattr(storage, "write_historical_lookup_event_row", _boom)
+        resp = client.get(f"/source/{anchor_id}/context", params={"container_ref": CONTAINER})
+        assert resp.status_code == 200, resp.text  # expansion still returns
+
+
+def test_concurrent_expansions_get_distinct_active_sessions(monkeypatch, test_db_url: str) -> None:
+    """Two sessions expanding the same anchor concurrently each get an event
+    attributed to their own active session — no cross-call/global contamination.
+    Completion criterion 3 (concurrency)."""
+    import threading
+
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="u1", content=_USER, role="user",
+                artifact_kind="message", thread_ref=_SESSION_A)
+        _ingest(client, source_id="a1", content=_WORK, role="assistant",
+                artifact_kind="assistant_output", thread_ref=_SESSION_A)
+        result = _search_history(client, thread_ref=_SESSION_A)
+        source_hits = [r for r in result["results"] if r["result_kind"] == "source_hit"]
+        assert source_hits, result
+        anchor_id = source_hits[0]["source_item_id"]
+
+        service = client.app.state.pallium_service
+        sessions = ["sess:one", "sess:two"]
+
+        def _expand(active: str) -> None:
+            service.get_source_context(anchor_id, container_ref=CONTAINER, active_session_ref=active)
+
+        threads = [threading.Thread(target=_expand, args=(s,)) for s in sessions]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        ex = _events_attr(client, "expansion")
+        got = sorted(e["session_id"] for e in ex)
+        assert got == sorted(sessions)  # exactly two, each its own active session

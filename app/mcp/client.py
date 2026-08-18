@@ -156,6 +156,11 @@ class PalliumMcpClient:
         actor = getattr(self._ctx, "actor_ref", None)
         if actor:
             params["query_actor_ref"] = actor
+        # Active (requesting) session for reuse-funnel attribution — so the
+        # expansion event records THIS session, never the historical anchor's.
+        session = getattr(self._ctx, "thread_ref", None)
+        if session:
+            params["active_session_ref"] = session
         if self._ctx.visibility is not None:
             params["query_visibility"] = self._ctx.visibility
         if before is not None:

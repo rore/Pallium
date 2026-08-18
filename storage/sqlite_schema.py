@@ -348,6 +348,11 @@ class HistoricalLookupReuseEventRecord(Base):
     # [{"source_item_id", "raw_rank", "score"}].
     exposed_json = Column(Text, nullable=False, default="[]")
     visibility = Column(String, nullable=True, default="private")
+    # Attribution: session_id is the ACTIVE (requesting) session. For an
+    # expansion, source_session_ref records the historical anchor's session so
+    # activity in the requesting session is never mislabeled as the source's.
+    # NULL for lookups (a lookup exposes many sources, no single source session).
+    source_session_ref = Column(String, nullable=True)
 
 
 class HistoricalLookupReuseLabelRecord(Base):
@@ -817,6 +822,13 @@ class SQLiteSchemaMixin:
             "ON historical_lookup_reuse_label (lookup_event_id)"
         ),
     }
+    # Attribution column added after the event table shipped (nullable / no
+    # backfill: existing rows keep source_session_ref NULL, the correct default).
+    _HISTORICAL_LOOKUP_COLUMN_MIGRATIONS = {
+        "source_session_ref": (
+            "ALTER TABLE historical_lookup_reuse_event ADD COLUMN source_session_ref VARCHAR"
+        ),
+    }
     _MEMORY_FEEDBACK_COLUMN_MIGRATIONS = {
         "memory_type": "ALTER TABLE memory_feedback ADD COLUMN memory_type VARCHAR",
         "memory_text": "ALTER TABLE memory_feedback ADD COLUMN memory_text TEXT",
@@ -852,6 +864,7 @@ class SQLiteSchemaMixin:
             # declaratively by Base.metadata.create_all above).
             self._ensure_memory_usage_audit_indexes()
             self._ensure_historical_lookup_indexes()
+            self._ensure_historical_lookup_columns()
             self._ensure_fts5_table()
             self._backfill_legacy_memory_freshness()
             self._backfill_thread_position()
@@ -1081,6 +1094,16 @@ class SQLiteSchemaMixin:
         with self._engine.begin() as connection:
             for _index_name, create_sql in self._HISTORICAL_LOOKUP_INDEX_MIGRATIONS.items():
                 connection.execute(text(create_sql))
+
+    def _ensure_historical_lookup_columns(self) -> None:
+        with self._engine.begin() as connection:
+            existing_columns = {
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(historical_lookup_reuse_event)"))
+            }
+            for column_name, migration_sql in self._HISTORICAL_LOOKUP_COLUMN_MIGRATIONS.items():
+                if column_name not in existing_columns:
+                    connection.execute(text(migration_sql))
 
     def _ensure_fts5_available(self, connection) -> None:
         """Verify FTS5 extension is available. Fail fast with clear message."""

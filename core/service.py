@@ -735,6 +735,9 @@ class PalliumService:
                     "parent_lookup_id": None,
                     "exposed_json": json.dumps(exposed),
                     "visibility": visibility,
+                    # A lookup exposes many sources (no single source session);
+                    # session_id already holds the active requesting session.
+                    "source_session_ref": None,
                 })
             except Exception:
                 self._logger.warning("historical lookup event write failed", exc_info=True)
@@ -1465,6 +1468,7 @@ class PalliumService:
         max_chars: int = 16000,
         include_supported_memories: bool = False,
         parent_lookup_id: str | None = None,
+        active_session_ref: str | None = None,
     ) -> tuple[SourceItem, list[SourceItem], list | None, str | None]:
         """Bounded neighborhood of raw turns around an anchor source item.
 
@@ -1608,13 +1612,22 @@ class PalliumService:
                 "id": new_id(),
                 "created_at": utc_now(),
                 "event_type": "expansion",
-                "session_id": anchor.thread_ref,
+                # Active (requesting) identity ONLY. NEVER the anchor's or the
+                # parent lookup's — attributing an expansion to the retrieved
+                # source's session is the mis-attribution this fixes. NULL when
+                # the caller supplies no session => unattributed (excluded from
+                # the reuse KPI, counted as data-quality). parent_lookup_id is
+                # linkage, not an identity source.
+                "session_id": active_session_ref,
                 "container_ref": effective_container,
-                "actor_ref": effective_actor_ref,
+                "actor_ref": query_actor_ref,
                 "trigger_origin": None,
                 "parent_lookup_id": parent_lookup_id,
                 "exposed_json": json.dumps(exposed),
                 "visibility": anchor.visibility,
+                # The historical anchor's session — recorded separately so the
+                # requesting session (session_id) is never overwritten by it.
+                "source_session_ref": anchor.thread_ref,
             })
         except Exception:
             self._logger.warning("historical expansion event write failed", exc_info=True)
