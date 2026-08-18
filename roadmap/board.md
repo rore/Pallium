@@ -1,5 +1,4 @@
 # P1 · Reuse Measurement
-- fix-lookup-and-expansion-active-attribution
 - fix-continuous-eval-lookup-population
 - idea-reuse-judge-calibration
 - idea-reuse-judge-evidence-span-enforcement
@@ -38,6 +37,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- fix-lookup-and-expansion-active-attribution
 - fix-reuse-kpi-artifact-taxonomy
 - fix-budget-aware-historical-recall-hardening
 - fix-source-forget-scope-authorization

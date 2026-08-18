@@ -1,7 +1,7 @@
 ---
 id: fix-lookup-and-expansion-active-attribution
 title: Lookup and expansion events must carry active session + agent identity
-status: queued
+status: done
 priority: high
 commitment: uncommitted
 ---
