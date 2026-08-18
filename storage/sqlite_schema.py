@@ -353,6 +353,11 @@ class HistoricalLookupReuseEventRecord(Base):
     # activity in the requesting session is never mislabeled as the source's.
     # NULL for lookups (a lookup exposes many sources, no single source session).
     source_session_ref = Column(String, nullable=True)
+    # Redacted search phrase for a "lookup" event (the always-on population for
+    # the RAW/DERIVED/HYBRID evaluator, which otherwise reads the off-by-default
+    # query_audit_log). Passed through redact_sensitive at write time — the same
+    # scrubbing every stored turn gets. NULL for expansions and legacy rows.
+    query_text = Column(Text, nullable=True)
 
 
 class HistoricalLookupReuseLabelRecord(Base):
@@ -827,6 +832,9 @@ class SQLiteSchemaMixin:
     _HISTORICAL_LOOKUP_COLUMN_MIGRATIONS = {
         "source_session_ref": (
             "ALTER TABLE historical_lookup_reuse_event ADD COLUMN source_session_ref VARCHAR"
+        ),
+        "query_text": (
+            "ALTER TABLE historical_lookup_reuse_event ADD COLUMN query_text TEXT"
         ),
     }
     _MEMORY_FEEDBACK_COLUMN_MIGRATIONS = {

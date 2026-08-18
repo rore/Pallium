@@ -365,6 +365,7 @@ def test_source_session_ref_migration_on_pre_column_db(tmp_path) -> None:
     cols_after = {r[1] for r in conn.execute("PRAGMA table_info(historical_lookup_reuse_event)")}
     conn.close()
     assert "source_session_ref" in cols_after
+    assert "query_text" in cols_after  # both attribution/eval columns migrated in
 
 
 def test_unattributed_lookups_counted_and_excluded_from_kpi(tmp_path) -> None:

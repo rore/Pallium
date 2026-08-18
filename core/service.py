@@ -738,6 +738,10 @@ class PalliumService:
                     # A lookup exposes many sources (no single source session);
                     # session_id already holds the active requesting session.
                     "source_session_ref": None,
+                    # Redacted search phrase — the always-on population for the
+                    # RAW/DERIVED/HYBRID evaluator. Scrubbed the same way stored
+                    # turns are; NULL when the query text is empty.
+                    "query_text": redact_sensitive(text) if text else None,
                 })
             except Exception:
                 self._logger.warning("historical lookup event write failed", exc_info=True)

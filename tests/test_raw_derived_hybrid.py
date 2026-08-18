@@ -38,7 +38,12 @@ from evals.raw_derived_hybrid.arms import (
     evidence_link_recovery,
     partition_candidates,
 )
-from evals.raw_derived_hybrid.runner import QueryRow, run_eval
+from evals.raw_derived_hybrid.runner import (
+    QueryRow,
+    count_lookup_population,
+    load_query_rows,
+    run_eval,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -319,21 +324,22 @@ def synthetic_db(tmp_path: Path):
     dec = add_mem("decision", {"decision": "holds must be idempotent in the reservation ledger"})
     link(dec, s0)
 
-    # Seed one historical agent-pull query so the load path is exercised.
-    storage.write_query_audit_row({
-        "id": "q1",
+    # Seed one historical agent-pull lookup on the always-on funnel event (the
+    # loader's authoritative population — NOT query_audit_log, which is off by
+    # default). query_text is the redacted search phrase.
+    storage.write_historical_lookup_event_row({
+        "id": "lk1",
         "created_at": utc_now(),
-        "source_item_id": s0,
-        "source_id": "t1-0",
-        "thread_ref": None,
+        "event_type": "lookup",
+        "session_id": None,
         "container_ref": None,
         "actor_ref": None,
-        "visibility": None,
-        "query_text": "reservation ledger idempotent holds",
-        "should_inject": 0,
-        "decision_reason": "test",
-        "injected_blocks_json": "[]",
         "trigger_origin": "agent_pull",
+        "parent_lookup_id": None,
+        "exposed_json": "[]",
+        "visibility": None,
+        "source_session_ref": None,
+        "query_text": "reservation ledger idempotent holds",
     })
 
     return {"storage": storage, "db": str(db), "s0": s0, "s1": s1, "dec": dec}
@@ -342,6 +348,61 @@ def synthetic_db(tmp_path: Path):
 def _build_lexical_retrieval(storage):
     from retrieval.lexical import LexicalRetrievalProvider
     return LexicalRetrievalProvider(storage)
+
+
+def test_population_counts_lookups_only_and_reports_exclusions(synthetic_db) -> None:
+    """count_lookup_population counts funnel 'lookup' events under the loader's
+    filters, splits with/without query_text, and never counts expansions."""
+    storage = synthetic_db["storage"]
+    # A second lookup with NO query_text (legacy / pre-column) — excluded from the
+    # eval population but reported.
+    storage.write_historical_lookup_event_row({
+        "id": "lk2", "created_at": utc_now(), "event_type": "lookup",
+        "session_id": None, "container_ref": None, "actor_ref": None,
+        "trigger_origin": "agent_pull", "parent_lookup_id": None,
+        "exposed_json": "[]", "visibility": None, "source_session_ref": None,
+        "query_text": None,
+    })
+    # An expansion event must NOT inflate the lookup population.
+    storage.write_historical_lookup_event_row({
+        "id": "ex1", "created_at": utc_now(), "event_type": "expansion",
+        "session_id": None, "container_ref": None, "actor_ref": None,
+        "trigger_origin": None, "parent_lookup_id": "lk1",
+        "exposed_json": "[]", "visibility": None, "source_session_ref": "t1",
+        "query_text": None,
+    })
+
+    origins = ("agent_pull", "mcp_pull")
+    pop = count_lookup_population(
+        synthetic_db["db"], container_ref=None, thread_ref=None, actor_ref=None,
+        trigger_origins=origins,
+    )
+    assert pop["total"] == 2  # two lookups (lk1, lk2); expansion excluded
+    assert pop["with_query_text"] == 1  # only lk1
+    assert pop["without_query_text"] == 1  # lk2, reported not silently dropped
+
+    rows = load_query_rows(
+        synthetic_db["db"], container_ref=None, thread_ref=None, actor_ref=None,
+        trigger_origins=origins,
+    )
+    assert [r.query_text for r in rows] == ["reservation ledger idempotent holds"]
+
+
+def test_run_eval_report_includes_population(synthetic_db) -> None:
+    """The eval report carries a population block (default install won't emit a
+    silent zero — it states how many lookups were found and excluded)."""
+    judge = _CountingJudge()
+    retrieval = _build_lexical_retrieval(synthetic_db["storage"])
+    report = run_eval(
+        db_path=synthetic_db["db"], storage=synthetic_db["storage"], retrieval=retrieval,
+        judge_provider=judge, report_time_model="test-model",
+        limit=0, seed=1, container_ref=None, thread_ref=None, actor_ref=None,
+        trigger_origins=("agent_pull", "mcp_pull"),
+        retrieval_limit=10, judge_samples=1, represent_limit=0, token_budgets=[64],
+    )
+    assert report["population"]["total"] == 1
+    assert report["population"]["with_query_text"] == 1
+    assert report["population"]["without_query_text"] == 0
 
 
 def test_runner_three_arms_purity_recovery_and_seam_labels(synthetic_db) -> None:

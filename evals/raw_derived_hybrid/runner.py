@@ -84,11 +84,17 @@ def load_query_rows(
     actor_ref: str | None,
     trigger_origins: tuple[str, ...] | None,
 ) -> list[QueryRow]:
-    """Load historical lookups from ``query_audit_log`` (read-only SELECT).
+    """Load historical lookups from the always-on funnel event (read-only SELECT).
 
-    A single static parameterized statement: NULL binds disable the container/thread/
-    actor filters; ``trigger_origins`` (default agent_pull/mcp_pull) is applied via an
-    expanding IN bind, disabled when None/empty.
+    Reads ``historical_lookup_reuse_event`` "lookup" rows carrying a redacted
+    ``query_text`` — the authoritative, always-on population (NOT the
+    off-by-default ``query_audit_log``), so the evaluator finds queries on a
+    default install. A single static parameterized statement: NULL binds disable
+    the container/thread/actor filters; ``trigger_origins`` (default
+    agent_pull/mcp_pull) is applied via an expanding IN bind, disabled when
+    None/empty. ``session_id`` is the requesting session (aliased to
+    ``thread_ref`` for the QueryRow); rows with NULL ``query_text`` (expansions,
+    legacy events) are excluded here and counted by ``count_lookup_population``.
     """
     from sqlalchemy import bindparam, create_engine, text
 
@@ -97,10 +103,11 @@ def load_query_rows(
     origins = list(trigger_origins) if trigger_origins else ["__none__"]
 
     sql = text(
-        "SELECT query_text, container_ref, thread_ref, actor_ref, visibility, "
-        "trigger_origin FROM query_audit_log "
-        "WHERE (:container_ref IS NULL OR container_ref = :container_ref) "
-        "AND (:thread_ref IS NULL OR thread_ref = :thread_ref) "
+        "SELECT query_text, container_ref, session_id AS thread_ref, actor_ref, visibility, "
+        "trigger_origin FROM historical_lookup_reuse_event "
+        "WHERE event_type = 'lookup' AND query_text IS NOT NULL "
+        "AND (:container_ref IS NULL OR container_ref = :container_ref) "
+        "AND (:thread_ref IS NULL OR session_id = :thread_ref) "
         "AND (:actor_ref IS NULL OR actor_ref = :actor_ref) "
         "AND (:filter_origin = 0 OR trigger_origin IN :origins) "
         "ORDER BY created_at, id"  # deterministic → seeded shuffle+truncate reproducible
@@ -129,6 +136,59 @@ def load_query_rows(
         )
         for r in rows
     ]
+
+
+def count_lookup_population(
+    db_path: str,
+    *,
+    container_ref: str | None,
+    thread_ref: str | None,
+    actor_ref: str | None,
+    trigger_origins: tuple[str, ...] | None,
+) -> dict:
+    """Population coverage for the funnel "lookup" events under the SAME filters
+    as ``load_query_rows`` (so reported total == the sampled population's source).
+
+    Returns ``{total, with_query_text, without_query_text}``. ``without_query_text``
+    are legacy / pre-query_text lookup events, excluded from the eval and reported
+    (not silently dropped) so a zero population is never mistaken for no activity.
+    """
+    from sqlalchemy import bindparam, create_engine, text
+
+    filter_origin = 1 if trigger_origins else 0
+    origins = list(trigger_origins) if trigger_origins else ["__none__"]
+    sql = text(
+        "SELECT "
+        "COUNT(*) AS total, "
+        "SUM(CASE WHEN query_text IS NOT NULL THEN 1 ELSE 0 END) AS with_qt "
+        "FROM historical_lookup_reuse_event "
+        "WHERE event_type = 'lookup' "
+        "AND (:container_ref IS NULL OR container_ref = :container_ref) "
+        "AND (:thread_ref IS NULL OR session_id = :thread_ref) "
+        "AND (:actor_ref IS NULL OR actor_ref = :actor_ref) "
+        "AND (:filter_origin = 0 OR trigger_origin IN :origins)"
+    ).bindparams(bindparam("origins", expanding=True))
+    params = {
+        "container_ref": container_ref,
+        "thread_ref": thread_ref,
+        "actor_ref": actor_ref,
+        "filter_origin": filter_origin,
+        "origins": origins,
+    }
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sql, params).one()
+    finally:
+        engine.dispose()
+    total = int(row._mapping["total"] or 0)
+    with_qt = int(row._mapping["with_qt"] or 0)
+    return {
+        "total": total,
+        "with_query_text": with_qt,
+        "without_query_text": total - with_qt,
+        "excluded_reason": "legacy/pre-query_text lookup event (no stored query text)",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +467,22 @@ def run_eval(
             actor_ref=actor_ref,
             trigger_origins=trigger_origins,
         )
+        population = count_lookup_population(
+            db_path,
+            container_ref=container_ref,
+            thread_ref=thread_ref,
+            actor_ref=actor_ref,
+            trigger_origins=trigger_origins,
+        )
+    else:
+        # Explicit query list (tests / offline replay): no funnel population to
+        # report; state the source honestly rather than a misleading zero.
+        population = {
+            "total": len(queries),
+            "with_query_text": len(queries),
+            "without_query_text": 0,
+            "source": "explicit query list",
+        }
     rng = random.Random(seed)
     rng.shuffle(queries)
     if limit > 0:
@@ -480,6 +556,7 @@ def run_eval(
             "counts": recovery_counts,
         },
         "query_count": len(per_query),
+        "population": population,
         "queries": per_query,
     }
 
