@@ -27,7 +27,9 @@ eval; no production runtime path.
 **Constraints:**
 - Do NOT change the prior-indexed / eligibility-N / forgotten-exclusion logic.
 - Empty-content `message` (tool-only turns) must not qualify.
-- No internal/product names.
+- No internal codenames or third-party competitor product names. (The shipped
+  Claude/Codex integration names — `integrations/claude-code`, `integrations/codex` — are first-party and
+  accurate; they are not covered by that rule.)
 
 **Completion criteria:**
 A session of user + non-empty assistant `message` turns is eligible; an empty-content-only assistant
