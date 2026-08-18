@@ -72,8 +72,12 @@ access counts/types.
   agent pull, shipped as one vertical slice (source-only retrieval target,
   `pallium_search_history` tool, source-context expansion). Note: routing already
   scores/selects source hits — the gap is a clean source-only target, not a second
-  stack. Gate = Experiment 1: do agents invoke lookup unprompted, and is retrieved
-  history materially used? If not despite strong retrieval, the core thesis is weak.
+  stack. Gate = Experiment 1 (reframed): the open question is NO LONGER "will agents
+  pull unprompted?" — evidence shows they over-pull (≈0.75 on no-opportunity
+  controls). The headline is now: **does agent-filtered historical pull improve the
+  work enough to justify its token, latency, and contamination cost?** Measured on
+  real corpus via the consolidated real-corpus decision experiment. If filtered pull
+  is not net-positive, the core thesis is weak.
 - **Continuous — Derived-memory evaluation (RAW/DERIVED/HYBRID + coverage/fidelity)**:
   not a sequential phase. Decompose why a DERIVED result loses into four seams
   (retrieval / extraction / derived-retrieval / representation). The shadow measures

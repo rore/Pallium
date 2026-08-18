@@ -2,14 +2,12 @@
 - fix-reuse-kpi-artifact-taxonomy
 - fix-lookup-and-expansion-active-attribution
 - fix-continuous-eval-lookup-population
-- idea-visibility-violation-metric-completeness
-- fix-vector-source-only-starvation
-- idea-raw-duplicate-ingestion-and-result-diversity
-- idea-pull-real-corpus-validation
-- idea-measure-pull-filtering-accuracy-and-cost
-- idea-reconcile-unprompted-pull-direction-signal
 - idea-reuse-judge-calibration
 - idea-reuse-judge-evidence-span-enforcement
+- idea-pull-real-corpus-validation
+- fix-vector-source-only-starvation
+- idea-raw-duplicate-ingestion-and-result-diversity
+- idea-visibility-violation-metric-completeness
 - fix-roadmap-and-evidence-status-drift
 
 # P2 · Work Continuity

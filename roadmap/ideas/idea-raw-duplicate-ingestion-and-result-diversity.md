@@ -6,6 +6,11 @@ priority: medium
 commitment: uncommitted
 ---
 
+> **Sequencing note 2026-08-18.** Split this: **measure duplicate prevalence FIRST** (cheap — count
+> identical-content, distinct-id results in real top-K). Only build ingest idempotency / result collapsing
+> if duplicates *materially* waste top-K slots or tokens in the real-corpus experiment. Don't build the
+> collapser on spec.
+
 ## Summary
 
 Raw history search can return adjacent pairs of identical content under distinct source IDs, so a few

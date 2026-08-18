@@ -56,16 +56,25 @@ External-review register items 2 + 3 (severity High) — merged; the code fix is
 contract change. Touches red `core/service.py` — clean-context plan review required. Related:
 `add-historical-lookup-funnel-telemetry`, `add-agent-event-contract-and-compact-query-results`.
 
+## Scope note — telemetry identity, NOT authorization
+
+This is a **telemetry** contract: record which session/agent *requested* a lookup/expansion and link it
+via `parent_lookup_id`. It is NOT authorization. Pallium is trusted-local — do NOT introduce
+actor-authentication machinery, actor-scoped access checks, or "deny cross-actor" gates here (that path
+was tried and reverted in #42 as pseudo-authorization). Identity fields are for measurement attribution
+only; enforcing them as an access boundary is out of scope and premature without an auth layer.
+
 ## Additional DoD detail (external review items 2 + 3 — full matrix)
 
-**Cross-agent / actor matrix** (beyond the base cross-agent case): same agent, different session;
-different agent, same actor; different actor, authorized shared scope; different actor, private scope
-denied.
+**Cross-agent / cross-session attribution matrix** (telemetry only — assert the event records the
+correct requesting identity, NOT that access is granted/denied): same agent, different session;
+different agent, same actor; different actor. Each case asserts the lookup/expansion event carries the
+*requesting* session + agent, never the source's.
 
 **Expansion invalid-chaining cases:** nonexistent parent lookup; expansion attached to a lookup from
 another actor; expansion attached to another container's lookup; expansion attached to a completed or
 expired lookup (if expiry exists); repeated expansion of the same source; expansion of two results from
-one lookup (funnel counts correctly).
+one lookup (funnel counts correctly). (These test event LINKAGE integrity, not authorization.)
 
 **Concurrency:** two agents concurrently against the same historical source get distinct lookup events,
 each with the correct active session; expansions and downstream-use events attach to the correct lookup;

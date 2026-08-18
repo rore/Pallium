@@ -1,10 +1,19 @@
 ---
 id: idea-pull-real-corpus-validation
-title: Pull proposition — real-corpus validation + superseded-scope applicability probe
+title: Real-corpus pull decision gate — value, filtering, contamination, cost (consolidated)
 status: queued
 priority: high
 commitment: uncommitted
 ---
+
+> **Consolidated 2026-08-18 (roadmap refinement).** This is now the single product-decision gate for
+> historical pull. It absorbs `idea-measure-pull-filtering-accuracy-and-cost` (filtering accuracy,
+> contamination, token/latency cost) and the direction-metric portion of
+> `idea-reconcile-unprompted-pull-direction-signal` (both superseded → point here). The headline question
+> is NOT "will agents pull unprompted?" (answered: they over-pull) but: **does agent-filtered historical
+> pull improve the work enough to justify its token, latency, and contamination cost?** Runs only after
+> measurement integrity (KPI taxonomy + attribution + continuous-eval population) and a calibrated reuse
+> judge (κ≥0.70) are in place. See the merged tickets for their full DoD detail.
 
 ## Summary
 
