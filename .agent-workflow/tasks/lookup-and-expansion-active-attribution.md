@@ -64,7 +64,7 @@ reconstruction (`evals/historical_lookup_measurement.py`) to add an unattributed
 3. Cross-agent: agent B expanding agent A's material yields an event attributed to B, not self-reuse by A.
 4. Missing-identity: a call with no session identity writes `session_id` NULL; the reuse-KPI
    reconstruction excludes it from eligible/reuse and counts it in a data-quality tally (no silent NULL).
-5. Best-effort preserved: a forced write/parent-resolution exception logs and still returns results.
+5. Best-effort preserved: a forced telemetry write exception logs and still returns results.
 6. Existing historical-lookup + measurement tests still pass; migration applies on a pre-column DB.
 
 **Risk:** High
@@ -127,23 +127,14 @@ Localized (two write sites + one signature + one migration + KPI exclusion), so 
 6. Tests covering completion criteria 1-6.
 Stop condition: if threading the session needs a protocol/tool-signature break, pause and record it.
 
-**DoD dispositions (from full ticket matrix):**
-- Expansion idempotency (item 5): MOOT for the KPI — expansions aren't in the reuse numerator and lookup
-  reuse dedups by session (set). Covered by asserting a retried expansion writes a well-formed event; no
-  double-count possible. No dedup machinery added.
-- Concurrency (item 3): write path uses only per-call locals + a fresh `anchor` read — no server-global
-  mutable state. Add one cheap two-thread test asserting distinct events with correct active session; no
-  new locking.
-- Invalid-chaining foreign-actor / foreign-container / "expired" parent "rejected" (ticket wording):
-  DECLINED as authorization — parent handling is existence/linkage only; a mismatch attributes to the
-  requester, never denies (#42 boundary). Recorded, not silently dropped.
-
 **Verification plan:**
 - Criteria 1-3 → new tests asserting event field attribution (active vs source session, cross-agent);
   expansion `session_id` = requester even when parent belongs to another session (the plan-review C case).
 - Criterion 4 → test that NULL-session lookup events appear in the data-quality count and don't inflate
   the KPI.
-- Criterion 5 → monkeypatch the write / parent-read to raise; assert results still returned + warning.
+- Criterion 5 → monkeypatch the event write to raise; assert results still returned + warning. (The
+  expansion stores `parent_lookup_id` as linkage only and performs no parent read, so there is no
+  parent-resolution failure path to test.)
 - Criterion 6 → full `pytest tests/ -q` (expect only the known pre-existing `test_config` env-leak
   failure); a migration test opening a pre-column DB and asserting the ALTER applied via the orchestrator.
 - Concurrency → the two-thread test above. redline + agent-workflow CI predicates.
@@ -164,6 +155,20 @@ event); this PR persists attribution only. Reduction is conservative; no scope a
 
 **State:** Ready for review
 <!-- agent-workflow:end -->
+
+## DoD dispositions
+
+From the full ticket matrix, how each item was handled:
+
+- **Expansion idempotency (item 5):** moot for the KPI — expansions aren't in the reuse numerator and
+  lookup reuse dedups by session (set). A retried expansion just writes another well-formed event; no
+  double-count possible. No dedup machinery added.
+- **Concurrency (item 3):** the write path uses only per-call locals + a fresh `anchor` read — no
+  server-global mutable state. Covered by a two-thread test asserting distinct events with the correct
+  active session; no new locking.
+- **Invalid-chaining foreign-actor / foreign-container / "expired" parent "rejected" (ticket wording):**
+  DECLINED as authorization — parent handling is existence/linkage only; a mismatch attributes to the
+  requester, never denies (#42 boundary). Recorded, not silently dropped.
 
 ## Plan review
 
