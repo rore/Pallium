@@ -529,3 +529,47 @@ def test_concurrent_expansions_get_distinct_active_sessions(monkeypatch, test_db
         ex = _events_attr(client, "expansion")
         got = sorted(e["session_id"] for e in ex)
         assert got == sorted(sessions)  # exactly two, each its own active session
+
+
+# ---------------------------------------------------------------------------
+# Redacted query text + always-on eval population (continuous-eval-lookup-population)
+# ---------------------------------------------------------------------------
+
+
+def test_lookup_query_text_redacted_and_feeds_eval_with_audit_off(monkeypatch, test_db_url: str) -> None:
+    """A source_only search persists a REDACTED query phrase on the always-on
+    funnel event, and the RAW/DERIVED/HYBRID evaluator finds it even though
+    query_audit_log is OFF (the default in build_llm_test_config)."""
+    from evals.raw_derived_hybrid.runner import count_lookup_population, load_query_rows
+
+    secret = "hunter2SuperSecretValue1234567890"  # noqa: S105 - synthetic fixture
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="u1", content=_USER, role="user", artifact_kind="message")
+        resp = client.post("/query", json={
+            "text": f"reservation ordering password={secret}",
+            "container_ref": CONTAINER, "thread_ref": THREAD, "visibility": "private",
+            "limit": 5, "source_only": True, "trigger_origin": "agent_pull",
+        })
+        assert resp.status_code == 200, resp.text
+
+        storage = client.app.state.pallium_service._storage
+        with storage._engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT query_text, trigger_origin FROM historical_lookup_reuse_event "
+                "WHERE event_type = 'lookup'"
+            )).mappings().one()
+        # Redacted, not raw — the secret never lands on the always-on event.
+        assert secret not in (row["query_text"] or "")
+        assert "[REDACTED]" in (row["query_text"] or "")
+        assert row["trigger_origin"] == "agent_pull"  # in the eval's default origin filter
+
+        # Audit is OFF, yet the evaluator's population loader finds the lookup.
+        db = _db_file(test_db_url)
+        origins = ("agent_pull", "mcp_pull")
+        rows = load_query_rows(db, container_ref=CONTAINER, thread_ref=None, actor_ref=None,
+                               trigger_origins=origins)
+        assert len(rows) >= 1
+        assert all(secret not in (r.query_text or "") for r in rows)
+        pop = count_lookup_population(db, container_ref=CONTAINER, thread_ref=None, actor_ref=None,
+                                     trigger_origins=origins)
+        assert pop["with_query_text"] >= 1

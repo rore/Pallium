@@ -118,13 +118,56 @@ plan the user accepted in the preceding turns.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Plan review
 
-(pending)
+Clean-context Explore reviewer (2026-08-18). Verdict: **plan sound — proceed with tightenings**. Field
+coverage (QueryRow's 6 fields all present; `session_id AS thread_ref` alias; `thread_ref` is
+filter-only, never passed to retrieval), privacy (redaction = same barrier as stored turns +
+`_redact_query_result`), config-equivalence (funnel is the sole population reader — no double-count),
+determinism (stable `ORDER BY created_at, id`), measurement-only, and the two-ALTER migration all verified
+OK. Required tightenings, applied to the plan:
+
+- **SELECT must guard `event_type='lookup'` AND `query_text IS NOT NULL`** — expansion rows (NULL
+  query_text) would otherwise pollute the population *count* even though the NULL filter drops them.
+- **`count_lookup_population` must scope to `event_type='lookup'` and apply the SAME
+  container/thread/actor/trigger_origin filters** as the loader, or reported total ≠ sampled population
+  (DoD #4). The "legacy/pre-query_text" excluded reason is only truthful for lookup rows.
+- **Model column required** — `write_historical_lookup_event_row` does `Record(**row)`, so the model must
+  declare `query_text` or the new key raises.
+- **trigger_origin caveat**: the default filter is `agent_pull/mcp_pull`; MCP source-only searches send
+  `agent_pull` (pass). A source_only search with a different/None origin is dropped by the default filter
+  → the default-off E2E test asserts the funnel row's `trigger_origin` is in the default set, so
+  "never silently 0" is verified for the real (MCP) path.
+
+**Edge-case DoD dispositions** (ticket "Additional DoD detail"): Unicode query + missing-session
+(`session_id` NULL) → covered by tests. Over-maximum length → WONTFIX: `query_text` is unbounded TEXT, no
+truncation path to test. Malformed/legacy event → the NULL-query_text exclusion IS the legacy case;
+covered.
 
 ## Implementation
 
-(pending)
+- **Schema** (`storage/sqlite_schema.py`): added `query_text` (nullable `Text`) to the event model + a
+  `query_text` ALTER in `_HISTORICAL_LOOKUP_COLUMN_MIGRATIONS` (applied by the existing
+  `_ensure_historical_lookup_columns`, already registered).
+- **Service** (`core/service.py`): the lookup event write now sets
+  `"query_text": redact_sensitive(text) if text else None` — the first content on the funnel event,
+  scrubbed the same way stored turns are; still inside the best-effort try/except.
+- **Eval** (`evals/raw_derived_hybrid/runner.py`): `load_query_rows` reads the always-on funnel event
+  (`event_type='lookup' AND query_text IS NOT NULL`, `session_id AS thread_ref`, stable
+  `ORDER BY created_at, id`) instead of `query_audit_log`; added `count_lookup_population` (lookup-only,
+  same filters, with/without split) and a `population` block in the `run_eval` report.
+- **Fixture** (`tests/test_raw_derived_hybrid.py`): `synthetic_db` now seeds a funnel lookup event with
+  query_text instead of a `query_audit_log` row (the loader's new source), so the existing runner tests
+  keep exercising the load path.
+
+## Evidence
+
+`pytest tests/ -q` → **3617 passed, 15 skipped, 2 xfailed, 1 failed**. The single failure is the
+pre-existing env-leak `test_config.py::test_prompt_variants_legacy_fallback_unaffected` (unrelated).
+Affected slices (`test_raw_derived_hybrid`, `test_historical_lookup_funnel_e2e`,
+`test_historical_lookup_storage`) → 51 passed. New tests: redacted-query-text + audit-off eval population
+(E2E), lookup-only population counts + exclusion reporting, run_eval population block, query_text
+migration on a pre-column DB.
