@@ -14,6 +14,7 @@ from sqlalchemy import text
 from core.models import new_id, utc_now
 from evals.historical_lookup_measurement import (
     compute_reuse_rollup,
+    count_unattributed_lookups,
     load_events_from_storage,
 )
 from storage.sqlite import SQLiteStorageProvider
@@ -331,3 +332,56 @@ class TestLoaderEmptySafe:
         eligible, events = load_events_from_storage(db_file, container_ref="c:1", eligibility_n=0)
         assert eligible == []
         assert events == []
+
+
+# ---------------------------------------------------------------------------
+# Attribution: migration + unattributed data-quality count
+# ---------------------------------------------------------------------------
+
+
+def test_source_session_ref_migration_on_pre_column_db(tmp_path) -> None:
+    """A DB whose event table predates source_session_ref gets the column added
+    by schema init — proving the orchestrator actually calls the column-ensure
+    (create_all alone never alters an existing table)."""
+    import sqlite3
+
+    db_file = tmp_path / "old.db"
+    conn = sqlite3.connect(str(db_file))
+    conn.execute(
+        "CREATE TABLE historical_lookup_reuse_event ("
+        " id VARCHAR PRIMARY KEY, created_at DATETIME NOT NULL, event_type VARCHAR NOT NULL,"
+        " session_id VARCHAR, container_ref VARCHAR, actor_ref VARCHAR, trigger_origin VARCHAR,"
+        " parent_lookup_id VARCHAR, exposed_json TEXT NOT NULL DEFAULT '[]', visibility VARCHAR)"
+    )
+    conn.commit()
+    cols_before = {r[1] for r in conn.execute("PRAGMA table_info(historical_lookup_reuse_event)")}
+    conn.close()
+    assert "source_session_ref" not in cols_before
+
+    # Instantiating the provider runs _initialize_schema → the column-ensure.
+    SQLiteStorageProvider(f"sqlite:///{db_file}")
+
+    conn = sqlite3.connect(str(db_file))
+    cols_after = {r[1] for r in conn.execute("PRAGMA table_info(historical_lookup_reuse_event)")}
+    conn.close()
+    assert "source_session_ref" in cols_after
+
+
+def test_unattributed_lookups_counted_and_excluded_from_kpi(tmp_path) -> None:
+    """A lookup with no requesting session (session_id NULL) is excluded from the
+    reuse KPI but surfaced in the data-quality count — no silent NULL."""
+    storage, db_file = _storage(tmp_path)
+    _seed_substantive_session(storage, container_ref="c:1", thread_ref="t:1", base="2026-08-18")
+    _write_lookup(storage, container_ref="c:1", session_id="t:1")
+    _write_lookup(storage, container_ref="c:1", session_id=None)
+
+    assert count_unattributed_lookups(db_file, container_ref="c:1") == 1
+
+    eligible, events = load_events_from_storage(db_file, container_ref="c:1", eligibility_n=0)
+    assert "t:1" in eligible
+    assert all(e["session_id"] is not None for e in events)  # NULL-session lookup not in KPI events
+
+    rollup = compute_reuse_rollup(
+        eligible, events, eligibility_n=0, window={}, unattributed_lookups=1
+    )
+    assert rollup["data_quality"]["unattributed_lookup_events"] == 1

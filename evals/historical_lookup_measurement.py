@@ -127,6 +127,7 @@ def compute_reuse_rollup(
     window: dict[str, Any],
     visibility_report: dict[str, Any] | None = None,
     calibration: dict[str, Any] | None = None,
+    unattributed_lookups: int = 0,
 ) -> dict[str, Any]:
     """Compute the three-rung reuse rollup from in-memory inputs.
 
@@ -237,6 +238,12 @@ def compute_reuse_rollup(
         "n_reuse_events": len(reuse_events),
         "rungs": rungs_out,
         "calibration": calibration_block,
+        "data_quality": {
+            # Lookup events with no requesting-session identity (session_id
+            # NULL). Excluded from every rung numerator; surfaced so a zero KPI
+            # is never silently a data gap ("no silent NULL" contract).
+            "unattributed_lookup_events": unattributed_lookups,
+        },
         "visibility_violations": visibility_report
         if visibility_report is not None
         else _empty_visibility_report(),
@@ -524,6 +531,58 @@ def load_events_from_storage(
         conn.close()
 
 
+def count_unattributed_lookups(
+    db_path: Path | str | None = None,
+    *,
+    container_ref: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+) -> int:
+    """Count "lookup" events with no requesting-session attribution (session_id
+    NULL/empty).
+
+    These are excluded from the reuse KPI numerator anyway (the eligible-session
+    set never contains NULL), but a raw zero KPI must be distinguishable from a
+    data gap: an install that never supplies session identity writes only
+    unattributed events, so the KPI would read a confident zero over blind data.
+    Surfacing this count keeps ``fix-lookup-and-expansion-active-attribution``'s
+    "no silent NULL" contract observable. Empty-safe (0 when the DB/table is
+    absent).
+    """
+    if db_path is None:
+        return 0
+    path = Path(db_path)
+    if not path.exists():
+        return 0
+    since = _normalize_ts_bound(since)
+    until = _normalize_ts_bound(until)
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "historical_lookup_reuse_event"):
+            return 0
+        where = ["event_type = 'lookup'", "(session_id IS NULL OR session_id = '')"]
+        params: list[Any] = []
+        if container_ref is not None:
+            where.append("container_ref = ?")
+            params.append(container_ref)
+        if since is not None:
+            where.append("created_at >= ?")
+            params.append(since)
+        if until is not None:
+            where.append("created_at <= ?")
+            params.append(until)
+        sql = (
+            "SELECT COUNT(*) AS n FROM historical_lookup_reuse_event WHERE "
+            + " AND ".join(where)
+        )
+        row = conn.execute(sql, params).fetchone()
+        return int(row["n"]) if row is not None else 0
+    finally:
+        conn.close()
+
+
+
 # ---------------------------------------------------------------------------
 # Visibility / governance violation reporting
 # ---------------------------------------------------------------------------
@@ -714,6 +773,7 @@ def main(argv: list[str] | None = None) -> int:
         ]
         window: dict[str, Any] = {"note": "dry-run synthetic data"}
         visibility_report = _empty_visibility_report()
+        unattributed_lookups = 0
     else:
         sessions, events = load_events_from_storage(
             args.db,
@@ -733,6 +793,12 @@ def main(argv: list[str] | None = None) -> int:
             since=args.since,
             until=args.until,
         )
+        unattributed_lookups = count_unattributed_lookups(
+            args.db,
+            container_ref=args.container_ref,
+            since=args.since,
+            until=args.until,
+        )
 
     report = compute_reuse_rollup(
         sessions,
@@ -740,6 +806,7 @@ def main(argv: list[str] | None = None) -> int:
         eligibility_n=args.eligibility_n,
         window=window,
         visibility_report=visibility_report,
+        unattributed_lookups=unattributed_lookups,
     )
 
     serialised = json.dumps(report, indent=2, sort_keys=True, default=str)

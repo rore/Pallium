@@ -316,12 +316,14 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
         visibility: str | None = None,
+        thread_ref: str | None = None,
     ) -> str:
         """Expand a raw source hit into a bounded chronological neighborhood. The anchor is always represented; pass parent_lookup_id from search to preserve lookup linkage."""
         ctx = resolve_context(
             container_ref=container_ref,
             actor_ref=actor_ref,
             visibility=visibility,
+            thread_ref=thread_ref,
         )
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG

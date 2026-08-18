@@ -680,6 +680,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
         max_chars: int = 16000,
         include_supported_memories: bool = False,
         parent_lookup_id: str | None = None,
+        active_session_ref: str | None = None,
     ) -> SourceContextResponse:
         try:
             anchor, neighbors, supported, echoed_lookup_id = service.get_source_context(
@@ -692,6 +693,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 max_chars=max_chars,
                 include_supported_memories=include_supported_memories,
                 parent_lookup_id=parent_lookup_id,
+                active_session_ref=active_session_ref,
             )
         except KeyError:
             raise HTTPException(status_code=404, detail="source item not found") from None
