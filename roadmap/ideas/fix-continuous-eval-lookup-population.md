@@ -1,7 +1,7 @@
 ---
 id: fix-continuous-eval-lookup-population
 title: Continuous RAW/DERIVED/HYBRID eval needs an authoritative lookup population
-status: queued
+status: done
 priority: medium
 commitment: uncommitted
 ---
