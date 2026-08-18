@@ -1,10 +1,15 @@
 ---
 id: idea-reconcile-unprompted-pull-direction-signal
 title: Reconcile the two conflicting "unprompted-pull / direction" signals
-status: queued
-priority: high
+status: superseded
+priority: low
 commitment: uncommitted
 ---
+
+> **Superseded 2026-08-18 → `idea-pull-real-corpus-validation`.** The reframed headline (net value of
+> agent-filtered pull, not unprompted-pull rate) demotes direction to a secondary signal. The one
+> durable requirement — a single documented definition of "agent-decided" direction with a divergence
+> check — is folded into the consolidated experiment's measurement contract. No longer a standalone gate.
 
 ## Summary
 

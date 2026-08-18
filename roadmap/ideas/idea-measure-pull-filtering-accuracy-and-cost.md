@@ -1,10 +1,15 @@
 ---
 id: idea-measure-pull-filtering-accuracy-and-cost
 title: Experiment 1 (sharpened) — is indiscriminate-but-agent-filtered pull net-positive?
-status: queued
+status: superseded
 priority: high
 commitment: uncommitted
 ---
+
+> **Superseded 2026-08-18 → `idea-pull-real-corpus-validation`** (consolidated real-corpus pull decision
+> gate). The two overlapped on corpus setup and asked the same question; merged into one product gate.
+> This card's DoD (pull selectivity, returned-result precision, agent-filtering accuracy, contamination
+> outcome, token/latency cost, numeric release gates) is carried into the survivor. Kept for its detail.
 
 ## Summary
 

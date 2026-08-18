@@ -6,6 +6,11 @@ priority: medium
 commitment: uncommitted
 ---
 
+> **Sequencing note 2026-08-18.** This is a *supporting* fix, not standalone urgent work: land it
+> **before** any multilingual / lexically-cold corpus evaluation in the real-corpus decision experiment
+> (where the lexical leg can't rescue source coverage). Absent that, the default hybrid stack's lexical
+> push-down already guarantees source coverage, so it does not block measurement integrity.
+
 ## Summary
 
 Source-only vector retrieval can return fewer than K raw results — or none — even when eligible raw
