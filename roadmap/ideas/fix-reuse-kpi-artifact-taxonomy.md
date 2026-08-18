@@ -1,7 +1,7 @@
 ---
 id: fix-reuse-kpi-artifact-taxonomy
 title: Reuse KPI must recognize production assistant artifacts
-status: queued
+status: done
 priority: high
 commitment: uncommitted
 ---
