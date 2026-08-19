@@ -55,16 +55,6 @@ stopped or via a safe UPDATE).
   home scope; normalize them too so audit/feedback joins stay consistent with canonical containers (the
   helper is harmless on non-github values).
 
-**Constraints:**
-- PER-TYPE: only `git:github.com/owner/repo` is lowercased. NEVER blanket-lowercase — `path:` and
-  non-GitHub hosts can be case-sensitive; `repo:<hash>` is already stable.
-- Behavior-preserving for already-canonical inputs (idempotent); no retrieval/injection logic change
-  beyond scope normalization.
-- The integration hooks keep their source-side lowercasing (separate process, can't import `core`); this
-  is additive server-side defense, not a hook change.
-- Do NOT change visibility/`is_visible` semantics; canonicalization happens before scoping.
-- Live-DB merge is a targeted 4-row UPDATE by id — no bulk/destructive operation; rows shown before write.
-
 **Completion criteria:**
 1. A write under `git:github.com/rore/Pallium` and a read under `git:github.com/rore/pallium` resolve to
    the same container at the service layer (round-trip test).
