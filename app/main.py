@@ -253,16 +253,37 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
 
         vector_index_configured = service._vector_index is not None
         reconcile_done_event = getattr(app.state, "_reconcile_done", None)
+        reconcile_done = reconcile_done_event is not None and reconcile_done_event.is_set()
+
+        # Vector was expected (configured on) but the embedding provider failed
+        # to initialize (index is None) → functional but impaired, not "not configured".
+        vector_expected = bool(resolved_config.vector_index.enabled)
+        embedding_provider_ok = (not vector_expected) or vector_index_configured
+
+        # Ready when: index present + reconciled, OR vector genuinely not expected.
+        # An expected-but-absent index (provider failed) is NOT ready — don't let
+        # "index is None" masquerade as "not configured, therefore ready".
         vector_index_ready = (
-            not vector_index_configured
-            or (reconcile_done_event is not None and reconcile_done_event.is_set())
+            reconcile_done if vector_index_configured else not vector_expected
         )
 
         ready = lifespan_ok and vector_index_ready
 
+        if not embedding_provider_ok:
+            # Impaired: keep HTTP 200 so orchestration doesn't hard-fail; the
+            # signal is the status/reasons fields.
+            body = {
+                "status": "degraded",
+                "vector_index_ready": vector_index_ready,
+                "embedding_provider_ok": False,
+                "degraded_reasons": ["vector_embedding_provider_unavailable"],
+            }
+            return JSONResponse(content=body, status_code=200)
+
         body = {
             "status": "ok" if ready else "initializing",
             "vector_index_ready": vector_index_ready,
+            "embedding_provider_ok": True,
         }
         status_code = 200 if ready else 503
         return JSONResponse(content=body, status_code=status_code)
@@ -355,9 +376,12 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         # --- Vector index readiness ---
         vector_index_configured = service._vector_index is not None
         reconcile_done_event = getattr(app.state, "_reconcile_done", None)
+        reconcile_done = reconcile_done_event is not None and reconcile_done_event.is_set()
+        # Expected-but-failed embedding provider: configured on, yet index is None.
+        vector_expected = bool(resolved_config.vector_index.enabled)
+        embedding_provider_ok = (not vector_expected) or vector_index_configured
         vector_index_ready = (
-            not vector_index_configured
-            or (reconcile_done_event is not None and reconcile_done_event.is_set())
+            reconcile_done if vector_index_configured else not vector_expected
         )
 
         # --- Storage sizes (best-effort) ---
@@ -433,6 +457,8 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "snapshot": snapshot_info,
             "storage": storage_info,
             "vector_index_ready": vector_index_ready,
+            "embedding_provider_ok": embedding_provider_ok,
+            "vector_expected": vector_expected,
             "vector_rebuild": rebuild_info,
             "uptime_seconds": uptime,
             "query": query_info,

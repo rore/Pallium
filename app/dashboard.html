@@ -1507,12 +1507,19 @@ function populateActorDropdown() {
 // ──────────────────────────────────────────────────
 function renderStatus(data) {
   const badge = document.getElementById('health-badge');
-  if (data.vector_index_ready) {
+  if (data.embedding_provider_ok === false) {
+    // Vector was expected but the embedding provider failed → impaired.
+    badge.textContent = 'degraded: embeddings';
+    badge.className = 'health-badge error';
+    badge.title = 'Vector embedding provider unavailable — semantic search disabled. Check service launch env.';
+  } else if (data.vector_index_ready) {
     badge.textContent = 'healthy';
     badge.className = 'health-badge ok';
+    badge.title = '';
   } else {
     badge.textContent = 'initializing';
     badge.className = 'health-badge init';
+    badge.title = '';
   }
 
   document.getElementById('header-uptime').textContent =
