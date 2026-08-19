@@ -40,7 +40,42 @@ class TestHealthNoVector:
         app = create_app(_no_vector_config())
         with TestClient(app) as client:
             body = client.get("/health").json()
-        assert set(body.keys()) == {"status", "vector_index_ready"}
+        assert set(body.keys()) == {"status", "vector_index_ready", "embedding_provider_ok"}
+
+
+def _failed_embedding_config() -> AppConfig:
+    """Vector is EXPECTED (enabled) but the embedding provider can't build
+    (empty provider name) → index stays None. Simulates the silent-degrade
+    scenario without needing a real ONNX model."""
+    return AppConfig(
+        storage_backend="sqlite",
+        sqlite_url="sqlite:///:memory:",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=True, embedding_provider=""),
+    )
+
+
+class TestHealthDegradedEmbeddings:
+
+    def test_health_degraded_when_vector_expected_but_provider_failed(self) -> None:
+        app = create_app(_failed_embedding_config())
+        with TestClient(app) as client:
+            response = client.get("/health")
+        # Impaired but reachable → 200 with a degraded signal, not 503.
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "degraded"
+        assert body["embedding_provider_ok"] is False
+        assert body["degraded_reasons"] == ["vector_embedding_provider_unavailable"]
+
+    def test_health_ok_when_vector_disabled(self) -> None:
+        # Vector intentionally off is NOT a failure.
+        app = create_app(_no_vector_config())
+        with TestClient(app) as client:
+            body = client.get("/health").json()
+        assert body["status"] == "ok"
+        assert body["embedding_provider_ok"] is True
 
 
 class TestHealthLifecycle:
@@ -168,6 +203,8 @@ class TestStatusResponseShape:
             "snapshot",
             "storage",
             "vector_index_ready",
+            "embedding_provider_ok",
+            "vector_expected",
             "vector_rebuild",
             "uptime_seconds",
             "query",
@@ -216,6 +253,28 @@ class TestStatusResponseShape:
         # SQLite file exists after DB init — size is reported (may be 0.0 for an empty DB)
         assert storage["sqlite_mb"] is not None
         assert isinstance(storage["sqlite_mb"], float)
+
+
+class TestStatusEmbeddingProviderSignal:
+
+    def test_status_embedding_ok_when_vector_disabled(self, tmp_path: Path) -> None:
+        app = create_app(_file_db_config(tmp_path))
+        with TestClient(app) as client:
+            body = client.get("/status").json()
+        assert body["vector_expected"] is False
+        assert body["embedding_provider_ok"] is True
+
+    def test_status_embedding_not_ok_when_provider_failed(self, tmp_path: Path) -> None:
+        app = create_app(
+            _file_db_config(
+                tmp_path,
+                vector_index=VectorIndexConfig(enabled=True, embedding_provider=""),
+            )
+        )
+        with TestClient(app) as client:
+            body = client.get("/status").json()
+        assert body["vector_expected"] is True
+        assert body["embedding_provider_ok"] is False
 
 
 class TestStatusEmptyDatabase:

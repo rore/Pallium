@@ -94,9 +94,23 @@ handle the service issue" — approving the dashboard/health-signal fix.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-(pending)
+- `app/main.py` `/health`: computes `vector_expected = bool(resolved_config.vector_index.enabled)` and
+  `embedding_provider_ok = (not vector_expected) or vector_index_configured`. When expected-but-failed →
+  `status: "degraded"` + `degraded_reasons: ["vector_embedding_provider_unavailable"]`, HTTP 200. Otherwise
+  `ok`/`initializing` as before, now also carrying `embedding_provider_ok`.
+- `app/main.py` `/status`: adds `embedding_provider_ok` and `vector_expected` to the response body.
+- `app/dashboard.html` `renderStatus`: red "degraded: embeddings" badge (reuses `.error` class) + tooltip
+  when `embedding_provider_ok === false`, checked before the healthy/initializing branches.
+- `docs/context/operations.md` (new, generic — no machine paths): service model, health-signal table, the
+  silent embedding-provider degrade + how to read it. `AGENTS.md`: one-line pointer.
+- Tests (`tests/test_health.py`): degraded + disabled `/health` cases, `/status` embedding-signal cases;
+  updated the two exact-key-set assertions. Degrade simulated with `VectorIndexConfig(enabled=True,
+  embedding_provider="")` — index stays None, no ONNX download.
+
+**Verification:** `pytest tests/test_health.py tests/test_dashboard.py tests/test_api.py -q` → 81 passed.
+Criteria 1-3 covered by tests; criterion 4 is the dashboard JS branch (asserted via the JSON it reads).
