@@ -110,9 +110,28 @@ always knows how to call it and why it doesn't return results" + "go".
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-(pending)
+- `core/query.py` (guard ~L107): changed the fail-closed `decision_reason` from `"no_relevant_memory"` to
+  `"visibility_context_required"`. `fail_closed_reason`, empty results, `should_inject=False` all unchanged.
+- Grep confirmed (Plan step 2): the other `no_relevant_memory` sites are the *genuine* retrieval-ran-nothing-
+  matched path (`semantic/agent_conversation_memory_routing_selection.py`) — untouched. No behavioral consumer
+  keys on the literal for the missing-context case; `query_stats.skip_reasons` just tallies whatever string it
+  gets (new bucket = feature). The three tests that exercise the guard assert `fail_closed_reason` / `results
+  == []` / skip counts, none the old `decision_reason` — so none broke.
+- `app/mcp/server.py`: added the visibility-context requirement to `pallium_query` and `pallium_search_history`
+  docstrings (the two tools that route through `/query`).
+- Expansion endpoints (WR step 4): verified they already fail **legibly** — `get_memory_expand` → 404 "memory
+  object not found"; `get_source_context` → 404/400 with explicit detail. No silent conflation, so left
+  untouched (scope stays narrow). `pallium_expand`/`pallium_expand_source` docstrings unchanged.
+- Docs: added `visibility_context_required` to the decision_reason tables in `docs/http-api.md` and
+  `docs/how-it-works.md`.
+- Tests: `tests/test_visibility_scope.py::test_missing_container_ref_fails_closed` now also asserts
+  `decision_reason == "visibility_context_required"` (criterion 1).
+
+**Verification:** `pytest tests/test_visibility_scope.py tests/test_source_only_search.py tests/test_query_stats.py
+tests/test_query_policy.py tests/test_mcp_server.py tests/test_mcp_client.py -q` → 70 passed, 2 skipped.
+Criteria 1-4 covered; criterion 5 = the passing slices above (broader run at PR CI).

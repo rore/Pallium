@@ -179,6 +179,7 @@ where it returns `should_inject: false`:
 | Low-value query | `low_value_query` | Greetings, acknowledgements, or meta-conversation that won't benefit from memory |
 | Same-thread context | `same_thread_context_sufficient` | The agent already has the relevant context in its current conversation — injection would be redundant |
 | No relevant memory | `no_relevant_memory` | Retrieval ran but nothing matched well enough to surface |
+| Missing visibility context | `visibility_context_required` | Retrieval did **not** run — the request lacked a visibility context. Pass both `container_ref` and `visibility` |
 | Only low-value candidates | `only_low_value_candidates` | Matches found but all are too low-value to inject |
 | Low injection confidence | `low_injection_confidence` | Candidates exist but confidence is too low to recommend injection |
 | No candidates above floor | `no_candidates_above_floor` | Candidates exist but none scored above the minimum routing floor |

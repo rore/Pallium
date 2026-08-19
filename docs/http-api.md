@@ -264,6 +264,7 @@ Response fields:
   - `"constraint_supplement"` — a user-stated constraint was found and injected
   - `"same_thread_context_sufficient"` — the agent already has this context in the current thread
   - `"no_relevant_memory"` — retrieval ran but nothing matched well enough
+  - `"visibility_context_required"` — retrieval did **not** run: the request lacked a visibility context. Pass both `container_ref` and `visibility` (see `trace.visibility.fail_closed_reason`)
   - `"only_low_value_candidates"` — matches found but too low-value to inject
   - `"low_injection_confidence"` — candidates exist but confidence is below the injection threshold
   - `"no_candidates_above_floor"` — all candidates scored below the minimum retrieval floor

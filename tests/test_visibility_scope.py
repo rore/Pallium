@@ -105,6 +105,9 @@ def test_missing_container_ref_fails_closed(monkeypatch, test_db_url: str) -> No
         payload = client.post("/query/debug", json={"text": "what did we decide about reservation ordering?", "limit": 10}).json()
         assert payload["results"] == []
         assert payload["trace"]["visibility"]["fail_closed_reason"] == "query_visibility_context_required"
+        # The normal response must SAY why it's empty — distinct from a genuine
+        # "retrieval ran, nothing matched" (no_relevant_memory).
+        assert payload["decision_reason"] == "visibility_context_required"
 
 
 def test_missing_ingest_visibility_uses_private_default(monkeypatch, test_db_url: str) -> None:

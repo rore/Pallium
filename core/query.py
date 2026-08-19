@@ -108,7 +108,11 @@ class QueryExecutor:
                 results=[],
                 trace=trace,
                 should_inject=False,
-                decision_reason="no_relevant_memory",
+                # Distinct from "no_relevant_memory" (retrieval ran, nothing matched):
+                # here retrieval never ran — the caller sent no visibility context.
+                # Surfacing this in the normal response (not just /query/debug) tells
+                # the caller *why* it got nothing. See trace.visibility.fail_closed_reason.
+                decision_reason="visibility_context_required",
                 injectable_blocks=[],
             )
             if self._query_stats is not None:
