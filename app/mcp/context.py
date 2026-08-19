@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import dataclass
+
+from core.container_ref import canonicalize_container_ref
 
 
 @dataclass(frozen=True)
@@ -23,16 +24,10 @@ class PalliumContext:
 
 
 def _canonicalize_container_ref(value: str | None) -> str | None:
-    if value is None:
-        return None
-    match = re.fullmatch(
-        r"git:github\.com/([^/]+)/([^/]+?)(?:\.git)?/?",
-        value,
-        flags=re.IGNORECASE,
-    )
-    if not match:
-        return value
-    return f"git:github.com/{match.group(1).lower()}/{match.group(2).lower()}"
+    # Thin alias — the authoritative rule now lives in core.container_ref so the
+    # server and this MCP boundary share one definition. Kept for existing
+    # imports/tests that reference this name.
+    return canonicalize_container_ref(value)
 
 def resolve_context(
     *,

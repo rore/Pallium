@@ -30,14 +30,30 @@ stopped or via a safe UPDATE).
 **Scope:**
 - Add `canonicalize_container_ref(value)` — GITHUB-ONLY: lowercases owner/repo of
   `git:github.com/owner/repo` (the exact rule now in `app/mcp/context.py:28-35`); returns every other
-  value unchanged (`path:…`, `repo:<hash>`, other hosts). Pure, None-safe.
-- Call it at the top of `ingest_item`, `query`, `get_source_context`, `forget_source` — reassign the
-  local `container_ref` so all downstream uses (retrieval filters, funnel event writes, storage) see the
-  canonical value.
+  value unchanged (`path:…`, `repo:<hash>`, other hosts). Pure, None-safe, idempotent.
+- Call it as the FIRST body statement of EVERY `core/service.py` method that accepts `container_ref`
+  (reassign the local so all downstream uses see the canonical value). Enumerated (11): `ingest_item`
+  (:274), `query` (:667), `run_consolidation_pass` (:760), `record_memory_feedback` (:839),
+  `remember_memory` (:946), `supersede_memory` (:1021), `forget_source` (:1083),
+  `record_procedure_outcome` (:1138), `write_query_audit` (:1199), `get_memory_expand` (:1408),
+  `get_source_context` (:1467). Applying to all is safe because the helper is a github-only pass-through.
 - `app/mcp/context.py`: replace the private `_canonicalize_container_ref` body with a call to the shared
-  helper (keep the name as a thin re-export so existing imports/tests don't break).
+  helper (keep the name as a thin alias so existing imports/tests don't break).
 - One-off migration: re-point the 4 `git:github.com/rore/Pallium` memory objects to
   `git:github.com/rore/pallium`. Show the rows first; UPDATE by id.
+
+**Constraints:**
+- PER-TYPE: only `git:github.com/owner/repo` is lowercased. NEVER blanket-lowercase — `path:` and
+  non-GitHub hosts can be case-sensitive; `repo:<hash>` is already stable.
+- Behavior-preserving for already-canonical inputs (idempotent); no retrieval/injection logic change
+  beyond scope normalization.
+- The integration hooks keep their source-side lowercasing (separate process, can't import `core`); this
+  is additive server-side defense, not a hook change.
+- Do NOT change visibility/`is_visible` semantics; canonicalization happens before scoping.
+- Live-DB merge is a targeted 4-row UPDATE by id — no bulk/destructive operation; rows shown before write.
+- Telemetry writers (`record_memory_feedback`, `write_query_audit`) persist query-CONTEXT container, not a
+  home scope; normalize them too so audit/feedback joins stay consistent with canonical containers (the
+  helper is harmless on non-github values).
 
 **Constraints:**
 - PER-TYPE: only `git:github.com/owner/repo` is lowercased. NEVER blanket-lowercase — `path:` and
@@ -78,12 +94,17 @@ Localized and behavior-preserving (a per-type normalization + a shared helper), 
 - Live DB: 4 memory_objects under capital-`P`; 0 source_items; all pre-#43.
 
 **Material assumptions:**
-- *`ingest_item` is the sole write path that sets a source/memory container_ref.* If a separate
-  create-memory service method takes container_ref directly, normalize it too. Action: grep before
-  finalizing (explicit `remember` appears to route through ingest as a note).
-- *The 4 capital-`P` memory objects have no relations/index rows keyed on the capital container that also
-  need re-pointing.* Verify the merge doesn't orphan index entries (index entries key on target_id, not
-  container, so re-pointing the memory row's container_ref is sufficient). Action: confirm in the script.
+- *CORRECTED (plan review): `ingest_item` is NOT the sole container-bearing write.* The explicit W3
+  memory writes — `remember_memory` (:946→create_memory_object), `supersede_memory` (:1021),
+  `record_procedure_outcome` (:1138) — set `container_ref` on a `MemoryObject` directly and bypass
+  `ingest_item`. This is almost certainly how the 4 rows were stranded (pre-#43 `pallium_remember`).
+  Resolution: normalize all 11 container-accepting methods, not 4.
+- *Reassign-at-top is safe (no earlier pre-canonical capture).* Verified by plan review for the read/write
+  methods: the only downstream uses (retrieval filters, funnel/expansion event dicts, gates) read the same
+  local, no separate copy captured before the reassignment.
+- *Re-pointing `memory_objects.container_ref` alone is sufficient.* Relations/index_entries key on the
+  object id, not container; sibling container-bearing rows (audit/feedback/funnel) record query-context,
+  not home scope, so must NOT be re-pointed. Confirmed by plan review.
 
 **Plan:**
 1. `core/container_ref.py`: `canonicalize_container_ref(value)` — copy the github-only regex from
@@ -117,13 +138,48 @@ turns.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Plan review
 
-(pending)
+Clean-context Explore reviewer (2026-08-19). Verdict: **needs changes** — mechanism sound (helper +
+reassign-at-top + github-only regex + 4-row merge all verified safe), but the method list under-scoped.
+Applied:
+
+- **Missed writes**: `remember_memory` (:946), `supersede_memory` (:1021), `record_procedure_outcome`
+  (:1138) build `MemoryObject(container_ref=…)` and call `create_memory_object` directly — bypass
+  `ingest_item`. This is the exact split path (likely origin of the 4 stranded rows). → now normalized.
+- **Missed reads/scope**: `get_memory_expand` (:1408, cross-container gate) and `run_consolidation_pass`
+  (:760) → now normalized.
+- **Telemetry** `record_memory_feedback` (:839) + `write_query_audit` (:1199): normalize too (join
+  consistency; helper harmless on non-github). Decision recorded in Constraints.
+- **Reassign-at-top safe** for all: no method captures a pre-canonical copy before the reassignment
+  (funnel/expansion event dicts and filters read the same local).
+- **Regex safe to copy verbatim**; `path:`/`repo:`/non-github pass through (asserted by
+  `tests/test_mcp_context.py:96-106`). Aliasing the private name keeps those tests green.
+- **Merge**: relations/index_entries key on object id (not container); only `memory_objects.container_ref`
+  needs re-pointing. Verify no feedback row exists for the 4 ids (unlikely, pre-#43).
 
 ## Implementation
 
-(pending)
+- **Helper** `core/container_ref.py`: `canonicalize_container_ref` — github-only, None-safe, idempotent
+  (the exact rule extracted from `app/mcp/context.py`).
+- **Service** `core/service.py`: normalize `container_ref` as the first body statement of all 11
+  container-accepting methods (`ingest_item`, `query`, `run_consolidation_pass`, `record_memory_feedback`,
+  `remember_memory`, `supersede_memory`, `forget_source`, `record_procedure_outcome`, `write_query_audit`,
+  `get_memory_expand`, `get_source_context`). Reassign-at-top → all downstream uses (filters, funnel/
+  expansion event writes, gates, MemoryObject construction) see the canonical value.
+- **MCP** `app/mcp/context.py`: `_canonicalize_container_ref` is now a thin alias of the shared helper
+  (imports removed the private regex copy); existing name kept for `tests/test_mcp_context.py`.
+- **Data merge** `scripts/backfill_container_ref_canonical.py`: dry-run-by-default, idempotent, github-only.
+  Re-points only `memory_objects.container_ref`. Ran against the live DB: 4 rows
+  `git:github.com/rore/Pallium` → `.../pallium`; post-merge capital-P memory count = 0.
+
+## Evidence
+
+`pytest tests/ -q` → **3623 passed, 15 skipped, 2 xfailed, 1 failed** (pre-existing `test_config`
+env-leak, unrelated). New: `tests/test_container_ref.py` (github lowercased; path/repo/gitlab/non-2-seg
+pass through; idempotent; None-safe) + a service round-trip E2E (write under capital, read under
+lowercase → hit; funnel event records canonical). Live-DB merge verified read-only: 0 capital-`P`
+memory objects remain.
