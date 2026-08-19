@@ -36,6 +36,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- surface-retrieval-fail-closed-reason
 - surface-service-health-signals
 - server-side-container-ref-canonicalization
 - fix-continuous-eval-lookup-population
