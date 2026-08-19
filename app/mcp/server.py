@@ -58,6 +58,10 @@ def _compact_history(result: dict, query: str, limit: int = 3) -> dict:
                 hit[key] = item[key]
         hits.append(hit)
     payload = {"results": hits, "lookup_event_id": result.get("lookup_event_id")}
+    # Preserve the fail-closed / abstention reason so an empty result is
+    # self-explaining (e.g. "visibility_context_required"), not a silent [].
+    if result.get("decision_reason") is not None:
+        payload["decision_reason"] = result["decision_reason"]
     budget = _MCP_SEARCH_EMPTY_MAX_CHARS if not hits else _MCP_SEARCH_MAX_CHARS
     while len(_json_text(payload)) > budget and hits:
         longest = max(hits, key=lambda hit: len(hit.get("excerpt", "")))
@@ -181,7 +185,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         actor_ref: str | None = None,
         visibility: str | None = None,
     ) -> str:
-        """Search Pallium memory. Use when automatic memory injection is missing something specific — e.g. a past decision, investigation outcome, or context from a previous conversation that wasn't auto-injected."""
+        """Search Pallium memory. Use when automatic memory injection is missing something specific — e.g. a past decision, investigation outcome, or context from a previous conversation that wasn't auto-injected. Requires a visibility context: pass BOTH `container_ref` and `visibility` (e.g. "private"), or the search fails closed and returns no results with `decision_reason: "visibility_context_required"`."""
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,
@@ -207,7 +211,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         artifact_kind: str | None = None,
         work_refs: list[str] | None = None,
     ) -> str:
-        """Search prior raw turns for historical context. Returns compact match-centred excerpts with stable source_item_id values and lookup_event_id for optional expansion linkage."""
+        """Search prior raw turns for historical context. Returns compact match-centred excerpts with stable source_item_id values and lookup_event_id for optional expansion linkage. Requires a visibility context: pass BOTH `container_ref` and `visibility` (e.g. "private"), or the search fails closed and returns no results with `decision_reason: "visibility_context_required"`."""
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,
