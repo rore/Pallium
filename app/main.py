@@ -253,15 +253,19 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
 
         vector_index_configured = service._vector_index is not None
         reconcile_done_event = getattr(app.state, "_reconcile_done", None)
-        vector_index_ready = (
-            not vector_index_configured
-            or (reconcile_done_event is not None and reconcile_done_event.is_set())
-        )
+        reconcile_done = reconcile_done_event is not None and reconcile_done_event.is_set()
 
         # Vector was expected (configured on) but the embedding provider failed
         # to initialize (index is None) → functional but impaired, not "not configured".
         vector_expected = bool(resolved_config.vector_index.enabled)
         embedding_provider_ok = (not vector_expected) or vector_index_configured
+
+        # Ready when: index present + reconciled, OR vector genuinely not expected.
+        # An expected-but-absent index (provider failed) is NOT ready — don't let
+        # "index is None" masquerade as "not configured, therefore ready".
+        vector_index_ready = (
+            reconcile_done if vector_index_configured else not vector_expected
+        )
 
         ready = lifespan_ok and vector_index_ready
 
@@ -372,13 +376,13 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         # --- Vector index readiness ---
         vector_index_configured = service._vector_index is not None
         reconcile_done_event = getattr(app.state, "_reconcile_done", None)
-        vector_index_ready = (
-            not vector_index_configured
-            or (reconcile_done_event is not None and reconcile_done_event.is_set())
-        )
+        reconcile_done = reconcile_done_event is not None and reconcile_done_event.is_set()
         # Expected-but-failed embedding provider: configured on, yet index is None.
         vector_expected = bool(resolved_config.vector_index.enabled)
         embedding_provider_ok = (not vector_expected) or vector_index_configured
+        vector_index_ready = (
+            reconcile_done if vector_index_configured else not vector_expected
+        )
 
         # --- Storage sizes (best-effort) ---
         def _file_size_mb(path: str) -> float | None:

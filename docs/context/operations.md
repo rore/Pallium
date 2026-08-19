@@ -17,7 +17,9 @@ authorization.
 ## Health signals
 
 Two endpoints report liveness. Read them together — a 200 alone does not mean
-fully functional.
+fully functional. `/health` is the liveness endpoint (always available);
+`/status` provides diagnostics and is **SQLite-only** — it returns HTTP 501 when
+another storage backend is configured.
 
 | Endpoint | Field | Meaning |
 |----------|-------|---------|

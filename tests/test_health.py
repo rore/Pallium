@@ -67,6 +67,7 @@ class TestHealthDegradedEmbeddings:
         body = response.json()
         assert body["status"] == "degraded"
         assert body["embedding_provider_ok"] is False
+        assert body["vector_index_ready"] is False
         assert body["degraded_reasons"] == ["vector_embedding_provider_unavailable"]
 
     def test_health_ok_when_vector_disabled(self) -> None:
@@ -275,6 +276,7 @@ class TestStatusEmbeddingProviderSignal:
             body = client.get("/status").json()
         assert body["vector_expected"] is True
         assert body["embedding_provider_ok"] is False
+        assert body["vector_index_ready"] is False
 
 
 class TestStatusEmptyDatabase:
