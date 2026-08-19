@@ -573,3 +573,37 @@ def test_lookup_query_text_redacted_and_feeds_eval_with_audit_off(monkeypatch, t
         pop = count_lookup_population(db, container_ref=CONTAINER, thread_ref=None, actor_ref=None,
                                      trigger_origins=origins)
         assert pop["with_query_text"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Server-side container_ref canonicalization (server-side-container-ref-canonicalization)
+# ---------------------------------------------------------------------------
+
+
+def test_mixed_case_container_write_and_read_resolve_to_same_scope(monkeypatch, test_db_url: str) -> None:
+    """Ingest under a capital-P GitHub container, search under the lowercase
+    form: the core service canonicalizes both, so the turn is found and the
+    funnel event records the canonical (lowercase) container."""
+    cap = "git:github.com/rore/Pallium"
+    low = "git:github.com/rore/pallium"
+    thread = "git:github.com/rore/pallium:t1"
+    with _build_client(monkeypatch, test_db_url) as client:
+        # Write under the CAPITAL container.
+        _ingest(client, source_id="u1", content=_USER, role="user", artifact_kind="message",
+                container_ref=cap, thread_ref=thread)
+        _ingest(client, source_id="a1", content=_WORK, role="assistant", artifact_kind="assistant_output",
+                container_ref=cap, thread_ref=thread)
+
+        # Read under the LOWERCASE container — must still find it.
+        result = _search_history(client, container_ref=low, thread_ref=thread)
+        source_hits = [r for r in result["results"] if r["result_kind"] == "source_hit"]
+        assert source_hits, result  # canonicalization made the capital write visible to the lowercase read
+
+        # The funnel lookup event records the canonical (lowercase) container.
+        storage = client.app.state.pallium_service._storage
+        with storage._engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT DISTINCT container_ref FROM historical_lookup_reuse_event WHERE event_type='lookup'"
+            )).mappings().all()
+        containers = {r["container_ref"] for r in rows}
+        assert containers == {low}  # never the capital-P form

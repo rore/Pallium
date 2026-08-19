@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from capabilities.consolidation import ConsolidationRunResult
 from capabilities.workstreams import WorkstreamCapability
 from core.consolidation_runner import ConsolidationRunner
+from core.container_ref import canonicalize_container_ref
 from core.contracts import IngestResult, ItemProcessingResult, MemoryRetentionPolicy, ProcessResult, QueryResult, build_source_item
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
 from core.processing import (
@@ -277,6 +278,7 @@ class PalliumService:
         artifact_kind: str | None = None,
         visibility: str | None = None,
     ) -> IngestResult:
+        container_ref = canonicalize_container_ref(container_ref)
         existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
         if existing_source_item is not None:
             return self._build_ingest_result(existing_source_item)
@@ -674,6 +676,7 @@ class PalliumService:
         trigger_origin: str | None = None,
         source_only: bool = False,
     ) -> QueryResult:
+        container_ref = canonicalize_container_ref(container_ref)
         runtime_context = resolve_runtime_context(
             self._storage,
             thread_ref,
@@ -759,6 +762,7 @@ class PalliumService:
         strategy_name: str | None = None,
         container_ref: str | None = None,
     ) -> ConsolidationRunResult | None:
+        container_ref = canonicalize_container_ref(container_ref)
         return self._consolidation_runner.run_consolidation_pass(
             use_case=use_case,
             strategy_name=strategy_name,
@@ -842,6 +846,7 @@ class PalliumService:
 
         Returns the feedback record id. Always succeeds — 200 even for deleted memories.
         """
+        container_ref = canonicalize_container_ref(container_ref)
         return self._storage.record_memory_feedback(
             memory_object_id=memory_object_id,
             rating=rating,
@@ -959,6 +964,7 @@ class PalliumService:
             raise ValueError(
                 f"type must be one of {sorted(self._W3_ALLOWED_MEMORY_TYPES)}, got {type!r}"
             )
+        container_ref = canonicalize_container_ref(container_ref)
         payload: dict[str, object] = {"statement": text}
         if confidence is not None:
             payload["confidence"] = confidence
@@ -1032,6 +1038,7 @@ class PalliumService:
         active (surfaces as 409 to the MCP caller).
         """
         old = self._storage.get_memory_object(supersedes_id)
+        container_ref = canonicalize_container_ref(container_ref)
         resolved_type = type or old.type
         if resolved_type not in self._W3_ALLOWED_MEMORY_TYPES:
             raise ValueError(
@@ -1105,6 +1112,7 @@ class PalliumService:
             raise ValueError(
                 "forget_source accepts source_item_id OR container_ref/thread_ref, not both"
             )
+        container_ref = canonicalize_container_ref(container_ref)
         if source_item_id is not None:
             forgotten = self._storage.forget_source_item(
                 source_item_id, reason=reason, actor_ref=actor_ref,
@@ -1150,6 +1158,7 @@ class PalliumService:
             raise ValueError(
                 f"outcome must be success | failure | inconclusive, got {outcome!r}"
             )
+        container_ref = canonicalize_container_ref(container_ref)
         # Confirm the procedure exists so we don't accept dangling references.
         try:
             self._storage.get_memory_object(procedure_id)
@@ -1208,6 +1217,7 @@ class PalliumService:
         injection_method: str | None = None,
         trigger_origin: str | None = None,
     ) -> str:
+        container_ref = canonicalize_container_ref(container_ref)
         result_lookup = {}
         for item in results:
             rid = getattr(item, 'result_id', None)
@@ -1424,6 +1434,7 @@ class PalliumService:
         write barrier landed, ``pallium_expand`` never returns it raw.
         """
         memory_object = self._storage.get_memory_object(memory_object_id)
+        container_ref = canonicalize_container_ref(container_ref)
         effective_container = container_ref or memory_object.container_ref
         if container_ref and memory_object.visibility != "global" and memory_object.container_ref != container_ref:
             raise KeyError(memory_object_id)
@@ -1503,6 +1514,8 @@ class PalliumService:
             "public", "container", "private", "global",
         ):
             raise ValueError(f"invalid query_visibility: {query_visibility!r}")
+
+        container_ref = canonicalize_container_ref(container_ref)
 
         _MAX_SIDE = 25
         before = max(0, min(before, _MAX_SIDE))
