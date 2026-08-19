@@ -293,6 +293,18 @@ def test_compact_history_defaults_to_three_hits_and_bounds_escaped_json() -> Non
     assert result["lookup_event_id"] == "lookup-1"
 
 
+def test_compact_history_preserves_decision_reason_on_empty_fail_closed() -> None:
+    # search_history routes through _compact_history; an empty fail-closed
+    # result must still tell the caller WHY (not a silent []).
+    result = _compact_history({
+        "results": [],
+        "lookup_event_id": None,
+        "decision_reason": "visibility_context_required",
+    }, "needle")
+    assert result["results"] == []
+    assert result["decision_reason"] == "visibility_context_required"
+
+
 def test_bounded_expansion_clips_anchor_and_flags_every_clipped_item() -> None:
     result = _bounded_expansion({
         "items": [

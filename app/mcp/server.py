@@ -58,6 +58,10 @@ def _compact_history(result: dict, query: str, limit: int = 3) -> dict:
                 hit[key] = item[key]
         hits.append(hit)
     payload = {"results": hits, "lookup_event_id": result.get("lookup_event_id")}
+    # Preserve the fail-closed / abstention reason so an empty result is
+    # self-explaining (e.g. "visibility_context_required"), not a silent [].
+    if result.get("decision_reason") is not None:
+        payload["decision_reason"] = result["decision_reason"]
     budget = _MCP_SEARCH_EMPTY_MAX_CHARS if not hits else _MCP_SEARCH_MAX_CHARS
     while len(_json_text(payload)) > budget and hits:
         longest = max(hits, key=lambda hit: len(hit.get("excerpt", "")))

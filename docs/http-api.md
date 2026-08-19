@@ -164,6 +164,13 @@ Recommended fields:
 - `visibility` — visibility boundary for the query
 - `thread_ref` — current thread within the container
 
+> **Required for visibility-enforcing packages.** With a package that enforces
+> visibility (the conversation packages), a query missing **either**
+> `container_ref` **or** `visibility` fails closed: it returns no results with
+> `decision_reason: "visibility_context_required"`. Pass both. Packages that
+> don't require a visibility context (e.g. the demo package) still accept
+> `text` alone.
+
 Additional filters:
 
 - `limit` — max results (default: 5, range: 1–50)
@@ -178,7 +185,7 @@ Additional filters:
   filtering is applied. See
   [privacy-and-visibility.md](privacy-and-visibility.md#actor-scoping) for
   details.
-Minimal example:
+Minimal example (accepted only by packages that don't enforce visibility):
 
 ```json
 {
@@ -201,8 +208,9 @@ Current request rules:
 
 - `limit` defaults to `5`
 - `limit` must be between `1` and `50`
-- for the current scoped package, missing `container_ref` causes
-  fail-closed behavior rather than a broad fallback
+- for a visibility-enforcing package, a request missing **either**
+  `container_ref` or `visibility` fails closed (empty results,
+  `decision_reason: "visibility_context_required"`) rather than a broad fallback
 
 Response:
 

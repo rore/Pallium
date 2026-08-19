@@ -135,3 +135,14 @@ always knows how to call it and why it doesn't return results" + "go".
 **Verification:** `pytest tests/test_visibility_scope.py tests/test_source_only_search.py tests/test_query_stats.py
 tests/test_query_policy.py tests/test_mcp_server.py tests/test_mcp_client.py -q` → 70 passed, 2 skipped.
 Criteria 1-4 covered; criterion 5 = the passing slices above (broader run at PR CI).
+
+### CodeRabbit review (PR #50)
+- **Major — `pallium_search_history` dropped the reason.** `_compact_history` (`app/mcp/server.py:60`) rebuilt
+  the payload as `{results, lookup_event_id}`, stripping `decision_reason`. So the search-history tool's empty
+  fail-closed result was still a silent `[]` despite the docstring promise. Fixed: `_compact_history` now
+  preserves `decision_reason` when present. Added `test_compact_history_preserves_decision_reason_on_empty_fail_closed`
+  (runs in CI; module import-skipped locally without `mcp[cli]`).
+- **Minor — http-api.md inconsistency.** The `/query` section listed `container_ref`/`visibility` as merely
+  "Recommended," the minimal example omitted them, and the request rule mentioned only `container_ref`. Made
+  consistent: a callout that visibility-enforcing packages require BOTH (else `visibility_context_required`),
+  the minimal example is annotated as non-visibility packages only, and the request rule names both fields.
