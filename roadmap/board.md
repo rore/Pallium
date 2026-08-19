@@ -36,6 +36,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- server-side-container-ref-canonicalization
 - fix-continuous-eval-lookup-population
 - fix-lookup-and-expansion-active-attribution
 - fix-reuse-kpi-artifact-taxonomy
