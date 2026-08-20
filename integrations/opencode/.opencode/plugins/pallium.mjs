@@ -162,6 +162,8 @@ export default async ({ client, directory, worktree } = {}) => {
 
   async function ingestAssistantTurn(sessionId) {
     if (!sessionId || !client || !client.session || typeof client.session.messages !== "function") return;
+    let seen;
+    let dedupKey;
     try {
       const res = await client.session.messages({ path: { id: sessionId } });
       const messages = (res && (res.data || res)) || [];
@@ -184,11 +186,12 @@ export default async ({ client, directory, worktree } = {}) => {
 
       // Fall back to a content hash when the message carries no id, so a
       // turn without an id can't be re-ingested on every idle/compacting event.
-      const dedupKey = lastAssistantId || ("sha:" + pallium.shortHash(sessionId + "\u0000" + content));
-      const seen = ingestedBySession.get(sessionId) || new Set();
+      dedupKey = lastAssistantId || ("sha:" + pallium.shortHash(sessionId + "\u0000" + content));
+      seen = ingestedBySession.get(sessionId) || new Set();
       if (seen.has(dedupKey)) return;
       // Mark before the awaited POST so a re-entrant event during the in-flight
-      // request also short-circuits (Node is single-threaded).
+      // request also short-circuits (Node is single-threaded). On failure the
+      // key is removed below so a later lifecycle event retries the turn.
       seen.add(dedupKey);
       ingestedBySession.set(sessionId, seen);
 
@@ -211,8 +214,12 @@ export default async ({ client, directory, worktree } = {}) => {
       const workTrace = pallium.buildWorkTraceMetadata(turn);
       if (workTrace) item.metadata = { agent_work_trace_turn: workTrace, cwd };
 
-      await pallium.palliumRequest("POST", "/items", [item]);
+      const response = await pallium.palliumRequest("POST", "/items", [item]);
+      // palliumRequest returns null on any failure; drop the dedup key so the
+      // turn is retried on a later session.idle / compaction rather than lost.
+      if (response === null && seen) seen.delete(dedupKey);
     } catch (e) {
+      if (seen && dedupKey !== undefined) seen.delete(dedupKey);
       log("error", `assistant-turn ingest failed: ${e && e.message}`);
     }
   }

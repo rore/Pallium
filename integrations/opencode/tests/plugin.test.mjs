@@ -161,6 +161,22 @@ test("event session.idle reads the last assistant message and ingests it via /it
   assert.equal(fetchCalls.length, before, "same assistant message must not be re-ingested");
 });
 
+test("a failed /items ingest is retried on a later lifecycle event", async () => {
+  const messages = [
+    { info: { role: "assistant", id: "aRetry" }, parts: [{ type: "text", text: "Ingest me, please." }] },
+  ];
+  // First attempt: daemon unreachable -> palliumRequest returns null.
+  global.fetch = async () => { throw new Error("ECONNREFUSED"); };
+  fetchCalls = [];
+  const hooks = await loadPlugin({ client: makeClient(messages), directory: nonGitDir });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "sesRetryIngest" } } });
+
+  // Second attempt: daemon back up -> the turn must be retried, not skipped.
+  installFetch({ "/items": [{ source_item_id: "sid-r" }] });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "sesRetryIngest" } } });
+  assert.equal(fetchCalls.filter((c) => c.url.includes("/items")).length, 1, "failed turn is retried once daemon recovers");
+});
+
 // --- cross-session isolation + state cleanup --------------------------------
 
 test("system.transform does not bleed one session's private blocks into another", async () => {
