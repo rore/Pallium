@@ -88,10 +88,18 @@ curl http://localhost:19836/status
 }
 ```
 
-Or copy `.opencode/plugins/pallium.mjs` and `.opencode/plugins/pallium-common.mjs`
-into your project's `.opencode/plugins/` (project-level) or
-`~/.config/opencode/plugins/` (global) directory — OpenCode auto-loads plugins
-from those locations.
+The **`"plugin"` array entry is the recommended, verified method** (it is how
+OpenCode loads plugins in practice). A relative path is resolved against the
+config file's directory, so for a *global* install add the entry to
+`~/.config/opencode/opencode.json` with a path to the plugin file.
+
+> Note: OpenCode also documents auto-loading any file dropped into a
+> `.opencode/plugins/` (project) or `~/.config/opencode/plugins/` (global)
+> directory. That directory auto-load has been observed **not** to pick the
+> plugin up on some setups — prefer the explicit `"plugin"` array entry above.
+> If you point the entry at the in-repo file, the plugin imports its sibling
+> `pallium-common.mjs` relative to its own location, so keep the two files
+> together.
 
 The plugin's `config` hook registers the `pallium-memory` skill directory and the
 `/pallium-memory` slash command automatically.
@@ -144,6 +152,12 @@ including the fail-safe (daemon-unreachable) path.
   where this is free; this plugin runs in the long-lived OpenCode server process,
   so a hung `git` can briefly block the event loop. Acceptable for the local
   single-user daemon; the upgrade path is async `execFile` if it ever regresses.
+- **Orientation only on new sessions.** Session-start orientation fires on the
+  `session.created` event, so a *resumed* session (e.g. after an OpenCode
+  restart) gets per-message injection and ingest but no session-start
+  orientation query. The Python hooks orient on startup *and* resume; this is a
+  minor best-effort parity gap (orientation usually abstains anyway).
 - A `pallium setup opencode` CLI (mirroring `setup_codex.py` /
-  `setup_claude_code.py`) could automate steps 2–3; the npm `"plugin"` entry is
-  the idiomatic OpenCode install and is documented above.
+  `setup_claude_code.py`) could automate steps 2–3 and write the working
+  `"plugin"` + MCP config deterministically; the npm `"plugin"` entry is the
+  idiomatic OpenCode install and is documented above.
