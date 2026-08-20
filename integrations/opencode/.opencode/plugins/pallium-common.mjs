@@ -203,9 +203,15 @@ export function resolveContainerRef(cwd, sessionId) {
 // --- dedup ------------------------------------------------------------------
 
 export function checkDedup(prompt, sessionId) {
+  // Guard the session id the same way pinContainer/getPinnedContainer do — it
+  // is interpolated into a state-file path and originates from host event
+  // payloads. An unsafe value ('/', '..') could escape STATE_DIR or throw; an
+  // unguarded id therefore skips dedup (safe default) rather than risking that.
+  const sid = _safeSessionId(sessionId);
+  if (sid === null) return false;
   const promptHash = crypto.createHash("sha256").update(prompt, "utf8").digest("hex").slice(0, 16);
   const now = Date.now() / 1000;
-  const stateFile = path.join(STATE_DIR, `${sessionId}.json`);
+  const stateFile = path.join(STATE_DIR, `${sid}.json`);
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
   } catch {

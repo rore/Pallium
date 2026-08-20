@@ -161,6 +161,39 @@ test("event session.idle reads the last assistant message and ingests it via /it
   assert.equal(fetchCalls.length, before, "same assistant message must not be re-ingested");
 });
 
+// --- cross-session isolation + state cleanup --------------------------------
+
+test("system.transform does not bleed one session's private blocks into another", async () => {
+  installFetch({ "/item-and-query": oneBlock });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  // Two sessions each queue their own container-scoped, private memory.
+  const p = (t) => [{ type: "text", text: t }];
+  await hooks["chat.message"]({}, { message: { sessionID: "sX" }, parts: p("investigate the retrieval grounding gates thoroughly") });
+  await hooks["chat.message"]({}, { message: { sessionID: "sY" }, parts: p("explain the container derivation logic in depth") });
+
+  // A transform that can't resolve a session id must NOT drain either bucket
+  // (both remain pending), since blocks are private + container-scoped.
+  const ambiguous = { system: [] };
+  await hooks["experimental.chat.system.transform"]({}, ambiguous);
+  assert.deepEqual(ambiguous.system, [], "no drain when the session is ambiguous and >1 pending");
+
+  // A transform for sX drains only sX's block.
+  const forX = await systemTransform(hooks, "sX");
+  assert.equal(forX.length, 1);
+  // sY's block is still pending and only surfaces for sY.
+  const forY = await systemTransform(hooks, "sY");
+  assert.equal(forY.length, 1);
+});
+
+test("session.deleted purges pending per-session state", async () => {
+  installFetch({ "/item-and-query": oneBlock });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  await hooks["chat.message"]({}, { message: { sessionID: "sZ" }, parts: [{ type: "text", text: "a real prompt about memory injection budgets" }] });
+  await hooks.event({ event: { type: "session.deleted", properties: { sessionID: "sZ" } } });
+  const system = await systemTransform(hooks, "sZ");
+  assert.deepEqual(system, [], "deleted session's queued injection is purged");
+});
+
 // --- experimental.session.compacting -> ingest before compaction -----------
 
 test("experimental.session.compacting ingests the latest assistant turn via /items", async () => {

@@ -77,10 +77,24 @@ export default async ({ client, directory, worktree } = {}) => {
   // Per-session queue of formatted injection chunks awaiting the next
   // system-prompt transform. Orientation (session.created), per-message memory
   // (chat.message), and opt-in trigger output (tool.execute.after) all enqueue
-  // here; system.transform drains it.
+  // here; system.transform drains it. All per-session state is bounded: it is
+  // purged on `session.deleted` (see the event hook) so the long-lived server
+  // process does not accumulate entries for closed sessions.
   const pendingInjections = new Map(); // sessionID -> string[]
-  const orientedSessions = new Set();
-  const ingestedMessageIds = new Set();
+  const orientedSessions = new Set(); // sessionID
+  const ingestedBySession = new Map(); // sessionID -> Set(dedupKey)
+  const retryCounters = new Map(); // `${sessionID}::${tool}::${target}` -> count
+
+  function purgeSession(sessionId) {
+    if (!sessionId) return;
+    pendingInjections.delete(sessionId);
+    orientedSessions.delete(sessionId);
+    ingestedBySession.delete(sessionId);
+    const prefix = `${sessionId}::`;
+    for (const k of retryCounters.keys()) {
+      if (k.startsWith(prefix)) retryCounters.delete(k);
+    }
+  }
 
   function enqueueInjection(sessionId, text) {
     if (!text) return;
@@ -95,16 +109,14 @@ export default async ({ client, directory, worktree } = {}) => {
     if (sessionId && pendingInjections.has(sessionId)) {
       out.push(...pendingInjections.get(sessionId));
       pendingInjections.delete(sessionId);
+      return out;
     }
-    // Also drain the un-keyed default bucket (orientation queued before a
-    // session id was resolvable, or single-session fallback).
-    if (pendingInjections.has("__default__")) {
-      out.push(...pendingInjections.get("__default__"));
-      pendingInjections.delete("__default__");
-    }
-    // Robust single-session fallback: if we could not resolve a session id at
-    // all, drain everything so injection is not silently stranded.
-    if (!sessionId) {
+    // No resolvable session (or no bucket for it). Injectable blocks are
+    // visibility:"private" and scoped to a container_ref, so draining another
+    // session's bucket here would cross a session/container boundary. Only
+    // drain when exactly one session has pending blocks (the common
+    // single-session case); otherwise leave them pending.
+    if (!sessionId && pendingInjections.size === 1) {
       for (const [k, v] of pendingInjections) {
         out.push(...v);
         pendingInjections.delete(k);
@@ -173,10 +185,12 @@ export default async ({ client, directory, worktree } = {}) => {
       // Fall back to a content hash when the message carries no id, so a
       // turn without an id can't be re-ingested on every idle/compacting event.
       const dedupKey = lastAssistantId || ("sha:" + pallium.shortHash(sessionId + "\u0000" + content));
-      if (ingestedMessageIds.has(dedupKey)) return;
+      const seen = ingestedBySession.get(sessionId) || new Set();
+      if (seen.has(dedupKey)) return;
       // Mark before the awaited POST so a re-entrant event during the in-flight
       // request also short-circuits (Node is single-threaded).
-      ingestedMessageIds.add(dedupKey);
+      seen.add(dedupKey);
+      ingestedBySession.set(sessionId, seen);
 
       const containerRef = pallium.resolveContainerRef(cwd, sessionId);
       const actorRef = pallium.deriveActorRef();
@@ -204,8 +218,8 @@ export default async ({ client, directory, worktree } = {}) => {
   }
 
   // --- opt-in PostToolUse triggers ------------------------------------------
-
-  const retryCounters = new Map(); // `${sessionId}::${tool}::${target}` -> count
+  // (retryCounters is declared with the other per-session state above so it is
+  //  purged on session.deleted.)
 
   function normalizeTarget(toolName, toolInput) {
     if (!toolInput || typeof toolInput !== "object") return "";
@@ -371,6 +385,9 @@ export default async ({ client, directory, worktree } = {}) => {
           await orient(sessionId);
         } else if (type === "session.idle") {
           await ingestAssistantTurn(sessionId);
+        } else if (type === "session.deleted") {
+          // Bound in-memory state: drop everything for a closed session.
+          purgeSession(sessionId);
         }
       } catch (e) {
         log("error", `event hook failed: ${e && e.message}`);

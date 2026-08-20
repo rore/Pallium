@@ -57,12 +57,13 @@ test("deriveContainerRef returns path:<...> for a non-git dir and is stable", ()
   assert.equal(ref, P.deriveContainerRef(dir)); // stable across calls
 });
 
-test("deriveContainerRef reads the git remote for this repo", () => {
-  // Runs inside the Pallium git checkout; origin is github.com/rore/pallium.
+test("deriveContainerRef derives a stable ref for this repo checkout", () => {
+  // Runs inside a git checkout; the derivation contract (git:/repo:/path:) is
+  // covered above. Assert the shape + determinism rather than the exact remote,
+  // so this passes in a fork, a renamed-remote clone, or a git-less tarball.
   const ref = P.deriveContainerRef(process.cwd());
-  assert.ok(ref.startsWith("git:") || ref.startsWith("repo:") || ref.startsWith("path:"));
-  // We are in a git repo with a remote, so expect a git: ref specifically.
-  assert.equal(ref, "git:github.com/rore/pallium");
+  assert.match(ref, /^(git:|repo:|path:)/);
+  assert.equal(ref, P.deriveContainerRef(process.cwd()));
 });
 
 test("deriveActorRef returns a non-empty string (git user.name or 'local')", () => {
@@ -104,6 +105,15 @@ test("checkDedup expires entries older than the 5-minute window", () => {
   for (const k of Object.keys(state)) state[k] = Date.now() / 1000 - (P.DEDUP_EXPIRY_SECONDS + 60);
   fs.writeFileSync(stateFile, JSON.stringify(state));
   assert.equal(P.checkDedup("aging prompt", sid), false); // expired -> not a dup
+});
+
+test("checkDedup rejects an unsafe session id (no path escape, safe default)", () => {
+  const before = fs.readdirSync(path.join(tmpHome, ".pallium", "hooks", "state"));
+  // A traversal-y id must not dedup and must not write a state file for it.
+  assert.equal(P.checkDedup("some prompt", "../../evil"), false);
+  assert.equal(P.checkDedup("some prompt", "a/b"), false);
+  const after = fs.readdirSync(path.join(tmpHome, ".pallium", "hooks", "state"));
+  assert.deepEqual(after.sort(), before.sort(), "no state file created for unsafe ids");
 });
 
 // --- session pinning --------------------------------------------------------
