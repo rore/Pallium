@@ -41,7 +41,7 @@ function installFetch(routes) {
     fetchCalls.push({ url: String(url), method: init && init.method, body });
     const key = Object.keys(routes).find((k) => String(url).includes(k));
     const payload = key ? routes[key] : {};
-    return { text: async () => JSON.stringify(payload) };
+    return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
   };
 }
 
@@ -175,6 +175,26 @@ test("a failed /items ingest is retried on a later lifecycle event", async () =>
   installFetch({ "/items": [{ source_item_id: "sid-r" }] });
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "sesRetryIngest" } } });
   assert.equal(fetchCalls.filter((c) => c.url.includes("/items")).length, 1, "failed turn is retried once daemon recovers");
+});
+
+test("a JSON HTTP-error /items response (4xx/5xx) is treated as failure and retried", async () => {
+  const messages = [
+    { info: { role: "assistant", id: "aHttpErr" }, parts: [{ type: "text", text: "Persist me after a 500." }] },
+  ];
+  // First attempt: 500 with a JSON error body -> palliumRequest must return null.
+  fetchCalls = [];
+  global.fetch = async (url, init) => {
+    fetchCalls.push({ url: String(url), method: init && init.method });
+    return { ok: false, status: 500, text: async () => JSON.stringify({ error: "boom" }) };
+  };
+  const hooks = await loadPlugin({ client: makeClient(messages), directory: nonGitDir });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "sesHttpErr" } } });
+  assert.equal(fetchCalls.filter((c) => c.url.includes("/items")).length, 1, "first attempt hits /items");
+
+  // Second attempt succeeds -> retried, not skipped.
+  installFetch({ "/items": [{ source_item_id: "sid-h" }] });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "sesHttpErr" } } });
+  assert.equal(fetchCalls.filter((c) => c.url.includes("/items")).length, 1, "HTTP-error turn retried on recovery");
 });
 
 // --- cross-session isolation + state cleanup --------------------------------
