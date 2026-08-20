@@ -1,0 +1,35 @@
+{
+  "name": "@pallium/opencode",
+  "version": "0.1.0",
+  "description": "Persistent cross-session memory for OpenCode via Pallium — auto-injection and auto-ingestion against the local Pallium daemon.",
+  "keywords": ["opencode-plugin", "opencode", "pallium", "memory", "skills"],
+  "license": "MIT",
+  "author": "pallium",
+  "homepage": "https://github.com/rore/Pallium",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rore/Pallium.git",
+    "directory": "integrations/opencode"
+  },
+  "type": "module",
+  "main": "./.opencode/plugins/pallium.mjs",
+  "exports": {
+    ".": "./.opencode/plugins/pallium.mjs",
+    "./plugin": "./.opencode/plugins/pallium.mjs"
+  },
+  "files": [
+    "AGENTS.md",
+    "skills/",
+    ".opencode/",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

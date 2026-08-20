@@ -1,0 +1,283 @@
+#!/usr/bin/env node
+// Parity tests for the OpenCode integration's shared helpers — the JS twin of
+// tests/test_hook_common_parity.py. Asserts container derivation, actor/redaction
+// behaviour, the 5-minute dedup window, injection budget trimming, and turn
+// extraction / work-trace metadata match the Claude Code / Codex contract.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+
+// Redirect the state dir to a temp HOME BEFORE the module is imported, so
+// dedup/pin state never touches the real ~/.pallium. STATE_DIR is resolved once
+// at module load, so we must set the env then dynamic-import (imports are
+// hoisted; a static import would run before this assignment).
+const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-common-"));
+process.env.USERPROFILE = tmpHome;
+process.env.HOME = tmpHome;
+
+let P;
+test.before(async () => {
+  const url = pathToFileURL(
+    path.join(process.cwd(), ".opencode", "plugins", "pallium-common.mjs"),
+  );
+  P = await import(url);
+});
+
+test.after(() => {
+  try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
+});
+
+// --- container_ref derivation ----------------------------------------------
+
+test("normalizeRemoteUrl canonicalizes ssh/https/user forms", () => {
+  assert.equal(P.normalizeRemoteUrl("git@github.com:user/repo.git"), "github.com/user/repo");
+  assert.equal(P.normalizeRemoteUrl("https://github.com/user/repo.git"), "github.com/user/repo");
+  assert.equal(P.normalizeRemoteUrl("https://github.com/User/Repo/"), "github.com/user/repo");
+  assert.equal(P.normalizeRemoteUrl("https://token@github.com/user/repo"), "github.com/user/repo");
+});
+
+test("pathContainer emits path:<label>:<hash12> and path:<hash12> when label empty", () => {
+  const withLabel = P.pathContainer(path.join(os.tmpdir(), "My Project"));
+  assert.match(withLabel, /^path:my_project:[0-9a-f]{12}$/);
+  // A basename that sanitizes to empty falls back to the bare-hash form.
+  const bare = P.pathContainer("/@@@");
+  assert.match(bare, /^path:[0-9a-f]{12}$/);
+});
+
+test("deriveContainerRef returns path:<...> for a non-git dir and is stable", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-nogit-"));
+  const ref = P.deriveContainerRef(dir);
+  assert.ok(ref.startsWith("path:"), `expected path: prefix, got ${ref}`);
+  assert.equal(ref, P.pathContainer(dir));
+  assert.equal(ref, P.deriveContainerRef(dir)); // stable across calls
+});
+
+test("deriveContainerRef derives a stable ref for this repo checkout", () => {
+  // Runs inside a git checkout; the derivation contract (git:/repo:/path:) is
+  // covered above. Assert the shape + determinism rather than the exact remote,
+  // so this passes in a fork, a renamed-remote clone, or a git-less tarball.
+  const ref = P.deriveContainerRef(process.cwd());
+  assert.match(ref, /^(git:|repo:|path:)/);
+  assert.equal(ref, P.deriveContainerRef(process.cwd()));
+});
+
+test("deriveActorRef returns a non-empty string (git user.name or 'local')", () => {
+  const actor = P.deriveActorRef();
+  assert.equal(typeof actor, "string");
+  assert.ok(actor.length > 0);
+});
+
+// --- redaction --------------------------------------------------------------
+
+test("redactSensitive matches the Python behavioral-parity cases exactly", () => {
+  assert.equal(P.redactSensitive("Bearer sk-12345"), "Bearer [REDACTED]");
+  assert.equal(P.redactSensitive("DB_PASSWORD=secret"), "DB_PASSWORD=[REDACTED]");
+  assert.equal(P.redactSensitive("postgres://user:pass@host/db"), "postgres://[REDACTED]");
+  assert.equal(P.redactSensitive("clean text here"), "clean text here");
+});
+
+test("redactSensitive strips Authorization headers and key blocks", () => {
+  assert.equal(P.redactSensitive("Authorization: Bearer abc123"), "Authorization: [REDACTED]");
+  const key = "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----";
+  assert.equal(P.redactSensitive(key), "[REDACTED KEY BLOCK]");
+});
+
+// --- dedup ------------------------------------------------------------------
+
+test("checkDedup: first false, immediate repeat true, distinct prompt false", () => {
+  const sid = "dedup-session-1";
+  assert.equal(P.checkDedup("some unique prompt about widgets", sid), false);
+  assert.equal(P.checkDedup("some unique prompt about widgets", sid), true);
+  assert.equal(P.checkDedup("a completely different prompt", sid), false);
+});
+
+test("checkDedup expires entries older than the 5-minute window", () => {
+  const sid = "dedup-session-2";
+  assert.equal(P.checkDedup("aging prompt", sid), false);
+  // Rewrite the state file with a stale timestamp to simulate >5 min elapsed.
+  const stateFile = path.join(tmpHome, ".pallium", "hooks", "state", `${sid}.json`);
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  for (const k of Object.keys(state)) state[k] = Date.now() / 1000 - (P.DEDUP_EXPIRY_SECONDS + 60);
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+  assert.equal(P.checkDedup("aging prompt", sid), false); // expired -> not a dup
+});
+
+test("checkDedup rejects an unsafe session id (no path escape, safe default)", () => {
+  const before = fs.readdirSync(path.join(tmpHome, ".pallium", "hooks", "state"));
+  // A traversal-y id must not dedup and must not write a state file for it.
+  assert.equal(P.checkDedup("some prompt", "../../evil"), false);
+  assert.equal(P.checkDedup("some prompt", "a/b"), false);
+  const after = fs.readdirSync(path.join(tmpHome, ".pallium", "hooks", "state"));
+  assert.deepEqual(after.sort(), before.sort(), "no state file created for unsafe ids");
+});
+
+// --- session pinning --------------------------------------------------------
+
+test("pinContainer/resolveContainerRef pins a session and is sticky on resume", () => {
+  const sid = "pin-session-1";
+  P.pinContainer(sid, "git:example.com/a/b");
+  assert.equal(P.getPinnedContainer(sid), "git:example.com/a/b");
+  // resolve prefers the pin over a fresh cwd derivation.
+  assert.equal(P.resolveContainerRef("/some/other/dir", sid), "git:example.com/a/b");
+  // Sticky on resume: an existing pin is preserved.
+  P.pinContainer(sid, "git:example.com/x/y", "resume");
+  assert.equal(P.getPinnedContainer(sid), "git:example.com/a/b");
+  // Invalid session ids are ignored.
+  P.pinContainer("bad id!", "git:z");
+  assert.equal(P.getPinnedContainer("bad id!"), null);
+});
+
+// --- injection budget -------------------------------------------------------
+
+function blocks(n) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push({ title: `T${i}`, memory_object_id: `ref-${i}`, text: "x".repeat(60), expand_available: i === 0 });
+  }
+  return out;
+}
+
+test("formatInjection includes header/footer and all blocks under a generous budget", () => {
+  const out = P.formatInjection(blocks(3), "git:example.com/a/b", 5000);
+  assert.match(out, /^\[Pallium memory — container: git:example\.com\/a\/b\]/);
+  assert.match(out, /\[End Pallium memory\]$/);
+  assert.match(out, /ref:ref-0\]/);
+  assert.match(out, /ref:ref-2\]/);
+  assert.match(out, /\[\+expand\]/); // block 0 was expandable
+});
+
+test("formatInjection trims blocks that overflow the char budget", () => {
+  const full = P.formatInjection(blocks(5), "c", 5000);
+  const trimmed = P.formatInjection(blocks(5), "c", 400);
+  assert.ok(trimmed.length <= 400 || trimmed === "", "trimmed output must respect the budget");
+  assert.ok(trimmed.length < full.length, "tight budget must drop blocks");
+  // First block is kept preferentially (blocks are popped from the end).
+  if (trimmed) assert.match(trimmed, /ref:ref-0\]/);
+});
+
+test("formatInjection returns empty string for no blocks", () => {
+  assert.equal(P.formatInjection([], "c", 2400), "");
+  assert.equal(P.formatInjection(null, "c", 2400), "");
+});
+
+// --- turn extraction + work-trace metadata ----------------------------------
+
+function assistantMessages() {
+  return [
+    { info: { role: "user", id: "u1" }, parts: [{ type: "text", text: "please build it" }] },
+    {
+      info: { role: "assistant", id: "a1" },
+      parts: [
+        { type: "text", text: "Working on it." },
+        { type: "tool", tool: "read", state: { status: "completed", input: { filePath: "src/a.js" }, output: "" } },
+        { type: "tool", tool: "bash", state: { status: "error", input: { command: "npm test" }, output: "FAIL 1 test" } },
+        { type: "tool", tool: "grep", state: { status: "completed", input: { pattern: "TODO", path: "src" }, output: "src/a.js:1: TODO x" } },
+        { type: "tool", tool: "edit", state: { status: "completed", input: { filePath: "src/b.js" } } },
+        { type: "tool", tool: "todowrite", state: { status: "completed", input: {} } },
+      ],
+    },
+  ];
+}
+
+test("extractAssistantTurn folds OpenCode parts into the normalized TurnData shape", () => {
+  const turn = P.extractAssistantTurn(assistantMessages());
+  assert.ok(turn);
+  assert.equal(turn.assistant_text, "Working on it.");
+  assert.equal(turn.has_productive_action, true);
+  assert.deepEqual(turn.files_modified, ["src/b.js"]);
+  const toolNames = turn.tool_calls.map((c) => c.tool).sort();
+  // Read/Bash/Grep are recorded; Edit (productive) and TodoWrite are excluded
+  // from tool_calls per the shared EXCLUDED_TOOLS contract.
+  assert.deepEqual(toolNames, ["Bash", "Grep", "Read"]);
+  const bash = turn.tool_calls.find((c) => c.tool === "Bash");
+  assert.equal(bash.exit_code, 1); // status:"error" -> synthetic exit code
+  assert.equal(bash.failure_class, "command_error");
+});
+
+test("buildWorkTraceMetadata produces the shared work-trace shape", () => {
+  const turn = P.extractAssistantTurn(assistantMessages());
+  const meta = P.buildWorkTraceMetadata(turn);
+  assert.ok(meta);
+  assert.deepEqual(meta.files_read, ["src/a.js"]);
+  assert.deepEqual(meta.grep_patterns, ["TODO"]);
+  assert.deepEqual(meta.files_modified, ["src/b.js"]);
+  assert.equal(meta.has_productive_action, true);
+  assert.equal(meta.commands.length, 1);
+  assert.equal(meta.commands[0].failure_class, "command_error");
+});
+
+test("extractAssistantTurn returns null when there is no assistant content", () => {
+  assert.equal(P.extractAssistantTurn([]), null);
+  assert.equal(P.extractAssistantTurn([{ info: { role: "user" }, parts: [{ type: "text", text: "hi" }] }]), null);
+  assert.equal(
+    P.extractAssistantTurn([{ info: { role: "assistant" }, parts: [{ type: "text", text: "   " }] }]),
+    null,
+  );
+});
+
+test("extractTextFromParts / stripIdeContext behave like the user-prompt path", () => {
+  assert.equal(P.extractTextFromParts([{ type: "text", text: "hello" }, { type: "reasoning", text: "x" }]), "hello");
+  assert.equal(
+    P.stripIdeContext("real prompt <ide_selection>noise</ide_selection> more"),
+    "real prompt  more",
+  );
+});
+
+test("extractAssistantTurn captures apply_patch productive edits + patch_bodies metadata", () => {
+  const messages = [
+    { info: { role: "user", id: "u1" }, parts: [{ type: "text", text: "patch it" }] },
+    {
+      info: { role: "assistant", id: "a2" },
+      parts: [
+        { type: "text", text: "Patched." },
+        {
+          type: "tool",
+          tool: "patch",
+          state: {
+            status: "completed",
+            input: { operation: { path: "src/patched.js", diff: "@@ -1 +1 @@\n-old\n+new" } },
+            output: "applied",
+          },
+        },
+      ],
+    },
+  ];
+  const turn = P.extractAssistantTurn(messages);
+  assert.equal(turn.has_productive_action, true);
+  assert.deepEqual(turn.files_modified, ["src/patched.js"]);
+  const patch = turn.tool_calls.find((c) => c.tool === "apply_patch");
+  assert.ok(patch, "apply_patch tool call recorded");
+  assert.equal(patch.operation.path, "src/patched.js");
+  const meta = P.buildWorkTraceMetadata(turn);
+  assert.equal(meta.patch_bodies.length, 1);
+  assert.equal(meta.patch_bodies[0].operation.path, "src/patched.js");
+});
+
+test("extractToolCall Glob splits and caps output paths", () => {
+  const call = P.extractToolCall("Glob", { pattern: "**/*.js" }, "a.js\nb.js\nc.js");
+  assert.deepEqual(call, { tool: "Glob", pattern: "**/*.js", paths: ["a.js", "b.js", "c.js"] });
+});
+
+test("deriveContainerRef returns repo:<hash12> for a git repo with no remote", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-repo-"));
+  const run = (args) => execFileSync("git", args, { cwd: repo, stdio: ["ignore", "pipe", "ignore"] });
+  run(["init"]);
+  run(["config", "user.email", "t@e.st"]);
+  run(["config", "user.name", "Tester"]);
+  run(["config", "commit.gpgsign", "false"]);
+  fs.writeFileSync(path.join(repo, "f.txt"), "hi");
+  run(["add", "f.txt"]);
+  run(["commit", "-m", "init"]);
+  const ref = P.deriveContainerRef(repo);
+  assert.match(ref, /^repo:[0-9a-f]{12}$/, `expected repo:<hash12>, got ${ref}`);
+});
+
+test("redactSensitive is unicode-safe (non-ASCII text is preserved, secrets still stripped)", () => {
+  assert.equal(P.redactSensitive("提交说明 Bearer sk-üñ"), "提交说明 Bearer [REDACTED]");
+  assert.equal(P.redactSensitive("café notes, no secrets"), "café notes, no secrets");
+});
