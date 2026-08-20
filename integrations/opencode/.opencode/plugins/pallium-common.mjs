@@ -314,8 +314,12 @@ export async function palliumRequest(method, reqPath, payload) {
     // Treat any non-2xx as failure (returns null), matching the Python hooks
     // where urllib raises HTTPError on 4xx/5xx and the caller sees None. This
     // keeps the /items retry path correct: a JSON error body must not look like
-    // a successful ingest.
-    if (!resp.ok) return null;
+    // a successful ingest. Cancel the unconsumed body so Undici can reuse the
+    // connection across repeated daemon errors.
+    if (!resp.ok) {
+      try { await resp.body?.cancel(); } catch { /* ignore */ }
+      return null;
+    }
     const raw = await resp.text();
     if (!raw) return null;
     return JSON.parse(raw);
