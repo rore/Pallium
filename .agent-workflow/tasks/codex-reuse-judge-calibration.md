@@ -81,6 +81,8 @@ Not required at this risk level.
 - Corrected the static fallback and nearby explanatory comment to maintained-reference-set/seed-group wording. Added negative assertions for the stale phrases; no data or runtime behavior changed.
 - PR review found two remaining scoped boundary defects: the dashboard missing-threshold fallback was still 0.60, and direct validation callers could supply other than two seed groups. State returned to Blocked for minimal guards and focused tests.
 - Changed the fallback to 0.70 and added an exact-two-groups guard before indexing. Added one dashboard contract assertion and parameterized one-group/three-group regression cases.
+- A follow-up PR thread correctly found that maintained-reference wording alone still hid the single-author limitation. State returned to Blocked to make that qualifier explicit in every reuse-card state and revalidate the longer layout.
+- Added the single-author qualifier across the initial, unavailable, calibrated, and uncalibrated card copy plus the reference-count label and explanatory comment. The dashboard contract now requires the qualifier.
 
 ## Evidence
 
@@ -95,6 +97,7 @@ Not required at this risk level.
 - Bundled Playwright validated the served dashboard at 2048×700 and 480×900. Wide summary width was exactly 760px with 280px/456px columns and the value 304px from the wrapper edge; narrow layout computed one 414px column with the value below its label. Screenshots: .local/research/reuse-card-wide.png and .local/research/reuse-card-narrow.png.
 - After the review correction, the dashboard suite again passed 27 tests. The installed service was restarted to healthy status and the identical Playwright wide/narrow assertions passed again.
 - PR review corrections: dashboard plus reuse-calibration focused suites passed 56 tests. The installed service was restarted again and returned 200 with status ok, vector index ready, and embedding provider working.
+- Single-author copy correction: dashboard suite passed 27 tests; installed service restarted healthy; Playwright wide/narrow geometry remained unchanged and passed.
 
 ## Plan review
 
@@ -110,3 +113,5 @@ Independent result review: APPROVE after exact event-set rejection, partial/all-
 UX result review initially found stale human-review claims in the static fallback. After correction and regression assertions, independent re-review: APPROVE; fallback semantics are honest, CSS is reuse-only and responsive, and data/render semantics remain unchanged.
 
 PR review then found the stale 0.60 display fallback and missing outer seed-group cardinality validation. Both were accepted as valid scoped findings and corrected with focused regression coverage. Independent re-review: APPROVE; the authoritative threshold and exact-two guard are now consistent and covered.
+
+A later PR thread found the dashboard did not expose that the reference set is single-author. The finding was accepted and every reuse-card state now carries that qualifier with contract and browser verification. Independent re-review: APPROVE; all states are honest and the longer copy remains responsive.
