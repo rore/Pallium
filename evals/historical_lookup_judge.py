@@ -71,7 +71,7 @@ from evals.historical_lookup_measurement import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 JUDGE_PROMPT_ID = "historical-lookup-reuse"
-JUDGE_PROMPT_VERSION = "2026-08-23-evidence-v3"
+JUDGE_PROMPT_VERSION = "2026-08-23-evidence-v6"
 
 JUDGE_SYSTEM_PROMPT = """\
 You are auditing whether an AI agent actually REUSED information it retrieved
@@ -100,13 +100,20 @@ Decide:
    - "none": no evidence the history was used.
 3. evidence_span (string): one short, contiguous, exact substring (<=200 chars)
    that occurs in BOTH RETRIEVED HISTORY and WORK AFTER after ignoring only
-   casing and whitespace differences. Prefer a distinctive value, identifier,
-   name, or short phrase. Copy it from one block; do not paraphrase, combine
+   casing and whitespace differences. Select it in this order:
+   a. If an exact identifier or code token occurs in both blocks, return ONLY
+      that identifier or token — never append its surrounding description.
+   b. Otherwise, if a numeric value with its unit occurs in both, return ONLY
+      that value and unit.
+   c. Otherwise, return the shortest distinctive contiguous phrase shared by both.
+   Do not include surrounding words unless those words also occur contiguously
+   in both blocks. Copy from one block; do not paraphrase, combine
    separate fragments, or quote text unique to only one block. Before returning,
    verify that the same contiguous words occur in both blocks. If reuse is only
    near-verbatim and there is no suitable exact shared substring, choose
    "influence" and return an empty evidence_span. Required (non-empty) only when
-   rung is "incorporation"; empty string for "influence" and "none".
+   rung is "incorporation". For "influence" and "none", evidence_span MUST be
+   exactly the empty string "", even when the rationale has supporting details.
 4. direction (string): who initiated the lookup, read from CONTEXT BEFORE —
    - "user_directed": the user explicitly asked the agent to recall or look up
      past context.

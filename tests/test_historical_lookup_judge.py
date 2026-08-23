@@ -34,6 +34,11 @@ from storage.sqlite import SQLiteStorageProvider
 
 def test_prompt_requires_one_contiguous_exact_shared_span() -> None:
     assert "one short, contiguous, exact substring" in JUDGE_SYSTEM_PROMPT
+    assert "return ONLY" in JUDGE_SYSTEM_PROMPT
+    assert "shortest distinctive contiguous phrase" in JUDGE_SYSTEM_PROMPT
+    assert "Do not include surrounding words" in JUDGE_SYSTEM_PROMPT
+    assert "evidence_span MUST be" in JUDGE_SYSTEM_PROMPT
+    assert 'exactly the empty string ""' in JUDGE_SYSTEM_PROMPT
     assert "do not paraphrase, combine" in JUDGE_SYSTEM_PROMPT
     assert "there is no suitable exact shared substring" in JUDGE_SYSTEM_PROMPT
 
