@@ -2249,7 +2249,7 @@ function renderReuseCalibration(entry) {
   }
   const jvg = (entry.report && entry.report.judge_vs_gold) || {};
   const kappa = (jvg.kappa != null) ? Number(jvg.kappa).toFixed(2) : 'n/a';
-  const thr = (jvg.threshold != null) ? Number(jvg.threshold).toFixed(2) : '0.60';
+  const thr = (jvg.threshold != null) ? Number(jvg.threshold).toFixed(2) : '0.70';
   const calibrated = jvg.calibrated === true;
   const uncalibrated = jvg.calibrated === false;
   const verdict = calibrated ? 'checked against the maintained reference cases'
