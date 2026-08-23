@@ -329,6 +329,14 @@ class TestReferenceValidation:
         assert len(summary["mutual_agreement"]["failed_events"]["a"]) == 6
         assert summary["mutual_agreement"]["n"] == 0
 
+    @pytest.mark.parametrize(
+        "seed_groups",
+        [((0, 1, 2),), ((0, 1, 2), (3, 4, 5), (6, 7, 8))],
+    )
+    def test_exactly_two_seed_groups_are_required(self, seed_groups) -> None:
+        with pytest.raises(ValueError, match="exactly two"):
+            run_reference_validation(provider=_StubJudge(), seed_groups=seed_groups)
+
     def test_underpowered_seed_group_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="at least three"):
             run_reference_validation(

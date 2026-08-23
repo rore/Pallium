@@ -344,6 +344,7 @@ class TestDashboardTwoViewShell:
         assert "human review" not in html
         assert "person reviewing" not in html
         assert "human comparison" not in html
+        assert "? Number(jvg.threshold).toFixed(2) : '0.70'" in html
         assert 'class="hh-reuse-summary"' in html
         assert '.hh-reuse-summary { max-width: 760px; }' in html
         assert 'grid-template-columns: minmax(190px, 280px) minmax(0, 1fr)' in html

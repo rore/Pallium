@@ -359,10 +359,12 @@ def run_reference_validation(
     *,
     provider,
     fixture_path: Path | str = DEFAULT_FIXTURE_PATH,
-    seed_groups: tuple[tuple[int, ...], tuple[int, ...]] = ((0, 1, 2), (3, 4, 5)),
+    seed_groups: tuple[tuple[int, ...], ...] = ((0, 1, 2), (3, 4, 5)),
     sample_size: int = 500,
 ) -> dict[str, Any]:
     """Run two disjoint seed groups against the same reference cases."""
+    if len(seed_groups) != 2:
+        raise ValueError("exactly two seed groups are required")
     if any(len(group) < 3 for group in seed_groups):
         raise ValueError("each seed group must contain at least three seeds")
     if any(len(set(group)) != len(group) for group in seed_groups):

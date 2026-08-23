@@ -79,6 +79,8 @@ Not required at this risk level.
 - UX re-plan was independently approved. Implemented only `app/dashboard.html` and `tests/test_dashboard.py`: a reuse-only 760px grid wrapper, adjacent left-aligned values, and the existing 900px breakpoint's single-column fallback. Report data, field order, copy, endpoints, and rendering semantics are unchanged. The documented deterministic .NET replacement was used because `apply_patch` had already failed with Windows error 1385.
 - UX result review found stale human-review claims in the initial/fetch-failure fallback. State returned to Blocked for the already-scoped copy correction and a stronger contract assertion.
 - Corrected the static fallback and nearby explanatory comment to maintained-reference-set/seed-group wording. Added negative assertions for the stale phrases; no data or runtime behavior changed.
+- PR review found two remaining scoped boundary defects: the dashboard missing-threshold fallback was still 0.60, and direct validation callers could supply other than two seed groups. State returned to Blocked for minimal guards and focused tests.
+- Changed the fallback to 0.70 and added an exact-two-groups guard before indexing. Added one dashboard contract assertion and parameterized one-group/three-group regression cases.
 
 ## Evidence
 
@@ -92,6 +94,7 @@ Not required at this risk level.
 - Restarted the installed scheduled-task service. /health returned 200 status=ok, `vector_index_ready=true`, and `embedding_provider_ok=true`; /status returned 200.
 - Bundled Playwright validated the served dashboard at 2048×700 and 480×900. Wide summary width was exactly 760px with 280px/456px columns and the value 304px from the wrapper edge; narrow layout computed one 414px column with the value below its label. Screenshots: .local/research/reuse-card-wide.png and .local/research/reuse-card-narrow.png.
 - After the review correction, the dashboard suite again passed 27 tests. The installed service was restarted to healthy status and the identical Playwright wide/narrow assertions passed again.
+- PR review corrections: dashboard plus reuse-calibration focused suites passed 56 tests. The installed service was restarted again and returned 200 with status ok, vector index ready, and embedding provider working.
 
 ## Plan review
 
@@ -105,3 +108,5 @@ Correction-plan re-review: APPROVE after making any failed seed call fatal, defi
 Independent result review: APPROVE after exact event-set rejection, partial/all-failure rejection, three distinct disjoint seeds per group, compatible minimum-kappa/minimum-N dashboard fields, and honest reference-set copy. Live evidence subsequently passed all three 0.70 gates with zero failures; roadmap and validation evidence are aligned.
 
 UX result review initially found stale human-review claims in the static fallback. After correction and regression assertions, independent re-review: APPROVE; fallback semantics are honest, CSS is reuse-only and responsive, and data/render semantics remain unchanged.
+
+PR review then found the stale 0.60 display fallback and missing outer seed-group cardinality validation. Both were accepted as valid scoped findings and corrected with focused regression coverage. Independent re-review: APPROVE; the authoritative threshold and exact-two guard are now consistent and covered.
