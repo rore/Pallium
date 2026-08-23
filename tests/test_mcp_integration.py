@@ -451,6 +451,16 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
         anchor_id = search["results"][0]["source_item_id"]
         assert anchor_id == source_ids[1]
 
+        wrong_scope_content, _ = await server.call_tool("pallium_search_history", {
+            "query": "distinctive lookup anchor phrase",
+            "container_ref": "github.com/rore/pallium",
+            "thread_ref": active_thread,
+            "visibility": "private",
+        })
+        wrong_scope = json.loads(wrong_scope_content[0].text)
+        assert wrong_scope["results"] == []
+        assert wrong_scope["requested_container_ref"] == "github.com/rore/pallium"
+        assert "never derive or guess" in wrong_scope["empty_result_hint"]
         expand_content, _ = await server.call_tool("pallium_expand_source", {
             "source_item_id": anchor_id,
             "before": 1,

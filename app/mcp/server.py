@@ -45,7 +45,9 @@ def _bounded_error(result: dict, budget: int) -> dict:
     compact = {"error": error[:low]}
     return compact if len(_json_text(compact)) <= budget else {}
 
-def _compact_history(result: dict, query: str, limit: int = 3) -> dict:
+def _compact_history(
+    result: dict, query: str, limit: int = 3, container_ref: str | None = None
+) -> dict:
     if "error" in result:
         return _bounded_error(result, _MCP_SEARCH_MAX_CHARS)
     hits = []
@@ -62,6 +64,13 @@ def _compact_history(result: dict, query: str, limit: int = 3) -> dict:
     # self-explaining (e.g. "visibility_context_required"), not a silent [].
     if result.get("decision_reason") is not None:
         payload["decision_reason"] = result["decision_reason"]
+    if not hits and result.get("decision_reason") == "source_only_search" and container_ref:
+        payload["requested_container_ref"] = container_ref[:64]
+        if len(container_ref) > 64:
+            payload["container_ref_truncated"] = True
+        payload["empty_result_hint"] = (
+            "Copy the injected container_ref exactly; never derive or guess it."
+        )
     budget = _MCP_SEARCH_EMPTY_MAX_CHARS if not hits else _MCP_SEARCH_MAX_CHARS
     while len(_json_text(payload)) > budget and hits:
         longest = max(hits, key=lambda hit: len(hit.get("excerpt", "")))
@@ -211,7 +220,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         artifact_kind: str | None = None,
         work_refs: list[str] | None = None,
     ) -> str:
-        """Search prior raw turns for historical context. Returns compact match-centred excerpts with stable source_item_id values and lookup_event_id for optional expansion linkage. Requires a visibility context: pass BOTH `container_ref` and `visibility` (e.g. "private"), or the search fails closed and returns no results with `decision_reason: "visibility_context_required"`."""
+        """Search prior raw turns for historical context. Returns compact match-centred excerpts with stable source_item_id values and lookup_event_id for optional expansion linkage. Copy the injected container_ref exactly; never derive, guess, or normalize it. Requires container_ref plus visibility (e.g. private), or search fails closed with decision_reason visibility_context_required."""
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,
@@ -229,7 +238,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             artifact_kind=artifact_kind,
             work_refs=work_refs,
         )
-        return _json_text(_compact_history(result, query, limit))
+        return _json_text(_compact_history(result, query, limit, ctx.container_ref))
 
     @server.tool()
     async def pallium_query_debug(
