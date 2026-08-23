@@ -1,9 +1,9 @@
 ---
 id: idea-reuse-judge-evidence-span-enforcement
 title: Enforce the reuse judge's evidence_span output contract (overlap + rung consistency)
-status: queued
+status: done
 priority: low
-commitment: uncommitted
+commitment: committed
 ---
 
 ## Summary
@@ -65,3 +65,16 @@ Evidence: `evals/historical_lookup_judge.py` `_judge_once` (evidence_span stored
 enforced); `tests/test_historical_lookup_judge.py` `_StubJudge` (work-only "marker").
 Related: `reuse-judge-rubric-hardening` (the prompt contract this would enforce),
 `idea-reuse-judge-calibration` (the calibration story this guards).
+## Result
+
+Completed 2026-08-23. The validator now fails closed on raw type, the 200-character
+boundary, incorporation evidence not present in both normalized text sides, and
+non-empty influence/none evidence. Focused evaluator/reference suites pass.
+
+The cache-disabled maintained-reference run measured a real reliability cost:
+16/72 judge calls failed validation (22.2%; 8/36 in each seed group). Group A
+compared 10/12 events and group B 11/12; mutual comparison covered 10/12. The
+remaining labels agreed perfectly, but incomplete-subset kappa is not a pass, so
+the overall reference gate correctly failed and downstream-task-effect
+observational rung rates remain untrusted. The calibration item is reopened;
+the validator and fixture were not weakened or tuned to hide the failures.

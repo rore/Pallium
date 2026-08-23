@@ -64,7 +64,7 @@ class _StubJudge:
         payload = {
             "genuine_opportunity": genuine,
             "rung": rung,
-            "evidence_span": "marker" if genuine else "",
+            "evidence_span": "INCORP_MARKER" if rung == "incorporation" else "",
             "direction": direction,
         }
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
@@ -253,6 +253,130 @@ class TestJudgeOffline:
         assert ev1.before_turns
         assert any("please recall" in content for _role, content in ev1.before_turns)
 
+
+class _PayloadJudge:
+    def __init__(self, *, rung, genuine, evidence) -> None:
+        self.payload = {
+            "genuine_opportunity": genuine,
+            "rung": rung,
+            "evidence_span": evidence,
+            "direction": "agent_decided",
+        }
+
+    def generate_json(self, *, system_prompt, user_prompt, schema_description):
+        return LLMJsonResponse(
+            raw_text=json.dumps(self.payload),
+            parsed_json=self.payload,
+        )
+
+
+def _seed_contract_lookup(storage, *, retrieved: str, after: str) -> None:
+    _insert_turn(
+        storage,
+        sid="contract-history",
+        role="assistant",
+        artifact_kind="assistant_output",
+        content=retrieved,
+        thread="t:old",
+        created="2026-07-01 00:00:01.000000",
+    )
+    _insert_turn(
+        storage,
+        sid="contract-user",
+        role="user",
+        artifact_kind="message",
+        content="resume the task",
+        thread="t:contract",
+        created="2026-08-01 00:00:01.000000",
+    )
+    _write_lookup(
+        storage,
+        event_id="contract-event",
+        thread="t:contract",
+        exposed_ids=["contract-history"],
+        created="2026-08-01 00:00:02.000000",
+    )
+    _insert_turn(
+        storage,
+        sid="contract-after",
+        role="assistant",
+        artifact_kind="assistant_output",
+        content=after,
+        thread="t:contract",
+        created="2026-08-01 00:00:03.000000",
+    )
+
+
+class TestEvidenceSpanContract:
+    @pytest.mark.parametrize(
+        ("evidence", "retrieved", "after"),
+        [
+            ("shared fact", "SHARED\n fact", "used shared\tFACT"),
+            ("x" * 200, "prefix " + "x" * 200, "x" * 200 + " suffix"),
+            ("Straße", "Remember STRASSE", "Applied Straße"),
+        ],
+    )
+    def test_valid_incorporation_is_accepted_and_persisted(
+        self, tmp_path, evidence, retrieved, after
+    ) -> None:
+        storage, db = _storage(tmp_path)
+        _seed_contract_lookup(storage, retrieved=retrieved, after=after)
+
+        report = run_judge(
+            db,
+            provider=_PayloadJudge(
+                rung="incorporation", genuine=True, evidence=evidence
+            ),
+            storage=storage,
+            container_ref="c:1",
+            eligibility_n=0,
+            seeds=[0],
+        )
+
+        assert report.n_judge_failures == 0
+        assert len(report.labels) == 1
+        assert report.labels[0].evidence_span == evidence
+        with storage._engine.connect() as conn:
+            persisted = conn.execute(
+                text("SELECT count(*) FROM historical_lookup_reuse_label")
+            ).scalar_one()
+        assert persisted == 1
+
+    @pytest.mark.parametrize(
+        ("rung", "genuine", "evidence", "retrieved", "after"),
+        [
+            ("incorporation", True, "", "shared fact", "shared fact"),
+            ("incorporation", True, None, "shared fact", "shared fact"),
+            ("incorporation", True, ["shared fact"], "shared fact", "shared fact"),
+            ("incorporation", True, "x" * 201, "x" * 201, "x" * 201),
+            ("incorporation", True, "work only", "different", "work only"),
+            ("incorporation", True, "history only", "history only", "different"),
+            ("influence", True, "shared fact", "shared fact", "shared fact"),
+            ("none", False, "shared fact", "shared fact", "shared fact"),
+        ],
+    )
+    def test_invalid_evidence_is_a_failure_and_is_not_persisted(
+        self, tmp_path, rung, genuine, evidence, retrieved, after
+    ) -> None:
+        storage, db = _storage(tmp_path)
+        _seed_contract_lookup(storage, retrieved=retrieved, after=after)
+
+        report = run_judge(
+            db,
+            provider=_PayloadJudge(rung=rung, genuine=genuine, evidence=evidence),
+            storage=storage,
+            container_ref="c:1",
+            eligibility_n=0,
+            seeds=[0],
+        )
+
+        assert report.n_judge_failures == 1
+        assert report.labels == []
+        with storage._engine.connect() as conn:
+            persisted = conn.execute(
+                text("SELECT count(*) FROM historical_lookup_reuse_label")
+            ).scalar_one()
+        assert persisted == 0
 
 # ---------------------------------------------------------------------------
 # Seed folding — >=3 seeds must produce distinct cache keys

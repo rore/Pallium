@@ -56,11 +56,48 @@ class _StubJudge:
         payload = {
             "genuine_opportunity": genuine,
             "rung": rung,
-            "evidence_span": "marker" if genuine else "",
+            "evidence_span": "INCORP_MARKER" if rung == "incorporation" else "",
             "direction": "agent_decided",
         }
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
 
+
+class _CommittedFixtureJudge:
+    _INCORPORATION_EVIDENCE = {
+        "base delay of 250ms": "base delay of 250ms",
+        "TTL of 90 seconds": "90 seconds",
+        "idx_docs_tenant_tag": "idx_docs_tenant_tag",
+        "bulk_export_v2_enabled": "bulk_export_v2_enabled",
+    }
+    _INFLUENCE_MARKERS = (
+        "opaque cursor tokens",
+        "never crash the loop",
+        "expand/contract phases",
+        "lowercase snake_case",
+    )
+
+    def generate_json(self, *, system_prompt, user_prompt, schema_description):
+        evidence = next(
+            (
+                shared
+                for marker, shared in self._INCORPORATION_EVIDENCE.items()
+                if marker in user_prompt
+            ),
+            None,
+        )
+        if evidence is not None:
+            rung, genuine = "incorporation", True
+        elif any(marker in user_prompt for marker in self._INFLUENCE_MARKERS):
+            rung, genuine, evidence = "influence", True, ""
+        else:
+            rung, genuine, evidence = "none", False, ""
+        payload = {
+            "genuine_opportunity": genuine,
+            "rung": rung,
+            "evidence_span": evidence,
+            "direction": "agent_decided",
+        }
+        return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
 
 class _PartialFailingStub(_StubJudge):
     def generate_json(self, *, system_prompt, user_prompt, schema_description):
@@ -103,7 +140,11 @@ def _inline_gold() -> list[dict]:
             "id": rid,
             "container_ref": "git:example.com/acme-x",
             "before_turns": [{"role": "user", "content": "please help with the task"}],
-            "retrieved_history": [] if rung == "none" else ["past decision text"],
+            "retrieved_history": (
+                []
+                if rung == "none"
+                else ["past decision text. INCORP_MARKER" if rung == "incorporation" else "past decision text"]
+            ),
             "after_turns": [{"role": "assistant", "content": after}],
             "gold_rung": rung,
         })
@@ -127,6 +168,13 @@ class TestGoldFixture:
         banned = ["xlm", "pelican", "clmia", "sap-dev", "sap ", "atlas", "muxi", "pallium"]
         hits = [b for b in banned if b in raw]
         assert not hits, f"gold fixture must be generic; found banned tokens: {hits}"
+    def test_committed_fixture_passes_executable_evidence_contract(self) -> None:
+        summary = run_reference_validation(provider=_CommittedFixtureJudge())
+
+        assert summary["reference_set_passed"] is True
+        assert summary["groups"]["a"]["n_judge_failures"] == 0
+        assert summary["groups"]["b"]["n_judge_failures"] == 0
+        assert summary["mutual_agreement"]["n"] == 12
 
 
 # ---------------------------------------------------------------------------
