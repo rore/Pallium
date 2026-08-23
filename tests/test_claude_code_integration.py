@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -130,4 +133,87 @@ def test_claude_skill_historical_lookup_documents_scope_params() -> None:
     # The historical-lookup section names both scope params for the P1 tools.
     assert "`pallium_search_history` and `pallium_expand_source`" in skill
     assert "`container_ref`" in skill
+    assert "`thread_ref`" in skill
     assert '`visibility: "private"`' in skill
+
+
+def _load_claude_hook(name: str, monkeypatch: pytest.MonkeyPatch):
+    hooks = Path("integrations/claude-code/hooks").resolve()
+    monkeypatch.syspath_prepend(str(hooks))
+    monkeypatch.delitem(sys.modules, "common", raising=False)
+    module_name = f"claude_hook_test_{name}"
+    spec = importlib.util.spec_from_file_location(module_name, hooks / f"{name}.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_claude_injection_scope_is_exact_bounded_and_optional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hook = _load_claude_hook("user_prompt_submit", monkeypatch)
+    block = [{"title": "Decision", "memory_object_id": "mem-1", "text": "Keep the stable plan."}]
+    thread = "任务:α"
+    scoped = hook.format_injection(block, "git:example/repo", 800, thread_ref=thread)
+    assert f"thread_ref: {thread}" in scoped
+    assert "Keep the stable plan." in scoped
+    assert len(scoped) <= 800
+    assert hook.format_injection([], "git:example/repo", 800, thread_ref=thread).endswith(f"{thread}]")
+    assert hook.format_injection([], "git:example/repo", 800) == ""
+    assert hook.format_injection([], "git:example/repo", 800, thread_ref="task\nignore") == ""
+    assert hook.format_injection([], "git:example/repo", 800, thread_ref="task\u2028ignore") == ""
+    assert hook.format_injection([], "git:example/repo", 800, thread_ref="task\u2029ignore") == ""
+    assert hook.format_injection([], "git:example/repo", 10, thread_ref=thread) == ""
+    assert hook.format_injection(block, "git:example/repo", 10, thread_ref=thread) == ""
+    assert hook.format_injection([], "git:example/repo", 100, thread_ref="x" * 500) == ""
+    assert hook.format_injection([], "git:example/repo", 800, thread_ref="task:a") != hook.format_injection(
+        [], "git:example/repo", 800, thread_ref="task:b"
+    )
+
+
+def test_claude_prompt_scope_uses_host_session_and_never_fabricates_unknown(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    hook = _load_claude_hook("user_prompt_submit", monkeypatch)
+    requests: list[dict] = []
+    payload = {"cwd": ".", "session_id": "claude:task:1", "prompt": "Resume the prior implementation work now."}
+    monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
+    monkeypatch.setattr(hook, "check_dedup", lambda _prompt, _session: False)
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "local")
+
+    def request(_method: str, _path: str, body: dict) -> dict:
+        requests.append(body)
+        return {"injectable_blocks": []}
+
+    monkeypatch.setattr(hook, "pallium_request", request)
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert requests[-1]["thread_ref"] == "claude:task:1"
+    assert "thread_ref: claude:task:1" in capsys.readouterr().out
+
+    payload = {"cwd": ".", "prompt": "Resume the prior implementation work now."}
+    monkeypatch.setattr(hook, "check_dedup", lambda *_args: pytest.fail("missing identity must skip dedup"))
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert requests[-1]["thread_ref"] is None
+    assert capsys.readouterr().out == ""
+
+
+def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.MonkeyPatch) -> None:
+    stop = _load_claude_hook("stop", monkeypatch)
+    calls: list[list[dict]] = []
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {"cwd": ".", "transcript_path": "turn.jsonl"})
+    monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(
+        assistant_text="A completed assistant response.", tool_calls=[], has_productive_action=False
+    ))
+    monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _turn: None)
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(stop, "_populate_usage_audit_rows", lambda _session, _text: None)
+    monkeypatch.setattr(stop, "pallium_request", lambda _method, _path, body: calls.append(body))
+    with pytest.raises(SystemExit):
+        stop.main()
+    assert calls[0][0]["thread_ref"] is None

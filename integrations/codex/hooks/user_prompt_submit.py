@@ -39,7 +39,7 @@ def _strip_ide_context(text: str) -> str:
 def main() -> None:
     try:
         payload = read_hook_input()
-        session_id = payload.get("session_id", "unknown")
+        session_id = payload.get("session_id")
         cwd = payload.get("cwd", ".")
         prompt = payload.get("prompt", "")
 
@@ -47,7 +47,7 @@ def main() -> None:
             sys.exit(0)
         if prompt.startswith("/"):
             sys.exit(0)
-        if check_dedup(prompt, session_id):
+        if session_id and check_dedup(prompt, session_id):
             sys.exit(0)
 
         container_ref = resolve_container_ref(cwd, session_id)
@@ -82,7 +82,7 @@ def main() -> None:
             sys.exit(0)
 
         blocks = response.get("injectable_blocks", [])
-        output = format_injection(blocks, container_ref, budget_chars=2400)
+        output = format_injection(blocks, container_ref, budget_chars=2400, thread_ref=session_id)
         if output:
             emit_context(output, "UserPromptSubmit")
 
