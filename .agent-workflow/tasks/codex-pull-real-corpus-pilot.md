@@ -48,17 +48,26 @@ Not required at this risk level. The user explicitly authorized the budget-aware
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Pending.
+- Added an eval-only CLI that requires an explicit scratch DB, exact container, visibility, aggregate output, private review output, and acknowledgement that the review file contains raw private text.
+- The loader opens SQLite in read-only mode, samples only non-empty agent-pull events, keeps the exact container boundary, and reuses the production visibility predicate for same-container source eligibility.
+- The public-tool representation is bounded to three deduplicated sources at 480 characters each. Oversized queries, answers passed to the judge, sample count, and total estimated model input are bounded.
+- Each valid case runs matched WITH/WITHOUT prompts plus a deterministic blind A/B comparison. Aggregate output is text-free; the separate local review output carries raw evidence and a never-publish warning.
+- The report labels the result as offline controlled downstream-task-effect and explicitly excludes candidate recovery, injection precision, observed live improvement, a calibrated evaluator, a human spot-check, and an exact tokenizer budget.
+- Delegated edits used the documented deterministic IO.File fallback after the machine-local apply_patch/process error.
 
 ## Evidence
 
-Pending.
+- 13 focused network-free tests pass, including the full CLI lifecycle, DB byte preservation, output/sidecar collision rejection, cross-container and mixed-visibility isolation, malformed/missing/forgotten/empty/duplicate/Unicode cases, invalid judge output, provider failure, deterministic/max sampling, oversized queries, answer truncation, and estimated-input-budget stop.
+- Module syntax compilation and git diff --check pass.
+- Scratch preflight found 8 valid scoped agent-pull cases and deterministically selected 5. Per-case public-shape history is 1,032–1,440 characters (about 258–360 chars/4 estimated tokens).
+- No production files changed and no paid/provider call succeeded.
+- BLOCKED: the configured HAI run would send five real private Pallium queries and bounded retrieved excerpts to an external model. Execution was rejected until the user explicitly approves that private-data transfer. The aggregate result, local review, roadmap evidence, service refresh, PR, and merge therefore remain pending.
 
 ## Result review
 
-Pending.
+APPROVE IMPLEMENTATION PENDING RUN — clean-context review confirms the scope, privacy boundaries, production visibility reuse, approximate-budget honesty, CLI E2E, and 13-test evidence. Product/result approval remains blocked on the explicitly approved private-corpus HAI run and local review.
