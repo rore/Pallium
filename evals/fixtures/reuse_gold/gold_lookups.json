@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "purpose": "Human-labelled gold set for calibrating the historical-lookup reuse judge (rung-1 incorporation / rung-2 influence / none). Consumed by evals/reuse_judge_calibration.py, which seeds each record into a scratch DB as one lookup event + surrounding source turns and runs the real judge against it.",
+    "purpose": "Single-author synthetic reference set for regression-checking the historical-lookup reuse judge (rung-1 incorporation / rung-2 influence / none). Consumed by evals/reuse_judge_calibration.py, which seeds each record into a scratch DB as one lookup event + surrounding source turns and runs the real judge against it. This supports reference-set validation, not independent human calibration.",
     "labelling_scheme": {
       "incorporation": "A specific detail from retrieved_history reappears verbatim (or near-verbatim) in after_turns — an observable reuse.",
       "influence": "after_turns build on the retrieved history's decision/direction without quoting it verbatim.",

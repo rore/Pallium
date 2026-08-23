@@ -1,62 +1,66 @@
 ---
 id: idea-reuse-judge-calibration
 title: Reuse-ladder judge calibration (gold set + agreement threshold)
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-p1
 ---
 
-> **Reopened 2026-08-17 (external review item 12):** the calibration harness landed, but measured
-> judge-vs-gold agreement is Cohen's κ ≈ 0.50 — below the stated ≥0.70 confidence threshold. The KPI it
-> backs must not be labeled "confirmed" until κ passes. Remaining work: improve rubric + calibration
-> corpus; report per-class precision/recall (not only κ); ≥2 human labels per ambiguous example with
-> adjudication; record judge prompt/version; repeated-run stability. Keep deterministic facts (lookup,
-> exposure, expansion, citation) separate from judged use.
+> **Reopened 2026-08-17 (external review item 12):** the original κ≈0.50 was below
+> the stated ≥0.70 threshold. The hardened rubric later produced a provisional
+> κ=0.75 on N=12, but the fixture is single-author synthetic evidence. Two
+> independent human raters are not part of the intended product workflow, so
+> this item now closes only a narrower, maintainable claim: reference-set
+> regression accuracy plus repeat-run stability. It must never be described as
+> independent human calibration. Keep deterministic facts (lookup, exposure,
+> expansion, citation) separate from judged use.
 
 ## Summary
 
-The retrospective reuse KPI (the three-rung ladder) rests entirely on an
-LLM-judge's rung-1/rung-2 verdicts. There is a judge harness that computes
-inter-seed Cohen's kappa, but **no human-labelled gold set and no target
-agreement threshold**. Add a small committed gold fixture of hand-labelled
-lookups and a documented minimum kappa (judge-vs-gold, not only seed-vs-seed)
-below which rung rates are reported as uncalibrated.
+The reuse KPI depends on an LLM judge. The repository has a small maintained
+single-author reference fixture and a threshold, but its evidence has been
+single-run and lacked per-class diagnostics. Add repeatable reference-set
+validation: per-class metrics, prompt provenance, and agreement across two
+cache-disabled seed groups over the same cases.
 
 ## Why
 
-Inter-rater agreement between seeded copies of the same model measures judge
-*stability*, not correctness — a confidently-wrong judge can be perfectly
-self-consistent. Design 015 lists "judge rubric + calibration" as a P0
-deliverable; it shipped without the calibration half. Single-seed judge rungs
-also carry the repo's documented ~20pp variance. Until a gold set exists, every
-rung number the dashboard shows is uncalibrated, so the KPI cannot yet mean what
-it claims — and the Experiment-1 window is now open.
+Agreement among seeded copies of one model measures stability, not objective
+correctness. Agreement with the maintained examples catches known rubric
+regressions, while a second disjoint seed group catches unstable results. The
+combined signal is useful for deciding whether the judged rung rates are safe
+to track, provided it is not presented as independent human calibration.
 
 ## In Scope
 
-- A small committed gold fixture: N hand-labelled lookup events (before/after
-  turns + assigned rung), scoped to the current product slice, no product names.
-- Judge-vs-gold agreement (Cohen's kappa or equivalent) reported alongside the
-  existing seed-vs-seed kappa in the judge output.
-- A documented minimum agreement threshold; below it, the rollup/dashboard marks
-  rung rates "uncalibrated" rather than presenting them as confident.
-- Reuse the existing judge harness and rollup; do not build a new judge.
+- Reuse the existing 12-case generic reference fixture and real judge path.
+- Report group-vs-reference kappa, confusion matrix, per-class
+  precision/recall/support, prompt id/version, and mutual seed-group kappa.
+- Require the sole live κ≥0.70 gate for both group-vs-reference comparisons and
+  mutual agreement, with no missing or all-failed event.
+- Preserve visibly uncalibrated rollup/dashboard behavior on failure.
 
 ## Out of Scope
 
-- Rung-3 (downstream benefit) — remains controlled-exposure-only by design.
-- Replacing the judge model or the rubric (this calibrates the current one).
-- Growing the gold set to a large corpus — smallest fixture that yields a
-  meaningful agreement read.
+- Independent human labeling or adjudication.
+- Rung-3 downstream benefit, which remains controlled-exposure-only.
+- Replacing the judge model/rubric or growing a large corpus.
+- Executable evidence-span validation, tracked separately.
 
 ## Done When
 
-1. A committed gold fixture exists and the judge reports judge-vs-gold agreement.
-2. A documented threshold gates whether rung rates are presented as calibrated.
-3. The dashboard/rollup distinguishes calibrated from uncalibrated rung rates.
+1. The maintained reference fixture reports confusion matrix and per-class precision/recall/support.
+2. The sole live threshold is κ≥0.70 and the report records judge prompt id/version.
+3. Two cache-disabled, disjoint seed groups judge identical ordered events; each
+   group-vs-reference κ and their mutual κ meet the threshold, with no missing or failed event.
+4. The report and validation docs call this a single-author reference-set check,
+   not independent human calibration; the dashboard/rollup keeps failed checks visibly uncalibrated.
 
 ## Notes
+
+Completed 2026-08-23: cache-disabled groups 0/1/2 and 3/4/5 produced group-vs-reference kappa 0.750 and 0.875, with mutual kappa 0.870 (N=12, zero failures).
+
 
 Highest-value verification gap from the vNext architect review. Should land
 before the Experiment-1 window produces enough data to be interpreted as a

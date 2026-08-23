@@ -340,6 +340,8 @@ class TestDashboardTwoViewShell:
         assert "How memory helps" in html
         assert 'id="funnel-pill"' in html
         assert "fetchEffectivenessReports" in html
+        assert "maintained reference cases" in html
+        assert "human review" not in html
 
 
 class TestDashboardEffectivenessReports:

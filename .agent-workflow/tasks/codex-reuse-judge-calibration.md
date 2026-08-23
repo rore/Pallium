@@ -11,7 +11,7 @@ Pallium reports whether its reuse judge agrees with the maintained reference set
 Pallium repository.
 
 **Scope:**
-Existing reuse-judge prompt metadata, reference-set metrics/runner, focused tests, validation evidence, and roadmap status. No production retrieval, storage, API, dashboard, or integration behavior.
+Existing reuse-judge prompt metadata, reference-set metrics/runner, focused tests, validation evidence, roadmap status, and the existing dashboard calibration copy/legacy report fields. No production retrieval, storage, API, dashboard endpoint, or integration behavior.
 
 **Constraints:**
 Reuse the existing judge and scratch-DB runner; no replacement evaluator, model change, production DB access, product-specific fixtures, or tuning examples to force a pass. Retrieval remains non-mutating. Evidence-span enforcement stays in its separate ticket: this task measures rung-label agreement, not whether evidence spans are executable.
@@ -40,14 +40,16 @@ Calibration plumbing already exists: consensus-vs-gold kappa, scratch runner, ro
 1. Reuse the current fixture→scratch DB→real judge path. Add only stable prompt id/version, confusion matrix, and per-class precision/recall/support in the existing judge/calibration modules.
 2. Change the exported `GOLD_KAPPA_THRESHOLD` constant to 0.70 and use it as the sole live threshold for reports and verdicts. Preserve historical 0.50 and provisional hardened-rubric 0.75 results as dated evidence; remove any active 0.60 gate from validation and roadmap text.
 3. Keep the existing single-author fixture as a clearly named reference set. Do not add a labeling workflow, rater schema, adjudication machinery, or any claim of independent human calibration.
-4. Run two scratch-DB evaluations over identical event IDs in identical order, using disjoint seed groups `0,1,2` and `3,4,5`, with eval cache disabled. Build one consensus vector per group over the same successfully judged events and compute mutual kappa, reporting `n`, missing events, and failed events. The reference-set verdict passes only when both group-vs-reference kappas and mutual kappa use the exported threshold and meet 0.70; an empty comparison or any missing/all-failed group fails.
-5. Add focused unit and CLI/report end-to-end coverage: dry run and serialized report; empty, exact, and over-count samples; invalid reference labels; mismatched event sets; a missing seed group; zero-denominator metrics; and all judge calls failed. Run the full non-slow suite plus workflow/redline checks. Update roadmap status only after all completion criteria hold.
+4. Run two scratch-DB evaluations over identical event IDs in identical order, using disjoint seed groups `0,1,2` and `3,4,5`, with eval cache disabled. Build one consensus vector per group over the same successfully judged events and compute mutual kappa, reporting `n`, missing, extra, and partial/all-failed events. Any failed seed call rejects the verdict while remaining visible. The verdict otherwise passes only when both group-vs-reference kappas and mutual kappa use the exported threshold and meet 0.70 over the exact expected event set.
+5. Add focused unit and CLI/report end-to-end coverage: dry run and serialized report; empty, exact, and over-count samples; invalid reference labels; mismatched event sets including extras; a missing seed group; zero-denominator metrics; and partial/all judge failures.
+6. Preserve the existing dashboard report shape by mapping combined kappa to the minimum of the two group-vs-reference kappas and combined N to the minimum group comparison N. Change app/dashboard.html copy only from human-review to maintained-reference-set wording; do not alter its rendering logic or endpoints. Run the full non-slow suite plus workflow/redline checks. Update roadmap status only after all completion criteria hold.
 
 **Verification plan:**
 - Report completeness → deterministic tests assert prompt/version, all three classes, confusion-matrix totals, precision/recall zero-denominator behavior, and the 0.70 verdict.
 - Honest evidence semantics → tests and docs call the fixture a maintained single-author reference set and never describe its pass result as independent human agreement.
-- Repeat stability → two cache-disabled real-provider runs over identical ordered events with disjoint three-seed groups and scratch DBs record both reference kappas, mutual kappa, `n`, and missing/failed events; any empty, mismatched, missing, or all-failed group fails the reference-set gate.
+- Repeat stability → two cache-disabled real-provider runs over identical ordered events with disjoint three-seed groups and scratch DBs record both reference kappas, mutual kappa, `n`, and missing/failed events; any empty, mismatched, missing, extra, or failed seed call rejects the gate.
 - CLI lifecycle → dry-run and serialized-report paths cover empty, exact, and over-count sampling, invalid reference labels, mismatched event sets, a missing group, and all-failed judge calls without division errors or false passes.
+- Dashboard semantics → tests assert the legacy summary fields equal minimum group kappa/minimum group N plus threshold/verdict, and the caller-facing HTML contains maintained-reference-set wording with no human-review claim; dashboard code change is copy-only.
 - No regression and roadmap truth → focused tests, full non-slow suite, agent-workflow checker, redline report, validation evidence, and roadmap status agree.
 
 **Plan review:**
@@ -59,7 +61,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -68,9 +70,19 @@ Not required at this risk level.
 - Pre-edit redline verdict: BLUE for intended eval/tests/docs/roadmap scope; no boundary findings. Elevated declared conservatively because the Work Record path is unclassified in the current policy.
 - The first Work Record update attempt hit the documented Windows `CreateProcessWithLogonW failed: 1385`. Per local instructions it was not retried; this file was updated through a deterministic, single-file .NET replacement.
 
+- Implemented the 0.70 constant, prompt provenance, confusion/per-class metrics, two-group comparison, mandatory CLI cache disablement, honest docs, and focused lifecycle tests.
+- Result review found ignored extra events, hidden partial failures, and stale dashboard human-review copy/report shape. State returned to Blocked for the scoped correction and review.
+- Redline reassessment for app/dashboard.html: BLUE watch-only, no boundary findings or checkpoint; edit remains copy/rendering-only.
+- Final verification passed and the roadmap item moved from queued to done.
+
 ## Evidence
 
-Pending.
+- Focused judge/reference/dashboard suites: 66 passed after all result-review corrections.
+- Full non-slow suite with the ignored local config explicitly disabled: 3678 passed, 23 skipped, 2 xfailed. The earlier single failure was reproduced as local-config contamination and passed in isolation under the neutral config.
+- Caller-facing full-fixture dry-run wrote a valid two-group report and failed honestly at the 0.70 gate.
+- After explicit user approval, the evaluator inherited the existing launcher credential in-memory without displaying or copying it. Cache-disabled real-provider result: group A κ=0.750 (N=12), group B κ=0.875 (N=12), mutual κ=0.870 (N=12), zero failures → PASSED at 0.70.
+- Compile check and git diff --check passed; Ruff is not installed in the local environment.
+- Final workflow checker: clean. Redline: BLUE, app/dashboard.html watch-only, no checkpoints or boundary findings; reporter exit 1 is advisory review-warnings in shadow mode.
 
 ## Plan review
 
@@ -78,4 +90,7 @@ Initial clean-context review: REVISE. The user then ruled out two independent hu
 
 ## Result review
 
-Pending.
+Correction-plan re-review: APPROVE after making any failed seed call fatal, defining exact extra-event rejection and min-kappa/min-N legacy mapping, and limiting dashboard scope to copy only.
+
+
+Independent result review: APPROVE after exact event-set rejection, partial/all-failure rejection, three distinct disjoint seeds per group, compatible minimum-kappa/minimum-N dashboard fields, and honest reference-set copy. Live evidence subsequently passed all three 0.70 gates with zero failures; roadmap and validation evidence are aligned.
