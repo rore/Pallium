@@ -71,7 +71,7 @@ from evals.historical_lookup_measurement import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 JUDGE_PROMPT_ID = "historical-lookup-reuse"
-JUDGE_PROMPT_VERSION = "2026-08-17-rubric-v2"
+JUDGE_PROMPT_VERSION = "2026-08-23-evidence-v3"
 
 JUDGE_SYSTEM_PROMPT = """\
 You are auditing whether an AI agent actually REUSED information it retrieved
@@ -98,10 +98,15 @@ Decide:
      direction WITHOUT reproducing a specific detail from it verbatim or
      near-verbatim. Weaker, observational.
    - "none": no evidence the history was used.
-3. evidence_span (string): a short verbatim quote (<=200 chars) of the specific
-   detail that appears in BOTH RETRIEVED HISTORY and WORK AFTER — the overlap
-   itself, not just any WORK AFTER text. Required (non-empty) only when rung is
-   "incorporation"; empty string for "influence" and "none".
+3. evidence_span (string): one short, contiguous, exact substring (<=200 chars)
+   that occurs in BOTH RETRIEVED HISTORY and WORK AFTER after ignoring only
+   casing and whitespace differences. Prefer a distinctive value, identifier,
+   name, or short phrase. Copy it from one block; do not paraphrase, combine
+   separate fragments, or quote text unique to only one block. Before returning,
+   verify that the same contiguous words occur in both blocks. If reuse is only
+   near-verbatim and there is no suitable exact shared substring, choose
+   "influence" and return an empty evidence_span. Required (non-empty) only when
+   rung is "incorporation"; empty string for "influence" and "none".
 4. direction (string): who initiated the lookup, read from CONTEXT BEFORE —
    - "user_directed": the user explicitly asked the agent to recall or look up
      past context.

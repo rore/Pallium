@@ -32,6 +32,11 @@ from providers.llm.cached import _cache_key
 from storage.sqlite import SQLiteStorageProvider
 
 
+def test_prompt_requires_one_contiguous_exact_shared_span() -> None:
+    assert "one short, contiguous, exact substring" in JUDGE_SYSTEM_PROMPT
+    assert "do not paraphrase, combine" in JUDGE_SYSTEM_PROMPT
+    assert "there is no suitable exact shared substring" in JUDGE_SYSTEM_PROMPT
+
 # ---------------------------------------------------------------------------
 # Deterministic stub judge — verdict keyed on inert content markers
 # ---------------------------------------------------------------------------

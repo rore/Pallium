@@ -18,6 +18,8 @@ from copy import deepcopy
 
 import pytest
 
+import evals.reuse_judge_calibration as calibration
+
 from evals.historical_lookup_judge import (
     GOLD_KAPPA_THRESHOLD,
     JUDGE_PROMPT_ID,
@@ -402,6 +404,21 @@ class TestReferenceValidation:
             run_reference_validation(
                 provider=_StubJudge(), seed_groups=((0, 1, 2), (2, 3, 4))
             )
+
+    def test_failed_default_run_replaces_stale_passing_report(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        output = tmp_path / "reuse_judge_calibration.json"
+        output.write_text(
+            json.dumps({"reference_set_passed": True}), encoding="utf-8"
+        )
+        monkeypatch.setattr(calibration, "DEFAULT_OUTPUT_PATH", output)
+
+        assert calibration.main(["--dry-run", "--sample-size", "0"]) == 0
+
+        summary = json.loads(output.read_text(encoding="utf-8"))
+        assert summary["reference_set_passed"] is False
+        assert summary["judge_vs_gold"]["calibrated"] is False
 
     def test_dry_run_cli_serializes_failed_reference_check(self, tmp_path) -> None:
         output = tmp_path / "report.json"
