@@ -99,6 +99,11 @@
   .hh-kv { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 12px; }
   .hh-kv .k { color: var(--muted); }
   .hh-kv .v { color: var(--text); font-weight: bold; }
+  .hh-reuse-summary { max-width: 760px; }
+  .hh-reuse-summary .hh-kv {
+    display: grid; grid-template-columns: minmax(190px, 280px) minmax(0, 1fr); gap: 24px;
+  }
+  .hh-reuse-summary .hh-kv .v { text-align: left; }
   .health-badge {
     padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: bold;
     text-transform: uppercase; letter-spacing: 0.05em;
@@ -552,6 +557,7 @@
     .iq-grid     { grid-template-columns: repeat(2, 1fr); }
     .query-grid  { grid-template-columns: repeat(2, 1fr); }
     .hh-grid     { grid-template-columns: 1fr; }
+    .hh-reuse-summary .hh-kv { grid-template-columns: 1fr; gap: 2px; }
   }
 </style>
 </head>
@@ -933,8 +939,8 @@
           We measure how often past work that an agent pulled up actually gets used again — either
           <strong>reused directly</strong> (the agent copied a specific detail) or used to
           <strong>shape the approach</strong>. An automatic check scores this, but we don't trust its
-          numbers until it has been compared against a person reviewing the same cases. That
-          human comparison hasn't been run yet, so these numbers aren't shown as confident.
+          numbers until it has been checked against maintained reference cases and a separate
+          seed group. That check hasn't been run yet, so these numbers aren't shown as confident.
         </div>
       </div>
     </div>
@@ -2227,9 +2233,9 @@ function renderEffectivenessReports(reports) {
 
 // Reuse-KPI calibration affordance. The reuse-rate table is not wired to live
 // data yet; until it is, this panel's job is to say — honestly, in plain words —
-// whether the automatic check that WOULD produce those rates has been compared
-// against a person reviewing the same cases. Until that agreement is good enough,
-// the rates are not shown as confident.
+// whether the automatic check that WOULD produce those rates has been checked
+// against maintained reference cases and a separate seed group. Until that agreement
+// is good enough, the rates are not shown as confident.
 function renderReuseCalibration(entry) {
   const el = document.getElementById('hh-reuse-kpi');
   if (!el) return;
@@ -2263,7 +2269,7 @@ function renderReuseCalibration(entry) {
       'trust these numbers. Note the review set is small and hand-built — solid, but not the ' +
       'final word.</div>';
   }
-  el.innerHTML = rows.join('') + note + _hhStamp(entry);
+  el.innerHTML = '<div class="hh-reuse-summary">' + rows.join('') + '</div>' + note + _hhStamp(entry);
 }
 
 function renderRawDerivedHybrid(entry) {
