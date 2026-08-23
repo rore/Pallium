@@ -71,7 +71,7 @@ from evals.historical_lookup_measurement import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 JUDGE_PROMPT_ID = "historical-lookup-reuse"
-JUDGE_PROMPT_VERSION = "2026-08-17-rubric-v2"
+JUDGE_PROMPT_VERSION = "2026-08-23-evidence-v6"
 
 JUDGE_SYSTEM_PROMPT = """\
 You are auditing whether an AI agent actually REUSED information it retrieved
@@ -98,10 +98,22 @@ Decide:
      direction WITHOUT reproducing a specific detail from it verbatim or
      near-verbatim. Weaker, observational.
    - "none": no evidence the history was used.
-3. evidence_span (string): a short verbatim quote (<=200 chars) of the specific
-   detail that appears in BOTH RETRIEVED HISTORY and WORK AFTER — the overlap
-   itself, not just any WORK AFTER text. Required (non-empty) only when rung is
-   "incorporation"; empty string for "influence" and "none".
+3. evidence_span (string): one short, contiguous, exact substring (<=200 chars)
+   that occurs in BOTH RETRIEVED HISTORY and WORK AFTER after ignoring only
+   casing and whitespace differences. Select it in this order:
+   a. If an exact identifier or code token occurs in both blocks, return ONLY
+      that identifier or token — never append its surrounding description.
+   b. Otherwise, if a numeric value with its unit occurs in both, return ONLY
+      that value and unit.
+   c. Otherwise, return the shortest distinctive contiguous phrase shared by both.
+   Do not include surrounding words unless those words also occur contiguously
+   in both blocks. Copy from one block; do not paraphrase, combine
+   separate fragments, or quote text unique to only one block. Before returning,
+   verify that the same contiguous words occur in both blocks. If reuse is only
+   near-verbatim and there is no suitable exact shared substring, choose
+   "influence" and return an empty evidence_span. Required (non-empty) only when
+   rung is "incorporation". For "influence" and "none", evidence_span MUST be
+   exactly the empty string "", even when the rationale has supporting details.
 4. direction (string): who initiated the lookup, read from CONTEXT BEFORE —
    - "user_directed": the user explicitly asked the agent to recall or look up
      past context.
@@ -450,11 +462,15 @@ def _judge_once(provider, ctx: LookupContext, *, rater_seed: str, seed_value: in
             raise ValueError("invalid evidence_span type or length")
         if rung == "incorporation":
             normalized = " ".join(evidence.casefold().split())
-            retrieved = " ".join(" ".join(ctx.retrieved_texts).casefold().split())
-            work_after = " ".join(
-                " ".join(content for _role, content in ctx.after_turns).casefold().split()
+            retrieved_has_span = any(
+                normalized in " ".join(text.casefold().split())
+                for text in ctx.retrieved_texts
             )
-            if not normalized or normalized not in retrieved or normalized not in work_after:
+            work_after_has_span = any(
+                normalized in " ".join(content.casefold().split())
+                for _role, content in ctx.after_turns
+            )
+            if not normalized or not retrieved_has_span or not work_after_has_span:
                 raise ValueError("incorporation evidence_span must overlap both sides")
         elif evidence:
             raise ValueError("non-incorporation evidence_span must be empty")

@@ -1,7 +1,7 @@
 ---
 id: idea-reuse-judge-calibration
 title: Reuse-ladder judge calibration (gold set + agreement threshold)
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-p1
@@ -67,10 +67,13 @@ Historical pre-enforcement result, 2026-08-23: cache-disabled groups 0/1/2 and
 Reopened 2026-08-23 after executable evidence-span enforcement: 16/72 calls
 failed because the judge supplied work-only or history-only spans. The overall
 gate failed despite perfect agreement on the incomplete surviving subset.
-Follow-up: make the existing judge reliably emit a short exact shared span for
-incorporation, without weakening the validator or tuning the fixture, then
-repeat the full cache-disabled two-group gate before interpreting real lookup
-windows.
+
+Completed 2026-08-23: prompt version 2026-08-23-evidence-v6 made the output
+contract explicit without changing the validator or fixture. Cache-disabled
+seed groups 0/1/2 and 3/4/5 each matched the maintained reference set at
+kappa 1.0 (N=12), their mutual kappa was 1.0 (N=12), and there were zero failed
+or missing events. This establishes reference-set regression stability only;
+it does not show that retrieved memory improves real downstream work.
 
 
 Highest-value verification gap from the vNext architect review. Should land
