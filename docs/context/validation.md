@@ -104,63 +104,50 @@ snapshots and applies a rule — no LLM in the harness itself.
 - **Don't trust single-seed judge calls on small samples.** ~20pp variance is real (see `lessons.md`); use ≥3 seeds and a consensus rule, or pick a deterministic-replay tool instead.
 - **Don't conflate retrieval recall with end-to-end accuracy.** R@5 of 95% on LongMemEval-S is session-id-in-top-5, not QA. Pick the metric that matches the claim.
 
-## Reuse Judge Calibration
+## Reuse Judge Reference-Set Validation
 
-The retrospective reuse KPI (the three-rung ladder) rests entirely on the
-LLM-judge's rung-1/rung-2 verdicts. Inter-seed Cohen's kappa (already reported
-by the judge) measures the judge's *stability*, not its *correctness* — a
-confidently-wrong judge can be perfectly self-consistent. Calibration closes
-that gap against a human-labelled gold set.
+The reuse judge is checked against a maintained single-author reference set and
+against a second independent seed group. This is a regression and stability
+signal, not proof of objective correctness or independent human agreement.
 
-- **Gold fixture:** `evals/fixtures/reuse_gold/gold_lookups.json` — 12
-  hand-labelled synthetic lookups (before/after turns + retrieved history +
-  correct rung), 4 incorporation / 4 influence / 4 none.
-- **Runner:** `python -m evals.reuse_judge_calibration --seeds 0,1,2` seeds the
-  fixture into a scratch DB and runs the REAL judge (`evals/historical_lookup_judge.py`)
-  with `gold_labels`, so it reports judge-vs-gold Cohen's kappa (consensus rung
-  vs gold rung) alongside the usual seed-vs-seed kappa.
-- **Threshold:** `GOLD_KAPPA_THRESHOLD = 0.6` — a project-defined minimum
-  agreement threshold (it sits just below the Landis & Koch "substantial"
-  boundary of 0.61, cited only as a rough reference, not a claim that 0.6 is
-  itself "substantial").
-  Below it, the rollup embeds `calibration.calibrated = false`, every rung entry
-  is stamped `"calibrated": false`, and the dashboard reuse-KPI panel presents
-  rung rates as **uncalibrated** rather than confident.
+- **Reference fixture:** evals/fixtures/reuse_gold/gold_lookups.json contains 12
+  synthetic lookups: 4 incorporation, 4 influence, and 4 none.
+- **Runner:** python -m evals.reuse_judge_calibration --seed-groups
+  "0,1,2;3,4,5" seeds two scratch databases, disables the evaluation cache, and
+  judges the same ordered cases with both disjoint groups.
+- **Report:** records prompt id/version, each group-vs-reference kappa, confusion
+  matrix, per-class precision/recall/support, mutual group kappa, comparison N,
+  and missing/failed event IDs.
+- **Sole live threshold:** GOLD_KAPPA_THRESHOLD = 0.70. The reference-set check
+  passes only when both group-vs-reference kappas and mutual kappa meet 0.70,
+  every expected event is compared, and neither group has a missing/all-failed
+  event. Failed checks keep rung rates visibly uncalibrated.
 
-### Measured result (2026-08-14, seeds 0,1,2, real provider)
+### Historical evidence
 
-Re-run after correcting a gold-set taxonomy error (`gold-influence-3` had
-restated the retrieved sequence near-verbatim, which is incorporation, not
-influence; its after_turns were rewritten to carry only high-level direction)
-and after fixing the gold-kappa math (all-failed events are now excluded from
-the comparison vectors).
-
-- **judge-vs-gold Cohen's kappa = 0.50** (n = 12, 0 judge failures) → **below the
-  0.60 threshold → UNCALIBRATED.**
-- seed-vs-seed kappa on the same run = **1.0** (perfectly self-consistent).
-- The gold-set and math corrections did **not** move the aggregate kappa: the
-  judge assigned "incorporation" to 8/12 lookups and never assigned "influence",
-  collapsing the rung-1/rung-2 distinction the KPI depends on — the miss is in
-  the judge, not the fixture.
-- Verdict: **the reuse judge is NOT yet calibrated.** Rung rates are presented
-  as uncalibrated. The gap between a perfect 1.0 self-consistency and a 0.50
-  agreement-with-gold is exactly why inter-seed kappa alone is insufficient.
-  Fixing the rung-1/rung-2 collapse is a judge-rubric change, out of scope for
-  this calibration work — the honest present state is "uncalibrated".
+- 2026-08-14, old rubric, seeds 0/1/2: judge-vs-reference κ=0.50 (N=12,
+  no judge failures), seed-vs-seed κ=1.0. The judge collapsed all four influence
+  cases upward to incorporation. The former live gate was 0.60; this result also
+  fails the current 0.70 gate.
+- After the incorporation/influence rubric was aligned, a provisional rerun
+  produced κ=0.75 (N=12, no failures), with two of four influence cases
+  recovered and seed-vs-seed κ=1.0. This is historical single-group evidence,
+  not completion of the current two-group reference-set gate.
+- 2026-08-23, current prompt, cache disabled: the two-group reference-set gate
+  **passed**. Group A (seeds 0/1/2) κ=0.750, N=12; group B (3/4/5) κ=0.875,
+  N=12; mutual group κ=0.870, N=12; zero judge failures. All three comparisons
+  exceed the 0.70 threshold. This confirms repeatable agreement with the
+  maintained examples, not independent human correctness.
 
 ### Honesty limitations
 
-This is a directional calibration, not a final one:
-
-- **Small N.** 12 gold lookups → a WIDE kappa confidence interval; the 0.50
-  point estimate should not be over-read.
-- **Single-author synthetic labels.** One human labeller, no second independent
-  rater (so no human-human agreement baseline), and hand-written scenarios that
-  may not mirror the rung distribution of real lookup traffic.
-- A below-threshold result is a valid, honest outcome. The fixture must not be
-  grown or tweaked to force a pass; growing it to a larger, multi-rater corpus
-  is deliberately out of scope for this pass.
-
+- N=12 yields a wide kappa uncertainty range.
+- The labels and scenarios are single-author and synthetic; there is no
+  human-human agreement baseline and the distribution may differ from real
+  lookup traffic.
+- Passing protects against known regressions and unstable judge runs. It does
+  not establish that the reference labels are objectively correct.
+- The fixture must not be tuned merely to force a pass.
 
 ## Confidence Gate
 

@@ -70,6 +70,9 @@ from evals.historical_lookup_measurement import (  # noqa: E402
 # Judge prompt
 # ---------------------------------------------------------------------------
 
+JUDGE_PROMPT_ID = "historical-lookup-reuse"
+JUDGE_PROMPT_VERSION = "2026-08-17-rubric-v2"
+
 JUDGE_SYSTEM_PROMPT = """\
 You are auditing whether an AI agent actually REUSED information it retrieved
 from its own past conversation history. You judge one history lookup at a time,
@@ -120,17 +123,10 @@ JUDGE_SCHEMA = (
 _JUDGE_RUNGS = frozenset({"incorporation", "influence"})
 _DIRECTIONS = frozenset({"user_directed", "agent_decided"})
 
-#: Minimum judge-vs-gold Cohen's kappa below which the reuse KPI is presented as
-#: UNCALIBRATED. 0.60 is a PROJECT-DEFINED minimum agreement threshold (it sits
-#: just below the Landis & Koch "substantial" boundary of 0.61, used only as a
-#: rough reference point — not a claim that 0.60 IS "substantial"). The repo
-#: already requires >=3 rater seeds + a consensus rule because single-seed judge
-#: verdicts carry ~20pp variance (docs/context/validation.md); calibration raises
-#: that bar from self-consistency to CORRECTNESS — the judge's consensus must
-#: reach this agreement with a human-labelled gold set before rung rates are
-#: shown as confident. Point estimate on a small gold fixture; see the fixture's
-#: honesty_limitations (wide CI, single-author synthetic labels).
-GOLD_KAPPA_THRESHOLD = 0.6
+#: Sole live agreement gate for the maintained single-author reference set.
+#: This is a regression/reference check, not independent human calibration.
+GOLD_KAPPA_THRESHOLD = 0.7
+REFERENCE_CATEGORIES = ("incorporation", "influence", "none")
 
 
 # ---------------------------------------------------------------------------
@@ -189,10 +185,11 @@ class JudgeReport:
     rung_rates: dict[str, Any] = field(default_factory=dict)
     # Judge-vs-gold calibration (populated only when run_judge is given
     # gold_labels). gold_kappa is Cohen's kappa between the per-event CONSENSUS
-    # rung and the human gold rung, over the events present in gold_labels;
+    # rung and the maintained reference rung, over the events present in gold_labels;
     # calibrated is gold_kappa >= GOLD_KAPPA_THRESHOLD. None when uncomputed.
     gold_kappa: float | None = None
     gold_kappa_n: int = 0
+    gold_metrics: dict[str, Any] = field(default_factory=dict)
     calibrated: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -203,6 +200,10 @@ class JudgeReport:
             "n_abandoned": self.n_abandoned,
             "seeds": self.seeds,
             "sample_seed": self.sample_seed,
+            "judge_prompt": {
+                "id": JUDGE_PROMPT_ID,
+                "version": JUDGE_PROMPT_VERSION,
+            },
             "genuine_opportunities": self.genuine_opportunities,
             "direction_split": {
                 "user_directed": self.user_directed,
@@ -218,7 +219,10 @@ class JudgeReport:
                 "n": self.gold_kappa_n,
                 "threshold": GOLD_KAPPA_THRESHOLD,
                 "calibrated": self.calibrated,
-                "categories": ["incorporation", "influence", "none"],
+                "evidence_kind": "single_author_reference_set",
+                "categories": list(REFERENCE_CATEGORIES),
+                "confusion_matrix": self.gold_metrics.get("confusion_matrix"),
+                "per_class": self.gold_metrics.get("per_class"),
             },
             "rung_rates": self.rung_rates,
             "n_labels_written": len(self.labels),
@@ -526,6 +530,33 @@ def _rung_category(rung: str | None) -> str:
     return rung if rung in _RUNG_LADDER else "none"
 
 
+def classification_metrics(
+    predicted: list[str], reference: list[str]
+) -> dict[str, Any]:
+    """Confusion matrix and per-class precision/recall for fixed reuse rungs."""
+    if len(predicted) != len(reference):
+        raise ValueError("predicted and reference vectors must have equal length")
+    matrix = {
+        actual: {guess: 0 for guess in REFERENCE_CATEGORIES}
+        for actual in REFERENCE_CATEGORIES
+    }
+    for guess, actual in zip(predicted, reference):
+        if guess not in REFERENCE_CATEGORIES or actual not in REFERENCE_CATEGORIES:
+            raise ValueError("unknown reuse rung in classification vectors")
+        matrix[actual][guess] += 1
+    per_class: dict[str, dict[str, float | int]] = {}
+    for rung in REFERENCE_CATEGORIES:
+        tp = matrix[rung][rung]
+        predicted_n = sum(matrix[actual][rung] for actual in REFERENCE_CATEGORIES)
+        support = sum(matrix[rung].values())
+        per_class[rung] = {
+            "precision": tp / predicted_n if predicted_n else 0.0,
+            "recall": tp / support if support else 0.0,
+            "support": support,
+        }
+    return {"confusion_matrix": matrix, "per_class": per_class}
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -557,11 +588,11 @@ def run_judge(
     on the double-rated subsample.
 
     ``gold_labels`` (optional): a ``{lookup_event_id -> gold_rung}`` map of
-    human labels (gold_rung in {"incorporation", "influence", "none"}, or None
+    maintained reference labels (gold_rung in {"incorporation", "influence", "none"}, or None
     treated as "none"). When supplied, the report also carries judge-vs-gold
     Cohen's kappa (the per-event CONSENSUS rung vs the gold rung, over the
     events present in the map) and a ``calibrated`` verdict against
-    ``GOLD_KAPPA_THRESHOLD``. This measures judge CORRECTNESS, not just
+    ``GOLD_KAPPA_THRESHOLD``. This measures agreement with the maintained reference set, not just
     inter-seed stability. It does not change the rubric, the sampling, or the
     persisted labels.
     """
@@ -689,7 +720,7 @@ def run_judge(
         report.kappa_n = len(vec_a)
 
     # Judge-vs-gold calibration: compare the per-event CONSENSUS rung against
-    # the human gold rung over the events present in gold_labels. Reuses the
+    # the maintained reference rung over the events present in gold_labels. Reuses the
     # same cohens_kappa + _rung_category machinery as the seed-vs-seed kappa, so
     # both agreement numbers are computed identically (only the second rater
     # differs: gold instead of another seed).
@@ -709,6 +740,7 @@ def run_judge(
             gold_vec.append(_rung_category(gold_labels.get(ctx.lookup_event_id)))
         report.gold_kappa = cohens_kappa(judge_vec, gold_vec)
         report.gold_kappa_n = len(judge_vec)
+        report.gold_metrics = classification_metrics(judge_vec, gold_vec)
         report.calibrated = (
             report.gold_kappa is not None
             and report.gold_kappa >= GOLD_KAPPA_THRESHOLD

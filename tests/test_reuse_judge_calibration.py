@@ -14,10 +14,17 @@ The judge LLM is a deterministic in-process stub — no network calls.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 import pytest
 
-from evals.historical_lookup_judge import GOLD_KAPPA_THRESHOLD, run_judge
+from evals.historical_lookup_judge import (
+    GOLD_KAPPA_THRESHOLD,
+    JUDGE_PROMPT_ID,
+    JUDGE_PROMPT_VERSION,
+    classification_metrics,
+    run_judge,
+)
 from evals.historical_lookup_measurement import (
     _empty_calibration_report,
     compute_reuse_rollup,
@@ -25,7 +32,10 @@ from evals.historical_lookup_measurement import (
 from evals.reuse_judge_calibration import (
     DEFAULT_FIXTURE_PATH,
     _calibration_summary,
+    build_reference_validation_summary,
     load_gold_fixture,
+    main,
+    run_reference_validation,
     seed_scratch_db,
 )
 from providers.llm.base import LLMJsonResponse
@@ -50,6 +60,17 @@ class _StubJudge:
             "direction": "agent_decided",
         }
         return LLMJsonResponse(raw_text=json.dumps(payload), parsed_json=payload)
+
+
+class _PartialFailingStub(_StubJudge):
+    def generate_json(self, *, system_prompt, user_prompt, schema_description):
+        if "[reviewer pass #0]" in user_prompt:
+            raise RuntimeError("simulated partial judge failure")
+        return super().generate_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            schema_description=schema_description,
+        )
 
 
 class _FailingStub(_StubJudge):
@@ -152,6 +173,13 @@ class TestJudgeVsGold:
         assert set(block) >= {"kappa", "n", "threshold", "calibrated", "categories"}
         assert block["threshold"] == GOLD_KAPPA_THRESHOLD
         assert block["calibrated"] is True
+        assert block["evidence_kind"] == "single_author_reference_set"
+        assert block["confusion_matrix"]["incorporation"]["incorporation"] == 2
+        assert block["per_class"]["influence"] == {
+            "precision": 1.0, "recall": 1.0, "support": 2,
+        }
+        prompt = report.to_dict()["judge_prompt"]
+        assert prompt == {"id": JUDGE_PROMPT_ID, "version": JUDGE_PROMPT_VERSION}
 
     def test_no_gold_labels_leaves_calibration_none(self, tmp_path) -> None:
         db = tmp_path / "cal.db"
@@ -165,7 +193,7 @@ class TestJudgeVsGold:
 
     def test_threshold_value(self) -> None:
         # Guards accidental drift of the documented calibration bar.
-        assert GOLD_KAPPA_THRESHOLD == 0.6
+        assert GOLD_KAPPA_THRESHOLD == 0.7
 
     def test_all_failed_event_excluded_from_gold_vectors(self, tmp_path) -> None:
         # 6 clean records + 1 whose judge calls always fail (FAIL_MARKER). The
@@ -193,6 +221,141 @@ class TestJudgeVsGold:
         # The 6 remaining agree perfectly with gold → still calibrated.
         assert report.gold_kappa == pytest.approx(1.0)
         assert report.calibrated is True
+
+
+class TestReferenceValidation:
+    def _report(self, tmp_path):
+        db = tmp_path / "reference.db"
+        labels = seed_scratch_db(_inline_gold(), db)
+        return run_judge(
+            db, provider=_StubJudge(), container_ref=None, eligibility_n=0,
+            sample_size=500, seeds=[0, 1, 2], write_labels=False,
+            gold_labels=labels,
+        )
+
+    def test_zero_denominator_metrics_are_explicit(self) -> None:
+        metrics = classification_metrics(["none"], ["none"])
+        assert metrics["per_class"]["incorporation"] == {
+            "precision": 0.0, "recall": 0.0, "support": 0,
+        }
+
+    def test_two_identical_groups_pass(self, tmp_path) -> None:
+        report = self._report(tmp_path)
+        event_ids = list(report.consensus_rung)
+        summary = build_reference_validation_summary(
+            report, report, event_ids=event_ids, fixture_path="inline"
+        )
+        assert summary["reference_set_passed"] is True
+        assert summary["mutual_agreement"]["kappa"] == pytest.approx(1.0)
+        assert summary["mutual_agreement"]["n"] == len(event_ids)
+        assert summary["judge_vs_gold"]["kappa"] == pytest.approx(1.0)
+        assert summary["judge_vs_gold"]["n"] == len(event_ids)
+
+    def test_extra_event_fails(self, tmp_path) -> None:
+        report = self._report(tmp_path)
+        report.consensus_rung["ev:extra"] = None
+        event_ids = [event_id for event_id in report.consensus_rung if event_id != "ev:extra"]
+        summary = build_reference_validation_summary(
+            report, report, event_ids=event_ids, fixture_path="inline"
+        )
+        assert summary["reference_set_passed"] is False
+        assert summary["mutual_agreement"]["extra_events"]["a"] == ["ev:extra"]
+
+    def test_legacy_fields_use_minimum_group_values(self, tmp_path) -> None:
+        group_a = self._report(tmp_path)
+        group_b = deepcopy(group_a)
+        group_b.gold_kappa = 0.8
+        group_b.gold_kappa_n = 5
+        summary = build_reference_validation_summary(
+            group_a,
+            group_b,
+            event_ids=list(group_a.consensus_rung),
+            fixture_path="inline",
+        )
+        assert summary["judge_vs_gold"]["kappa"] == pytest.approx(0.8)
+        assert summary["judge_vs_gold"]["n"] == 5
+        assert summary["reference_set_passed"] is False
+
+    def test_missing_event_fails(self, tmp_path) -> None:
+        report = self._report(tmp_path)
+        event_ids = [*report.consensus_rung, "ev:missing"]
+        summary = build_reference_validation_summary(
+            report, report, event_ids=event_ids, fixture_path="inline"
+        )
+        assert summary["reference_set_passed"] is False
+        assert summary["mutual_agreement"]["missing_events"]["a"] == ["ev:missing"]
+
+    @pytest.mark.parametrize("sample_size", [6, 500])
+    def test_exact_and_over_count_full_lifecycle(self, tmp_path, sample_size) -> None:
+        fixture = tmp_path / "reference.json"
+        fixture.write_text(json.dumps({"lookups": _inline_gold()}), encoding="utf-8")
+        summary = run_reference_validation(
+            provider=_StubJudge(),
+            fixture_path=fixture,
+            seed_groups=((0, 1, 2), (3, 4, 5)),
+            sample_size=sample_size,
+        )
+        assert summary["reference_set_passed"] is True
+        assert summary["mutual_agreement"]["n"] == 6
+
+    def test_invalid_reference_label_is_rejected(self, tmp_path) -> None:
+        fixture = tmp_path / "invalid.json"
+        records = _inline_gold()
+        records[0]["gold_rung"] = "maybe"
+        fixture.write_text(json.dumps({"lookups": records}), encoding="utf-8")
+        with pytest.raises(ValueError, match="invalid gold_rung"):
+            load_gold_fixture(fixture)
+
+    def test_partial_seed_failure_is_visible_and_rejected(self, tmp_path) -> None:
+        fixture = tmp_path / "partial.json"
+        fixture.write_text(json.dumps({"lookups": _inline_gold()}), encoding="utf-8")
+        summary = run_reference_validation(
+            provider=_PartialFailingStub(), fixture_path=fixture
+        )
+        assert summary["reference_set_passed"] is False
+        assert len(summary["mutual_agreement"]["failed_events"]["a"]) == 6
+        assert summary["mutual_agreement"]["failed_events"]["b"] == []
+
+    def test_all_failed_groups_do_not_pass(self, tmp_path) -> None:
+        fixture = tmp_path / "failed.json"
+        records = _inline_gold()
+        for record in records:
+            record["after_turns"][0]["content"] = "FAIL_MARKER"
+        fixture.write_text(json.dumps({"lookups": records}), encoding="utf-8")
+        summary = run_reference_validation(
+            provider=_FailingStub(), fixture_path=fixture
+        )
+        assert summary["reference_set_passed"] is False
+        assert len(summary["mutual_agreement"]["failed_events"]["a"]) == 6
+        assert summary["mutual_agreement"]["n"] == 0
+
+    def test_underpowered_seed_group_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="at least three"):
+            run_reference_validation(
+                provider=_StubJudge(), seed_groups=((0, 1), (2, 3, 4))
+            )
+
+    def test_duplicate_seed_within_group_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="distinct"):
+            run_reference_validation(
+                provider=_StubJudge(), seed_groups=((0, 0, 1), (2, 3, 4))
+            )
+
+    def test_overlapping_seed_groups_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="disjoint"):
+            run_reference_validation(
+                provider=_StubJudge(), seed_groups=((0, 1, 2), (2, 3, 4))
+            )
+
+    def test_dry_run_cli_serializes_failed_reference_check(self, tmp_path) -> None:
+        output = tmp_path / "report.json"
+        assert main([
+            "--dry-run", "--sample-size", "0", "--output", str(output),
+        ]) == 0
+        summary = json.loads(output.read_text(encoding="utf-8"))
+        assert summary["reference_set_passed"] is False
+        assert summary["mutual_agreement"]["n"] == 0
+        assert summary["judge_prompt"]["version"] == JUDGE_PROMPT_VERSION
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Reuse-judge calibration runner — judge-vs-gold agreement.
+"""Reuse-judge calibration runner — judge-vs-reference agreement.
 
 Spec / ticket: roadmap/ideas/idea-reuse-judge-calibration.md
 Judge:         evals/historical_lookup_judge.py
@@ -8,21 +8,21 @@ verdicts. Inter-seed Cohen's kappa (already in the judge) measures the judge's
 *stability*, not its *correctness*: a confidently-wrong judge can be perfectly
 self-consistent. This runner closes that gap. It:
 
-  1. Loads a small, committed, human-labelled GOLD fixture of lookups
+  1. Loads a small, committed, single-author reference fixture of lookups
      (``evals/fixtures/reuse_gold/gold_lookups.json``) — each record is
-     before/after turns + retrieved history + the correct rung.
+     before/after turns + retrieved history + the maintained reference rung.
   2. Seeds those records into a throwaway scratch SQLite DB as
      ``historical_lookup_reuse_event`` "lookup" rows + surrounding
      ``source_items`` turns, exactly the shape the judge reads from a live DB.
   3. Runs the REAL judge (``run_judge``) over the scratch DB with
-     ``gold_labels`` supplied, so the judge reports judge-vs-gold Cohen's kappa
+     ``gold_labels`` supplied, so the judge reports judge-vs-reference Cohen's kappa
      (consensus rung vs gold rung) alongside its usual seed-vs-seed kappa.
   4. Emits a report with the measured kappa + the ``calibrated`` verdict
      against ``GOLD_KAPPA_THRESHOLD``.
 
 This is a thin CONSUMER of the judge — it does NOT define a second judge, and it
 does NOT change the rubric, model, sampling, or consensus rule. It only measures
-how well the existing judge agrees with the gold set.
+how well the existing judge agrees with the reference set.
 
 HONESTY LIMITATIONS (see the fixture's ``_meta.honesty_limitations``): the gold
 set is small (N=12 → wide kappa CI) and single-author synthetic (no second human
@@ -35,7 +35,7 @@ Run (dry, no LLM, no DB needed beyond a temp file):
 
 Run for real (needs a configured LLM provider):
     PALLIUM_CONFIG_FILE=pallium.local.toml PALLIUM_HAI_API_KEY=... \\
-        python -m evals.reuse_judge_calibration --seeds 0,1,2 \\
+        python -m evals.reuse_judge_calibration --seed-groups "0,1,2;3,4,5" \\
         --cache-dir .local/llm-cache \\
         --output .local/research/reuse_judge_calibration.json
 """
@@ -58,8 +58,12 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from evals.historical_lookup_judge import (  # noqa: E402
     GOLD_KAPPA_THRESHOLD,
+    JUDGE_PROMPT_ID,
+    JUDGE_PROMPT_VERSION,
     JudgeReport,
     _NullProvider,
+    _rung_category,
+    cohens_kappa,
     run_judge,
 )
 from storage.sqlite import SQLiteStorageProvider  # noqa: E402
@@ -95,27 +99,27 @@ def _artifact_kind_for(role: str) -> str:
 
 
 def load_gold_fixture(path: Path | str = DEFAULT_FIXTURE_PATH) -> list[dict[str, Any]]:
-    """Load and validate the gold fixture. Raises ValueError on a malformed or
+    """Load and validate the reference fixture. Raises ValueError on a malformed or
     non-generic record so a bad fixture fails loudly rather than silently
     skewing calibration."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     lookups = data.get("lookups")
     if not isinstance(lookups, list) or not lookups:
-        raise ValueError("gold fixture has no 'lookups' list")
+        raise ValueError("reference fixture has no 'lookups' list")
     seen_ids: set[str] = set()
     for rec in lookups:
         rid = rec.get("id")
         if not rid or rid in seen_ids:
-            raise ValueError(f"gold fixture: missing or duplicate id: {rid!r}")
+            raise ValueError(f"reference fixture: missing or duplicate id: {rid!r}")
         seen_ids.add(rid)
         if rec.get("gold_rung") not in _GOLD_RUNGS:
-            raise ValueError(f"gold fixture {rid}: invalid gold_rung {rec.get('gold_rung')!r}")
+            raise ValueError(f"reference fixture {rid}: invalid gold_rung {rec.get('gold_rung')!r}")
         if not isinstance(rec.get("before_turns"), list) or not rec["before_turns"]:
-            raise ValueError(f"gold fixture {rid}: before_turns must be non-empty")
+            raise ValueError(f"reference fixture {rid}: before_turns must be non-empty")
         if not isinstance(rec.get("after_turns"), list) or not rec["after_turns"]:
-            raise ValueError(f"gold fixture {rid}: after_turns must be non-empty")
+            raise ValueError(f"reference fixture {rid}: after_turns must be non-empty")
         if not isinstance(rec.get("retrieved_history"), list):
-            raise ValueError(f"gold fixture {rid}: retrieved_history must be a list")
+            raise ValueError(f"reference fixture {rid}: retrieved_history must be a list")
     return lookups
 
 
@@ -223,8 +227,8 @@ def run_calibration(
     seeds: list[int] | None = None,
     sample_size: int = 500,
 ) -> JudgeReport:
-    """Load the gold fixture, seed a scratch DB, and run the real judge with
-    gold_labels so the report carries judge-vs-gold agreement.
+    """Load the reference fixture, seed a scratch DB, and run the real judge with
+    gold_labels so the report carries judge-vs-reference agreement.
 
     ``db_path`` None → a fresh temp file (removed by the OS temp dir lifecycle).
     ``write_labels`` is False: this is a calibration measurement, not a labels
@@ -264,11 +268,133 @@ def run_calibration(
     return report
 
 
+def _event_status(
+    report: JudgeReport, event_ids: list[str]
+) -> tuple[set[str], list[str], list[str], list[str]]:
+    expected = set(event_ids)
+    sampled = set(report.consensus_rung)
+    successful = {label.lookup_event_id for label in report.labels}
+    successful_counts: dict[str, int] = {}
+    for label in report.labels:
+        successful_counts[label.lookup_event_id] = (
+            successful_counts.get(label.lookup_event_id, 0) + 1
+        )
+    return (
+        successful,
+        [event_id for event_id in event_ids if event_id not in sampled],
+        [
+            event_id for event_id in event_ids
+            if event_id in sampled
+            and successful_counts.get(event_id, 0) < len(report.seeds)
+        ],
+        sorted(sampled - expected),
+    )
+
+
+def build_reference_validation_summary(
+    group_a: JudgeReport,
+    group_b: JudgeReport,
+    *,
+    event_ids: list[str],
+    fixture_path: Path | str,
+) -> dict[str, Any]:
+    """Combine two disjoint seed groups over one ordered reference set."""
+    success_a, missing_a, failed_a, extra_a = _event_status(group_a, event_ids)
+    success_b, missing_b, failed_b, extra_b = _event_status(group_b, event_ids)
+    common = [event_id for event_id in event_ids if event_id in success_a and event_id in success_b]
+    vector_a = [_rung_category(group_a.consensus_rung[event_id]) for event_id in common]
+    vector_b = [_rung_category(group_b.consensus_rung[event_id]) for event_id in common]
+    mutual_kappa = cohens_kappa(vector_a, vector_b)
+    passed = (
+        group_a.calibrated is True
+        and group_b.calibrated is True
+        and not missing_a
+        and not missing_b
+        and not failed_a
+        and not failed_b
+        and not extra_a
+        and not extra_b
+        and group_a.gold_kappa_n == len(event_ids)
+        and group_b.gold_kappa_n == len(event_ids)
+        and len(common) == len(event_ids)
+        and mutual_kappa is not None
+        and mutual_kappa >= GOLD_KAPPA_THRESHOLD
+    )
+    combined_kappa = (
+        min(group_a.gold_kappa, group_b.gold_kappa)
+        if group_a.gold_kappa is not None and group_b.gold_kappa is not None
+        else None
+    )
+    combined_n = min(group_a.gold_kappa_n, group_b.gold_kappa_n)
+    return {
+        "spec": "roadmap/ideas/idea-reuse-judge-calibration.md",
+        "fixture": str(fixture_path),
+        "evidence_kind": "single_author_reference_set",
+        "judge_prompt": {"id": JUDGE_PROMPT_ID, "version": JUDGE_PROMPT_VERSION},
+        "threshold": GOLD_KAPPA_THRESHOLD,
+        "reference_set_passed": passed,
+        "judge_vs_gold": {
+            "kappa": combined_kappa,
+            "n": combined_n,
+            "calibrated": passed,
+            "threshold": GOLD_KAPPA_THRESHOLD,
+            "evidence_kind": "single_author_reference_set",
+        },
+        "groups": {
+            "a": _calibration_summary(group_a, fixture_path=fixture_path),
+            "b": _calibration_summary(group_b, fixture_path=fixture_path),
+        },
+        "mutual_agreement": {
+            "kappa": mutual_kappa,
+            "n": len(common),
+            "expected_n": len(event_ids),
+            "missing_events": {"a": missing_a, "b": missing_b},
+            "extra_events": {"a": extra_a, "b": extra_b},
+            "failed_events": {"a": failed_a, "b": failed_b},
+        },
+    }
+
+
+def run_reference_validation(
+    *,
+    provider,
+    fixture_path: Path | str = DEFAULT_FIXTURE_PATH,
+    seed_groups: tuple[tuple[int, ...], tuple[int, ...]] = ((0, 1, 2), (3, 4, 5)),
+    sample_size: int = 500,
+) -> dict[str, Any]:
+    """Run two disjoint seed groups against the same reference cases."""
+    if any(len(group) < 3 for group in seed_groups):
+        raise ValueError("each seed group must contain at least three seeds")
+    if any(len(set(group)) != len(group) for group in seed_groups):
+        raise ValueError("seeds within each group must be distinct")
+    if set(seed_groups[0]) & set(seed_groups[1]):
+        raise ValueError("seed groups must be disjoint")
+    gold = load_gold_fixture(fixture_path)
+    event_ids = [f"ev:{record['id']}" for record in gold]
+    group_a = run_calibration(
+        provider=provider,
+        fixture_path=fixture_path,
+        seeds=list(seed_groups[0]),
+        sample_size=sample_size,
+    )
+    group_b = run_calibration(
+        provider=provider,
+        fixture_path=fixture_path,
+        seeds=list(seed_groups[1]),
+        sample_size=sample_size,
+    )
+    return build_reference_validation_summary(
+        group_a, group_b, event_ids=event_ids, fixture_path=fixture_path
+    )
+
+
 def _calibration_summary(report: JudgeReport, *, fixture_path: Path | str) -> dict[str, Any]:
     return {
         "spec": "roadmap/ideas/idea-reuse-judge-calibration.md",
         "fixture": str(fixture_path),
         "n_gold": report.gold_kappa_n,
+        "evidence_kind": "single_author_reference_set",
+        "judge_prompt": {"id": JUDGE_PROMPT_ID, "version": JUDGE_PROMPT_VERSION},
         "seeds": report.seeds,
         "judge_vs_gold": {
             "kappa": report.gold_kappa,
@@ -286,15 +412,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Reuse-judge calibration: run the existing historical-lookup reuse "
-            "judge against a human-labelled gold fixture and report judge-vs-gold "
-            "Cohen's kappa + a calibrated verdict against GOLD_KAPPA_THRESHOLD."
+            "judge against a maintained single-author reference fixture and report judge-vs-reference "
+            "Cohen's kappa + a reference-set verdict against GOLD_KAPPA_THRESHOLD."
         )
     )
     parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE_PATH)
     parser.add_argument(
-        "--seeds",
-        default="0,1,2",
-        help="Comma-separated rater seeds; >=3 recommended (default: 0,1,2).",
+        "--seed-groups",
+        default="0,1,2;3,4,5",
+        help="Two semicolon-separated seed groups (default: 0,1,2;3,4,5).",
     )
     parser.add_argument("--sample-size", type=int, default=500)
     parser.add_argument(
@@ -303,11 +429,22 @@ def main(argv: list[str] | None = None) -> int:
         help="Seed + run with a no-op provider (no LLM calls). Kappa is not meaningful.",
     )
     parser.add_argument("--cache-dir", type=Path, default=None)
-    parser.add_argument("--no-eval-cache", action="store_true")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     args = parser.parse_args(argv)
 
-    seeds = [int(p.strip()) for p in str(args.seeds).split(",") if p.strip()]
+    try:
+        seed_groups = [
+            [int(p.strip()) for p in group.split(",") if p.strip()]
+            for group in str(args.seed_groups).split(";")
+        ]
+    except ValueError:
+        parser.error("--seed-groups must contain integers")
+    if len(seed_groups) != 2 or any(len(group) < 3 for group in seed_groups):
+        parser.error("--seed-groups requires two groups of at least three seeds")
+    if any(len(set(group)) != len(group) for group in seed_groups):
+        parser.error("seeds within each group must be distinct")
+    if set(seed_groups[0]) & set(seed_groups[1]):
+        parser.error("--seed-groups must be disjoint")
 
     if args.dry_run:
         provider = _NullProvider()
@@ -317,16 +454,15 @@ def main(argv: list[str] | None = None) -> int:
 
         config = AppConfig.from_env()
         _main_provider, provider = build_eval_providers(
-            config, cache_dir=args.cache_dir, no_eval_cache=args.no_eval_cache
+            config, cache_dir=args.cache_dir, no_eval_cache=True
         )
 
-    report = run_calibration(
+    summary = run_reference_validation(
         provider=provider,
         fixture_path=args.fixture,
-        seeds=seeds,
+        seed_groups=(tuple(seed_groups[0]), tuple(seed_groups[1])),
         sample_size=args.sample_size,
     )
-    summary = _calibration_summary(report, fixture_path=args.fixture)
 
     serialised = json.dumps(summary, indent=2, sort_keys=True, default=str)
     if args.output is not None:
@@ -335,15 +471,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Wrote calibration report -> {args.output}", file=sys.stderr)
     print(serialised)
 
-    kappa = report.gold_kappa
-    verdict = (
-        "CALIBRATED" if report.calibrated
-        else "UNCALIBRATED" if report.calibrated is False
-        else "INDETERMINATE"
-    )
+    verdict = "PASSED" if summary["reference_set_passed"] else "FAILED"
+    mutual = summary["mutual_agreement"]
     print(
-        f"judge-vs-gold kappa={kappa} n={report.gold_kappa_n} "
-        f"threshold={GOLD_KAPPA_THRESHOLD} -> {verdict}",
+        f"reference-set validation mutual_kappa={mutual['kappa']} "
+        f"n={mutual['n']} threshold={GOLD_KAPPA_THRESHOLD} -> {verdict}",
         file=sys.stderr,
     )
     return 0
