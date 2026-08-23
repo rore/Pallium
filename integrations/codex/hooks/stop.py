@@ -133,7 +133,7 @@ def _fetch_memory_match_text(memory_object_id: str) -> str:
 def main() -> None:
     try:
         payload = read_hook_input()
-        session_id = payload.get("session_id", "unknown")
+        session_id = payload.get("session_id")
         cwd = payload.get("cwd", ".")
         transcript_path = payload.get("transcript_path", "")
 

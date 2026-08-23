@@ -60,7 +60,7 @@ def main() -> None:
                         blocks.append(tb)
                         break
 
-        output = format_injection(blocks, container_ref, budget_chars=2400)
+        output = format_injection(blocks, container_ref, budget_chars=2400, thread_ref=session_id)
         if output:
             print(output)
 

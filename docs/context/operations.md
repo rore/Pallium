@@ -14,6 +14,13 @@ The service is **trusted-local**: no auth layer. Identity fields (`container_ref
 `actor_ref`, `session_id`) are for attribution and visibility scoping, not
 authorization.
 
+Codex and Claude hooks expose the host's active task as a compact injected
+`thread_ref`; deliberate historical search and expansion must pass it so lookup
+events can be joined to later work. It always names the requester, never the
+historical source, and grants no access. If the host supplies no task identity,
+Pallium leaves attribution absent rather than guessing or writing `unknown`. The
+marker uses the existing injection character budget.
+
 ## Health signals
 
 Two endpoints report liveness. Read them together — a 200 alone does not mean

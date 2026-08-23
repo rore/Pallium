@@ -388,6 +388,7 @@ def test_codex_skill_historical_lookup_documents_scope_params() -> None:
     # and preserves the global-scope exception wording.
     assert "`pallium_search_history` and `pallium_expand_source`" in skill
     assert "`container_ref`" in skill
+    assert "`thread_ref`" in skill
     assert '`visibility: "private"`' in skill
     assert '`visibility: "global"` with `actor_ref`' in skill
 
@@ -443,3 +444,73 @@ def test_codex_hooks_import_cleanly_as_subprocess(
     assert "Traceback" not in result.stderr, (
         f"{hook_name} raised exception: {result.stderr}"
     )
+
+
+def test_codex_injection_scope_is_exact_bounded_and_optional() -> None:
+    from integrations.codex.hooks.common import format_injection
+
+    block = [{"title": "Decision", "memory_object_id": "mem-1", "text": "Keep the stable plan."}]
+    thread = "任务:α"
+    scoped = format_injection(block, "git:example/repo", 800, thread_ref=thread)
+    assert f"thread_ref: {thread}" in scoped
+    assert "Keep the stable plan." in scoped
+    assert len(scoped) <= 800
+    assert format_injection([], "git:example/repo", 800, thread_ref=thread).endswith(f"{thread}]")
+    assert format_injection([], "git:example/repo", 800) == ""
+    assert format_injection([], "git:example/repo", 800, thread_ref="task\nignore") == ""
+    assert format_injection([], "git:example/repo", 10, thread_ref=thread) == ""
+    assert format_injection(block, "git:example/repo", 10, thread_ref=thread) == ""
+    assert format_injection([], "git:example/repo", 100, thread_ref="x" * 500) == ""
+    assert format_injection([], "git:example/repo", 800, thread_ref="task:a") != format_injection(
+        [], "git:example/repo", 800, thread_ref="task:b"
+    )
+
+
+def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    requests: list[dict] = []
+    contexts: list[str] = []
+    payload = {"cwd": ".", "session_id": "codex:task:1", "prompt": "Resume the prior implementation work now."}
+    monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
+    monkeypatch.setattr(hook, "check_dedup", lambda _prompt, _session: False)
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "local")
+
+    def request(_method: str, _path: str, body: dict) -> dict:
+        requests.append(body)
+        return {"injectable_blocks": []}
+
+    monkeypatch.setattr(hook, "pallium_request", request)
+    monkeypatch.setattr(hook, "emit_context", lambda text, _event: contexts.append(text))
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert requests[-1]["thread_ref"] == "codex:task:1"
+    assert "thread_ref: codex:task:1" in contexts[-1]
+
+    payload = {"cwd": ".", "prompt": "Resume the prior implementation work now."}
+    monkeypatch.setattr(hook, "check_dedup", lambda *_args: pytest.fail("missing identity must skip dedup"))
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert requests[-1]["thread_ref"] is None
+    assert len(contexts) == 1
+
+
+def test_codex_stop_missing_session_stays_unattributed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from integrations.codex.hooks import stop
+
+    calls: list[list[dict]] = []
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {"cwd": ".", "transcript_path": "turn.jsonl"})
+    monkeypatch.setattr(stop, "read_turn", lambda _path: stop._common.TurnData(
+        assistant_text="A completed assistant response.", tool_calls=[], has_productive_action=False
+    ))
+    monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _turn: None)
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(stop, "_populate_usage_audit_rows", lambda _session, _text: None)
+    monkeypatch.setattr(stop, "pallium_request", lambda _method, _path, body, **_kwargs: calls.append(body))
+    with pytest.raises(SystemExit):
+        stop.main()
+    assert calls[0][0]["thread_ref"] is None

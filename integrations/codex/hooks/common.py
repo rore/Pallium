@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -249,27 +250,38 @@ def pallium_request(
         return None
 
 
-def format_injection(
-    injectable_blocks: list[dict], container_ref: str, budget_chars: int
-) -> str:
-    """Format memory blocks for injection into Codex context.
+def _safe_scope_value(value: str) -> str | None:
+    """Preserve Unicode identity exactly and reject control-character breaks."""
+    return value if all(unicodedata.category(char) != "Cc" for char in value) else None
 
-    Returns empty string if no blocks or result is whitespace-only.
-    """
-    if not injectable_blocks:
+
+def format_injection(
+    injectable_blocks: list[dict],
+    container_ref: str,
+    budget_chars: int,
+    thread_ref: str | None = None,
+) -> str:
+    """Format bounded memory plus exact active-task telemetry scope."""
+    safe_container = _safe_scope_value(container_ref)
+    safe_thread = _safe_scope_value(thread_ref) if isinstance(thread_ref, str) and thread_ref else None
+    if safe_container is None or (thread_ref and safe_thread is None):
         return ""
 
-    header = f"[Pallium memory — container: {container_ref}]\n\n"
+    scope = f"[Pallium scope — container_ref: {safe_container}"
+    if safe_thread:
+        scope += f"; thread_ref: {safe_thread}"
+    scope += "]"
+    if not injectable_blocks:
+        return scope if safe_thread and len(scope) <= budget_chars else ""
+
+    prefix = f"[Pallium active thread_ref: {safe_thread}]\n\n" if safe_thread else ""
+    header = f"[Pallium memory — container: {safe_container}]\n\n"
     footer = (
         "\n\n[If any memory above seems incorrect or outdated, use the pallium_flag_memory\n"
         "tool with the ref ID and a brief reason. Use pallium_expand if you need\n"
         "more context on how a memory was derived.]\n\n"
         "[End Pallium memory]"
     )
-
-    overhead = len(header) + len(footer)
-    available = budget_chars - overhead
-
     formatted_blocks: list[str] = []
     for block in injectable_blocks:
         title = block.get("title", "")
@@ -280,21 +292,12 @@ def format_injection(
             line += " [+expand]"
         formatted_blocks.append(line)
 
-    total_len = sum(len(b) for b in formatted_blocks) + len(formatted_blocks) - 1
-    while formatted_blocks and total_len > available:
+    while formatted_blocks:
+        output = prefix + header + "\n\n".join(formatted_blocks) + footer
+        if len(output) <= budget_chars:
+            return output
         formatted_blocks.pop()
-        total_len = sum(len(b) for b in formatted_blocks) + max(0, len(formatted_blocks) - 1)
-
-    if not formatted_blocks:
-        return ""
-
-    body = "\n\n".join(formatted_blocks)
-    output = header + body + footer
-
-    if not output.strip():
-        return ""
-
-    return output
+    return scope if safe_thread and len(scope) <= budget_chars else ""
 
 
 def read_last_assistant_turn(transcript_path: str) -> str | None:

@@ -374,7 +374,8 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
     pallium_asgi_app, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     container = "git:github.com/rore/pallium"
-    thread = "mcp:e2e:historical"
+    source_thread = "mcp:e2e:historical:source"
+    active_thread = "mcp:e2e:historical:active"
     transport = httpx.ASGITransport(app=pallium_asgi_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:
         source_ids = []
@@ -391,7 +392,7 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
                 "artifact_kind": "message",
                 "role": "user",
                 "container_ref": container,
-                "thread_ref": thread,
+                "thread_ref": source_thread,
                 "visibility": "private",
             }])
             assert response.status_code == 200, response.text
@@ -411,7 +412,7 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
             "source_only": True,
             "trigger_origin": "agent_pull",
             "container_ref": container,
-            "thread_ref": thread,
+            "thread_ref": active_thread,
             "visibility": "private",
         })
         assert direct.status_code == 200, direct.text
@@ -425,6 +426,8 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
             client: PalliumMcpClient, source_item_id: str, **kwargs: object,
         ) -> dict:
             params: dict[str, object] = {"container_ref": client._ctx.container_ref}
+            if client._ctx.thread_ref:
+                params["active_session_ref"] = client._ctx.thread_ref
             for key in ("before", "after", "max_chars", "parent_lookup_id"):
                 if kwargs.get(key) is not None:
                     params[key] = kwargs[key]
@@ -439,7 +442,7 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
         search_content, _ = await server.call_tool("pallium_search_history", {
             "query": "distinctive lookup anchor phrase",
             "container_ref": "git:github.com/Rore/Pallium",
-            "thread_ref": thread,
+            "thread_ref": active_thread,
             "visibility": "private",
         })
         search = json.loads(search_content[0].text)
@@ -455,6 +458,7 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
             "max_chars": 4000,
             "parent_lookup_id": search["lookup_event_id"],
             "container_ref": "git:github.com/Rore/Pallium",
+            "thread_ref": active_thread,
             "visibility": "private",
         })
         expanded = json.loads(expand_content[0].text)
@@ -473,15 +477,20 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
         storage = pallium_asgi_app.state.pallium_service._storage
         with storage._engine.connect() as connection:
             rows = connection.execute(text(
-                "SELECT id, event_type, parent_lookup_id, exposed_json "
+                "SELECT id, event_type, session_id, source_session_ref, "
+                "parent_lookup_id, exposed_json "
                 "FROM historical_lookup_reuse_event ORDER BY created_at"
             )).mappings().all()
         lookup = next(row for row in rows if row["id"] == search["lookup_event_id"])
         assert anchor_id in {item["source_item_id"] for item in json.loads(lookup["exposed_json"])}
-        assert any(
-            row["event_type"] == "expansion" and row["parent_lookup_id"] == search["lookup_event_id"]
-            for row in rows
+        assert lookup["session_id"] == active_thread
+        expansion = next(
+            row for row in rows
+            if row["event_type"] == "expansion"
+            and row["parent_lookup_id"] == search["lookup_event_id"]
         )
+        assert expansion["session_id"] == active_thread
+        assert expansion["source_session_ref"] == source_thread
         after = [
             dataclasses.asdict(memory)
             for memory in sorted(storage.list_memory_objects(), key=lambda memory: memory.id)
