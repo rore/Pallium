@@ -280,16 +280,21 @@ class _PayloadJudge:
         )
 
 
-def _seed_contract_lookup(storage, *, retrieved: str, after: str) -> None:
-    _insert_turn(
-        storage,
-        sid="contract-history",
-        role="assistant",
-        artifact_kind="assistant_output",
-        content=retrieved,
-        thread="t:old",
-        created="2026-07-01 00:00:01.000000",
-    )
+def _seed_contract_lookup(
+    storage, *, retrieved: str | list[str], after: str | list[str]
+) -> None:
+    retrieved_items = [retrieved] if isinstance(retrieved, str) else retrieved
+    after_items = [after] if isinstance(after, str) else after
+    for index, content in enumerate(retrieved_items):
+        _insert_turn(
+            storage,
+            sid=f"contract-history-{index}",
+            role="assistant",
+            artifact_kind="assistant_output",
+            content=content,
+            thread="t:old",
+            created=f"2026-07-01 00:00:{index + 1:02d}.000000",
+        )
     _insert_turn(
         storage,
         sid="contract-user",
@@ -303,18 +308,19 @@ def _seed_contract_lookup(storage, *, retrieved: str, after: str) -> None:
         storage,
         event_id="contract-event",
         thread="t:contract",
-        exposed_ids=["contract-history"],
+        exposed_ids=[f"contract-history-{i}" for i in range(len(retrieved_items))],
         created="2026-08-01 00:00:02.000000",
     )
-    _insert_turn(
-        storage,
-        sid="contract-after",
-        role="assistant",
-        artifact_kind="assistant_output",
-        content=after,
-        thread="t:contract",
-        created="2026-08-01 00:00:03.000000",
-    )
+    for index, content in enumerate(after_items):
+        _insert_turn(
+            storage,
+            sid=f"contract-after-{index}",
+            role="assistant",
+            artifact_kind="assistant_output",
+            content=content,
+            thread="t:contract",
+            created=f"2026-08-01 00:00:{index + 3:02d}.000000",
+        )
 
 
 class TestEvidenceSpanContract:
@@ -361,6 +367,7 @@ class TestEvidenceSpanContract:
             ("incorporation", True, "x" * 201, "x" * 201, "x" * 201),
             ("incorporation", True, "work only", "different", "work only"),
             ("incorporation", True, "history only", "history only", "different"),
+            ("incorporation", True, "alpha beta", ["alpha", "beta"], ["alpha", "beta"]),
             ("influence", True, "shared fact", "shared fact", "shared fact"),
             ("none", False, "shared fact", "shared fact", "shared fact"),
         ],

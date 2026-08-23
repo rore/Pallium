@@ -462,11 +462,15 @@ def _judge_once(provider, ctx: LookupContext, *, rater_seed: str, seed_value: in
             raise ValueError("invalid evidence_span type or length")
         if rung == "incorporation":
             normalized = " ".join(evidence.casefold().split())
-            retrieved = " ".join(" ".join(ctx.retrieved_texts).casefold().split())
-            work_after = " ".join(
-                " ".join(content for _role, content in ctx.after_turns).casefold().split()
+            retrieved_has_span = any(
+                normalized in " ".join(text.casefold().split())
+                for text in ctx.retrieved_texts
             )
-            if not normalized or normalized not in retrieved or normalized not in work_after:
+            work_after_has_span = any(
+                normalized in " ".join(content.casefold().split())
+                for _role, content in ctx.after_turns
+            )
+            if not normalized or not retrieved_has_span or not work_after_has_span:
                 raise ValueError("incorporation evidence_span must overlap both sides")
         elif evidence:
             raise ValueError("non-incorporation evidence_span must be empty")
