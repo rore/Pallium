@@ -1,4 +1,4 @@
-﻿# Validation
+# Validation
 
 This page summarizes the validation surface for Pallium.
 
@@ -133,11 +133,19 @@ signal, not proof of objective correctness or independent human agreement.
   produced κ=0.75 (N=12, no failures), with two of four influence cases
   recovered and seed-vs-seed κ=1.0. This is historical single-group evidence,
   not completion of the current two-group reference-set gate.
-- 2026-08-23, current prompt, cache disabled: the two-group reference-set gate
-  **passed**. Group A (seeds 0/1/2) κ=0.750, N=12; group B (3/4/5) κ=0.875,
-  N=12; mutual group κ=0.870, N=12; zero judge failures. All three comparisons
-  exceed the 0.70 threshold. This confirms repeatable agreement with the
-  maintained examples, not independent human correctness.
+- 2026-08-23, before executable evidence-span enforcement, cache disabled: the
+  two-group reference-set gate passed. Group A (seeds 0/1/2) κ=0.750, N=12;
+  group B (3/4/5) κ=0.875, N=12; mutual group κ=0.870, N=12; zero judge
+  failures. This is historical evidence only.
+- 2026-08-23, with executable evidence-span enforcement, cache disabled: the
+  current gate **failed**. The judge emitted a malformed work-only or
+  history-only span on 16/72 calls (22.2%; 8/36 per group). Group A retained
+  10/12 comparable events, group B 11/12, and the mutual comparison retained
+  10/12. Kappa was 1.0 on each incomplete surviving subset, but incomplete
+  coverage is not a pass. These are downstream-task-effect / observational
+  judge-reliability numbers, not candidate-recovery or injection-precision.
+  Rung rates remain visibly uncalibrated until the judge reliably meets the
+  enforced contract across all cases.
 
 ### Honesty limitations
 

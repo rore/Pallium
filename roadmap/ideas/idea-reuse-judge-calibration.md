@@ -1,7 +1,7 @@
 ---
 id: idea-reuse-judge-calibration
 title: Reuse-ladder judge calibration (gold set + agreement threshold)
-status: done
+status: queued
 priority: high
 commitment: committed
 milestone: pallium-vnext-p1
@@ -46,7 +46,8 @@ to track, provided it is not presented as independent human calibration.
 - Independent human labeling or adjudication.
 - Rung-3 downstream benefit, which remains controlled-exposure-only.
 - Replacing the judge model/rubric or growing a large corpus.
-- Executable evidence-span validation, tracked separately.
+- Changing or weakening executable evidence-span validation; the enforced
+  contract is now a prerequisite for this gate.
 
 ## Done When
 
@@ -59,7 +60,17 @@ to track, provided it is not presented as independent human calibration.
 
 ## Notes
 
-Completed 2026-08-23: cache-disabled groups 0/1/2 and 3/4/5 produced group-vs-reference kappa 0.750 and 0.875, with mutual kappa 0.870 (N=12, zero failures).
+Historical pre-enforcement result, 2026-08-23: cache-disabled groups 0/1/2 and
+3/4/5 produced group-vs-reference kappa 0.750 and 0.875, with mutual kappa
+0.870 (N=12, zero failures).
+
+Reopened 2026-08-23 after executable evidence-span enforcement: 16/72 calls
+failed because the judge supplied work-only or history-only spans. The overall
+gate failed despite perfect agreement on the incomplete surviving subset.
+Follow-up: make the existing judge reliably emit a short exact shared span for
+incorporation, without weakening the validator or tuning the fixture, then
+repeat the full cache-disabled two-group gate before interpreting real lookup
+windows.
 
 
 Highest-value verification gap from the vNext architect review. Should land

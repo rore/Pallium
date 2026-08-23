@@ -445,7 +445,19 @@ def _judge_once(provider, ctx: LookupContext, *, rater_seed: str, seed_value: in
         genuine = _coerce_bool(parsed.get("genuine_opportunity", False))
         rung = _coerce_rung(parsed.get("rung")) if genuine else None
         direction = _coerce_direction(parsed.get("direction"))
-        evidence = str(parsed.get("evidence_span", ""))[:300]
+        evidence = parsed.get("evidence_span", "")
+        if not isinstance(evidence, str) or len(evidence) > 200:
+            raise ValueError("invalid evidence_span type or length")
+        if rung == "incorporation":
+            normalized = " ".join(evidence.casefold().split())
+            retrieved = " ".join(" ".join(ctx.retrieved_texts).casefold().split())
+            work_after = " ".join(
+                " ".join(content for _role, content in ctx.after_turns).casefold().split()
+            )
+            if not normalized or normalized not in retrieved or normalized not in work_after:
+                raise ValueError("incorporation evidence_span must overlap both sides")
+        elif evidence:
+            raise ValueError("non-incorporation evidence_span must be empty")
         rationale = f"genuine={genuine} rung={rung} dir={direction}"
     except Exception as exc:  # noqa: BLE001 — a judge error must not abort the run
         # A provider failure is NOT a "no reuse" verdict: mark it failed so it is
