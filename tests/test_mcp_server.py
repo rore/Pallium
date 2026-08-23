@@ -200,6 +200,33 @@ async def test_expand_source_tool_forwards_visibility(
     assert captured == {"source_item_id": "s-1"}
 
 @pytest.mark.asyncio
+async def test_historical_search_empty_echoes_exact_requested_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    raw = {
+        "results": [],
+        "lookup_event_id": "lookup-empty",
+        "decision_reason": "source_only_search",
+    }
+    with patch(
+        "app.mcp.client.PalliumMcpClient.search_history",
+        new=AsyncMock(return_value=raw),
+    ):
+        server = create_server()
+        content, _ = await server.call_tool("pallium_search_history", {
+            "query": "missing",
+            "container_ref": "git:github.com/rore/pallium",
+            "visibility": "private",
+        })
+
+    payload = json.loads(content[0].text)
+    assert payload["requested_container_ref"] == "git:github.com/rore/pallium"
+    assert "exact" in payload["empty_result_hint"]
+    assert len(content[0].text) <= 300
+
+
+@pytest.mark.asyncio
 async def test_historical_tools_project_bounded_payloads(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
     raw = {"results": [{"result_kind": "source_hit", "source_item_id": "s1", "excerpt": "prefix match middle suffix", "role": None, "occurred_at": None, "score": 99}], "lookup_event_id": "lookup-1"}
@@ -291,6 +318,7 @@ def test_compact_history_defaults_to_three_hits_and_bounds_escaped_json() -> Non
     assert len(result["results"]) <= 3
     assert len(_json_text(result)) <= 2000
     assert result["lookup_event_id"] == "lookup-1"
+    assert "empty_result_hint" not in result
 
 
 def test_compact_history_preserves_decision_reason_on_empty_fail_closed() -> None:
@@ -303,6 +331,31 @@ def test_compact_history_preserves_decision_reason_on_empty_fail_closed() -> Non
     }, "needle")
     assert result["results"] == []
     assert result["decision_reason"] == "visibility_context_required"
+
+
+
+def test_compact_history_explains_empty_requested_scope_within_budget() -> None:
+    result = _compact_history({
+        "results": [],
+        "lookup_event_id": "lookup-1",
+        "decision_reason": "source_only_search",
+    }, "needle", container_ref="git:github.com/rore/pallium")
+
+    assert result["requested_container_ref"] == "git:github.com/rore/pallium"
+    assert "exact" in result["empty_result_hint"]
+    assert len(_json_text(result)) <= 300
+
+
+def test_compact_history_truncates_oversized_requested_scope_within_budget() -> None:
+    result = _compact_history({
+        "results": [],
+        "lookup_event_id": None,
+        "decision_reason": "source_only_search",
+    }, "needle", container_ref="x" * 1000)
+
+    assert result["requested_container_ref"] == "x" * 64
+    assert result["container_ref_truncated"] is True
+    assert len(_json_text(result)) <= 300
 
 
 def test_bounded_expansion_clips_anchor_and_flags_every_clipped_item() -> None:

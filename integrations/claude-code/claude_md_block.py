@@ -6,7 +6,7 @@ CLAUDE_MD_BLOCK = """\
 
 Use Pallium for deliberate memory work; automatic injection handles routine retrieval.
 
-Picking up prior work? Call `pallium_search_history` first. After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`. Pass the injected active `thread_ref` to both tools for telemetry; it is not authorization or the historical source identity.
+Picking up prior work? Call `pallium_search_history` first. After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`. Copy the injected `container_ref` exactly—never derive, guess, or normalize it. Pass the active `thread_ref` to both tools for telemetry; it is not authorization or the historical source identity.
 - Search distilled memory with `pallium_query`; use `pallium_search_history` for raw turns and `pallium_expand_source` for bounded context.
 - Store turns with `pallium_ingest` (`artifact_kind="note"`, `visibility: "private"`, and the injected `container_ref`). Use global visibility only when explicitly requested, with `actor_ref`.
 - Use `pallium_query_debug` to distinguish filtered, missing, and low-relevance results; use `pallium_expand` when a memory card offers expansion.

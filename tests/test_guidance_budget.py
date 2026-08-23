@@ -36,3 +36,4 @@ def test_all_guidance_surfaces_preserve_search_to_expansion_telemetry_link() -> 
         Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8"),
     )
     assert all(linkage in rendered for rendered in surfaces)
+    assert all("never derive, guess, or normalize" in rendered for rendered in surfaces)
