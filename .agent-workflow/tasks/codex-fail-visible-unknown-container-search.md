@@ -19,13 +19,13 @@ Do not change authorization semantics, expose or enumerate containers, alter the
 An empty historical search echoes the requested container and gives a compact exact-ID hint; non-empty results do not pay that token cost; both integration skills and the MCP tool contract require copying the injected container_ref unchanged and never deriving or guessing it; E2E coverage proves the behavior without cross-container leakage.
 
 **Risk:**
-Routine
+Elevated
 
 **Complexity:**
 Moderate
 
 **Reason:**
-Clean-context redline review classifies the intended app/MCP, integration-skill, and test-only path as watch/blue with no checkpoint. Moderate complexity covers shared validation, two packaged integrations, and E2E behavior.
+The PR redline artifact classifies app/mcp/server.py as a watch/gray-zone file, which maps to Elevated risk. Moderate complexity covers shared validation, two packaged integrations, and E2E behavior.
 
 **Discovery:**
 Observed incident: guessed container identifiers returned the same empty result as a valid scope with no matches; using the injected canonical git:github.com/rore/pallium immediately returned useful history. Trace: MCP server → client POST /query → API/service/query executor. No REST/MCP surface or generic storage helper defines container existence; containers are implicit and may become valid on first ingest. /dashboard/api/containers is SQLite/dashboard-only and lists derived-memory containers, so it is not a valid raw-history preflight.
@@ -40,10 +40,10 @@ Reuse _compact_history in app/mcp/server.py: accept the resolved container, and 
 Empty search shall expose requested scope and exact-ID hint within 300 chars → compact-history + MCP tool tests. Non-empty search shall omit the hint → regression test. Packaged Claude/Codex skills shall carry identical exact-ID guidance → integration tests/hash parity. Existing visibility/canonicalization contracts shall remain green → focused history/MCP/container tests and CI. Installed integrations and service shall match merged code → setup refresh, restart, live health/search check.
 
 **Plan review:**
-self — minimal app/MCP-only correction; no truthful container-not-found state exists without a new registry/API contract, which is intentionally skipped.
+Clean-context agents reviewed the scope before implementation and the completed diff afterward. The final review approved the minimal app/MCP-only correction, confirmed no truthful container-not-found state exists without a new registry/API contract, and verified the public MCP-to-HTTP lifecycle. The PR redline artifact later supplied the authoritative watch/gray classification, so Risk was raised from Routine to Elevated.
 
 **Approvals:**
-Not required at this risk level.
+Not required at this risk level (Elevated). The user explicitly authorized this budget-aware fix and next slice.
 
 **Exceptions:**
 —
@@ -54,7 +54,7 @@ Not required at this risk level.
 ## Implementation
 
 - Established context and clean-context redline classification before code inspection. Intended implementation remains app/MCP-only unless discovery disproves the reusable-read-surface assumption.
-- Discovery disproved container-existence preflight. Returned to planning and narrowed the fix to exact-ID prevention plus compact empty-result diagnostics; Risk remains Routine because API/core/storage stay untouched.
+- Discovery disproved container-existence preflight. Returned to planning and narrowed the fix to exact-ID prevention plus compact empty-result diagnostics; API/core/storage stay untouched; the PR artifact nevertheless classifies the MCP server path as Elevated watch/gray.
 - The compact-history response now echoes a bounded requested container and exact-ID hint only for empty source-only searches. Successful results, errors, and fail-closed visibility responses retain their prior compact shape.
 - Claude and Codex packaged guidance now requires copying the injected container_ref unchanged and never deriving, guessing, or normalizing it.
 - Added compact boundary tests and extended the existing public MCP-to-real-HTTP lifecycle to prove a matching item in the canonical container does not leak into a guessed container.
