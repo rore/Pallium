@@ -163,6 +163,8 @@ def test_claude_injection_scope_is_exact_bounded_and_optional(
     assert hook.format_injection([], "git:example/repo", 800, thread_ref=thread).endswith(f"{thread}]")
     assert hook.format_injection([], "git:example/repo", 800) == ""
     assert hook.format_injection([], "git:example/repo", 800, thread_ref="task\nignore") == ""
+    assert hook.format_injection([], "git:example/repo", 800, thread_ref="task\u2028ignore") == ""
+    assert hook.format_injection([], "git:example/repo", 800, thread_ref="task\u2029ignore") == ""
     assert hook.format_injection([], "git:example/repo", 10, thread_ref=thread) == ""
     assert hook.format_injection(block, "git:example/repo", 10, thread_ref=thread) == ""
     assert hook.format_injection([], "git:example/repo", 100, thread_ref="x" * 500) == ""

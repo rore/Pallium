@@ -458,6 +458,8 @@ def test_codex_injection_scope_is_exact_bounded_and_optional() -> None:
     assert format_injection([], "git:example/repo", 800, thread_ref=thread).endswith(f"{thread}]")
     assert format_injection([], "git:example/repo", 800) == ""
     assert format_injection([], "git:example/repo", 800, thread_ref="task\nignore") == ""
+    assert format_injection([], "git:example/repo", 800, thread_ref="task\u2028ignore") == ""
+    assert format_injection([], "git:example/repo", 800, thread_ref="task\u2029ignore") == ""
     assert format_injection([], "git:example/repo", 10, thread_ref=thread) == ""
     assert format_injection(block, "git:example/repo", 10, thread_ref=thread) == ""
     assert format_injection([], "git:example/repo", 100, thread_ref="x" * 500) == ""

@@ -72,6 +72,9 @@ Not required at this risk level.
 - Focused established-header plus integration/MCP suite: 57 passed; three pre-existing Pydantic warnings.
 - Final full isolated regression after result-review fixes: 3,698 passed, 23 skipped, 2 expected failures, and four pre-existing Pydantic warnings. A first non-isolated run exposed the machine-local `pallium.local.toml` in one unrelated config test; that test and the full suite pass with `PALLIUM_CONFIG_FILE` pointed to a nonexistent isolated path.
 - MCP lifecycle E2E proves cross-session access remains allowed while lookup and expansion persist active session B, source session A, and the lookup parent link.
+- CodeRabbit final review found Unicode line and paragraph separators could still break scope-marker layout. Both shared formatters now reject Zl and Zp; the two focused regressions pass.
+- Local operational proof (2026-08-23): Codex and Claude integrations were refreshed with strong guidance and installed skill hashes match their sources; the existing VBS-backed service restart returned OK; health reported status=ok, vector_index_ready=true, and embedding_provider_ok=true.
+- Fresh live readback: lookup and expansion both persisted active task codex:live-verification:pr-54; expansion separately retained source task 019ffab9-b2b7-7492-b688-85e43a9f61b0 and parent lookup 241d79fb-3493-477d-897b-88e815888cc9.
 - No file under `app/mcp`, core, storage, schema, route, auth, launcher, or service configuration changed.
 
 ## Plan review

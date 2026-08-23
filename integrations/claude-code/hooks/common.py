@@ -253,7 +253,7 @@ def pallium_request(
 
 def _safe_scope_value(value: str) -> str | None:
     """Preserve Unicode identity exactly and reject control-character breaks."""
-    return value if all(unicodedata.category(char) != "Cc" for char in value) else None
+    return value if all(unicodedata.category(char) not in {"Cc", "Zl", "Zp"} for char in value) else None
 
 
 def format_injection(

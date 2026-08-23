@@ -33,3 +33,5 @@ The server-side attribution contract is already shipped: when historical search 
 ## Evidence
 
 Pre-fix local aggregate: 37 historical lookup events, only 2 with any session identity, and 0 whose active session matched a captured source thread. The explicit-thread funnel E2E passed, isolating the defect to integration context rather than persistence.
+
+Post-fix live verification (2026-08-23): refreshed both Codex and Claude integrations with the existing strong guidance arm; their installed skill files exactly match the repository sources. Restarted the service through the existing VBS-backed service command. Health returned status=ok, vector_index_ready=true, and embedding_provider_ok=true; the reuse funnel remained armed. A fresh source-only lookup and bounded expansion returned three hits and three context items. Persisted readback showed both events attributed to active task codex:live-verification:pr-54, the expansion retained historical source task 019ffab9-b2b7-7492-b688-85e43a9f61b0, and its parent matched lookup 241d79fb-3493-477d-897b-88e815888cc9.
