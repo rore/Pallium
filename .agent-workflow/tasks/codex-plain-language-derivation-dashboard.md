@@ -37,12 +37,15 @@ Focused dashboard tests, a deterministic JavaScript renderer check against prese
 ## Implementation
 
 - Discovery: the reports are already loaded correctly. The UI currently exposes raw labels (`raw_only`, `item coverage`) and decimals, and reports `objects judged` even when every fidelity result is null. The smallest root fix is confined to the two existing JavaScript renderers and their visible headings.
-- Implementation: replaced jargon-first headings and key/value dumps with calculated human conclusions, explicit unjudged-state wording, and collapsed technical details. The repository patch helper failed once with Windows error 1385; exact replacements were then limited to the recorded dashboard and test files.
+- Implementation: replaced jargon-first headings and key/value dumps with calculated human conclusions, explicit unjudged-state wording, and collapsed technical details. The helpfulness panel now distinguishes "the measurement works" from "memory helped," and expanded technical details retain their state across refreshes. The repository patch helper failed with Windows error 1385; exact replacements were then limited to the recorded dashboard and test files.
 
 ## Evidence
 
-Pending.
+- `node tests\dashboard_plain_language_renderer.mjs app\dashboard.html`: passed; executes the shipped renderers for every helpfulness-calibration state, refresh-preserved technical details, original-history win, compact-memory win, tie, unknown lookup count, missing reports, empty coverage, and mixed judged/unjudged results.
+- `.venv\Scripts\python.exe -m pytest tests\test_dashboard.py -q`: 28 passed; 4 pre-existing Pydantic warnings.
+- VBS-backed service restarted successfully. `/health`: status ok, vector index ready, embedding provider ok. `/dashboard`: HTTP 200 with all three plain-language headings. Both experiment reports are available; current data is 28 lookups, 44% item coverage, and 62% conversation coverage.
+- In-app browser pixel inspection was unavailable because its Windows Node sandbox hit `CreateProcessWithLogonW failed: 1385`; live HTTP and executable rendering of the actual shipped JavaScript provide the fallback verification.
 
 ## Result review
 
-Pending.
+Independent reviewer first found three misleading/untested states: a downstream-safety overclaim, nullable judge values counted as false, and static-only HTML assertions. After those were fixed, the reviewer found two more partial-report cases: an unconditional winner claim and missing lookup counts rendered as zero. The final reviews approved the corrected diff, the plain-language helpfulness distinction, and refresh-preserved technical details with executable coverage for all identified states.

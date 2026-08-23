@@ -340,15 +340,41 @@ class TestDashboardTwoViewShell:
         assert "How memory helps" in html
         assert 'id="funnel-pill"' in html
         assert "fetchEffectivenessReports" in html
-        assert "maintained single-author reference cases" in html
-        assert "human review" not in html
-        assert "person reviewing" not in html
-        assert "human comparison" not in html
+        assert "Did pulled-up memory help the next task?" in html
+        assert "We do not know yet whether pulled-up memory helped." in html
+        assert "does not show that Pallium improved real work." in html
+        assert "hand-reviewed examples" in html
         assert "? Number(jvg.threshold).toFixed(2) : '0.70'" in html
-        assert 'class="hh-reuse-summary"' in html
-        assert '.hh-reuse-summary { max-width: 760px; }' in html
-        assert 'grid-template-columns: minmax(190px, 280px) minmax(0, 1fr)' in html
-        assert '.hh-reuse-summary .hh-kv { grid-template-columns: 1fr; gap: 2px; }' in html
+        # Derivation research leads with human conclusions; jargon stays secondary.
+        assert "Are compact memories helping?" in html
+        assert "Can it find the right past information?" in html
+        assert "Are compact memories created faithfully?" in html
+        assert "Original conversation history found the expected evidence" in html
+        assert "Accuracy was not checked in this run." in html
+        assert "This is not a success rate." in html
+        assert "Technical details" in html
+        assert ">Raw / Derived / Hybrid<" not in html
+        assert "recovery ·" not in html
+    def test_plain_language_renderers_execute(self) -> None:
+        """Execute the shipped JS against present, missing, null, and judged reports."""
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        assert node is not None, "Node.js is required for the dashboard renderer contract test"
+        repo_root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                node,
+                str(Path(__file__).with_name("dashboard_plain_language_renderer.mjs")),
+                str(repo_root / "app" / "dashboard.html"),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "all cases passed" in result.stdout
 
 
 class TestDashboardEffectivenessReports:
