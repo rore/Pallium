@@ -68,6 +68,21 @@ Evidence: `.agent-workflow/tasks/pull-applicability-judgment-experiment.md` Evid
 harness. Related: `idea-arbitrary-convention-contamination-scenarios` (superseded by this — the
 arbitrary-convention set was built and run in #33), `idea-measure-pull-filtering-accuracy-and-cost`.
 
+### Directional real-corpus pilot — 2026-08-23
+
+A budget-capped offline run sampled five actual non-empty historical pulls from a private scratch
+snapshot. At the same task, the answer with bounded history won 5/5 blinded comparisons; the judge
+labelled the retrieved history useful in 4 cases, irrelevant in 1, and harmful in 0. History added a
+mean 340.6 estimated tokens; mean latency was 8.56s with history versus 3.42s without. The run used
+6,796 estimated model-input tokens and had no failures.
+
+This is **offline controlled downstream-task-effect**, not candidate recovery, injection precision,
+or observed live improvement. It is encouraging directional evidence only: five cases, one draw per
+case, one uncalibrated model judge that sees the history and may infer the history arm, no human
+spot-check, no linked work-after, and reconstructed bounded excerpts that may differ from the
+original agent-visible excerpts. It does not satisfy
+this item's Done When criteria; the human review and focused superseded-history probe remain open.
+
 ## Product DoD (external review item 11 — ranking precision)
 
 Build a real-corpus validation set from anonymized historical sessions that includes: long-running
