@@ -342,6 +342,12 @@ class TestDashboardTwoViewShell:
         assert "fetchEffectivenessReports" in html
         assert "maintained reference cases" in html
         assert "human review" not in html
+        assert "person reviewing" not in html
+        assert "human comparison" not in html
+        assert 'class="hh-reuse-summary"' in html
+        assert '.hh-reuse-summary { max-width: 760px; }' in html
+        assert 'grid-template-columns: minmax(190px, 280px) minmax(0, 1fr)' in html
+        assert '.hh-reuse-summary .hh-kv { grid-template-columns: 1fr; gap: 2px; }' in html
 
 
 class TestDashboardEffectivenessReports:
