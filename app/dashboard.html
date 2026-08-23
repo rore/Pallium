@@ -939,7 +939,7 @@
           We measure how often past work that an agent pulled up actually gets used again — either
           <strong>reused directly</strong> (the agent copied a specific detail) or used to
           <strong>shape the approach</strong>. An automatic check scores this, but we don't trust its
-          numbers until it has been checked against maintained reference cases and a separate
+          numbers until it has been checked against maintained single-author reference cases and a separate
           seed group. That check hasn't been run yet, so these numbers aren't shown as confident.
         </div>
       </div>
@@ -2234,7 +2234,7 @@ function renderEffectivenessReports(reports) {
 // Reuse-KPI calibration affordance. The reuse-rate table is not wired to live
 // data yet; until it is, this panel's job is to say — honestly, in plain words —
 // whether the automatic check that WOULD produce those rates has been checked
-// against maintained reference cases and a separate seed group. Until that agreement
+// against maintained single-author reference cases and a separate seed group. Until that agreement
 // is good enough, the rates are not shown as confident.
 function renderReuseCalibration(entry) {
   const el = document.getElementById('hh-reuse-kpi');
@@ -2243,7 +2243,7 @@ function renderReuseCalibration(entry) {
     el.innerHTML = '<div class="hh-empty">We track how often pulled-up past work actually gets ' +
       'used again — <strong>reused directly</strong> (a specific detail is copied) or used to ' +
       '<strong>shape the approach</strong>. An automatic check scores this, but its numbers ' +
-      'aren\'t shown as confident until they\'ve been compared against maintained reference cases and a separate seed group. ' +
+      'aren\'t shown as confident until they\'ve been compared against maintained single-author reference cases and a separate seed group. ' +
       'That check hasn\'t been run yet.</div>';
     return;
   }
@@ -2252,20 +2252,20 @@ function renderReuseCalibration(entry) {
   const thr = (jvg.threshold != null) ? Number(jvg.threshold).toFixed(2) : '0.70';
   const calibrated = jvg.calibrated === true;
   const uncalibrated = jvg.calibrated === false;
-  const verdict = calibrated ? 'checked against the maintained reference cases'
-    : (uncalibrated ? 'not yet checked against the maintained reference cases' : 'in progress');
+  const verdict = calibrated ? 'checked against the maintained single-author reference cases'
+    : (uncalibrated ? 'not yet checked against the maintained single-author reference cases' : 'in progress');
   const color = calibrated ? 'var(--green)' : (uncalibrated ? 'var(--red)' : 'var(--muted)');
   const rows = [];
-  rows.push(_hhKv('agreement with the maintained reference cases', kappa + '  (needs ' + thr + '+ to trust)'));
-  if (jvg.n != null) rows.push(_hhKv('reference cases', fmtNum(jvg.n)));
+  rows.push(_hhKv('agreement with the maintained single-author reference cases', kappa + '  (needs ' + thr + '+ to trust)'));
+  if (jvg.n != null) rows.push(_hhKv('single-author reference cases', fmtNum(jvg.n)));
   rows.push('<div class="hh-kv"><span class="k">these numbers are</span>' +
     '<span class="v" style="color:' + color + ';font-weight:600">' + verdict + '</span></div>');
   let note = '';
   if (uncalibrated) {
     note = '<div class="hh-empty">The automatic check doesn\'t yet agree closely enough with ' +
-      'the maintained reference cases, so these reuse numbers are <strong>not shown as confident</strong>.</div>';
+      'the maintained single-author reference cases, so these reuse numbers are <strong>not shown as confident</strong>.</div>';
   } else if (calibrated) {
-    note = '<div class="hh-empty">The automatic check agrees closely enough with the maintained reference cases to ' +
+    note = '<div class="hh-empty">The automatic check agrees closely enough with the maintained single-author reference cases to ' +
       'trust these numbers. Note the review set is small and hand-built — solid, but not the ' +
       'final word.</div>';
   }
