@@ -67,7 +67,8 @@ Not required at this risk level. The user explicitly authorized the budget-aware
 - Scratch preflight found 8 valid scoped agent-pull cases and deterministically selected 5. Per-case public-shape history is 1,032–1,440 characters (about 258–360 chars/4 estimated tokens).
 - No production files changed. The user explicitly approved sending the bounded private pilot corpus to the configured HAI provider; the credential was loaded from Windows Credential Manager into process memory only and was neither printed nor persisted.
 - The capped HAI run completed 5/5 paired cases with no failures, using 6,796 estimated input tokens of the 20,000-token ceiling. WITH history won 5/5 comparisons; history was labelled useful in 4 cases, irrelevant in 1, and harmful in 0. Added history averaged 340.6 estimated tokens and WITH-history latency averaged 8.56s versus 3.42s WITHOUT history.
-- The result is directional only: one uncalibrated model judge, one draw per case, no human spot-check, and no linked observed work-after. Stored lookup events contain source IDs rather than the exact original excerpts, so the bounded reconstruction may differ from what the agent originally saw. It does not establish broad ROI or complete the parent roadmap item.
+- The result is directional only: one uncalibrated model judge that sees the history and may infer the history arm, one draw per case, no human spot-check, and no linked observed work-after. Stored lookup events contain source IDs rather than the exact original excerpts, so the bounded reconstruction may differ from what the agent originally saw. It does not establish broad ROI or complete the parent roadmap item.
+- PR review findings addressed: the report exposes the partial-blinding limitation, private review output requests owner-only POSIX permissions before writing, and every read-only SQLite handle is explicitly closed. Existing lifecycle tests now assert these contracts.
 
 ## Result review
 

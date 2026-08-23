@@ -78,7 +78,9 @@ mean 340.6 estimated tokens; mean latency was 8.56s with history versus 3.42s wi
 
 This is **offline controlled downstream-task-effect**, not candidate recovery, injection precision,
 or observed live improvement. It is encouraging directional evidence only: five cases, one draw per
-case, one uncalibrated model judge, no human spot-check, no linked work-after, and reconstructed bounded excerpts that may differ from the original agent-visible excerpts. It does not satisfy
+case, one uncalibrated model judge that sees the history and may infer the history arm, no human
+spot-check, no linked work-after, and reconstructed bounded excerpts that may differ from the
+original agent-visible excerpts. It does not satisfy
 this item's Done When criteria; the human review and focused superseded-history probe remain open.
 
 ## Product DoD (external review item 11 — ranking precision)

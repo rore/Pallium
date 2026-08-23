@@ -14,6 +14,7 @@ import random
 import sqlite3
 import sys
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -99,7 +100,7 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
     cases: list[PullCase] = []
 
     db_uri = "file:" + db_path.resolve().as_posix() + "?mode=ro"
-    with sqlite3.connect(db_uri, uri=True) as conn:
+    with closing(sqlite3.connect(db_uri, uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         if not _table_columns(conn, "historical_lookup_reuse_event"):
             raise ValueError("database has no historical lookup event table")
@@ -411,6 +412,7 @@ def run_pilot(
                 "paired_draws": 1,
                 "human_spot_check": False,
                 "linked_observed_work_after": False,
+                "judge_sees_history": True,
             },
         },
         "sampling": {
@@ -491,6 +493,8 @@ def main(argv: list[str] | None = None) -> int:
         args.aggregate_output.parent.mkdir(parents=True, exist_ok=True)
         args.review_output.parent.mkdir(parents=True, exist_ok=True)
         args.aggregate_output.write_text(json.dumps(aggregate, indent=2) + "\n", encoding="utf-8")
+        args.review_output.touch(mode=0o600, exist_ok=True)
+        args.review_output.chmod(0o600)
         args.review_output.write_text(json.dumps(review, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     except (ValueError, FileNotFoundError, sqlite3.Error) as exc:
         parser.error(str(exc))

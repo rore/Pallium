@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import sqlite3
 from pathlib import Path
 
@@ -156,13 +158,16 @@ def test_loader_opens_db_read_only(tmp_path: Path, monkeypatch) -> None:
     calls = []
 
     def capture(database, *args, **kwargs):
-        calls.append((database, kwargs))
-        return real_connect(database, *args, **kwargs)
+        conn = real_connect(database, *args, **kwargs)
+        calls.append((database, kwargs, conn))
+        return conn
 
     monkeypatch.setattr(runner.sqlite3, "connect", capture)
     load_corpus(db, container_ref="c:test", visibility="private")
     assert calls and "mode=ro" in calls[0][0]
     assert calls[0][1]["uri"] is True
+    with pytest.raises(sqlite3.ProgrammingError):
+        calls[0][2].execute("SELECT 1")
 
 
 def test_decision_gate_requires_three_successful_pairs() -> None:
@@ -182,6 +187,7 @@ def test_decision_gate_requires_three_successful_pairs() -> None:
         "paired_draws": 1,
         "human_spot_check": False,
         "linked_observed_work_after": False,
+        "judge_sees_history": True,
     }
 class InvalidJudgeProvider(ScriptedProvider):
     def generate_json(self, *, system_prompt, user_prompt, schema_description):
@@ -258,6 +264,8 @@ def test_cli_main_writes_reports_without_mutating_db_or_leaking_aggregate(tmp_pa
     assert "CLI SECRET_QUERY" not in aggregate and "CLI SECRET_SOURCE" not in aggregate
     assert "CLI SECRET_QUERY" in review
     assert "contains_raw_private_text" in review and "never_publish" in review
+    if os.name != "nt":
+        assert stat.S_IMODE(review_path.stat().st_mode) == 0o600
     with pytest.raises(SystemExit):
         runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(db), "--review-output", str(tmp_path / "other.json")])
 
