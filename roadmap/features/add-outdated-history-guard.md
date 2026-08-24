@@ -1,7 +1,7 @@
 ---
 id: add-outdated-history-guard
 title: Mark outdated historical guidance and surface its current replacement
-status: in-progress
+status: done
 priority: high
 commitment: committed
 milestone: Pallium vNext Phase 1
@@ -80,4 +80,4 @@ product value from the 12-case pilot or from this focused regression alone.
 
 ## Implementation status — 2026-08-24
 
-The production guard and public MCP lifecycle coverage are implemented locally. The unchanged two-scenario, five-repetition stale probe used the compact MCP renderer and adopted obsolete guidance 0/10 times, down from 9/10. Agent review of the larger run found and closed one over-broad roll-up-summary replacement bug; direct durable claims remain guarded while summary/atomic roll-ups are ignored. Merge remains pending PR closure.
+Completed in PR #62. The unchanged two-scenario, five-repetition stale probe used the compact MCP renderer and adopted obsolete guidance 0/10 times, down from 9/10. Public MCP lifecycle coverage includes timestamps, A -> B -> C, mixed claim types, visibility, actor fail-closed behavior, cross-container shared replacements, Unicode, and bounded truncation. Agent review found and closed one over-broad roll-up-summary bug; direct durable claims remain guarded while summary/atomic roll-ups are ignored. The larger real-corpus gate remains open because the corrected sample contains zero qualifying direct-claim replacements.
