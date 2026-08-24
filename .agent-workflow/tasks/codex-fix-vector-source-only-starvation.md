@@ -45,10 +45,11 @@
 - 2026-08-24: The delegated first implementation over-expanded and queried storage per candidate; parent review rejected it before commit and retained batched storage resolution within the reviewed start-horizon plan.
 - 2026-08-24: Early Windows test runners used `WScript.Shell.Exec`, left two orphaned pytest trees, and surfaced console windows. Exact task processes were stopped; subsequent verification used hidden `WScript.Shell.Run(..., 0, True)`. Trigger 7 did not pass the skill-feedback actionability filter because this is a machine-local launcher constraint, not a repeatable workflow-skill rule.
 - 2026-08-24: Final reviewer found missing below-floor and actual add/remove mutation regressions, an incorrect full-suite pass count, and non-managed HTTP client cleanup. Added both regressions, registered `client.close` as a test finalizer without enabling the hanging app lifespan, corrected evidence arithmetic, and reran the focused suites at `26571408e12d5a04216dc1e87af5a27db331f888`.
+- 2026-08-24: PR review requested a non-shadowing HTTP payload name and a full repeated-batch no-progress regression; both were fixed and 55 focused tests passed at `bdab4b0aa973dcfd5372d7c8a5ab407f7ba85c56`. The suggestion to move State beyond `Ready for review` was not applied because the installed workflow defines only `Ready to implement`, `Blocked`, and `Ready for review`; this is its terminal reviewed-work state.
 
 ## Evidence
 
-- Revision `26571408e12d5a04216dc1e87af5a27db331f888`: `tests/test_vector_retrieval.py` + `tests/test_source_only_search.py` → 55 passed, 0 failed, 0 skipped.
+- Revision `bdab4b0aa973dcfd5372d7c8a5ab407f7ba85c56`: `tests/test_vector_retrieval.py` + `tests/test_source_only_search.py` → 55 passed, 0 failed, 0 skipped.
 - Vector-enabled HTTP regression alone → 1 passed; exercises >8×K derived clutter, Unicode semantic query, cross-container isolation, source-only response shape, and ingest → retrieve → forget → absent lifecycle.
 - Normal full suite → 3,832 tests collected: 3,806 passed, 25 skipped, 1 unrelated local-configuration failure in `tests.test_config::test_prompt_variants_legacy_fallback_unaffected` because the local QAR prompt override is enabled. No configuration file is changed by this branch; clean PR CI remains required before merge.
 
@@ -56,6 +57,7 @@
 
 - Initial final review: P1 missing below-threshold adaptive-stop regression; P2 no actual inter-search add/remove mutation test; P2 evidence arithmetic mismatch; P3 HTTP client not explicitly closed.
 - Response: all four addressed in `26571408e12d5a04216dc1e87af5a27db331f888`. Repeat final review: APPROVED; no new correctness issues. Residual risk is limited to the documented weak-consistency contract under concurrent index mutation.
+- PR review: two valid test-maintainability findings addressed in `bdab4b0aa973dcfd5372d7c8a5ab407f7ba85c56`; terminal-state suggestion answered without code change because `Ready for review` is the highest valid workflow state.
 
 ## Skill feedback (unsent)
 
