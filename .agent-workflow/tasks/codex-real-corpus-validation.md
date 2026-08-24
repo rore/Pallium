@@ -37,7 +37,7 @@
 - Establish Context / Assess Risk: task branch created; BLUE redline verdict returned by clean-context read-only review.
 - Discovery / Plan: existing evaluator and contamination harness traced end to end; live DB inspected read-only (30 valid cases, four requester-session values). Minimal plan self-reviewed; no production edit or new framework required. `apply_patch` hit the documented machine-local 1385 failure, so the Work Record transition used the allowed narrow deterministic replacement fallback.
 - Implement: raised the cap to 12, added seeded requester-session round-robin sampling and text-free composition counts, added a private blinded Markdown worksheet, and added a two-scenario focused superseded corpus without changing the existing harness.
-- Live run attempt: a fresh scratch snapshot was created successfully. The private run was blocked before transmission pending explicit approval to send sampled private excerpts through HAI. The synthetic real-provider probe reached HAI but failed 30/30 with HTTP 401 because this Codex terminal lacks `PALLIUM_HAI_API_KEY`; credential-location discovery was also blocked pending explicit approval. No private corpus was sent. Next step: obtain explicit user authorization for both using the existing local credential and transmitting the 12 sampled private cases, then rerun.
+- Live experiments: after explicit user approval, loaded `hai-cli:proxy-api-key` from Windows Credential Manager as UTF-8 bytes into process memory only. The focused superseded probe completed 30/30 calls; the 12-case private paired run completed without failures or budget stops. Raw private outputs remain ignored under `.local/research/`. A four-case blinded sheet is ready for the required human spot-check; that review is the only current blocker.
 
 ## Evidence
 
@@ -46,9 +46,11 @@
 - `git diff --check` -> clean.
 - Focused superseded dry-run: 30/30 trials completed with zero errors; scripted results are harness validation only, not product evidence.
 - Fresh scratch snapshot: `.local/research/real_corpus_validation_snapshots/pallium-20260824T125946Z.db`; live DB never written.
-- Real-provider superseded attempt: 30/30 HTTP 401 `MISSING_AUTHORIZATION_HEADER`; no usable product result.
-- Private real-corpus attempt: blocked before provider transmission by the environment approval gate; no private data sent.
+- Initial real-provider attempt: 30/30 HTTP 401 `MISSING_AUTHORIZATION_HEADER`; retained as setup evidence, not an experiment result.
+- Focused real-model superseded probe: 30/30 calls, zero errors; contaminating earlier convention adopted 9/10, contamination harm +0.60 [+0.171,+0.809], while applicable history selected current convention 10/10.
+- Real-corpus paired run: 12/12 cases, zero failures/budget stops, with-history won 11, without-history won 1, history relevance useful 10 / irrelevant 2 / harmful 0; 16,461 estimated input tokens; added context mean 330.75 estimated tokens; latency means 5.714s with vs 3.419s without.
+- Human review artifact: `.local/research/real_corpus_pull_human_spotcheck.md`, four blinded cases selected across model disagreement, irrelevance, possible staleness, and useful history.
 
 ## Result review
 
-Blocked pending explicit user authorization and subsequent human spot-check; no product recommendation yet.
+Provisional decision: historical pull is strongly useful overall, but same-lineage outdated history is unsafe; recommend a focused stale/superseded guard before Phase 2. Final decision remains blocked only on the required four-case human spot-check.
