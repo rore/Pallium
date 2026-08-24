@@ -239,6 +239,7 @@ def _post_other_creation(client: TestClient, operation: str, **scope_overrides):
         client,
         type="operational_fact" if operation == "record-outcome" else "decision",
     )
+    baseline = _counts(client)
     body = {**_PROVENANCE, **scope_overrides}
     if operation == "supersede":
         body.update(new_text="replacement", supersedes_id=anchor_id)
@@ -246,7 +247,7 @@ def _post_other_creation(client: TestClient, operation: str, **scope_overrides):
     else:
         body.update(procedure_id=anchor_id, outcome="success")
         endpoint = "/memory/record-outcome"
-    return client.post(endpoint, json=body)
+    return client.post(endpoint, json=body), baseline
 
 
 def _created_other_memory(storage, operation: str, response, before_ids: set[str]):
@@ -278,12 +279,11 @@ def test_other_creation_operations_reject_raw_paths_without_write(
     operation: str,
     container_ref: str,
 ) -> None:
-    anchor_count = _counts(client)
-    response = _post_other_creation(
+    response, baseline = _post_other_creation(
         client, operation, container_ref=container_ref
     )
     assert response.status_code == 400, response.text
-    assert _counts(client) == (anchor_count[0] + 1, anchor_count[1] + 2)
+    assert _counts(client) == baseline
 
 
 @pytest.mark.parametrize("operation", ["supersede", "record-outcome"])
@@ -304,7 +304,7 @@ def test_other_creation_operations_accept_opaque_container_refs(
 ) -> None:
     storage = client.app.state.pallium_service._storage
     before_ids = {memory.id for memory in storage.list_memory_objects()}
-    response = _post_other_creation(
+    response, _ = _post_other_creation(
         client, operation, container_ref=container_ref
     )
     assert response.status_code == 200, response.text
@@ -321,7 +321,7 @@ def test_other_creation_operations_accept_supported_visibility(
 ) -> None:
     storage = client.app.state.pallium_service._storage
     before_ids = {memory.id for memory in storage.list_memory_objects()}
-    response = _post_other_creation(client, operation, visibility=visibility)
+    response, _ = _post_other_creation(client, operation, visibility=visibility)
     assert response.status_code == 200, response.text
     created = _created_other_memory(storage, operation, response, before_ids)
     assert created.visibility == visibility
@@ -332,7 +332,6 @@ def test_other_creation_operations_reject_public_without_write(
     client: TestClient,
     operation: str,
 ) -> None:
-    anchor_count = _counts(client)
-    response = _post_other_creation(client, operation, visibility="public")
+    response, baseline = _post_other_creation(client, operation, visibility="public")
     assert response.status_code == 422, response.text
-    assert _counts(client) == (anchor_count[0] + 1, anchor_count[1] + 2)
+    assert _counts(client) == baseline

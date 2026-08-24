@@ -99,9 +99,10 @@ Initial clean-context verdict: BLOCKING. It required one canonical public naming
 - MCP error behavior: missing agent scope and raw-path scope return 422/400 through MCP-to-real-HTTP with unchanged memory and index counts.
 - Integration scope and budget: Claude/Codex formatter, PostToolUse failure-path, packaged integration, and guidance-budget tests assert exact five-field scope with/without memory, control-character rejection, and existing size ceilings.
 - Focused reviewer-finding regression suite: 85 passed. Earlier combined provenance/integration/budget suite: 83 passed. Dedicated all-operation boundary suite: 62 passed.
+- PR review fixes: 115 focused tests passed; scenario 05 passed with persisted actor/session/agent/visibility assertions; scope headers now use compact JSON so delimiter characters remain unambiguous; Codex guidance remains inside its managed install block.
 - Final full suite: 3764 passed, 23 skipped, 2 xfailed; all branch-relevant tests are green. One unrelated pre-existing local prompt-variant configuration assertion remains (test_prompt_variants_legacy_fallback_unaffected); no configuration file is changed by this branch.
 - git diff --check is clean apart from expected Git line-ending notices. Ruff is not installed in the repository virtual environment, so no Ruff result is claimed.
 
 ## Result review
 
-APPROVE — clean-context review found and verified fixes for the Claude PostToolUse scope path, MCP no-write lifecycle, and all-operation boundary matrix. The final reviewer reported no remaining P0–P3 findings; 62 dedicated boundary tests and the workflow checker are green.
+APPROVE — clean-context review found and verified fixes for the Claude PostToolUse scope path, MCP no-write lifecycle, and all-operation boundary matrix. The final reviewer reported no remaining P0–P3 findings; 62 dedicated boundary tests and the workflow checker are green. CodeRabbit later found three actionable and two test-quality PR comments; all were addressed and validated before merge.

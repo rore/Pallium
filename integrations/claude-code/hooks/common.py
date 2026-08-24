@@ -274,16 +274,18 @@ def format_injection(
     if safe_container is None or any(value is None for supplied, value in ((thread_ref, safe_thread), (actor_ref, safe_actor), (agent_ref, safe_agent), (visibility, safe_visibility)) if supplied):
         return ""
 
-    scope = f"[Pallium scope — container_ref: {safe_container}"
+    scope_fields = {"container_ref": safe_container}
     if safe_thread:
-        scope += f"; thread_ref: {safe_thread}"
+        scope_fields["thread_ref"] = safe_thread
     if safe_actor:
-        scope += f"; actor_ref: {safe_actor}"
+        scope_fields["actor_ref"] = safe_actor
     if safe_agent:
-        scope += f"; agent_ref: {safe_agent}"
+        scope_fields["agent_ref"] = safe_agent
     if safe_visibility:
-        scope += f"; visibility: {safe_visibility}"
-    scope += "]"
+        scope_fields["visibility"] = safe_visibility
+    scope = "[Pallium scope — " + json.dumps(
+        scope_fields, ensure_ascii=False, separators=(",", ":")
+    ) + "]"
     if not injectable_blocks:
         return scope if safe_thread and len(scope) <= budget_chars else ""
 

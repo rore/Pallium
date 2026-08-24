@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -157,10 +158,14 @@ def test_claude_injection_scope_is_exact_bounded_and_optional(
     block = [{"title": "Decision", "memory_object_id": "mem-1", "text": "Keep the stable plan."}]
     thread = "任务:α"
     scoped = hook.format_injection(block, "git:example/repo", 800, thread_ref=thread)
-    assert f"thread_ref: {thread}" in scoped
+    scope_line = scoped.splitlines()[0]
+    encoded = scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
+    assert json.loads(encoded)["thread_ref"] == thread
     assert "Keep the stable plan." in scoped
     assert len(scoped) <= 800
-    assert hook.format_injection([], "git:example/repo", 800, thread_ref=thread).endswith(f"{thread}]")
+    empty_scope = hook.format_injection([], "git:example/repo", 800, thread_ref=thread)
+    encoded_empty = empty_scope.removeprefix("[Pallium scope — ").removesuffix("]")
+    assert json.loads(encoded_empty)["thread_ref"] == thread
     assert hook.format_injection([], "git:example/repo", 800) == ""
     assert hook.format_injection([], "git:example/repo", 800, thread_ref="task\nignore") == ""
     assert hook.format_injection([], "git:example/repo", 800, thread_ref="task\u2028ignore") == ""
@@ -192,7 +197,8 @@ def test_claude_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     with pytest.raises(SystemExit):
         hook.main()
     assert requests[-1]["thread_ref"] == "claude:task:1"
-    assert "thread_ref: claude:task:1" in capsys.readouterr().out
+    scope = capsys.readouterr().out.strip()
+    assert json.loads(scope[scope.index("{"):-1])["thread_ref"] == "claude:task:1"
 
     payload = {"cwd": ".", "prompt": "Resume the prior implementation work now."}
     monkeypatch.setattr(hook, "check_dedup", lambda *_args: pytest.fail("missing identity must skip dedup"))

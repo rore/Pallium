@@ -119,7 +119,8 @@ def run() -> ScenarioResult:
     # ── Write-side contract checks (these are W3's acceptance surface) ──
     with storage._engine.connect() as conn:
         row = conn.execute(_text(
-            "SELECT type, lifecycle, container_ref, origin, is_soft_deleted "
+            "SELECT type, lifecycle, container_ref, actor_ref, visibility, "
+            "origin, origin_session_id, origin_agent_id, is_soft_deleted "
             "FROM memory_objects WHERE id=:i"
         ), {"i": remembered_id}).one()
         idx_count = conn.execute(_text(
@@ -134,6 +135,14 @@ def run() -> ScenarioResult:
         write_side_failures.append(f"lifecycle={row.lifecycle!r} (expected 'active')")
     if row.container_ref != container_ref:
         write_side_failures.append(f"container_ref={row.container_ref!r}")
+    if row.actor_ref != remember_body["actor_ref"]:
+        write_side_failures.append(f"actor_ref={row.actor_ref!r}")
+    if row.origin_session_id != remember_body["thread_ref"]:
+        write_side_failures.append(f"origin_session_id={row.origin_session_id!r}")
+    if row.origin_agent_id != remember_body["agent_ref"]:
+        write_side_failures.append(f"origin_agent_id={row.origin_agent_id!r}")
+    if row.visibility != remember_body["visibility"]:
+        write_side_failures.append(f"visibility={row.visibility!r}")
     if row.origin != "agent_explicit":
         write_side_failures.append(f"origin={row.origin!r} (expected 'agent_explicit')")
     if row.is_soft_deleted != 0:

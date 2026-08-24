@@ -10,6 +10,5 @@ Picking up prior work? Call `pallium_search_history` first. After a promising se
 - Use `pallium_flag_memory` for incorrect or obsolete memories. `pallium_rate_memory` is optional, non-blocking feedback; never require a rating for every injected block.
 - Explicit writes are compact and deliberate: `pallium_remember` stores a durable fact; `pallium_correct` fixes it; `pallium_supersede` replaces an obsolete fact; `pallium_forget` hides it; `pallium_record_outcome` records a procedure result. Retrieval is not use: these writes do not update accessibility or ranking from retrieval alone.
 - Do not ingest routine turns or re-query for something already in the injected block; use forget only for direct hiding, not vote suppression; use `pallium_flag_memory` for that.
-<!-- pallium:end -->
-
 - Explicit remember, supersede, and record-outcome writes must copy all five exact [Pallium scope] values: container_ref, thread_ref, actor_ref, agent_ref, and visibility. Never use cwd. Default private; use global only when requested. Correction and forget keep original provenance.
+<!-- pallium:end -->
