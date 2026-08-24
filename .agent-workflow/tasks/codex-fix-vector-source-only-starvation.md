@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -41,17 +41,33 @@
 - 2026-08-24: Initial clean-context plan review blocked on concurrent-mutation termination and trace semantics; plan revised with a start-horizon/no-progress contract and returned for repeat review.
 
 - 2026-08-24: Repeat clean-context review approved the revised plan; State advanced to Ready to implement before guarded edits.
+- 2026-08-24: Implemented bounded adaptive vector-prefix expansion at `f79d609c8d73af01d772ebd91154b22a8659c75e`, preserving the fixed default-query search and existing filter/hydration rules. Added focused boundary, starvation, rejection, trace/dedup, mutation-bound, and vector-enabled Unicode HTTP lifecycle coverage.
+- 2026-08-24: The delegated first implementation over-expanded and queried storage per candidate; parent review rejected it before commit and retained batched storage resolution within the reviewed start-horizon plan.
+- 2026-08-24: Early Windows test runners used `WScript.Shell.Exec`, left two orphaned pytest trees, and surfaced console windows. Exact task processes were stopped; subsequent verification used hidden `WScript.Shell.Run(..., 0, True)`. Trigger 7 did not pass the skill-feedback actionability filter because this is a machine-local launcher constraint, not a repeatable workflow-skill rule.
 
 ## Evidence
 
-- Pending.
+- Revision `f79d609c8d73af01d772ebd91154b22a8659c75e`: `tests/test_vector_retrieval.py` + `tests/test_source_only_search.py` → 53 passed, 0 failed, 0 skipped.
+- Vector-enabled HTTP regression alone → 1 passed; exercises >8×K derived clutter, Unicode semantic query, cross-container isolation, source-only response shape, and ingest → retrieve → forget → absent lifecycle.
+- Normal full suite → 3,832 tests collected: 3,831 passed, 25 skipped, 1 unrelated local-configuration failure in `tests.test_config::test_prompt_variants_legacy_fallback_unaffected` because the local QAR prompt override is enabled. No configuration file is changed by this branch; clean PR CI remains required before merge.
 
 ## Result review
 
 - Pending.
 
-## Plan review
+## Skill feedback (unsent)
 
+**Trigger fired:** 5 — skill cross-reference was broken.
+
+**What the skill said (or failed to say):** `docs/agent-workflow/review-result.md` links to `../skill-feedback.md`, but that file is absent from `docs/`; the usable source is `.claude/skills/agent-workflow/templates/skill-feedback.md`.
+
+**What happened:** The required feedback checkpoint could not be loaded from the documented repository path.
+
+**Suggested fix:** Generate `docs/agent-workflow/skill-feedback.md` during bootstrap or change the review-result cross-reference to an installed path that exists.
+
+**Work Record:** `f79d609c8d73af01d772ebd91154b22a8659c75e` + `.agent-workflow/tasks/codex-fix-vector-source-only-starvation.md`; source commit not recorded because the skill is vendored in this consumer repository.
+
+## Plan review
 - Initial clean-context verdict: blocked pending concurrency/termination and trace-semantics clarification. Reviewer required a finite/no-progress guard, qualified ordering under concurrent mutation, matching-kind similarity-floor semantics, unique cross-batch trace rules, and proof that HTTP E2E actually enables vector retrieval.
 - Plan response: capture a start-of-query entry-count horizon, stop on short/horizon/no-progress, process IDs once, preserve stable-index ordering while explicitly retaining the documented weak-concurrency contract, stop below threshold only on matching-kind candidates, define unique first-exposure trace semantics, and assert vector readiness in the E2E fixture.
 - Repeat clean-context verdict: APPROVED. The start-horizon and termination semantics resolve the blockers. Non-blocking conditions: do not call `search(k=0)` for an empty index, and assert horizon/no-progress call bounds.
