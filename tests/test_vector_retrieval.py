@@ -888,6 +888,7 @@ class TestSourceOnlyExpansion:
         assert len({hit.index_entry_id for hit in stage.candidate_hits}) == len(stage.candidate_hits)
         assert [hit.index_entry_id for hit in stage.candidate_hits] == ["source-0", "source-1"]
         assert index.search_calls == [16, 20]
+        assert index._removed == ["stale"]
 
     def test_rejected_sources_do_not_starve_later_eligible_source(self) -> None:
         entries: dict[str, IndexEntry] = {}
@@ -927,6 +928,7 @@ class TestSourceOnlyExpansion:
 
         assert [item.source_item_id for item in result.results] == ["eligible"]
         assert index.search_calls == [8, 16, 20]
+
     def test_matching_below_similarity_floor_stops_expansion(self) -> None:
         entries: dict[str, IndexEntry] = {}
         hits: list[tuple[str, float]] = []
@@ -972,7 +974,7 @@ class TestSourceOnlyExpansion:
         entries: dict[str, IndexEntry] = {}
         sources: dict[str, SourceItem] = {}
         hits: list[tuple[str, float]] = []
-        for i in range(16):
+        for i in range(15):
             entry_id = f"memory-{i}"
             entries[entry_id] = _make_index_entry(
                 entry_id=entry_id, target_kind="memory_object", target_id=entry_id,
@@ -985,6 +987,10 @@ class TestSourceOnlyExpansion:
             )
             sources[entry_id] = _make_source_item(si_id=entry_id)
             hits.append((entry_id, similarity))
+        entries["memory-tail"] = _make_index_entry(
+            entry_id="memory-tail", target_kind="memory_object", target_id="memory-tail",
+        )
+        hits.append(("memory-tail", 0.78))
         entries["source-late"] = _make_index_entry(
             entry_id="source-late", target_kind="source_item", target_id="source-late",
         )
@@ -1012,6 +1018,7 @@ class TestSourceOnlyExpansion:
         )
 
         assert [item.source_item_id for item in result.results] == ["source-0", "source-1"]
+        assert [item.source_item_id for item in result.results].count("source-0") == 1
         assert index.search_calls == [16, 18]
         candidate_ids = [hit.index_entry_id for hit in result.trace.stages[0].candidate_hits]
         assert candidate_ids == ["source-0", "source-1"]
