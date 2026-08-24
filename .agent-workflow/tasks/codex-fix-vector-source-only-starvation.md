@@ -61,7 +61,7 @@
 - PR review: two valid test-maintainability findings addressed in `bdab4b0aa973dcfd5372d7c8a5ab407f7ba85c56`; terminal-state suggestion answered without code change because `Ready for review` is the highest valid workflow state.
 - PR follow-up: over-return fixture intent documented; stale cleanup and cross-batch eligible dedup assertions added in `b423e8ded6a64ab76eacec138bdb0337ed82bc9c`; all inline threads answered and resolved.
 
-## Skill feedback (unsent)
+## Skill feedback
 
 **Trigger fired:** 5 — skill cross-reference was broken.
 
@@ -72,6 +72,8 @@
 **Suggested fix:** Generate `docs/agent-workflow/skill-feedback.md` during bootstrap or change the review-result cross-reference to an installed path that exists.
 
 **Work Record:** `f79d609c8d73af01d772ebd91154b22a8659c75e` + `.agent-workflow/tasks/codex-fix-vector-source-only-starvation.md`; source commit not recorded because the skill is vendored in this consumer repository.
+
+Filed after merge: https://github.com/rore/agent-workflow/issues/12
 
 ## Plan review
 - Initial clean-context verdict: blocked pending concurrency/termination and trace-semantics clarification. Reviewer required a finite/no-progress guard, qualified ordering under concurrent mutation, matching-kind similarity-floor semantics, unique cross-batch trace rules, and proof that HTTP E2E actually enables vector retrieval.
