@@ -1848,6 +1848,9 @@ function buildDetailRow(m) {
   const meta = [
     '<span><b>id:</b> ' + escapeHtml(m.id) + ' <button class="copy-btn" onclick="event.stopPropagation();copyToClipboard(\'' + escapeHtml(m.id) + '\')">copy</button></span>',
     m.visibility  ? '<span><b>visibility:</b> ' + escapeHtml(m.visibility) + '</span>' : null,
+    m.actor_ref || m.origin_agent_id || m.origin_session_id
+      ? '<span><b>creation provenance:</b> actor ' + escapeHtml(m.actor_ref || '-') +
+        '; agent ' + escapeHtml(m.origin_agent_id || '-') + '; session ' + escapeHtml(m.origin_session_id || '-') + '</span>' : null,
     m.schema_id   ? '<span><b>schema:</b> ' + escapeHtml(m.schema_id) + '</span>' : null,
     m.subject     ? '<span><b>subject:</b> ' + escapeHtml(m.subject) + '</span>' : null,
   ].filter(Boolean).join(' &middot; ');

@@ -868,6 +868,8 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 container_ref=request.container_ref,
                 actor_ref=request.actor_ref,
                 thread_ref=request.thread_ref,
+                agent_ref=request.agent_ref,
+                visibility=request.visibility,
                 origin_session_id=request.origin_session_id,
                 origin_agent_id=request.origin_agent_id,
             )
@@ -912,6 +914,8 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 container_ref=request.container_ref,
                 actor_ref=request.actor_ref,
                 thread_ref=request.thread_ref,
+                agent_ref=request.agent_ref,
+                visibility=request.visibility,
                 origin_session_id=request.origin_session_id,
                 origin_agent_id=request.origin_agent_id,
             )
@@ -975,6 +979,13 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 outcome=request.outcome,
                 evidence=request.evidence,
                 note=request.note,
+                container_ref=request.container_ref,
+                actor_ref=request.actor_ref,
+                thread_ref=request.thread_ref,
+                agent_ref=request.agent_ref,
+                visibility=request.visibility,
+                origin_session_id=request.origin_session_id,
+                origin_agent_id=request.origin_agent_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))

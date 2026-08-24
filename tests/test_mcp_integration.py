@@ -506,3 +506,109 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
             for memory in sorted(storage.list_memory_objects(), key=lambda memory: memory.id)
         ]
         assert after == baseline
+
+@pytest.mark.asyncio
+async def test_explicit_creation_mcp_to_http_persists_complete_provenance(
+    pallium_asgi_app,
+) -> None:
+    context = PalliumContext(
+        base_url="http://testserver",
+        container_ref="GIT:GITHUB.COM/Example/Project.GIT/",
+        thread_ref="mcp-session-123",
+        actor_ref="mcp-user",
+        agent_ref="codex",
+        visibility="private",
+    )
+    client = PalliumMcpClient(context)
+    transport = httpx.ASGITransport(app=pallium_asgi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver", timeout=30.0
+    ) as http:
+        async def post(path, payload):
+            response = await http.post(path, json=payload)
+            if response.is_error:
+                return {"status_code": response.status_code, "detail": response.json()}
+            return response.json()
+
+        client._post_or_error = post
+        remembered = await client.remember_memory(text="original", type="decision")
+        assert "memory_object_id" in remembered, remembered
+        superseded = await client.supersede_memory(
+            new_text="replacement", supersedes_id=remembered["memory_object_id"]
+        )
+        assert superseded["superseded"] is True, superseded
+        outcome = await client.record_outcome(
+            procedure_id=superseded["new_memory_object_id"], outcome="success"
+        )
+        assert outcome["recorded"] is True, outcome
+
+        dashboard = (await http.get("/dashboard/api/memories", params={"limit": 20})).json()
+
+    explicit_rows = [
+        row for row in dashboard["memories"] if row.get("origin_agent_id") == "codex"
+    ]
+    assert len(explicit_rows) == 3
+    for row in explicit_rows:
+        assert row["container_ref"] == "git:github.com/example/project"
+        assert row["actor_ref"] == "mcp-user"
+        assert row["origin_session_id"] == "mcp-session-123"
+        assert row["visibility"] == "private"
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("context", "expected_status"),
+    [
+        (
+            PalliumContext(
+                base_url="http://testserver",
+                container_ref="git:github.com/example/project",
+                thread_ref="mcp-session-123",
+                actor_ref="mcp-user",
+                visibility="private",
+            ),
+            422,
+        ),
+        (
+            PalliumContext(
+                base_url="http://testserver",
+                container_ref=r"C:\work\project",
+                thread_ref="mcp-session-123",
+                actor_ref="mcp-user",
+                agent_ref="codex",
+                visibility="private",
+            ),
+            400,
+        ),
+    ],
+)
+async def test_explicit_creation_mcp_to_http_rejects_bad_scope_without_write(
+    pallium_asgi_app,
+    context: PalliumContext,
+    expected_status: int,
+) -> None:
+    storage = pallium_asgi_app.state.pallium_service._storage
+
+    def counts() -> tuple[int, int]:
+        with storage._engine.connect() as connection:
+            return (
+                connection.execute(text("SELECT COUNT(*) FROM memory_objects")).scalar_one(),
+                connection.execute(text("SELECT COUNT(*) FROM index_entries")).scalar_one(),
+            )
+
+    client = PalliumMcpClient(context)
+    transport = httpx.ASGITransport(app=pallium_asgi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver", timeout=30.0
+    ) as http:
+        async def post(path, payload):
+            response = await http.post(path, json=payload)
+            if response.is_error:
+                return {"status_code": response.status_code, "detail": response.json()}
+            return response.json()
+
+        client._post_or_error = post
+        before = counts()
+        result = await client.remember_memory(text="must not persist", type="decision")
+
+    assert result["status_code"] == expected_status
+    assert counts() == before

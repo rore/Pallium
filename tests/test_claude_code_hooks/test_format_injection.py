@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "integrations" / "claude-code" / "hooks"))
 
@@ -76,3 +79,55 @@ class TestFormatInjection:
         blocks = [{"title": "T", "memory_object_id": "x", "text": "y"}]
         result = format_injection(blocks, "c", 2400)
         assert "[+expand]" not in result
+
+    def test_scope_exposes_write_provenance_without_memory(self):
+        result = format_injection(
+            [],
+            "git:repo",
+            2400,
+            thread_ref="thread-1",
+            actor_ref="actor",
+            agent_ref="claude-code",
+            visibility="private",
+        )
+        assert result == '[Pallium scope — {"container_ref":"git:repo","thread_ref":"thread-1","actor_ref":"actor","agent_ref":"claude-code","visibility":"private"}]'
+
+    def test_scope_exposes_write_provenance_with_memory(self):
+        result = format_injection(
+            [{"title": "Fact", "memory_object_id": "m1", "text": "Remember."}],
+            "git:repo",
+            2400,
+            thread_ref="thread-1",
+            actor_ref="actor",
+            agent_ref="claude-code",
+            visibility="private",
+        )
+        expected = '[Pallium scope — {"container_ref":"git:repo","thread_ref":"thread-1","actor_ref":"actor","agent_ref":"claude-code","visibility":"private"}]'
+        assert result.startswith(expected + chr(10) * 2)
+
+    def test_scope_json_encoding_is_unambiguous(self):
+        actor = 'user; visibility: global] "quoted"'
+        result = format_injection(
+            [],
+            "git:repo",
+            2400,
+            thread_ref="thread",
+            actor_ref=actor,
+            agent_ref="claude-code",
+            visibility="private",
+        )
+        encoded = result.removeprefix("[Pallium scope — ").removesuffix("]")
+        assert json.loads(encoded)["actor_ref"] == actor
+
+    @pytest.mark.parametrize(
+        "field", ["thread_ref", "actor_ref", "agent_ref", "visibility"]
+    )
+    def test_scope_rejects_control_chars_in_provenance(self, field):
+        kwargs = {
+            "thread_ref": "thread",
+            "actor_ref": "actor",
+            "agent_ref": "claude-code",
+            "visibility": "private",
+        }
+        kwargs[field] += chr(10) + "x"
+        assert format_injection([], "git:repo", 2400, **kwargs) == ""

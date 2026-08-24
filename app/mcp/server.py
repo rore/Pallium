@@ -433,6 +433,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         thread_ref: str | None = None,
         actor_ref: str | None = None,
+        agent_ref: str | None = None,
         visibility: str | None = None,
     ) -> str:
         """Explicitly store a durable fact in Pallium memory.
@@ -450,6 +451,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             container_ref=container_ref,
             thread_ref=thread_ref,
             actor_ref=actor_ref,
+            agent_ref=agent_ref,
             visibility=visibility,
         )
         if not ctx.is_configured:
@@ -496,6 +498,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         thread_ref: str | None = None,
         actor_ref: str | None = None,
+        agent_ref: str | None = None,
         visibility: str | None = None,
     ) -> str:
         """Replace an obsolete memory with a new one. Both persist.
@@ -510,6 +513,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             container_ref=container_ref,
             thread_ref=thread_ref,
             actor_ref=actor_ref,
+            agent_ref=agent_ref,
             visibility=visibility,
         )
         if not ctx.is_configured:
@@ -579,6 +583,11 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         outcome: Literal["success", "failure", "inconclusive"],
         evidence: list[str] | None = None,
         note: str | None = None,
+        container_ref: str | None = None,
+        thread_ref: str | None = None,
+        actor_ref: str | None = None,
+        agent_ref: str | None = None,
+        visibility: str | None = None,
     ) -> str:
         """Record the outcome of following an operational procedure.
 
@@ -590,7 +599,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         memory will consume these outcomes for its success/failure
         counters. Ranking is NOT updated from these outcomes until W4
         integration testing verifies the contract."""
-        ctx = resolve_context()
+        ctx = resolve_context(container_ref=container_ref, thread_ref=thread_ref, actor_ref=actor_ref, agent_ref=agent_ref, visibility=visibility)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         client = PalliumMcpClient(ctx)

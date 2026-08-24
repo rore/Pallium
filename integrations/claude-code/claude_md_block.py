@@ -11,6 +11,7 @@ Picking up prior work? Call `pallium_search_history` first. After a promising se
 - Store turns with `pallium_ingest` (`artifact_kind="note"`, `visibility: "private"`, and the injected `container_ref`). Use global visibility only when explicitly requested, with `actor_ref`.
 - Use `pallium_query_debug` to distinguish filtered, missing, and low-relevance results; use `pallium_expand` when a memory card offers expansion.
 - Use `pallium_flag_memory` for incorrect or obsolete memories. `pallium_rate_memory` is optional, non-blocking feedback; never require a rating for every injected block.
+- For explicit remember, supersede, and record-outcome writes, copy exact Pallium scope values for container_ref, thread_ref, actor_ref, agent_ref, and visibility; pass all five exactly, never raw cwd. Default to private; use global only when explicitly requested. Correction and forget retain the original creation provenance.
 - Explicit writes are compact and deliberate: `pallium_remember` stores a durable fact; `pallium_correct` fixes it; `pallium_supersede` replaces an obsolete fact; `pallium_forget` hides it; `pallium_record_outcome` records a procedure result. Retrieval is not use: these writes do not update accessibility or ranking from retrieval alone.
 - Do not ingest routine turns or re-query for something already in the injected block; use forget only for direct hiding, not vote suppression; use `pallium_flag_memory` for that.
 <!-- pallium:end -->

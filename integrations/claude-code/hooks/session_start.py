@@ -161,7 +161,7 @@ def main() -> None:
         query_text = _derive_orientation_query(cwd)
         blocks = _fetch_orientation(query_text, container_ref, actor_ref)
 
-        output = format_injection(blocks, container_ref, budget_chars=1200, thread_ref=session_id)
+        output = format_injection(blocks, container_ref, budget_chars=1200, thread_ref=session_id, actor_ref=actor_ref, agent_ref="claude-code", visibility="private")
         if output:
             print(output)
 

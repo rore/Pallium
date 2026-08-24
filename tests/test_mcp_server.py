@@ -475,3 +475,54 @@ def test_compact_history_preserves_unicode_casefold_match_offset() -> None:
     }, "STRASSE")
     assert "Straße" in result["results"][0]["excerpt"]
     assert len(_json_text(result)) <= 2000
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "client_method"),
+    [
+        (
+            "pallium_remember",
+            {"text": "fact", "type": "decision"},
+            "remember_memory",
+        ),
+        (
+            "pallium_supersede",
+            {"new_text": "replacement", "supersedes_id": "old-id"},
+            "supersede_memory",
+        ),
+        (
+            "pallium_record_outcome",
+            {"procedure_id": "procedure-id", "outcome": "success"},
+            "record_outcome",
+        ),
+    ],
+)
+async def test_explicit_creation_tools_resolve_complete_provenance_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tool_name: str,
+    arguments: dict,
+    client_method: str,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    scope = {
+        "container_ref": "git:github.com/example/project",
+        "thread_ref": "session-123",
+        "actor_ref": "local-user",
+        "agent_ref": "codex",
+        "visibility": "private",
+    }
+    with patch("app.mcp.client.PalliumMcpClient.__init__", return_value=None) as init, patch(
+        f"app.mcp.client.PalliumMcpClient.{client_method}",
+        new=AsyncMock(return_value={"ok": True}),
+    ):
+        server = create_server()
+        await server.call_tool(tool_name, {**arguments, **scope})
+
+    context = init.call_args.args[0]
+    assert {
+        "container_ref": context.container_ref,
+        "thread_ref": context.thread_ref,
+        "actor_ref": context.actor_ref,
+        "agent_ref": context.agent_ref,
+        "visibility": context.visibility,
+    } == scope

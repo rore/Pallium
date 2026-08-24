@@ -557,11 +557,27 @@ class RememberMemoryRequest(BaseModel):
     type: str = Field(min_length=1)
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence: list[str] | None = Field(default=None, max_length=5)
-    container_ref: str | None = None
-    actor_ref: str | None = None
-    thread_ref: str | None = None
-    origin_session_id: str | None = None
-    origin_agent_id: str | None = None
+    container_ref: str = Field(min_length=1)
+    actor_ref: str = Field(min_length=1)
+    thread_ref: str | None = Field(default=None, min_length=1)
+    agent_ref: str | None = Field(default=None, min_length=1)
+    visibility: Literal["private", "container", "global"]
+    origin_session_id: str | None = Field(default=None, min_length=1, json_schema_extra={"deprecated": True})
+    origin_agent_id: str | None = Field(default=None, min_length=1, json_schema_extra={"deprecated": True})
+
+    @model_validator(mode="after")
+    def populate_deprecated_provenance(self):
+        if self.thread_ref is None:
+            self.thread_ref = self.origin_session_id
+        elif self.origin_session_id is not None and self.thread_ref != self.origin_session_id:
+            raise ValueError("thread_ref and origin_session_id must match")
+        if self.agent_ref is None:
+            self.agent_ref = self.origin_agent_id
+        elif self.origin_agent_id is not None and self.agent_ref != self.origin_agent_id:
+            raise ValueError("agent_ref and origin_agent_id must match")
+        if self.thread_ref is None or self.agent_ref is None:
+            raise ValueError("thread_ref and agent_ref are required")
+        return self
 
 
 class RememberMemoryResponse(BaseModel):
@@ -601,13 +617,29 @@ class SupersedeMemoryRequest(BaseModel):
     new_text: str = Field(min_length=1, max_length=_MAX_MEMORY_TEXT_CHARS)
     supersedes_id: str = Field(min_length=1)
     reason: str | None = Field(default=None, max_length=_MAX_REASON_CHARS)
-    # The new memory takes the old memory's type/container by default; overrides here.
+    # The new memory may keep the old memory's type; creation scope is always explicit.
     type: str | None = None
-    container_ref: str | None = None
-    actor_ref: str | None = None
-    thread_ref: str | None = None
-    origin_session_id: str | None = None
-    origin_agent_id: str | None = None
+    container_ref: str = Field(min_length=1)
+    actor_ref: str = Field(min_length=1)
+    thread_ref: str | None = Field(default=None, min_length=1)
+    agent_ref: str | None = Field(default=None, min_length=1)
+    visibility: Literal["private", "container", "global"]
+    origin_session_id: str | None = Field(default=None, min_length=1, json_schema_extra={"deprecated": True})
+    origin_agent_id: str | None = Field(default=None, min_length=1, json_schema_extra={"deprecated": True})
+
+    @model_validator(mode="after")
+    def populate_deprecated_provenance(self):
+        if self.thread_ref is None:
+            self.thread_ref = self.origin_session_id
+        elif self.origin_session_id is not None and self.thread_ref != self.origin_session_id:
+            raise ValueError("thread_ref and origin_session_id must match")
+        if self.agent_ref is None:
+            self.agent_ref = self.origin_agent_id
+        elif self.origin_agent_id is not None and self.agent_ref != self.origin_agent_id:
+            raise ValueError("agent_ref and origin_agent_id must match")
+        if self.thread_ref is None or self.agent_ref is None:
+            raise ValueError("thread_ref and agent_ref are required")
+        return self
 
 
 class SupersedeMemoryResponse(BaseModel):
@@ -673,6 +705,28 @@ class RecordOutcomeRequest(BaseModel):
     outcome: Literal["success", "failure", "inconclusive"]
     evidence: list[str] | None = Field(default=None, max_length=5)
     note: str | None = Field(default=None, max_length=_MAX_REASON_CHARS)
+    container_ref: str = Field(min_length=1)
+    actor_ref: str = Field(min_length=1)
+    thread_ref: str | None = Field(default=None, min_length=1)
+    agent_ref: str | None = Field(default=None, min_length=1)
+    visibility: Literal["private", "container", "global"]
+    origin_session_id: str | None = Field(default=None, min_length=1, json_schema_extra={"deprecated": True})
+    origin_agent_id: str | None = Field(default=None, min_length=1, json_schema_extra={"deprecated": True})
+
+    @model_validator(mode="after")
+    def populate_deprecated_provenance(self):
+        if self.thread_ref is None:
+            self.thread_ref = self.origin_session_id
+        elif self.origin_session_id is not None and self.thread_ref != self.origin_session_id:
+            raise ValueError("thread_ref and origin_session_id must match")
+        if self.agent_ref is None:
+            self.agent_ref = self.origin_agent_id
+        elif self.origin_agent_id is not None and self.agent_ref != self.origin_agent_id:
+            raise ValueError("agent_ref and origin_agent_id must match")
+        if self.thread_ref is None or self.agent_ref is None:
+            raise ValueError("thread_ref and agent_ref are required")
+        return self
+
 
 
 class RecordOutcomeResponse(BaseModel):

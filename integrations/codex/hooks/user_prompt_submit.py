@@ -82,7 +82,7 @@ def main() -> None:
             sys.exit(0)
 
         blocks = response.get("injectable_blocks", [])
-        output = format_injection(blocks, container_ref, budget_chars=2400, thread_ref=session_id)
+        output = format_injection(blocks, container_ref, budget_chars=2400, thread_ref=session_id, actor_ref=actor_ref, agent_ref=AGENT_REF, visibility="private")
         if output:
             emit_context(output, "UserPromptSubmit")
 

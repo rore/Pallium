@@ -20,6 +20,7 @@ def ctx() -> PalliumContext:
         container_ref="test-container",
         thread_ref="test-thread",
         actor_ref="test-actor",
+        agent_ref="test-agent",
         visibility="container",
     )
 
@@ -165,3 +166,37 @@ class TestConnectionError:
             result = await client.query("test")
             assert "error" in result
             assert "Connection refused" in result["error"]
+
+class TestExplicitMemoryCreation:
+    @staticmethod
+    def _payload(mock_post):
+        return mock_post.call_args.kwargs.get("json") or mock_post.call_args[1].get("json")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "kwargs", "endpoint"),
+        [
+            ("remember_memory", {"text": "fact", "type": "decision"}, "/memory/remember"),
+            ("supersede_memory", {"new_text": "replacement", "supersedes_id": "old-id"}, "/memory/supersede"),
+            ("record_outcome", {"procedure_id": "procedure-id", "outcome": "success"}, "/memory/record-outcome"),
+        ],
+    )
+    async def test_creation_forwards_complete_canonical_provenance(
+        self, ctx: PalliumContext, method: str, kwargs: dict, endpoint: str
+    ) -> None:
+        mock_resp = _mock_response(json_data={"ok": True})
+        with patch("httpx.AsyncClient.post", return_value=mock_resp) as mock_post:
+            await getattr(PalliumMcpClient(ctx), method)(**kwargs)
+
+        url = mock_post.call_args.args[0]
+        payload = self._payload(mock_post)
+        assert str(url).endswith(endpoint)
+        assert {key: payload[key] for key in (
+            "container_ref", "actor_ref", "thread_ref", "agent_ref", "visibility"
+        )} == {
+            "container_ref": "test-container",
+            "actor_ref": "test-actor",
+            "thread_ref": "test-thread",
+            "agent_ref": "test-agent",
+            "visibility": "container",
+        }

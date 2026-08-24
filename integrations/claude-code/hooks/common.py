@@ -261,21 +261,35 @@ def format_injection(
     container_ref: str,
     budget_chars: int,
     thread_ref: str | None = None,
+    actor_ref: str | None = None,
+    agent_ref: str | None = None,
+    visibility: str | None = None,
 ) -> str:
     """Format bounded memory plus exact active-task telemetry scope."""
     safe_container = _safe_scope_value(container_ref)
     safe_thread = _safe_scope_value(thread_ref) if isinstance(thread_ref, str) and thread_ref else None
-    if safe_container is None or (thread_ref and safe_thread is None):
+    safe_actor = _safe_scope_value(actor_ref) if isinstance(actor_ref, str) and actor_ref else None
+    safe_agent = _safe_scope_value(agent_ref) if isinstance(agent_ref, str) and agent_ref else None
+    safe_visibility = _safe_scope_value(visibility) if isinstance(visibility, str) and visibility else None
+    if safe_container is None or any(value is None for supplied, value in ((thread_ref, safe_thread), (actor_ref, safe_actor), (agent_ref, safe_agent), (visibility, safe_visibility)) if supplied):
         return ""
 
-    scope = f"[Pallium scope — container_ref: {safe_container}"
+    scope_fields = {"container_ref": safe_container}
     if safe_thread:
-        scope += f"; thread_ref: {safe_thread}"
-    scope += "]"
+        scope_fields["thread_ref"] = safe_thread
+    if safe_actor:
+        scope_fields["actor_ref"] = safe_actor
+    if safe_agent:
+        scope_fields["agent_ref"] = safe_agent
+    if safe_visibility:
+        scope_fields["visibility"] = safe_visibility
+    scope = "[Pallium scope — " + json.dumps(
+        scope_fields, ensure_ascii=False, separators=(",", ":")
+    ) + "]"
     if not injectable_blocks:
         return scope if safe_thread and len(scope) <= budget_chars else ""
 
-    prefix = f"[Pallium active thread_ref: {safe_thread}]\n\n" if safe_thread else ""
+    prefix = scope + "\n\n"
     header = f"[Pallium memory — container: {safe_container}]\n\n"
     footer = (
         "\n\n[If any memory above seems incorrect or outdated, use the pallium_flag_memory\n"
