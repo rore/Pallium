@@ -25,6 +25,14 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text as _text
 
+_PROVENANCE = {
+    "container_ref": "git:test",
+    "actor_ref": "test-actor",
+    "thread_ref": "test-session",
+    "agent_ref": "test-agent",
+    "visibility": "private",
+}
+
 
 @pytest.fixture
 def client(tmp_path):
@@ -54,9 +62,9 @@ def storage(client):
 def _remember(client, **overrides) -> dict:
     """Convenience: POST /memory/remember with sensible defaults, return response body."""
     body = {
+        **_PROVENANCE,
         "text": "a durable fact",
         "type": "decision",
-        "container_ref": "git:test",
     }
     body.update(overrides)
     resp = client.post("/memory/remember", json=body)
@@ -96,7 +104,7 @@ class TestRememberBoundaryValues:
         assert "memory_object_id" in r
 
     def test_confidence_above_one_rejected(self, client):
-        resp = client.post("/memory/remember", json={
+        resp = client.post("/memory/remember", json={**_PROVENANCE,
             "text": "x", "type": "decision", "confidence": 1.01,
         })
         assert resp.status_code == 422
@@ -112,7 +120,7 @@ class TestRememberBoundaryValues:
         assert "memory_object_id" in r
 
     def test_text_over_max_rejected(self, client):
-        resp = client.post("/memory/remember", json={
+        resp = client.post("/memory/remember", json={**_PROVENANCE,
             "text": "a" * 10_001, "type": "decision",
         })
         assert resp.status_code == 422
@@ -122,7 +130,7 @@ class TestRememberBoundaryValues:
         assert "memory_object_id" in r
 
     def test_evidence_six_items_rejected(self, client):
-        resp = client.post("/memory/remember", json={
+        resp = client.post("/memory/remember", json={**_PROVENANCE,
             "text": "x", "type": "decision",
             "evidence": ["e1", "e2", "e3", "e4", "e5", "e6"],
         })
@@ -173,37 +181,37 @@ class TestRememberUnicode:
 
 
 class TestRememberProvenanceCombinations:
-    """Verify optional provenance fields land correctly regardless of combination."""
+    """Verify canonical fields and deprecated aliases persist consistently."""
 
     def test_only_session_id(self, client, storage):
-        r = _remember(client, origin_session_id="sess-only")
+        r = _remember(client, thread_ref=None, origin_session_id="sess-only")
         mid = r["memory_object_id"]
         with storage._engine.connect() as conn:
             row = conn.execute(_text(
                 "SELECT origin_session_id, origin_agent_id FROM memory_objects WHERE id=:i"
             ), {"i": mid}).one()
         assert row.origin_session_id == "sess-only"
-        assert row.origin_agent_id is None
+        assert row.origin_agent_id == "test-agent"
 
     def test_only_agent_id(self, client, storage):
-        r = _remember(client, origin_agent_id="agent-only")
+        r = _remember(client, agent_ref=None, origin_agent_id="agent-only")
         mid = r["memory_object_id"]
         with storage._engine.connect() as conn:
             row = conn.execute(_text(
                 "SELECT origin_session_id, origin_agent_id FROM memory_objects WHERE id=:i"
             ), {"i": mid}).one()
-        assert row.origin_session_id is None
+        assert row.origin_session_id == "test-session"
         assert row.origin_agent_id == "agent-only"
 
-    def test_neither(self, client, storage):
+    def test_canonical_fields(self, client, storage):
         r = _remember(client)
         mid = r["memory_object_id"]
         with storage._engine.connect() as conn:
             row = conn.execute(_text(
                 "SELECT origin_session_id, origin_agent_id FROM memory_objects WHERE id=:i"
             ), {"i": mid}).one()
-        assert row.origin_session_id is None
-        assert row.origin_agent_id is None
+        assert row.origin_session_id == "test-session"
+        assert row.origin_agent_id == "test-agent"
 
 
 class TestRememberDistinctIds:
@@ -290,18 +298,18 @@ class TestSupersedeEdgeCases:
         """
         a = _remember(client, text="A")["memory_object_id"]
         # A → B
-        r1 = client.post("/memory/supersede", json={
+        r1 = client.post("/memory/supersede", json={**_PROVENANCE,
             "new_text": "B", "supersedes_id": a,
         })
         assert r1.status_code == 200
         b = r1.json()["new_memory_object_id"]
         # A → C rejected
-        r2 = client.post("/memory/supersede", json={
+        r2 = client.post("/memory/supersede", json={**_PROVENANCE,
             "new_text": "C via A", "supersedes_id": a,
         })
         assert r2.status_code == 409
         # B → C accepted (B is still active)
-        r3 = client.post("/memory/supersede", json={
+        r3 = client.post("/memory/supersede", json={**_PROVENANCE,
             "new_text": "C", "supersedes_id": b,
         })
         assert r3.status_code == 200
@@ -323,7 +331,7 @@ class TestSupersedeEdgeCases:
         replaces intent, not type. Storing an investigation as a decision is
         allowed if the caller wants that shape."""
         old = _remember(client, type="investigation_outcome", text="investigated X")["memory_object_id"]
-        resp = client.post("/memory/supersede", json={
+        resp = client.post("/memory/supersede", json={**_PROVENANCE,
             "new_text": "Decision: don't do X.", "supersedes_id": old,
             "type": "decision",
         })
@@ -341,21 +349,21 @@ class TestSupersedeEdgeCases:
 
     def test_supersede_with_invalid_new_type_rejected(self, client):
         old = _remember(client)["memory_object_id"]
-        resp = client.post("/memory/supersede", json={
+        resp = client.post("/memory/supersede", json={**_PROVENANCE,
             "new_text": "x", "supersedes_id": old, "type": "not_valid",
         })
         assert resp.status_code == 400
 
     def test_supersede_reason_at_max(self, client):
         old = _remember(client)["memory_object_id"]
-        resp = client.post("/memory/supersede", json={
+        resp = client.post("/memory/supersede", json={**_PROVENANCE,
             "new_text": "new", "supersedes_id": old, "reason": "r" * 500,
         })
         assert resp.status_code == 200
 
     def test_supersede_reason_over_max_rejected(self, client):
         old = _remember(client)["memory_object_id"]
-        resp = client.post("/memory/supersede", json={
+        resp = client.post("/memory/supersede", json={**_PROVENANCE,
             "new_text": "new", "supersedes_id": old, "reason": "r" * 501,
         })
         assert resp.status_code == 422
@@ -365,7 +373,7 @@ class TestSupersedeEdgeCases:
         This is the reference behavior — call out clearly."""
         old = _remember(client)["memory_object_id"]
         client.post(f"/memory/{old}/forget", json={"reason": "hidden"})
-        resp = client.post("/memory/supersede", json={
+        resp = client.post("/memory/supersede", json={**_PROVENANCE,
             "new_text": "replacement", "supersedes_id": old,
         })
         # Lifecycle is still 'active' after forget (tombstone is orthogonal),
@@ -395,7 +403,7 @@ class TestForgetEdgeCases:
         signal.
         """
         old = _remember(client)["memory_object_id"]
-        client.post("/memory/supersede", json={"new_text": "new", "supersedes_id": old})
+        client.post("/memory/supersede", json={**_PROVENANCE,"new_text": "new", "supersedes_id": old})
         # Old is now lifecycle='superseded'.
         resp = client.post(f"/memory/{old}/forget", json={"reason": "audit cleanup"})
         assert resp.status_code == 200
@@ -413,7 +421,7 @@ class TestRecordOutcomeEdgeCases:
     @pytest.mark.parametrize("outcome", ["success", "failure", "inconclusive"])
     def test_all_three_outcome_values(self, client, outcome):
         proc = _remember(client, type="operational_fact")["memory_object_id"]
-        resp = client.post("/memory/record-outcome", json={
+        resp = client.post("/memory/record-outcome", json={**_PROVENANCE,
             "procedure_id": proc, "outcome": outcome,
         })
         assert resp.status_code == 200
@@ -425,7 +433,7 @@ class TestRecordOutcomeEdgeCases:
         """
         proc = _remember(client, type="operational_fact")["memory_object_id"]
         for outcome in ("success", "failure", "success"):
-            resp = client.post("/memory/record-outcome", json={
+            resp = client.post("/memory/record-outcome", json={**_PROVENANCE,
                 "procedure_id": proc, "outcome": outcome,
             })
             assert resp.status_code == 200
@@ -439,7 +447,7 @@ class TestRecordOutcomeEdgeCases:
 
     def test_outcome_with_evidence_and_note(self, client, storage):
         proc = _remember(client, type="operational_fact")["memory_object_id"]
-        resp = client.post("/memory/record-outcome", json={
+        resp = client.post("/memory/record-outcome", json={**_PROVENANCE,
             "procedure_id": proc, "outcome": "success",
             "evidence": ["source:1", "source:2"],
             "note": "worked on first try",
@@ -448,7 +456,7 @@ class TestRecordOutcomeEdgeCases:
 
     def test_outcome_evidence_over_max_rejected(self, client):
         proc = _remember(client, type="operational_fact")["memory_object_id"]
-        resp = client.post("/memory/record-outcome", json={
+        resp = client.post("/memory/record-outcome", json={**_PROVENANCE,
             "procedure_id": proc, "outcome": "success",
             "evidence": ["e1", "e2", "e3", "e4", "e5", "e6"],
         })
@@ -456,7 +464,7 @@ class TestRecordOutcomeEdgeCases:
 
     def test_outcome_note_over_max_rejected(self, client):
         proc = _remember(client, type="operational_fact")["memory_object_id"]
-        resp = client.post("/memory/record-outcome", json={
+        resp = client.post("/memory/record-outcome", json={**_PROVENANCE,
             "procedure_id": proc, "outcome": "success",
             "note": "n" * 501,
         })
@@ -471,7 +479,7 @@ class TestRecordOutcomeEdgeCases:
         deliberately.
         """
         proc = _remember(client, type="decision")["memory_object_id"]
-        resp = client.post("/memory/record-outcome", json={
+        resp = client.post("/memory/record-outcome", json={**_PROVENANCE,
             "procedure_id": proc, "outcome": "success",
         })
         assert resp.status_code == 200  # tighten in W4 if we decide to
@@ -482,7 +490,7 @@ class TestRecordOutcomeEdgeCases:
         works. When W4 wires ranking, this may want to reject."""
         proc = _remember(client, type="operational_fact")["memory_object_id"]
         client.post(f"/memory/{proc}/forget", json={"reason": "cleanup"})
-        resp = client.post("/memory/record-outcome", json={
+        resp = client.post("/memory/record-outcome", json={**_PROVENANCE,
             "procedure_id": proc, "outcome": "success",
         })
         assert resp.status_code == 200  # v1 permissive; W4 may tighten
@@ -517,7 +525,7 @@ class TestFullLifecycleJourneys:
 
     def test_remember_supersede_correct_the_new(self, client, storage):
         old = _remember(client, text="A")["memory_object_id"]
-        new = client.post("/memory/supersede", json={
+        new = client.post("/memory/supersede", json={**_PROVENANCE,
             "new_text": "B", "supersedes_id": old,
         }).json()["new_memory_object_id"]
         # Correcting the new (active) memory should work.
@@ -533,7 +541,7 @@ class TestFullLifecycleJourneys:
     def test_remember_supersede_forget_new(self, client, storage):
         """Full journey: A→B, then forget B. A stays superseded; B is soft-deleted."""
         old = _remember(client, text="A")["memory_object_id"]
-        new = client.post("/memory/supersede", json={
+        new = client.post("/memory/supersede", json={**_PROVENANCE,
             "new_text": "B", "supersedes_id": old,
         }).json()["new_memory_object_id"]
         assert client.post(f"/memory/{new}/forget", json={"reason": "changed my mind"}).status_code == 200
@@ -569,7 +577,7 @@ class TestRetrievalIntegration:
 
     def test_superseded_new_memory_has_index_entries(self, client, storage):
         old = _remember(client, container_ref="git:idx-test")["memory_object_id"]
-        new = client.post("/memory/supersede", json={
+        new = client.post("/memory/supersede", json={**_PROVENANCE,
             "new_text": "replacement fact for retrieval test",
             "supersedes_id": old,
             "container_ref": "git:idx-test",
@@ -602,7 +610,7 @@ class TestErrorMessageQuality:
     """Errors that an agent will see should be actionable."""
 
     def test_invalid_type_error_names_the_allowed_set(self, client):
-        resp = client.post("/memory/remember", json={"text": "x", "type": "bogus"})
+        resp = client.post("/memory/remember", json={**_PROVENANCE,"text": "x", "type": "bogus"})
         assert resp.status_code == 400
         detail = resp.json()["detail"]
         # Every allowed type should appear so the agent can self-correct.
@@ -612,8 +620,8 @@ class TestErrorMessageQuality:
 
     def test_supersede_conflict_error_names_current_state(self, client):
         old = _remember(client)["memory_object_id"]
-        client.post("/memory/supersede", json={"new_text": "first", "supersedes_id": old})
-        resp = client.post("/memory/supersede", json={"new_text": "second", "supersedes_id": old})
+        client.post("/memory/supersede", json={**_PROVENANCE,"new_text": "first", "supersedes_id": old})
+        resp = client.post("/memory/supersede", json={**_PROVENANCE,"new_text": "second", "supersedes_id": old})
         assert resp.status_code == 409
         detail = resp.json()["detail"]
         assert "superseded" in detail.lower() or "not active" in detail.lower(), (

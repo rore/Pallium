@@ -23,6 +23,20 @@ _GITHUB_REF = re.compile(
     r"git:github\.com/([^/]+)/([^/]+?)(?:\.git)?/?",
     flags=re.IGNORECASE,
 )
+_RAW_ABSOLUTE_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|/|\\\\)")
+
+
+def validate_explicit_container_ref(value: str | None) -> str:
+    """Validate and canonicalize a container supplied to an explicit write."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("container_ref is required and must be non-blank")
+    if value != value.strip():
+        raise ValueError("container_ref must not have leading or trailing whitespace")
+    if _RAW_ABSOLUTE_PATH.match(value):
+        raise ValueError(
+            "container_ref must be an opaque scope, not an absolute filesystem path"
+        )
+    return canonicalize_container_ref(value) or value
 
 
 def canonicalize_container_ref(value: str | None) -> str | None:

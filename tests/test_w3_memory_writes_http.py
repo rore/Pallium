@@ -30,6 +30,14 @@ import pytest
 from core.models import MemoryObject
 from storage.sqlite import SQLiteStorageProvider
 
+_PROVENANCE = {
+    "container_ref": "git:test",
+    "actor_ref": "test-actor",
+    "thread_ref": "test-session",
+    "agent_ref": "test-agent",
+    "visibility": "private",
+}
+
 
 @pytest.fixture
 def client(tmp_path):
@@ -77,13 +85,11 @@ class TestRememberEndpoint:
     def test_happy_path(self, client, storage):
         resp = client.post(
             "/memory/remember",
-            json={
+            json={**_PROVENANCE,
                 "text": "Decision: prefer approach A over B because of latency.",
                 "type": "decision",
                 "confidence": 0.9,
                 "container_ref": "git:test",
-                "origin_session_id": "sess-1",
-                "origin_agent_id": "agent-x",
             },
         )
         assert resp.status_code == 200, resp.text
@@ -99,32 +105,32 @@ class TestRememberEndpoint:
                 "FROM memory_objects WHERE id=:i"
             ), {"i": body["memory_object_id"]}).one()
         assert row.origin == "agent_explicit"
-        assert row.origin_session_id == "sess-1"
-        assert row.origin_agent_id == "agent-x"
+        assert row.origin_session_id == "test-session"
+        assert row.origin_agent_id == "test-agent"
         assert row.type == "decision"
 
     def test_invalid_type_returns_400(self, client):
         resp = client.post(
             "/memory/remember",
-            json={"text": "bogus", "type": "not_a_real_type"},
+            json={**_PROVENANCE,"text": "bogus", "type": "not_a_real_type"},
         )
         assert resp.status_code == 400
         assert "must be one of" in resp.json()["detail"]
 
     def test_empty_text_returns_422(self, client):
         # Pydantic min_length=1 rejects at the boundary.
-        resp = client.post("/memory/remember", json={"text": "", "type": "decision"})
+        resp = client.post("/memory/remember", json={**_PROVENANCE,"text": "", "type": "decision"})
         assert resp.status_code == 422
 
     def test_oversize_text_returns_422(self, client):
         big = "x" * 10_001  # exceeds _MAX_MEMORY_TEXT_CHARS
-        resp = client.post("/memory/remember", json={"text": big, "type": "decision"})
+        resp = client.post("/memory/remember", json={**_PROVENANCE,"text": big, "type": "decision"})
         assert resp.status_code == 422
 
     def test_negative_confidence_returns_422(self, client):
         resp = client.post(
             "/memory/remember",
-            json={"text": "x", "type": "decision", "confidence": -0.1},
+            json={**_PROVENANCE,"text": "x", "type": "decision", "confidence": -0.1},
         )
         assert resp.status_code == 422
 
@@ -163,7 +169,7 @@ class TestCorrectEndpoint:
         # Supersede first via the service directly.
         client.post(
             "/memory/supersede",
-            json={"new_text": "replacement", "supersedes_id": old.id},
+            json={**_PROVENANCE,"new_text": "replacement", "supersedes_id": old.id},
         )
         # Now try to correct the old memory — must be 409.
         resp = client.post(
@@ -178,7 +184,7 @@ class TestSupersedeEndpoint:
         old = _seed_memory(storage, memory_id="ss-old")
         resp = client.post(
             "/memory/supersede",
-            json={
+            json={**_PROVENANCE,
                 "new_text": "new fact replaces old",
                 "supersedes_id": old.id,
                 "reason": "found a better formulation",
@@ -209,7 +215,7 @@ class TestSupersedeEndpoint:
     def test_supersede_missing_old_returns_404(self, client):
         resp = client.post(
             "/memory/supersede",
-            json={"new_text": "x", "supersedes_id": "nonexistent"},
+            json={**_PROVENANCE,"new_text": "x", "supersedes_id": "nonexistent"},
         )
         assert resp.status_code == 404
 
@@ -217,11 +223,11 @@ class TestSupersedeEndpoint:
         old = _seed_memory(storage, memory_id="dbl-old")
         assert client.post(
             "/memory/supersede",
-            json={"new_text": "first", "supersedes_id": old.id},
+            json={**_PROVENANCE,"new_text": "first", "supersedes_id": old.id},
         ).status_code == 200
         resp = client.post(
             "/memory/supersede",
-            json={"new_text": "second", "supersedes_id": old.id},
+            json={**_PROVENANCE,"new_text": "second", "supersedes_id": old.id},
         )
         assert resp.status_code == 409
 
@@ -282,7 +288,7 @@ class TestRecordOutcomeEndpoint:
         proc = _seed_memory(storage, memory_id="proc-1", mtype="operational_fact")
         resp = client.post(
             "/memory/record-outcome",
-            json={
+            json={**_PROVENANCE,
                 "procedure_id": proc.id,
                 "outcome": "success",
                 "note": "worked on first try",
@@ -298,14 +304,14 @@ class TestRecordOutcomeEndpoint:
         proc = _seed_memory(storage, memory_id="proc-2", mtype="operational_fact")
         resp = client.post(
             "/memory/record-outcome",
-            json={"procedure_id": proc.id, "outcome": "maybe"},
+            json={**_PROVENANCE,"procedure_id": proc.id, "outcome": "maybe"},
         )
         assert resp.status_code == 422  # pydantic Literal validation
 
     def test_unknown_procedure_returns_404(self, client):
         resp = client.post(
             "/memory/record-outcome",
-            json={"procedure_id": "nonexistent", "outcome": "success"},
+            json={**_PROVENANCE,"procedure_id": "nonexistent", "outcome": "success"},
         )
         assert resp.status_code == 404
 
@@ -323,11 +329,11 @@ class TestConcurrencySafeSemanticsViaHTTP:
         # sees the state written by the first and returns 409.
         r1 = client.post(
             "/memory/supersede",
-            json={"new_text": "first attempt", "supersedes_id": old.id},
+            json={**_PROVENANCE,"new_text": "first attempt", "supersedes_id": old.id},
         )
         r2 = client.post(
             "/memory/supersede",
-            json={"new_text": "second attempt", "supersedes_id": old.id},
+            json={**_PROVENANCE,"new_text": "second attempt", "supersedes_id": old.id},
         )
         assert r1.status_code == 200
         assert r2.status_code == 409

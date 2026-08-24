@@ -300,6 +300,10 @@ class PalliumMcpClient:
             payload["origin_session_id"] = origin_session_id
         if origin_agent_id is not None:
             payload["origin_agent_id"] = origin_agent_id
+        for key in ("agent_ref", "visibility"):
+            value = getattr(self._ctx, key, None)
+            if value is not None:
+                payload[key] = value
         return await self._post_or_error("/memory/remember", payload)
 
     async def correct_memory(
@@ -340,6 +344,10 @@ class PalliumMcpClient:
             payload["origin_session_id"] = origin_session_id
         if origin_agent_id is not None:
             payload["origin_agent_id"] = origin_agent_id
+        for key in ("agent_ref", "visibility"):
+            value = getattr(self._ctx, key, None)
+            if value is not None:
+                payload[key] = value
         return await self._post_or_error("/memory/supersede", payload)
 
     async def forget_memory(
@@ -391,4 +399,8 @@ class PalliumMcpClient:
             payload["evidence"] = evidence
         if note is not None:
             payload["note"] = note
+        for key in ("container_ref", "actor_ref", "thread_ref", "agent_ref", "visibility"):
+            value = getattr(self._ctx, key, None)
+            if value is not None:
+                payload[key] = value
         return await self._post_or_error("/memory/record-outcome", payload)

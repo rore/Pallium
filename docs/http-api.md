@@ -387,13 +387,19 @@ extraction path. Every write records an `origin ∈ {agent_explicit,
 agent_inferred, user_requested}`. Use these when a fact deserves
 preservation and automatic extraction may miss it — not on every turn.
 
+Creation endpoints (remember, supersede, and record-outcome) require
+container_ref, actor_ref, thread_ref, agent_ref, and visibility. Visibility
+must be private, container, or global. Raw absolute filesystem paths are
+rejected as container identifiers. Deprecated origin_session_id and
+origin_agent_id aliases may populate their canonical fields, but must match
+when both forms are sent. These values are attribution, not authentication.
+Correction and forget preserve the memory's original creation provenance.
+
 ### POST /memory/remember
 
-Durable fact write. `type` names a registered memory type (one of
-`decision`, `investigation_outcome`, `constraint_memory`, `operational_fact`,
-`note`). Body fields: `text`, `type`, optional `confidence` (audit only —
-does NOT influence retrieval ranking), `evidence` list, `container_ref`,
-`actor_ref`, `thread_ref`, `origin_session_id`, `origin_agent_id`.
+Durable fact write. Body fields: text, type, the required creation provenance
+above, and optional confidence (audit only — does NOT influence retrieval
+ranking) and evidence list.
 
 Response: `{memory_object_id, origin, created_at}`.
 
@@ -412,8 +418,9 @@ For fully obsolete memories, use `/memory/supersede` instead.
 
 ### POST /memory/supersede
 
-Replace an obsolete memory. Body: `new_text`, `supersedes_id`, optional
-`type`, `reason`. Both rows persist; retrieval hides the old.
+Replace an obsolete memory. Body: new_text, supersedes_id, the required
+creation provenance above, and optional type and reason. Both rows persist;
+retrieval hides the old.
 
 Response: `{new_memory_object_id, superseded_memory_object_id}`.
 
@@ -431,9 +438,8 @@ Use `/memory/{id}/flag` instead when you're one voter among many;
 ### POST /memory/record-outcome
 
 Record success / failure / inconclusive for an operational-fact procedure.
-Body: `procedure_id` (an `operational_fact` memory-object id), `outcome`
-(one of `"success"`, `"failure"`, `"inconclusive"`), optional `evidence`,
-`note`. Response: `{recorded: true}`.
+Body: procedure_id, outcome, the required creation provenance above, and
+optional evidence and note. Response: {recorded: true}.
 
 Counters live under `payload["use_counters"]` on the target memory — a
 nested sub-blob that retrieval paths cannot read (Invariant 1: retrieval

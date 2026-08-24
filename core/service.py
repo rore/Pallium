@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from capabilities.consolidation import ConsolidationRunResult
 from capabilities.workstreams import WorkstreamCapability
 from core.consolidation_runner import ConsolidationRunner
-from core.container_ref import canonicalize_container_ref
+from core.container_ref import canonicalize_container_ref, validate_explicit_container_ref
 from core.contracts import IngestResult, ItemProcessingResult, MemoryRetentionPolicy, ProcessResult, QueryResult, build_source_item
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
 from core.processing import (
@@ -951,6 +951,8 @@ class PalliumService:
         container_ref: str | None = None,
         actor_ref: str | None = None,
         thread_ref: str | None = None,
+        visibility: str | None = None,
+        agent_ref: str | None = None,
         origin_session_id: str | None = None,
         origin_agent_id: str | None = None,
     ) -> MemoryObject:
@@ -964,7 +966,17 @@ class PalliumService:
             raise ValueError(
                 f"type must be one of {sorted(self._W3_ALLOWED_MEMORY_TYPES)}, got {type!r}"
             )
-        container_ref = canonicalize_container_ref(container_ref)
+        container_ref, actor_ref, thread_ref, agent_ref, visibility = (
+            self._validate_explicit_provenance(
+                container_ref=container_ref,
+                actor_ref=actor_ref,
+                thread_ref=thread_ref,
+                agent_ref=agent_ref,
+                visibility=visibility,
+                origin_session_id=origin_session_id,
+                origin_agent_id=origin_agent_id,
+            )
+        )
         payload: dict[str, object] = {"statement": text}
         if confidence is not None:
             payload["confidence"] = confidence
@@ -979,13 +991,14 @@ class PalliumService:
             payload=payload,
             container_ref=container_ref,
             actor_ref=actor_ref,
+            visibility=visibility,
         )
         self._storage.create_memory_object(memory)
         self._storage.mark_memory_origin(
             memory.id,
             origin="agent_explicit",
-            origin_session_id=origin_session_id,
-            origin_agent_id=origin_agent_id,
+            origin_session_id=thread_ref,
+            origin_agent_id=agent_ref,
         )
         # Emit index entries so the memory is retrievable via /query
         # right away, without waiting for a downstream re-indexer. Match
@@ -1027,18 +1040,30 @@ class PalliumService:
         container_ref: str | None = None,
         actor_ref: str | None = None,
         thread_ref: str | None = None,
+        visibility: str | None = None,
+        agent_ref: str | None = None,
         origin_session_id: str | None = None,
         origin_agent_id: str | None = None,
     ) -> tuple[str, str]:
         """pallium_supersede: explicit chain — new memory replaces old.
 
-        Returns (old_id, new_id). If `type` / `container_ref` / `actor_ref`
-        are None, defaults are taken from the old memory. Raises
+        Returns (old_id, new_id). `type` may default from the old memory;
+        all creation scope and provenance fields must be supplied deliberately.
         SupersessionConflictError if the old memory is not currently
         active (surfaces as 409 to the MCP caller).
         """
         old = self._storage.get_memory_object(supersedes_id)
-        container_ref = canonicalize_container_ref(container_ref)
+        container_ref, actor_ref, thread_ref, agent_ref, visibility = (
+            self._validate_explicit_provenance(
+                container_ref=container_ref,
+                actor_ref=actor_ref,
+                thread_ref=thread_ref,
+                agent_ref=agent_ref,
+                visibility=visibility,
+                origin_session_id=origin_session_id,
+                origin_agent_id=origin_agent_id,
+            )
+        )
         resolved_type = type or old.type
         if resolved_type not in self._W3_ALLOWED_MEMORY_TYPES:
             raise ValueError(
@@ -1054,15 +1079,16 @@ class PalliumService:
             schema_id=f"{resolved_type}.agent_explicit.v1",
             schema_version="1",
             payload=payload,
-            container_ref=container_ref or old.container_ref,
-            actor_ref=actor_ref or old.actor_ref,
+            container_ref=container_ref,
+            actor_ref=actor_ref,
+            visibility=visibility,
         )
         self._storage.create_memory_object(new_memory)
         self._storage.mark_memory_origin(
             new_memory.id,
             origin="agent_explicit",
-            origin_session_id=origin_session_id,
-            origin_agent_id=origin_agent_id,
+            origin_session_id=thread_ref,
+            origin_agent_id=agent_ref,
         )
         # Same as remember_memory: index the new memory so it's
         # retrievable immediately. The old memory's index entries remain
@@ -1145,6 +1171,9 @@ class PalliumService:
         note: str | None = None,
         container_ref: str | None = None,
         actor_ref: str | None = None,
+        thread_ref: str | None = None,
+        visibility: str | None = None,
+        agent_ref: str | None = None,
         origin_session_id: str | None = None,
         origin_agent_id: str | None = None,
     ) -> bool:
@@ -1158,7 +1187,17 @@ class PalliumService:
             raise ValueError(
                 f"outcome must be success | failure | inconclusive, got {outcome!r}"
             )
-        container_ref = canonicalize_container_ref(container_ref)
+        container_ref, actor_ref, thread_ref, agent_ref, visibility = (
+            self._validate_explicit_provenance(
+                container_ref=container_ref,
+                actor_ref=actor_ref,
+                thread_ref=thread_ref,
+                agent_ref=agent_ref,
+                visibility=visibility,
+                origin_session_id=origin_session_id,
+                origin_agent_id=origin_agent_id,
+            )
+        )
         # Confirm the procedure exists so we don't accept dangling references.
         try:
             self._storage.get_memory_object(procedure_id)
@@ -1183,15 +1222,51 @@ class PalliumService:
             payload=payload,
             container_ref=container_ref,
             actor_ref=actor_ref,
+            visibility=visibility,
         )
         self._storage.create_memory_object(outcome_memory)
         self._storage.mark_memory_origin(
             outcome_memory.id,
             origin="agent_explicit",
-            origin_session_id=origin_session_id,
-            origin_agent_id=origin_agent_id,
+            origin_session_id=thread_ref,
+            origin_agent_id=agent_ref,
         )
         return True
+
+    @staticmethod
+    def _validate_explicit_provenance(
+        *,
+        container_ref: str | None,
+        actor_ref: str | None,
+        thread_ref: str | None,
+        agent_ref: str | None,
+        visibility: str | None,
+        origin_session_id: str | None = None,
+        origin_agent_id: str | None = None,
+    ) -> tuple[str, str, str, str, str]:
+        if thread_ref is None:
+            thread_ref = origin_session_id
+        elif origin_session_id is not None and thread_ref != origin_session_id:
+            raise ValueError("thread_ref and origin_session_id must match")
+        if agent_ref is None:
+            agent_ref = origin_agent_id
+        elif origin_agent_id is not None and agent_ref != origin_agent_id:
+            raise ValueError("agent_ref and origin_agent_id must match")
+        container_ref = validate_explicit_container_ref(container_ref)
+        missing = [
+            name
+            for name, value in (
+                ("actor_ref", actor_ref),
+                ("thread_ref", thread_ref),
+                ("agent_ref", agent_ref),
+            )
+            if not isinstance(value, str) or not value.strip()
+        ]
+        if missing:
+            raise ValueError("explicit memory provenance requires: " + ", ".join(missing))
+        if visibility not in {"private", "container", "global"}:
+            raise ValueError("visibility must be one of [container, global, private]")
+        return container_ref, actor_ref, thread_ref, agent_ref, visibility
 
     # ── /W3 explicit memory-write service methods ────────────────────
 

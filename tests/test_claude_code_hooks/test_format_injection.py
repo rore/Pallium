@@ -76,3 +76,25 @@ class TestFormatInjection:
         blocks = [{"title": "T", "memory_object_id": "x", "text": "y"}]
         result = format_injection(blocks, "c", 2400)
         assert "[+expand]" not in result
+
+
+    def test_scope_exposes_write_provenance_without_memory(self):
+        result = format_injection([], "git:repo", 2400, thread_ref="thread-1", actor_ref="actor", agent_ref="claude-code", visibility="private")
+        assert result == "[Pallium scope — container_ref: git:repo; thread_ref: thread-1; actor_ref: actor; agent_ref: claude-code; visibility: private]"
+
+    def test_scope_exposes_write_provenance_with_memory(self):
+        result = format_injection(
+            [{"title": "Fact", "memory_object_id": "m1", "text": "Remember."}],
+            "git:repo",
+            2400,
+            thread_ref="thread-1",
+            actor_ref="actor",
+            agent_ref="claude-code",
+            visibility="private",
+        )
+        assert result.startswith(
+            "[Pallium scope — container_ref: git:repo; thread_ref: thread-1; "
+            "actor_ref: actor; agent_ref: claude-code; visibility: private]\n\n"
+        )
+    def test_scope_rejects_control_chars_in_provenance(self):
+        assert format_injection([], "git:repo", 2400, thread_ref="thread", actor_ref="bad" + chr(10) + "actor", agent_ref="claude-code", visibility="private") == ""

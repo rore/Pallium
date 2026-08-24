@@ -58,7 +58,7 @@ def main() -> None:
 
         blocks = _fetch_retrieval_fallback(container_ref, actor_ref)
 
-        output = format_injection(blocks, container_ref, budget_chars=1200, thread_ref=session_id)
+        output = format_injection(blocks, container_ref, budget_chars=1200, thread_ref=session_id, actor_ref=actor_ref, agent_ref=_common.AGENT_REF, visibility="private")
         if output:
             emit_context(output, "SessionStart")
 

@@ -16,6 +16,7 @@ class PalliumContext:
     container_ref: str | None = None
     thread_ref: str | None = None
     actor_ref: str | None = None
+    agent_ref: str | None = None
     visibility: str | None = None
 
     @property
@@ -34,6 +35,7 @@ def resolve_context(
     container_ref: str | None = None,
     thread_ref: str | None = None,
     actor_ref: str | None = None,
+    agent_ref: str | None = None,
     visibility: str | None = None,
 ) -> PalliumContext:
     """Merge explicit parameters with environment variable defaults.
@@ -45,5 +47,6 @@ def resolve_context(
         container_ref=_canonicalize_container_ref(container_ref if container_ref is not None else os.environ.get("PALLIUM_CONTAINER_REF")),
         thread_ref=thread_ref if thread_ref is not None else os.environ.get("PALLIUM_THREAD_REF"),
         actor_ref=actor_ref if actor_ref is not None else os.environ.get("PALLIUM_ACTOR_REF"),
+        agent_ref=agent_ref if agent_ref is not None else os.environ.get("PALLIUM_AGENT_REF"),
         visibility=visibility if visibility is not None else os.environ.get("PALLIUM_VISIBILITY"),
     )

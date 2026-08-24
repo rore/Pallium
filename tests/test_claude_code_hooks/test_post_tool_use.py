@@ -285,6 +285,31 @@ class TestMainFailureDetection:
         failure_calls = [p for (_, _, p) in sent if p.get("trigger_origin") == "post_tool_failure"]
         assert failure_calls, "An interrupted tool call must fire a failure trigger."
 
+    def test_failure_injection_passes_complete_provenance_scope(self):
+        import io
+        import json
+
+        pt = _import_with_isolated_state_dir()
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(pt, "RETRY_COUNTERS_DIR", Path(td) / "retry_counters"), \
+                mock.patch.object(pt, "_TRIGGERS_ENABLED", True), \
+                mock.patch.object(pt, "pallium_request", return_value={"injectable_blocks": []}), \
+                mock.patch.object(pt, "resolve_container_ref", return_value="git:repo"), \
+                mock.patch.object(pt, "derive_actor_ref", return_value="user"), \
+                mock.patch.object(pt, "format_injection", return_value="") as formatter, \
+                mock.patch.object(sys, "stdin", io.StringIO(json.dumps(_FAILED_BASH_PAYLOAD))):
+                try:
+                    pt.main()
+                except SystemExit:
+                    pass
+
+        assert formatter.call_args.kwargs == {
+            "budget_chars": 1200,
+            "thread_ref": "sess-main-1",
+            "actor_ref": "user",
+            "agent_ref": "claude-code",
+            "visibility": "private",
+        }
     def test_triggers_disabled_by_default_is_inert(self):
         """With the opt-in flag off, main() must emit no queries even on failure."""
         import io

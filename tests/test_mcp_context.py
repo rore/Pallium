@@ -15,6 +15,7 @@ class TestResolveContext:
         monkeypatch.setenv("PALLIUM_CONTAINER_REF", "slack:channel:C04ABC")
         monkeypatch.setenv("PALLIUM_THREAD_REF", "slack:thread:C04ABC:123")
         monkeypatch.setenv("PALLIUM_ACTOR_REF", "slack:user:U789")
+        monkeypatch.setenv("PALLIUM_AGENT_REF", "claude-code")
         monkeypatch.setenv("PALLIUM_VISIBILITY", "container")
 
         ctx = resolve_context()
@@ -22,6 +23,7 @@ class TestResolveContext:
         assert ctx.container_ref == "slack:channel:C04ABC"
         assert ctx.thread_ref == "slack:thread:C04ABC:123"
         assert ctx.actor_ref == "slack:user:U789"
+        assert ctx.agent_ref == "claude-code"
         assert ctx.visibility == "container"
 
     def test_explicit_overrides_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -43,6 +45,7 @@ class TestResolveContext:
         monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
         monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
         monkeypatch.delenv("PALLIUM_ACTOR_REF", raising=False)
+        monkeypatch.delenv("PALLIUM_AGENT_REF", raising=False)
         monkeypatch.delenv("PALLIUM_VISIBILITY", raising=False)
 
         ctx = resolve_context()
@@ -50,6 +53,7 @@ class TestResolveContext:
         assert ctx.container_ref is None
         assert ctx.thread_ref is None
         assert ctx.actor_ref is None
+        assert ctx.agent_ref is None
         assert ctx.visibility is None
 
     def test_missing_base_url_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:

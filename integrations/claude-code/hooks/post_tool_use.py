@@ -260,7 +260,15 @@ def main() -> None:
                     tool_name=tool_name,
                 ))
 
-        output_text = format_injection(blocks, container_ref, budget_chars=1200)
+        output_text = format_injection(
+            blocks,
+            container_ref,
+            budget_chars=1200,
+            thread_ref=session_id,
+            actor_ref=actor_ref,
+            agent_ref="claude-code",
+            visibility="private",
+        )
         if output_text:
             print(output_text)
 

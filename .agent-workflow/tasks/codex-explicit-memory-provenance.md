@@ -53,7 +53,7 @@ Key conventions: `core.container_ref` remains the sole container-normalization s
 - When the dashboard returns and expands an explicit memory, it shall display actor, agent, and session as creation provenance in plain labels; correction/forget shall not change or claim those fields as mutator identity → dashboard API test, lifecycle assertion, and browser/DOM validation.
 - When Claude/Codex inject scope with or without memory blocks, it shall include safe exact container/thread/actor/agent/visibility values within the existing character budget and reject control-character injection → integration boundary tests.
 - When explicit memories are created, corrected, superseded, forgotten, queried, and outcomes recorded, lifecycle/conflict/idempotence/Unicode/max-boundary behavior shall remain intact and retrieval ranking/accessibility shall not be updated merely by write/retrieval → updated W3 E2E plus focused regression suites.
-- When delivery completes, workflow/redline/import checks and CI shall be green; installed integrations shall match merged sources; local `/health` shall report `status=ok` and `embedding_provider_ok=true` after VBS service restart.
+- When delivery completes, workflow/redline/import checks and CI shall be green; installed integrations shall match merged sources; local `/health` shall report `status=ok` and `embedding_provider_ok=true` after VBS service restart. → workflow checker and CI, setup refresh, VBS restart, and live health request.
 
 **Plan review:**
 Clean-context review in `## Plan review`; final verdict APPROVE after two blocking review rounds were resolved.
@@ -64,7 +64,7 @@ Approved by user 2026-08-24T11:00:23+03:00: "yes"
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Checkpoint: explicit-memory-provenance
@@ -82,3 +82,26 @@ Verification plan: Public HTTP/MCP no-partial-write tests, integration scope-hea
 ## Plan review
 
 Initial clean-context verdict: BLOCKING. It required one canonical public naming scheme (`thread_ref`/`agent_ref` mapped internally), service-level enforcement before persistence, explicit non-inheritance on supersede, OS-independent raw-path cases, a decision on the existing `local` actor fallback, creation-only dashboard labels, docs/caller updates, and per-operation no-partial-write tests. The first amendment incorporated those points. Re-review found two remaining contract traps: removing existing origin inputs without migration, and actor-bearing `public` memories being invisible under current semantics. The amended plan retains strict deprecated aliases and rejects `public` on this actor-attributed creation path. Final clean-context verdict: APPROVE.
+## Implementation
+
+- Added one shared explicit-container validator that rejects blanks, surrounding whitespace, and raw absolute Windows/POSIX/UNC paths while preserving canonical git/repo/path identifiers and Unicode opaque scopes.
+- Remember, supersede, and record-outcome now validate complete creation provenance in the service before persistence. HTTP canonical thread/agent fields accept deprecated origin aliases only as populating or exact-match aliases; public visibility is rejected; no authorization or schema layer was added.
+- MCP context, tools, and client forwarding carry agent and visibility scope. Claude/Codex hooks inject exact container, thread, actor, agent, and visibility for normal, empty, retry, and failure paths within existing character budgets.
+- Dashboard rows expose existing actor, origin agent, and origin session columns under the plain creation-provenance label. Correction and forget preserve those creation fields.
+- Updated supported callers, W3 scenarios, packaged guidance, and the HTTP reference. Roadmap status remains unchanged because W3 was already shipped.
+- apply_patch failed once with machine-local Windows error 1385. As required by local instructions, subsequent edits used narrowly scoped deterministic IO.File replacements. The VBS service launcher was not modified.
+
+## Evidence
+
+- Required-field and no-partial-write criteria: tests/test_explicit_memory_provenance.py covers missing/blank fields for all three creation operations, deprecated-alias populate/mismatch, service-boundary rejection, unchanged memory/index counts, and active supersede source.
+- Container and visibility boundaries: raw Windows/POSIX/UNC/whitespace rejection; canonical mixed-case GitHub, repo, path, Unicode opaque acceptance; private/container/global persistence; public rejection.
+- Creation provenance and lifecycle: HTTP W3 E2E plus MCP-to-real-ASGI lifecycle assert canonical container, actor, session, agent, visibility, supersede/outcome creation, and correction/forget preservation through dashboard/storage reads.
+- MCP error behavior: missing agent scope and raw-path scope return 422/400 through MCP-to-real-HTTP with unchanged memory and index counts.
+- Integration scope and budget: Claude/Codex formatter, PostToolUse failure-path, packaged integration, and guidance-budget tests assert exact five-field scope with/without memory, control-character rejection, and existing size ceilings.
+- Focused reviewer-finding regression suite: 85 passed. Earlier combined provenance/integration/budget suite: 83 passed. Dedicated all-operation boundary suite: 62 passed.
+- Final full suite: 3764 passed, 23 skipped, 2 xfailed; all branch-relevant tests are green. One unrelated pre-existing local prompt-variant configuration assertion remains (test_prompt_variants_legacy_fallback_unaffected); no configuration file is changed by this branch.
+- git diff --check is clean apart from expected Git line-ending notices. Ruff is not installed in the repository virtual environment, so no Ruff result is claimed.
+
+## Result review
+
+APPROVE — clean-context review found and verified fixes for the Claude PostToolUse scope path, MCP no-write lifecycle, and all-operation boundary matrix. The final reviewer reported no remaining P0–P3 findings; 62 dedicated boundary tests and the workflow checker are green.

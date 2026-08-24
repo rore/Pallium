@@ -92,8 +92,10 @@ def run() -> ScenarioResult:
         "type": "decision",
         "confidence": 0.95,
         "container_ref": container_ref,
-        "origin_session_id": "session-A",
-        "origin_agent_id": "scenario-5-runner",
+        "actor_ref": "scenario-user",
+        "thread_ref": "session-A",
+        "agent_ref": "scenario-5-runner",
+        "visibility": "private",
     }
     r_remember = client.post("/memory/remember", json=remember_body)
     if r_remember.status_code != 200:
