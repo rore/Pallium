@@ -1,7 +1,6 @@
 # P1 · Reuse Measurement
 - idea-reuse-judge-calibration
 - idea-pull-real-corpus-validation
-- fix-vector-source-only-starvation
 - idea-raw-duplicate-ingestion-and-result-diversity
 - idea-visibility-violation-metric-completeness
 - fix-roadmap-and-evidence-status-drift
@@ -35,6 +34,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- fix-vector-source-only-starvation
 - fix-lookup-and-expansion-active-attribution
 - idea-reuse-judge-evidence-span-enforcement
 - surface-retrieval-fail-closed-reason

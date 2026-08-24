@@ -1,9 +1,9 @@
 ---
 id: fix-vector-source-only-starvation
 title: Vector source-only retrieval can be starved by derived memories
-status: queued
+status: done
 priority: medium
-commitment: uncommitted
+commitment: committed
 ---
 
 > **Sequencing note 2026-08-18.** This is a *supporting* fix, not standalone urgent work: land it

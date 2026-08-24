@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 
 from core.filters import matches_filters, target_visibility_and_container
 from core.models import (
@@ -25,6 +26,36 @@ from storage.vector_index import VectorIndex
 logger = logging.getLogger(__name__)
 
 VECTOR_STAGE_NAME = "vector"
+
+def _iter_vector_hit_batches(
+    index: VectorIndex,
+    query_vector: list[float],
+    limit: int,
+    *,
+    target_kind: str | None,
+) -> Iterator[list[tuple[str, float]]]:
+    """Yield duplicate-free ordered prefixes within a start-of-query horizon."""
+    if target_kind is None:
+        yield index.search(query_vector, k=limit * 4)
+        return
+    horizon = index.entry_count()
+    if horizon <= 0 or limit <= 0:
+        return
+    search_k = min(max(limit * 8, 1), horizon)
+    seen_ids: set[str] = set()
+    while True:
+        batch = index.search(query_vector, k=search_k)
+        new_hits: list[tuple[str, float]] = []
+        for entry_id, similarity in batch:
+            if entry_id in seen_ids:
+                continue
+            seen_ids.add(entry_id)
+            new_hits.append((entry_id, similarity))
+        if new_hits:
+            yield new_hits
+        if not batch or len(batch) < search_k or search_k >= horizon or not new_hits:
+            return
+        search_k = min(search_k * 2, horizon)
 
 
 class VectorRetrievalProvider(RetrievalProvider):
@@ -84,161 +115,159 @@ class VectorRetrievalProvider(RetrievalProvider):
         query_vectors = self._embedding_provider.embed([text], mode="query")
         query_vector = query_vectors[0]
 
-        # 2. Search vector index (overfetch limit * 4). For source-only search
-        # the ANN index cannot filter by target_kind, so over-fetch more widely
-        # and skip non-matching kinds below — the guaranteed source coverage
-        # comes from the lexical leg's SQL push-down; this just lets the vector
-        # leg contribute source hits it would otherwise crowd out with memory.
-        search_k = limit * 8 if target_kind is not None else limit * 4
-        raw_hits = index.search(query_vector, k=search_k)
-
-        # 3. Resolve entry_ids to IndexEntries, handle stale entries
-        resolved_hits: list[tuple[IndexEntry, float]] = []
-        index_entries = self._storage.get_index_entries([entry_id for entry_id, _similarity in raw_hits])
-        if not isinstance(index_entries, dict):
-            index_entries = {}
-
-        for entry_id, similarity in raw_hits:
-            index_entry = index_entries.get(entry_id)
-            if index_entry is None:
-                try:
-                    index_entry = self._storage.get_index_entry(entry_id)
-                except KeyError:
-                    # Stale entry: index entry deleted by retention
-                    logger.debug("Stale vector index entry %s; scheduling lazy removal", entry_id)
-                    try:
-                        index.remove(entry_id)
-                    except KeyError:
-                        pass  # Already removed
-                    continue
-            resolved_hits.append((index_entry, similarity))
-
-        # Stale entry removal is in-memory only — reconcile handles disk persistence.
-        # No save() call here; the query-serving process should not write the index file.
-
-        # 4. Apply min_similarity threshold, filters, visibility, and dedup
+        # 2. Search vector index. Default retrieval intentionally remains one
+        # fixed overfetch; target-kind retrieval expands in bounded batches.
         results: list[QueryResultItem] = []
         all_candidate_trace_hits: list[RetrievalTraceHit] = []
         selected_trace_hits: list[RetrievalTraceHit] = []
         seen: set[tuple[str, str]] = set()
-
         hits_before_visibility = 0
         hits_after_visibility = 0
 
-        for index_entry, similarity in resolved_hits:
-            score = int(similarity * 1000)
+        for raw_hits in _iter_vector_hit_batches(index, query_vector, limit, target_kind=target_kind):
+            # 3. Resolve each newly exposed batch in one storage call.
+            resolved_hits: list[tuple[IndexEntry, float]] = []
+            index_entries = self._storage.get_index_entries([entry_id for entry_id, _similarity in raw_hits])
+            if not isinstance(index_entries, dict):
+                index_entries = {}
+            for entry_id, similarity in raw_hits:
+                index_entry = index_entries.get(entry_id)
+                if index_entry is None:
+                    try:
+                        index_entry = self._storage.get_index_entry(entry_id)
+                    except KeyError:
+                        logger.debug("Stale vector index entry %s; scheduling lazy removal", entry_id)
+                        try:
+                            index.remove(entry_id)
+                        except KeyError:
+                            pass
+                        continue
+                resolved_hits.append((index_entry, similarity))
 
-            # Source-only search (vNext P1): the ANN index can't filter by
-            # target_kind, so skip non-matching kinds here (defense-in-depth
-            # alongside the lexical SQL push-down). Skips before trace/threshold
-            # so a source-only vector stage reflects only source candidates.
-            if target_kind is not None and index_entry.target_kind != target_kind:
-                continue
-
-            # Build trace hit for all candidates (before filtering)
-            trace_hit = RetrievalTraceHit(
-                target_kind=index_entry.target_kind,
-                target_id=index_entry.target_id,
-                index_entry_id=index_entry.id,
-                index_type="vector",
-                text_view_name=index_entry.text_view_name,
-                score=score,
-                matched_tokens=(),
-                provider_name=index_entry.provider_name,
-                provider_version=index_entry.provider_version,
-                cosine_similarity=similarity,
+            # Stale entry removal is in-memory only; reconcile persists it.
+            matching_below_floor = any(
+                target_kind is not None
+                and index_entry.target_kind == target_kind
+                and similarity < self._min_similarity
+                for index_entry, similarity in resolved_hits
             )
 
-            if include_trace:
-                all_candidate_trace_hits.append(trace_hit)
+            for index_entry, similarity in resolved_hits:
+                score = int(similarity * 1000)
 
-            # Apply min_similarity threshold
-            if similarity < self._min_similarity:
-                continue
-
-            # Apply filters (lifecycle check for memory_objects + field matching)
-            if not matches_filters(
-                self._storage.get_memory_object,
-                self._storage.get_source_item,
-                self._storage.get_evidence_for_memory_object,
-                index_entry.target_kind, index_entry.target_id, filters,
-            ):
-                continue
-
-            hits_before_visibility += 1
-
-            # Apply visibility using new is_visible()
-            candidate_visibility, candidate_container_ref, candidate_actor_ref = target_visibility_and_container(
-                self._storage.get_source_item, self._storage.get_memory_object,
-                index_entry.target_kind, index_entry.target_id,
-            )
-            if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref, candidate_actor_ref, query_visibility=visibility, query_actor_ref=query_actor_ref):
-                continue
-
-            hits_after_visibility += 1
-
-            # Dedup by (target_kind, target_id)
-            key = (index_entry.target_kind, index_entry.target_id)
-            if key in seen:
-                continue
-            seen.add(key)
-
-            # 6. Hydrate into QueryResultItem (same pattern as lexical.py)
-            if index_entry.target_kind == "memory_object":
-                try:
-                    memory_object = self._storage.get_memory_object(index_entry.target_id)
-                    evidence = self._storage.get_evidence_for_memory_object(index_entry.target_id)
-                except KeyError:
-                    logger.debug("Skipping deleted memory_object %s during hydration", index_entry.target_id)
+                # Source-only search (vNext P1): the ANN index can't filter by
+                # target_kind, so skip non-matching kinds here (defense-in-depth
+                # alongside the lexical SQL push-down). Skips before trace/threshold
+                # so a source-only vector stage reflects only source candidates.
+                if target_kind is not None and index_entry.target_kind != target_kind:
                     continue
-                results.append(
-                    QueryResultItem(
-                        result_kind="memory_hit",
-                        memory_object_id=memory_object.id,
-                        type=memory_object.type,
-                        payload=memory_object.payload,
-                        freshness_at=memory_object.freshness_at,
-                        envelope=memory_object.envelope,
-                        score=score,
-                        evidence=evidence,
-                        visibility=memory_object.visibility,
-                    )
+
+                # Build trace hit for all candidates (before filtering)
+                trace_hit = RetrievalTraceHit(
+                    target_kind=index_entry.target_kind,
+                    target_id=index_entry.target_id,
+                    index_entry_id=index_entry.id,
+                    index_type="vector",
+                    text_view_name=index_entry.text_view_name,
+                    score=score,
+                    matched_tokens=(),
+                    provider_name=index_entry.provider_name,
+                    provider_version=index_entry.provider_version,
+                    cosine_similarity=similarity,
                 )
-            elif index_entry.target_kind == "source_item":
-                try:
-                    source_item = self._storage.get_source_item(index_entry.target_id)
-                except KeyError:
-                    logger.debug("Skipping deleted source_item %s during hydration", index_entry.target_id)
+
+                if include_trace:
+                    all_candidate_trace_hits.append(trace_hit)
+
+                # Apply min_similarity threshold
+                if similarity < self._min_similarity:
                     continue
-                results.append(
-                    QueryResultItem(
-                        result_kind="source_hit",
-                        source_item_id=source_item.id,
-                        source_type=source_item.source_type,
-                        source_id=source_item.source_id,
-                        excerpt=build_excerpt(source_item.content, query=text),
-                        occurred_at=source_item.occurred_at,
-                        actor_ref=source_item.actor_ref,
-                        agent_ref=source_item.agent_ref,
-                        role=source_item.role,
-                        container_ref=source_item.container_ref,
-                        thread_ref=source_item.thread_ref,
-                        source_ref=source_item.source_ref,
-                        artifact_kind=source_item.artifact_kind,
-                        score=score,
-                        evidence=[build_evidence(source_item)],
-                        visibility=source_item.visibility,
-                    )
+
+                # Apply filters (lifecycle check for memory_objects + field matching)
+                if not matches_filters(
+                    self._storage.get_memory_object,
+                    self._storage.get_source_item,
+                    self._storage.get_evidence_for_memory_object,
+                    index_entry.target_kind, index_entry.target_id, filters,
+                ):
+                    continue
+
+                hits_before_visibility += 1
+
+                # Apply visibility using new is_visible()
+                candidate_visibility, candidate_container_ref, candidate_actor_ref = target_visibility_and_container(
+                    self._storage.get_source_item, self._storage.get_memory_object,
+                    index_entry.target_kind, index_entry.target_id,
                 )
-            else:
-                continue
+                if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref, candidate_actor_ref, query_visibility=visibility, query_actor_ref=query_actor_ref):
+                    continue
 
-            if include_trace:
-                selected_trace_hits.append(trace_hit)
+                hits_after_visibility += 1
 
-            if len(results) >= limit:
+                # Dedup by (target_kind, target_id)
+                key = (index_entry.target_kind, index_entry.target_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                # 6. Hydrate into QueryResultItem (same pattern as lexical.py)
+                if index_entry.target_kind == "memory_object":
+                    try:
+                        memory_object = self._storage.get_memory_object(index_entry.target_id)
+                        evidence = self._storage.get_evidence_for_memory_object(index_entry.target_id)
+                    except KeyError:
+                        logger.debug("Skipping deleted memory_object %s during hydration", index_entry.target_id)
+                        continue
+                    results.append(
+                        QueryResultItem(
+                            result_kind="memory_hit",
+                            memory_object_id=memory_object.id,
+                            type=memory_object.type,
+                            payload=memory_object.payload,
+                            freshness_at=memory_object.freshness_at,
+                            envelope=memory_object.envelope,
+                            score=score,
+                            evidence=evidence,
+                            visibility=memory_object.visibility,
+                        )
+                    )
+                elif index_entry.target_kind == "source_item":
+                    try:
+                        source_item = self._storage.get_source_item(index_entry.target_id)
+                    except KeyError:
+                        logger.debug("Skipping deleted source_item %s during hydration", index_entry.target_id)
+                        continue
+                    results.append(
+                        QueryResultItem(
+                            result_kind="source_hit",
+                            source_item_id=source_item.id,
+                            source_type=source_item.source_type,
+                            source_id=source_item.source_id,
+                            excerpt=build_excerpt(source_item.content, query=text),
+                            occurred_at=source_item.occurred_at,
+                            actor_ref=source_item.actor_ref,
+                            agent_ref=source_item.agent_ref,
+                            role=source_item.role,
+                            container_ref=source_item.container_ref,
+                            thread_ref=source_item.thread_ref,
+                            source_ref=source_item.source_ref,
+                            artifact_kind=source_item.artifact_kind,
+                            score=score,
+                            evidence=[build_evidence(source_item)],
+                            visibility=source_item.visibility,
+                        )
+                    )
+                else:
+                    continue
+
+                if include_trace:
+                    selected_trace_hits.append(trace_hit)
+
+                if len(results) >= limit:
+                    break
+
+            if len(results) >= limit or matching_below_floor:
                 break
-
         # 7. Build trace
         trace = None
         if include_trace:
