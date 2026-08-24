@@ -29,6 +29,7 @@ from evals.pull_contamination.harness import (
 
 _AMBIGUOUS_PATH = "evals/pull_contamination/scenarios_ambiguous.json"
 _APPLICABILITY_PATH = "evals/pull_contamination/scenarios_applicability.json"
+_SUPERSEDED_PATH = "evals/pull_contamination/scenarios_superseded.json"
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +270,18 @@ def test_applicability_scenario_marker_and_scope_invariants() -> None:
         assert classify_answer(s.current_task, s.marker_a, s.marker_b) == "ambiguous", (
             f"{s.id}: task text resolves the convention; baseline would not be uncertain"
         )
+
+
+def test_focused_superseded_scenarios_are_multi_case_and_detection_clean() -> None:
+    scenarios = load_scenarios(_SUPERSEDED_PATH)
+    assert load_case(_SUPERSEDED_PATH) == "applicability-judgment"
+    assert len(scenarios) >= 2
+    assert len({scenario.id for scenario in scenarios}) == len(scenarios)
+    assert {scenario.taxonomy_type for scenario in scenarios} == {"scope-superseded"}
+    for scenario in scenarios:
+        assert classify_answer(scenario.current_task, scenario.marker_a, scenario.marker_b) == "ambiguous"
+        assert classify_answer(scenario.relevant_history, scenario.marker_a, scenario.marker_b) == "chose_A"
+        assert classify_answer(scenario.contaminating_history, scenario.marker_a, scenario.marker_b) == "chose_B"
 
 
 def test_leading_is_primary_for_non_explicit_cases() -> None:

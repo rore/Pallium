@@ -14,6 +14,7 @@ import random
 import sqlite3
 import sys
 import time
+from collections import Counter
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,7 +29,7 @@ from evals.eval_common import build_eval_providers  # noqa: E402
 from providers.llm.base import LLMProvider  # noqa: E402
 from core.visibility import is_visible  # noqa: E402
 
-MAX_SAMPLE_SIZE = 5
+MAX_SAMPLE_SIZE = 12
 MAX_VISIBLE_SOURCES = 3
 MAX_SOURCE_CHARS = 480
 MAX_QUERY_CHARS = 1000
@@ -71,6 +72,32 @@ def _valid_sample_size(value: int) -> int:
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _sample_cases(cases: list[PullCase], *, sample_size: int, seed: int) -> list[PullCase]:
+    """Select deterministically while spreading cases across requester sessions."""
+    grouped: dict[str, list[PullCase]] = {}
+    for case in cases:
+        grouped.setdefault(case.session_id, []).append(case)
+    rng = random.Random(seed)
+    session_ids = sorted(grouped)
+    rng.shuffle(session_ids)
+    for group in grouped.values():
+        rng.shuffle(group)
+
+    selected: list[PullCase] = []
+    target = min(sample_size, len(cases))
+    while len(selected) < target:
+        added = False
+        for session_id in session_ids:
+            group = grouped[session_id]
+            if group and len(selected) < target:
+                selected.append(group.pop())
+                added = True
+        if not added:
+            break
+    selected.sort(key=lambda case: case.event_id)
+    return selected
 
 
 def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_size: int = MAX_SAMPLE_SIZE, seed: int = 0) -> CorpusSnapshot:
@@ -209,9 +236,7 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
                 source_texts=tuple(surviving_texts),
             ))
 
-    rng = random.Random(seed)
-    selected = rng.sample(cases, min(sample_size, len(cases)))
-    selected.sort(key=lambda case: case.event_id)
+    selected = _sample_cases(cases, sample_size=sample_size, seed=seed)
     return CorpusSnapshot(
         cases=tuple(selected),
         counts={
@@ -220,6 +245,11 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
             "query_bearing_nonempty": query_bearing_nonempty,
             "valid_cases": len(cases),
             "sampled_cases": len(selected),
+            "requester_sessions_sampled": len({case.session_id for case in selected}),
+            "requester_session_case_counts": sorted(
+                Counter(case.session_id for case in selected).values(),
+                reverse=True,
+            ),
         },
         attrition=attrition,
     )
@@ -449,6 +479,49 @@ def run_pilot(
     return aggregate, {"eval": "real-corpus-pull-pilot-review", "contains_raw_private_text": True, "never_publish": True, "cases": review_cases}
 
 
+def render_review_sheet(review: dict[str, Any]) -> str:
+    """Render a private, blinded worksheet for one human reviewer."""
+    lines = [
+        "# Pallium real-corpus review (private)",
+        "",
+        "This file contains private task history. Do not publish it.",
+        "For each case, judge the answers before opening the JSON review file, which contains the hidden arm mapping.",
+        "",
+    ]
+
+    def block(value: str) -> list[str]:
+        text = value.strip() or "[empty]"
+        return [f"    {line}" for line in text.splitlines()]
+
+    for case in review.get("cases", []):
+        lines.extend([f"## Case {case['case_id']}", ""])
+        if case.get("failure_type"):
+            lines.extend([f"Run failure: `{case['failure_type']}`", ""])
+            continue
+        with_first = bool(case["blind_with_history_is_a"])
+        answer_a = case["with_history_answer"] if with_first else case["without_history_answer"]
+        answer_b = case["without_history_answer"] if with_first else case["with_history_answer"]
+        history = "\n\n".join(case.get("source_texts", []))
+        lines.extend([
+            "### Task", "", *block(case["query"]), "",
+            "### Retrieved history", "", *block(history), "",
+            "### Answer A", "", *block(answer_a), "",
+            "### Answer B", "", *block(answer_b), "",
+            "### Your judgement", "",
+            "- Better answer: [ ] A  [ ] B  [ ] Tie",
+            "- History was: [ ] Useful  [ ] Irrelevant  [ ] Harmful",
+            "- History was stale or reversed: [ ] Yes  [ ] No  [ ] Unsure",
+            "- Notes:", "", "---", "",
+        ])
+    return "\n".join(lines)
+
+
+def _write_private(path: Path, content: str) -> None:
+    path.touch(mode=0o600, exist_ok=True)
+    path.chmod(0o600)
+    path.write_text(content, encoding="utf-8")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--db", type=Path, required=True, help="Existing scratch SQLite database")
@@ -456,6 +529,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--visibility", required=True)
     parser.add_argument("--aggregate-output", type=Path, required=True, help="Text-free aggregate JSON output")
     parser.add_argument("--review-output", type=Path, required=True, help="PRIVATE: contains raw text; local only; never publish")
+    parser.add_argument("--review-sheet-output", type=Path, default=None, help="PRIVATE: optional blinded Markdown worksheet for one human reviewer")
     parser.add_argument("--acknowledge-private-review-output", action="store_true", help="Acknowledge that the review output contains raw private text and must never be published")
     parser.add_argument("--sample-size", type=int, default=MAX_SAMPLE_SIZE)
     parser.add_argument("--seed", type=int, default=0)
@@ -472,10 +546,13 @@ def main(argv: list[str] | None = None) -> int:
         if not args.db.exists() or not args.db.is_file():
             parser.error("--db must name an existing scratch SQLite database")
         db_targets = {args.db.resolve(), Path(str(args.db) + "-wal").resolve(), Path(str(args.db) + "-shm").resolve(), Path(str(args.db) + "-journal").resolve()}
-        if args.aggregate_output.resolve() in db_targets or args.review_output.resolve() in db_targets:
+        output_paths = [args.aggregate_output.resolve(), args.review_output.resolve()]
+        if args.review_sheet_output is not None:
+            output_paths.append(args.review_sheet_output.resolve())
+        if any(path in db_targets for path in output_paths):
             parser.error("report outputs must not equal the scratch database or its sidecars")
-        if args.aggregate_output.resolve() == args.review_output.resolve():
-            parser.error("aggregate and review outputs must be different files")
+        if len(set(output_paths)) != len(output_paths):
+            parser.error("report outputs must be different files")
         if not args.acknowledge_private_review_output:
             parser.error("--acknowledge-private-review-output is required before writing private review output")
         snapshot = load_corpus(
@@ -493,9 +570,10 @@ def main(argv: list[str] | None = None) -> int:
         args.aggregate_output.parent.mkdir(parents=True, exist_ok=True)
         args.review_output.parent.mkdir(parents=True, exist_ok=True)
         args.aggregate_output.write_text(json.dumps(aggregate, indent=2) + "\n", encoding="utf-8")
-        args.review_output.touch(mode=0o600, exist_ok=True)
-        args.review_output.chmod(0o600)
-        args.review_output.write_text(json.dumps(review, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        _write_private(args.review_output, json.dumps(review, indent=2, ensure_ascii=False) + "\n")
+        if args.review_sheet_output is not None:
+            args.review_sheet_output.parent.mkdir(parents=True, exist_ok=True)
+            _write_private(args.review_sheet_output, render_review_sheet(review) + "\n")
     except (ValueError, FileNotFoundError, sqlite3.Error) as exc:
         parser.error(str(exc))
     return 0

@@ -4,6 +4,7 @@ import json
 import os
 import stat
 import sqlite3
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from evals.real_corpus_pull_eval import (
     PullCase,
     _build_parser,
     load_corpus,
+    render_review_sheet,
     run_pilot,
 )
 from providers.llm.base import LLMJsonResponse
@@ -128,9 +130,49 @@ def test_sampling_is_seeded_and_capped(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         load_corpus(db, container_ref="c:test", visibility="private", sample_size=0)
     with pytest.raises(ValueError):
-        load_corpus(db, container_ref="c:test", visibility="private", sample_size=6)
+        load_corpus(db, container_ref="c:test", visibility="private", sample_size=13)
     with pytest.raises(FileNotFoundError):
         load_corpus(tmp_path / "missing.db", container_ref="c:test", visibility="private")
+
+
+def test_sampling_balances_requester_sessions_before_refilling(tmp_path: Path) -> None:
+    db = tmp_path / "balanced.db"
+    sources = [(f"s{i}", f"source {i}", None) for i in range(15)]
+    events = [(f"e{i:02d}", f"query {i}", json.dumps([{"source_item_id": f"s{i}"}])) for i in range(15)]
+    _db(db, events, sources)
+    with sqlite3.connect(db) as conn:
+        for i in range(15):
+            conn.execute(
+                "UPDATE historical_lookup_reuse_event SET session_id = ? WHERE id = ?",
+                (f"session-{i // 5}", f"e{i:02d}"),
+            )
+
+    snapshot = load_corpus(db, container_ref="c:test", visibility="private", sample_size=12, seed=7)
+
+    assert Counter(case.session_id for case in snapshot.cases) == {
+        "session-0": 4,
+        "session-1": 4,
+        "session-2": 4,
+    }
+    assert snapshot.counts["requester_sessions_sampled"] == 3
+    assert snapshot.counts["requester_session_case_counts"] == [4, 4, 4]
+
+
+def test_review_sheet_is_blinded_private_and_unicode_safe() -> None:
+    sheet = render_review_sheet({"cases": [{
+        "case_id": "abc",
+        "query": "מה הוחלט?",
+        "source_texts": ["résumé context"],
+        "with_history_answer": "context answer",
+        "without_history_answer": "baseline answer",
+        "blind_with_history_is_a": False,
+    }]})
+
+    assert "private task history" in sheet
+    assert "מה הוחלט?" in sheet and "résumé context" in sheet
+    assert sheet.index("baseline answer") < sheet.index("context answer")
+    assert "Better answer: [ ] A  [ ] B  [ ] Tie" in sheet
+    assert "with_history_answer" not in sheet and "blind_with_history" not in sheet
 
 
 def test_provider_failure_is_case_scoped_and_does_not_leak(tmp_path: Path) -> None:
@@ -147,7 +189,7 @@ def test_cli_requires_explicit_db_and_outputs() -> None:
     with pytest.raises(SystemExit):
         parser.parse_args([])
     args = parser.parse_args(["--db", "x.db", "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", "a.json", "--review-output", "r.json"])
-    assert args.sample_size == 5 and args.seed == 0
+    assert args.sample_size == 12 and args.seed == 0
     assert "never publish" in parser.format_help()
 
 def test_loader_opens_db_read_only(tmp_path: Path, monkeypatch) -> None:
@@ -182,7 +224,7 @@ def test_decision_gate_requires_three_successful_pairs() -> None:
     assert aggregate["decision_gate"]["broad_product_recommendation"] == "none"
     limitations = aggregate["claim"]["limitations"]
     assert limitations == {
-        "max_cases": 5,
+        "max_cases": 12,
         "judge": "single uncalibrated model judge",
         "paired_draws": 1,
         "human_spot_check": False,
@@ -257,17 +299,21 @@ def test_cli_main_writes_reports_without_mutating_db_or_leaking_aggregate(tmp_pa
     monkeypatch.setattr(runner, "build_eval_providers", lambda *args, **kwargs: (ScriptedProvider(), ScriptedProvider()))
     aggregate_path = tmp_path / "aggregate.json"
     review_path = tmp_path / "review.json"
-    assert runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(aggregate_path), "--review-output", str(review_path), "--acknowledge-private-review-output"]) == 0
+    sheet_path = tmp_path / "review.md"
+    assert runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(aggregate_path), "--review-output", str(review_path), "--review-sheet-output", str(sheet_path), "--acknowledge-private-review-output"]) == 0
     assert db.read_bytes() == before
     aggregate = aggregate_path.read_text(encoding="utf-8")
     review = review_path.read_text(encoding="utf-8")
+    sheet = sheet_path.read_text(encoding="utf-8")
     assert "CLI SECRET_QUERY" not in aggregate and "CLI SECRET_SOURCE" not in aggregate
-    assert "CLI SECRET_QUERY" in review
+    assert "CLI SECRET_QUERY" in review and "CLI SECRET_QUERY" in sheet
     assert "contains_raw_private_text" in review and "never_publish" in review
     if os.name != "nt":
         assert stat.S_IMODE(review_path.stat().st_mode) == 0o600
     with pytest.raises(SystemExit):
         runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(db), "--review-output", str(tmp_path / "other.json")])
+    with pytest.raises(SystemExit):
+        runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(aggregate_path), "--review-output", str(review_path), "--review-sheet-output", str(review_path), "--acknowledge-private-review-output"])
 
 def test_answer_is_capped_before_blinded_judge(tmp_path: Path) -> None:
     db = tmp_path / "answers.db"
