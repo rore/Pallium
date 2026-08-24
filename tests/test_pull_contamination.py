@@ -8,6 +8,8 @@ without an LLM. No ``@pytest.mark.slow``; import-mode=importlib compatible.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 
 from providers.llm.base import LLMJsonResponse, LLMProvider
 
@@ -43,6 +45,19 @@ _SUPERSEDED_PATH = "evals/pull_contamination/scenarios_superseded.json"
 # Deterministic A/B detection — the PRIMARY signal
 # ---------------------------------------------------------------------------
 
+
+def test_harness_import_does_not_require_optional_mcp_package() -> None:
+    script = """
+import builtins
+original_import = builtins.__import__
+def without_mcp(name, *args, **kwargs):
+    if name == 'mcp' or name.startswith('mcp.'):
+        raise ModuleNotFoundError(name)
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = without_mcp
+import evals.pull_contamination.harness
+"""
+    subprocess.run([sys.executable, "-c", script], check=True)
 
 def test_classify_a_only_is_chose_a() -> None:
     assert classify_answer("I will set the TTL to 300 seconds.", r"\b300\b", r"\b60\b") == "chose_A"

@@ -10,8 +10,6 @@ import json
 import os
 from typing import Literal
 
-from mcp.server.fastmcp import FastMCP
-
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_context
 from retrieval.common import build_excerpt
@@ -238,6 +236,7 @@ NOT_CONFIGURED_MSG = (
 
 def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
+    from mcp.server.fastmcp import FastMCP
     # stateless_http: every Pallium MCP tool is a single-shot RPC, so we don't
     # need server-side session affinity. Stateless mode survives server
     # restarts (sessions are otherwise in-process only) — without it, clients
