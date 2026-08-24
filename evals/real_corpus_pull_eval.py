@@ -16,7 +16,7 @@ import sys
 import time
 from collections import Counter
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -25,16 +25,20 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from app.config import AppConfig  # noqa: E402
+from app.mcp.server import _compact_history, _json_text  # noqa: E402
 from evals.eval_common import build_eval_providers  # noqa: E402
 from providers.llm.base import LLMProvider  # noqa: E402
+from redaction import redact_sensitive  # noqa: E402
 from core.visibility import is_visible  # noqa: E402
 
-MAX_SAMPLE_SIZE = 12
+MAX_SAMPLE_SIZE = 20
 MAX_VISIBLE_SOURCES = 3
 MAX_SOURCE_CHARS = 480
 MAX_QUERY_CHARS = 1000
 MAX_ANSWER_CHARS = 2000
-MAX_TOTAL_ESTIMATED_INPUT_TOKENS = 20000
+MAX_TOTAL_ESTIMATED_INPUT_TOKENS = 50000
+MAX_MODEL_CALLS = 100
+_ALLOWED_CATEGORIES = {"applicable", "unrelated", "replaced_decision", "unlabeled"}
 ANSWER_SCHEMA = '{"answer":"string"}'
 JUDGE_SCHEMA = '{"winner":"A|B|tie","history_relevance":"useful|harmful|irrelevant","rationale":"string"}'
 CLAIM_SEAM = "offline controlled downstream-task-effect"
@@ -47,6 +51,9 @@ class PullCase:
     query: str
     source_ids: tuple[str, ...]
     source_texts: tuple[str, ...]
+    raw_history: str | None = None
+    guarded_history: str | None = None
+    category: str = "unlabeled"
 
     @property
     def case_id(self) -> str:
@@ -58,6 +65,7 @@ class CorpusSnapshot:
     cases: tuple[PullCase, ...]
     counts: dict[str, int]
     attrition: dict[str, int]
+    lineage: dict[str, int] = field(default_factory=dict)
 
 
 def _hash_id(value: str) -> str:
@@ -100,7 +108,181 @@ def _sample_cases(cases: list[PullCase], *, sample_size: int, seed: int) -> list
     return selected
 
 
-def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_size: int = MAX_SAMPLE_SIZE, seed: int = 0) -> CorpusSnapshot:
+def _memory_text(row: sqlite3.Row) -> str:
+    try:
+        payload = json.loads(row['payload_json'] or '{}')
+    except (TypeError, json.JSONDecodeError):
+        payload = {}
+    if isinstance(payload, dict):
+        for key in ('text', 'statement', 'fact', 'summary', 'decision', 'content'):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    subject = row['subject'] if 'subject' in row.keys() else None
+    return str(subject or '').strip()
+
+
+
+def _load_lineage(
+    conn: sqlite3.Connection,
+    *,
+    container_ref: str,
+    visibility: str,
+    query_actor_ref: str | None,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int]]:
+    """Read supported supersession chains using the production relation shape."""
+    memory_columns = _table_columns(conn, 'memory_objects')
+    relation_columns = _table_columns(conn, 'relations')
+    required_memory = {'id', 'type', 'payload_json', 'lifecycle', 'visibility', 'container_ref', 'actor_ref', 'created_at'}
+    required_relation = {'from_kind', 'from_id', 'relation_type', 'to_kind', 'to_id'}
+    empty = {'supported_memory_claims': 0, 'superseded_claims': 0, 'supported_replacements': 0, 'conflicting_or_missing_replacements': 0, 'sources_with_supported_replacements': 0}
+    if not required_memory.issubset(memory_columns) or not required_relation.issubset(relation_columns):
+        return {}, empty
+    optional = [column for column in ('freshness_at', 'subject', 'superseded_by_id', 'is_soft_deleted') if column in memory_columns]
+    selected = ['id', 'type', 'payload_json', 'lifecycle', 'visibility', 'container_ref', 'actor_ref', 'created_at', *optional]
+    records = conn.execute(
+        f"SELECT {', '.join('m.' + column for column in selected)} FROM memory_objects m "
+        "WHERE m.container_ref = ?", (container_ref,)
+    ).fetchall()
+    by_id = {str(row['id']): row for row in records}
+    if not by_id:
+        return {}, empty
+    successors: dict[str, set[str]] = {memory_id: set() for memory_id in by_id}
+    if 'superseded_by_id' in memory_columns:
+        for row in records:
+            successor = row['superseded_by_id']
+            if successor:
+                successors[str(row['id'])].add(str(successor))
+    for row in conn.execute(
+        "SELECT from_id, to_id FROM relations "
+        "WHERE from_kind = 'memory_object' AND to_kind = 'memory_object' "
+        "AND relation_type = 'supersedes'"
+    ):
+        if str(row['to_id']) in successors:
+            successors[str(row['to_id'])].add(str(row['from_id']))
+    source_memory_rows = conn.execute(
+        "SELECT r.to_id AS source_id, r.from_id AS memory_id FROM relations r "
+        "WHERE r.from_kind = 'memory_object' AND r.to_kind = 'source_item' "
+        "AND r.relation_type = 'supported_by'"
+    ).fetchall()
+    updates_by_source: dict[str, list[dict[str, Any]]] = {}
+    supported = 0
+    replaced = 0
+    conflicted = 0
+    seen_sources: set[str] = set()
+    for link in source_memory_rows:
+        memory_id = str(link['memory_id'])
+        memory = by_id.get(memory_id)
+        if memory is None:
+            continue
+        soft_deleted = bool(memory["is_soft_deleted"]) if "is_soft_deleted" in memory.keys() else False
+        if (
+            soft_deleted
+            or str(memory["lifecycle"]) != "superseded"
+            or not is_visible(
+                memory["visibility"],
+                memory["container_ref"],
+                container_ref,
+                memory["actor_ref"],
+                query_visibility=visibility,
+                query_actor_ref=query_actor_ref,
+            )
+        ):
+            continue
+        supported += 1
+        successors_for_memory = successors.get(memory_id, set())
+        if str(memory['lifecycle']) != 'superseded' and not successors_for_memory:
+            continue
+        current = memory
+        visited = {memory_id}
+        replacement_status = 'unavailable'
+        current_id = None
+        current_text = None
+        current_recorded_at = None
+        while True:
+            next_ids = successors.get(str(current['id']), set())
+            if len(next_ids) != 1:
+                replacement_status = 'conflict' if len(next_ids) > 1 else replacement_status
+                break
+            next_id = next(iter(next_ids))
+            if next_id in visited or next_id not in by_id:
+                replacement_status = 'cycle' if next_id in visited else 'unavailable'
+                break
+            visited.add(next_id)
+            current = by_id[next_id]
+            soft_deleted = bool(current['is_soft_deleted']) if 'is_soft_deleted' in current.keys() else False
+            visible = not soft_deleted and str(current['lifecycle']) == 'active' and is_visible(
+                current['visibility'], current['container_ref'], container_ref, current['actor_ref'],
+                query_visibility=visibility, query_actor_ref=query_actor_ref,
+            )
+            if visible:
+                replacement_status = 'current'
+                current_id = next_id
+                current_text = redact_sensitive(_memory_text(current))[:240] or None
+                current_recorded_at = current['freshness_at'] if 'freshness_at' in current.keys() and current['freshness_at'] else current['created_at']
+                break
+        update = {'memory_type': str(memory['type']), 'status': 'outdated', 'replacement_status': replacement_status}
+        if current_id:
+            update.update({'current_memory_object_id': current_id, 'current_text': current_text, 'current_recorded_at': current_recorded_at})
+            replaced += 1
+            seen_sources.add(str(link['source_id']))
+        else:
+            conflicted += 1
+        updates_by_source.setdefault(str(link['source_id']), []).append(update)
+    empty['supported_memory_claims'] = supported
+    empty['superseded_claims'] = sum(len(items) for items in updates_by_source.values())
+    empty['supported_replacements'] = replaced
+    empty['conflicting_or_missing_replacements'] = conflicted
+    empty['sources_with_supported_replacements'] = len(seen_sources)
+    return updates_by_source, empty
+
+
+def _raw_history(
+    source_ids: tuple[str, ...],
+    source_texts: tuple[str, ...],
+    *,
+    query: str,
+) -> str:
+    return _json_text(_compact_history(
+        {
+            "results": [
+                {"source_item_id": source_id, "excerpt": text}
+                for source_id, text in zip(source_ids, source_texts)
+            ],
+            "lookup_event_id": None,
+        },
+        query=query,
+        limit=len(source_ids),
+    ))
+
+def _guarded_history(
+    source_ids: tuple[str, ...],
+    source_texts: tuple[str, ...],
+    *,
+    query: str,
+    source_rows: dict[str, sqlite3.Row],
+    updates_by_source: dict[str, list[dict[str, Any]]],
+) -> str:
+    items = []
+    for source_id, text in zip(source_ids, source_texts):
+        row = source_rows.get(source_id)
+        item: dict[str, Any] = {'source_item_id': source_id, 'excerpt': text}
+        if row is not None:
+            for column in ('occurred_at', 'created_at'):
+                if column in row.keys() and row[column]:
+                    item['recorded_at'] = row[column]
+                    item['recorded_at_source'] = 'event' if column == 'occurred_at' else 'ingest'
+                    break
+        item['historical_updates'] = updates_by_source.get(source_id, [])
+        items.append(item)
+    return _json_text(_compact_history(
+        {"results": items, "lookup_event_id": None},
+        query=query,
+        limit=len(items),
+    ))
+
+
+def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_size: int = MAX_SAMPLE_SIZE, seed: int = 0, category_labels: dict[str, str] | None = None) -> CorpusSnapshot:
     """Load and deterministically sample valid historical-pull episodes."""
     _valid_sample_size(sample_size)
     if not container_ref or not visibility:
@@ -125,6 +307,7 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
     query_bearing_nonempty = 0
     query_rows = 0
     cases: list[PullCase] = []
+    lineage: dict[str, int] = {}
 
     db_uri = "file:" + db_path.resolve().as_posix() + "?mode=ro"
     with closing(sqlite3.connect(db_uri, uri=True)) as conn:
@@ -146,10 +329,26 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
         source_columns = _table_columns(conn, "source_items")
         if not {"id", "content", "forgotten_at", "container_ref", "visibility", "actor_ref"}.issubset(source_columns):
             raise ValueError("database source_items table is missing required columns")
+        _, lineage = _load_lineage(
+            conn,
+            container_ref=container_ref,
+            visibility=visibility,
+            query_actor_ref=None,
+        )
+        updates_by_actor: dict[str | None, dict[str, list[dict[str, Any]]]] = {}
 
         for row in rows:
             if not is_visible(row["visibility"], row["container_ref"], container_ref, row["actor_ref"], query_visibility=visibility, query_actor_ref=row["actor_ref"]):
                 continue
+            actor_ref = row["actor_ref"]
+            if actor_ref not in updates_by_actor:
+                updates_by_actor[actor_ref], _ = _load_lineage(
+                    conn,
+                    container_ref=container_ref,
+                    visibility=visibility,
+                    query_actor_ref=actor_ref,
+                )
+            updates_by_source = updates_by_actor[actor_ref]
             raw_query = row["query_text"]
             raw_exposed = row["exposed_json"]
             query = str(raw_query or "").strip()
@@ -194,8 +393,7 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
 
             placeholders = ",".join("?" for _ in ordered_ids)
             source_rows = conn.execute(
-                f"SELECT id, content, forgotten_at, container_ref, visibility, actor_ref FROM source_items WHERE id IN ({placeholders}) "
-                "AND container_ref = ?",
+                f"SELECT * FROM source_items WHERE id IN ({placeholders}) AND container_ref = ?",
                 (*ordered_ids, container_ref),
             ).fetchall()
             by_id = {str(source["id"]): source for source in source_rows}
@@ -213,7 +411,7 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
                 if not is_visible(source["visibility"], source["container_ref"], container_ref, source["actor_ref"], query_visibility=visibility, query_actor_ref=row["actor_ref"]):
                     missing += 1
                     continue
-                text = str(source["content"] or "")
+                text = redact_sensitive(str(source["content"] or ""))
                 if not text.strip():
                     empty += 1
                     continue
@@ -228,15 +426,43 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
             if not surviving_ids:
                 attrition["zero_surviving_sources"] += 1
                 continue
+            category = (category_labels or {}).get(
+                str(row["id"]),
+                (category_labels or {}).get(_hash_id(str(row["id"])), "unlabeled"),
+            )
+            if category not in _ALLOWED_CATEGORIES:
+                raise ValueError(f"invalid category for event {row['id']!r}: {category!r}")
+            if category == "unlabeled" and any(
+                update.get("replacement_status") == "current"
+                for source_id in surviving_ids
+                for update in updates_by_source.get(source_id, [])
+            ):
+                category = "replaced_decision"
             cases.append(PullCase(
                 event_id=str(row["id"]),
                 session_id=str(row["session_id"] or ""),
                 query=query,
                 source_ids=tuple(surviving_ids),
                 source_texts=tuple(surviving_texts),
+                raw_history=_raw_history(
+                    tuple(surviving_ids),
+                    tuple(surviving_texts),
+                    query=query,
+                ),
+                guarded_history=_guarded_history(
+                    tuple(surviving_ids),
+                    tuple(surviving_texts),
+                    query=query,
+                    source_rows=by_id,
+                    updates_by_source=updates_by_source,
+                ),
+                category=category,
             ))
 
     selected = _sample_cases(cases, sample_size=sample_size, seed=seed)
+    lineage["sampled_cases_with_supported_replacements"] = sum(
+        case.category == "replaced_decision" for case in selected
+    )
     return CorpusSnapshot(
         cases=tuple(selected),
         counts={
@@ -252,6 +478,7 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
             ),
         },
         attrition=attrition,
+        lineage=lineage,
     )
 
 
@@ -284,7 +511,17 @@ def _answer_prompt(query: str, history: str | None) -> tuple[str, str]:
     return ANSWER_SYSTEM_PROMPT, _task_prompt(query, history)
 
 
-def _answer(provider: LLMProvider, *, query: str, history: str | None) -> tuple[str, float, int]:
+def _response_input_tokens(response: Any) -> int | None:
+    metadata = getattr(response, "metadata", None)
+    for name in ("input_tokens", "prompt_tokens"):
+        value = getattr(metadata, name, None)
+        if isinstance(value, int) and value >= 0:
+            return value
+    usage = getattr(metadata, "usage", None)
+    value = getattr(usage, "input_tokens", None)
+    return value if isinstance(value, int) and value >= 0 else None
+
+def _answer(provider: LLMProvider, *, query: str, history: str | None) -> tuple[str, float, int, int | None]:
     system_prompt, user_prompt = _answer_prompt(query, history)
     started = time.perf_counter()
     response = provider.generate_json(
@@ -293,7 +530,7 @@ def _answer(provider: LLMProvider, *, query: str, history: str | None) -> tuple[
         schema_description=ANSWER_SCHEMA,
     )
     answer = str(response.parsed_json.get("answer", ""))
-    return answer, (time.perf_counter() - started) * 1000, _estimate_input_tokens(system_prompt, user_prompt)
+    return answer, (time.perf_counter() - started) * 1000, _estimate_input_tokens(system_prompt, user_prompt), _response_input_tokens(response)
 
 
 def _judge_prompt(case_id: str, query: str, history: str, with_answer: str, without_answer: str) -> tuple[str, str, bool]:
@@ -306,7 +543,7 @@ def _judge_prompt(case_id: str, query: str, history: str, with_answer: str, with
     return JUDGE_SYSTEM_PROMPT, user_prompt, with_first
 
 
-def _judge(provider: LLMProvider, *, case_id: str, query: str, history: str, with_answer: str, without_answer: str) -> tuple[str, str, str, bool, int]:
+def _judge(provider: LLMProvider, *, case_id: str, query: str, history: str, with_answer: str, without_answer: str) -> tuple[str, str, str, bool, int, int | None]:
     system_prompt, user_prompt, with_first = _judge_prompt(
         case_id, query, history, with_answer, without_answer
     )
@@ -328,7 +565,7 @@ def _judge(provider: LLMProvider, *, case_id: str, query: str, history: str, wit
     else:
         winner_is_with = (winner == "a") == with_first
         mapped = "with_history" if winner_is_with else "without_history"
-    return mapped, relevance, rationale, with_first, _estimate_input_tokens(system_prompt, user_prompt)
+    return mapped, relevance, rationale, with_first, _estimate_input_tokens(system_prompt, user_prompt), _response_input_tokens(response)
 
 
 def run_pilot(
@@ -336,147 +573,200 @@ def run_pilot(
     *,
     provider: LLMProvider,
     judge_provider: LLMProvider | None = None,
+    history_arm: str = "raw",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run paired calls and return privacy-safe aggregate plus private review."""
+    """Run bounded downstream-task comparisons; no calls happen without lineage in guarded mode."""
+    if history_arm not in {"raw", "guarded", "both"}:
+        raise ValueError("history_arm must be raw, guarded, or both")
     judge_provider = judge_provider or provider
-    aggregate_cases: list[str] = []
+    if history_arm in {"guarded", "both"} and snapshot.lineage.get("sampled_cases_with_supported_replacements", 0) == 0:
+        return {
+            "eval": "real-corpus-pull-pilot",
+            "claim": {"measures": CLAIM_SEAM, "preflight": "supported supersession lineage coverage is zero; no model calls made"},
+            "sampling": {"sampled_cases": len(snapshot.cases), "paired_cases": 0},
+            "corpus": {**snapshot.counts, "attrition": snapshot.attrition, "lineage": snapshot.lineage},
+            "decision_gate": {"status": "blocked_no_supported_lineage", "broad_product_recommendation": "none"},
+            "results": {"model_calls": 0, "estimated_input_tokens_total": 0, "budget_is_estimate": True},
+        }, {"eval": "real-corpus-pull-pilot-review", "contains_raw_private_text": True, "never_publish": True, "cases": []}
+
+    arms = ["raw"] if history_arm == "raw" else ["guarded"] if history_arm == "guarded" else ["raw", "guarded"]
+    outcomes = {arm: {"with_history": 0, "without_history": 0, "tie": 0} for arm in arms}
+    relevance = {arm: {"useful": 0, "harmful": 0, "irrelevant": 0} for arm in arms}
+    category_counts = Counter(case.category for case in snapshot.cases)
+    category_results: dict[str, dict[str, dict[str, Counter]]] = {
+        arm: {} for arm in arms
+    }
     review_cases: list[dict[str, Any]] = []
-    outcomes = {"with_history": 0, "without_history": 0, "tie": 0}
-    relevance = {"useful": 0, "harmful": 0, "irrelevant": 0}
-    latencies = {"with_history_ms": [], "without_history_ms": []}
+    aggregate_cases: list[str] = []
+    failures = budget_failures = budget_stopped_cases = model_calls = 0
     total_input_tokens = 0
-    incremental_history_tokens = 0
-    failures = 0
-    budget_failures = 0
-    budget_stopped_cases = 0
+    exact_input_tokens = 0
+    exact_usage_calls = 0
+    missing_usage_calls = 0
+    incremental_history_tokens = {arm: 0 for arm in arms}
+    latencies = {arm: [] for arm in arms}
+    latencies["without_history"] = []
+
+    def reserve(estimate: int) -> bool:
+        nonlocal total_input_tokens, model_calls
+        if model_calls >= MAX_MODEL_CALLS or total_input_tokens + estimate > MAX_TOTAL_ESTIMATED_INPUT_TOKENS:
+            return False
+        total_input_tokens += estimate
+        model_calls += 1
+        return True
 
     for index, case in enumerate(snapshot.cases):
         case_review: dict[str, Any] = {
-            "case_id": case.case_id,
-            "lookup_event_id": _hash_id(case.event_id),
-            "query": case.query,
-            "source_ids": list(case.source_ids),
-            "source_texts": list(case.source_texts),
+            "case_id": case.case_id, "lookup_event_id": _hash_id(case.event_id),
+            "query": case.query, "source_ids": list(case.source_ids),
+            "source_texts": list(case.source_texts), "category": case.category,
         }
-        history = "\n\n".join(case.source_texts)
-        with_system, with_user = _answer_prompt(case.query, history)
-        with_estimate = _estimate_input_tokens(with_system, with_user)
-        if total_input_tokens + with_estimate > MAX_TOTAL_ESTIMATED_INPUT_TOKENS:
+        raw_history = case.raw_history or "\n\n".join(case.source_texts)
+        guarded_history = case.guarded_history or raw_history
+        histories = {"raw": raw_history, "guarded": guarded_history}
+        answers: dict[str, str] = {}
+        answer_ms: dict[str, float] = {}
+        try:
+            for arm in arms:
+                system, user = _answer_prompt(case.query, histories[arm])
+                estimate = _estimate_input_tokens(system, user)
+                if not reserve(estimate):
+                    raise _BudgetStop
+                answers[arm], answer_ms[arm], _, exact = _answer(provider, query=case.query, history=histories[arm])
+                if exact is None:
+                    missing_usage_calls += 1
+                else:
+                    exact_input_tokens += exact
+                    exact_usage_calls += 1
+                incremental_history_tokens[arm] += max(1, len(histories[arm]) // 4)
+                latencies[arm].append(round(answer_ms[arm], 3))
+            no_system, no_user = _answer_prompt(case.query, None)
+            if not reserve(_estimate_input_tokens(no_system, no_user)):
+                raise _BudgetStop
+            without_answer, without_ms, _, exact = _answer(provider, query=case.query, history=None)
+            if exact is None:
+                missing_usage_calls += 1
+            else:
+                exact_input_tokens += exact
+                exact_usage_calls += 1
+            latencies["without_history"].append(round(without_ms, 3))
+            arm_results = {}
+            for arm in arms:
+                judge_system, judge_user, _ = _judge_prompt(
+                    case.case_id, case.query, histories[arm],
+                    answers[arm][:MAX_ANSWER_CHARS], without_answer[:MAX_ANSWER_CHARS],
+                )
+                if not reserve(_estimate_input_tokens(judge_system, judge_user)):
+                    raise _BudgetStop
+                winner, rel, rationale, with_first, _, exact = _judge(
+                    judge_provider, case_id=case.case_id, query=case.query,
+                    history=histories[arm], with_answer=answers[arm][:MAX_ANSWER_CHARS],
+                    without_answer=without_answer[:MAX_ANSWER_CHARS],
+                )
+                if exact is None:
+                    missing_usage_calls += 1
+                else:
+                    exact_input_tokens += exact
+                    exact_usage_calls += 1
+                outcomes[arm][winner] += 1
+                relevance[arm][rel] += 1
+                category_bucket = category_results[arm].setdefault(
+                    case.category,
+                    {"wins": Counter(), "history_relevance": Counter()},
+                )
+                category_bucket["wins"][winner] += 1
+                category_bucket["history_relevance"][rel] += 1
+                arm_results[arm] = {
+                    "winner": winner, "history_relevance": rel,
+                    "judge_rationale": rationale, "blind_with_history_is_a": with_first,
+                }
+            aggregate_cases.append(case.case_id)
+            case_review.update({
+                "with_history_answer": answers[arms[0]][:MAX_ANSWER_CHARS],
+                "without_history_answer": without_answer[:MAX_ANSWER_CHARS],
+                "judge_winner": arm_results[arms[0]]["winner"],
+                "history_relevance": arm_results[arms[0]]["history_relevance"],
+                "judge_rationale": arm_results[arms[0]]["judge_rationale"],
+                "blind_with_history_is_a": arm_results[arms[0]]["blind_with_history_is_a"],
+                "arm_results": arm_results,
+            })
+            if len(arms) > 1:
+                case_review["guarded_history"] = guarded_history
+                case_review["answers"] = {arm: answers[arm][:MAX_ANSWER_CHARS] for arm in arms}
+        except _BudgetStop:
             budget_failures += 1
             budget_stopped_cases = len(snapshot.cases) - index
             case_review["failure_type"] = "budget_exceeded"
             review_cases.append(case_review)
             break
-        try:
-            total_input_tokens += with_estimate
-            with_answer, with_ms, _ = _answer(provider, query=case.query, history=history)
-            without_system, without_user = _answer_prompt(case.query, None)
-            without_estimate = _estimate_input_tokens(without_system, without_user)
-            if total_input_tokens + without_estimate > MAX_TOTAL_ESTIMATED_INPUT_TOKENS:
-                budget_failures += 1
-                budget_stopped_cases = len(snapshot.cases) - index
-                case_review["failure_type"] = "budget_exceeded"
-                review_cases.append(case_review)
-                break
-            total_input_tokens += without_estimate
-            without_answer, without_ms, _ = _answer(provider, query=case.query, history=None)
-            judge_with_answer = with_answer[:MAX_ANSWER_CHARS]
-            judge_without_answer = without_answer[:MAX_ANSWER_CHARS]
-            judge_system, judge_user, _ = _judge_prompt(
-                case.case_id, case.query, history, judge_with_answer, judge_without_answer
-            )
-            judge_estimate = _estimate_input_tokens(judge_system, judge_user)
-            if total_input_tokens + judge_estimate > MAX_TOTAL_ESTIMATED_INPUT_TOKENS:
-                budget_failures += 1
-                budget_stopped_cases = len(snapshot.cases) - index
-                case_review["failure_type"] = "budget_exceeded"
-                review_cases.append(case_review)
-                break
-            total_input_tokens += judge_estimate
-            winner, history_relevance, rationale, with_first, _ = _judge(
-                judge_provider,
-                case_id=case.case_id,
-                query=case.query,
-                history=history,
-                with_answer=judge_with_answer,
-                without_answer=judge_without_answer,
-            )
-            outcomes[winner] += 1
-            relevance[history_relevance] += 1
-            aggregate_cases.append(case.case_id)
-            incremental_history_tokens += max(1, len(history) // 4)
-            latencies["with_history_ms"].append(round(with_ms, 3))
-            latencies["without_history_ms"].append(round(without_ms, 3))
-            case_review.update({
-                "with_history_answer": with_answer[:MAX_ANSWER_CHARS],
-                "without_history_answer": without_answer[:MAX_ANSWER_CHARS],
-                "judge_winner": winner,
-                "history_relevance": history_relevance,
-                "judge_rationale": rationale,
-                "blind_with_history_is_a": with_first,
-            })
         except Exception as exc:
             failures += 1
             case_review["failure_type"] = type(exc).__name__
         review_cases.append(case_review)
 
-    decision_status = (
-        "directional_read_ready"
-        if len(aggregate_cases) >= 3 and failures <= 1 and budget_failures == 0
-        else "insufficient_data"
-    )
+    default_outcomes = outcomes["raw"] if arms == ["raw"] else outcomes
+    default_relevance = relevance["raw"] if arms == ["raw"] else relevance
+    decision_status = "directional_read_ready" if len(aggregate_cases) >= 3 and failures <= 1 and budget_failures == 0 else "insufficient_data"
     aggregate = {
         "eval": "real-corpus-pull-pilot",
         "claim": {
             "measures": CLAIM_SEAM,
             "does_not_measure": ["candidate-recovery", "injection-precision", "observed live improvement"],
-            "estimation": {
-                "method": "chars_div_4",
-                "exact_token_ceiling": False,
-                "unicode_may_underestimate": True,
-                "provider_completion_pre_capped": False,
-            },
-            "limitations": {
-                "max_cases": MAX_SAMPLE_SIZE,
-                "judge": "single uncalibrated model judge",
-                "paired_draws": 1,
-                "human_spot_check": False,
-                "linked_observed_work_after": False,
-                "judge_sees_history": True,
-            },
+            "estimation": {"method": "chars_div_4", "exact_token_ceiling": False, "unicode_may_underestimate": True, "provider_completion_pre_capped": False},
+            "limitations": {"max_cases": MAX_SAMPLE_SIZE, "judge": "single uncalibrated model judge", "paired_draws": 1, "human_spot_check": False, "linked_observed_work_after": False, "judge_sees_history": True},
         },
-        "sampling": {
-            "sample_size_cap": MAX_SAMPLE_SIZE,
-            "sampled_cases": len(snapshot.cases),
-            "paired_cases": len(aggregate_cases),
-            "case_ids": aggregate_cases,
-        },
-        "corpus": {**snapshot.counts, "attrition": snapshot.attrition},
-        "decision_gate": {
-            "status": decision_status,
-            "broad_product_recommendation": "none",
-            "note": "directional pilot only; no broad product recommendation",
-        },
+        "sampling": {"sample_size_cap": MAX_SAMPLE_SIZE, "sampled_cases": len(snapshot.cases), "paired_cases": len(aggregate_cases), "case_ids": aggregate_cases},
+        "corpus": {**snapshot.counts, "attrition": snapshot.attrition, "lineage": snapshot.lineage},
+        "decision_gate": {"status": decision_status, "broad_product_recommendation": "none", "note": "directional pilot only; no broad product recommendation"},
         "results": {
-            "failures": failures,
-            "budget_failures": budget_failures,
-            "budget_stopped_cases": budget_stopped_cases,
-            "estimated_input_tokens_total": total_input_tokens,
-            "max_estimated_input_tokens": MAX_TOTAL_ESTIMATED_INPUT_TOKENS,
-            "budget_is_estimate": True,
-            "wins": outcomes,
-            "history_relevance": relevance,
-            "incremental_history_tokens": incremental_history_tokens,
-            "added_context_tokens": {"total": incremental_history_tokens, "mean": round(incremental_history_tokens / len(aggregate_cases), 3) if aggregate_cases else None},
-            "latency_ms": {
-                "with_history_total": round(sum(latencies["with_history_ms"]), 3),
-                "without_history_total": round(sum(latencies["without_history_ms"]), 3),
-                "with_history_mean": round(sum(latencies["with_history_ms"]) / len(latencies["with_history_ms"]), 3) if latencies["with_history_ms"] else None,
-                "without_history_mean": round(sum(latencies["without_history_ms"]) / len(latencies["without_history_ms"]), 3) if latencies["without_history_ms"] else None,
+            "failures": failures, "budget_failures": budget_failures, "budget_stopped_cases": budget_stopped_cases,
+            "model_calls": model_calls, "max_model_calls": MAX_MODEL_CALLS,
+            "estimated_input_tokens_total": total_input_tokens, "max_estimated_input_tokens": MAX_TOTAL_ESTIMATED_INPUT_TOKENS,
+            "exact_input_tokens_total": exact_input_tokens if missing_usage_calls == 0 and exact_usage_calls else None,
+            "token_measurement": "exact" if missing_usage_calls == 0 and exact_usage_calls else "estimate",
+            "usage_calls_observed": exact_usage_calls, "usage_calls_missing": missing_usage_calls,
+            "budget_is_estimate": True, "wins": default_outcomes, "history_relevance": default_relevance,
+            "category_counts": dict(sorted(category_counts.items())),
+            "category_results": {
+                arm: {
+                    category: {
+                        metric: dict(counter)
+                        for metric, counter in metrics.items()
+                    }
+                    for category, metrics in sorted(by_category.items())
+                }
+                for arm, by_category in category_results.items()
             },
+            "incremental_history_tokens": incremental_history_tokens if len(arms) > 1 else incremental_history_tokens["raw"],
+            "latency_ms": {
+                "with_history_total": {arm: round(sum(latencies[arm]), 3) for arm in arms},
+                "without_history_total": round(sum(latencies["without_history"]), 3),
+            },
+            "arms": arms,
         },
     }
     return aggregate, {"eval": "real-corpus-pull-pilot-review", "contains_raw_private_text": True, "never_publish": True, "cases": review_cases}
+
+
+class _BudgetStop(Exception):
+    pass
+
+def _spotcheck_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not any(case.get("arm_results") for case in cases):
+        return cases
+    required = [
+        case for case in cases
+        if any(
+            result.get("winner") != "with_history" or result.get("history_relevance") == "harmful"
+            for result in case.get("arm_results", {}).values()
+        )
+    ]
+    required_ids = {case["case_id"] for case in required}
+    wins = sorted(
+        (case for case in cases if case["case_id"] not in required_ids and not case.get("failure_type")),
+        key=lambda case: case["case_id"],
+    )[:2]
+    return required + wins
 
 
 def render_review_sheet(review: dict[str, Any]) -> str:
@@ -485,7 +775,7 @@ def render_review_sheet(review: dict[str, Any]) -> str:
         "# Pallium real-corpus review (private)",
         "",
         "This file contains private task history. Do not publish it.",
-        "For each case, judge the answers before opening the JSON review file, which contains the hidden arm mapping.",
+        "Judge each case before opening its answer mapping.",
         "",
     ]
 
@@ -493,10 +783,37 @@ def render_review_sheet(review: dict[str, Any]) -> str:
         text = value.strip() or "[empty]"
         return [f"    {line}" for line in text.splitlines()]
 
-    for case in review.get("cases", []):
+    for case in _spotcheck_cases(list(review.get("cases", []))):
         lines.extend([f"## Case {case['case_id']}", ""])
         if case.get("failure_type"):
-            lines.extend([f"Run failure: `{case['failure_type']}`", ""])
+            lines.extend([f"Run failure: {case['failure_type']}", ""])
+            continue
+        answers = case.get("answers")
+        if isinstance(answers, dict) and {"raw", "guarded"}.issubset(answers):
+            candidates = {
+                "pre-guard history": answers["raw"],
+                "guarded history": answers["guarded"],
+                "no history": case["without_history_answer"],
+            }
+            order = sorted(candidates, key=lambda label: _hash_id(f"{case['case_id']}:{label}"))
+            raw_history = "\n\n".join(case.get("source_texts", []))
+            guarded_history = case.get("guarded_history", "")
+            lines.extend([
+                "### Task", "", *block(case["query"]), "",
+                "### Pre-guard history", "", *block(raw_history), "",
+                "### Guarded history", "", *block(guarded_history), "",
+            ])
+            for label, arm in zip(("A", "B", "C"), order):
+                lines.extend([f"### Answer {label}", "", *block(candidates[arm]), ""])
+            lines.extend([
+                "### Your judgement", "",
+                "- Better answer: [ ] A  [ ] B  [ ] C  [ ] Tie",
+                "- Any answer stale, reversed, or harmful: [ ] A  [ ] B  [ ] C  [ ] None",
+                "- Notes:", "",
+                "<details><summary>Answer mapping — open after judging</summary>", "",
+                *(f"- Answer {label}: {arm}" for label, arm in zip(("A", "B", "C"), order)),
+                "", "</details>", "", "---", "",
+            ])
             continue
         with_first = bool(case["blind_with_history_is_a"])
         answer_a = case["with_history_answer"] if with_first else case["without_history_answer"]
@@ -515,7 +832,6 @@ def render_review_sheet(review: dict[str, Any]) -> str:
         ])
     return "\n".join(lines)
 
-
 def _write_private(path: Path, content: str) -> None:
     path.touch(mode=0o600, exist_ok=True)
     path.chmod(0o600)
@@ -531,6 +847,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--review-output", type=Path, required=True, help="PRIVATE: contains raw text; local only; never publish")
     parser.add_argument("--review-sheet-output", type=Path, default=None, help="PRIVATE: optional blinded Markdown worksheet for one human reviewer")
     parser.add_argument("--acknowledge-private-review-output", action="store_true", help="Acknowledge that the review output contains raw private text and must never be published")
+    parser.add_argument("--history-arm", choices=("raw", "guarded", "both"), default="raw", help="Compare raw, production-shaped guarded history, or both")
+    parser.add_argument("--categories-json", type=Path, default=None, help="Optional JSON mapping event id or case id to applicable/unrelated/replaced_decision")
     parser.add_argument("--sample-size", type=int, default=MAX_SAMPLE_SIZE)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--cache-dir", type=Path, default=None)
@@ -555,18 +873,29 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("report outputs must be different files")
         if not args.acknowledge_private_review_output:
             parser.error("--acknowledge-private-review-output is required before writing private review output")
+        category_labels = None
+        if args.categories_json is not None:
+            category_labels = json.loads(args.categories_json.read_text(encoding="utf-8"))
+            if not isinstance(category_labels, dict):
+                parser.error("--categories-json must contain an object")
         snapshot = load_corpus(
             args.db,
             container_ref=args.container_ref,
             visibility=args.visibility,
             sample_size=args.sample_size,
             seed=args.seed,
+            category_labels=category_labels,
         )
-        config = AppConfig.from_env()
-        provider, judge_provider = build_eval_providers(
-            config, cache_dir=args.cache_dir, no_eval_cache=args.no_eval_cache
-        )
-        aggregate, review = run_pilot(snapshot, provider=provider, judge_provider=judge_provider)
+        if args.history_arm in {"guarded", "both"} and snapshot.lineage.get("sampled_cases_with_supported_replacements", 0) == 0:
+            aggregate, review = run_pilot(snapshot, provider=object(), history_arm=args.history_arm)
+        else:
+            config = AppConfig.from_env()
+            provider, judge_provider = build_eval_providers(
+                config, cache_dir=args.cache_dir, no_eval_cache=args.no_eval_cache
+            )
+            aggregate, review = run_pilot(
+                snapshot, provider=provider, judge_provider=judge_provider, history_arm=args.history_arm
+            )
         args.aggregate_output.parent.mkdir(parents=True, exist_ok=True)
         args.review_output.parent.mkdir(parents=True, exist_ok=True)
         args.aggregate_output.write_text(json.dumps(aggregate, indent=2) + "\n", encoding="utf-8")

@@ -399,6 +399,31 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
             source_ids.append(response.json()[0]["source_item_id"])
         pallium_asgi_app.state.pallium_service.drain_processing_queue(worker_id="mcp-e2e")
 
+        from core.models import MemoryObject, Relation
+
+        storage = pallium_asgi_app.state.pallium_service._storage
+        old = MemoryObject(
+            type="decision", schema_id="test", schema_version="v1",
+            payload={"decision": "Preserve the old anchor."},
+            container_ref=container, visibility="private",
+        )
+        middle = dataclasses.replace(
+            old, id="mcp-history-middle",
+            payload={"decision": "Use the intermediate anchor."},
+        )
+        current = dataclasses.replace(
+            old, id="mcp-history-current",
+            payload={"decision": "Use the current anchor."},
+        )
+        for memory in (old, middle, current):
+            storage.create_memory_object(memory)
+        storage.create_relation(Relation(
+            from_kind="memory_object", from_id=old.id,
+            relation_type="supported_by", to_kind="source_item", to_id=source_ids[1],
+        ))
+        storage.link_supersession(old.id, middle.id, correction_reason="updated")
+        storage.link_supersession(middle.id, current.id, correction_reason="updated")
+
         baseline = [
             dataclasses.asdict(memory)
             for memory in sorted(
@@ -450,6 +475,14 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
         assert search["lookup_event_id"]
         anchor_id = search["results"][0]["source_item_id"]
         assert anchor_id == source_ids[1]
+        assert search["results"][0]["recorded_at_source"] == "ingest"
+        search_updates = search["results"][0]["historical_updates"]
+        assert any(
+            update["status"] == "outdated"
+            and update["replacement_status"] == "current"
+            and "current anchor" in update.get("current_text", "").lower()
+            for update in search_updates
+        )
 
         wrong_scope_content, _ = await server.call_tool("pallium_search_history", {
             "query": "distinctive lookup anchor phrase",
@@ -476,6 +509,10 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
         assert expanded["parent_lookup_id"] == search["lookup_event_id"]
         assert [item["source_item_id"] for item in expanded["items"]] == source_ids
         assert sum(item["is_anchor"] for item in expanded["items"]) == 1
+        expanded_anchor = next(item for item in expanded["items"] if item["is_anchor"])
+        assert expanded_anchor["recorded_at_source"] == "ingest"
+        assert expanded_anchor["historical_updates"][0]["status"] == "outdated"
+        assert expanded_anchor["historical_updates"][0]["replacement_status"] == "current"
 
         direct_context = await http.get(
             f"/source/{anchor_id}/context",

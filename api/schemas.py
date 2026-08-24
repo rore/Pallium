@@ -136,6 +136,16 @@ class EvidenceResponse(BaseModel):
     visibility: str = "private"
 
 
+class HistoricalGuidanceUpdateResponse(BaseModel):
+    outdated_memory_object_id: str
+    memory_type: str
+    status: str
+    replacement_status: str
+    current_memory_object_id: str | None = None
+    current_text: str | None = None
+    current_recorded_at: datetime | None = None
+
+
 class QueryResultResponse(BaseModel):
     result_id: str | None = None
     result_kind: str
@@ -149,6 +159,10 @@ class QueryResultResponse(BaseModel):
     source_id: str | None = None
     excerpt: str | None = None
     occurred_at: datetime | None = None
+    recorded_at: datetime | None = None
+    recorded_at_source: str | None = None
+    historical_updates: list[HistoricalGuidanceUpdateResponse] = Field(default_factory=list)
+    historical_updates_omitted: int = 0
     actor_ref: str | None = None
     agent_ref: str | None = None
     role: str | None = None
@@ -224,6 +238,10 @@ class SourceContextItemResponse(BaseModel):
     role: str | None = None
     actor_ref: str | None = None
     occurred_at: datetime | None = None
+    recorded_at: datetime
+    recorded_at_source: str
+    historical_updates: list[HistoricalGuidanceUpdateResponse] = Field(default_factory=list)
+    historical_updates_omitted: int = 0
     thread_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
     thread_position: int | None = None

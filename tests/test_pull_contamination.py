@@ -7,6 +7,10 @@ without an LLM. No ``@pytest.mark.slow``; import-mode=importlib compatible.
 """
 from __future__ import annotations
 
+import json
+
+from providers.llm.base import LLMJsonResponse, LLMProvider
+
 from evals.pull_contamination.harness import (
     CONDITION_CONTAMINATING,
     CONDITION_NO_HISTORY,
@@ -16,6 +20,8 @@ from evals.pull_contamination.harness import (
     Scenario,
     _diff_with_band,
     _scripted_contamination_handler,
+    _compact_history,
+    _structured_history_for,
     _trial_tag,
     classify_answer,
     classify_answer_leading,
@@ -450,3 +456,34 @@ def test_run_harness_over_shipped_scenarios_is_deterministic() -> None:
     # benign-irrelevant scenarios echo off-topic text (neither marker → ambiguous).
     assert m["contamination_rate"]["rate"] == 8 / 10
     assert m["ambiguous_rate"][CONDITION_CONTAMINATING]["rate"] == 2 / 10
+
+class _CaptureProvider(LLMProvider):
+    def __init__(self) -> None:
+        self.user_prompts: list[str] = []
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        self.user_prompts.append(user_prompt)
+        return LLMJsonResponse(raw_text='{"answer":"timestamp"}', parsed_json={"answer": "timestamp"})
+
+
+def test_structured_superseded_history_uses_mcp_serializer_and_stays_bounded() -> None:
+    scenario = load_scenarios(_SUPERSEDED_PATH)[0]
+    payload = _structured_history_for(scenario, CONDITION_CONTAMINATING)
+    assert payload is not None
+    serialized = _compact_history(payload, query=scenario.current_task, limit=1)
+    assert len(json.dumps(serialized, ensure_ascii=False, separators=(",", ":"))) <= 2000
+    provider = _CaptureProvider()
+    agent = ContaminationAgent(provider, structured_history=True)
+    agent.answer(
+        scenario_id=scenario.id,
+        seed=0,
+        condition=CONDITION_CONTAMINATING,
+        task=scenario.current_task,
+        history_text=scenario.contaminating_history,
+        history_payload=payload,
+    )
+    assert len(provider.user_prompts) == 1
+    prompt = provider.user_prompts[0]
+    assert '"status":"outdated"' in prompt
+    assert scenario.relevant_history in prompt
+    assert len(prompt.split("\n\n" + "Retrieved prior work (from your own earlier sessions):\n", 1)[-1].split("\n\n[trial:", 1)[0]) <= 2000

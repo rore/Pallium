@@ -130,7 +130,7 @@ def test_sampling_is_seeded_and_capped(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         load_corpus(db, container_ref="c:test", visibility="private", sample_size=0)
     with pytest.raises(ValueError):
-        load_corpus(db, container_ref="c:test", visibility="private", sample_size=13)
+        load_corpus(db, container_ref="c:test", visibility="private", sample_size=21)
     with pytest.raises(FileNotFoundError):
         load_corpus(tmp_path / "missing.db", container_ref="c:test", visibility="private")
 
@@ -175,6 +175,34 @@ def test_review_sheet_is_blinded_private_and_unicode_safe() -> None:
     assert "with_history_answer" not in sheet and "blind_with_history" not in sheet
 
 
+def test_three_arm_review_sheet_includes_all_losses_and_only_two_wins() -> None:
+    def case(case_id: str, winner: str) -> dict:
+        return {
+            "case_id": case_id,
+            "query": f"task {case_id}",
+            "source_texts": ["old"],
+            "guarded_history": "current",
+            "answers": {"raw": f"raw {case_id}", "guarded": f"guarded {case_id}"},
+            "without_history_answer": f"none {case_id}",
+            "arm_results": {
+                "raw": {"winner": winner, "history_relevance": "useful"},
+                "guarded": {"winner": "with_history", "history_relevance": "useful"},
+            },
+        }
+
+    sheet = render_review_sheet({"cases": [
+        case("loss", "without_history"),
+        case("win-c", "with_history"),
+        case("win-a", "with_history"),
+        case("win-b", "with_history"),
+    ]})
+
+    assert "Case loss" in sheet
+    assert "Case win-a" in sheet and "Case win-b" in sheet
+    assert "Case win-c" not in sheet
+    assert "Better answer: [ ] A  [ ] B  [ ] C  [ ] Tie" in sheet
+    assert "Answer mapping — open after judging" in sheet
+
 def test_provider_failure_is_case_scoped_and_does_not_leak(tmp_path: Path) -> None:
     db = tmp_path / "fail.db"
     _db(db, [("e1", "PRIVATE_QUERY", json.dumps([{ "source_item_id": "s1" }]))], [("s1", "PRIVATE_SOURCE", None)])
@@ -189,7 +217,7 @@ def test_cli_requires_explicit_db_and_outputs() -> None:
     with pytest.raises(SystemExit):
         parser.parse_args([])
     args = parser.parse_args(["--db", "x.db", "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", "a.json", "--review-output", "r.json"])
-    assert args.sample_size == 12 and args.seed == 0
+    assert args.sample_size == 20 and args.seed == 0
     assert "never publish" in parser.format_help()
 
 def test_loader_opens_db_read_only(tmp_path: Path, monkeypatch) -> None:
@@ -224,7 +252,7 @@ def test_decision_gate_requires_three_successful_pairs() -> None:
     assert aggregate["decision_gate"]["broad_product_recommendation"] == "none"
     limitations = aggregate["claim"]["limitations"]
     assert limitations == {
-        "max_cases": 12,
+        "max_cases": 20,
         "judge": "single uncalibrated model judge",
         "paired_draws": 1,
         "human_spot_check": False,
@@ -281,7 +309,7 @@ def test_oversized_query_and_total_budget_stop(tmp_path: Path) -> None:
     assert not snapshot.cases
     assert snapshot.attrition["oversized_queries"] == 1
     huge = CorpusSnapshot(
-        cases=(PullCase("e-huge", "t", "task", ("s",), ("X" * 100000,)),),
+        cases=(PullCase("e-huge", "t", "task", ("s",), ("X" * 300000,)),),
         counts={"valid_cases": 1}, attrition={},
     )
     aggregate, _ = run_pilot(huge, provider=ScriptedProvider())
@@ -343,3 +371,74 @@ def test_same_container_visibility_matches_production_rules(tmp_path: Path) -> N
         conn.execute("UPDATE historical_lookup_reuse_event SET visibility = 'container' WHERE id = 'e1'")
     container = load_corpus(db, container_ref="c:test", visibility="container")
     assert container.cases[0].source_ids == ("s-container", "s-public")
+
+def _add_lineage(db: Path) -> None:
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            CREATE TABLE memory_objects (
+              id TEXT PRIMARY KEY, type TEXT, payload_json TEXT, lifecycle TEXT,
+              visibility TEXT, container_ref TEXT, actor_ref TEXT,
+              created_at TEXT, freshness_at TEXT, subject TEXT,
+              superseded_by_id TEXT, is_soft_deleted INTEGER DEFAULT 0
+            );
+            CREATE TABLE relations (
+              from_kind TEXT, from_id TEXT, relation_type TEXT, to_kind TEXT, to_id TEXT
+            );
+        """)
+        conn.executemany(
+            "INSERT INTO memory_objects VALUES (?, ?, ?, ?, 'private', 'c:test', NULL, ?, ?, NULL, ?, 0)",
+            [
+                ("old", "decision", '{"statement":"use old"}', "superseded", "2026-01-01", "2026-01-01", "new"),
+                ("new", "decision", '{"statement":"use new"}', "active", "2026-01-02", "2026-01-02", None),
+            ],
+        )
+        conn.executemany("INSERT INTO relations VALUES (?, ?, ?, ?, ?)", [
+            ("memory_object", "old", "supported_by", "source_item", "s1"),
+            ("memory_object", "new", "supersedes", "memory_object", "old"),
+        ])
+
+
+def test_guarded_history_uses_supported_lineage_and_both_arms(tmp_path: Path) -> None:
+    db = tmp_path / "lineage.db"
+    _db(db, [("e1", "which decision?", json.dumps([{"source_item_id": "s1"}]))], [("s1", "we used old", None)])
+    _add_lineage(db)
+    snapshot = load_corpus(db, container_ref="c:test", visibility="private")
+    assert snapshot.lineage["sampled_cases_with_supported_replacements"] == 1
+    raw_payload = json.loads(snapshot.cases[0].raw_history)
+    assert "historical_updates" not in raw_payload["results"][0]
+    payload = json.loads(snapshot.cases[0].guarded_history)
+    assert payload["results"][0]["historical_updates"][0]["replacement_status"] == "current"
+    assert payload["results"][0]["historical_updates"][0]["current_text"] == "use new"
+    provider = ScriptedProvider()
+    aggregate, _ = run_pilot(snapshot, provider=provider, history_arm="both")
+    assert aggregate["results"]["arms"] == ["raw", "guarded"]
+    assert aggregate["results"]["model_calls"] == 5
+    assert aggregate["results"]["category_results"]["raw"]["replaced_decision"]["wins"]
+    assert provider.calls == 5
+
+
+def test_guarded_arm_stops_before_provider_when_lineage_is_absent(tmp_path: Path) -> None:
+    db = tmp_path / "no-lineage.db"
+    _db(db, [("e1", "query", json.dumps([{"source_item_id": "s1"}]))], [("s1", "source", None)])
+    snapshot = load_corpus(db, container_ref="c:test", visibility="private")
+    provider = ScriptedProvider()
+    aggregate, _ = run_pilot(snapshot, provider=provider, history_arm="guarded")
+    assert aggregate["decision_gate"]["status"] == "blocked_no_supported_lineage"
+    assert aggregate["results"]["model_calls"] == 0
+    assert provider.calls == 0
+
+
+def test_both_arms_respect_hard_call_cap() -> None:
+    snapshot = CorpusSnapshot(
+        cases=tuple(
+            PullCase(f"e{i}", f"t{i}", f"task {i}", (f"s{i}",), (f"context {i}",), guarded_history=f'["guarded {i}"]')
+            for i in range(20)
+        ),
+        counts={"valid_cases": 20},
+        attrition={},
+        lineage={"sampled_cases_with_supported_replacements": 20},
+    )
+    provider = ScriptedProvider()
+    aggregate, _ = run_pilot(snapshot, provider=provider, history_arm="both")
+    assert aggregate["results"]["model_calls"] == 100
+    assert aggregate["sampling"]["paired_cases"] == 20

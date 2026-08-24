@@ -11,7 +11,9 @@ These E2E tests drive the HTTP boundary and assert the MCP client payload.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -260,3 +262,172 @@ def test_public_context_filters_same_container_supported_memories(
         for item in response.json()["supported_memories"]
     }
     assert returned == {ids["public"]}
+
+@pytest.mark.parametrize(
+    ("occurred_at", "hide_replacement"),
+    [
+        (datetime(2026, 8, 20, 10, tzinfo=timezone.utc), False),
+        (None, False),
+        (datetime(2026, 8, 20, 10, tzinfo=timezone.utc), True),
+        (None, True),
+    ],
+)
+def test_source_context_reports_current_supersession_and_safe_unavailable_state(
+    client: TestClient,
+    occurred_at: datetime | None,
+    hide_replacement: bool,
+) -> None:
+    """The public expansion surface identifies stale claims without leaking tombstones."""
+    from core.models import MemoryObject, Relation, SourceItem
+
+    created_at = datetime(2026, 8, 19, 10, tzinfo=timezone.utc)
+    source = SourceItem(
+        source_type="chat_message",
+        source_id="history-guard-source",
+        content_type="text/plain",
+        content="The rollout decision was recorded here.",
+        occurred_at=occurred_at,
+        container_ref=CT,
+        thread_ref=TH,
+        role="user",
+        artifact_kind="message",
+        visibility="private",
+        created_at=created_at,
+    )
+    storage = client.app.state.pallium_service._storage
+    storage.create_source_item(source)
+
+    def memory(text: str, *, memory_id: str) -> MemoryObject:
+        return MemoryObject(
+            id=memory_id,
+            type="decision",
+            schema_id="test",
+            schema_version="v1",
+            payload={"decision": text},
+            container_ref=CT,
+            visibility="private",
+            created_at=created_at,
+        )
+
+    old = memory("Use the staging endpoint.", memory_id="guard-old")
+    replacement = memory("Use the production endpoint.", memory_id="guard-current")
+    unrelated = memory("Keep retries bounded.", memory_id="guard-unrelated")
+    for item in (old, replacement, unrelated):
+        storage.create_memory_object(item)
+    storage.create_relation(Relation(
+        from_kind="memory_object", from_id=old.id, relation_type="supported_by",
+        to_kind="source_item", to_id=source.id,
+    ))
+    storage.create_relation(Relation(
+        from_kind="memory_object", from_id=unrelated.id, relation_type="supported_by",
+        to_kind="source_item", to_id=source.id,
+    ))
+    storage.link_supersession(old.id, replacement.id, correction_reason="new decision")
+    current = memory("Use the production endpoint with retries.", memory_id="guard-head")
+    storage.create_memory_object(current)
+    storage.link_supersession(replacement.id, current.id, correction_reason="clarified")
+    if hide_replacement:
+        storage.soft_delete_memory(current.id, reason="test tombstone")
+
+    response = _context(client, source.id, include_supported_memories=True)
+    assert response.status_code == 200, response.text
+    item = next(entry for entry in response.json()["items"] if entry["is_anchor"])
+    assert item["recorded_at_source"] == ("event" if occurred_at else "ingest")
+    assert item["recorded_at"] == (occurred_at or created_at).isoformat().replace("+00:00", "Z")
+
+    updates = item["historical_updates"]
+    assert len(updates) == 1
+    assert updates[0]["outdated_memory_object_id"] == old.id
+    assert updates[0]["status"] == "outdated"
+    assert unrelated.id not in {update["outdated_memory_object_id"] for update in updates}
+    if hide_replacement:
+        assert updates[0]["replacement_status"] == "unavailable"
+        assert updates[0].get("current_memory_object_id") is None
+        assert updates[0].get("current_text") is None
+    else:
+        assert updates[0]["replacement_status"] == "current"
+        assert updates[0]["current_memory_object_id"] == current.id
+        assert updates[0]["current_text"] == "Decision: Use the production endpoint with retries."
+@pytest.mark.parametrize("mode", ["conflict", "cycle"])
+def test_source_context_marks_ambiguous_supersession_unavailable(
+    client: TestClient,
+    mode: str,
+) -> None:
+    from core.models import MemoryObject, Relation, SourceItem
+
+    storage = client.app.state.pallium_service._storage
+    source = SourceItem(
+        id=f"guard-{mode}-source",
+        source_type="chat_message",
+        source_id=f"guard-{mode}-source",
+        content_type="text/plain",
+        content="An earlier decision.",
+        container_ref=CT,
+        thread_ref=TH,
+        artifact_kind="message",
+        visibility="private",
+    )
+    old = MemoryObject(
+        id=f"guard-{mode}-old",
+        type="decision",
+        schema_id="test",
+        schema_version="v1",
+        payload={"decision": "Earlier"},
+        lifecycle="superseded",
+        container_ref=CT,
+        visibility="private",
+    )
+    first = dataclasses.replace(
+        old,
+        id=f"guard-{mode}-first",
+        payload={"decision": "First replacement"},
+        lifecycle="superseded" if mode == "cycle" else "active",
+    )
+    memories = [old, first]
+    if mode == "conflict":
+        memories.append(dataclasses.replace(
+            first,
+            id="guard-conflict-second",
+            payload={"decision": "Second replacement"},
+        ))
+    storage.create_source_item(source)
+    for memory in memories:
+        storage.create_memory_object(memory)
+    storage.create_relation(Relation(
+        from_kind="memory_object",
+        from_id=old.id,
+        relation_type="supported_by",
+        to_kind="source_item",
+        to_id=source.id,
+    ))
+    storage.create_relation(Relation(
+        from_kind="memory_object",
+        from_id=first.id,
+        relation_type="supersedes",
+        to_kind="memory_object",
+        to_id=old.id,
+    ))
+    if mode == "conflict":
+        storage.create_relation(Relation(
+            from_kind="memory_object",
+            from_id=memories[2].id,
+            relation_type="supersedes",
+            to_kind="memory_object",
+            to_id=old.id,
+        ))
+    else:
+        storage.create_relation(Relation(
+            from_kind="memory_object",
+            from_id=old.id,
+            relation_type="supersedes",
+            to_kind="memory_object",
+            to_id=first.id,
+        ))
+
+    response = _context(client, source.id)
+    assert response.status_code == 200, response.text
+    update = response.json()["items"][0]["historical_updates"][0]
+    assert update["status"] == "outdated"
+    assert update["replacement_status"] == mode
+    assert update["current_memory_object_id"] is None
+    assert update["current_text"] is None

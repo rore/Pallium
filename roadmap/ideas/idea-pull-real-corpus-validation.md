@@ -1,9 +1,9 @@
 ---
 id: idea-pull-real-corpus-validation
 title: Real-corpus pull decision gate — value, filtering, contamination, cost (consolidated)
-status: queued
+status: in-progress
 priority: high
-commitment: uncommitted
+commitment: committed
 ---
 
 > **Consolidated 2026-08-18 (roadmap refinement).** This is now the single product-decision gate for
@@ -17,9 +17,13 @@ commitment: uncommitted
 
 ## Summary
 
-Validate the pull proposition on REAL corpus cases (from the live DB snapshot, with human
-spot-checking), and run a focused probe of the one synthetic weak spot: superseded/older-state
-scope applicability.
+After `add-outdated-history-guard` ships, run a larger, more varied real-corpus
+before/after study. Verify that the guard reduces harm from replaced decisions without
+removing the benefit of relevant history, and measure whether historical pull remains
+worth its token and latency cost.
+
+This is the second next vNext item. The completed 12-case run is its directional
+baseline, not the final product-value claim.
 
 ## Why
 
@@ -38,28 +42,41 @@ so the next step is real-corpus — with a targeted watch on superseded scope, t
 
 ## In Scope
 
-- Real-corpus pass: sample real historical-lookup cases from a DB snapshot (scratch copy, never the
-  live DB), reuse the `evals/pull_contamination/` harness shape where possible, and human-spot-check
-  whether the synthetic susceptibility (superseded-scope contamination) appears under realistic
-  retrieval noise. Deterministic detection where feasible; human adjudication for the residual.
-- A focused synthetic SUPERSEDED probe: more than one scenario (n>1 scenario, more reps) of the
-  branch-naming shape (task says "current standard", history describes a superseded standard from the
-  same lineage) to see whether the correct→wrong flip is systematic or a single-scenario artifact.
-- Report both against the decision-first detector + differential (relevant_lift, contamination_harm),
-  with per-scenario breakdowns (aggregate hides the superseded signal).
+- Use 20-30 real cases from as many distinct sessions and task shapes as the available
+  corpus supports; do not spend budget repeatedly sampling the same narrow sessions.
+- Before running, label cases as applicable, unrelated, or containing a replaced
+  decision. Preserve those labels independently of the model judge.
+- Compare three conditions where possible: no history, the pre-guard historical
+  result, and the guarded result. Keep task, model, and token budget comparable.
+- Include the focused superseded-history probe unchanged so its 9-of-10 contamination
+  baseline remains directly comparable.
+- Have one human review every loss or harmful result and a bounded random sample of
+  wins. A second independent reviewer is not required.
+- Report downstream answer effect, harmful-result rate, useful-history rate, context
+  tokens, and latency separately, including per-case-category breakdowns.
 
 ## Out of Scope
 
 - More general-knowledge synthetic sets (explicit/ambiguous/applicability arc is done).
 - Production behavior changes.
+- Repeating the same small sample merely to increase the call count.
 
 ## Done When
 
-1. A real-corpus read of whether applicable history helps and whether non-applicable (esp. superseded)
-   history contaminates, with human spot-checks.
-2. A focused superseded probe establishing whether the correct→wrong flip generalizes.
-3. A recommendation: does the pull model need a scope/recency guard (e.g. surfacing provenance/age to
-   the agent, or down-weighting superseded sources) before broad rollout?
+1. `add-outdated-history-guard` is complete before this run starts.
+2. The study contains 20-30 usable real cases, or explicitly reports that the live
+   corpus lacks enough diverse sessions instead of padding the count with repeats.
+3. Applicable history improves the answer in at least 70% of reviewed applicable
+   cases; unrelated history changes the answer in fewer than 5%; replaced decisions
+   mislead in no more than 10%.
+4. The unchanged focused stale-history probe falls from 9 misleading trials out of
+   10 to no more than 1 out of 10.
+5. Every harmful or losing case and a bounded random sample of wins receive one human
+   spot-check; automatic-judge and human results are reported separately.
+6. Results state sample diversity, failures, exclusions, model calls, estimated
+   input tokens, added-history tokens, and latency for each condition.
+7. The conclusion is an explicit product decision: proceed to Phase 2, revise the
+   guard and repeat, or stop broader investment in historical pull.
 
 ## Notes
 
@@ -83,6 +100,16 @@ spot-check, no linked work-after, and reconstructed bounded excerpts that may di
 original agent-visible excerpts. It does not satisfy
 this item's Done When criteria; the human review and focused superseded-history probe remain open.
 
+### Expanded baseline — 2026-08-24
+
+The budget-capped run reached 12 usable paired cases: history won 11, lost 1,
+and tied 0; the judge labelled history useful in 10, irrelevant in 2, and harmful
+in 0. The cases came from only four requester sessions. A separate two-scenario,
+five-repetition stale-history probe found that plausible superseded guidance was
+adopted in 9 of 10 contaminating trials. These results justify fixing outdated
+history first, then running the larger before/after study above. They do not yet
+prove broad product value.
+
 ## Product DoD (external review item 11 — ranking precision)
 
 Build a real-corpus validation set from anonymized historical sessions that includes: long-running
@@ -102,3 +129,21 @@ ranked below many derived objects; chain length greater than two.
 
 Every output must state whether it measures candidate recovery, injection precision, or downstream
 effect — a shadow replay must never be labeled observed downstream improvement.
+
+### Guarded real-corpus run — 2026-08-24
+
+The fixed stale probe passed at 0/10 obsolete adoptions, down from 9/10. The
+comparable private-corpus run completed 20 cases with zero failures under the
+100-call / 50,000-estimated-input-token caps (43,282 estimated input tokens).
+An independent pre-aggregation pass labelled 16 cases applicable, 3 unrelated,
+and 1 replaced-decision. The guarded arm won 15/16 applicable comparisons; the
+replaced case tied no-history and was judged irrelevant rather than harmful.
+Across all cases, guarded history won 15, lost 3, and tied 2; it was judged
+useful 13, irrelevant 7, and harmful 0.
+
+The result supports shipping the outdated-history guard, but not advancing to
+Phase 2 yet. Only four requester sessions were available, with too few unrelated
+and replaced cases to validate the <5% and <=10% safety thresholds. Seven cases
+(all automatic losses/ties plus two wins) remain in the private one-human
+spot-check. Decision: revise the corpus/measurement coverage and repeat this gate;
+do not pad the current sample or claim broad product value.

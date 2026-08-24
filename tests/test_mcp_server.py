@@ -333,6 +333,79 @@ def test_compact_history_preserves_decision_reason_on_empty_fail_closed() -> Non
     assert result["decision_reason"] == "visibility_context_required"
 
 
+def test_compact_history_preserves_recorded_date_and_replacement_status() -> None:
+    result = _compact_history({
+        "results": [{
+            "source_item_id": "source-1",
+            "excerpt": "The old rollout used the staging endpoint.",
+            "recorded_at": "2026-08-20T10:00:00+00:00",
+            "recorded_at_source": "event",
+            "historical_updates": [{
+                "outdated_memory_object_id": "old-memory",
+                "memory_type": "decision",
+                "status": "outdated",
+                "replacement_status": "current",
+                "current_memory_object_id": "new-memory",
+                "current_text": "Use the production endpoint.",
+                "current_recorded_at": "2026-08-21T10:00:00+00:00",
+            }],
+        }],
+        "lookup_event_id": "lookup-1",
+    }, "endpoint")
+
+    hit = result["results"][0]
+    assert hit["recorded_at"] == "2026-08-20T10:00:00+00:00"
+    assert hit["recorded_at_source"] == "event"
+    assert hit["historical_updates"][0]["replacement_status"] == "current"
+    assert hit["historical_updates"][0]["current_memory_object_id"] == "new-memory"
+    assert hit["historical_updates"][0]["current_text"] == "Use the production endpoint."
+    assert len(_json_text(result)) <= 2000
+
+
+def test_bounded_expansion_preserves_historical_updates_within_budget() -> None:
+    result = _bounded_expansion({
+        "items": [{
+            "source_item_id": "anchor",
+            "is_anchor": True,
+            "content": "The old rollout used the staging endpoint.",
+            "recorded_at": "2026-08-20T10:00:00+00:00",
+            "recorded_at_source": "ingest",
+            "historical_updates": [{
+                "outdated_memory_object_id": "old-memory",
+                "memory_type": "decision",
+                "status": "outdated",
+                "replacement_status": "unavailable",
+            }],
+        }],
+        "supported_memories": None,
+        "parent_lookup_id": "lookup-1",
+    }, 700)
+
+    assert len(_json_text(result)) <= 700
+    item = result["items"][0]
+    assert item["recorded_at_source"] == "ingest"
+    assert item["historical_updates"][0]["status"] == "outdated"
+
+
+def test_compact_history_trims_unicode_without_dropping_stale_status() -> None:
+    result = _compact_history({
+        "results": [{
+            "source_item_id": "unicode-source",
+            "excerpt": "界" * 5000,
+            "recorded_at": "2026-08-20T10:00:00+00:00",
+            "historical_updates": [{
+                "memory_type": "decision",
+                "status": "outdated",
+                "replacement_status": "current",
+                "current_text": "更新" * 5000,
+            }],
+        }],
+        "lookup_event_id": "lookup-unicode",
+    }, "界")
+
+    assert len(_json_text(result)) <= 2000
+    assert len(result["results"]) == 1
+    assert result["results"][0]["historical_updates"][0]["status"] == "outdated"
 
 def test_compact_history_explains_empty_requested_scope_within_budget() -> None:
     result = _compact_history({

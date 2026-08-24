@@ -27,6 +27,63 @@ def _json_text(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
+def _history_fields(item: dict) -> dict:
+    fields = {
+        key: item[key]
+        for key in ("recorded_at", "recorded_at_source")
+        if item.get(key) is not None
+    }
+    updates = [
+        {
+            key: update[key]
+            for key in (
+                "memory_type",
+                "status",
+                "replacement_status",
+                "current_memory_object_id",
+                "current_text",
+                "current_recorded_at",
+            )
+            if update.get(key) is not None
+        }
+        for update in item.get("historical_updates") or []
+    ]
+    if updates:
+        fields["historical_updates"] = updates
+    omitted = item.get("historical_updates_omitted") or 0
+    if omitted:
+        fields["historical_updates_omitted"] = omitted
+    return fields
+
+
+def _trim_update_details(payload: dict, items: list[dict], budget: int) -> None:
+    while len(_json_text(payload)) > budget:
+        texts = [
+            update
+            for item in items
+            for update in item.get("historical_updates") or []
+            if update.get("current_text")
+        ]
+        if not texts:
+            break
+        longest = max(texts, key=lambda update: len(update["current_text"]))
+        excess = len(_json_text(payload)) - budget
+        longest["current_text"] = longest["current_text"][
+            : max(0, len(longest["current_text"]) - excess - 1)
+        ]
+        if not longest["current_text"]:
+            longest.pop("current_text", None)
+    while len(_json_text(payload)) > budget:
+        item = next(
+            (candidate for candidate in items if len(candidate.get("historical_updates") or []) > 1),
+            None,
+        )
+        if item is None:
+            break
+        item["historical_updates"].pop()
+        item["historical_updates_omitted"] = item.get("historical_updates_omitted", 0) + 1
+
+
 def _bounded_error(result: dict, budget: int) -> dict:
     payload = {key: result[key] for key in ("error", "detail") if key in result}
     if len(_json_text(payload)) <= budget:
@@ -54,7 +111,7 @@ def _compact_history(
     for item in result.get("results", [])[:max(0, limit)]:
         if item.get("source_item_id") is None:
             continue
-        hit = {"source_item_id": item["source_item_id"], "excerpt": build_excerpt(item.get("excerpt") or "", max_length=240, query=query)}
+        hit = {"source_item_id": item["source_item_id"], "excerpt": build_excerpt(item.get("excerpt") or "", max_length=240, query=query), **_history_fields(item)}
         for key in ("role", "occurred_at"):
             if item.get(key) is not None:
                 hit[key] = item[key]
@@ -76,11 +133,10 @@ def _compact_history(
         longest = max(hits, key=lambda hit: len(hit.get("excerpt", "")))
         excerpt = longest.get("excerpt", "")
         if not excerpt:
-            hits.pop()
-            payload["results"] = hits
-            continue
+            break
         excess = len(_json_text(payload)) - budget
         longest["excerpt"] = excerpt[:max(0, len(excerpt) - excess - 1)]
+    _trim_update_details(payload, hits, budget)
     while len(_json_text(payload)) > budget and hits:
         hits.pop()
         payload["results"] = hits
@@ -101,6 +157,7 @@ def _bounded_expansion(result: dict, max_chars: int = _MCP_EXPANSION_MAX_CHARS) 
             "source_item_id": item.get("source_item_id"),
             "is_anchor": bool(item.get("is_anchor")),
             **{k: item[k] for k in ("role", "occurred_at") if item.get(k) is not None},
+            **_history_fields(item),
             "content": item.get("content") or "",
         })
     anchor = next((item for item in projected if item.get("is_anchor")), projected[0] if projected else None)
@@ -118,6 +175,7 @@ def _bounded_expansion(result: dict, max_chars: int = _MCP_EXPANSION_MAX_CHARS) 
             item["content_truncated"] = True
     out = {"items": projected, "supported_memories": result.get("supported_memories"), "parent_lookup_id": result.get("parent_lookup_id")}
     omitted = 0
+    _trim_update_details(out, projected, max_chars)
     if len(_json_text(out)) > max_chars:
         out["supported_memories"] = None
     while len(_json_text(out)) > max_chars and len(projected) > 1:
@@ -220,7 +278,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         artifact_kind: str | None = None,
         work_refs: list[str] | None = None,
     ) -> str:
-        """Search prior raw turns for historical context. Returns compact match-centred excerpts with stable source_item_id values and lookup_event_id for optional expansion linkage. Copy the injected container_ref exactly; never derive, guess, or normalize it. Requires container_ref plus visibility (e.g. private), or search fails closed with decision_reason visibility_context_required."""
+        """Search prior raw turns for historical context. Results include the best available recorded date. A historical_updates entry with status outdated is historical evidence, not current guidance; use current_text only when replacement_status is current. Copy the injected container_ref exactly—never derive, guess, or normalize it. Requires container_ref plus visibility (e.g. private), or search fails closed with decision_reason visibility_context_required."""
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,
@@ -331,7 +389,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         visibility: str | None = None,
         thread_ref: str | None = None,
     ) -> str:
-        """Expand a raw source hit into a bounded chronological neighborhood. The anchor is always represented; pass parent_lookup_id from search to preserve lookup linkage."""
+        """Expand a raw source hit into a bounded chronological neighborhood. The anchor is always represented. Treat historical_updates marked outdated as historical evidence, not current guidance; pass parent_lookup_id from search to preserve lookup linkage."""
         ctx = resolve_context(
             container_ref=container_ref,
             actor_ref=actor_ref,

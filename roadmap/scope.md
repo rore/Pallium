@@ -77,7 +77,10 @@ access counts/types.
   controls). The headline is now: **does agent-filtered historical pull improve the
   work enough to justify its token, latency, and contamination cost?** Measured on
   real corpus via the consolidated real-corpus decision experiment. If filtered pull
-  is not net-positive, the core thesis is weak.
+  is not net-positive, the core thesis is weak. The directional 12-case run was
+  positive but exposed a concrete superseded-guidance risk. The immediate sequence is
+  therefore: ship `add-outdated-history-guard`, then run the larger before/after
+  `idea-pull-real-corpus-validation` gate before Phase 2 earns investment.
 - **Continuous — Derived-memory evaluation (RAW/DERIVED/HYBRID + coverage/fidelity)**:
   not a sequential phase. Decompose why a DERIVED result loses into four seams
   (retrieval / extraction / derived-retrieval / representation). The shadow measures

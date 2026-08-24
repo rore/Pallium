@@ -26,7 +26,7 @@ from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
 from core.vector_index_holder import VectorIndexHolder
-from core.models import FlagResult, InjectableBlock, MemoryFlag, MemoryObject, QueryRuntimeContext, Relation, SourceItem, new_id, utc_now
+from core.models import FlagResult, HistoricalGuidanceUpdate, InjectableBlock, MemoryFlag, MemoryObject, QueryRuntimeContext, Relation, SourceItem, new_id, utc_now
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
@@ -154,6 +154,17 @@ def _redact_query_result(result: "QueryResult") -> "QueryResult":
         injectable_blocks=redacted_blocks,
         results=redacted_results,
     )
+
+_HISTORY_UPDATE_LIMIT = 3
+_HISTORY_CHAIN_LIMIT = 12
+
+
+@dataclasses.dataclass(frozen=True)
+class _HistoricalSourceMetadata:
+    recorded_at: datetime
+    recorded_at_source: str
+    updates: tuple[HistoricalGuidanceUpdate, ...]
+    updates_omitted: int = 0
 
 
 class PalliumService:
@@ -658,6 +669,162 @@ class PalliumService:
             produced_memory_provenance=list(observability.get("produced_memory_provenance", [])),
         )
 
+    def _replacement_is_visible(
+        self,
+        memory: MemoryObject,
+        *,
+        container_ref: str | None,
+        query_actor_ref: str | None,
+        query_visibility: str | None,
+    ) -> bool:
+        if memory.is_soft_deleted or memory.lifecycle != "active":
+            return False
+        if not is_visible(
+            memory.visibility,
+            memory.container_ref,
+            container_ref,
+            memory.actor_ref,
+            query_visibility=query_visibility,
+            query_actor_ref=query_actor_ref,
+        ):
+            return False
+        evidence = self._storage.get_evidence_for_memory_object(memory.id)
+        if not evidence:
+            return True
+        sources = self._storage.get_source_items(
+            [item.source_item_id for item in evidence]
+        )
+        return any(
+            not source.forgotten
+            and is_visible(
+                source.visibility,
+                source.container_ref,
+                container_ref,
+                source.actor_ref,
+                query_visibility=query_visibility,
+                query_actor_ref=query_actor_ref,
+            )
+            for source in sources.values()
+        )
+
+    def _historical_update(
+        self,
+        outdated: MemoryObject,
+        *,
+        container_ref: str | None,
+        query_actor_ref: str | None,
+        query_visibility: str | None,
+    ) -> HistoricalGuidanceUpdate:
+        current = outdated
+        visited = {outdated.id}
+        replacement_status = "unavailable"
+        for _ in range(_HISTORY_CHAIN_LIMIT):
+            try:
+                successor_ids = self._storage.list_supersession_successor_ids(current.id)
+            except KeyError:
+                successor_ids = ()
+            if not successor_ids:
+                if current.id != outdated.id and self._replacement_is_visible(
+                    current,
+                    container_ref=container_ref,
+                    query_actor_ref=query_actor_ref,
+                    query_visibility=query_visibility,
+                ):
+                    text = redact_sensitive(build_memory_match_text(current) or "")
+                    return HistoricalGuidanceUpdate(
+                        outdated_memory_object_id=outdated.id,
+                        memory_type=outdated.type,
+                        status="outdated",
+                        replacement_status="current",
+                        current_memory_object_id=current.id,
+                        current_text=text[:240] or None,
+                        current_recorded_at=current.freshness_at or current.created_at,
+                    )
+                break
+            if len(successor_ids) != 1:
+                replacement_status = "conflict"
+                break
+            successor_id = successor_ids[0]
+            if successor_id in visited:
+                replacement_status = "cycle"
+                break
+            visited.add(successor_id)
+            try:
+                current = self._storage.get_memory_object(successor_id)
+            except KeyError:
+                break
+        else:
+            replacement_status = "chain_limit"
+        return HistoricalGuidanceUpdate(
+            outdated_memory_object_id=outdated.id,
+            memory_type=outdated.type,
+            status="outdated",
+            replacement_status=replacement_status,
+        )
+
+    def get_historical_source_metadata(
+        self,
+        source_item_ids: list[str],
+        *,
+        container_ref: str | None,
+        query_actor_ref: str | None,
+        query_visibility: str | None,
+    ) -> dict[str, _HistoricalSourceMetadata]:
+        """Return bounded, visibility-safe freshness metadata for raw history."""
+        container_ref = canonicalize_container_ref(container_ref)
+        sources = self._storage.get_source_items(source_item_ids)
+        memories_by_source = self._storage.list_memory_objects_for_source_items(
+            list(sources)
+        )
+        result: dict[str, _HistoricalSourceMetadata] = {}
+        for source_id in source_item_ids:
+            source = sources.get(source_id)
+            if source is None or source.forgotten:
+                continue
+            effective_container = container_ref or source.container_ref
+            effective_actor = query_actor_ref or source.actor_ref
+            if not is_visible(
+                source.visibility,
+                source.container_ref,
+                effective_container,
+                source.actor_ref,
+                query_visibility=query_visibility,
+                query_actor_ref=effective_actor,
+            ):
+                continue
+            outdated = [
+                memory
+                for memory in memories_by_source.get(source_id, [])
+                if memory.lifecycle == "superseded"
+                and not memory.is_soft_deleted
+                and is_visible(
+                    memory.visibility,
+                    memory.container_ref,
+                    effective_container,
+                    memory.actor_ref,
+                    query_visibility=query_visibility,
+                    query_actor_ref=effective_actor,
+                )
+            ]
+            outdated.sort(key=lambda memory: (memory.created_at, memory.id), reverse=True)
+            selected = outdated[:_HISTORY_UPDATE_LIMIT]
+            updates = tuple(
+                self._historical_update(
+                    memory,
+                    container_ref=effective_container,
+                    query_actor_ref=effective_actor,
+                    query_visibility=query_visibility,
+                )
+                for memory in selected
+            )
+            result[source_id] = _HistoricalSourceMetadata(
+                recorded_at=source.occurred_at or source.created_at,
+                recorded_at_source="event" if source.occurred_at is not None else "ingest",
+                updates=updates,
+                updates_omitted=max(0, len(outdated) - len(selected)),
+            )
+        return result
+
     def query(
         self,
         text: str,
@@ -704,6 +871,33 @@ class PalliumService:
         # it never reaches the LLM prompt. Redact injectable_blocks and
         # results before returning.
         result = _redact_query_result(result)
+        if source_only:
+            source_ids = [
+                item.source_item_id
+                for item in result.results
+                if item.source_item_id is not None
+            ]
+            metadata = self.get_historical_source_metadata(
+                source_ids,
+                container_ref=container_ref,
+                query_actor_ref=actor_ref,
+                query_visibility=visibility,
+            )
+            result = dataclasses.replace(
+                result,
+                results=[
+                    dataclasses.replace(
+                        item,
+                        recorded_at=metadata[item.source_item_id].recorded_at,
+                        recorded_at_source=metadata[item.source_item_id].recorded_at_source,
+                        historical_updates=metadata[item.source_item_id].updates,
+                        historical_updates_omitted=metadata[item.source_item_id].updates_omitted,
+                    )
+                    if item.source_item_id in metadata
+                    else item
+                    for item in result.results
+                ],
+            )
         # Historical-lookup reuse funnel: persist a "lookup" event for every
         # source_only search, UNCONDITIONALLY (not gated on query_audit_log).
         # Reads the POST-redaction results so forbidden/forgotten/out-of-scope

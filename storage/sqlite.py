@@ -470,6 +470,22 @@ class SQLiteStorageProvider(
                 raise KeyError(memory_object_id)
             return self._to_memory_object(record)
 
+    def list_supersession_successor_ids(self, memory_object_id: str) -> tuple[str, ...]:
+        with self._session_factory() as session:
+            record = session.get(MemoryObjectRecord, memory_object_id)
+            if record is None:
+                raise KeyError(memory_object_id)
+            successor_ids = set()
+            if record.superseded_by_id:
+                successor_ids.add(record.superseded_by_id)
+            successor_ids.update(session.scalars(select(RelationRecord.from_id).where(
+                RelationRecord.from_kind == "memory_object",
+                RelationRecord.to_id == memory_object_id,
+                RelationRecord.relation_type == "supersedes",
+                RelationRecord.to_kind == "memory_object",
+            )).all())
+        return tuple(sorted(successor_ids))
+
     def update_memory_object_lifecycle(self, memory_object_id: str, lifecycle: str) -> None:
         def _do(session):
             record = session.get(MemoryObjectRecord, memory_object_id)

@@ -1,6 +1,7 @@
 # P1 · Reuse Measurement
-- idea-reuse-judge-calibration
+- add-outdated-history-guard
 - idea-pull-real-corpus-validation
+- idea-reuse-judge-calibration
 - idea-raw-duplicate-ingestion-and-result-diversity
 - idea-visibility-violation-metric-completeness
 - fix-roadmap-and-evidence-status-drift

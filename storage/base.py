@@ -428,6 +428,12 @@ class StorageProvider(ABC):
     def get_memory_object(self, memory_object_id: str) -> MemoryObject:
         raise NotImplementedError
 
+    def list_supersession_successor_ids(self, memory_object_id: str) -> tuple[str, ...]:
+        """Return immediate replacement IDs for a memory object."""
+        memory_object = self.get_memory_object(memory_object_id)
+        successor_id = getattr(memory_object, "superseded_by_id", None)
+        return (successor_id,) if successor_id else ()
+
     @abstractmethod
     def update_memory_object_lifecycle(self, memory_object_id: str, lifecycle: str) -> None:
         raise NotImplementedError
