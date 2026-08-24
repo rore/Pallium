@@ -68,13 +68,16 @@ class ConcurrentWriter:
         self.inserted_ids: list[int] = []
         self.errors: list[Exception] = []
         self._stop = threading.Event()
+        self._ready = threading.Event()
+        self.first_insert_started = threading.Event()
         self._thread: threading.Thread | None = None
         self._start_id = 1000  # avoid collision with pre-existing rows
 
     def __enter__(self) -> "ConcurrentWriter":
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        time.sleep(0.05)  # let writer get started
+        if not self._ready.wait(timeout=2):
+            raise RuntimeError("concurrent writer did not become ready")
         return self
 
     def __exit__(self, *exc) -> None:
@@ -83,13 +86,24 @@ class ConcurrentWriter:
             self._thread.join(timeout=10)
 
     def _run(self) -> None:
-        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
-        if self.wal:
-            conn.execute("PRAGMA journal_mode=WAL")
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+            if self.wal:
+                conn.execute("PRAGMA journal_mode=WAL")
+        except Exception as exc:
+            self.errors.append(exc)
+            if conn is not None:
+                conn.close()
+            self._ready.set()
+            return
+        self._ready.set()
         for i in range(self.count):
             if self._stop.is_set():
                 break
             row_id = self._start_id + i
+            if i == 0:
+                self.first_insert_started.set()
             try:
                 conn.execute(
                     "INSERT INTO items VALUES (?, ?)", (row_id, f"concurrent-{row_id}")
@@ -253,6 +267,7 @@ def test_snapshot_does_not_block_writer_for_long(tmp_path: Path) -> None:
     with ConcurrentWriter(
         str(db_path), wal=True, count=50, delay=0.01, timeout=1.0
     ) as writer:
+        assert writer.first_insert_started.wait(timeout=2)
         # Take snapshot while writes are in flight
         snap = create_snapshot(str(db_path), snapshot_dir, pages_per_step=256, sleep_between=0.01)
 
