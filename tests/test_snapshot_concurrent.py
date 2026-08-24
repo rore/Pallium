@@ -20,13 +20,16 @@ from app.snapshot import create_snapshot, _validate_snapshot
 # ---------------------------------------------------------------------------
 
 
-def _make_concurrent_db(db_path: Path, *, wal: bool = False, rows: int = 0) -> None:
+def _make_concurrent_db(
+    db_path: Path, *, wal: bool = False, rows: int = 0, value_size: int = 0
+) -> None:
     conn = sqlite3.connect(str(db_path))
     if wal:
         conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)")
+    value = "x" * value_size
     for i in range(rows):
-        conn.execute("INSERT INTO items VALUES (?, ?)", (i, f"row-{i}"))
+        conn.execute("INSERT INTO items VALUES (?, ?)", (i, value or f"row-{i}"))
     conn.commit()
     conn.close()
 
@@ -77,6 +80,8 @@ class ConcurrentWriter:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         if not self._ready.wait(timeout=2):
+            self._stop.set()
+            self._thread.join(timeout=10)
             raise RuntimeError("concurrent writer did not become ready")
         return self
 
@@ -102,12 +107,12 @@ class ConcurrentWriter:
             if self._stop.is_set():
                 break
             row_id = self._start_id + i
-            if i == 0:
-                self.first_insert_started.set()
             try:
                 conn.execute(
                     "INSERT INTO items VALUES (?, ?)", (row_id, f"concurrent-{row_id}")
                 )
+                if i == 0:
+                    self.first_insert_started.set()
                 conn.commit()
                 self.inserted_ids.append(row_id)
             except Exception as exc:
@@ -258,9 +263,13 @@ def test_snapshot_does_not_block_writer_for_long(tmp_path: Path) -> None:
     db_path = tmp_path / "live.db"
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
-    # Pre-fill to ~500 pages (~5000 rows of modest size).
-    # Use IDs starting at 0 so ConcurrentWriter's _start_id=1000 avoids collision.
-    _make_concurrent_db(db_path, wal=True, rows=500)
+    # Pre-fill past one 256-page backup batch while keeping IDs below the
+    # ConcurrentWriter start ID.
+    _make_concurrent_db(db_path, wal=True, rows=500, value_size=4096)
+    conn = sqlite3.connect(str(db_path))
+    page_count = conn.execute("PRAGMA page_count").fetchone()[0]
+    conn.close()
+    assert page_count > 256
 
     # A one-second SQLite busy timeout detects lock contention without counting
     # time when the background thread is merely descheduled.
