@@ -34,7 +34,7 @@
 
 ## Implementation
 
-Discovery and redline classification completed, followed by clean-context approval. Implementation used the documented deterministic Windows fallback after one apply_patch error 1385: copied the two canonical Codex guidance files over their OpenCode peers. No plugin, config, or runtime file changed.
+Discovery and redline classification completed, followed by clean-context approval. Implementation used the documented deterministic Windows fallback after one apply_patch error 1385: copied the two canonical Codex guidance files over their OpenCode peers. No plugin, config, or runtime file changed. Skill feedback issue filed: https://github.com/rore/agent-workflow/issues/14.
 
 ## Evidence
 
@@ -42,7 +42,7 @@ Verification at the working-tree revision: SHA-256 parity passed for both guidan
 
 ## Result review
 
-Completion criteria are satisfied. Final scope remains the two OpenCode guidance files plus the Work Record; runtime/config behavior is unchanged, the compatibility assumption holds, and the fresh diff remains Elevated/Simple. Skill-feedback trigger 3 passed the actionability filter because the operating instructions name a missing Unix-only local check on a Windows-supported repository; file one upstream issue after the Work Record commit.
+Completion criteria are satisfied. Final scope remains the two OpenCode guidance files plus the Work Record; runtime/config behavior is unchanged, the compatibility assumption holds, and the fresh diff remains Elevated/Simple. Skill-feedback trigger 3 passed the actionability filter because the operating instructions name a missing Unix-only local check on a Windows-supported repository; upstream feedback filed as https://github.com/rore/agent-workflow/issues/14.
 
 ## Plan review
 
