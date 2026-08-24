@@ -8,7 +8,7 @@ description: Search, store, expand, or debug Pallium memory when explicit contex
 Use for deliberate memory work; injection handles routine retrieval.
 
 - Store with `pallium_ingest`, using `artifact_kind: "note"`, `visibility: "private"`, and the injected `container_ref`. Use `visibility: "global"` with `actor_ref` only when explicitly requested.
-- When resuming work, call `pallium_search_history` first. Use `pallium_query` for distilled memory. After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`. Pass both tools the exact injected `container_ref` and active `thread_ref`; never derive, guess, or normalize the container. Default private; explicit global needs `actor_ref`. `thread_ref` is telemetry only—not authorization or historical identity.
+- When resuming work, call `pallium_search_history` first. Use `pallium_query` for distilled memory. After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`. `pallium_search_history` and `pallium_expand_source` receive the exact injected `container_ref` and active `thread_ref`; never derive, guess, or normalize the container. Default private; explicit global needs `actor_ref`. `thread_ref` is telemetry only—not authorization or historical identity.
 - Use `pallium_query_debug` to distinguish filtered, missing, and low-relevance results. Use `pallium_expand` when a memory card offers expansion.
 - `recorded_at_source` labels dates. Treat `outdated` as evidence; use only a `current` replacement.
 - Flag incorrect or obsolete cards with `pallium_flag_memory`; ratings are optional.
