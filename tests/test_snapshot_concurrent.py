@@ -20,13 +20,16 @@ from app.snapshot import create_snapshot, _validate_snapshot
 # ---------------------------------------------------------------------------
 
 
-def _make_concurrent_db(db_path: Path, *, wal: bool = False, rows: int = 0) -> None:
+def _make_concurrent_db(
+    db_path: Path, *, wal: bool = False, rows: int = 0, value_size: int = 0
+) -> None:
     conn = sqlite3.connect(str(db_path))
     if wal:
         conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)")
+    value = "x" * value_size
     for i in range(rows):
-        conn.execute("INSERT INTO items VALUES (?, ?)", (i, f"row-{i}"))
+        conn.execute("INSERT INTO items VALUES (?, ?)", (i, value or f"row-{i}"))
     conn.commit()
     conn.close()
 
@@ -58,22 +61,28 @@ class ConcurrentWriter:
         wal: bool = False,
         count: int = 100,
         delay: float = 0.005,
+        timeout: float = 10.0,
     ):
         self.db_path = db_path
         self.wal = wal
         self.count = count
         self.delay = delay
+        self.timeout = timeout
         self.inserted_ids: list[int] = []
-        self.insert_durations: list[float] = []
         self.errors: list[Exception] = []
         self._stop = threading.Event()
+        self._ready = threading.Event()
+        self.first_insert_started = threading.Event()
         self._thread: threading.Thread | None = None
         self._start_id = 1000  # avoid collision with pre-existing rows
 
     def __enter__(self) -> "ConcurrentWriter":
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        time.sleep(0.05)  # let writer get started
+        if not self._ready.wait(timeout=2):
+            self._stop.set()
+            self._thread.join(timeout=10)
+            raise RuntimeError("concurrent writer did not become ready")
         return self
 
     def __exit__(self, *exc) -> None:
@@ -82,22 +91,30 @@ class ConcurrentWriter:
             self._thread.join(timeout=10)
 
     def _run(self) -> None:
-        conn = sqlite3.connect(self.db_path, timeout=10)
-        if self.wal:
-            conn.execute("PRAGMA journal_mode=WAL")
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+            if self.wal:
+                conn.execute("PRAGMA journal_mode=WAL")
+        except Exception as exc:
+            self.errors.append(exc)
+            if conn is not None:
+                conn.close()
+            self._ready.set()
+            return
+        self._ready.set()
         for i in range(self.count):
             if self._stop.is_set():
                 break
             row_id = self._start_id + i
             try:
-                t0 = time.monotonic()
                 conn.execute(
                     "INSERT INTO items VALUES (?, ?)", (row_id, f"concurrent-{row_id}")
                 )
+                if i == 0:
+                    self.first_insert_started.set()
                 conn.commit()
-                elapsed = time.monotonic() - t0
                 self.inserted_ids.append(row_id)
-                self.insert_durations.append(elapsed)
             except Exception as exc:
                 self.errors.append(exc)
             if self.delay > 0:
@@ -242,16 +259,24 @@ def test_multiple_snapshots_during_sustained_writes(tmp_path: Path) -> None:
 
 
 def test_snapshot_does_not_block_writer_for_long(tmp_path: Path) -> None:
-    """No single INSERT should be blocked for more than 2 seconds by a snapshot."""
+    """Snapshot must not hold a SQLite write lock for one second."""
     db_path = tmp_path / "live.db"
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
-    # Pre-fill to ~500 pages (~5000 rows of modest size).
-    # Use IDs starting at 0 so ConcurrentWriter's _start_id=1000 avoids collision.
-    _make_concurrent_db(db_path, wal=True, rows=500)
+    # Pre-fill past one 256-page backup batch while keeping IDs below the
+    # ConcurrentWriter start ID.
+    _make_concurrent_db(db_path, wal=True, rows=500, value_size=4096)
+    conn = sqlite3.connect(str(db_path))
+    page_count = conn.execute("PRAGMA page_count").fetchone()[0]
+    conn.close()
+    assert page_count > 256
 
-    # ConcurrentWriter uses start_id=1000 by default, well above the 500 pre-fill IDs.
-    with ConcurrentWriter(str(db_path), wal=True, count=50, delay=0.01) as writer:
+    # A one-second SQLite busy timeout detects lock contention without counting
+    # time when the background thread is merely descheduled.
+    with ConcurrentWriter(
+        str(db_path), wal=True, count=50, delay=0.01, timeout=1.0
+    ) as writer:
+        assert writer.first_insert_started.wait(timeout=2)
         # Take snapshot while writes are in flight
         snap = create_snapshot(str(db_path), snapshot_dir, pages_per_step=256, sleep_between=0.01)
 
@@ -259,11 +284,6 @@ def test_snapshot_does_not_block_writer_for_long(tmp_path: Path) -> None:
     assert _validate_snapshot(snap) is True
     assert len(writer.errors) == 0
 
-    if writer.insert_durations:
-        max_duration = max(writer.insert_durations)
-        assert max_duration < 2.0, (
-            f"An INSERT was blocked for {max_duration:.3f}s — snapshot is too intrusive"
-        )
 
 
 def test_snapshot_during_concurrent_deletes(tmp_path: Path) -> None:
