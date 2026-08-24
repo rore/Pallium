@@ -59,12 +59,12 @@ Key conventions: `core.container_ref` remains the sole container-normalization s
 Clean-context review in `## Plan review`; final verdict APPROVE after two blocking review rounds were resolved.
 
 **Approvals:**
-Pending post-review human approval.
+Approved by user 2026-08-24T11:00:23+03:00: "yes"
 
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Checkpoint: explicit-memory-provenance
