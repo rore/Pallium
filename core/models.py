@@ -7,6 +7,10 @@ from uuid import uuid4
 
 from core.visibility import QueryVisibilityTrace
 
+HISTORICAL_GUIDANCE_MEMORY_TYPES = frozenset(
+    {"decision", "investigation_outcome", "constraint_memory", "operational_fact", "note"}
+)
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)

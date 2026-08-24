@@ -390,11 +390,19 @@ def _add_lineage(db: Path) -> None:
             [
                 ("old", "decision", '{"statement":"use old"}', "superseded", "2026-01-01", "2026-01-01", "new"),
                 ("new", "decision", '{"statement":"use new"}', "active", "2026-01-02", "2026-01-02", None),
+                ("summary-old", "thread_summary", '{"summary":"old roll-up"}', "superseded", "2026-01-01", "2026-01-01", "summary-new"),
+                ("summary-new", "thread_summary", '{"summary":"unrelated roll-up"}', "active", "2026-01-02", "2026-01-02", None),
+                ("atomic-old", "atomic_fact", '{"statement":"old atom"}', "superseded", "2026-01-01", "2026-01-01", "fact-summary"),
+                ("fact-summary", "fact_summary", '{"summary":"merged facts"}', "active", "2026-01-02", "2026-01-02", None),
             ],
         )
         conn.executemany("INSERT INTO relations VALUES (?, ?, ?, ?, ?)", [
             ("memory_object", "old", "supported_by", "source_item", "s1"),
             ("memory_object", "new", "supersedes", "memory_object", "old"),
+            ("memory_object", "summary-old", "supported_by", "source_item", "s1"),
+            ("memory_object", "summary-new", "supersedes", "memory_object", "summary-old"),
+            ("memory_object", "atomic-old", "supported_by", "source_item", "s1"),
+            ("memory_object", "fact-summary", "supersedes", "memory_object", "atomic-old"),
         ])
 
 
@@ -407,8 +415,11 @@ def test_guarded_history_uses_supported_lineage_and_both_arms(tmp_path: Path) ->
     raw_payload = json.loads(snapshot.cases[0].raw_history)
     assert "historical_updates" not in raw_payload["results"][0]
     payload = json.loads(snapshot.cases[0].guarded_history)
+    assert len(payload["results"][0]["historical_updates"]) == 1
+    assert payload["results"][0]["historical_updates"][0]["memory_type"] == "decision"
     assert payload["results"][0]["historical_updates"][0]["replacement_status"] == "current"
     assert payload["results"][0]["historical_updates"][0]["current_text"] == "use new"
+    assert snapshot.lineage["supported_memory_claims"] == 1
     provider = ScriptedProvider()
     aggregate, _ = run_pilot(snapshot, provider=provider, history_arm="both")
     assert aggregate["results"]["arms"] == ["raw", "guarded"]
@@ -420,7 +431,14 @@ def test_guarded_history_uses_supported_lineage_and_both_arms(tmp_path: Path) ->
 def test_guarded_arm_stops_before_provider_when_lineage_is_absent(tmp_path: Path) -> None:
     db = tmp_path / "no-lineage.db"
     _db(db, [("e1", "query", json.dumps([{"source_item_id": "s1"}]))], [("s1", "source", None)])
-    snapshot = load_corpus(db, container_ref="c:test", visibility="private")
+    snapshot = load_corpus(
+        db,
+        container_ref="c:test",
+        visibility="private",
+        category_labels={"e1": "replaced_decision"},
+    )
+    assert snapshot.cases[0].category == "replaced_decision"
+    assert snapshot.lineage["sampled_cases_with_supported_replacements"] == 0
     provider = ScriptedProvider()
     aggregate, _ = run_pilot(snapshot, provider=provider, history_arm="guarded")
     assert aggregate["decision_gate"]["status"] == "blocked_no_supported_lineage"

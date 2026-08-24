@@ -130,20 +130,28 @@ ranked below many derived objects; chain length greater than two.
 Every output must state whether it measures candidate recovery, injection precision, or downstream
 effect — a shadow replay must never be labeled observed downstream improvement.
 
-### Guarded real-corpus run — 2026-08-24
+### Guarded real-corpus review — 2026-08-24
 
-The fixed stale probe passed at 0/10 obsolete adoptions, down from 9/10. The
-comparable private-corpus run completed 20 cases with zero failures under the
-100-call / 50,000-estimated-input-token caps (43,282 estimated input tokens).
-An independent pre-aggregation pass labelled 16 cases applicable, 3 unrelated,
-and 1 replaced-decision. The guarded arm won 15/16 applicable comparisons; the
-replaced case tied no-history and was judged irrelevant rather than harmful.
-Across all cases, guarded history won 15, lost 3, and tied 2; it was judged
-useful 13, irrelevant 7, and harmful 0.
+The fixed stale probe passed at 0/10 obsolete adoptions, down from 9/10. A
+20-case comparable run completed with zero failures under the 100-call /
+50,000-estimated-input-token caps (43,282 estimated input tokens). Its automated
+judge reported strong applicable-history value, but the required spot-check
+found that several keyword-fragment tasks were unanswerable and all arms merely
+invented plausible responses. The user delegated the seven-case review to the
+agent; this is explicitly agent review, not human validation.
 
-The result supports shipping the outdated-history guard, but not advancing to
-Phase 2 yet. Only four requester sessions were available, with too few unrelated
-and replaced cases to validate the <5% and <=10% safety thresholds. Seven cases
-(all automatic losses/ties plus two wins) remain in the private one-human
-spot-check. Decision: revise the corpus/measurement coverage and repeat this gate;
-do not pad the current sample or claim broad product value.
+More importantly, the review exposed that the only apparent replaced-decision
+case came from a superseded thread summary. For roll-up memories, supported_by is
+provenance across many turns, not a claim that the summary's successor replaces
+each raw passage. The production guard and evaluator now restrict replacement
+guidance to direct durable claim types. Public MCP search/expand and evaluator
+regressions prove summary and atomic-fact roll-ups are excluded while a
+superseded decision remains visible.
+
+After that correction, the same 20-case snapshot contains zero qualifying
+claim-level replacements. Therefore the larger run is invalid as evidence of
+the guard's real-corpus effect; rerunning the model would spend budget without
+testing the feature. Decision: ship the guard based on its focused 0/10
+regression and public lifecycle coverage, but keep this product gate in progress.
+Collect genuinely superseded decision/constraint/operational cases across more
+sessions, then repeat before Phase 2. Do not pad or claim broad product value.

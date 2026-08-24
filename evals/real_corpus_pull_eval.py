@@ -29,6 +29,7 @@ from app.mcp.server import _compact_history, _json_text  # noqa: E402
 from evals.eval_common import build_eval_providers  # noqa: E402
 from providers.llm.base import LLMProvider  # noqa: E402
 from redaction import redact_sensitive  # noqa: E402
+from core.models import HISTORICAL_GUIDANCE_MEMORY_TYPES  # noqa: E402
 from core.visibility import is_visible  # noqa: E402
 
 MAX_SAMPLE_SIZE = 20
@@ -54,6 +55,7 @@ class PullCase:
     raw_history: str | None = None
     guarded_history: str | None = None
     category: str = "unlabeled"
+    has_supported_replacement: bool = False
 
     @property
     def case_id(self) -> str:
@@ -178,6 +180,7 @@ def _load_lineage(
         soft_deleted = bool(memory["is_soft_deleted"]) if "is_soft_deleted" in memory.keys() else False
         if (
             soft_deleted
+            or str(memory["type"]) not in HISTORICAL_GUIDANCE_MEMORY_TYPES
             or str(memory["lifecycle"]) != "superseded"
             or not is_visible(
                 memory["visibility"],
@@ -211,9 +214,14 @@ def _load_lineage(
             visited.add(next_id)
             current = by_id[next_id]
             soft_deleted = bool(current['is_soft_deleted']) if 'is_soft_deleted' in current.keys() else False
-            visible = not soft_deleted and str(current['lifecycle']) == 'active' and is_visible(
-                current['visibility'], current['container_ref'], container_ref, current['actor_ref'],
-                query_visibility=visibility, query_actor_ref=query_actor_ref,
+            visible = (
+                not soft_deleted
+                and str(current['type']) in HISTORICAL_GUIDANCE_MEMORY_TYPES
+                and str(current['lifecycle']) == 'active'
+                and is_visible(
+                    current['visibility'], current['container_ref'], container_ref, current['actor_ref'],
+                    query_visibility=visibility, query_actor_ref=query_actor_ref,
+                )
             )
             if visible:
                 replacement_status = 'current'
@@ -432,11 +440,12 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
             )
             if category not in _ALLOWED_CATEGORIES:
                 raise ValueError(f"invalid category for event {row['id']!r}: {category!r}")
-            if category == "unlabeled" and any(
+            has_supported_replacement = any(
                 update.get("replacement_status") == "current"
                 for source_id in surviving_ids
                 for update in updates_by_source.get(source_id, [])
-            ):
+            )
+            if category == "unlabeled" and has_supported_replacement:
                 category = "replaced_decision"
             cases.append(PullCase(
                 event_id=str(row["id"]),
@@ -457,11 +466,12 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
                     updates_by_source=updates_by_source,
                 ),
                 category=category,
+                has_supported_replacement=has_supported_replacement,
             ))
 
     selected = _sample_cases(cases, sample_size=sample_size, seed=seed)
     lineage["sampled_cases_with_supported_replacements"] = sum(
-        case.category == "replaced_decision" for case in selected
+        case.has_supported_replacement for case in selected
     )
     return CorpusSnapshot(
         cases=tuple(selected),

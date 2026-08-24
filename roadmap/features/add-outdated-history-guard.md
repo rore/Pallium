@@ -80,4 +80,4 @@ product value from the 12-case pilot or from this focused regression alone.
 
 ## Implementation status — 2026-08-24
 
-The production guard and public MCP lifecycle coverage are implemented locally. The unchanged two-scenario, five-repetition stale probe used the compact MCP renderer and adopted obsolete guidance 0/10 times, down from 9/10. The ordered 20-case run found zero guarded-history harm and supports shipping the guard. Merge remains pending PR closure and the required one-human spot-check.
+The production guard and public MCP lifecycle coverage are implemented locally. The unchanged two-scenario, five-repetition stale probe used the compact MCP renderer and adopted obsolete guidance 0/10 times, down from 9/10. Agent review of the larger run found and closed one over-broad roll-up-summary replacement bug; direct durable claims remain guarded while summary/atomic roll-ups are ignored. Merge remains pending PR closure.

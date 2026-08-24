@@ -26,7 +26,7 @@ from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
 from core.vector_index_holder import VectorIndexHolder
-from core.models import FlagResult, HistoricalGuidanceUpdate, InjectableBlock, MemoryFlag, MemoryObject, QueryRuntimeContext, Relation, SourceItem, new_id, utc_now
+from core.models import HISTORICAL_GUIDANCE_MEMORY_TYPES, FlagResult, HistoricalGuidanceUpdate, InjectableBlock, MemoryFlag, MemoryObject, QueryRuntimeContext, Relation, SourceItem, new_id, utc_now
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
@@ -724,11 +724,15 @@ class PalliumService:
             except KeyError:
                 successor_ids = ()
             if not successor_ids:
-                if current.id != outdated.id and self._replacement_is_visible(
+                if (
+                    current.id != outdated.id
+                    and current.type in HISTORICAL_GUIDANCE_MEMORY_TYPES
+                    and self._replacement_is_visible(
                     current,
                     container_ref=container_ref,
                     query_actor_ref=query_actor_ref,
                     query_visibility=query_visibility,
+                    )
                 ):
                     text = redact_sensitive(build_memory_match_text(current) or "")
                     return HistoricalGuidanceUpdate(
@@ -752,6 +756,8 @@ class PalliumService:
             try:
                 current = self._storage.get_memory_object(successor_id)
             except KeyError:
+                break
+            if current.type not in HISTORICAL_GUIDANCE_MEMORY_TYPES:
                 break
         else:
             replacement_status = "chain_limit"
@@ -795,7 +801,8 @@ class PalliumService:
             outdated = [
                 memory
                 for memory in memories_by_source.get(source_id, [])
-                if memory.lifecycle == "superseded"
+                if memory.type in HISTORICAL_GUIDANCE_MEMORY_TYPES
+                and memory.lifecycle == "superseded"
                 and not memory.is_soft_deleted
                 and is_visible(
                     memory.visibility,
@@ -1066,9 +1073,8 @@ class PalliumService:
     # The five type ids the initial version accepts. Extraction pipeline
     # already writes to these types via the same table; we validate at the
     # tool boundary so the agent doesn't invent new memory types by accident.
-    _W3_ALLOWED_MEMORY_TYPES = frozenset(
-        {"decision", "investigation_outcome", "constraint_memory", "operational_fact", "note"}
-    )
+    _W3_ALLOWED_MEMORY_TYPES = HISTORICAL_GUIDANCE_MEMORY_TYPES
+
 
     def _w3_memory_text_view_name(self, memory_type: str) -> str:
         """Text-view name for an explicit-write memory's lexical index entry.
