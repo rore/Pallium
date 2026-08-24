@@ -56,7 +56,7 @@ Key conventions: `core.container_ref` remains the sole container-normalization s
 - When delivery completes, workflow/redline/import checks and CI shall be green; installed integrations shall match merged sources; local `/health` shall report `status=ok` and `embedding_provider_ok=true` after VBS service restart.
 
 **Plan review:**
-Clean-context review in `## Plan review`; re-review pending after blocking naming/enforcement amendments.
+Clean-context review in `## Plan review`; final verdict APPROVE after two blocking review rounds were resolved.
 
 **Approvals:**
 Pending post-review human approval.
@@ -81,4 +81,4 @@ Verification plan: Public HTTP/MCP no-partial-write tests, integration scope-hea
 
 ## Plan review
 
-Initial clean-context verdict: BLOCKING. It required one canonical public naming scheme (`thread_ref`/`agent_ref` mapped internally), service-level enforcement before persistence, explicit non-inheritance on supersede, OS-independent raw-path cases, a decision on the existing `local` actor fallback, creation-only dashboard labels, docs/caller updates, and per-operation no-partial-write tests. The first amendment incorporated those points. Re-review found two remaining contract traps: removing existing origin inputs without migration, and actor-bearing `public` memories being invisible under current semantics. The amended plan retains strict deprecated aliases and rejects `public` on this actor-attributed creation path. Final re-review pending.
+Initial clean-context verdict: BLOCKING. It required one canonical public naming scheme (`thread_ref`/`agent_ref` mapped internally), service-level enforcement before persistence, explicit non-inheritance on supersede, OS-independent raw-path cases, a decision on the existing `local` actor fallback, creation-only dashboard labels, docs/caller updates, and per-operation no-partial-write tests. The first amendment incorporated those points. Re-review found two remaining contract traps: removing existing origin inputs without migration, and actor-bearing `public` memories being invisible under current semantics. The amended plan retains strict deprecated aliases and rejects `public` on this actor-attributed creation path. Final clean-context verdict: APPROVE.
