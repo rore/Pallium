@@ -742,6 +742,7 @@ class PalliumService:
                         replacement_status="current",
                         current_memory_object_id=current.id,
                         current_text=text[:240] or None,
+                        current_text_truncated=len(text) > 240,
                         current_recorded_at=current.freshness_at or current.created_at,
                     )
                 break

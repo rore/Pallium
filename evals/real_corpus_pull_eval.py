@@ -193,9 +193,6 @@ def _load_lineage(
         ):
             continue
         supported += 1
-        successors_for_memory = successors.get(memory_id, set())
-        if str(memory['lifecycle']) != 'superseded' and not successors_for_memory:
-            continue
         current = memory
         visited = {memory_id}
         replacement_status = 'unavailable'
@@ -581,14 +578,13 @@ def _judge(provider: LLMProvider, *, case_id: str, query: str, history: str, wit
 def run_pilot(
     snapshot: CorpusSnapshot,
     *,
-    provider: LLMProvider,
+    provider: LLMProvider | None = None,
     judge_provider: LLMProvider | None = None,
     history_arm: str = "raw",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run bounded downstream-task comparisons; no calls happen without lineage in guarded mode."""
     if history_arm not in {"raw", "guarded", "both"}:
         raise ValueError("history_arm must be raw, guarded, or both")
-    judge_provider = judge_provider or provider
     if history_arm in {"guarded", "both"} and snapshot.lineage.get("sampled_cases_with_supported_replacements", 0) == 0:
         return {
             "eval": "real-corpus-pull-pilot",
@@ -598,6 +594,9 @@ def run_pilot(
             "decision_gate": {"status": "blocked_no_supported_lineage", "broad_product_recommendation": "none"},
             "results": {"model_calls": 0, "estimated_input_tokens_total": 0, "budget_is_estimate": True},
         }, {"eval": "real-corpus-pull-pilot-review", "contains_raw_private_text": True, "never_publish": True, "cases": []}
+    if provider is None:
+        raise ValueError("provider is required when the guarded preflight passes")
+    judge_provider = judge_provider or provider
 
     arms = ["raw"] if history_arm == "raw" else ["guarded"] if history_arm == "guarded" else ["raw", "guarded"]
     outcomes = {arm: {"with_history": 0, "without_history": 0, "tie": 0} for arm in arms}
@@ -661,6 +660,7 @@ def run_pilot(
                 exact_usage_calls += 1
             latencies["without_history"].append(round(without_ms, 3))
             arm_results = {}
+            pending_counts: list[tuple[str, str, str]] = []
             for arm in arms:
                 judge_system, judge_user, _ = _judge_prompt(
                     case.case_id, case.query, histories[arm],
@@ -678,6 +678,12 @@ def run_pilot(
                 else:
                     exact_input_tokens += exact
                     exact_usage_calls += 1
+                pending_counts.append((arm, winner, rel))
+                arm_results[arm] = {
+                    "winner": winner, "history_relevance": rel,
+                    "judge_rationale": rationale, "blind_with_history_is_a": with_first,
+                }
+            for arm, winner, rel in pending_counts:
                 outcomes[arm][winner] += 1
                 relevance[arm][rel] += 1
                 category_bucket = category_results[arm].setdefault(
@@ -686,10 +692,6 @@ def run_pilot(
                 )
                 category_bucket["wins"][winner] += 1
                 category_bucket["history_relevance"][rel] += 1
-                arm_results[arm] = {
-                    "winner": winner, "history_relevance": rel,
-                    "judge_rationale": rationale, "blind_with_history_is_a": with_first,
-                }
             aggregate_cases.append(case.case_id)
             case_review.update({
                 "with_history_answer": answers[arms[0]][:MAX_ANSWER_CHARS],
@@ -897,7 +899,7 @@ def main(argv: list[str] | None = None) -> int:
             category_labels=category_labels,
         )
         if args.history_arm in {"guarded", "both"} and snapshot.lineage.get("sampled_cases_with_supported_replacements", 0) == 0:
-            aggregate, review = run_pilot(snapshot, provider=object(), history_arm=args.history_arm)
+            aggregate, review = run_pilot(snapshot, history_arm=args.history_arm)
         else:
             config = AppConfig.from_env()
             provider, judge_provider = build_eval_providers(

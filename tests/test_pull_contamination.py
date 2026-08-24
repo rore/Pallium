@@ -28,6 +28,7 @@ from evals.pull_contamination.harness import (
     compute_metrics,
     load_case,
     load_scenarios,
+    main as contamination_main,
     references_history,
     run_harness,
     run_trial,
@@ -417,6 +418,19 @@ def test_leading_choice_block_reads_decision_first_field() -> None:
 # Full scripted dry-run chain — wiring + detection end to end (no network)
 # ---------------------------------------------------------------------------
 
+
+def test_dry_run_ignores_model_call_cap(tmp_path) -> None:
+    output = tmp_path / "dry-run.json"
+    assert contamination_main([
+        "--dry-run",
+        "--scenarios", _SUPERSEDED_PATH,
+        "--seeds", "0",
+        "--max-calls", "1",
+        "--output", str(output),
+    ]) == 0
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["mode"] == "dry-run"
+    assert report["planned_model_calls"] > report["model_call_cap"]
 
 def test_scripted_dry_run_produces_expected_choices() -> None:
     # A type-1 scenario: task states A, relevant history supports A, contaminating

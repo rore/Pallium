@@ -406,6 +406,7 @@ def test_compact_history_trims_unicode_without_dropping_stale_status() -> None:
     assert len(_json_text(result)) <= 2000
     assert len(result["results"]) == 1
     assert result["results"][0]["historical_updates"][0]["status"] == "outdated"
+    assert result["results"][0]["historical_updates"][0]["current_text_truncated"] is True
 
 def test_compact_history_explains_empty_requested_scope_within_budget() -> None:
     result = _compact_history({

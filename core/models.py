@@ -239,6 +239,7 @@ class HistoricalGuidanceUpdate:
     replacement_status: str
     current_memory_object_id: str | None = None
     current_text: str | None = None
+    current_text_truncated: bool = False
     current_recorded_at: datetime | None = None
 
 

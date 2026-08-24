@@ -582,7 +582,9 @@ def main(argv: list[str] | None = None) -> int:
     case = load_case(args.scenarios)
     seeds = list(args.seeds)
     planned_calls = len(scenarios) * len(seeds) * len(CONDITIONS)
-    if args.max_calls <= 0 or planned_calls > args.max_calls:
+    if args.max_calls <= 0:
+        parser.error("--max-calls must be positive")
+    if not args.dry_run and planned_calls > args.max_calls:
         parser.error(f"planned model calls ({planned_calls}) exceed --max-calls ({args.max_calls})")
 
     provider = _build_agent_provider(

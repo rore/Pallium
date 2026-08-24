@@ -413,7 +413,7 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
         )
         current = dataclasses.replace(
             old, id="mcp-history-current",
-            payload={"decision": "Use the current anchor."},
+            payload={"decision": "Use the current anchor. " + "x" * 400},
         )
         for memory in (old, middle, current):
             storage.create_memory_object(memory)
@@ -497,6 +497,8 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
         assert search_updates[0]["status"] == "outdated"
         assert search_updates[0]["replacement_status"] == "current"
         assert "current anchor" in search_updates[0].get("current_text", "").lower()
+        assert search_updates[0]["current_text_truncated"] is True
+        assert len(search_updates[0]["current_text"]) == 240
 
         wrong_scope_content, _ = await server.call_tool("pallium_search_history", {
             "query": "distinctive lookup anchor phrase",

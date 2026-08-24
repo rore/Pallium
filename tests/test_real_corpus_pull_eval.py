@@ -439,12 +439,26 @@ def test_guarded_arm_stops_before_provider_when_lineage_is_absent(tmp_path: Path
     )
     assert snapshot.cases[0].category == "replaced_decision"
     assert snapshot.lineage["sampled_cases_with_supported_replacements"] == 0
-    provider = ScriptedProvider()
-    aggregate, _ = run_pilot(snapshot, provider=provider, history_arm="guarded")
+    aggregate, _ = run_pilot(snapshot, history_arm="guarded")
     assert aggregate["decision_gate"]["status"] == "blocked_no_supported_lineage"
     assert aggregate["results"]["model_calls"] == 0
-    assert provider.calls == 0
 
+
+def test_mid_case_budget_stop_does_not_commit_partial_judge_counts(monkeypatch) -> None:
+    import evals.real_corpus_pull_eval as runner
+
+    snapshot = CorpusSnapshot(
+        cases=(PullCase("e1", "t1", "task", ("s1",), ("context",), guarded_history='["guarded"]'),),
+        counts={"valid_cases": 1},
+        attrition={},
+        lineage={"sampled_cases_with_supported_replacements": 1},
+    )
+    monkeypatch.setattr(runner, "MAX_MODEL_CALLS", 4)
+    aggregate, _ = run_pilot(snapshot, provider=ScriptedProvider(), history_arm="both")
+
+    assert aggregate["sampling"]["paired_cases"] == 0
+    assert aggregate["results"]["budget_failures"] == 1
+    assert all(sum(wins.values()) == 0 for wins in aggregate["results"]["wins"].values())
 
 def test_both_arms_respect_hard_call_cap() -> None:
     snapshot = CorpusSnapshot(

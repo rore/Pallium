@@ -42,6 +42,7 @@ def _history_fields(item: dict) -> dict:
                 "replacement_status",
                 "current_memory_object_id",
                 "current_text",
+                "current_text_truncated",
                 "current_recorded_at",
             )
             if update.get(key) is not None
@@ -68,6 +69,7 @@ def _trim_update_details(payload: dict, items: list[dict], budget: int) -> None:
             break
         longest = max(texts, key=lambda update: len(update["current_text"]))
         excess = len(_json_text(payload)) - budget
+        longest["current_text_truncated"] = True
         longest["current_text"] = longest["current_text"][
             : max(0, len(longest["current_text"]) - excess - 1)
         ]
