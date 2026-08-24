@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import EmbeddingProviderConfig
@@ -292,8 +293,10 @@ def _build_vector_client(monkeypatch, test_db_url: str) -> tuple[TestClient, _Co
 def test_vector_source_only_http_expands_then_forgets_unicode_source(
     monkeypatch,
     test_db_url: str,
+    request: pytest.FixtureRequest,
 ) -> None:
     client = _build_vector_client(monkeypatch, test_db_url)[0]
+    request.addfinalizer(client.close)
     vector_index = client.app.state.pallium_service._vector_index
     assert isinstance(vector_index, _ControlledVectorIndex)
     health = client.get("/health").json()

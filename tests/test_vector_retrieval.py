@@ -927,6 +927,94 @@ class TestSourceOnlyExpansion:
 
         assert [item.source_item_id for item in result.results] == ["eligible"]
         assert index.search_calls == [8, 16, 20]
+    def test_matching_below_similarity_floor_stops_expansion(self) -> None:
+        entries: dict[str, IndexEntry] = {}
+        hits: list[tuple[str, float]] = []
+        for i in range(8):
+            entry_id = f"memory-high-{i}"
+            entries[entry_id] = _make_index_entry(
+                entry_id=entry_id, target_kind="memory_object", target_id=entry_id,
+            )
+            hits.append((entry_id, 0.9 - i * 0.001))
+        entries["source-low"] = _make_index_entry(
+            entry_id="source-low", target_kind="source_item", target_id="source-low",
+        )
+        hits.append(("source-low", 0.2))
+        for i in range(7):
+            entry_id = f"memory-low-{i}"
+            entries[entry_id] = _make_index_entry(
+                entry_id=entry_id, target_kind="memory_object", target_id=entry_id,
+            )
+            hits.append((entry_id, 0.19 - i * 0.001))
+
+        class InflatedHorizonIndex(FakeVectorIndex):
+            def entry_count(self) -> int:
+                return 100
+
+        index = InflatedHorizonIndex(hits)
+        storage = MagicMock(spec=StorageProvider)
+        storage.get_index_entries.side_effect = lambda ids: {
+            entry_id: entries[entry_id] for entry_id in ids
+        }
+        provider = VectorRetrievalProvider(
+            storage,
+            FakeEmbeddingProvider(),
+            min_similarity=0.3,
+            index_holder=VectorIndexHolder(index),
+        )
+
+        result = provider.query("test", limit=1, target_kind="source_item")
+
+        assert result.results == []
+        assert index.search_calls == [8, 16]
+
+    def test_add_remove_between_searches_stays_bounded_and_duplicate_free(self) -> None:
+        entries: dict[str, IndexEntry] = {}
+        sources: dict[str, SourceItem] = {}
+        hits: list[tuple[str, float]] = []
+        for i in range(16):
+            entry_id = f"memory-{i}"
+            entries[entry_id] = _make_index_entry(
+                entry_id=entry_id, target_kind="memory_object", target_id=entry_id,
+            )
+            hits.append((entry_id, 0.99 - i * 0.001))
+        for i, similarity in enumerate((0.8, 0.79)):
+            entry_id = f"source-{i}"
+            entries[entry_id] = _make_index_entry(
+                entry_id=entry_id, target_kind="source_item", target_id=entry_id,
+            )
+            sources[entry_id] = _make_source_item(si_id=entry_id)
+            hits.append((entry_id, similarity))
+        entries["source-late"] = _make_index_entry(
+            entry_id="source-late", target_kind="source_item", target_id="source-late",
+        )
+        sources["source-late"] = _make_source_item(si_id="source-late")
+
+        class MutatingIndex(FakeVectorIndex):
+            def search(self, query_vector, k):
+                batch = super().search(query_vector, k)
+                if len(self.search_calls) == 1:
+                    self._hits = self._hits[1:] + [("source-late", 0.6)]
+                return batch
+
+        index = MutatingIndex(hits)
+        storage = MagicMock(spec=StorageProvider)
+        storage.get_index_entries.side_effect = lambda ids: {
+            entry_id: entries[entry_id] for entry_id in ids
+        }
+        storage.get_source_item.side_effect = lambda source_id: sources[source_id]
+        provider = VectorRetrievalProvider(
+            storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(index),
+        )
+
+        result = provider.query(
+            "test", limit=2, target_kind="source_item", include_trace=True,
+        )
+
+        assert [item.source_item_id for item in result.results] == ["source-0", "source-1"]
+        assert index.search_calls == [16, 18]
+        candidate_ids = [hit.index_entry_id for hit in result.trace.stages[0].candidate_hits]
+        assert candidate_ids == ["source-0", "source-1"]
     def test_no_progress_mutation_is_bounded(self) -> None:
         entries = {"memory-0": _make_index_entry(entry_id="memory-0", target_kind="memory_object", target_id="memory-0")}
         class NoProgressIndex(FakeVectorIndex):
