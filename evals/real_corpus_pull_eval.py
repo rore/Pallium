@@ -143,8 +143,7 @@ def _load_lineage(
     optional = [column for column in ('freshness_at', 'subject', 'superseded_by_id', 'is_soft_deleted') if column in memory_columns]
     selected = ['id', 'type', 'payload_json', 'lifecycle', 'visibility', 'container_ref', 'actor_ref', 'created_at', *optional]
     records = conn.execute(
-        f"SELECT {', '.join('m.' + column for column in selected)} FROM memory_objects m "
-        "WHERE m.container_ref = ?", (container_ref,)
+        f"SELECT {', '.join('m.' + column for column in selected)} FROM memory_objects m"
     ).fetchall()
     by_id = {str(row['id']): row for row in records}
     if not by_id:

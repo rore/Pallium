@@ -348,6 +348,45 @@ def test_source_context_reports_current_supersession_and_safe_unavailable_state(
         assert updates[0]["replacement_status"] == "current"
         assert updates[0]["current_memory_object_id"] == current.id
         assert updates[0]["current_text"] == "Decision: Use the production endpoint with retries."
+
+
+def test_global_replacement_requires_caller_actor(client: TestClient) -> None:
+    from core.models import MemoryObject, Relation, SourceItem
+
+    storage = client.app.state.pallium_service._storage
+    source = SourceItem(
+        id="guard-global-source", source_type="chat_message", source_id="guard-global-source",
+        content_type="text/plain", content="An actor-scoped earlier decision.",
+        container_ref=CT, thread_ref=TH, artifact_kind="message",
+        visibility="private", actor_ref="actor-A",
+    )
+    old = MemoryObject(
+        id="guard-global-old", type="decision", schema_id="test", schema_version="v1",
+        payload={"decision": "Earlier"}, container_ref=CT,
+        visibility="private", actor_ref="actor-A",
+    )
+    current = dataclasses.replace(
+        old, id="guard-global-current", payload={"decision": "Current"},
+        container_ref="other-container", visibility="global",
+    )
+    storage.create_source_item(source)
+    storage.create_memory_object(old)
+    storage.create_memory_object(current)
+    storage.create_relation(Relation(
+        from_kind="memory_object", from_id=old.id, relation_type="supported_by",
+        to_kind="source_item", to_id=source.id,
+    ))
+    storage.link_supersession(old.id, current.id, correction_reason="updated")
+
+    no_actor = _context(client, source.id).json()["items"][0]["historical_updates"][0]
+    assert no_actor["replacement_status"] == "unavailable"
+    with_actor = _context(
+        client, source.id, query_actor_ref="actor-A"
+    ).json()["items"][0]["historical_updates"][0]
+    assert with_actor["replacement_status"] == "current"
+    assert with_actor["current_memory_object_id"] == current.id
+
+
 @pytest.mark.parametrize("mode", ["conflict", "cycle"])
 def test_source_context_marks_ambiguous_supersession_unavailable(
     client: TestClient,

@@ -428,6 +428,22 @@ def test_guarded_history_uses_supported_lineage_and_both_arms(tmp_path: Path) ->
     assert provider.calls == 5
 
 
+def test_guarded_history_follows_visible_cross_container_successor(tmp_path: Path) -> None:
+    db = tmp_path / "cross-container-lineage.db"
+    _db(db, [("e1", "which decision?", json.dumps([{"source_item_id": "s1"}]))], [("s1", "we used old", None)])
+    _add_lineage(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE memory_objects SET container_ref = 'c:other', visibility = 'public' WHERE id = 'new'"
+        )
+
+    snapshot = load_corpus(db, container_ref="c:test", visibility="private")
+    update = json.loads(snapshot.cases[0].guarded_history)["results"][0]["historical_updates"][0]
+    assert update["replacement_status"] == "current"
+    assert update["current_memory_object_id"] == "new"
+    assert snapshot.lineage["sampled_cases_with_supported_replacements"] == 1
+
+
 def test_guarded_arm_stops_before_provider_when_lineage_is_absent(tmp_path: Path) -> None:
     db = tmp_path / "no-lineage.db"
     _db(db, [("e1", "query", json.dumps([{"source_item_id": "s1"}]))], [("s1", "source", None)])

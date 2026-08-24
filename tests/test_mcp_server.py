@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("mcp", reason="mcp[cli] not installed")
 
-from app.mcp.server import _bounded_expansion, _compact_history, _json_text, create_server
+from app.mcp.server import _bounded_expansion, _compact_history, _json_text, _trim_update_details, create_server
 
 
 class TestSelfGating:
@@ -360,6 +360,21 @@ def test_compact_history_preserves_recorded_date_and_replacement_status() -> Non
     assert hit["historical_updates"][0]["current_memory_object_id"] == "new-memory"
     assert hit["historical_updates"][0]["current_text"] == "Use the production endpoint."
     assert len(_json_text(result)) <= 2000
+
+
+def test_budget_trimming_keeps_current_replacement_before_unavailable() -> None:
+    current = {"status": "outdated", "replacement_status": "current", "current_memory_object_id": "new"}
+    unavailable = {"status": "outdated", "replacement_status": "unavailable"}
+    item = {"historical_updates": [current, unavailable]}
+    payload = {"results": [item]}
+    expected = {"results": [{"historical_updates": [current], "historical_updates_omitted": 1}]}
+    budget = len(_json_text(expected))
+
+    _trim_update_details(payload, [item], budget)
+
+    assert item["historical_updates"] == [current]
+    assert item["historical_updates_omitted"] == 1
+    assert len(_json_text(payload)) <= budget
 
 
 def test_bounded_expansion_preserves_historical_updates_within_budget() -> None:

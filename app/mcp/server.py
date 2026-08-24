@@ -74,13 +74,19 @@ def _trim_update_details(payload: dict, items: list[dict], budget: int) -> None:
         if not longest["current_text"]:
             longest.pop("current_text", None)
     while len(_json_text(payload)) > budget:
-        item = next(
-            (candidate for candidate in items if len(candidate.get("historical_updates") or []) > 1),
-            None,
-        )
-        if item is None:
+        removable = [
+            (item, index, update)
+            for item in items
+            if len(item.get("historical_updates") or []) > 1
+            for index, update in enumerate(item["historical_updates"])
+        ]
+        if not removable:
             break
-        item["historical_updates"].pop()
+        item, index, _ = min(
+            removable,
+            key=lambda candidate: candidate[2].get("replacement_status") == "current",
+        )
+        item["historical_updates"].pop(index)
         item["historical_updates_omitted"] = item.get("historical_updates_omitted", 0) + 1
 
 

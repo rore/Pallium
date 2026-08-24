@@ -789,7 +789,7 @@ class PalliumService:
             if source is None or source.forgotten:
                 continue
             effective_container = container_ref or source.container_ref
-            effective_actor = query_actor_ref or source.actor_ref
+            effective_actor = query_actor_ref
             if not is_visible(
                 source.visibility,
                 source.container_ref,
