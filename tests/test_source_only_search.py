@@ -9,9 +9,16 @@ push-down that provides the anti-starvation guarantee.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 
+from app.config import EmbeddingProviderConfig
 from app.main import create_app
+from core.models import IndexEntry, MemoryObject
+from providers.embedding.base import EmbeddingProvider
+from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
+from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import build_llm_test_config
 from tests.stub_providers import TieredMemorySemanticProvider
 
@@ -192,3 +199,188 @@ def test_source_only_trace_has_mode_marker(monkeypatch, test_db_url: str) -> Non
         trace = payload["trace"]
         assert trace["routing"] == {"mode": "source_only"}
         assert trace["result_summary"] is not None
+# ---------------------------------------------------------------------------
+# F. HTTP vector-only starvation lifecycle
+# ---------------------------------------------------------------------------
+
+
+class _StubEmbeddingProvider(EmbeddingProvider):
+    def embed(self, texts: list[str], **kwargs) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
+    def dimensions(self) -> int:
+        return 4
+
+    def model_name(self) -> str:
+        return "test-embedding"
+
+
+class _ControlledVectorIndex:
+    """Vector-index test double with caller-controlled similarity order."""
+
+    model_name = "test-embedding"
+    embedding_schema_version = EMBEDDING_SCHEMA_VERSION
+
+    def __init__(self) -> None:
+        self._hits: list[tuple[str, float]] = []
+        self._ids: set[str] = set()
+
+    def set_hits(self, hits: list[tuple[str, float]]) -> None:
+        self._hits = hits
+        self._ids.update(entry_id for entry_id, _similarity in hits)
+
+    def add(self, entry_id: str, _vector: list[float]) -> None:
+        self._ids.add(entry_id)
+
+    def remove(self, entry_id: str) -> None:
+        if entry_id not in self._ids:
+            raise KeyError(entry_id)
+        self._ids.remove(entry_id)
+        self._hits = [hit for hit in self._hits if hit[0] != entry_id]
+
+    def search(self, _query_vector: list[float], k: int) -> list[tuple[str, float]]:
+        return self._hits[:k]
+
+    def entry_count(self) -> int:
+        return len(self._hits) if self._hits else len(self._ids)
+
+    def known_entry_ids(self) -> frozenset[str]:
+        return frozenset(self._ids)
+
+    def save(self) -> None:
+        pass
+
+
+def _build_vector_client(monkeypatch, test_db_url: str) -> tuple[TestClient, _ControlledVectorIndex]:
+    monkeypatch.setattr(
+        "app.dependencies.build_llm_provider",
+        lambda config, **_: TieredMemorySemanticProvider(),
+    )
+    embedding = _StubEmbeddingProvider()
+    vector_index = _ControlledVectorIndex()
+    monkeypatch.setattr(
+        "app.dependencies.build_embedding_provider",
+        lambda config, *, provider_name: embedding,
+    )
+    monkeypatch.setattr(
+        "app.dependencies._load_or_create_vector_index",
+        lambda config, provider: vector_index,
+    )
+    config = replace(
+        build_llm_test_config(
+            default_use_case="agent_conversation_memory",
+            sqlite_url=test_db_url,
+        ),
+        vector_index=VectorIndexConfig(
+            enabled=True,
+            index_path="unused-test.index",
+            embedding_provider="test",
+            min_similarity=0.3,
+        ),
+        embedding_providers={
+            "test": EmbeddingProviderConfig(
+                name="test",
+                kind="onnx",
+                model="test-embedding",
+                dimensions=4,
+            ),
+        },
+    )
+    return TestClient(create_app(config)), vector_index
+
+
+def test_vector_source_only_http_expands_then_forgets_unicode_source(
+    monkeypatch,
+    test_db_url: str,
+) -> None:
+    client = _build_vector_client(monkeypatch, test_db_url)[0]
+    vector_index = client.app.state.pallium_service._vector_index
+    assert isinstance(vector_index, _ControlledVectorIndex)
+    health = client.get("/health").json()
+    assert health["embedding_provider_ok"] is True
+
+    storage = client.app.state.pallium_service._storage
+    derived_entry_ids: list[str] = []
+    for index in range(97):  # source-only provider receives K=12: exceed 8*K.
+        memory = MemoryObject(
+            type="decision",
+            schema_id="test",
+            schema_version="1",
+            payload={"decision": f"derived clutter {index}"},
+            visibility="private",
+            container_ref=CONTAINER,
+        )
+        storage.create_memory_object(memory)
+        entry = IndexEntry(
+            target_kind="memory_object",
+            target_id=memory.id,
+            index_type="vector",
+            text_view=f"derived clutter {index}",
+            text_view_name="test.embedding",
+            provider_name="test-embedding",
+            provider_version="v1",
+        )
+        storage.create_index_entry(entry)
+        derived_entry_ids.append(entry.id)
+
+    other_source_id = _ingest(
+        client,
+        source_id="unicode-other-container",
+        content="האחסון יתבסס על מסד אחר",
+        container_ref="chat:other",
+        thread_ref="chat:other:thread-1",
+    )
+    target_source_id = _ingest(
+        client,
+        source_id="unicode-target",
+        content="האחסון יתבסס על PostgreSQL",
+    )
+    source_entry_ids: dict[str, str] = {}
+    for source_id in (other_source_id, target_source_id):
+        entry = IndexEntry(
+            target_kind="source_item",
+            target_id=source_id,
+            index_type="vector",
+            text_view="controlled source vector",
+            text_view_name="test.embedding",
+            provider_name="test-embedding",
+            provider_version="v1",
+        )
+        storage.create_index_entry(entry)
+        source_entry_ids[source_id] = entry.id
+    vector_index.set_hits(
+        [
+            (entry_id, 0.99 - index * 0.001)
+            for index, entry_id in enumerate(derived_entry_ids)
+        ]
+        + [
+            (source_entry_ids[other_source_id], 0.80),
+            (source_entry_ids[target_source_id], 0.79),
+        ]
+    )
+
+    request = {
+        "text": "מהי טכנולוגיית הנתונים שסוכמה?",
+        "container_ref": CONTAINER,
+        "thread_ref": THREAD,
+        "visibility": "private",
+        "limit": 1,
+        "source_only": True,
+    }
+    response = client.post("/query", json=request)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["decision_reason"] == "source_only_search"
+    assert payload["should_inject"] is False
+    assert payload["injectable_blocks"] == []
+    assert [row["source_item_id"] for row in payload["results"]] == [target_source_id]
+    assert [row["raw_rank"] for row in payload["results"]] == [1]
+
+    forgotten = client.post(
+        "/source/forget",
+        json={"source_item_id": target_source_id, "reason": "E2E lifecycle"},
+    )
+    assert forgotten.status_code == 200, forgotten.text
+    after = client.post("/query", json=request)
+    assert after.status_code == 200, after.text
+    assert after.json()["results"] == []

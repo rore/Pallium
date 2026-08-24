@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -11,6 +11,7 @@ from core.models import (
     MemoryObject,
     QueryFilters,
     SourceItem,
+    utc_now,
 )
 from core.vector_index_holder import VectorIndexHolder
 from providers.embedding.base import EmbeddingProvider
@@ -137,9 +138,14 @@ class FakeVectorIndex:
         self._hits = hits or []
         self._removed: list[str] = []
         self._saved = False
+        self.search_calls: list[int] = []
 
     def search(self, query_vector: list[float], k: int) -> list[tuple[str, float]]:
+        self.search_calls.append(k)
         return self._hits[:k]
+
+    def entry_count(self) -> int:
+        return len(self._hits)
 
     def remove(self, entry_id: str) -> None:
         self._removed.append(entry_id)
@@ -802,3 +808,150 @@ class TestEmptyIndex:
         assert result.trace.stages[0].stage_name == VECTOR_STAGE_NAME
         assert result.trace.stages[0].candidate_hits_considered == 0
         assert result.trace.stages[0].selected_hits == ()
+
+class TestSourceOnlyExpansion:
+    def _provider(self, hits: list[tuple[str, float]], entries: dict[str, IndexEntry], sources: dict[str, SourceItem], *, minimum: float = 0.3):
+        storage = MagicMock(spec=StorageProvider)
+        storage.get_index_entries.side_effect = lambda ids: {entry_id: entries[entry_id] for entry_id in ids if entry_id in entries}
+        storage.get_index_entry.side_effect = lambda entry_id: entries[entry_id]
+        storage.get_source_item.side_effect = lambda source_id: sources[source_id]
+        index = FakeVectorIndex(hits=hits)
+        provider = VectorRetrievalProvider(
+            storage, FakeEmbeddingProvider(), min_similarity=minimum,
+            index_holder=VectorIndexHolder(index),
+        )
+        return provider, index
+
+    def test_expands_past_8x_derived_entries(self) -> None:
+        entries: dict[str, IndexEntry] = {}
+        sources: dict[str, SourceItem] = {}
+        hits: list[tuple[str, float]] = []
+        for i in range(17):
+            entry_id = f"memory-{i}"
+            entries[entry_id] = _make_index_entry(entry_id=entry_id, target_kind="memory_object", target_id=entry_id)
+            hits.append((entry_id, 0.99 - i * 0.001))
+        for i in range(2):
+            entry_id = f"source-{i}"
+            entries[entry_id] = _make_index_entry(entry_id=entry_id, target_kind="source_item", target_id=entry_id)
+            sources[entry_id] = _make_source_item(si_id=entry_id)
+            hits.append((entry_id, 0.7 - i * 0.01))
+        provider, index = self._provider(hits, entries, sources)
+
+        result = provider.query("test", limit=2, target_kind="source_item")
+
+        assert [item.source_item_id for item in result.results] == ["source-0", "source-1"]
+        assert index.search_calls == [16, 19]
+        assert all(
+            len(call.args[0]) > 1
+            for call in provider._storage.get_index_entries.call_args_list
+        )
+
+    @pytest.mark.parametrize("source_count", [0, 1, 2, 3])
+    def test_returns_minimum_of_k_and_available_sources(self, source_count: int) -> None:
+        entries: dict[str, IndexEntry] = {}
+        sources: dict[str, SourceItem] = {}
+        hits: list[tuple[str, float]] = []
+        for i in range(17):
+            entry_id = f"memory-{i}"
+            entries[entry_id] = _make_index_entry(entry_id=entry_id, target_kind="memory_object", target_id=entry_id)
+            hits.append((entry_id, 0.99 - i * 0.001))
+        for i in range(source_count):
+            entry_id = f"source-{i}"
+            entries[entry_id] = _make_index_entry(entry_id=entry_id, target_kind="source_item", target_id=entry_id)
+            sources[entry_id] = _make_source_item(si_id=entry_id)
+            hits.append((entry_id, 0.7 - i * 0.01))
+        provider, _index = self._provider(hits, entries, sources)
+
+        result = provider.query("test", limit=2, target_kind="source_item")
+
+        assert len(result.results) == min(2, source_count)
+        assert all(item.result_kind == "source_hit" for item in result.results)
+
+    def test_stale_duplicate_and_filtered_candidates_continue_with_unique_trace(self) -> None:
+        entries: dict[str, IndexEntry] = {}
+        sources: dict[str, SourceItem] = {}
+        hits: list[tuple[str, float]] = [(f"memory-{i}", 0.99 - i * 0.001) for i in range(16)]
+        for i in range(16):
+            entry_id = f"memory-{i}"
+            entries[entry_id] = _make_index_entry(entry_id=entry_id, target_kind="memory_object", target_id=entry_id)
+        hits.extend([("stale", 0.8), ("source-0", 0.7), ("source-0", 0.69), ("source-1", 0.68)])
+        for i in range(2):
+            entry_id = f"source-{i}"
+            entries[entry_id] = _make_index_entry(entry_id=entry_id, target_kind="source_item", target_id=entry_id)
+            sources[entry_id] = _make_source_item(si_id=entry_id)
+        provider, index = self._provider(hits, entries, sources)
+
+        result = provider.query("test", limit=2, target_kind="source_item", include_trace=True)
+
+        assert [item.source_item_id for item in result.results] == ["source-0", "source-1"]
+        stage = result.trace.stages[0]
+        assert len({hit.index_entry_id for hit in stage.candidate_hits}) == len(stage.candidate_hits)
+        assert [hit.index_entry_id for hit in stage.candidate_hits] == ["source-0", "source-1"]
+        assert index.search_calls == [16, 20]
+
+    def test_rejected_sources_do_not_starve_later_eligible_source(self) -> None:
+        entries: dict[str, IndexEntry] = {}
+        sources: dict[str, SourceItem] = {}
+        hits: list[tuple[str, float]] = []
+        for i in range(16):
+            entry_id = f"memory-{i}"
+            entries[entry_id] = _make_index_entry(
+                entry_id=entry_id, target_kind="memory_object", target_id=entry_id,
+            )
+            hits.append((entry_id, 0.99 - i * 0.001))
+        sources.update({
+            "forgotten": replace(_make_source_item(si_id="forgotten"), forgotten_at=utc_now()),
+            "wrong-role": _make_source_item(si_id="wrong-role", role="user"),
+            "wrong-container": _make_source_item(
+                si_id="wrong-container", visibility="private", container_ref="chat:other",
+            ),
+            "eligible": _make_source_item(
+                si_id="eligible", visibility="private", container_ref="chat:test",
+            ),
+        })
+        for offset, source_id in enumerate(sources):
+            entries[source_id] = _make_index_entry(
+                entry_id=source_id, target_kind="source_item", target_id=source_id,
+            )
+            hits.append((source_id, 0.8 - offset * 0.01))
+        provider, index = self._provider(hits, entries, sources)
+
+        result = provider.query(
+            "test",
+            limit=1,
+            target_kind="source_item",
+            filters=QueryFilters(role="assistant", container_ref="chat:test"),
+            visibility="private",
+            query_container_ref="chat:test",
+        )
+
+        assert [item.source_item_id for item in result.results] == ["eligible"]
+        assert index.search_calls == [8, 16, 20]
+    def test_no_progress_mutation_is_bounded(self) -> None:
+        entries = {"memory-0": _make_index_entry(entry_id="memory-0", target_kind="memory_object", target_id="memory-0")}
+        class NoProgressIndex(FakeVectorIndex):
+            def entry_count(self) -> int:
+                return 100
+        index = NoProgressIndex([("memory-0", 0.9)])
+        storage = MagicMock(spec=StorageProvider)
+        storage.get_index_entries.return_value = entries
+        storage.get_index_entry.return_value = entries["memory-0"]
+        provider = VectorRetrievalProvider(storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(index))
+
+        result = provider.query("test", limit=2, target_kind="source_item")
+
+        assert result.results == []
+        assert len(index.search_calls) == 1
+
+    def test_default_query_keeps_one_search(self) -> None:
+        entry = _make_index_entry()
+        storage = MagicMock(spec=StorageProvider)
+        storage.get_index_entries.return_value = {entry.id: entry}
+        storage.get_memory_object.return_value = _make_memory_object()
+        storage.get_evidence_for_memory_object.return_value = []
+        index = FakeVectorIndex([(entry.id, 0.9)] * 20)
+        provider = VectorRetrievalProvider(storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(index))
+
+        provider.query("test", limit=2)
+
+        assert index.search_calls == [8]
