@@ -30,9 +30,10 @@
 - 2026-08-24: Verification passed: focused regression 10/10 repetitions under four workers; snapshot concurrency file 7 passed; clean-CI Windows-sensitive selection 371 passed, 7 skipped at `9638f0c`; final redline verdict BLUE with no checkpoint or boundary finding. The first local Windows batch's unrelated `test_prompt_variants_legacy_fallback_unaffected` failure came from the repository-local service config and disappeared when the child process used an absent config path, matching CI.
 - 2026-08-24: Workflow checker has one non-blocking commit-order advisory because the initial commit updated the previous task's Work Record alongside creating this task's Work Record; no implementation code existed in that commit.
 - 2026-08-24: Independent final review found that the writer was not explicitly ready before the snapshot and WAL setup exceptions could escape the error list. Added readiness/first-insert events and captured setup failures at `7548c9a`; repeat review accepted the minimal synchronization and the clean-CI Windows selection passed again.
+- 2026-08-24: PR review found readiness-timeout cleanup missing and showed the fixture was only four pages, so it could finish in one backup batch. At `4128ff2`, timeout now stops/joins the worker, the fixture asserts more than 256 pages, and first-insert signaling occurs after `execute` and before `commit`. Snapshot tests and the clean-CI Windows selection passed.
 
 ## Evidence
 
-- Revision `7548c9a`: exact Windows-sensitive CI selection with repository-local config disabled → 371 passed, 7 skipped; `tests/test_snapshot_concurrent.py` → 7 passed.
+- Revision `4128ff2`: exact Windows-sensitive CI selection with repository-local config disabled → 371 passed, 7 skipped; `tests/test_snapshot_concurrent.py` → 7 passed.
 - Initial timeout regression: focused contention test → 10/10 repetitions passed under `-n 4`.
 - Final redline report: BLUE; 3 blue files, 0 gray/red/watch, 0 checkpoints, 0 boundary violations.
