@@ -362,7 +362,7 @@ def test_vector_source_only_http_expands_then_forgets_unicode_source(
         ]
     )
 
-    request = {
+    query_payload = {
         "text": "מהי טכנולוגיית הנתונים שסוכמה?",
         "container_ref": CONTAINER,
         "thread_ref": THREAD,
@@ -370,7 +370,7 @@ def test_vector_source_only_http_expands_then_forgets_unicode_source(
         "limit": 1,
         "source_only": True,
     }
-    response = client.post("/query", json=request)
+    response = client.post("/query", json=query_payload)
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["decision_reason"] == "source_only_search"
@@ -384,6 +384,6 @@ def test_vector_source_only_http_expands_then_forgets_unicode_source(
         json={"source_item_id": target_source_id, "reason": "E2E lifecycle"},
     )
     assert forgotten.status_code == 200, forgotten.text
-    after = client.post("/query", json=request)
+    after = client.post("/query", json=query_payload)
     assert after.status_code == 200, after.text
     assert after.json()["results"] == []

@@ -1015,21 +1015,38 @@ class TestSourceOnlyExpansion:
         assert index.search_calls == [16, 18]
         candidate_ids = [hit.index_entry_id for hit in result.trace.stages[0].candidate_hits]
         assert candidate_ids == ["source-0", "source-1"]
-    def test_no_progress_mutation_is_bounded(self) -> None:
-        entries = {"memory-0": _make_index_entry(entry_id="memory-0", target_kind="memory_object", target_id="memory-0")}
-        class NoProgressIndex(FakeVectorIndex):
+
+    def test_repeated_full_batch_stops_on_no_progress(self) -> None:
+        entries = {
+            f"memory-{i}": _make_index_entry(
+                entry_id=f"memory-{i}",
+                target_kind="memory_object",
+                target_id=f"memory-{i}",
+            )
+            for i in range(32)
+        }
+
+        class StuckIndex(FakeVectorIndex):
             def entry_count(self) -> int:
                 return 100
-        index = NoProgressIndex([("memory-0", 0.9)])
+
+            def search(self, query_vector, k):
+                self.search_calls.append(k)
+                return self._hits
+
+        index = StuckIndex([(entry_id, 0.9) for entry_id in entries])
         storage = MagicMock(spec=StorageProvider)
-        storage.get_index_entries.return_value = entries
-        storage.get_index_entry.return_value = entries["memory-0"]
-        provider = VectorRetrievalProvider(storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(index))
+        storage.get_index_entries.side_effect = lambda ids: {
+            entry_id: entries[entry_id] for entry_id in ids
+        }
+        provider = VectorRetrievalProvider(
+            storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(index),
+        )
 
         result = provider.query("test", limit=2, target_kind="source_item")
 
         assert result.results == []
-        assert len(index.search_calls) == 1
+        assert index.search_calls == [16, 32]
 
     def test_default_query_keeps_one_search(self) -> None:
         entry = _make_index_entry()
