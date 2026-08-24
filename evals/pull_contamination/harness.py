@@ -49,6 +49,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from app.mcp.server import _compact_history, _json_text
 from evals.history_pull_decision.agent import ScriptedDecisionProvider, _render_results
 from evals.historical_lookup_measurement import _wilson_95
 from providers.llm.base import LLMProvider, LLMProviderError
@@ -243,8 +244,9 @@ def _trial_tag(scenario_id: str, seed: int, condition: str) -> str:
 class ContaminationAgent:
     """Wraps an ``LLMProvider`` and produces a final answer for one condition."""
 
-    def __init__(self, provider: LLMProvider) -> None:
+    def __init__(self, provider: LLMProvider, *, structured_history: bool = False) -> None:
         self._provider = provider
+        self._structured_history = structured_history
 
     def answer(
         self,
@@ -254,13 +256,19 @@ class ContaminationAgent:
         condition: str,
         task: str,
         history_text: str | None,
+        history_payload: dict[str, Any] | None = None,
     ) -> str:
         tag = _trial_tag(scenario_id, seed, condition)
         if history_text is None:
             system_prompt = NO_HISTORY_SYSTEM_PROMPT
             user_prompt = f"Task:\n{task}{tag}"
         else:
-            rendered = _render_results([{"excerpt": history_text}])
+            if self._structured_history:
+                if history_payload is None:
+                    raise ValueError("structured history requires a payload")
+                rendered = _json_text(_compact_history(history_payload, query=task, limit=1))
+            else:
+                rendered = _render_results([{"excerpt": history_text}])
             system_prompt = WITH_HISTORY_SYSTEM_PROMPT
             user_prompt = f"Task:\n{task}\n\n{HISTORY_DELIMITER}{rendered}{tag}"
         response = self._provider.generate_json(
@@ -325,6 +333,16 @@ def _history_for(scenario: Scenario, condition: str) -> str | None:
     return scenario.contaminating_history
 
 
+def _structured_history_for(scenario: Scenario, condition: str) -> dict[str, Any] | None:
+    """Build a production-shaped query result for the compact MCP serializer."""
+    history = _history_for(scenario, condition)
+    if history is None:
+        return None
+    item: dict[str, Any] = {"source_item_id": f"source-{scenario.id}", "excerpt": history, "recorded_at": "2026-08-01T00:00:00+00:00", "recorded_at_source": "ingest"}
+    if condition == CONDITION_CONTAMINATING:
+        item["historical_updates"] = [{"memory_type": "decision", "status": "outdated", "replacement_status": "current", "current_text": scenario.relevant_history, "current_recorded_at": "2026-08-20T00:00:00+00:00"}]
+    return {"results": [item], "lookup_event_id": f"lookup-{scenario.id}"}
+
 def run_trial(agent: ContaminationAgent, scenario: Scenario, seed: int, condition: str) -> Trial:
     history = _history_for(scenario, condition)
     try:
@@ -334,6 +352,7 @@ def run_trial(agent: ContaminationAgent, scenario: Scenario, seed: int, conditio
             condition=condition,
             task=scenario.current_task,
             history_text=history,
+            history_payload=_structured_history_for(scenario, condition) if agent._structured_history else None,
         )
     except LLMProviderError as exc:
         return Trial(
@@ -550,6 +569,8 @@ def _fmt_diff(diff: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--dry-run", action="store_true", help="Deterministic scripted stub; no network.")
+    parser.add_argument("--structured-history", action="store_true", help="Render forced history through the production MCP compact serializer.")
+    parser.add_argument("--max-calls", type=int, default=50, help="Hard cap on planned model calls (default: 50).")
     parser.add_argument("--seeds", type=_parse_seeds, default=[0, 1, 2], help="Comma-separated seeds (default 0,1,2).")
     parser.add_argument("--scenarios", type=Path, default=_SCENARIOS_PATH, help="Scenario JSON (default: shipped scenarios.json).")
     parser.add_argument("--cache-dir", type=Path, default=None, help="LLM cache dir (real runs).")
@@ -560,11 +581,16 @@ def main(argv: list[str] | None = None) -> int:
     scenarios = load_scenarios(args.scenarios)
     case = load_case(args.scenarios)
     seeds = list(args.seeds)
+    planned_calls = len(scenarios) * len(seeds) * len(CONDITIONS)
+    if args.max_calls <= 0:
+        parser.error("--max-calls must be positive")
+    if not args.dry_run and planned_calls > args.max_calls:
+        parser.error(f"planned model calls ({planned_calls}) exceed --max-calls ({args.max_calls})")
 
     provider = _build_agent_provider(
         dry_run=args.dry_run, cache_dir=args.cache_dir, no_eval_cache=args.no_eval_cache
     )
-    agent = ContaminationAgent(provider)
+    agent = ContaminationAgent(provider, structured_history=args.structured_history)
     trials = run_harness(agent=agent, scenarios=scenarios, seeds=seeds)
     metrics = compute_metrics(trials)
 
@@ -595,6 +621,9 @@ def main(argv: list[str] | None = None) -> int:
         "harness": "pull_contamination",
         "case": case,
         "mode": "dry-run" if args.dry_run else "real",
+        "history_rendering": "mcp_compact_history" if args.structured_history else "plain_text",
+        "planned_model_calls": planned_calls,
+        "model_call_cap": args.max_calls,
         "seeds": seeds,
         "n_scenarios": len(scenarios),
         "conditions": list(CONDITIONS),

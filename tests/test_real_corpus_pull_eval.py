@@ -4,6 +4,7 @@ import json
 import os
 import stat
 import sqlite3
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from evals.real_corpus_pull_eval import (
     PullCase,
     _build_parser,
     load_corpus,
+    render_review_sheet,
     run_pilot,
 )
 from providers.llm.base import LLMJsonResponse
@@ -128,10 +130,78 @@ def test_sampling_is_seeded_and_capped(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         load_corpus(db, container_ref="c:test", visibility="private", sample_size=0)
     with pytest.raises(ValueError):
-        load_corpus(db, container_ref="c:test", visibility="private", sample_size=6)
+        load_corpus(db, container_ref="c:test", visibility="private", sample_size=21)
     with pytest.raises(FileNotFoundError):
         load_corpus(tmp_path / "missing.db", container_ref="c:test", visibility="private")
 
+
+def test_sampling_balances_requester_sessions_before_refilling(tmp_path: Path) -> None:
+    db = tmp_path / "balanced.db"
+    sources = [(f"s{i}", f"source {i}", None) for i in range(15)]
+    events = [(f"e{i:02d}", f"query {i}", json.dumps([{"source_item_id": f"s{i}"}])) for i in range(15)]
+    _db(db, events, sources)
+    with sqlite3.connect(db) as conn:
+        for i in range(15):
+            conn.execute(
+                "UPDATE historical_lookup_reuse_event SET session_id = ? WHERE id = ?",
+                (f"session-{i // 5}", f"e{i:02d}"),
+            )
+
+    snapshot = load_corpus(db, container_ref="c:test", visibility="private", sample_size=12, seed=7)
+
+    assert Counter(case.session_id for case in snapshot.cases) == {
+        "session-0": 4,
+        "session-1": 4,
+        "session-2": 4,
+    }
+    assert snapshot.counts["requester_sessions_sampled"] == 3
+    assert snapshot.counts["requester_session_case_counts"] == [4, 4, 4]
+
+
+def test_review_sheet_is_blinded_private_and_unicode_safe() -> None:
+    sheet = render_review_sheet({"cases": [{
+        "case_id": "abc",
+        "query": "מה הוחלט?",
+        "source_texts": ["résumé context"],
+        "with_history_answer": "context answer",
+        "without_history_answer": "baseline answer",
+        "blind_with_history_is_a": False,
+    }]})
+
+    assert "private task history" in sheet
+    assert "מה הוחלט?" in sheet and "résumé context" in sheet
+    assert sheet.index("baseline answer") < sheet.index("context answer")
+    assert "Better answer: [ ] A  [ ] B  [ ] Tie" in sheet
+    assert "with_history_answer" not in sheet and "blind_with_history" not in sheet
+
+
+def test_three_arm_review_sheet_includes_all_losses_and_only_two_wins() -> None:
+    def case(case_id: str, winner: str) -> dict:
+        return {
+            "case_id": case_id,
+            "query": f"task {case_id}",
+            "source_texts": ["old"],
+            "guarded_history": "current",
+            "answers": {"raw": f"raw {case_id}", "guarded": f"guarded {case_id}"},
+            "without_history_answer": f"none {case_id}",
+            "arm_results": {
+                "raw": {"winner": winner, "history_relevance": "useful"},
+                "guarded": {"winner": "with_history", "history_relevance": "useful"},
+            },
+        }
+
+    sheet = render_review_sheet({"cases": [
+        case("loss", "without_history"),
+        case("win-c", "with_history"),
+        case("win-a", "with_history"),
+        case("win-b", "with_history"),
+    ]})
+
+    assert "Case loss" in sheet
+    assert "Case win-a" in sheet and "Case win-b" in sheet
+    assert "Case win-c" not in sheet
+    assert "Better answer: [ ] A  [ ] B  [ ] C  [ ] Tie" in sheet
+    assert "Answer mapping — open after judging" in sheet
 
 def test_provider_failure_is_case_scoped_and_does_not_leak(tmp_path: Path) -> None:
     db = tmp_path / "fail.db"
@@ -147,7 +217,7 @@ def test_cli_requires_explicit_db_and_outputs() -> None:
     with pytest.raises(SystemExit):
         parser.parse_args([])
     args = parser.parse_args(["--db", "x.db", "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", "a.json", "--review-output", "r.json"])
-    assert args.sample_size == 5 and args.seed == 0
+    assert args.sample_size == 20 and args.seed == 0
     assert "never publish" in parser.format_help()
 
 def test_loader_opens_db_read_only(tmp_path: Path, monkeypatch) -> None:
@@ -182,7 +252,7 @@ def test_decision_gate_requires_three_successful_pairs() -> None:
     assert aggregate["decision_gate"]["broad_product_recommendation"] == "none"
     limitations = aggregate["claim"]["limitations"]
     assert limitations == {
-        "max_cases": 5,
+        "max_cases": 20,
         "judge": "single uncalibrated model judge",
         "paired_draws": 1,
         "human_spot_check": False,
@@ -239,7 +309,7 @@ def test_oversized_query_and_total_budget_stop(tmp_path: Path) -> None:
     assert not snapshot.cases
     assert snapshot.attrition["oversized_queries"] == 1
     huge = CorpusSnapshot(
-        cases=(PullCase("e-huge", "t", "task", ("s",), ("X" * 100000,)),),
+        cases=(PullCase("e-huge", "t", "task", ("s",), ("X" * 300000,)),),
         counts={"valid_cases": 1}, attrition={},
     )
     aggregate, _ = run_pilot(huge, provider=ScriptedProvider())
@@ -257,17 +327,21 @@ def test_cli_main_writes_reports_without_mutating_db_or_leaking_aggregate(tmp_pa
     monkeypatch.setattr(runner, "build_eval_providers", lambda *args, **kwargs: (ScriptedProvider(), ScriptedProvider()))
     aggregate_path = tmp_path / "aggregate.json"
     review_path = tmp_path / "review.json"
-    assert runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(aggregate_path), "--review-output", str(review_path), "--acknowledge-private-review-output"]) == 0
+    sheet_path = tmp_path / "review.md"
+    assert runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(aggregate_path), "--review-output", str(review_path), "--review-sheet-output", str(sheet_path), "--acknowledge-private-review-output"]) == 0
     assert db.read_bytes() == before
     aggregate = aggregate_path.read_text(encoding="utf-8")
     review = review_path.read_text(encoding="utf-8")
+    sheet = sheet_path.read_text(encoding="utf-8")
     assert "CLI SECRET_QUERY" not in aggregate and "CLI SECRET_SOURCE" not in aggregate
-    assert "CLI SECRET_QUERY" in review
+    assert "CLI SECRET_QUERY" in review and "CLI SECRET_QUERY" in sheet
     assert "contains_raw_private_text" in review and "never_publish" in review
     if os.name != "nt":
         assert stat.S_IMODE(review_path.stat().st_mode) == 0o600
     with pytest.raises(SystemExit):
         runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(db), "--review-output", str(tmp_path / "other.json")])
+    with pytest.raises(SystemExit):
+        runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(aggregate_path), "--review-output", str(review_path), "--review-sheet-output", str(review_path), "--acknowledge-private-review-output"])
 
 def test_answer_is_capped_before_blinded_judge(tmp_path: Path) -> None:
     db = tmp_path / "answers.db"
@@ -297,3 +371,122 @@ def test_same_container_visibility_matches_production_rules(tmp_path: Path) -> N
         conn.execute("UPDATE historical_lookup_reuse_event SET visibility = 'container' WHERE id = 'e1'")
     container = load_corpus(db, container_ref="c:test", visibility="container")
     assert container.cases[0].source_ids == ("s-container", "s-public")
+
+def _add_lineage(db: Path) -> None:
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            CREATE TABLE memory_objects (
+              id TEXT PRIMARY KEY, type TEXT, payload_json TEXT, lifecycle TEXT,
+              visibility TEXT, container_ref TEXT, actor_ref TEXT,
+              created_at TEXT, freshness_at TEXT, subject TEXT,
+              superseded_by_id TEXT, is_soft_deleted INTEGER DEFAULT 0
+            );
+            CREATE TABLE relations (
+              from_kind TEXT, from_id TEXT, relation_type TEXT, to_kind TEXT, to_id TEXT
+            );
+        """)
+        conn.executemany(
+            "INSERT INTO memory_objects VALUES (?, ?, ?, ?, 'private', 'c:test', NULL, ?, ?, NULL, ?, 0)",
+            [
+                ("old", "decision", '{"statement":"use old"}', "superseded", "2026-01-01", "2026-01-01", "new"),
+                ("new", "decision", '{"statement":"use new"}', "active", "2026-01-02", "2026-01-02", None),
+                ("summary-old", "thread_summary", '{"summary":"old roll-up"}', "superseded", "2026-01-01", "2026-01-01", "summary-new"),
+                ("summary-new", "thread_summary", '{"summary":"unrelated roll-up"}', "active", "2026-01-02", "2026-01-02", None),
+                ("atomic-old", "atomic_fact", '{"statement":"old atom"}', "superseded", "2026-01-01", "2026-01-01", "fact-summary"),
+                ("fact-summary", "fact_summary", '{"summary":"merged facts"}', "active", "2026-01-02", "2026-01-02", None),
+            ],
+        )
+        conn.executemany("INSERT INTO relations VALUES (?, ?, ?, ?, ?)", [
+            ("memory_object", "old", "supported_by", "source_item", "s1"),
+            ("memory_object", "new", "supersedes", "memory_object", "old"),
+            ("memory_object", "summary-old", "supported_by", "source_item", "s1"),
+            ("memory_object", "summary-new", "supersedes", "memory_object", "summary-old"),
+            ("memory_object", "atomic-old", "supported_by", "source_item", "s1"),
+            ("memory_object", "fact-summary", "supersedes", "memory_object", "atomic-old"),
+        ])
+
+
+def test_guarded_history_uses_supported_lineage_and_both_arms(tmp_path: Path) -> None:
+    db = tmp_path / "lineage.db"
+    _db(db, [("e1", "which decision?", json.dumps([{"source_item_id": "s1"}]))], [("s1", "we used old", None)])
+    _add_lineage(db)
+    snapshot = load_corpus(db, container_ref="c:test", visibility="private")
+    assert snapshot.lineage["sampled_cases_with_supported_replacements"] == 1
+    raw_payload = json.loads(snapshot.cases[0].raw_history)
+    assert "historical_updates" not in raw_payload["results"][0]
+    payload = json.loads(snapshot.cases[0].guarded_history)
+    assert len(payload["results"][0]["historical_updates"]) == 1
+    assert payload["results"][0]["historical_updates"][0]["memory_type"] == "decision"
+    assert payload["results"][0]["historical_updates"][0]["replacement_status"] == "current"
+    assert payload["results"][0]["historical_updates"][0]["current_text"] == "use new"
+    assert snapshot.lineage["supported_memory_claims"] == 1
+    provider = ScriptedProvider()
+    aggregate, _ = run_pilot(snapshot, provider=provider, history_arm="both")
+    assert aggregate["results"]["arms"] == ["raw", "guarded"]
+    assert aggregate["results"]["model_calls"] == 5
+    assert aggregate["results"]["category_results"]["raw"]["replaced_decision"]["wins"]
+    assert provider.calls == 5
+
+
+def test_guarded_history_follows_visible_cross_container_successor(tmp_path: Path) -> None:
+    db = tmp_path / "cross-container-lineage.db"
+    _db(db, [("e1", "which decision?", json.dumps([{"source_item_id": "s1"}]))], [("s1", "we used old", None)])
+    _add_lineage(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE memory_objects SET container_ref = 'c:other', visibility = 'public' WHERE id = 'new'"
+        )
+
+    snapshot = load_corpus(db, container_ref="c:test", visibility="private")
+    update = json.loads(snapshot.cases[0].guarded_history)["results"][0]["historical_updates"][0]
+    assert update["replacement_status"] == "current"
+    assert update["current_memory_object_id"] == "new"
+    assert snapshot.lineage["sampled_cases_with_supported_replacements"] == 1
+
+
+def test_guarded_arm_stops_before_provider_when_lineage_is_absent(tmp_path: Path) -> None:
+    db = tmp_path / "no-lineage.db"
+    _db(db, [("e1", "query", json.dumps([{"source_item_id": "s1"}]))], [("s1", "source", None)])
+    snapshot = load_corpus(
+        db,
+        container_ref="c:test",
+        visibility="private",
+        category_labels={"e1": "replaced_decision"},
+    )
+    assert snapshot.cases[0].category == "replaced_decision"
+    assert snapshot.lineage["sampled_cases_with_supported_replacements"] == 0
+    aggregate, _ = run_pilot(snapshot, history_arm="guarded")
+    assert aggregate["decision_gate"]["status"] == "blocked_no_supported_lineage"
+    assert aggregate["results"]["model_calls"] == 0
+
+
+def test_mid_case_budget_stop_does_not_commit_partial_judge_counts(monkeypatch) -> None:
+    import evals.real_corpus_pull_eval as runner
+
+    snapshot = CorpusSnapshot(
+        cases=(PullCase("e1", "t1", "task", ("s1",), ("context",), guarded_history='["guarded"]'),),
+        counts={"valid_cases": 1},
+        attrition={},
+        lineage={"sampled_cases_with_supported_replacements": 1},
+    )
+    monkeypatch.setattr(runner, "MAX_MODEL_CALLS", 4)
+    aggregate, _ = run_pilot(snapshot, provider=ScriptedProvider(), history_arm="both")
+
+    assert aggregate["sampling"]["paired_cases"] == 0
+    assert aggregate["results"]["budget_failures"] == 1
+    assert all(sum(wins.values()) == 0 for wins in aggregate["results"]["wins"].values())
+
+def test_both_arms_respect_hard_call_cap() -> None:
+    snapshot = CorpusSnapshot(
+        cases=tuple(
+            PullCase(f"e{i}", f"t{i}", f"task {i}", (f"s{i}",), (f"context {i}",), guarded_history=f'["guarded {i}"]')
+            for i in range(20)
+        ),
+        counts={"valid_cases": 20},
+        attrition={},
+        lineage={"sampled_cases_with_supported_replacements": 20},
+    )
+    provider = ScriptedProvider()
+    aggregate, _ = run_pilot(snapshot, provider=provider, history_arm="both")
+    assert aggregate["results"]["model_calls"] == 100
+    assert aggregate["sampling"]["paired_cases"] == 20

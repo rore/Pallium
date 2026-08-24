@@ -931,3 +931,23 @@ def test_wal_journal_mode_enabled(test_db_url: str) -> None:
     assert journal_mode == "wal"
 
 
+def test_supersession_successor_ids_unifies_pointer_and_relation(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    old = MemoryObject(type="atomic_fact", schema_id="test", schema_version="v1", payload={})
+    same = MemoryObject(type="atomic_fact", schema_id="test", schema_version="v1", payload={})
+    other = MemoryObject(type="atomic_fact", schema_id="test", schema_version="v1", payload={})
+    for memory in (old, same, other):
+        storage.create_memory_object(memory)
+    storage.link_supersession(old.id, same.id)
+    storage.create_relation(Relation(from_kind="memory_object", from_id=same.id, relation_type="supersedes", to_kind="memory_object", to_id=old.id))
+    storage.create_relation(Relation(from_kind="memory_object", from_id=other.id, relation_type="supersedes", to_kind="memory_object", to_id=old.id))
+    assert storage.list_supersession_successor_ids(old.id) == tuple(sorted((same.id, other.id)))
+
+
+def test_supersession_successor_ids_none_and_missing(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    memory = MemoryObject(type="atomic_fact", schema_id="test", schema_version="v1", payload={})
+    storage.create_memory_object(memory)
+    assert storage.list_supersession_successor_ids(memory.id) == ()
+    with pytest.raises(KeyError):
+        storage.list_supersession_successor_ids("missing")

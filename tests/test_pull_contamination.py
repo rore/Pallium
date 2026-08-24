@@ -7,6 +7,12 @@ without an LLM. No ``@pytest.mark.slow``; import-mode=importlib compatible.
 """
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+
+from providers.llm.base import LLMJsonResponse, LLMProvider
+
 from evals.pull_contamination.harness import (
     CONDITION_CONTAMINATING,
     CONDITION_NO_HISTORY,
@@ -16,12 +22,15 @@ from evals.pull_contamination.harness import (
     Scenario,
     _diff_with_band,
     _scripted_contamination_handler,
+    _compact_history,
+    _structured_history_for,
     _trial_tag,
     classify_answer,
     classify_answer_leading,
     compute_metrics,
     load_case,
     load_scenarios,
+    main as contamination_main,
     references_history,
     run_harness,
     run_trial,
@@ -29,12 +38,26 @@ from evals.pull_contamination.harness import (
 
 _AMBIGUOUS_PATH = "evals/pull_contamination/scenarios_ambiguous.json"
 _APPLICABILITY_PATH = "evals/pull_contamination/scenarios_applicability.json"
+_SUPERSEDED_PATH = "evals/pull_contamination/scenarios_superseded.json"
 
 
 # ---------------------------------------------------------------------------
 # Deterministic A/B detection — the PRIMARY signal
 # ---------------------------------------------------------------------------
 
+
+def test_harness_import_does_not_require_optional_mcp_package() -> None:
+    script = """
+import builtins
+original_import = builtins.__import__
+def without_mcp(name, *args, **kwargs):
+    if name == 'mcp' or name.startswith('mcp.'):
+        raise ModuleNotFoundError(name)
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = without_mcp
+import evals.pull_contamination.harness
+"""
+    subprocess.run([sys.executable, "-c", script], check=True)
 
 def test_classify_a_only_is_chose_a() -> None:
     assert classify_answer("I will set the TTL to 300 seconds.", r"\b300\b", r"\b60\b") == "chose_A"
@@ -271,6 +294,18 @@ def test_applicability_scenario_marker_and_scope_invariants() -> None:
         )
 
 
+def test_focused_superseded_scenarios_are_multi_case_and_detection_clean() -> None:
+    scenarios = load_scenarios(_SUPERSEDED_PATH)
+    assert load_case(_SUPERSEDED_PATH) == "applicability-judgment"
+    assert len(scenarios) >= 2
+    assert len({scenario.id for scenario in scenarios}) == len(scenarios)
+    assert {scenario.taxonomy_type for scenario in scenarios} == {"scope-superseded"}
+    for scenario in scenarios:
+        assert classify_answer(scenario.current_task, scenario.marker_a, scenario.marker_b) == "ambiguous"
+        assert classify_answer(scenario.relevant_history, scenario.marker_a, scenario.marker_b) == "chose_A"
+        assert classify_answer(scenario.contaminating_history, scenario.marker_a, scenario.marker_b) == "chose_B"
+
+
 def test_leading_is_primary_for_non_explicit_cases() -> None:
     # The CLI/report primary-detector rule: strict for explicit-task, leading for
     # every other case. Verified through the case label the report would carry.
@@ -399,6 +434,19 @@ def test_leading_choice_block_reads_decision_first_field() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_dry_run_ignores_model_call_cap(tmp_path) -> None:
+    output = tmp_path / "dry-run.json"
+    assert contamination_main([
+        "--dry-run",
+        "--scenarios", _SUPERSEDED_PATH,
+        "--seeds", "0",
+        "--max-calls", "1",
+        "--output", str(output),
+    ]) == 0
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["mode"] == "dry-run"
+    assert report["planned_model_calls"] > report["model_call_cap"]
+
 def test_scripted_dry_run_produces_expected_choices() -> None:
     # A type-1 scenario: task states A, relevant history supports A, contaminating
     # history argues B. The scripted stub echoes the salient guidance, so the
@@ -437,3 +485,34 @@ def test_run_harness_over_shipped_scenarios_is_deterministic() -> None:
     # benign-irrelevant scenarios echo off-topic text (neither marker → ambiguous).
     assert m["contamination_rate"]["rate"] == 8 / 10
     assert m["ambiguous_rate"][CONDITION_CONTAMINATING]["rate"] == 2 / 10
+
+class _CaptureProvider(LLMProvider):
+    def __init__(self) -> None:
+        self.user_prompts: list[str] = []
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str, schema_description: str) -> LLMJsonResponse:
+        self.user_prompts.append(user_prompt)
+        return LLMJsonResponse(raw_text='{"answer":"timestamp"}', parsed_json={"answer": "timestamp"})
+
+
+def test_structured_superseded_history_uses_mcp_serializer_and_stays_bounded() -> None:
+    scenario = load_scenarios(_SUPERSEDED_PATH)[0]
+    payload = _structured_history_for(scenario, CONDITION_CONTAMINATING)
+    assert payload is not None
+    serialized = _compact_history(payload, query=scenario.current_task, limit=1)
+    assert len(json.dumps(serialized, ensure_ascii=False, separators=(",", ":"))) <= 2000
+    provider = _CaptureProvider()
+    agent = ContaminationAgent(provider, structured_history=True)
+    agent.answer(
+        scenario_id=scenario.id,
+        seed=0,
+        condition=CONDITION_CONTAMINATING,
+        task=scenario.current_task,
+        history_text=scenario.contaminating_history,
+        history_payload=payload,
+    )
+    assert len(provider.user_prompts) == 1
+    prompt = provider.user_prompts[0]
+    assert '"status":"outdated"' in prompt
+    assert scenario.relevant_history in prompt
+    assert len(prompt.split("\n\n" + "Retrieved prior work (from your own earlier sessions):\n", 1)[-1].split("\n\n[trial:", 1)[0]) <= 2000

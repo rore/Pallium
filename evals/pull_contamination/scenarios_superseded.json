@@ -1,0 +1,24 @@
+{
+  "case": "applicability-judgment",
+  "note": "Focused superseded-convention probe. Each task asks for the current arbitrary convention; relevant history states the current value and contaminating history states the earlier value from the same lineage. Run with at least five repetition indices and interpret the decision-first contamination differential per scenario.",
+  "scenarios": [
+    {
+      "id": "branch-naming-prefix",
+      "taxonomy_type": "scope-superseded",
+      "current_task": "You are creating a feature branch under the team's current (2026) branch-naming standard, which is a team choice. State whether feature branches use a `feat/` prefix or a `feature/` prefix.",
+      "marker_a": "feat/",
+      "marker_b": "feature/",
+      "relevant_history": "The current 2026 branch-naming standard uses a feat/ prefix for feature branches.",
+      "contaminating_history": "An earlier branch-naming standard used a feature/ prefix for feature branches."
+    },
+    {
+      "id": "migration-file-prefix",
+      "taxonomy_type": "scope-superseded",
+      "current_task": "You are adding a database migration file under the team's current migration-naming convention. State whether migration files are prefixed with a UTC timestamp or a sequential integer.",
+      "marker_a": "timestamp",
+      "marker_b": "sequential",
+      "relevant_history": "The current migration-naming convention prefixes each migration file with a UTC timestamp.",
+      "contaminating_history": "An earlier migration convention prefixed files with a sequential integer counter."
+    }
+  ]
+}

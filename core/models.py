@@ -7,6 +7,10 @@ from uuid import uuid4
 
 from core.visibility import QueryVisibilityTrace
 
+HISTORICAL_GUIDANCE_MEMORY_TYPES = frozenset(
+    {"decision", "investigation_outcome", "constraint_memory", "operational_fact", "note"}
+)
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -226,6 +230,20 @@ class QueryRuntimeContext:
 
 
 @dataclass(frozen=True)
+class HistoricalGuidanceUpdate:
+    """One superseded claim supported by a returned raw source."""
+
+    outdated_memory_object_id: str
+    memory_type: str
+    status: str
+    replacement_status: str
+    current_memory_object_id: str | None = None
+    current_text: str | None = None
+    current_text_truncated: bool = False
+    current_recorded_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class QueryResultItem:
     result_kind: str
     score: float
@@ -241,6 +259,10 @@ class QueryResultItem:
     source_id: str | None = None
     excerpt: str | None = None
     occurred_at: datetime | None = None
+    recorded_at: datetime | None = None
+    recorded_at_source: str | None = None
+    historical_updates: tuple[HistoricalGuidanceUpdate, ...] = ()
+    historical_updates_omitted: int = 0
     actor_ref: str | None = None
     agent_ref: str | None = None
     role: str | None = None

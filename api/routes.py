@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
@@ -13,6 +14,7 @@ from api.schemas import (
     ForgetMemoryResponse,
     ForgetSourceRequest,
     ForgetSourceResponse,
+    HistoricalGuidanceUpdateResponse,
     SourceContextItemResponse,
     SourceContextResponse,
     SupportedMemoryResponse,
@@ -100,6 +102,10 @@ def _serialize_result(item: QueryResultItem) -> dict[str, object]:
         "source_id": item.source_id,
         "excerpt": item.excerpt,
         "occurred_at": item.occurred_at,
+        "recorded_at": item.recorded_at,
+        "recorded_at_source": item.recorded_at_source,
+        "historical_updates": [dataclasses.asdict(update) for update in item.historical_updates],
+        "historical_updates_omitted": item.historical_updates_omitted,
         "actor_ref": item.actor_ref,
         "agent_ref": item.agent_ref,
         "role": item.role,
@@ -701,6 +707,12 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
             raise HTTPException(status_code=400, detail=str(exc)) from None
         # Chronological order (by ingest time) with the anchor flagged.
         combined = sorted([anchor, *neighbors], key=lambda i: (i.created_at, i.id))
+        metadata = service.get_historical_source_metadata(
+            [item.id for item in combined],
+            container_ref=container_ref,
+            query_actor_ref=query_actor_ref,
+            query_visibility=query_visibility,
+        )
         items = [
             SourceContextItemResponse(
                 source_item_id=i.id,
@@ -710,6 +722,13 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
                 role=i.role,
                 actor_ref=i.actor_ref,
                 occurred_at=i.occurred_at,
+                recorded_at=metadata[i.id].recorded_at,
+                recorded_at_source=metadata[i.id].recorded_at_source,
+                historical_updates=[
+                    HistoricalGuidanceUpdateResponse(**dataclasses.asdict(update))
+                    for update in metadata[i.id].updates
+                ],
+                historical_updates_omitted=metadata[i.id].updates_omitted,
                 thread_ref=i.thread_ref,
                 artifact_kind=i.artifact_kind,  # type: ignore[arg-type]
                 thread_position=i.thread_position,
