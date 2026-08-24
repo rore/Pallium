@@ -1027,6 +1027,8 @@ class TestSourceOnlyExpansion:
         }
 
         class StuckIndex(FakeVectorIndex):
+            """Over-return deliberately to exercise the defensive no-progress guard."""
+
             def entry_count(self) -> int:
                 return 100
 
