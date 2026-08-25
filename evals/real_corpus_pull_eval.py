@@ -306,6 +306,13 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
         "sources_beyond_visible_limit": 0,
         "source_chars_truncated": 0,
         "oversized_queries": 0,
+        "unlinked_requests": 0,
+        "missing_request_links": 0,
+        "wrong_scope_request_links": 0,
+        "non_user_request_links": 0,
+        "forgotten_request_links": 0,
+        "empty_request_links": 0,
+        "temporally_unsafe_request_links": 0,
     }
     candidates = 0
     query_bearing_nonempty = 0
@@ -319,11 +326,11 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
         if not _table_columns(conn, "historical_lookup_reuse_event"):
             raise ValueError("database has no historical lookup event table")
         event_columns = _table_columns(conn, "historical_lookup_reuse_event")
-        required = {"id", "session_id", "created_at", "event_type", "trigger_origin", "container_ref", "visibility", "actor_ref", "exposed_json", "query_text"}
+        required = {"id", "session_id", "created_at", "event_type", "trigger_origin", "container_ref", "visibility", "actor_ref", "exposed_json", "query_text", "request_source_item_id"}
         if not required.issubset(event_columns):
             raise ValueError("historical lookup event table is missing required columns")
         rows = conn.execute(
-            "SELECT id, session_id, container_ref, visibility, actor_ref, exposed_json, query_text "
+            "SELECT id, created_at, session_id, container_ref, visibility, actor_ref, exposed_json, query_text, request_source_item_id "
             "FROM historical_lookup_reuse_event "
             "WHERE event_type = 'lookup' AND trigger_origin = 'agent_pull' "
             "AND container_ref = ? "
@@ -331,7 +338,7 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
             (container_ref,),
         ).fetchall()
         source_columns = _table_columns(conn, "source_items")
-        if not {"id", "content", "forgotten_at", "container_ref", "visibility", "actor_ref"}.issubset(source_columns):
+        if not {"id", "content", "forgotten_at", "container_ref", "thread_ref", "visibility", "actor_ref", "role", "created_at"}.issubset(source_columns):
             raise ValueError("database source_items table is missing required columns")
         _, lineage = _load_lineage(
             conn,
@@ -344,6 +351,46 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
         for row in rows:
             if not is_visible(row["visibility"], row["container_ref"], container_ref, row["actor_ref"], query_visibility=visibility, query_actor_ref=row["actor_ref"]):
                 continue
+            request_id = row["request_source_item_id"]
+            if not isinstance(request_id, str) or not request_id:
+                attrition["unlinked_requests"] += 1
+                continue
+            request = conn.execute(
+                "SELECT * FROM source_items WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+            if request is None:
+                attrition["missing_request_links"] += 1
+                continue
+            if (
+                request["container_ref"] != row["container_ref"]
+                or request["thread_ref"] != row["session_id"]
+                or request["actor_ref"] != row["actor_ref"]
+                or request["visibility"] != row["visibility"]
+            ):
+                attrition["wrong_scope_request_links"] += 1
+                continue
+            if request["role"] != "user":
+                attrition["non_user_request_links"] += 1
+                continue
+            if request["forgotten_at"] is not None:
+                attrition["forgotten_request_links"] += 1
+                continue
+            query = redact_sensitive(str(request["content"] or "")).strip()
+            if not query:
+                attrition["empty_request_links"] += 1
+                continue
+            if len(query) > MAX_QUERY_CHARS:
+                attrition["oversized_queries"] += 1
+                continue
+            request_precedes_lookup = conn.execute(
+                "SELECT julianday(?) < julianday(?)",
+                (request["created_at"], row["created_at"]),
+            ).fetchone()[0]
+            if request_precedes_lookup != 1:
+                attrition["temporally_unsafe_request_links"] += 1
+                continue
+
             actor_ref = row["actor_ref"]
             if actor_ref not in updates_by_actor:
                 updates_by_actor[actor_ref], _ = _load_lineage(
@@ -353,15 +400,8 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
                     query_actor_ref=actor_ref,
                 )
             updates_by_source = updates_by_actor[actor_ref]
-            raw_query = row["query_text"]
             raw_exposed = row["exposed_json"]
-            query = str(raw_query or "").strip()
-            if not query:
-                continue
             query_rows += 1
-            if len(query) > MAX_QUERY_CHARS:
-                attrition["oversized_queries"] += 1
-                continue
             candidates += 1
             try:
                 exposed = json.loads(raw_exposed or "[]")
@@ -486,6 +526,7 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
             "lookup_events": len(rows),
             "query_bearing_events": query_rows,
             "query_bearing_nonempty": query_bearing_nonempty,
+            "directly_linked_requests": query_rows,
             "valid_cases": len(cases),
             "sampled_cases": len(selected),
             "requester_sessions_sampled": len({case.session_id for case in selected}),
@@ -592,18 +633,56 @@ def run_pilot(
     judge_provider: LLMProvider | None = None,
     history_arm: str = "raw",
     model_judge: bool = True,
+    minimum_cases: int = 1,
     max_model_calls: int = MAX_MODEL_CALLS,
     max_estimated_input_tokens: int = MAX_TOTAL_ESTIMATED_INPUT_TOKENS,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run bounded downstream-task comparisons; no calls happen without lineage in guarded mode."""
     if history_arm not in {"raw", "guarded", "both"}:
         raise ValueError("history_arm must be raw, guarded, or both")
+    if not 1 <= minimum_cases <= MAX_SAMPLE_SIZE:
+        raise ValueError(f"minimum_cases must be between 1 and {MAX_SAMPLE_SIZE}")
     if not 1 <= max_model_calls <= MAX_MODEL_CALLS:
         raise ValueError(f"max_model_calls must be between 1 and {MAX_MODEL_CALLS}")
     if not 1 <= max_estimated_input_tokens <= MAX_TOTAL_ESTIMATED_INPUT_TOKENS:
         raise ValueError(
             f"max_estimated_input_tokens must be between 1 and {MAX_TOTAL_ESTIMATED_INPUT_TOKENS}"
         )
+    if len(snapshot.cases) < minimum_cases:
+        return {
+            "eval": "real-corpus-pull-pilot",
+            "claim": {
+                "measures": CLAIM_SEAM,
+                "preflight": (
+                    f"only {len(snapshot.cases)} directly linked cases are available; "
+                    f"{minimum_cases} requested; no provider calls made"
+                ),
+            },
+            "sampling": {
+                "requested_cases": minimum_cases,
+                "sampled_cases": len(snapshot.cases),
+                "paired_cases": 0,
+            },
+            "corpus": {**snapshot.counts, "attrition": snapshot.attrition, "lineage": snapshot.lineage},
+            "decision_gate": {
+                "status": "blocked_insufficient_linked_cases",
+                "broad_product_recommendation": "none",
+            },
+            "results": {
+                "model_calls": 0,
+                "judge_calls": 0,
+                "model_judge": model_judge,
+                "max_model_calls": max_model_calls,
+                "estimated_input_tokens_total": 0,
+                "max_estimated_input_tokens": max_estimated_input_tokens,
+                "budget_is_estimate": True,
+            },
+        }, {
+            "eval": "real-corpus-pull-pilot-review",
+            "contains_raw_private_text": True,
+            "never_publish": True,
+            "cases": [],
+        }
     supported_case_count = sum(case.has_supported_replacement for case in snapshot.cases)
     lineage = {
         **snapshot.lineage,
@@ -950,11 +1029,16 @@ def main(argv: list[str] | None = None) -> int:
             category_labels=category_labels,
             case_ids=tuple(args.case_id) if args.case_id else None,
         )
-        if args.history_arm in {"guarded", "both"} and not any(case.has_supported_replacement for case in snapshot.cases):
+        minimum_cases = len(args.case_id) if args.case_id else args.sample_size
+        if len(snapshot.cases) < minimum_cases or (
+            args.history_arm in {"guarded", "both"}
+            and not any(case.has_supported_replacement for case in snapshot.cases)
+        ):
             aggregate, review = run_pilot(
                 snapshot,
                 history_arm=args.history_arm,
                 model_judge=not args.no_model_judge,
+                minimum_cases=minimum_cases,
                 max_model_calls=args.max_model_calls,
                 max_estimated_input_tokens=args.max_estimated_input_tokens,
             )
@@ -969,6 +1053,7 @@ def main(argv: list[str] | None = None) -> int:
                 judge_provider=judge_provider,
                 history_arm=args.history_arm,
                 model_judge=not args.no_model_judge,
+                minimum_cases=minimum_cases,
                 max_model_calls=args.max_model_calls,
                 max_estimated_input_tokens=args.max_estimated_input_tokens,
             )

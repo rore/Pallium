@@ -72,6 +72,27 @@ async def test_search_history_sends_source_only_and_agent_pull(client: PalliumMc
 
 
 @pytest.mark.asyncio
+async def test_search_history_sends_exact_request_source_id(
+    client: PalliumMcpClient,
+) -> None:
+    captured: dict = {}
+
+    async def capture(path, payload):
+        captured["path"] = path
+        captured["payload"] = payload
+        return {"results": [], "decision_reason": "source_only_search"}
+
+    client._post = capture
+    await client.search_history(
+        "résumé request",
+        request_source_item_id="请求:42",
+    )
+
+    assert captured["path"] == "/query"
+    assert captured["payload"]["request_source_item_id"] == "请求:42"
+
+
+@pytest.mark.asyncio
 async def test_search_history_returns_source_hits_with_stable_ids(asgi_app, client: PalliumMcpClient) -> None:
     await client.ingest(
         content="reservation ordering duplicate holds decision",
@@ -110,5 +131,5 @@ async def test_search_history_omits_unset_optional_filters(client: PalliumMcpCli
     p = captured["payload"]
     assert p["source_only"] is True
     assert p["trigger_origin"] == "agent_pull"
-    for k in ("source_type", "role", "artifact_kind", "work_refs"):
+    for k in ("source_type", "role", "artifact_kind", "work_refs", "request_source_item_id"):
         assert k not in p

@@ -284,6 +284,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         role: str | None = None,
         artifact_kind: str | None = None,
         work_refs: list[str] | None = None,
+        request_source_item_id: str | None = None,
     ) -> str:
         """Search prior raw turns for historical context. Results include the best available recorded date. A historical_updates entry with status outdated is historical evidence, not current guidance; use current_text only when replacement_status is current. Copy the injected container_ref exactly—never derive, guess, or normalize it. Requires container_ref plus visibility (e.g. private), or search fails closed with decision_reason visibility_context_required."""
         ctx = resolve_context(
@@ -302,6 +303,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             role=role,
             artifact_kind=artifact_kind,
             work_refs=work_refs,
+            request_source_item_id=request_source_item_id,
         )
         return _json_text(_compact_history(result, query, limit, ctx.container_ref))
 

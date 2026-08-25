@@ -317,10 +317,10 @@ class HistoricalLookupReuseEventRecord(Base):
     WRITE-ONLY: never mutated in place and never read by the injection
     pipeline. Rung labels live in the separate append-only
     ``historical_lookup_reuse_label`` table, so a double-rated subsample can
-    yield Cohen's kappa without mutating this row. Correlation to subsequent
-    session behaviour happens at eval time via
-    ``(container_ref, session_id, created_at)`` joined to source_items — the
-    same reconstruction pattern used by subtask_selector_shadow.
+    yield Cohen's kappa without mutating this row. A lookup may carry the exact
+    user source item that initiated it in ``request_source_item_id``; legacy
+    and uninstrumented rows remain NULL and are rejected by direct-link evals
+    instead of being paired by timestamp.
 
     Not foreign-keyed to query_audit_log: the write happens inside the query /
     source-context path (before any API-layer audit row) and audit logging may
@@ -358,6 +358,9 @@ class HistoricalLookupReuseEventRecord(Base):
     # query_audit_log). Passed through redact_sensitive at write time — the same
     # scrubbing every stored turn gets. NULL for expansions and legacy rows.
     query_text = Column(Text, nullable=True)
+    # Exact user request that initiated this lookup. NULL for expansions,
+    # legacy rows, and callers that do not provide direct linkage.
+    request_source_item_id = Column(String, nullable=True)
 
 
 class HistoricalLookupReuseLabelRecord(Base):
@@ -827,14 +830,17 @@ class SQLiteSchemaMixin:
             "ON historical_lookup_reuse_label (lookup_event_id)"
         ),
     }
-    # Attribution column added after the event table shipped (nullable / no
-    # backfill: existing rows keep source_session_ref NULL, the correct default).
+    # Additive event columns shipped after the table (nullable / no backfill:
+    # existing rows keep unknown attribution and request linkage as NULL).
     _HISTORICAL_LOOKUP_COLUMN_MIGRATIONS = {
         "source_session_ref": (
             "ALTER TABLE historical_lookup_reuse_event ADD COLUMN source_session_ref VARCHAR"
         ),
         "query_text": (
             "ALTER TABLE historical_lookup_reuse_event ADD COLUMN query_text TEXT"
+        ),
+        "request_source_item_id": (
+            "ALTER TABLE historical_lookup_reuse_event ADD COLUMN request_source_item_id VARCHAR"
         ),
     }
     _MEMORY_FEEDBACK_COLUMN_MIGRATIONS = {

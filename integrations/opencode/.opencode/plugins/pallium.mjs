@@ -153,7 +153,7 @@ export default async ({ client, directory, worktree } = {}) => {
         trigger_origin: "session_start_orientation",
       });
       const blocks = (resp && resp.injectable_blocks) || [];
-      const output = pallium.formatInjection(blocks, containerRef, SESSION_START_BUDGET);
+      const output = pallium.formatInjection(blocks, containerRef, SESSION_START_BUDGET, sessionId, actorRef, pallium.AGENT_REF, "private");
       if (output) enqueueInjection(sessionId, output);
     } catch (e) {
       log("error", `orientation failed: ${e && e.message}`);
@@ -287,7 +287,7 @@ export default async ({ client, directory, worktree } = {}) => {
       }
     }
 
-    const output = pallium.formatInjection(blocks, containerRef, TRIGGER_BUDGET);
+    const output = pallium.formatInjection(blocks, containerRef, TRIGGER_BUDGET, sessionId, actorRef, pallium.AGENT_REF, "private");
     if (output) enqueueInjection(sessionId, output);
   }
 
@@ -375,7 +375,7 @@ export default async ({ client, directory, worktree } = {}) => {
           query_trigger_origin: "user_prompt_submit",
         });
         if (!resp) return;
-        const output_text = pallium.formatInjection(resp.injectable_blocks || [], containerRef, USER_PROMPT_BUDGET);
+        const output_text = pallium.formatInjection(resp.injectable_blocks || [], containerRef, USER_PROMPT_BUDGET, sessionId, actorRef, pallium.AGENT_REF, "private", resp.source_item_id);
         if (output_text) enqueueInjection(sessionId, output_text);
       } catch (e) {
         log("error", `chat.message failed: ${e && e.message}`);

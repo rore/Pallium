@@ -75,7 +75,7 @@ def main() -> None:
             return
 
         blocks = response.get("injectable_blocks", [])
-        output = format_injection(blocks, container_ref, budget_chars=2400, thread_ref=session_id, actor_ref=actor_ref, agent_ref="claude-code", visibility="private")
+        output = format_injection(blocks, container_ref, budget_chars=2400, thread_ref=session_id, actor_ref=actor_ref, agent_ref="claude-code", visibility="private", request_source_item_id=response.get("source_item_id"))
         if output:
             print(output)
 

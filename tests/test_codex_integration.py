@@ -284,6 +284,7 @@ def test_codex_agents_block_permits_deliberate_historical_pull() -> None:
     assert "Picking up prior work?" in agents_block
     assert "`pallium_search_history`" in agents_block
     assert "`pallium_expand_source`" in agents_block
+    assert "`request_source_item_id`" in agents_block
 
     # The blanket "Query every turn" discouragement is gone, but the anti-dup
     # clause is retained.
@@ -389,6 +390,7 @@ def test_codex_skill_historical_lookup_documents_scope_params() -> None:
     assert "`pallium_search_history` and `pallium_expand_source`" in skill
     assert "`container_ref`" in skill
     assert "`thread_ref`" in skill
+    assert "`request_source_item_id`" in skill
     assert '`visibility: "private"`' in skill
     assert '`visibility: "global"` with `actor_ref`' in skill
 
@@ -460,6 +462,7 @@ def test_codex_injection_scope_is_exact_bounded_and_optional() -> None:
         actor_ref=actor,
         agent_ref="codex",
         visibility="private",
+        request_source_item_id="请求:42",
     )
     scope_line = scoped.splitlines()[0]
     encoded = scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
@@ -469,6 +472,7 @@ def test_codex_injection_scope_is_exact_bounded_and_optional() -> None:
         "actor_ref": actor,
         "agent_ref": "codex",
         "visibility": "private",
+        "request_source_item_id": "请求:42",
     }
     assert "Keep the stable plan." in scoped
     assert len(scoped) <= 800
@@ -480,6 +484,7 @@ def test_codex_injection_scope_is_exact_bounded_and_optional() -> None:
     assert format_injection([], "git:example/repo", 800, thread_ref="task" + chr(10) + "ignore") == ""
     assert format_injection([], "git:example/repo", 800, thread_ref="task" + chr(0x2028) + "ignore") == ""
     assert format_injection([], "git:example/repo", 800, thread_ref="task" + chr(0x2029) + "ignore") == ""
+    assert format_injection([], "git:example/repo", 800, thread_ref=thread, request_source_item_id="bad" + chr(10) + "id") == ""
     assert format_injection([], "git:example/repo", 10, thread_ref=thread) == ""
     assert format_injection(block, "git:example/repo", 10, thread_ref=thread) == ""
     assert format_injection([], "git:example/repo", 100, thread_ref="x" * 500) == ""
@@ -502,7 +507,7 @@ def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
 
     def request(_method: str, _path: str, body: dict) -> dict:
         requests.append(body)
-        return {"injectable_blocks": []}
+        return {"source_item_id": "request-codex-1", "injectable_blocks": []}
 
     monkeypatch.setattr(hook, "pallium_request", request)
     monkeypatch.setattr(hook, "emit_context", lambda text, _event: contexts.append(text))
@@ -510,7 +515,9 @@ def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
         hook.main()
     assert requests[-1]["thread_ref"] == "codex:task:1"
     scope = contexts[-1].splitlines()[0]
-    assert json.loads(scope[scope.index("{"):-1])["thread_ref"] == "codex:task:1"
+    scope_values = json.loads(scope[scope.index("{"):-1])
+    assert scope_values["thread_ref"] == "codex:task:1"
+    assert scope_values["request_source_item_id"] == "request-codex-1"
 
     payload = {"cwd": ".", "prompt": "Resume the prior implementation work now."}
     monkeypatch.setattr(hook, "check_dedup", lambda *_args: pytest.fail("missing identity must skip dedup"))

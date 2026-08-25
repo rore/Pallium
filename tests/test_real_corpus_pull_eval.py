@@ -46,20 +46,40 @@ def _db(path: Path, events: list[tuple[str, str, str]], sources: list[tuple[str,
             CREATE TABLE historical_lookup_reuse_event (
               id TEXT PRIMARY KEY, created_at TEXT, event_type TEXT,
               session_id TEXT, container_ref TEXT, trigger_origin TEXT,
-              visibility TEXT, actor_ref TEXT, exposed_json TEXT, query_text TEXT
+              visibility TEXT, actor_ref TEXT, exposed_json TEXT, query_text TEXT,
+              request_source_item_id TEXT
             );
             CREATE TABLE source_items (
               id TEXT PRIMARY KEY, content TEXT, forgotten_at TEXT,
-              container_ref TEXT, visibility TEXT, actor_ref TEXT
+              container_ref TEXT, visibility TEXT, actor_ref TEXT,
+              thread_ref TEXT, role TEXT, created_at TEXT
             );
             """
         )
         conn.executemany(
-            "INSERT INTO historical_lookup_reuse_event VALUES (?, ?, 'lookup', ?, 'c:test', 'agent_pull', 'private', NULL, ?, ?)",
-            [(eid, f"2026-01-01T00:00:{i:02d}", f"thread-{i}", exposed, query) for i, (eid, query, exposed) in enumerate(events)],
+            "INSERT INTO historical_lookup_reuse_event VALUES (?, ?, 'lookup', ?, 'c:test', 'agent_pull', 'private', 'actor-test', ?, ?, ?)",
+            [
+                (
+                    eid,
+                    f"2026-01-01T00:01:{i:02d}",
+                    f"thread-{i}",
+                    exposed,
+                    f"search: {query}",
+                    f"request-{eid}",
+                )
+                for i, (eid, query, exposed) in enumerate(events)
+            ],
         )
         conn.executemany(
-            "INSERT INTO source_items VALUES (?, ?, ?, 'c:test', 'private', NULL)", sources
+            "INSERT INTO source_items VALUES (?, ?, NULL, 'c:test', 'private', 'actor-test', ?, 'user', ?)",
+            [
+                (f"request-{eid}", query, f"thread-{i}", f"2026-01-01T00:00:{i:02d}")
+                for i, (eid, query, _) in enumerate(events)
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO source_items VALUES (?, ?, ?, 'c:test', 'private', 'actor-test', 'historical', 'assistant', '2025-01-01T00:00:00')",
+            sources,
         )
 
 
@@ -116,6 +136,61 @@ def test_lifecycle_filters_sources_and_keeps_aggregate_private_free(tmp_path: Pa
     assert "with_history" not in judge_prompt and "without_history" not in judge_prompt
 
 
+def test_loader_uses_exact_linked_request_and_reports_link_attrition(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "links.db"
+    events = [
+        (f"e{i}", f"request {i}", json.dumps([{"source_item_id": f"s{i}"}]))
+        for i in range(8)
+    ]
+    sources = [(f"s{i}", f"history {i}", None) for i in range(8)]
+    _db(db, events, sources)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE historical_lookup_reuse_event SET request_source_item_id = NULL WHERE id = 'e0'"
+        )
+        conn.execute(
+            "UPDATE historical_lookup_reuse_event SET request_source_item_id = 'missing' WHERE id = 'e1'"
+        )
+        conn.execute(
+            "UPDATE source_items SET thread_ref = 'wrong' WHERE id = 'request-e2'"
+        )
+        conn.execute(
+            "UPDATE source_items SET role = 'assistant' WHERE id = 'request-e3'"
+        )
+        conn.execute(
+            "UPDATE source_items SET forgotten_at = '2026-01-02' WHERE id = 'request-e4'"
+        )
+        conn.execute(
+            "UPDATE source_items SET content = '' WHERE id = 'request-e5'"
+        )
+        conn.execute(
+            "UPDATE source_items SET created_at = '2027-01-01' WHERE id = 'request-e6'"
+        )
+        conn.execute(
+            "UPDATE source_items SET content = '任务: résumé request' WHERE id = 'request-e7'"
+        )
+        conn.execute(
+            "UPDATE historical_lookup_reuse_event SET query_text = 'agent search phrase' WHERE id = 'e7'"
+        )
+
+    snapshot = load_corpus(
+        db, container_ref="c:test", visibility="private", sample_size=20
+    )
+
+    assert [case.event_id for case in snapshot.cases] == ["e7"]
+    assert snapshot.cases[0].query == "任务: résumé request"
+    assert snapshot.attrition["unlinked_requests"] == 1
+    assert snapshot.attrition["missing_request_links"] == 1
+    assert snapshot.attrition["wrong_scope_request_links"] == 1
+    assert snapshot.attrition["non_user_request_links"] == 1
+    assert snapshot.attrition["forgotten_request_links"] == 1
+    assert snapshot.attrition["empty_request_links"] == 1
+    assert snapshot.attrition["temporally_unsafe_request_links"] == 1
+    assert snapshot.counts["directly_linked_requests"] == 1
+
+
 def test_sampling_is_seeded_and_capped(tmp_path: Path) -> None:
     db = tmp_path / "many.db"
     sources = [(f"s{i}", f"source {i}", None) for i in range(7)]
@@ -142,9 +217,14 @@ def test_sampling_balances_requester_sessions_before_refilling(tmp_path: Path) -
     _db(db, events, sources)
     with sqlite3.connect(db) as conn:
         for i in range(15):
+            session_id = f"session-{i // 5}"
             conn.execute(
                 "UPDATE historical_lookup_reuse_event SET session_id = ? WHERE id = ?",
-                (f"session-{i // 5}", f"e{i:02d}"),
+                (session_id, f"e{i:02d}"),
+            )
+            conn.execute(
+                "UPDATE source_items SET thread_ref = ? WHERE id = ?",
+                (session_id, f"request-e{i:02d}"),
             )
 
     snapshot = load_corpus(db, container_ref="c:test", visibility="private", sample_size=12, seed=7)
@@ -293,9 +373,22 @@ def test_cross_scope_rows_and_exposed_sources_are_excluded(tmp_path: Path) -> No
     db = tmp_path / "scope.db"
     _db(db, [("e1", "query", json.dumps([{ "source_item_id": "s1" }]))], [("s1", "source", None)])
     with sqlite3.connect(db) as conn:
-        conn.execute("INSERT INTO source_items VALUES (?, ?, ?, ?, ?, ?)", ("foreign", "foreign text", None, "c:other", "private", None))
-        conn.execute("INSERT INTO historical_lookup_reuse_event VALUES (?, ?, 'lookup', ?, ?, 'agent_pull', ?, NULL, ?, ?)", ("e2", "2026-01-01T00:01:00", "t2", "c:test", "private", json.dumps([{ "source_item_id": "foreign" }]), "foreign exposed"))
-        conn.execute("INSERT INTO historical_lookup_reuse_event VALUES (?, ?, 'lookup', ?, ?, 'agent_pull', ?, NULL, ?, ?)", ("e3", "2026-01-01T00:02:00", "t3", "c:other", "private", json.dumps([{ "source_item_id": "s1" }]), "foreign event"))
+        conn.execute(
+            "INSERT INTO source_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("foreign", "foreign text", None, "c:other", "private", "actor-test", "historical", "assistant", "2025-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO source_items VALUES (?, ?, NULL, 'c:test', 'private', 'actor-test', 't2', 'user', ?)",
+            ("request-e2", "foreign exposed", "2026-01-01T00:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO historical_lookup_reuse_event VALUES (?, ?, 'lookup', ?, ?, 'agent_pull', ?, ?, ?, ?, ?)",
+            ("e2", "2026-01-01T00:01:00", "t2", "c:test", "private", "actor-test", json.dumps([{ "source_item_id": "foreign" }]), "search", "request-e2"),
+        )
+        conn.execute(
+            "INSERT INTO historical_lookup_reuse_event VALUES (?, ?, 'lookup', ?, ?, 'agent_pull', ?, ?, ?, ?, ?)",
+            ("e3", "2026-01-01T00:02:00", "t3", "c:other", "private", "actor-test", json.dumps([{ "source_item_id": "s1" }]), "search", "request-e1"),
+        )
     snapshot = load_corpus(db, container_ref="c:test", visibility="private")
     assert [case.event_id for case in snapshot.cases] == ["e1"]
     assert snapshot.attrition["missing_sources"] == 1
@@ -348,7 +441,7 @@ def test_cli_main_writes_reports_without_mutating_db_or_leaking_aggregate(tmp_pa
     aggregate_path = tmp_path / "aggregate.json"
     review_path = tmp_path / "review.json"
     sheet_path = tmp_path / "review.md"
-    assert runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(aggregate_path), "--review-output", str(review_path), "--review-sheet-output", str(sheet_path), "--acknowledge-private-review-output"]) == 0
+    assert runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--sample-size", "1", "--aggregate-output", str(aggregate_path), "--review-output", str(review_path), "--review-sheet-output", str(sheet_path), "--acknowledge-private-review-output"]) == 0
     assert db.read_bytes() == before
     aggregate = aggregate_path.read_text(encoding="utf-8")
     review = review_path.read_text(encoding="utf-8")
@@ -362,6 +455,46 @@ def test_cli_main_writes_reports_without_mutating_db_or_leaking_aggregate(tmp_pa
         runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(db), "--review-output", str(tmp_path / "other.json")])
     with pytest.raises(SystemExit):
         runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(aggregate_path), "--review-output", str(review_path), "--review-sheet-output", str(review_path), "--acknowledge-private-review-output"])
+
+def test_cli_insufficient_linked_cases_skips_provider_setup(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import evals.real_corpus_pull_eval as runner
+
+    db = tmp_path / "insufficient.db"
+    _db(
+        db,
+        [("e1", "one linked request", json.dumps([{"source_item_id": "s1"}]))],
+        [("s1", "history", None)],
+    )
+    monkeypatch.setattr(
+        runner.AppConfig,
+        "from_env",
+        staticmethod(lambda: (_ for _ in ()).throw(AssertionError("config loaded"))),
+    )
+    monkeypatch.setattr(
+        runner,
+        "build_eval_providers",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("provider built")),
+    )
+    aggregate_path = tmp_path / "aggregate.json"
+    review_path = tmp_path / "review.json"
+
+    assert runner.main([
+        "--db", str(db),
+        "--container-ref", "c:test",
+        "--visibility", "private",
+        "--aggregate-output", str(aggregate_path),
+        "--review-output", str(review_path),
+        "--acknowledge-private-review-output",
+    ]) == 0
+
+    aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+    assert aggregate["decision_gate"]["status"] == "blocked_insufficient_linked_cases"
+    assert aggregate["sampling"]["requested_cases"] == 20
+    assert aggregate["results"]["model_calls"] == 0
+    assert aggregate["results"]["estimated_input_tokens_total"] == 0
+
 
 def test_cli_exact_no_judge_run_obeys_caps_and_rejects_unknown_before_calls(tmp_path: Path, monkeypatch) -> None:
     import evals.real_corpus_pull_eval as runner
@@ -383,6 +516,7 @@ def test_cli_exact_no_judge_run_obeys_caps_and_rejects_unknown_before_calls(tmp_
     base = [
         "--db", str(db), "--container-ref", "c:test", "--visibility", "private",
         "--aggregate-output", str(aggregate_path), "--review-output", str(review_path),
+        "--sample-size", "1",
         "--acknowledge-private-review-output", "--case-id", selected_id,
         "--no-model-judge", "--max-model-calls", "2", "--max-estimated-input-tokens", "5000",
     ]
@@ -413,18 +547,23 @@ def test_same_container_visibility_matches_production_rules(tmp_path: Path) -> N
     db = tmp_path / "visibility.db"
     _db(db, [("e1", "query", json.dumps([{ "source_item_id": "s-private" }, { "source_item_id": "s-container" }, { "source_item_id": "s-public" }]))], [("s-private", "private text", None)])
     with sqlite3.connect(db) as conn:
-        conn.executemany("INSERT INTO source_items VALUES (?, ?, ?, 'c:test', ?, NULL)", [
-            ("s-container", "container text", None, "container"),
-            ("s-public", "public text", None, "public"),
-        ])
+        conn.executemany(
+            "INSERT INTO source_items VALUES (?, ?, ?, 'c:test', ?, ?, 'historical', 'assistant', '2025-01-01')",
+            [
+                ("s-container", "container text", None, "container", "actor-test"),
+                ("s-public", "public text", None, "public", None),
+            ],
+        )
     private = load_corpus(db, container_ref="c:test", visibility="private")
     assert private.cases[0].source_ids == ("s-private", "s-container", "s-public")
     with sqlite3.connect(db) as conn:
-        conn.execute("UPDATE historical_lookup_reuse_event SET visibility = 'public' WHERE id = 'e1'")
+        conn.execute("UPDATE historical_lookup_reuse_event SET visibility = 'public', actor_ref = NULL WHERE id = 'e1'")
+        conn.execute("UPDATE source_items SET visibility = 'public', actor_ref = NULL WHERE id = 'request-e1'")
     public = load_corpus(db, container_ref="c:test", visibility="public")
     assert public.cases[0].source_ids == ("s-public",)
     with sqlite3.connect(db) as conn:
-        conn.execute("UPDATE historical_lookup_reuse_event SET visibility = 'container' WHERE id = 'e1'")
+        conn.execute("UPDATE historical_lookup_reuse_event SET visibility = 'container', actor_ref = NULL WHERE id = 'e1'")
+        conn.execute("UPDATE source_items SET visibility = 'container', actor_ref = NULL WHERE id = 'request-e1'")
     container = load_corpus(db, container_ref="c:test", visibility="container")
     assert container.cases[0].source_ids == ("s-container", "s-public")
 

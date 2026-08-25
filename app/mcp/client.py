@@ -45,6 +45,7 @@ class PalliumMcpClient:
         role: str | None = None,
         artifact_kind: str | None = None,
         work_refs: list[str] | None = None,
+        request_source_item_id: str | None = None,
     ) -> dict[str, Any]:
         """Source-only history search: raw prior turns ranked on their own.
 
@@ -67,6 +68,8 @@ class PalliumMcpClient:
             payload["artifact_kind"] = artifact_kind
         if work_refs is not None:
             payload["work_refs"] = work_refs
+        if request_source_item_id is not None:
+            payload["request_source_item_id"] = request_source_item_id
         return await self._post("/query", payload)
 
     async def query_debug(self, text: str) -> dict[str, Any]:

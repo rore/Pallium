@@ -180,6 +180,11 @@ Additional filters:
 - `work_refs` — optional list of external work identifiers. When provided,
   memories with matching work_refs are prioritized. Format: normalized strings
   (casefold, separator-canonical). "PROJ-123", "PROJ 123", "proj_123" all match.
+- `request_source_item_id` — optional measurement link for a
+  `source_only=true` historical lookup. It must reference a live user source
+  item with the same container, thread, actor, and visibility as the request.
+  Invalid links return HTTP 422 on both `/query` and `/query/debug`; omission
+  remains supported. This field is telemetry, not authorization.
 - `actor_ref` — filter by actor identity. When provided, only returns memories
   whose `actor_ref` matches or is null (shared). When omitted, no actor
   filtering is applied. See
