@@ -42,8 +42,16 @@
 
 ## Evidence
 
-- Pending.
+- `python -m pytest -q tests/test_real_corpus_pull_eval.py tests/test_pull_contamination.py` -> 60 passed.
+- Agent-workflow checker -> clean; final redline -> BLUE with no checkpoints or boundary/API/schema/security/runtime-config changes; `git diff --check` -> clean.
+- Fresh snapshot: 53 lookup events, 48 query-bearing events, 39 valid non-empty cases, four requester sessions (9/9/1/1), and zero direct durable replacement lineage.
+- Final CLI preflight under 12-call / 15,000-estimated-input caps -> 0 model calls, 0 estimated input tokens, status `blocked_no_supported_lineage`.
+- Zero-cost agent review: 20 prior cases -> 12 answerable, 3 partial/ambiguous, 4 invalid, 1 duplicate. On answerable cases, guarded won 5, no history won 3, 2 tied, and both failed 2. Eleven were blinded; one accidentally exposed mapping is reported separately and favored no history.
+- Private ignored artifacts: `.local/research/real_corpus_budget_aware_agent_review.json`, preflight aggregate/review/worksheet, and fresh snapshot `pallium-20260825T073054Z.db`.
 
 ## Result review
 
-- Pending.
+- Independent low-cost review found one P1 fail-closed issue: summary lineage could disagree with selected cases. Fixed by recomputing from cases, overriding stale report metadata, and aligning the CLI preflight; re-review found no remaining actionable correctness issue.
+- PR review found guarded-only worksheets displayed raw rather than guarded prompt history and exposed an existing guarded-only token-summary crash; both were fixed with a guarded review-sheet regression. A CLI error-path test now proves unknown-case rejection rather than failing earlier on missing acknowledgement.
+- The study-specific minimum of eight replacements across four sessions and three task types remains an external preregistered experiment gate, not a generic evaluator rule. Hard-coding it here would prevent legitimate smaller directional pilots; this run applied the gate before invocation and stopped at zero calls.
+- Product result: historical context is promising but not proven broadly. The corpus is not decision-grade and cannot test the replacement guard. Do not spend further model budget until the preregistered direct-lineage and diversity gate is met.

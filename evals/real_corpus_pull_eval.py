@@ -736,8 +736,9 @@ def run_pilot(
                 case_review["blind_with_history_is_a"] = int(
                     hashlib.sha256(case.case_id.encode("utf-8")).hexdigest()[:2], 16
                 ) % 2 == 0
-            if len(arms) > 1:
+            if "guarded" in arms:
                 case_review["guarded_history"] = guarded_history
+            if len(arms) > 1:
                 case_review["answers"] = {arm: answers[arm][:MAX_ANSWER_CHARS] for arm in arms}
         except _BudgetStop:
             budget_failures += 1
@@ -787,7 +788,7 @@ def run_pilot(
                 }
                 for arm, by_category in category_results.items()
             },
-            "incremental_history_tokens": incremental_history_tokens if len(arms) > 1 else incremental_history_tokens["raw"],
+            "incremental_history_tokens": incremental_history_tokens if len(arms) > 1 else incremental_history_tokens[arms[0]],
             "latency_ms": {
                 "with_history_total": {arm: round(sum(latencies[arm]), 3) for arm in arms},
                 "without_history_total": round(sum(latencies["without_history"]), 3),
@@ -868,7 +869,7 @@ def render_review_sheet(review: dict[str, Any]) -> str:
         with_first = bool(case["blind_with_history_is_a"])
         answer_a = case["with_history_answer"] if with_first else case["without_history_answer"]
         answer_b = case["without_history_answer"] if with_first else case["with_history_answer"]
-        history = "\n\n".join(case.get("source_texts", []))
+        history = case.get("guarded_history") or "\n\n".join(case.get("source_texts", []))
         lines.extend([
             "### Task", "", *block(case["query"]), "",
             "### Retrieved history", "", *block(history), "",

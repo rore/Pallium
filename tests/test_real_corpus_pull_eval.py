@@ -393,8 +393,10 @@ def test_cli_exact_no_judge_run_obeys_caps_and_rejects_unknown_before_calls(tmp_
     assert aggregate["results"]["judge_calls"] == 0
     assert aggregate["sampling"]["paired_cases"] == 1
     assert review["cases"][0]["case_id"] == selected_id
+    invalid = base.copy()
+    invalid[invalid.index(selected_id)] = "missing"
     with pytest.raises(SystemExit):
-        runner.main([*base[:-8], "--case-id", "missing", "--no-model-judge"])
+        runner.main(invalid)
     assert provider.calls == 2
 
 def test_answer_is_capped_before_blinded_judge(tmp_path: Path) -> None:
@@ -560,6 +562,22 @@ def test_no_model_judge_emits_blinded_three_arm_review_with_three_calls() -> Non
     assert set(review["cases"][0]["answers"]) == {"raw", "guarded"}
     assert "Better answer: [ ] A  [ ] B  [ ] C  [ ] Tie" in render_review_sheet(review)
 
+
+def test_guarded_no_judge_sheet_uses_exact_guarded_prompt() -> None:
+    snapshot = CorpusSnapshot(
+        cases=(PullCase(
+            "e1", "t1", "task", ("s1",), ("RAW_CONTEXT",),
+            guarded_history="GUARDED_SERIALIZED", has_supported_replacement=True,
+        ),),
+        counts={"valid_cases": 1},
+        attrition={},
+    )
+    _, review = run_pilot(
+        snapshot, provider=ScriptedProvider(), history_arm="guarded", model_judge=False
+    )
+    sheet = render_review_sheet(review)
+    assert "GUARDED_SERIALIZED" in sheet
+    assert "RAW_CONTEXT" not in sheet
 
 def test_caller_budget_caps_are_lower_bounded_and_stop_before_call() -> None:
     snapshot = CorpusSnapshot(
