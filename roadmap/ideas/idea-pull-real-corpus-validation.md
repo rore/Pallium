@@ -186,3 +186,47 @@ queries. Then run a four-case, 12-call, no-model-judge pilot; expand to eight ca
 only if the pilot is informative. The evaluator now supports exact case IDs,
 lower per-run call/token caps, and blinded output without automatic judge calls,
 so that future run can enforce this budget mechanically.
+### Real-user-task replay — 2026-08-25
+
+This was a separate general-history value experiment, not the blocked replacement
+pilot. It neither satisfies nor bypasses the requirement for eight genuine
+replacements across four sessions; replacement-guard spending remains closed.
+
+A stricter reconstruction replaced agent-authored lookup-query fragments with the
+unique nearest preceding real user request and rejected exposed sources that were
+not strictly older than that request. Full attrition was 53 lookup events, minus
+five missing/blank queries -> 48 query-bearing, minus nine empty exposed-history
+lists -> 39 non-empty and valid. The loader observed zero malformed payloads,
+missing/forgotten/empty sources, zero-survivor cases, or oversized queries; it
+bounded away 67 excess source references and truncated 341,159 source characters
+across the corpus. Task reconstruction excluded 11 cases without a pairable earlier
+request, six with future/same-time leakage, and ten repeated requests, leaving 12
+temporally safe distinct candidates. A pre-answer review selected four clear task
+shapes from one requester session.
+
+The run generated four bounded-history/no-history pairs with eight model-provider
+answer calls, no model judge, zero answer failures, 1,612 estimated successful-call
+input tokens, and 890 estimated added-history tokens. Answer-arm-blinded review
+initially gave history three wins and no history one win. A later provenance audit,
+performed without seeing generated answers, found that two lookup queries were not
+for their paired user task. Those pairs—one apparent history win and the apparent
+no-history win—are excluded. Only two defensibly linked cases remain, and history
+won both. That is anecdotal directional evidence, not a valid four-case estimate.
+
+Four initial unauthenticated requests were rejected by the local bearer proxy
+before model execution. They reserved 1,255 estimated input tokens but used zero
+upstream model calls. Including those failed setup attempts, total estimated input
+was 2,867 tokens, below the 10,000-token ceiling. The source snapshot hash and write
+timestamp were unchanged. Exploratory latency totaled 18,427.692 ms with history
+versus 13,914.475 ms without; history always ran first, so this is order-confounded
+and not decision-grade.
+
+This measures only the downstream task effect of the offline-controlled replay.
+It does not measure
+candidate recovery, injection precision, observed live benefit, replacement-guard
+behavior, or human validation. The local database supplied realistic material but
+only two provenance-valid cases; therefore it still cannot establish that history
+usually helps or justify broader investment. Future paid replay must validate direct
+task-to-lookup linkage before case selection and provider calls. Keep this item in
+progress until more sessions yield enough linked, answerable, categorized cases and
+the required bounded human review is done.
