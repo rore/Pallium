@@ -9,11 +9,11 @@
 
 **Completion criteria:** Existing paid outputs receive a blinded, answerability-first agent review; evaluator controls support exact case selection, lower per-run call/token caps, and a no-model-judge path; focused tests prove each control and prove budget/preflight stops make no unintended calls; a read-only lineage inventory either qualifies a staged paid pilot or stops it at zero calls; the roadmap records the evidence, limitation, decision, and next gate.
 
-**Risk:** Low
+**Risk:** Elevated
 
 **Complexity:** Moderate
 
-**Reason:** All intended files are BLUE under the repository redline policy and no production boundary is touched. Complexity is Moderate because the task combines deterministic evaluator controls, a blinded reuse analysis, and a conditional staged experiment, while keeping one narrow product outcome.
+**Reason:** All intended files are BLUE under the repository redline policy, but the repository workflow checker maps the expanded Moderate task to Elevated risk and no production boundary is touched. Complexity is Moderate because the task combines deterministic evaluator controls, a blinded reuse analysis, and a conditional staged experiment, while keeping one narrow product outcome.
 
 **Discovery:** The completed 20-case run already contains raw, guarded, and no-history answers but its automatic judge overstated value on malformed tasks. The corrected direct-claim filter invalidated its only apparent replacement case, leaving zero qualifying replacements. The evaluator already centralizes caching, lineage preflight, and hard global caps, but its CLI fixes the run at 100 calls / 50,000 estimated input tokens, cannot select exact case IDs, and always spends two judge calls per case in the three-arm run. Reusing the paid answers can answer the general-value question at zero cost; new calls are justified only for genuine direct replacements.
 
@@ -21,20 +21,24 @@
 
 **Plan:** 1. Add the smallest evaluator controls for exact case IDs, configurable lower call/token caps, and disabling model judging while preserving current defaults. 2. Add focused tests for selection, bounds, zero-judge behavior, cache accounting, and fail-closed preflight. 3. Label existing cases for answerability/applicability without seeing their answers, then review valid guarded versus no-history answers in deterministic blinded order and write a private agent-review report. 4. Inventory direct replacement cases from the scratch snapshot without provider calls. 5. Only if the preregistered lineage/diversity gate passes, run four replacement cases (12 calls), expanding to eight cases and at most 32 calls / 15,000 estimated input tokens only when informative; use the absolute 48-call / 20,000-token ceiling solely for justified ambiguous repeats or missing general-value evidence. 6. Update the roadmap with the observed outcome and product decision; verify, review, and close the PR.
 
-**Verification plan:** Exact selection accepts known IDs and rejects unknown/duplicate IDs without provider calls. Lower caps stop before exceeding either call or estimated-input limits and leave no partial aggregate presented as complete. No-judge mode emits answers/review material with zero judge calls. Existing defaults remain backward compatible. Guarded/both lineage preflight remains zero-call on insufficient direct replacements. Focused pytest, workflow checker, redline report, and `git diff --check` pass. Private reports record case exclusions, blinded choices, model calls, estimated input tokens, failures, and the downstream-task-effect interpretation.
+**Verification plan:** pytest: exact selection, lower caps, no-judge output, default compatibility, atomic budget stops, and inconsistent-lineage fail-closed behavior. CLI preflight: a fresh scratch snapshot produces a zero-call aggregate when direct lineage is absent. Agent review: prior outputs are validity-labelled before deterministic blinded comparison. Workflow: checker, redline, and diff hygiene pass.
 
 **Plan review:** Self-reviewed; clean-context redline review classified the complete intended scope BLUE with no checkpoint or boundary risk and required preserving fail-closed lineage preflight and non-partial budget stops.
 
 **Approvals:** User approved execution on 2026-08-25: "ok, go".
 
-**Exceptions:** Human review is unavailable by product constraint; any manual review is explicitly labelled agent review and cannot satisfy a human-validation claim.
+**Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Pre-edit redline classification: BLUE; no production, API, schema, persistence, security, or runtime-config path is in scope.
+- `apply_patch` failed with the documented Windows error 1385. Per local instructions, implementation used narrowly scoped Git-native patches and deterministic replacements limited to the evaluator and test files.
+- Added exact hashed case selection, explicit lower call/token caps, and a no-model-judge answer/review path while preserving existing defaults and guarded lineage preflight.
+- Created a fresh WAL-safe snapshot and ran the real CLI preflight under 12-call / 15,000-estimated-input limits with judging disabled. Zero supported direct durable replacements caused the intended zero-call stop.
+- Reused the existing 20 paid answers. Validity was labelled before answer inspection, then guarded versus no-history answers were reviewed in deterministic blinded order; one accidentally unblinded case is isolated in the private report.
 
 ## Evidence
 
