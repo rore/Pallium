@@ -11,8 +11,9 @@ milestone: pallium-relay
 
 Test Pallium as a local durable context-exchange layer alongside, not after,
 Pallium vNext. Agent Relay lets an agent explicitly send a bounded, scoped message
-to another supported runtime. Pallium persists the message and delivers it at the
-recipient's next applicable natural turn with attribution.
+to one session or all sessions of a supported runtime. Pallium persists the message
+and delivers it at each resolved recipient's next applicable natural turn with
+attribution.
 
 Initial consumers are Claude Code, Codex, and OpenCode.
 
@@ -33,23 +34,41 @@ historical-work hypothesis.
 An agent explicitly sends a message with:
 
 - sender identity and provenance
-- a named supported recipient runtime
+- an explicit runtime-wide or session-specific recipient selector
 - repository/container scope
 - bounded payload
 - expiry and delivery state
 
-Pallium persists it and attempts one intended delivery at the recipient's next
-applicable turn. Reliability may use at-least-once delivery with a stable message
-identifier and deduplication; delivery means the message reached the runtime, not
-that the receiving agent understood or used it.
+Pallium persists the message once and tracks an intended delivery independently
+for every resolved recipient session. Reliability may use at-least-once delivery
+with stable message and delivery identifiers; delivery means the message reached
+that session's runtime context, not that the receiving agent understood or used it.
 
 Replies reuse the same send operation, optionally linked with `in_reply_to`; they
 do not create a continuously running conversation.
 
 ## Addressing Boundary
 
-The first slice targets a named runtime within a repository/container. A specific
-session may be targeted only when its identifier is already known.
+The first slice supports both runtime-wide and individual-session addressing
+within a repository/container. Illustrative selectors are:
+
+- `codex` — all eligible Codex sessions in the container
+- `codex:<session_ref>` — one exact session by immutable harness session ID
+- `codex:@migration-review` — one session by an explicit Pallium-managed alias
+
+The immutable `session_ref` is the canonical delivery identity. A mutable title
+shown by a harness is discovery metadata only and must not silently route a
+message. An optional Relay alias is unique within its container and harness and
+resolves to a `session_ref` when sending, so renaming it cannot redirect an already
+queued delivery.
+
+Pallium can address only sessions exposed by an integration as distinct delivery
+endpoints. A delegated or child agent sharing its parent's session is not
+independently addressable merely because the harness displays a name for it.
+
+R1 design must explicitly settle whether a runtime-wide send snapshots the
+currently registered sessions or also applies to matching sessions created before
+expiry. It must not leave future-session membership implicit.
 
 Extracted `work_refs` must not route Relay messages. They are optional retrieval
 hints, may be absent, and two agents cannot be assumed to derive the same value.
@@ -79,10 +98,13 @@ claim and inject persisted Relay messages without polling or waking an agent:
 The smallest viable R1 is a hook-time mailbox:
 
 - send bounded text through one Pallium operation
-- route by exact recipient runtime plus canonical `container_ref`; do not route
-  by `work_ref`
-- let the first applicable session of that runtime in the container atomically
-  claim the message
+- route by canonical `container_ref` plus an explicit runtime-wide, exact-session,
+  or Relay-alias selector; do not route by `work_ref`
+- resolve the selector to immutable session recipients and track delivery for each
+  session independently; one session's acknowledgement must not consume another's
+  delivery
+- register observed harness sessions and allow an optional, unique Relay alias;
+  retain mutable harness titles for discovery only
 - provide at-least-once delivery with a stable message ID, claim lease, expiry,
   and idempotent acknowledgement
 - treat acknowledgement as successful runtime injection, never as evidence that
@@ -90,11 +112,12 @@ The smallest viable R1 is a hook-time mailbox:
 - represent replies as another send with optional `in_reply_to`, without adding
   conversation state
 
-Minimum persisted state is the message ID, bounded payload, claimed sender runtime
-and session, recipient runtime, container and actor scope, creation and expiry
-times, delivery state, claim owner/lease, delivery time, and optional reply link.
-The initial state machine is `pending -> claimed -> delivered`, with `expired` and
-lease-based redelivery after an interrupted claim.
+Minimum persisted message state is the message ID, bounded payload, claimed sender
+runtime and session, original recipient selector, container and actor scope,
+creation and expiry times, and optional reply link. Each resolved session has its
+own delivery ID, state, claim owner/lease, and delivery time. Its state machine is
+`pending -> claimed -> delivered`, with `expired` and lease-based redelivery after
+an interrupted claim.
 
 Runtime attribution is convention-based rather than authenticated in the current
 local integrations. R1 must describe it as claimed attribution and remain a
@@ -107,13 +130,16 @@ asymmetric. Reconsider them only if real use demonstrates a need for known-sessi
 or live delivery.
 
 R0 decision: **go for R1**. Validate the contract end to end across all three
-runtimes, including bounds, Unicode, scope isolation, concurrent claims, lease
-recovery, acknowledgement idempotence, expiry, retries, and absence of memory or
-retrieval side effects.
+runtimes, including bounds, Unicode, scope isolation, runtime fan-out, exact-session
+delivery, alias uniqueness and rename behavior, concurrent claims, lease recovery,
+acknowledgement idempotence, expiry, retries, and absence of memory or retrieval
+side effects.
 
-### R1 — Explicit point-to-point relay
+### R1 — Explicit runtime and session relay
 
-Ship named-runtime delivery within a repository/container and measure real use:
+Ship runtime-wide fan-out and individually addressed session delivery within a
+repository/container. Include recipient discovery and optional Pallium-managed
+session aliases, then measure real use:
 
 - messages sent
 - delivered messages judged useful
@@ -130,9 +156,9 @@ delivery is the correct product boundary.
 
 ### R3 — Evidence-driven extensions
 
-Add only capabilities repeatedly demanded by actual use, such as session targeting,
-multiple explicit recipients, correction or cancellation, historical pointers, or
-safe live delivery.
+Add only capabilities repeatedly demanded by actual use, such as multiple explicit
+selectors, arbitrary named groups, correction or cancellation, historical pointers,
+or safe live delivery.
 
 ## Design Invariants
 
@@ -148,7 +174,7 @@ safe live delivery.
 - autonomous agent-to-agent conversations
 - wake-up loops or continuously running coordination
 - semantic recipient inference or related-memory broadcasts
-- group membership and project-wide broadcast
+- arbitrary group membership and project-wide broadcast beyond one named runtime
 - cross-user delivery without an explicit authorization and revocation contract
 - general-purpose message-broker behavior
 
