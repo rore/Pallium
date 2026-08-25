@@ -529,7 +529,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Name the current Relay session. Copy current_runtime from injected agent_ref and current_session_ref from injected thread_ref; never discover the current session from recipient listings."""
+        """Name the current Relay session. Copy current_runtime from injected agent_ref and current_session_ref from injected thread_ref; never discover self from recipient listings. If the user explicitly assigns an alias held by an older session, retry with replace_existing=true to transfer it; otherwise report the conflict."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
@@ -551,7 +551,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Send new bounded text to an explicit Relay selector. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for a received message."""
+        """Send new bounded text to runtime, exact-session, or alias selector: codex, codex:<session_ref>, or codex:@review (and equivalent supported runtimes). Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for a received message."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG

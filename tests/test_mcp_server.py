@@ -660,6 +660,10 @@ async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> No
         "pallium_relay_status",
     } <= names
 
+    tools = {tool.name: tool for tool in await server.list_tools()}
+    assert "replace_existing=true" in tools["pallium_relay_name"].description
+    assert "codex:@review" in tools["pallium_relay_send"].description
+
 
 @pytest.mark.asyncio
 async def test_relay_send_uses_exact_scope_and_preserves_unicode(monkeypatch: pytest.MonkeyPatch) -> None:
