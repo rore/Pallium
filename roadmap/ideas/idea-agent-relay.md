@@ -65,6 +65,52 @@ Confirm Claude Code, Codex, and OpenCode can support deterministic next-turn
 delivery and define only the required send, scope, expiry, delivery, attribution,
 and deduplication semantics.
 
+#### R0 result — feasible; proceed to R1 (2026-08-25)
+
+All three initial consumers have a supported pre-model turn boundary that can
+claim and inject persisted Relay messages without polling or waking an agent:
+
+| Runtime | R1 delivery boundary |
+|---|---|
+| Claude Code | `UserPromptSubmit` hook |
+| Codex | `UserPromptSubmit` hook using `additionalContext` |
+| OpenCode | existing `chat.message` and system-transform plugin path |
+
+The smallest viable R1 is a hook-time mailbox:
+
+- send bounded text through one Pallium operation
+- route by exact recipient runtime plus canonical `container_ref`; do not route
+  by `work_ref`
+- let the first applicable session of that runtime in the container atomically
+  claim the message
+- provide at-least-once delivery with a stable message ID, claim lease, expiry,
+  and idempotent acknowledgement
+- treat acknowledgement as successful runtime injection, never as evidence that
+  the receiving model used the message
+- represent replies as another send with optional `in_reply_to`, without adding
+  conversation state
+
+Minimum persisted state is the message ID, bounded payload, claimed sender runtime
+and session, recipient runtime, container and actor scope, creation and expiry
+times, delivery state, claim owner/lease, delivery time, and optional reply link.
+The initial state machine is `pending -> claimed -> delivered`, with `expired` and
+lease-based redelivery after an interrupted claim.
+
+Runtime attribution is convention-based rather than authenticated in the current
+local integrations. R1 must describe it as claimed attribution and remain a
+single-user local feature; cross-user delivery requires a later authorization and
+revocation contract.
+
+Do not base R1 on Claude Channels, OpenCode's beta V2 session inbox, or Codex App
+Server injection. They are preview, session-addressed, or architecturally
+asymmetric. Reconsider them only if real use demonstrates a need for known-session
+or live delivery.
+
+R0 decision: **go for R1**. Validate the contract end to end across all three
+runtimes, including bounds, Unicode, scope isolation, concurrent claims, lease
+recovery, acknowledgement idempotence, expiry, retries, and absence of memory or
+retrieval side effects.
+
 ### R1 — Explicit point-to-point relay
 
 Ship named-runtime delivery within a repository/container and measure real use:
