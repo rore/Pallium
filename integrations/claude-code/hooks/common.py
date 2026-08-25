@@ -151,6 +151,7 @@ def pin_container(
     session_id: str | None,
     container_ref: str,
     source: str | None = None,
+    pending_relay_closes: list[str] | None = None,
 ) -> None:
     """Pin (session_id -> container_ref) at SessionStart.
 
@@ -170,7 +171,14 @@ def pin_container(
         return
 
     tmp = SESSIONS_DIR / f"{sid}.json.tmp"
-    payload = json.dumps({"container_ref": container_ref, "ts": time.time()})
+    pending = list(dict.fromkeys(
+        ref for ref in (pending_relay_closes or [])
+        if isinstance(ref, str) and ref and ref != container_ref
+    ))
+    payload_data: dict[str, Any] = {"container_ref": container_ref, "ts": time.time()}
+    if pending:
+        payload_data["pending_relay_closes"] = pending
+    payload = json.dumps(payload_data)
     try:
         tmp.write_text(payload, encoding="utf-8")
         os.replace(tmp, fp)
@@ -203,6 +211,21 @@ def get_pinned_container(session_id: str | None) -> str | None:
     return None
 
 
+def get_pending_relay_closes(session_id: str | None) -> list[str]:
+    """Return project registrations that still need best-effort closure."""
+    sid = _safe_session_id(session_id)
+    if sid is None:
+        return []
+    try:
+        data = json.loads((SESSIONS_DIR / f"{sid}.json").read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return []
+    refs = data.get("pending_relay_closes") if isinstance(data, dict) else None
+    if not isinstance(refs, list):
+        return []
+    return list(dict.fromkeys(ref for ref in refs if isinstance(ref, str) and ref))
+
+
 def resolve_container_ref(
     cwd: str,
     session_id: str | None,
@@ -215,7 +238,12 @@ def resolve_container_ref(
 
     current = derive_container_ref(cwd)
     if current.startswith(("git:", "repo:")) and current != pinned:
-        pin_container(session_id, current)
+        pending = get_pending_relay_closes(session_id)
+        pin_container(
+            session_id,
+            current,
+            pending_relay_closes=[*pending, *([pinned] if pinned else [])],
+        )
         return current
     return pinned or current
 

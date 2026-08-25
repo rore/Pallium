@@ -79,3 +79,6 @@ Added one delivery-derived reply route and MCP tool over the existing send path,
 - Import-linter: 8 contracts kept, 0 broken. Workflow checker: clean. Compileall and `git diff --check`: clean.
 - Redline: RED for `api/routes.py`/`api/schemas.py`, no boundary violation; PR requires CODEOWNER approval or `api-reviewed` label.
 - `apply_patch` hit the documented Windows `CreateProcessWithLogonW` error 1385 once. Per repository instructions, all edits then used narrow deterministic replacements limited to named files.
+## Result review
+
+Automated review found one material lifecycle gap and one wording ambiguity. A failed old-project close could not be retried after the new pin replaced the old reference. Fixed by retaining a deduplicated list of pending Relay closes in the existing atomic session-pin record, retrying it at each model-bound turn, and clearing only successful closes; a two-turn failure→success regression runs for both Claude Code and Codex. The reply guide now states explicitly that the original message sender becomes the reply recipient. Focused post-review hook/integration verification: 94 passed. The generic docstring-coverage suggestion was not applied because it is unrelated repository-wide churn and not a project gate.

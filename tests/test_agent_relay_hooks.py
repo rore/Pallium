@@ -87,7 +87,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     payload = {"cwd": ".", "session_id": "target-session", "prompt": "hi"}
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
-    monkeypatch.setattr(hook, "get_pinned_container", lambda *_: None)
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
     turn_calls = []
@@ -147,7 +147,7 @@ def test_codex_short_prompt_delivers_relay_before_memory_gate(monkeypatch):
         ("integrations/codex/hooks/user_prompt_submit.py", "codex", True),
     ],
 )
-def test_recognized_project_switch_closes_old_relay_registration(
+def test_failed_project_close_is_retried(
     monkeypatch, relative, runtime, imported
 ):
     if imported:
@@ -159,30 +159,45 @@ def test_recognized_project_switch_closes_old_relay_registration(
         lambda: {"cwd": ".", "session_id": "target", "prompt": "hi"},
     )
     monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
-    monkeypatch.setattr(hook, "get_pinned_container", lambda *_: "git:old/repo")
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:new/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    state = {"pending": ["git:old/repo"]}
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: list(state["pending"]))
+    monkeypatch.setattr(
+        hook, "pin_container",
+        lambda _session, _container, *, pending_relay_closes: state.update(
+            pending=list(pending_relay_closes)
+        ),
+    )
     calls = []
+    close_attempts = 0
 
     def relay(method, path, body, *, timeout):
+        nonlocal close_attempts
         calls.append((method, path, body, timeout))
+        if path == "/relay/sessions/close":
+            close_attempts += 1
+            return None if close_attempts == 1 else {"state": "closed"}
         return {"deliveries": []}
 
     monkeypatch.setattr(hook, "relay_request", relay)
     monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: None)
     if imported:
         monkeypatch.setattr(hook, "emit_context", lambda *_: None)
-    with pytest.raises(SystemExit):
-        hook.main()
-    assert [call[1] for call in calls] == ["/relay/sessions/close", "/relay/turn"]
+    for _ in range(2):
+        with pytest.raises(SystemExit):
+            hook.main()
+    assert [call[1] for call in calls] == [
+        "/relay/sessions/close", "/relay/turn",
+        "/relay/sessions/close", "/relay/turn",
+    ]
     assert calls[0][2] == {
         "runtime": runtime,
         "session_ref": "target",
         "container_ref": "git:old/repo",
         "actor_ref": "actor",
     }
-    assert calls[1][2]["container_ref"] == "git:new/repo"
-
+    assert state["pending"] == []
 
 @pytest.mark.parametrize(
     ("relative", "imported"),
@@ -217,7 +232,7 @@ def test_codex_combined_output_is_relay_first_and_bounded(monkeypatch):
     }
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
-    monkeypatch.setattr(hook, "get_pinned_container", lambda *_: None)
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
     monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: {"deliveries": [DELIVERY]})

@@ -34,7 +34,7 @@ Recent sessions are shown by default. A session becomes dormant after 24 hours w
 
 Messages contain at most 1,500 Unicode code points and expire after 24 hours by default (allowed range: 60 seconds to 7 days). A turn claims at most three complete messages within a 2,400-character Relay budget. The integration acknowledges only after adding the attributed block to model context. Interrupted claims become eligible again after a lease; stable IDs make acknowledgement idempotent.
 
-A received block includes its `delivery_id`. `pallium_relay_reply` accepts that ID and reply text; Pallium derives the current sender, original sender recipient, and `in_reply_to` parent from the delivered record. Repeating the same reply is idempotent; changing its text conflicts. Replies do not create a live or autonomous conversation. Delivery means the runtime received the context, not that the model read or acted on it.
+A received block includes its `delivery_id`. `pallium_relay_reply` accepts that ID and reply text; Pallium derives the current sender, the original message sender as recipient, and the `in_reply_to` parent from the delivered record. Repeating the same reply is idempotent; changing its text conflicts. Replies do not create a live or autonomous conversation. Delivery means the runtime received the context, not that the model read or acted on it.
 
 Relay is local single-user coordination. `actor_ref` is claimed scope, not authenticated cross-user authorization. The generic secret redactor runs before persistence.
 

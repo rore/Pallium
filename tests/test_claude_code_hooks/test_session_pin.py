@@ -227,6 +227,9 @@ class TestResolveContainerRef:
         result = common.resolve_container_ref("/new/repo", "s1", allow_project_switch=True)
         assert result == "git:github.com/new/repo"
         assert common.get_pinned_container("s1") == result
+        assert common.get_pending_relay_closes("s1") == ["git:old/repo"]
+        common.pin_container("s1", result, pending_relay_closes=[])
+        assert common.get_pending_relay_closes("s1") == []
 
     @patch("common.subprocess.run")
     def test_transient_non_git_cwd_does_not_replace_git_pin(self, mock_run, tmp_state):

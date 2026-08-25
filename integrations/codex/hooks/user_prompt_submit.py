@@ -22,7 +22,8 @@ derive_actor_ref = _common.derive_actor_ref
 emit_context = _common.emit_context
 format_injection = _common.format_injection
 format_relay = _common.format_relay
-get_pinned_container = _common.get_pinned_container
+get_pending_relay_closes = _common.get_pending_relay_closes
+pin_container = _common.pin_container
 pallium_request = _common.pallium_request
 read_hook_input = _common.read_hook_input
 relay_request = _common.relay_request
@@ -50,21 +51,26 @@ def main() -> None:
         if session_id and check_dedup(prompt, session_id):
             return
         has_session = isinstance(session_id, str) and bool(session_id)
-        previous_container = get_pinned_container(session_id if has_session else None)
         container_ref = resolve_container_ref(cwd, session_id if has_session else None, True)
         actor_ref = derive_actor_ref()
-        if has_session and previous_container and previous_container != container_ref:
-            relay_request(
-                "POST",
-                "/relay/sessions/close",
-                {
-                    "runtime": "codex",
-                    "session_ref": session_id,
-                    "container_ref": previous_container,
-                    "actor_ref": actor_ref,
-                },
-                timeout=0.5,
-            )
+        pending_closes = get_pending_relay_closes(session_id if has_session else None)
+        if pending_closes:
+            remaining = []
+            for previous_container in pending_closes:
+                closed = relay_request(
+                    "POST",
+                    "/relay/sessions/close",
+                    {
+                        "runtime": "codex",
+                        "session_ref": session_id,
+                        "container_ref": previous_container,
+                        "actor_ref": actor_ref,
+                    },
+                    timeout=0.5,
+                )
+                if closed is None:
+                    remaining.append(previous_container)
+            pin_container(session_id, container_ref, pending_relay_closes=remaining)
         content = _strip_ide_context(prompt)
         if not content:
             return
