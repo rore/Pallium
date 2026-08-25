@@ -221,7 +221,8 @@ timestamp were unchanged. Exploratory latency totaled 18,427.692 ms with history
 versus 13,914.475 ms without; history always ran first, so this is order-confounded
 and not decision-grade.
 
-This measures offline controlled downstream-task-effect only. It does not measure
+This measures only the downstream task effect of the offline-controlled replay.
+It does not measure
 candidate recovery, injection precision, observed live benefit, replacement-guard
 behavior, or human validation. The local database supplied realistic material but
 only two provenance-valid cases; therefore it still cannot establish that history
