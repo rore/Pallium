@@ -331,3 +331,67 @@ test("hooks never throw even when the daemon is unreachable", async () => {
   const system = await systemTransform(hooks, "sesG");
   assert.ok(Array.isArray(system), "system.transform still returns cleanly");
 });
+
+test("system.transform injects Relay before memory and acknowledges after mutation", async () => {
+  const relay = {
+    deliveries: [{
+      delivery_id: "d-skipped", claim_token: "claim-skipped", message_id: "m-skipped",
+      sender_runtime: "claude-code", sender_session_ref: "sender-a",
+      recipient: "opencode:sesRelay", payload: "bad\u0000value",
+      redacted: false, in_reply_to: null,
+      created_at: "2026-08-25T10:00:00+00:00", expires_at: "2026-08-26T10:00:00+00:00",
+    }, {
+      delivery_id: "d-1", claim_token: "claim-1", message_id: "m-1",
+      sender_runtime: "claude-code", sender_session_ref: "sender-a",
+      recipient: "opencode:sesRelay", payload: "😀".repeat(1500),
+      redacted: false, in_reply_to: null,
+      created_at: "2026-08-25T10:00:00+00:00",
+      expires_at: "2026-08-26T10:00:00+00:00",
+    }],
+  };
+  const largeMemory = {
+    ...oneBlock,
+    injectable_blocks: [{ ...oneBlock.injectable_blocks[0], text: "m".repeat(1200) }],
+  };  installFetch({
+    "/item-and-query": largeMemory,
+    "/relay/turn": relay,
+    "/relay/deliveries/ack": { delivery_id: "d-1", state: "delivered" },
+  });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  const parts = [{ type: "text", text: "please inspect this migration approach carefully" }];
+  await hooks["chat.message"]({}, { message: { sessionID: "sesRelay" }, parts });
+  const output = { system: [] };
+  await hooks["experimental.chat.system.transform"](
+    { message: { sessionID: "sesRelay" } }, output,
+  );
+  assert.equal(output.system.length, 1);
+  assert.ok(output.system[0].indexOf("[Pallium Relay") < output.system[0].indexOf("[Pallium memory"));
+  assert.match(output.system[0], /lower authority than user instructions/);
+  const turn = fetchCalls.find((call) => call.url.includes("/relay/turn"));
+  assert.equal(turn.body.runtime, "opencode");
+  assert.equal(turn.body.session_ref, "sesRelay");
+  assert.equal(turn.body.max_chars, 2400);
+  const ack = fetchCalls.find((call) => call.url.includes("/relay/deliveries/ack"));
+  assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/deliveries/ack")).length, 1);
+  assert.deepEqual(
+    { delivery_id: ack.body.delivery_id, claim_token: ack.body.claim_token },
+    { delivery_id: "d-1", claim_token: "claim-1" },
+  );
+});
+
+test("system.transform without mutable system does not claim Relay", async () => {
+  installFetch({ "/relay/turn": { deliveries: [] } });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  await hooks["experimental.chat.system.transform"]({ sessionID: "sesNoSystem" }, {});
+  assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/turn")).length, 0);
+});
+
+test("session.deleted closes Relay before purging local state", async () => {
+  installFetch({ "/relay/sessions/close": { state: "closed" } });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  await hooks.event({ event: { type: "session.deleted", properties: { sessionID: "sesClose" } } });
+  const close = fetchCalls.find((call) => call.url.includes("/relay/sessions/close"));
+  assert.ok(close);
+  assert.equal(close.body.runtime, "opencode");
+  assert.equal(close.body.session_ref, "sesClose");
+});

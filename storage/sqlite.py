@@ -18,6 +18,7 @@ from storage.sqlite_codec import SQLiteCodecMixin
 from storage.sqlite_codec import extract_memory_subject
 from storage.sqlite_queue import SQLiteQueueMixin
 from storage.sqlite_retention import SQLiteRetentionMixin
+from storage.sqlite_relay import SQLiteRelayMixin
 from storage.sqlite_schema import (
     Base,
     IndexEntryRecord,
@@ -66,6 +67,7 @@ def _extract_display_text(payload: dict) -> str:
 
 
 class SQLiteStorageProvider(
+    SQLiteRelayMixin,
     SQLiteSearchMixin,
     SQLiteQueueMixin,
     SQLiteRetentionMixin,

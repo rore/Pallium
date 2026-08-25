@@ -6,6 +6,15 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 
 from api.schemas import (
+    RelayAckRequest,
+    RelayAckResponse,
+    RelayMessageResponse,
+    RelaySendRequest,
+    RelaySessionMutationRequest,
+    RelaySessionNameRequest,
+    RelaySessionResponse,
+    RelayTurnRequest,
+    RelayTurnResponse,
     CorrectMemoryRequest,
     CorrectMemoryResponse,
     FlagMemoryRequest,
@@ -46,6 +55,7 @@ from api.schemas import (
     SupersedeMemoryResponse,
 )
 from core.errors import LookupRequestLinkError, SupersessionConflictError
+from core.relay import RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
 from core.turn_inference import resolve_runtime_context
@@ -320,9 +330,75 @@ def _maybe_write_query_audit(
         return None
 
 
-def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -> APIRouter:
+def create_router(service: PalliumService, *, audit_log_enabled: bool = False, relay_service: RelayService | None = None) -> APIRouter:
     router = APIRouter()
 
+    def _relay() -> RelayService:
+        if relay_service is None:
+            raise HTTPException(status_code=501, detail="relay is not supported by the configured storage")
+        return relay_service
+
+    def _relay_call(operation):
+        try:
+            return operation()
+        except RelayNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="relay entity not found in the requested scope") from exc
+        except RelayConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RelayUnavailableError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.post("/relay/turn", response_model=RelayTurnResponse)
+    def relay_turn(request: RelayTurnRequest):
+        return _relay_call(lambda: _relay().turn(**request.model_dump()))
+
+    @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
+    def relay_close_session(request: RelaySessionMutationRequest):
+        return _relay_call(lambda: _relay().close_session(**request.model_dump()))
+
+    @router.get("/relay/sessions", response_model=list[RelaySessionResponse])
+    def relay_sessions(
+        container_ref: str = Query(min_length=1, max_length=512),
+        actor_ref: str = Query(min_length=1, max_length=255),
+        runtime: str | None = Query(default=None, max_length=32),
+        include_inactive: bool = False,
+    ):
+        return _relay_call(
+            lambda: _relay().list_sessions(
+                container_ref=container_ref,
+                actor_ref=actor_ref,
+                runtime=runtime,
+                include_inactive=include_inactive,
+            )
+        )
+
+    @router.post("/relay/sessions/name", response_model=RelaySessionResponse)
+    def relay_name_session(request: RelaySessionNameRequest):
+        return _relay_call(lambda: _relay().name_session(**request.model_dump()))
+
+    @router.post("/relay/messages", response_model=RelayMessageResponse)
+    def relay_send(request: RelaySendRequest):
+        return _relay_call(lambda: _relay().send(**request.model_dump()))
+
+    @router.get("/relay/messages/{message_id}", response_model=RelayMessageResponse)
+    def relay_message_status(
+        message_id: str,
+        container_ref: str = Query(min_length=1, max_length=512),
+        actor_ref: str = Query(min_length=1, max_length=255),
+    ):
+        return _relay_call(
+            lambda: _relay().message_status(
+                message_id=message_id,
+                container_ref=container_ref,
+                actor_ref=actor_ref,
+            )
+        )
+
+    @router.post("/relay/deliveries/ack", response_model=RelayAckResponse)
+    def relay_ack(request: RelayAckRequest):
+        return _relay_call(lambda: _relay().acknowledge(**request.model_dump()))
     def _ingest_one(request: ItemCreateRequest) -> ItemCreateResponse:
         result = service.ingest_item(
             source_type=request.source_type,

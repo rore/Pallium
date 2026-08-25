@@ -753,3 +753,102 @@ class RecordOutcomeResponse(BaseModel):
     procedure_id: str
     outcome: Literal["success", "failure", "inconclusive"]
     recorded: bool
+
+
+RelayRuntime = Literal["claude-code", "codex", "opencode"]
+
+
+class RelayTurnRequest(BaseModel):
+    runtime: RelayRuntime
+    session_ref: str = Field(min_length=1, max_length=255)
+    container_ref: str = Field(min_length=1, max_length=512)
+    actor_ref: str = Field(min_length=1, max_length=255)
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    max_chars: int = Field(default=2400, ge=1, le=2400)
+
+
+class RelaySessionMutationRequest(BaseModel):
+    runtime: RelayRuntime
+    session_ref: str = Field(min_length=1, max_length=255)
+    container_ref: str = Field(min_length=1, max_length=512)
+    actor_ref: str = Field(min_length=1, max_length=255)
+
+
+class RelaySessionNameRequest(RelaySessionMutationRequest):
+    alias: str | None = Field(default=None, min_length=1, max_length=32)
+    replace_existing: bool = False
+
+
+class RelaySendRequest(BaseModel):
+    sender_runtime: RelayRuntime
+    sender_session_ref: str = Field(min_length=1, max_length=255)
+    recipient: str = Field(min_length=1, max_length=320)
+    payload: str = Field(min_length=1, max_length=1500)
+    container_ref: str = Field(min_length=1, max_length=512)
+    actor_ref: str = Field(min_length=1, max_length=255)
+    expires_in_seconds: int = Field(default=86400, ge=60, le=604800)
+    in_reply_to: str | None = Field(default=None, min_length=1, max_length=128)
+    message_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class RelayAckRequest(BaseModel):
+    delivery_id: str = Field(min_length=1, max_length=128)
+    claim_token: str = Field(min_length=1, max_length=128)
+    container_ref: str = Field(min_length=1, max_length=512)
+    actor_ref: str = Field(min_length=1, max_length=255)
+
+
+class RelaySessionResponse(BaseModel):
+    runtime: str
+    session_ref: str
+    title: str | None = None
+    alias: str | None = None
+    state: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    closed_at: datetime | None = None
+
+
+class RelayDeliveryResponse(BaseModel):
+    delivery_id: str
+    message_id: str
+    state: str
+    claim_token: str | None = None
+    recipient_runtime: str
+    recipient_session_ref: str
+    sender_runtime: str
+    sender_session_ref: str
+    recipient: str
+    payload: str
+    redacted: bool
+    in_reply_to: str | None = None
+    created_at: datetime
+    expires_at: datetime
+    claimed_at: datetime | None = None
+    lease_expires_at: datetime | None = None
+    delivered_at: datetime | None = None
+    attempts: int
+
+
+class RelayTurnResponse(BaseModel):
+    session: RelaySessionResponse
+    deliveries: list[RelayDeliveryResponse]
+
+
+class RelayMessageResponse(BaseModel):
+    message_id: str
+    sender_runtime: str
+    sender_session_ref: str
+    recipient: str
+    payload: str
+    redacted: bool
+    in_reply_to: str | None = None
+    created_at: datetime
+    expires_at: datetime
+    deliveries: list[RelayDeliveryResponse]
+
+
+class RelayAckResponse(BaseModel):
+    delivery_id: str
+    state: str
+    delivered_at: datetime

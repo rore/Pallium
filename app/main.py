@@ -469,6 +469,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     mount_dashboard(app)
     app.include_router(build_router(
         service, audit_log_enabled=resolved_config.observability.query_audit_log,
+        relay_storage=build_result.storage,
     ))
     if mcp_available and mcp_app is not None:
         app.mount("", mcp_app)

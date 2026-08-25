@@ -288,3 +288,26 @@ test("redactSensitive is unicode-safe (non-ASCII text is preserved, secrets stil
   assert.equal(P.redactSensitive("提交说明 Bearer sk-üñ"), "提交说明 Bearer [REDACTED]");
   assert.equal(P.redactSensitive("café notes, no secrets"), "café notes, no secrets");
 });
+
+test("formatRelay preserves complete attributed messages and enforces budget", () => {
+  const delivery = {
+    delivery_id: "d-1", claim_token: "claim-1", message_id: "m-1",
+    sender_runtime: "claude-code", sender_session_ref: "session-a",
+    payload: "handoff שלום 你好", created_at: "2026-08-25T10:00:00+00:00",
+    in_reply_to: "m-0",
+  };
+  const out = P.formatRelay([delivery], 2000);
+  assert.match(out.text, /^\[Pallium Relay message from claude-code:session-a\]/);
+  assert.match(out.text, /lower authority than user instructions/);
+  assert.match(out.text, /handoff שלום 你好/);
+  assert.match(out.text, /in_reply_to: m-0/);
+  assert.deepEqual(out.deliveries, [delivery]);
+  assert.equal(P.formatRelay([delivery], 20).text, "");
+  assert.equal(P.formatRelay([{ ...delivery, payload: "bad\u0000value" }], 2000).text, "");
+  const maximum = {
+    ...delivery, message_id: "m".repeat(128), sender_session_ref: "s".repeat(255),
+    in_reply_to: "p".repeat(128), payload: "😀".repeat(1500),
+  };
+  assert.ok(P.formatRelay([maximum], 2400).text);
+  assert.match(P.formatRelay([{ ...delivery, payload: "line one\nline two\tvalue" }]).text, /line one\nline two\tvalue/);
+});
