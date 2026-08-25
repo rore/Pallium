@@ -233,10 +233,10 @@ class PalliumMcpClient:
             params["include_inactive"] = True
         return await self._get_or_error("/relay/sessions", params)
 
-    async def relay_name(self, *, alias: str | None, runtime: str, session_ref: str, replace_existing: bool = False) -> dict[str, Any]:
+    async def relay_name(self, *, alias: str | None, current_runtime: str, current_session_ref: str, replace_existing: bool = False) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "runtime": runtime,
-            "session_ref": session_ref,
+            "runtime": current_runtime,
+            "session_ref": current_session_ref,
             **self._relay_scope_params(),
         }
         if alias is not None:
@@ -250,8 +250,8 @@ class PalliumMcpClient:
         *,
         message: str,
         recipient: str,
-        runtime: str,
-        session_ref: str,
+        sender_runtime: str,
+        sender_session_ref: str,
         expires_in_seconds: int | None = None,
         in_reply_to: str | None = None,
         message_id: str | None = None,
@@ -259,8 +259,8 @@ class PalliumMcpClient:
         payload: dict[str, Any] = {
             "payload": message,
             "recipient": recipient,
-            "sender_runtime": runtime,
-            "sender_session_ref": session_ref,
+            "sender_runtime": sender_runtime,
+            "sender_session_ref": sender_session_ref,
             **self._relay_scope_params(),
         }
         for key, value in (
@@ -271,6 +271,22 @@ class PalliumMcpClient:
             if value is not None:
                 payload[key] = value
         return await self._post_or_error("/relay/messages", payload)
+
+    async def relay_reply(
+        self,
+        *,
+        delivery_id: str,
+        message: str,
+        expires_in_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "delivery_id": delivery_id,
+            "payload": message,
+            **self._relay_scope_params(),
+        }
+        if expires_in_seconds is not None:
+            payload["expires_in_seconds"] = expires_in_seconds
+        return await self._post_or_error("/relay/replies", payload)
 
     async def relay_status(self, message_id: str) -> dict[str, Any]:
         params = self._relay_scope_params()

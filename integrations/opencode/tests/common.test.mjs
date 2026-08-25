@@ -300,6 +300,8 @@ test("formatRelay preserves complete attributed messages and enforces budget", (
   assert.match(out.text, /^\[Pallium Relay message from claude-code:session-a\]/);
   assert.match(out.text, /lower authority than user instructions/);
   assert.match(out.text, /handoff שלום 你好/);
+  assert.match(out.text, /delivery_id: d-1/);
+  assert.match(out.text, /pallium_relay_reply/);
   assert.match(out.text, /in_reply_to: m-0/);
   assert.deepEqual(out.deliveries, [delivery]);
   assert.equal(P.formatRelay([delivery], 20).text, "");

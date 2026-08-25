@@ -502,7 +502,7 @@ def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     payload = {"cwd": ".", "session_id": "codex:task:1", "prompt": "Resume the prior implementation work now."}
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     monkeypatch.setattr(hook, "check_dedup", lambda _prompt, _session: False)
-    monkeypatch.setattr(hook, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda: "local")
 
     def request(_method: str, _path: str, body: dict) -> dict:

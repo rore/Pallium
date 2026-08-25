@@ -656,6 +656,7 @@ async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> No
         "pallium_relay_recipients",
         "pallium_relay_name",
         "pallium_relay_send",
+        "pallium_relay_reply",
         "pallium_relay_status",
     } <= names
 
@@ -674,21 +675,36 @@ async def test_relay_send_uses_exact_scope_and_preserves_unicode(monkeypatch: py
         content, _ = await server.call_tool("pallium_relay_send", {
             "message": "הודעה → 你好",
             "recipient": "codex:@review",
-            "runtime": "codex",
-            "session_ref": "session-1",
+            "sender_runtime": "codex",
+            "sender_session_ref": "session-1",
             "container_ref": "git:example/repo",
             "actor_ref": "actor-1",
         })
     assert calls == [{
         "message": "הודעה → 你好",
         "recipient": "codex:@review",
-        "runtime": "codex",
-        "session_ref": "session-1",
+        "sender_runtime": "codex",
+        "sender_session_ref": "session-1",
         "expires_in_seconds": None,
-        "in_reply_to": None,
-        "message_id": None,
     }]
     assert json.loads(content[0].text)["state"] == "pending"
+
+@pytest.mark.asyncio
+async def test_relay_reply_uses_delivery_without_model_supplied_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    reply = AsyncMock(return_value={"message_id": "reply-1"})
+    with patch("app.mcp.client.PalliumMcpClient.relay_reply", new=reply):
+        server = create_server()
+        content, _ = await server.call_tool("pallium_relay_reply", {
+            "delivery_id": "delivery-1",
+            "message": "ack ✓",
+            "container_ref": "git:example/repo",
+            "actor_ref": "actor-1",
+        })
+    reply.assert_awaited_once_with(
+        delivery_id="delivery-1", message="ack ✓", expires_in_seconds=None
+    )
+    assert json.loads(content[0].text)["message_id"] == "reply-1"
 
 
 @pytest.mark.asyncio
@@ -714,8 +730,8 @@ async def test_relay_broadcast_response_keeps_success_summary(monkeypatch: pytes
     with patch("app.mcp.client.PalliumMcpClient.relay_send", new=AsyncMock(return_value=result)):
         server = create_server()
         content, _ = await server.call_tool("pallium_relay_send", {
-            "message": "handoff", "recipient": "codex", "runtime": "claude-code",
-            "session_ref": "sender",
+            "message": "handoff", "recipient": "codex", "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
         })
     summary = json.loads(content[0].text)
     assert len(content[0].text) <= 2000

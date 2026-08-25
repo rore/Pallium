@@ -219,6 +219,24 @@ class TestResolveContainerRef:
         assert result == original
         assert result.startswith("path:")  # not git: of pelican
 
+    @patch("common.subprocess.run")
+    def test_deliberate_git_project_switch_updates_pin(self, mock_run, tmp_state):
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "https://github.com/new/repo.git\n"
+        common.pin_container("s1", "git:old/repo")
+        result = common.resolve_container_ref("/new/repo", "s1", allow_project_switch=True)
+        assert result == "git:github.com/new/repo"
+        assert common.get_pinned_container("s1") == result
+
+    @patch("common.subprocess.run")
+    def test_transient_non_git_cwd_does_not_replace_git_pin(self, mock_run, tmp_state):
+        mock_run.return_value.returncode = 128
+        mock_run.return_value.stdout = ""
+        common.pin_container("s1", "git:old/repo")
+        result = common.resolve_container_ref("/tmp", "s1", allow_project_switch=True)
+        assert result == "git:old/repo"
+        assert common.get_pinned_container("s1") == "git:old/repo"
+
 
 # --- Atomic write ---
 

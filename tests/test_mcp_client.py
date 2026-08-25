@@ -221,8 +221,8 @@ class TestRelay:
             result = await PalliumMcpClient(ctx).relay_send(
                 message="הודעה → 你好",
                 recipient="codex:@review",
-                runtime="codex",
-                session_ref="session-1",
+                sender_runtime="codex",
+                sender_session_ref="session-1",
             )
         assert result == {"message_id": "m-1"}
         payload = mock_post.call_args.kwargs["json"]
@@ -242,8 +242,8 @@ class TestRelay:
             await PalliumMcpClient(ctx).relay_send(
                 message="reply",
                 recipient="codex:session-1",
-                runtime="codex",
-                session_ref="session-2",
+                sender_runtime="codex",
+                sender_session_ref="session-2",
                 expires_in_seconds=60,
                 in_reply_to="m-1",
                 message_id="m-2",
@@ -252,6 +252,23 @@ class TestRelay:
         assert payload["expires_in_seconds"] == 60
         assert payload["in_reply_to"] == "m-1"
         assert payload["message_id"] == "m-2"
+
+    @pytest.mark.asyncio
+    async def test_reply_uses_delivery_and_scope_only(self, ctx: PalliumContext) -> None:
+        response = _mock_response(json_data={"message_id": "reply-1"})
+        with patch("httpx.AsyncClient.post", return_value=response) as mock_post:
+            result = await PalliumMcpClient(ctx).relay_reply(
+                delivery_id="delivery-1", message="ack ✓", expires_in_seconds=60
+            )
+        assert result == {"message_id": "reply-1"}
+        assert mock_post.call_args.args[0].endswith("/relay/replies")
+        assert mock_post.call_args.kwargs["json"] == {
+            "delivery_id": "delivery-1",
+            "payload": "ack ✓",
+            "expires_in_seconds": 60,
+            "container_ref": "test-container",
+            "actor_ref": "test-actor",
+        }
 
     @pytest.mark.asyncio
     async def test_status_gets_scoped_message(self, ctx: PalliumContext) -> None:
@@ -273,7 +290,9 @@ class TestRelay:
     async def test_name_omits_optional_alias_and_replace_flag(self, ctx: PalliumContext) -> None:
         response = _mock_response(json_data={"session_ref": "session-1"})
         with patch("httpx.AsyncClient.post", return_value=response) as mock_post:
-            await PalliumMcpClient(ctx).relay_name(alias=None, runtime="codex", session_ref="session-1")
+            await PalliumMcpClient(ctx).relay_name(
+                alias=None, current_runtime="codex", current_session_ref="session-1"
+            )
         assert mock_post.call_args.kwargs["json"] == {
             "runtime": "codex",
             "session_ref": "session-1",
