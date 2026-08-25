@@ -217,7 +217,7 @@ async def test_historical_search_empty_echoes_exact_requested_scope(
         server = create_server()
         content, _ = await server.call_tool("pallium_search_history", {
             "query": "missing",
-            "container_ref": "git:github.com/rore/pallium",
+            "container_ref": "git:example.com/example/repository",
             "thread_ref": "任务:1",
             "visibility": "private",
             "request_source_item_id": "请求:42",
@@ -225,7 +225,7 @@ async def test_historical_search_empty_echoes_exact_requested_scope(
 
     assert search_mock.await_args.kwargs["request_source_item_id"] == "请求:42"
     payload = json.loads(content[0].text)
-    assert payload["requested_container_ref"] == "git:github.com/rore/pallium"
+    assert payload["requested_container_ref"] == "git:example.com/example/repository"
     assert "exact" in payload["empty_result_hint"]
     assert len(content[0].text) <= 300
 

@@ -85,4 +85,4 @@ No authorization, retrieval/ranking, endpoint, inferred-link, or launcher behavi
 
 ## Result review
 
-Independent clean-context lower-cost review inspected the full 32-file diff against `origin/main`, including validation-before-retrieval, API/MCP propagation, all three integration callers, nullable schema migration, evaluator direct-link and zero-provider preflight behavior, roadmap alignment, context budgets, and public identifier exposure. Verdict: APPROVED with no actionable findings.
+Independent clean-context lower-cost review inspected the full 32-file diff against `origin/main`, including validation-before-retrieval, API/MCP propagation, all three integration callers, nullable schema migration, evaluator direct-link and zero-provider preflight behavior, roadmap alignment, context budgets, and public identifier exposure. Verdict: APPROVED with no actionable findings. PR review later requested one domain-generic MCP fixture; the real repository identifier and matching assertion were anonymized, and the focused MCP suite passed 35 tests.
