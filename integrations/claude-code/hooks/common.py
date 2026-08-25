@@ -270,9 +270,10 @@ def relay_request(
         return None
 
 
-def format_relay(deliveries: list[dict], budget_chars: int = 2400) -> str:
+def format_relay(deliveries: list[dict], budget_chars: int = 2400) -> tuple[str, list[dict]]:
     """Render complete attributed peer messages; never truncate payloads."""
     chunks: list[str] = []
+    rendered: list[dict] = []
     used = 0
     for delivery in deliveries:
         required = (
@@ -313,8 +314,9 @@ def format_relay(deliveries: list[dict], budget_chars: int = 2400) -> str:
         if used + added > budget_chars:
             break
         chunks.append(chunk)
+        rendered.append(delivery)
         used += added
-    return "\n\n".join(chunks)
+    return "\n\n".join(chunks), rendered
 
 
 def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: str) -> None:

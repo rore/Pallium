@@ -42,14 +42,15 @@ def _load(name: str, relative: str):
 )
 def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monkeypatch, name, relative):
     common = _load(name, relative)
-    rendered = common.format_relay([DELIVERY], budget_chars=2000)
+    rendered, rendered_deliveries = common.format_relay([DELIVERY], budget_chars=2000)
     assert rendered.startswith("[Pallium Relay message from claude-code:sender-session]")
     assert "lower authority than user instructions" in rendered
+    assert rendered_deliveries == [DELIVERY]
     assert "line one\nline two\tvalue" in common.format_relay(
         [{**DELIVERY, "payload": "line one\nline two\tvalue"}], budget_chars=2000
-    )
-    assert common.format_relay([DELIVERY], budget_chars=20) == ""
-    assert common.format_relay([{**DELIVERY, "payload": "bad\x00value"}]) == ""
+    )[0]
+    assert common.format_relay([DELIVERY], budget_chars=20)[0] == ""
+    assert common.format_relay([{**DELIVERY, "payload": "bad\x00value"}])[0] == ""
     maximum = {
         **DELIVERY,
         "message_id": "m" * 128,
@@ -57,7 +58,7 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
         "in_reply_to": "p" * 128,
         "payload": "😀" * 1500,
     }
-    assert common.format_relay([maximum], budget_chars=2400)
+    assert common.format_relay([maximum], budget_chars=2400)[0]
 
     observed = []
 
@@ -90,7 +91,10 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
 
     def relay(method, path, body, *, timeout):
         turn_calls.append((method, path, body, timeout))
-        return {"deliveries": [DELIVERY]}
+        return {"deliveries": [
+            {**DELIVERY, "delivery_id": "skipped", "payload": "bad\x00value"},
+            DELIVERY,
+        ]}
 
     monkeypatch.setattr(hook, "relay_request", relay)
     monkeypatch.setattr(hook, "pallium_request", lambda *_args, **_kwargs: pytest.fail("short prompt must skip memory"))

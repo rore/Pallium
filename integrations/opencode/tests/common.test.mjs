@@ -297,16 +297,17 @@ test("formatRelay preserves complete attributed messages and enforces budget", (
     in_reply_to: "m-0",
   };
   const out = P.formatRelay([delivery], 2000);
-  assert.match(out, /^\[Pallium Relay message from claude-code:session-a\]/);
-  assert.match(out, /lower authority than user instructions/);
-  assert.match(out, /handoff שלום 你好/);
-  assert.match(out, /in_reply_to: m-0/);
-  assert.equal(P.formatRelay([delivery], 20), "");
-  assert.equal(P.formatRelay([{ ...delivery, payload: "bad\u0000value" }], 2000), "");
+  assert.match(out.text, /^\[Pallium Relay message from claude-code:session-a\]/);
+  assert.match(out.text, /lower authority than user instructions/);
+  assert.match(out.text, /handoff שלום 你好/);
+  assert.match(out.text, /in_reply_to: m-0/);
+  assert.deepEqual(out.deliveries, [delivery]);
+  assert.equal(P.formatRelay([delivery], 20).text, "");
+  assert.equal(P.formatRelay([{ ...delivery, payload: "bad\u0000value" }], 2000).text, "");
   const maximum = {
     ...delivery, message_id: "m".repeat(128), sender_session_ref: "s".repeat(255),
     in_reply_to: "p".repeat(128), payload: "😀".repeat(1500),
   };
-  assert.ok(P.formatRelay([maximum], 2400));
-  assert.match(P.formatRelay([{ ...delivery, payload: "line one\nline two\tvalue" }]), /line one\nline two\tvalue/);
+  assert.ok(P.formatRelay([maximum], 2400).text);
+  assert.match(P.formatRelay([{ ...delivery, payload: "line one\nline two\tvalue" }]).text, /line one\nline two\tvalue/);
 });

@@ -529,7 +529,9 @@ class RelaySessionRecord(Base):
 
     __table_args__ = (
         UniqueConstraint("container_ref", "runtime", "session_ref", name="uq_relay_session_scope"),
-        UniqueConstraint("container_ref", "runtime", "alias", name="uq_relay_session_alias"),
+        UniqueConstraint(
+            "container_ref", "actor_ref", "runtime", "alias", name="uq_relay_session_alias"
+        ),
     )
 
 
@@ -657,6 +659,10 @@ class SQLiteSchemaMixin:
         "idx_relay_deliveries_message": (
             "CREATE INDEX IF NOT EXISTS idx_relay_deliveries_message "
             "ON relay_deliveries(message_id)"
+        ),
+        "idx_relay_messages_expiry": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_messages_expiry "
+            "ON relay_messages(expires_at)"
         ),
         # General container+lifecycle lookup. The hot retrieval / consolidation
         # / thread-rebuild / work-trace paths all call

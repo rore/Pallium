@@ -80,7 +80,7 @@ def parse_selector(value: str) -> tuple[str, str, str | None]:
     if not separator:
         return runtime, "runtime", None
     if not target:
-        raise ValueError("recipient session or alias is required after '':''")
+        raise ValueError("recipient session or alias is required after ':'")
     if target.startswith("@"):
         return runtime, "alias", validate_alias(target[1:])
     return runtime, "session", _opaque(target, "recipient session_ref")

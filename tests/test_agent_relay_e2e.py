@@ -115,6 +115,29 @@ def test_full_broadcast_snapshot_alias_transfer_reply_and_lifecycle(client):
     assert _name(client, "codex", "review-new", "review").status_code == 200
 
 
+def test_aliases_are_actor_scoped_and_replacement_cannot_clear_another_actor(client):
+    _turn(client, "codex", "actor-one-old", actor_ref="actor-one")
+    _turn(client, "codex", "actor-one-new", actor_ref="actor-one")
+    _turn(client, "codex", "actor-two-target", actor_ref="actor-two")
+    _turn(client, "claude-code", "actor-two-sender", actor_ref="actor-two")
+
+    assert _name(
+        client, "codex", "actor-one-old", "review", actor_ref="actor-one"
+    ).status_code == 200
+    assert _name(
+        client, "codex", "actor-two-target", "review", actor_ref="actor-two"
+    ).status_code == 200
+    assert _name(
+        client, "codex", "actor-one-new", "review",
+        actor_ref="actor-one", replace_existing=True,
+    ).status_code == 200
+
+    sent = _send(
+        client, "claude-code", "actor-two-sender", "codex:@review", actor_ref="actor-two"
+    ).json()
+    assert sent["deliveries"][0]["recipient_session_ref"] == "actor-two-target"
+
+
 @pytest.mark.parametrize(
     ("payload", "expected"),
     [
@@ -266,18 +289,20 @@ def test_dormant_hidden_default_exact_addressable_and_reactivated(client, relay_
 
 
 def test_relay_has_no_memory_retrieval_or_processing_side_effects(client, relay_storage):
-    table_names = (
-        "source_items",
-        "memory_objects",
-        "query_audit_log",
-        "historical_lookup_reuse_event",
-        "package_processing_status",
-        "index_entries",
-    )
+    count_queries = {
+        "source_items": text("SELECT COUNT(*) FROM source_items"),
+        "memory_objects": text("SELECT COUNT(*) FROM memory_objects"),
+        "query_audit_log": text("SELECT COUNT(*) FROM query_audit_log"),
+        "historical_lookup_reuse_event": text(
+            "SELECT COUNT(*) FROM historical_lookup_reuse_event"
+        ),
+        "package_processing_status": text("SELECT COUNT(*) FROM package_processing_status"),
+        "index_entries": text("SELECT COUNT(*) FROM index_entries"),
+    }
     with relay_storage._engine.begin() as connection:
         before = {
-            name: connection.execute(text(f"SELECT COUNT(*) FROM {name}")).scalar_one()
-            for name in table_names
+            name: connection.execute(statement).scalar_one()
+            for name, statement in count_queries.items()
         }
 
     _turn(client, "claude-code", "sender")
@@ -289,8 +314,8 @@ def test_relay_has_no_memory_retrieval_or_processing_side_effects(client, relay_
 
     with relay_storage._engine.begin() as connection:
         after = {
-            name: connection.execute(text(f"SELECT COUNT(*) FROM {name}")).scalar_one()
-            for name in table_names
+            name: connection.execute(statement).scalar_one()
+            for name, statement in count_queries.items()
         }
     assert after == before
 
@@ -353,6 +378,25 @@ def test_expiry_boundaries_and_complete_message_turn_budget(client):
     assert _ack(client, claimed[0]).status_code == 200
     assert _turn(client, "codex", "budget-target")["deliveries"]
 
+
+def test_small_turn_budget_skips_oversized_message_without_blocking_later_delivery(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "small-budget-target")
+    assert _send(
+        client, "claude-code", "sender", "codex:small-budget-target",
+        "x" * 1000, message_id="oversized-first",
+    ).status_code == 200
+    assert _send(
+        client, "claude-code", "sender", "codex:small-budget-target",
+        "fits", message_id="fits-second",
+    ).status_code == 200
+    claimed = _turn(client, "codex", "small-budget-target", max_chars=400)["deliveries"]
+    assert [delivery["message_id"] for delivery in claimed] == ["fits-second"]
+    assert _ack(client, claimed[0]).status_code == 200
+    assert (
+        _turn(client, "codex", "small-budget-target")["deliveries"][0]["message_id"]
+        == "oversized-first"
+    )
 
 def test_non_relay_router_returns_501_only_for_relay(client):
     app = FastAPI()

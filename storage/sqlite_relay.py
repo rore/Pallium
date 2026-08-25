@@ -174,7 +174,7 @@ class SQLiteRelayMixin:
                 ])
                 rendered_chars = len("\n".join(lines)) + (2 if claimed else 0)
                 if used + rendered_chars > max_chars:
-                    break
+                    continue
                 token = f"relay-claim-{uuid.uuid4().hex}"
                 delivery.state = "claimed"
                 delivery.claim_token = token
@@ -270,6 +270,7 @@ class SQLiteRelayMixin:
                         select(RelaySessionRecord).where(
                             RelaySessionRecord.container_ref == container_ref,
                             RelaySessionRecord.runtime == runtime,
+                            RelaySessionRecord.actor_ref == actor_ref,
                             RelaySessionRecord.alias == alias,
                             RelaySessionRecord.id != row.id,
                         )

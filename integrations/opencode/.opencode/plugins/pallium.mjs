@@ -334,7 +334,7 @@ export default async ({ client, directory, worktree } = {}) => {
           max_chars: 2400,
         }, 750);
         const deliveries = (relayResponse && relayResponse.deliveries) || [];
-        const relayText = pallium.formatRelay(deliveries, 2400);
+        const { text: relayText, deliveries: renderedDeliveries } = pallium.formatRelay(deliveries, 2400);
         const queued = drainInjections(sessionId);
         const parts = [];
         let used = 0;
@@ -355,7 +355,7 @@ export default async ({ client, directory, worktree } = {}) => {
         } else {
           output.system.push(text);
         }
-        if (relayText) await pallium.acknowledgeRelay(deliveries, containerRef, actorRef);
+        if (relayText) await pallium.acknowledgeRelay(renderedDeliveries, containerRef, actorRef);
       } catch (e) {
         log("error", `system.transform failed: ${e && e.message}`);
       }

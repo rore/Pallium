@@ -335,6 +335,12 @@ test("hooks never throw even when the daemon is unreachable", async () => {
 test("system.transform injects Relay before memory and acknowledges after mutation", async () => {
   const relay = {
     deliveries: [{
+      delivery_id: "d-skipped", claim_token: "claim-skipped", message_id: "m-skipped",
+      sender_runtime: "claude-code", sender_session_ref: "sender-a",
+      recipient: "opencode:sesRelay", payload: "bad\u0000value",
+      redacted: false, in_reply_to: null,
+      created_at: "2026-08-25T10:00:00+00:00", expires_at: "2026-08-26T10:00:00+00:00",
+    }, {
       delivery_id: "d-1", claim_token: "claim-1", message_id: "m-1",
       sender_runtime: "claude-code", sender_session_ref: "sender-a",
       recipient: "opencode:sesRelay", payload: "😀".repeat(1500),
@@ -366,6 +372,7 @@ test("system.transform injects Relay before memory and acknowledges after mutati
   assert.equal(turn.body.session_ref, "sesRelay");
   assert.equal(turn.body.max_chars, 2400);
   const ack = fetchCalls.find((call) => call.url.includes("/relay/deliveries/ack"));
+  assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/deliveries/ack")).length, 1);
   assert.deepEqual(
     { delivery_id: ack.body.delivery_id, claim_token: ack.body.claim_token },
     { delivery_id: "d-1", claim_token: "claim-1" },

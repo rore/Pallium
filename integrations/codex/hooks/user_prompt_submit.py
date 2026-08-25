@@ -56,6 +56,7 @@ def main() -> None:
             return
 
         deliveries = []
+        rendered_deliveries = []
         relay_output = ""
         if has_session:
             relay_response = relay_request(
@@ -71,7 +72,7 @@ def main() -> None:
                 timeout=0.75,
             )
             deliveries = (relay_response or {}).get("deliveries") or []
-            relay_output = format_relay(deliveries, budget_chars=2400)
+            relay_output, rendered_deliveries = format_relay(deliveries, budget_chars=2400)
 
         memory_output = ""
         if len(content) >= 20:
@@ -110,7 +111,9 @@ def main() -> None:
         if output:
             emit_context(output, "UserPromptSubmit")
             if relay_output:
-                acknowledge_relay(deliveries, container_ref=container_ref, actor_ref=actor_ref)
+                acknowledge_relay(
+                    rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref
+                )
     except Exception as exc:
         print(f"pallium user_prompt_submit hook error: {exc}", file=sys.stderr)
 

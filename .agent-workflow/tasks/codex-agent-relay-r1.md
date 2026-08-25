@@ -34,7 +34,7 @@ R0 established Claude Code `UserPromptSubmit`, Codex `UserPromptSubmit`/`additio
 - Broadcast snapshots non-closed sessions seen within 24 hours. Exact ID/alias may target a registered dormant session, never a closed one.
 - R1 retains session rows but hides dormant/closed rows by default. Purge waits for observed scale or UX pain.
 - Fixed bounds: runtimes `claude-code|codex|opencode`; 1,500 Unicode code points per message; 24-hour default expiry, accepted 60 seconds–7 days; 25 broadcast recipients; at most 3 complete messages within a 2,400-character Relay turn budget.
-- Alias uniqueness is `(container_ref, runtime, alias)`; `replace_existing` affects future sends only. Titles are metadata only.
+- Alias uniqueness is `(container_ref, actor_ref, runtime, alias)`; `replace_existing` affects only that actor's future sends. Titles are metadata only.
 - Every operation requires nonblank canonical container and claimed actor equality. This is local scoping, not authenticated cross-user authorization.
 - Payloads use the existing generic secret redactor before persistence and report whether redaction occurred.
 - Close atomically marks the session closed and releases its alias. Pinned deliveries remain unclaimable until expiry or re-registration; re-registration reactivates without restoring the alias.
@@ -93,7 +93,9 @@ Implemented the scoped R1 Relay domain, SQLite persistence, HTTP and MCP surface
 - Full Python regression: 3,884 passed, 23 skipped, 2 xfailed.
 - Import-linter: clean; workflow checker: clean; `git diff --check`: clean.
 - E2E drives public HTTP plus real hook/plugin entrypoints and asserts public status, lifecycle, concurrency, bounds, Unicode, expiry, scope isolation, and zero memory/retrieval state.
-- `apply_patch` hit documented Windows error 1385; edits used narrow deterministic replacements limited to named files.
+- `apply_patch` hit documented Windows error 1385; edits used narrow deterministic replacements and uniquely anchored Git patches limited to named files.
 
+
+PR review found actor-crossing alias replacement, acknowledge-all after a renderer skip, a small-budget head-of-line block, missing expiry indexing, fixed-table dynamic SQL, and a malformed selector error. Each was verified and corrected. Focused post-review verification: 28 Python Relay E2E/hook tests and 40 OpenCode tests passed; static SQL removed the reported S608 sites; `git diff --check` passed. The docstring suggestion was declined as unrelated churn because repository checks do not require per-function docstrings.
 ## Result review
 Independent clean-context review found two P1 delivery-budget defects: approximate storage sizing could claim an unrenderable maximum envelope, and a claimed tail could be acknowledged without injection. Corrected by selecting claims with the exact rendered envelope, using a 2,400-code-point Relay slice inside the unchanged 4,000-character combined cap, and aligning Python/OpenCode code-point arithmetic. Added max-payload/max-identity HTTP E2E and astral Relay-plus-memory runtime coverage. Re-review: RESOLVED, no remaining P1/P2 findings.
