@@ -44,8 +44,9 @@ for every resolved recipient session. Reliability may use at-least-once delivery
 with stable message and delivery identifiers; delivery means the message reached
 that session's runtime context, not that the receiving agent understood or used it.
 
-Replies reuse the same send operation, optionally linked with `in_reply_to`; they
-do not create a continuously running conversation.
+Replies use a received delivery ID. Pallium derives both endpoints and the
+`in_reply_to` parent, so agents cannot accidentally impersonate either side; replies do
+not create a continuously running conversation.
 
 ## Addressing Boundary
 
@@ -109,8 +110,8 @@ The smallest viable R1 is a hook-time mailbox:
   and idempotent acknowledgement
 - treat acknowledgement as successful runtime injection, never as evidence that
   the receiving model used the message
-- represent replies as another send with optional `in_reply_to`, without adding
-  conversation state
+- derive replies from a delivered delivery ID, with an idempotent retry and no
+  model-supplied sender or recipient; do not add conversation state
 
 Minimum persisted message state is the message ID, bounded payload, claimed sender
 runtime and session, original recipient selector, container and actor scope,
@@ -154,11 +155,13 @@ R1 is implemented as the full scoped slice, not a disposable proof of concept:
 
 - isolated SQLite session, message, and per-recipient delivery state
 - runtime broadcast snapshots plus exact-session and transferable-alias addressing
-- bounded, redacted send; linked replies; status; lease recovery; idempotent ack
+- bounded, redacted send; delivery-derived idempotent replies; status; lease recovery; idempotent ack
 - HTTP and MCP surfaces with bounded tool responses
 - next-turn delivery in Claude Code, Codex, and OpenCode with Relay-first context budgets
 - session discovery, dormancy, close/reactivation, and alias-release behavior
 - public-surface E2E coverage for routing, bounds, lifecycle, concurrency, expiry, scope isolation, and absence of memory/retrieval side effects
+
+Live Claude Code/Codex validation confirmed alias routing, next-turn delivery, acknowledgement, and round-trip messaging. It also exposed three R1 UX defects now covered by the contract: current identity must come from injected `agent_ref`/`thread_ref`, replies must derive endpoints from the received `delivery_id`, and Claude/Codex must follow deliberate Git-project changes while ignoring transient non-Git cwd drift. A project transition best-effort closes the old scoped Relay session and releases its alias; queued deliveries remain in the old project.
 
 The track remains `in-progress` because the product hypothesis is not yet proven. The next work is real-use measurement against the R1 decision gate, not automatic expansion into R2.
 ### R2 — Future-recipient addressing investigation

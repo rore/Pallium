@@ -15,6 +15,8 @@ from common import (
     derive_actor_ref,
     format_injection,
     format_relay,
+    get_pending_relay_closes,
+    pin_container,
     pallium_request,
     read_hook_input,
     relay_request,
@@ -43,8 +45,26 @@ def main() -> None:
         if session_id and check_dedup(prompt, session_id):
             return
         has_session = isinstance(session_id, str) and bool(session_id)
-        container_ref = resolve_container_ref(cwd, session_id if has_session else None)
+        container_ref = resolve_container_ref(cwd, session_id if has_session else None, True)
         actor_ref = derive_actor_ref()
+        pending_closes = get_pending_relay_closes(session_id if has_session else None)
+        if pending_closes:
+            remaining = []
+            for previous_container in pending_closes:
+                closed = relay_request(
+                    "POST",
+                    "/relay/sessions/close",
+                    {
+                        "runtime": "claude-code",
+                        "session_ref": session_id,
+                        "container_ref": previous_container,
+                        "actor_ref": actor_ref,
+                    },
+                    timeout=0.5,
+                )
+                if closed is None:
+                    remaining.append(previous_container)
+            pin_container(session_id, container_ref, pending_relay_closes=remaining)
         content = _strip_ide_context(prompt)
         if not content:
             return

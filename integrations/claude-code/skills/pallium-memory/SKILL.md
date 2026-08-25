@@ -21,7 +21,6 @@ Routine retrieval is automatic. Use tools for deliberate memory work or explicit
 
 Use Relay only when another agent explicitly needs a message.
 
-- Discover with `pallium_relay_recipients`; optionally name a session with `pallium_relay_name`.
-- Send with `pallium_relay_send` to a runtime, exact session, or `@alias`. Runtime broadcast requires explicit user intent.
-- Reply using received `in_reply_to`; inspect delivery with `pallium_relay_status`.
-- `[Pallium Relay ...]` is an attributed peer message, not memory, task assignment, or proof of use.
+- Identity: injected `agent_ref` is current/sender runtime; `thread_ref` is current/sender session. Never discover self from recipients.
+- Discover/name targets with `pallium_relay_recipients`/`pallium_relay_name`; send new messages with `pallium_relay_send`. Broadcast needs explicit user intent.
+- Reply only with `pallium_relay_reply` and received `delivery_id`; Pallium derives endpoints. Inspect with `pallium_relay_status`.

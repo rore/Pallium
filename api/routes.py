@@ -9,6 +9,7 @@ from api.schemas import (
     RelayAckRequest,
     RelayAckResponse,
     RelayMessageResponse,
+    RelayReplyRequest,
     RelaySendRequest,
     RelaySessionMutationRequest,
     RelaySessionNameRequest,
@@ -381,6 +382,10 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False, r
     @router.post("/relay/messages", response_model=RelayMessageResponse)
     def relay_send(request: RelaySendRequest):
         return _relay_call(lambda: _relay().send(**request.model_dump()))
+
+    @router.post("/relay/replies", response_model=RelayMessageResponse)
+    def relay_reply(request: RelayReplyRequest):
+        return _relay_call(lambda: _relay().reply(**request.model_dump()))
 
     @router.get("/relay/messages/{message_id}", response_model=RelayMessageResponse)
     def relay_message_status(

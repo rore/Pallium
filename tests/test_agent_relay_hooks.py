@@ -45,6 +45,8 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
     rendered, rendered_deliveries = common.format_relay([DELIVERY], budget_chars=2000)
     assert rendered.startswith("[Pallium Relay message from claude-code:sender-session]")
     assert "lower authority than user instructions" in rendered
+    assert "delivery_id: relay-delivery-1" in rendered
+    assert "pallium_relay_reply" in rendered
     assert rendered_deliveries == [DELIVERY]
     assert "line one\nline two\tvalue" in common.format_relay(
         [{**DELIVERY, "payload": "line one\nline two\tvalue"}], budget_chars=2000
@@ -85,6 +87,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     payload = {"cwd": ".", "session_id": "target-session", "prompt": "hi"}
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
     turn_calls = []
@@ -137,6 +140,64 @@ def test_codex_short_prompt_delivers_relay_before_memory_gate(monkeypatch):
 
     _exercise_short_prompt(hook, monkeypatch, codex=True)
 
+@pytest.mark.parametrize(
+    ("relative", "runtime", "imported"),
+    [
+        ("integrations/claude-code/hooks/user_prompt_submit.py", "claude-code", False),
+        ("integrations/codex/hooks/user_prompt_submit.py", "codex", True),
+    ],
+)
+def test_failed_project_close_is_retried(
+    monkeypatch, relative, runtime, imported
+):
+    if imported:
+        from integrations.codex.hooks import user_prompt_submit as hook
+    else:
+        hook = _load("claude_switch", relative)
+    monkeypatch.setattr(
+        hook, "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "target", "prompt": "hi"},
+    )
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:new/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    state = {"pending": ["git:old/repo"]}
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: list(state["pending"]))
+    monkeypatch.setattr(
+        hook, "pin_container",
+        lambda _session, _container, *, pending_relay_closes: state.update(
+            pending=list(pending_relay_closes)
+        ),
+    )
+    calls = []
+    close_attempts = 0
+
+    def relay(method, path, body, *, timeout):
+        nonlocal close_attempts
+        calls.append((method, path, body, timeout))
+        if path == "/relay/sessions/close":
+            close_attempts += 1
+            return None if close_attempts == 1 else {"state": "closed"}
+        return {"deliveries": []}
+
+    monkeypatch.setattr(hook, "relay_request", relay)
+    monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: None)
+    if imported:
+        monkeypatch.setattr(hook, "emit_context", lambda *_: None)
+    for _ in range(2):
+        with pytest.raises(SystemExit):
+            hook.main()
+    assert [call[1] for call in calls] == [
+        "/relay/sessions/close", "/relay/turn",
+        "/relay/sessions/close", "/relay/turn",
+    ]
+    assert calls[0][2] == {
+        "runtime": runtime,
+        "session_ref": "target",
+        "container_ref": "git:old/repo",
+        "actor_ref": "actor",
+    }
+    assert state["pending"] == []
 
 @pytest.mark.parametrize(
     ("relative", "imported"),
@@ -171,6 +232,7 @@ def test_codex_combined_output_is_relay_first_and_bounded(monkeypatch):
     }
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
     monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: {"deliveries": [DELIVERY]})

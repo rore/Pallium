@@ -791,6 +791,14 @@ class RelaySendRequest(BaseModel):
     message_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
+class RelayReplyRequest(BaseModel):
+    delivery_id: str = Field(min_length=1, max_length=128)
+    payload: str = Field(min_length=1, max_length=1500)
+    container_ref: str = Field(min_length=1, max_length=512)
+    actor_ref: str = Field(min_length=1, max_length=255)
+    expires_in_seconds: int = Field(default=86400, ge=60, le=604800)
+
+
 class RelayAckRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)
     claim_token: str = Field(min_length=1, max_length=128)

@@ -522,19 +522,22 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
 
     @server.tool()
     async def pallium_relay_name(
-        runtime: str,
-        session_ref: str,
+        current_runtime: str,
+        current_session_ref: str,
         alias: str | None = None,
         replace_existing: bool = False,
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Set the optional Pallium Relay name for one immutable session."""
+        """Name the current Relay session. Copy current_runtime from injected agent_ref and current_session_ref from injected thread_ref; never discover the current session from recipient listings."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_name(
-            alias=alias, runtime=runtime, session_ref=session_ref, replace_existing=replace_existing,
+            alias=alias,
+            current_runtime=current_runtime,
+            current_session_ref=current_session_ref,
+            replace_existing=replace_existing,
         )
         return _relay_text(result)
 
@@ -542,26 +545,41 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     async def pallium_relay_send(
         message: str,
         recipient: str,
-        runtime: str,
-        session_ref: str,
+        sender_runtime: str,
+        sender_session_ref: str,
         expires_in_seconds: int | None = None,
-        in_reply_to: str | None = None,
-        message_id: str | None = None,
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Send bounded text to an explicit Relay selector."""
+        """Send new bounded text to an explicit Relay selector. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for a received message."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_send(
             message=message,
             recipient=recipient,
-            runtime=runtime,
-            session_ref=session_ref,
+            sender_runtime=sender_runtime,
+            sender_session_ref=sender_session_ref,
             expires_in_seconds=expires_in_seconds,
-            in_reply_to=in_reply_to,
-            message_id=message_id,
+        )
+        return _relay_text(result)
+
+    @server.tool()
+    async def pallium_relay_reply(
+        delivery_id: str,
+        message: str,
+        expires_in_seconds: int | None = None,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
+    ) -> str:
+        """Reply once to a received Relay delivery. Copy delivery_id from the attributed Relay block; Pallium derives both endpoints and the parent message deterministically."""
+        ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        result = await PalliumMcpClient(ctx).relay_reply(
+            delivery_id=delivery_id,
+            message=message,
+            expires_in_seconds=expires_in_seconds,
         )
         return _relay_text(result)
 

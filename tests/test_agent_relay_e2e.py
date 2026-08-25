@@ -40,6 +40,13 @@ def _name(client, runtime: str, session: str, alias, **extra):
     )
 
 
+def _reply(client, delivery_id: str, payload: str = "reply", **extra):
+    return client.post(
+        "/relay/replies",
+        json={"delivery_id": delivery_id, "payload": payload, **SCOPE, **extra},
+    )
+
+
 def _status(client, message_id: str, **scope):
     return client.get("/relay/messages/" + message_id, params={**SCOPE, **scope})
 
@@ -210,6 +217,59 @@ def test_message_id_idempotency_redaction_and_reply_scope(client):
         client, "claude-code", "sender", "codex:target", "reply", in_reply_to="missing"
     )
     assert wrong_scope_parent.status_code == 404
+
+
+def test_delivery_derived_reply_is_attributed_scoped_and_idempotent(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    parent = _send(client, "claude-code", "sender", "codex:target", "question").json()
+    delivery = parent["deliveries"][0]
+
+    assert _reply(client, delivery["delivery_id"]).status_code == 409
+    claimed = _turn(client, "codex", "target")["deliveries"][0]
+    assert _reply(client, claimed["delivery_id"]).status_code == 409
+    assert _ack(client, claimed).status_code == 200
+
+    first = _reply(client, claimed["delivery_id"], "תשובה → 你好")
+    assert first.status_code == 200
+    body = first.json()
+    assert body["sender_runtime"] == "codex"
+    assert body["sender_session_ref"] == "target"
+    assert body["recipient"] == "claude-code:sender"
+    assert body["in_reply_to"] == parent["message_id"]
+    assert body["payload"] == "תשובה → 你好"
+
+    duplicate = _reply(client, claimed["delivery_id"], "תשובה → 你好")
+    assert duplicate.status_code == 200
+    assert duplicate.json()["message_id"] == body["message_id"]
+    assert len(duplicate.json()["deliveries"]) == 1
+    assert _reply(client, claimed["delivery_id"], "different").status_code == 409
+
+    assert _reply(client, "missing").status_code == 404
+    assert _reply(client, claimed["delivery_id"], actor_ref="different").status_code == 404
+    assert _reply(client, claimed["delivery_id"], container_ref="git:other").status_code == 404
+
+
+def test_delivery_derived_reply_chain_and_boundaries(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    parent = _send(client, "claude-code", "sender", "codex:target", "question").json()
+    delivered = _turn(client, "codex", "target")["deliveries"][0]
+    assert _ack(client, delivered).status_code == 200
+
+    assert _reply(client, delivered["delivery_id"], "x" * 1500, expires_in_seconds=60).status_code == 200
+    assert _reply(client, delivered["delivery_id"], "x" * 1501).status_code == 422
+    assert _reply(client, delivered["delivery_id"], "x", expires_in_seconds=59).status_code == 422
+    assert _reply(client, delivered["delivery_id"], "x", expires_in_seconds=604801).status_code == 422
+
+    reply_delivery = _turn(client, "claude-code", "sender")["deliveries"][0]
+    assert _ack(client, reply_delivery).status_code == 200
+    second = _reply(client, reply_delivery["delivery_id"], "second reply")
+    assert second.status_code == 200
+    assert second.json()["sender_runtime"] == "claude-code"
+    assert second.json()["sender_session_ref"] == "sender"
+    assert second.json()["recipient"] == "codex:target"
+    assert second.json()["in_reply_to"].startswith("relay-reply-")
 
 
 def test_broadcast_zero_exact_max_and_over_max(client):

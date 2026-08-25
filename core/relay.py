@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from datetime import datetime, timezone
@@ -96,6 +97,7 @@ class RelayService:
             "relay_list_sessions",
             "relay_name_session",
             "relay_send",
+            "relay_delivery_context",
             "relay_message_status",
             "relay_ack",
         )
@@ -222,6 +224,37 @@ class RelayService:
             in_reply_to=None if in_reply_to is None else _opaque(in_reply_to, "in_reply_to", maximum=128),
             broadcast_recent_seconds=RELAY_RECENT_SECONDS,
             broadcast_max_recipients=RELAY_BROADCAST_MAX_RECIPIENTS,
+            now=now,
+        )
+
+    def reply(
+        self,
+        *,
+        delivery_id: str,
+        payload: str,
+        container_ref: str,
+        actor_ref: str,
+        expires_in_seconds: int = RELAY_DEFAULT_EXPIRY_SECONDS,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        container, actor = self._scope(container_ref, actor_ref)
+        delivery = _opaque(delivery_id, "delivery_id", maximum=128)
+        context = self._store.relay_delivery_context(
+            delivery_id=delivery,
+            container_ref=container,
+            actor_ref=actor,
+        )
+        reply_id = "relay-reply-" + hashlib.sha256(delivery.encode("utf-8")).hexdigest()
+        return self.send(
+            sender_runtime=context["sender_runtime"],
+            sender_session_ref=context["sender_session_ref"],
+            recipient=context["recipient"],
+            payload=payload,
+            container_ref=container,
+            actor_ref=actor,
+            expires_in_seconds=expires_in_seconds,
+            in_reply_to=context["message_id"],
+            message_id=reply_id,
             now=now,
         )
 
