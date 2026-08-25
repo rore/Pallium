@@ -477,6 +477,16 @@ class QueueHealthResponse(BaseModel):
     retention: RetentionHealthResponse
 
 
+class RetryFailedProcessingRequest(BaseModel):
+    failure_category: str = Field(min_length=1, max_length=64)
+    limit: int = Field(default=1000, ge=1, le=1000)
+
+
+class RetryFailedProcessingResponse(BaseModel):
+    source_items: int
+    package_tasks: int
+
+
 class FlagMemoryRequest(BaseModel):
     reason: str = Field(min_length=1)
     source_ref: str = Field(min_length=1)

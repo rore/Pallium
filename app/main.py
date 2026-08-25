@@ -448,6 +448,27 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         except Exception:
             logger.warning("status: funnel count failed", exc_info=True)
 
+        ingestion_issues = []
+        for package_name, package in resolved_config.semantic_packages.items():
+            if (
+                not package.enabled
+                or package_name not in service._semantic_plugins
+                or package.implementation == "demo_agent_memory"
+            ):
+                continue
+            provider = resolved_config.llm_providers.get(package.llm_provider or "")
+            if provider is not None and (provider.api_key_env or provider.api_key_file) and not provider.api_key:
+                ingestion_issues.append({
+                    "package": package_name,
+                    "provider": provider.name,
+                    "reason": "missing_api_key",
+                    "api_key_env": provider.api_key_env,
+                })
+        ingestion_info = {
+            "status": "degraded" if ingestion_issues else "ok",
+            "issues": ingestion_issues,
+        }
+
         return JSONResponse(content={
             "pending_items": pending_count,
             "oldest_pending_age_seconds": oldest_pending_age,
@@ -458,6 +479,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "storage": storage_info,
             "vector_index_ready": vector_index_ready,
             "embedding_provider_ok": embedding_provider_ok,
+            "ingestion": ingestion_info,
             "vector_expected": vector_expected,
             "vector_rebuild": rebuild_info,
             "uptime_seconds": uptime,

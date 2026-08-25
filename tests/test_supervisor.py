@@ -99,6 +99,28 @@ def _counter_stop(n):
 _BASE_ARGS = ["--host", "127.0.0.1", "--port", "19999", "--processors", "1", "--cleaners", "0"]
 
 
+def test_zero_processors_keeps_api_available_without_worker():
+    api_proc = FakePopen(poll_returns=[])
+    commands = []
+
+    def popen_factory(cmd, **kwargs):
+        commands.append(cmd)
+        return api_proc
+
+    result = run_supervisor(
+        ["--host", "127.0.0.1", "--port", "19999", "--processors", "0", "--cleaners", "0"],
+        popen_factory=popen_factory,
+        sleep_fn=lambda _: None,
+        wait_for_api_fn=lambda *_, **__: True,
+        should_stop=_counter_stop(0),
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 0
+    assert len(commands) == 1
+    assert "serve" in commands[0]
+
+
 # ---------------------------------------------------------------------------
 # Test 1: health probe kills API after consecutive failures
 # ---------------------------------------------------------------------------

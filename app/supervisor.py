@@ -388,8 +388,8 @@ def run_supervisor(
     if parsed.reload:
         emit_runtime_log("supervisor", "supervisor mode does not support --reload in v1", stderr=True)
         return 2
-    if parsed.processors < 1:
-        raise ValueError("--processors must be >= 1")
+    if parsed.processors < 0:
+        raise ValueError("--processors must be >= 0")
     if parsed.cleaners < 0:
         raise ValueError("--cleaners must be >= 0")
 

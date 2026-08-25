@@ -176,6 +176,16 @@ A full caller-surface pass added one continuous MCP → HTTP → SQLite → hook
 - combined E2E coverage now exercises the per-turn cap, close/reactivate behavior, queued delivery preservation, idempotent acknowledgement, reply routing, Unicode, and full alias lifecycle
 
 A live two-Codex run independently confirmed alias conflict/transfer, alias-addressed delivery on an unrelated natural turn, delivery-derived reply, visible Relay attribution, and consume-once behavior. Claude Code and OpenCode retain harness-specific automated coverage through their real hook/plugin surfaces; an actual paid model-to-model run is a release smoke check, not a substitute for those deterministic tests.
+
+#### R1 operational visibility - complete (2026-08-25)
+
+The local dashboard now treats Relay as a peer operational subsystem. Its
+read-only summary reports activity, effective pending/expired state,
+send-to-delivery latency, retries, and recent/dormant/closed sessions for all three
+supported runtimes without exposing payloads or session identifiers. Waiting
+remains neutral because delivery is next-turn; expiry in the recent window is
+the actionable failure signal. This is operational telemetry only and does not
+claim that a delivered message was useful.
 ### R2 — Future-recipient addressing investigation
 
 Investigate only if R1 repeatedly exposes the need. Do not assume `work_ref` solves

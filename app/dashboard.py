@@ -9,12 +9,15 @@ from pathlib import Path
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
 from core.subject import subject_text_for_payload
-from storage.sqlite_schema import MemoryFeedbackRecord, MemoryFlagRecord, MemoryObjectRecord
+from storage.sqlite_schema import (
+    MemoryFeedbackRecord, MemoryFlagRecord, MemoryObjectRecord,
+    RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +174,176 @@ def mount_dashboard(app: FastAPI) -> None:
             })
 
         return JSONResponse(content={"items": items})
+
+    @app.get("/dashboard/api/relay/summary")
+    def dashboard_relay_summary() -> JSONResponse:
+        service = app.state.pallium_service
+        storage = service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=24)
+        active_states = ("pending", "claimed")
+
+        def utc(value):
+            if value is None:
+                return None
+            return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+        def percentile(values, fraction):
+            if not values:
+                return None
+            ordered = sorted(values)
+            index = max(0, math.ceil(len(ordered) * fraction) - 1)
+            return round(ordered[index], 3)
+
+        with storage._session_factory() as session:
+            messages_total = session.scalar(select(func.count()).select_from(RelayMessageRecord)) or 0
+            messages_24h = session.scalar(
+                select(func.count()).select_from(RelayMessageRecord).where(
+                    RelayMessageRecord.created_at >= cutoff
+                )
+            ) or 0
+            replies_24h = session.scalar(
+                select(func.count()).select_from(RelayMessageRecord).where(
+                    RelayMessageRecord.created_at >= cutoff,
+                    RelayMessageRecord.in_reply_to.isnot(None),
+                )
+            ) or 0
+            deliveries_total = session.scalar(select(func.count()).select_from(RelayDeliveryRecord)) or 0
+            delivered_total = session.scalar(
+                select(func.count()).select_from(RelayDeliveryRecord).where(
+                    RelayDeliveryRecord.state == "delivered"
+                )
+            ) or 0
+            delivered_24h = session.scalar(
+                select(func.count()).select_from(RelayDeliveryRecord).where(
+                    RelayDeliveryRecord.state == "delivered",
+                    RelayDeliveryRecord.delivered_at >= cutoff,
+                )
+            ) or 0
+            pending_now = session.scalar(
+                select(func.count())
+                .select_from(RelayDeliveryRecord)
+                .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                .where(
+                    RelayDeliveryRecord.state.in_(active_states),
+                    RelayMessageRecord.expires_at > now,
+                )
+            ) or 0
+            expired_total = session.scalar(
+                select(func.count())
+                .select_from(RelayDeliveryRecord)
+                .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                .where(or_(
+                    RelayDeliveryRecord.state == "expired",
+                    and_(
+                        RelayDeliveryRecord.state.in_(active_states),
+                        RelayMessageRecord.expires_at <= now,
+                    ),
+                ))
+            ) or 0
+            expired_24h = session.scalar(
+                select(func.count())
+                .select_from(RelayDeliveryRecord)
+                .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                .where(
+                    RelayMessageRecord.expires_at >= cutoff,
+                    RelayMessageRecord.expires_at <= now,
+                    RelayDeliveryRecord.state != "delivered",
+                )
+            ) or 0
+            oldest_pending = session.scalar(
+                select(func.min(RelayMessageRecord.created_at))
+                .select_from(RelayDeliveryRecord)
+                .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                .where(
+                    RelayDeliveryRecord.state.in_(active_states),
+                    RelayMessageRecord.expires_at > now,
+                )
+            )
+            latency_rows = session.execute(
+                select(
+                    RelayMessageRecord.created_at,
+                    RelayDeliveryRecord.claimed_at,
+                    RelayDeliveryRecord.delivered_at,
+                    RelayDeliveryRecord.attempts,
+                )
+                .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                .where(
+                    RelayDeliveryRecord.state == "delivered",
+                    RelayDeliveryRecord.delivered_at >= cutoff,
+                )
+            ).all()
+
+            runtimes = {}
+            for runtime in ("claude-code", "codex", "opencode"):
+                recent = session.scalar(
+                    select(func.count()).select_from(RelaySessionRecord).where(
+                        RelaySessionRecord.runtime == runtime,
+                        RelaySessionRecord.state != "closed",
+                        RelaySessionRecord.last_seen_at >= cutoff,
+                    )
+                ) or 0
+                dormant = session.scalar(
+                    select(func.count()).select_from(RelaySessionRecord).where(
+                        RelaySessionRecord.runtime == runtime,
+                        RelaySessionRecord.state != "closed",
+                        RelaySessionRecord.last_seen_at < cutoff,
+                    )
+                ) or 0
+                closed = session.scalar(
+                    select(func.count()).select_from(RelaySessionRecord).where(
+                        RelaySessionRecord.runtime == runtime,
+                        RelaySessionRecord.state == "closed",
+                    )
+                ) or 0
+                runtimes[runtime] = {"recent": recent, "dormant": dormant, "closed": closed}
+
+        queue_wait = []
+        acknowledgement = []
+        total_latency = []
+        redeliveries = 0
+        for created_at, claimed_at, delivered_at, attempts in latency_rows:
+            created = utc(created_at)
+            claimed = utc(claimed_at)
+            delivered = utc(delivered_at)
+            if created and delivered:
+                total_latency.append((delivered - created).total_seconds())
+            if created and claimed:
+                queue_wait.append((claimed - created).total_seconds())
+            if claimed and delivered:
+                acknowledgement.append((delivered - claimed).total_seconds())
+            if (attempts or 0) > 1:
+                redeliveries += 1
+
+        oldest_pending_age = None
+        if oldest_pending is not None:
+            oldest_pending_age = max(0, int((now - utc(oldest_pending)).total_seconds()))
+
+        return JSONResponse(content={
+            "status": "attention" if expired_24h else ("active" if deliveries_total else "idle"),
+            "messages": {"last_24h": messages_24h, "total": messages_total, "replies_last_24h": replies_24h},
+            "deliveries": {
+                "last_24h": delivered_24h,
+                "delivered_total": delivered_total,
+                "total": deliveries_total,
+                "pending_now": pending_now,
+                "expired_last_24h": expired_24h,
+                "expired_total": expired_total,
+                "redeliveries_last_24h": redeliveries,
+                "oldest_pending_age_seconds": oldest_pending_age,
+            },
+            "latency_seconds": {
+                "sample_size": len(total_latency),
+                "queue_wait_p50": percentile(queue_wait, 0.5),
+                "acknowledgement_p95": percentile(acknowledgement, 0.95),
+                "total_p50": percentile(total_latency, 0.5),
+                "total_p95": percentile(total_latency, 0.95),
+            },
+            "sessions": runtimes,
+        })
 
     @app.get("/dashboard/api/memories")
     def dashboard_memories(

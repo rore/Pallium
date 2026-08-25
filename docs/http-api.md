@@ -580,6 +580,22 @@ The response includes:
 This endpoint is mainly for local debugging, worker troubleshooting, and test
 or benchmark setup checks.
 
+## POST /debug/queue/retry-failed
+
+Loopback-only recovery for terminal processing failures after their root cause
+has been fixed.
+
+```json
+{
+  "failure_category": "llm_failure",
+  "limit": 1000
+}
+```
+
+Only exact-category matches are requeued. Completed package tasks are preserved;
+failed package tasks are reset to pending so already-created memory is not
+duplicated. Bounds are `1..1000`. Non-loopback callers receive HTTP 403.
+
 ## GET /health
 
 Operational readiness check. Returns whether the service is ready to handle

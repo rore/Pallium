@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
-from app.config import AppConfig, SnapshotConfig
+from app.config import AppConfig, LLMProviderConfig, SemanticPackageConfig, SnapshotConfig
 from app.main import create_app
 from core.models import MemoryObject, SourceItem
 from core.vector_index_holder import VectorIndexHolder
@@ -205,6 +205,7 @@ class TestStatusResponseShape:
             "storage",
             "vector_index_ready",
             "embedding_provider_ok",
+            "ingestion",
             "vector_expected",
             "vector_rebuild",
             "uptime_seconds",
@@ -255,6 +256,45 @@ class TestStatusResponseShape:
         assert storage["sqlite_mb"] is not None
         assert isinstance(storage["sqlite_mb"], float)
 
+
+class TestStatusIngestionProviderSignal:
+
+    def test_status_reports_missing_llm_credential_without_exposing_secrets(self, tmp_path: Path) -> None:
+        packages = {
+            "memory": SemanticPackageConfig(
+                name="memory",
+                implementation="agent_conversation_memory",
+                llm_provider="remote",
+                model="test-model",
+            )
+        }
+        providers = {
+            "remote": LLMProviderConfig(
+                name="remote",
+                kind="anthropic_claude",
+                base_url="https://example.test",
+                api_key_env="TEST_MISSING_KEY",
+            )
+        }
+        app = create_app(_file_db_config(
+            tmp_path,
+            default_use_case="memory",
+            semantic_packages=packages,
+            llm_providers=providers,
+        ))
+        with TestClient(app) as client:
+            body = client.get("/status").json()
+
+        assert body["ingestion"] == {
+            "status": "degraded",
+            "issues": [{
+                "package": "memory",
+                "provider": "remote",
+                "reason": "missing_api_key",
+                "api_key_env": "TEST_MISSING_KEY",
+            }],
+        }
+        assert "secret" not in str(body["ingestion"])
 
 class TestStatusEmbeddingProviderSignal:
 

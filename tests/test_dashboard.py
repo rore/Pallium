@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.config import AppConfig
 from app.main import create_app
@@ -130,6 +131,87 @@ class TestDashboardMemoriesEndpoint:
         assert body["limit"] == 200
 
 
+class TestDashboardRelaySummary:
+
+    def test_empty_relay_is_ready_and_names_all_supported_runtimes(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            response = client.get("/dashboard/api/relay/summary")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "idle"
+        assert body["messages"] == {"last_24h": 0, "total": 0, "replies_last_24h": 0}
+        assert set(body["sessions"]) == {"claude-code", "codex", "opencode"}
+
+    def test_relay_summary_reports_pending_delivery_expiry_and_latency_without_content(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        scope = {"container_ref": "git:example.test/team/dashboard", "actor_ref": "operator"}
+        with TestClient(app) as client:
+            for runtime, session_ref in (("claude-code", "sender"), ("codex", "target")):
+                response = client.post(
+                    "/relay/turn",
+                    json={"runtime": runtime, "session_ref": session_ref, **scope},
+                )
+                assert response.status_code == 200
+            sent = client.post(
+                "/relay/messages",
+                json={
+                    "sender_runtime": "claude-code",
+                    "sender_session_ref": "sender",
+                    "recipient": "codex:target",
+                    "payload": "private-secret-payload",
+                    **scope,
+                },
+            ).json()
+
+            pending = client.get("/dashboard/api/relay/summary").json()
+            assert pending["status"] == "active"
+            assert pending["deliveries"]["pending_now"] == 1
+            assert "private-secret-payload" not in str(pending)
+
+            claimed = client.post(
+                "/relay/turn",
+                json={"runtime": "codex", "session_ref": "target", **scope},
+            ).json()["deliveries"][0]
+            ack = client.post(
+                "/relay/deliveries/ack",
+                json={
+                    "delivery_id": claimed["delivery_id"],
+                    "claim_token": claimed["claim_token"],
+                    **scope,
+                },
+            )
+            assert ack.status_code == 200
+            delivered = client.get("/dashboard/api/relay/summary").json()
+            assert delivered["deliveries"]["delivered_total"] == 1
+            assert delivered["latency_seconds"]["sample_size"] == 1
+
+            expiring = client.post(
+                "/relay/messages",
+                json={
+                    "sender_runtime": "claude-code",
+                    "sender_session_ref": "sender",
+                    "recipient": "codex:target",
+                    "payload": "expires",
+                    "expires_in_seconds": 60,
+                    **scope,
+                },
+            ).json()
+            storage = app.state.pallium_service._storage
+            with storage._session_factory() as session:
+                session.execute(
+                    text("UPDATE relay_messages SET expires_at=:past WHERE id=:id"),
+                    {"past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": expiring["message_id"]},
+                )
+                session.commit()
+
+            expired = client.get("/dashboard/api/relay/summary").json()
+            assert expired["status"] == "attention"
+            assert expired["deliveries"]["pending_now"] == 0
+            assert expired["deliveries"]["expired_total"] == 1
+            assert sent["message_id"] != expiring["message_id"]
+
+
 class TestDashboardPage:
 
     def test_dashboard_returns_html(self, tmp_path: Path) -> None:
@@ -158,6 +240,9 @@ class TestDashboardIntegration:
         assert "Pallium" in html
         assert "fetchStatus" in html
         assert "/dashboard/api/memories" in html
+        assert "/dashboard/api/relay/summary" in html
+        assert "operational-summary" in html
+        assert "Agent Relay" in html
 
     def test_dashboard_html_has_dual_time_endpoints_wired(self, tmp_path: Path) -> None:
         """Regression guard: the dashboard must call the new /metrics/totals

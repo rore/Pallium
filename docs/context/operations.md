@@ -35,10 +35,21 @@ another storage backend is configured.
 | `/health` | `status: degraded` (200) | Reachable but **impaired**: vector was expected but the embedding provider failed to initialize. See `degraded_reasons`. |
 | `/status` | `vector_expected` | Config intends vector search to run. |
 | `/status` | `embedding_provider_ok` | `false` = vector expected but the embedding provider did not load. |
+| `/status` | `ingestion.status` | `degraded` = an enabled package declares a provider credential that did not resolve. `issues` names the package, provider, and configured environment-variable name, never the secret. |
 
 `degraded` stays HTTP 200 on purpose: the service is functional (lexical retrieval
 still works), so orchestration should not hard-fail. The signal is the `status`
 and `degraded_reasons` fields, and the dashboard badge turns non-green.
+
+## Ingestion credential readiness
+
+A declared `api_key_env` or `api_key_file` that resolves to no value makes
+`/status.ingestion.status` degraded and the dashboard non-green. The service
+keeps Relay and inspection available but starts with ingestion workers paused, and
+points to the managed `.pallium/config/.env` file. Once the credential is
+repaired and the service restarted, terminal items do not retry by themselves; use the
+loopback-only `POST /debug/queue/retry-failed` operation for the matching
+failure category.
 
 ## The embedding-provider gotcha
 

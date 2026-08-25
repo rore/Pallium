@@ -67,12 +67,10 @@ def _seed_config(home: Path) -> None:
     Embedding, vector index, and storage all have correct defaults.
     """
     config_dest = home / "config" / "pallium.toml"
-    if config_dest.exists():
-        return
-
-    # Read LLM provider and production package settings from dev config
+    # Config and credentials are independent. An existing TOML must not skip
+    # the .env migration or providers start without authentication.
     local_toml = Path("pallium.local.toml")
-    if local_toml.exists():
+    if not config_dest.exists() and local_toml.exists():
         lines = local_toml.read_text(encoding="utf-8").splitlines()
         keep_prefixes = (
             "[llm_providers.",
@@ -101,7 +99,7 @@ def _seed_config(home: Path) -> None:
         if output:
             config_dest.write_text("\n".join(output) + "\n", encoding="utf-8")
             print(f"  Wrote minimal config → {config_dest}")
-    else:
+    elif not config_dest.exists():
         print(f"  No config written (configure LLM provider in {config_dest})")
 
     env_dest = home / "config" / ".env"
@@ -380,6 +378,23 @@ def _start_linux() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _missing_declared_credentials(config) -> list[str]:
+    missing = set()
+    for package in config.semantic_packages.values():
+        if not package.enabled or package.implementation == "demo_agent_memory" or not package.llm_provider:
+            continue
+        provider = config.llm_providers.get(package.llm_provider)
+        if provider is not None and not provider.api_key:
+            locator = provider.api_key_env or provider.api_key_file
+            if locator:
+                missing.add(locator)
+    return sorted(missing)
+
+
+def _processor_count(config) -> int:
+    return 0 if _missing_declared_credentials(config) else 1
+
+
 def _cmd_install(args: argparse.Namespace) -> int:
     home = _pallium_home(args.home)
     port = args.port
@@ -390,8 +405,22 @@ def _cmd_install(args: argparse.Namespace) -> int:
 
     _ensure_dirs(home)
 
-    # Copy local config to service home if none exists there yet
+    # Copy local config to service home if none exists there yet.
     _seed_config(home)
+    _apply_home_env(home)
+
+    from app.config import AppConfig
+    missing_credentials = _missing_declared_credentials(AppConfig.from_env())
+    if missing_credentials:
+        print(
+            "  Missing configured credential(s): " + ", ".join(missing_credentials),
+            file=sys.stderr,
+        )
+        print(
+            "  Ingestion will stay paused; Relay and inspection remain available. "
+            "Add credentials to " + str(home / "config" / ".env") + " and restart.",
+            file=sys.stderr,
+        )
 
     pallium_cmd = _find_pallium_cmd()
     print(f"  Command: {pallium_cmd}")
@@ -404,7 +433,6 @@ def _cmd_install(args: argparse.Namespace) -> int:
         print(f"  macOS auto-start not yet supported. Run manually: pallium service run --port {port}")
 
     # Download embedding model with home env applied
-    _apply_home_env(home)
     print("  Downloading embedding model...")
     from app.run import _run_download_embedding_model
     _run_download_embedding_model()
@@ -649,19 +677,22 @@ def _cmd_run(args: argparse.Namespace) -> int:
     from app.dependencies import build_semantic_plugins
     plugins = build_semantic_plugins(config)
     active_names = list(plugins.keys())
+    processors = _processor_count(config)
     from app.runtime_logging import emit_runtime_log
     emit_runtime_log("service", f"Active packages: {', '.join(active_names)}")
     emit_runtime_log("service", f"Default use case: {config.default_use_case}")
     embedding_model = next(iter(config.embedding_providers.values()), None)
     if embedding_model:
         emit_runtime_log("service", f"Embedding model: {embedding_model.model}")
+    if processors == 0:
+        emit_runtime_log("service", "Ingestion paused: configured provider credential is missing")
 
     try:
         from app.supervisor import run_supervisor
         supervisor_args = [
             "--host", "127.0.0.1",
             "--port", str(port),
-            "--processors", "1",
+            "--processors", str(processors),
             "--cleaners", "1",
         ]
         return run_supervisor(

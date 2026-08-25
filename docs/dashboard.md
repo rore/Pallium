@@ -16,6 +16,20 @@ No authentication required — the dashboard is localhost-only, same as the API.
 
 ## Features
 
+### Operational status
+
+The first panel answers whether Pallium is operating before showing counters. It
+combines service, ingestion, search, queue, and Relay signals into:
+
+- an overall state: operating normally, warning, or needs attention
+- one status chip per subsystem
+- actionable problems such as a missing declared provider credential, terminal
+  ingestion failures, a stale pending item, unavailable semantic search, or a
+  Relay delivery that expired in the last 24 hours
+
+`/health` remaining reachable does not make this panel green when a functional
+subsystem is impaired.
+
 ### Overview
 
 Four dual-time metric cards. Every important number shows the **last 24h**
@@ -44,9 +58,19 @@ Three cards aligned to the same row height:
 - **Ingestion Queue** — Pending · Done 24h+total · Failed 24h+total ·
   Skipped 24h+total. Every tile follows the dual-time pattern; retention
   state is the footer.
-- **Extraction Health** — last three failures with category, error excerpt,
-  attempts, and date — sourced from `/debug/queue/health.recent_failures`.
-  When there are no recent failures the card simply reads `✓ no recent failures`.
+- **Extraction Health** - recent failures grouped into operator-readable causes,
+  with sample count and maximum attempts, sourced from
+  `/debug/queue/health.recent_failures`.
+
+### Agent Relay
+
+Relay is shown as a separate operational subsystem, not as memory processing.
+The panel reports messages and deliveries for the last 24 hours and all time,
+deliveries currently waiting for a recipient turn, effective expiry (including
+rows not yet materialized as expired), delivery-latency percentiles, and
+recent/dormant/closed sessions for Claude Code, Codex, and OpenCode. Waiting is neutral;
+expiry in the last 24 hours raises an operational warning. Payloads and session
+identifiers are never returned by the summary endpoint.
 
 ### Query Activity
 

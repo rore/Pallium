@@ -424,6 +424,12 @@ class PalliumService:
             retention_enabled=self._retention_enabled,
         )
 
+    def retry_failed_processing(self, *, failure_category: str, limit: int) -> dict[str, int]:
+        retry = getattr(self._storage, "retry_failed_source_items", None)
+        if not callable(retry):
+            raise RuntimeError("retrying failed processing requires SQLite storage")
+        return retry(failure_category=failure_category, limit=limit)
+
     def run_retention_pass(
         self,
         *,

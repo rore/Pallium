@@ -538,6 +538,29 @@
   .outcome-no  { color: var(--muted); }
 
   /* ── Responsive ────────────────────────────── */
+  /* Operational answer first: state, working subsystems, actionable faults. */
+  .ops-summary { border:1px solid var(--border); border-left:4px solid var(--blue); border-radius:8px; padding:14px 16px; margin-bottom:18px; background:var(--panel); }
+  .ops-summary.ok { border-left-color:var(--green); }
+  .ops-summary.attention { border-left-color:var(--yellow); }
+  .ops-summary.error { border-left-color:var(--red); }
+  .ops-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+  .ops-title { font-size:17px; font-weight:650; color:var(--text); }
+  .ops-updated { color:var(--muted); font-size:10px; }
+  .ops-systems { display:flex; flex-wrap:wrap; gap:7px; margin-top:11px; }
+  .ops-system { border:1px solid var(--border); border-radius:999px; padding:4px 8px; font-size:10.5px; color:var(--muted); }
+  .ops-system strong { color:var(--text); font-weight:600; }
+  .ops-system.ok { border-color:rgba(0,255,51,.35); }
+  .ops-system.warn { border-color:rgba(255,204,0,.45); }
+  .ops-system.bad { border-color:rgba(255,102,102,.55); }
+  .ops-issues { margin-top:10px; display:grid; gap:5px; }
+  .ops-issue { color:var(--text); font-size:11.5px; line-height:1.45; }
+  .ops-issue:before { content:"!"; color:var(--yellow); font-weight:bold; margin-right:8px; }
+  .ops-summary.error .ops-issue:before { color:var(--red); }
+  .relay-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
+  .relay-runtime-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; padding-top:11px; border-top:1px solid var(--border); }
+  .relay-runtime { color:var(--muted); font-size:10.5px; }
+  .relay-runtime strong { color:var(--text); }
+  .relay-note { margin-top:10px; color:var(--muted); font-size:10.5px; }
   @media (max-width: 1200px) {
     .mem-table .col-container { display: none; }
     .mem-table td:nth-child(5) { display: none; }
@@ -551,6 +574,7 @@
     .queue-grid-v2 { grid-template-columns: 1fr 1fr 1fr; }
     .iq-grid     { grid-template-columns: repeat(2, 1fr); }
     .query-grid  { grid-template-columns: repeat(2, 1fr); }
+    .relay-grid  { grid-template-columns: repeat(2, 1fr); }
     .hh-grid     { grid-template-columns: 1fr; }
   }
 </style>
@@ -577,6 +601,15 @@
 
   <!-- ══ VIEW A · OPERATIONAL (is Pallium healthy/working?) ══════ -->
   <div id="view-operational" class="view">
+
+  <div id="operational-summary" class="ops-summary">
+    <div class="ops-head">
+      <div id="ops-title" class="ops-title">Checking Pallium...</div>
+      <div id="ops-updated" class="ops-updated">waiting for live status</div>
+    </div>
+    <div id="ops-systems" class="ops-systems"></div>
+    <div id="ops-issues" class="ops-issues"></div>
+  </div>
 
   <!-- ── Overview (4 dual-time tiles + 24h sparkline) ──────────── -->
   <div class="section-title">Overview <span class="scope-tag">last 24h <span style="color:var(--text)">prominent</span> · all-time <span style="color:var(--muted)">muted</span></span></div>
@@ -724,7 +757,21 @@
     </div>
   </div>
 
-  <!-- ── Query Activity (dual-time tiles + hourly stacked bar) ─── -->
+  <!-- Agent Relay is a parallel operational track, not memory processing. -->
+  <div class="section-title">Agent Relay <span class="scope-tag">cross-agent delivery - waiting is normal until the recipient's next turn</span></div>
+  <div class="card">
+    <div class="relay-grid">
+      <div><div class="tile-label">messages</div><div class="dual"><span id="relay-messages-24h" class="v24 blue">&mdash;</span><span class="sep">&middot;</span><span id="relay-messages-total" class="vall">&mdash;</span></div><div class="tile-sub">24h - total</div></div>
+      <div><div class="tile-label">delivered</div><div class="dual"><span id="relay-delivered-24h" class="v24 green">&mdash;</span><span class="sep">&middot;</span><span id="relay-delivered-total" class="vall">&mdash;</span></div><div class="tile-sub">24h - total</div></div>
+      <div><div class="tile-label">waiting now</div><div class="dual"><span id="relay-pending" class="v24">&mdash;</span></div><div id="relay-pending-sub" class="tile-sub">next recipient turn</div></div>
+      <div><div class="tile-label">expired</div><div class="dual"><span id="relay-expired-24h" class="v24">&mdash;</span><span class="sep">&middot;</span><span id="relay-expired-total" class="vall">&mdash;</span></div><div class="tile-sub">24h - total</div></div>
+      <div><div class="tile-label">delivery time</div><div class="dual"><span id="relay-latency" class="v24">&mdash;</span></div><div id="relay-latency-sub" class="tile-sub">median - 24h</div></div>
+    </div>
+    <div id="relay-runtimes" class="relay-runtime-row"></div>
+    <div id="relay-note" class="relay-note">Loading Relay activity...</div>
+  </div>
+
+  <!-- Query Activity (dual-time tiles + hourly stacked bar) -->
   <div class="section-title">Query Activity <span id="qa-since" class="scope-tag">last 24h <span style="color:var(--text)">prominent</span> · all-time <span style="color:var(--muted)">muted</span></span></div>
   <div class="qa-row">
     <div class="card">
@@ -988,6 +1035,9 @@ let _actors = [];
 let _countdown = 10;
 let _countdownInterval = null;
 let _searchTimeout = null;
+let _statusData = null;
+let _queueData = null;
+let _relayData = null;
 
 // ──────────────────────────────────────────────────
 // Helpers
@@ -1089,9 +1139,11 @@ async function fetchStatus() {
     const r = await fetch('/status');
     if (!r.ok) throw new Error('status ' + r.status);
     const data = await r.json();
+    _statusData = data;
     document.getElementById('error-banner').classList.remove('visible');
     renderStatus(data);
     renderSinceRestart(data);
+    renderOperationalSummary();
   } catch (e) {
     document.getElementById('error-banner').classList.add('visible');
     const badge = document.getElementById('health-badge');
@@ -1347,31 +1399,46 @@ async function fetchSkipReasonStats() {
   } catch (e) { /* non-fatal */ }
 }
 
+function friendlyFailure(error) {
+  const text = String(error || '');
+  if (/missing authorization|http 401/i.test(text)) return 'Provider authorization failed';
+  if (/timeout/i.test(text)) return 'Provider request timed out';
+  return text.length > 72 ? text.slice(0, 72) + '...' : (text || 'Unknown extraction error');
+}
+
 async function fetchExtractionFailures() {
   try {
     const r = await fetch('/debug/queue/health');
     if (!r.ok) return;
     const data = await r.json();
-    const failures = (data.recent_failures || []).slice(0, 3);
+    const failures = data.recent_failures || [];
     const el = document.getElementById('extraction-fail-list');
     if (failures.length === 0) {
-      el.innerHTML = '<div style="color:var(--green);font-size:11px">✓ no recent failures</div>';
+      el.innerHTML = '<div style="color:var(--green);font-size:11px">No recent failures</div>';
       return;
     }
-    const rows = failures.map(f => {
-      const cat = escapeHtml(f.failure_category || '?');
-      const err = escapeHtml((f.processing_error || '').slice(0, 48));
-      const date = (f.processing_completed_at || '').slice(0, 10);
-      const attempts = f.processing_attempts != null ? f.processing_attempts : '?';
-      return (
-        '<div class="item">' +
-          '<span class="cat">' + cat + '</span> ' +
-          '<span style="color:var(--text)">' + err + '…</span>' +
-          '<div style="color:var(--muted);font-size:9.5px">attempts ' + attempts + ' · ' + date + '</div>' +
-        '</div>'
-      );
-    });
-    el.innerHTML = rows.join('');
+    const groups = {};
+    for (const failure of failures) {
+      const label = friendlyFailure(failure.processing_error);
+      const key = (failure.failure_category || 'unknown') + '|' + label;
+      if (!groups[key]) groups[key] = {
+        category: failure.failure_category || 'unknown',
+        label: label,
+        count: 0,
+        attempts: failure.processing_attempts || 0,
+      };
+      groups[key].count += 1;
+      groups[key].attempts = Math.max(groups[key].attempts, failure.processing_attempts || 0);
+    }
+    el.innerHTML = Object.values(groups).slice(0, 3).map(group =>
+      '<div class="item">' +
+        '<span class="cat">' + escapeHtml(group.category) + '</span> ' +
+        '<span style="color:var(--text)">' + escapeHtml(group.label) + '</span>' +
+        '<div style="color:var(--muted);font-size:9.5px">' +
+          group.count + ' of ' + failures.length + ' recent failures - up to ' + group.attempts + ' attempts' +
+        '</div>' +
+      '</div>'
+    ).join('');
   } catch (e) { /* non-fatal */ }
 }
 
@@ -1380,7 +1447,9 @@ async function fetchQueueHealth() {
     const r = await fetch('/debug/queue/health');
     if (!r.ok) throw new Error('queue ' + r.status);
     const data = await r.json();
+    _queueData = data;
     renderQueue(data);
+    renderOperationalSummary();
   } catch (e) { /* non-fatal */ }
 }
 
@@ -1500,25 +1569,107 @@ function populateActorDropdown() {
 }
 
 // ──────────────────────────────────────────────────
+// Overall operations: answer "is it working?" before exposing counters.
+function renderOperationalSummary() {
+  if (!_statusData) return;
+  if (!_queueData || !_relayData) {
+    document.getElementById('ops-title').textContent = 'Checking Pallium...';
+    const badge = document.getElementById('health-badge');
+    badge.textContent = 'checking';
+    badge.className = 'health-badge init';
+    return;
+  }
+  const ingestion = _statusData.ingestion || { status: 'ok', issues: [] };
+  const sc24 = (_queueData && _queueData.status_counts_24h) || {};
+  const oldest = _statusData.oldest_pending_age_seconds;
+  const relayDeliveries = (_relayData && _relayData.deliveries) || {};
+  const issues = [];
+
+  if (ingestion.status !== 'ok') {
+    const first = (ingestion.issues || [])[0] || {};
+    const hint = first.api_key_env ? ' - configure ' + first.api_key_env : '';
+    issues.push('Memory extraction is not operating: provider credential is missing' + hint + '.');
+  }
+  if (_statusData.embedding_provider_ok === false) issues.push('Semantic search is not operating: the embedding provider is unavailable.');
+  if ((sc24.failed || 0) > 0) issues.push(fmtNum(sc24.failed) + ' source items reached terminal failure in the last 24 hours.');
+  if ((_statusData.pending_items || 0) > 0 && oldest != null && oldest > 3600) issues.push('The oldest pending ingestion has waited ' + formatUptime(oldest) + '.');
+  if ((relayDeliveries.expired_last_24h || 0) > 0) issues.push(fmtNum(relayDeliveries.expired_last_24h) + ' Relay delivery' + (relayDeliveries.expired_last_24h === 1 ? ' has' : 's have') + ' expired in the last 24 hours.');
+
+  const critical = ingestion.status !== 'ok' || _statusData.embedding_provider_ok === false || (sc24.failed || 0) > 0;
+  const attention = critical || issues.length > 0;
+  const summary = document.getElementById('operational-summary');
+  summary.className = 'ops-summary ' + (critical ? 'error' : (attention ? 'attention' : 'ok'));
+  document.getElementById('ops-title').textContent = critical ? 'Pallium needs attention' : (attention ? 'Pallium is operating with warnings' : 'Pallium is operating normally');
+  document.getElementById('ops-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+
+  const system = (name, state, css) => '<span class="ops-system ' + css + '"><strong>' + escapeHtml(name) + '</strong> - ' + escapeHtml(state) + '</span>';
+  const relayState = _relayData.status === 'attention' ? 'delivery issue' : (_relayData.status === 'idle' ? 'ready, no activity' : 'operating');
+  const searchState = _statusData.vector_expected ? (_statusData.vector_index_ready ? 'operating' : 'not ready') : 'lexical only';
+  const searchClass = !_statusData.vector_expected || _statusData.vector_index_ready ? 'ok' : 'bad';
+  document.getElementById('ops-systems').innerHTML = [
+    system('Service', 'operating', 'ok'),
+    system('Ingestion', ingestion.status === 'ok' ? 'operating' : 'credential missing', ingestion.status === 'ok' ? 'ok' : 'bad'),
+    system('Search', searchState, searchClass),
+    system('Relay', relayState, _relayData && _relayData.status === 'attention' ? 'warn' : 'ok')
+  ].join('');
+  document.getElementById('ops-issues').innerHTML = issues.length
+    ? issues.map(issue => '<div class="ops-issue">' + escapeHtml(issue) + '</div>').join('')
+    : '<div style="color:var(--green);font-size:11.5px">No operational problems detected.</div>';
+
+  const badge = document.getElementById('health-badge');
+  badge.textContent = critical ? 'needs attention' : (attention ? 'warning' : 'healthy');
+  badge.className = 'health-badge ' + (critical ? 'error' : (attention ? 'init' : 'ok'));
+}
+
+function renderRelay(data) {
+  const messages = data.messages || {}, deliveries = data.deliveries || {}, latency = data.latency_seconds || {};
+  document.getElementById('relay-messages-24h').textContent = fmtNum(messages.last_24h || 0);
+  document.getElementById('relay-messages-total').textContent = fmtNum(messages.total || 0);
+  document.getElementById('relay-delivered-24h').textContent = fmtNum(deliveries.last_24h || 0);
+  document.getElementById('relay-delivered-total').textContent = fmtNum(deliveries.delivered_total || 0);
+  const pending = document.getElementById('relay-pending');
+  pending.textContent = fmtNum(deliveries.pending_now || 0);
+  pending.className = 'v24';
+  document.getElementById('relay-pending-sub').textContent = deliveries.oldest_pending_age_seconds == null ? 'next recipient turn' : 'oldest ' + formatUptime(deliveries.oldest_pending_age_seconds);
+  const expired = document.getElementById('relay-expired-24h');
+  expired.textContent = fmtNum(deliveries.expired_last_24h || 0);
+  expired.className = 'v24 ' + ((deliveries.expired_last_24h || 0) ? 'red' : 'green');
+  document.getElementById('relay-expired-total').textContent = fmtNum(deliveries.expired_total || 0);
+  document.getElementById('relay-latency').textContent = latency.total_p50 == null ? '-' : formatUptime(latency.total_p50);
+  document.getElementById('relay-latency-sub').textContent = latency.sample_size ? ('median - p95 ' + formatUptime(latency.total_p95) + ' - n=' + latency.sample_size) : 'no deliveries in 24h';
+  const labels = {'claude-code': 'Claude Code', 'codex': 'Codex', 'opencode': 'OpenCode'};
+  document.getElementById('relay-runtimes').innerHTML = Object.keys(labels).map(runtime => {
+    const row = (data.sessions || {})[runtime] || {};
+    const parts = [];
+    if (row.recent || 0) parts.push(fmtNum(row.recent) + ' recent');
+    if (row.dormant || 0) parts.push(fmtNum(row.dormant) + ' dormant');
+    if (row.closed || 0) parts.push(fmtNum(row.closed) + ' closed');
+    const state = parts.length ? parts.join(', ') : 'not seen';
+    return '<span class="relay-runtime"><strong>' + labels[runtime] + '</strong> - ' + state + '</span>';
+  }).join('');
+  const healthDetails = [];
+  if (latency.acknowledgement_p95 != null) healthDetails.push('hook ack p95 ' + formatUptime(latency.acknowledgement_p95));
+  healthDetails.push(fmtNum(deliveries.redeliveries_last_24h || 0) + ' redeliveries');
+  healthDetails.push(fmtNum(messages.replies_last_24h || 0) + ' replies');
+  const waitingNote = (deliveries.pending_now || 0) > 0
+    ? 'Waiting is expected until the recipient takes another turn.'
+    : 'No delivery is currently waiting for a recipient turn.';
+  document.getElementById('relay-note').textContent = waitingNote + ' ' + healthDetails.join(' - ');
+}
+
+async function fetchRelaySummary() {
+  try {
+    const r = await fetch('/dashboard/api/relay/summary');
+    if (!r.ok) return;
+    _relayData = await r.json();
+    renderRelay(_relayData);
+    renderOperationalSummary();
+  } catch (e) { /* non-fatal */ }
+}
+
 // Render: status (Overview row + Storage card)
 // ──────────────────────────────────────────────────
 function renderStatus(data) {
-  const badge = document.getElementById('health-badge');
-  if (data.embedding_provider_ok === false) {
-    // Vector was expected but the embedding provider failed → impaired.
-    badge.textContent = 'degraded: embeddings';
-    badge.className = 'health-badge error';
-    badge.title = 'Vector embedding provider unavailable — semantic search disabled. Check service launch env.';
-  } else if (data.vector_index_ready) {
-    badge.textContent = 'healthy';
-    badge.className = 'health-badge ok';
-    badge.title = '';
-  } else {
-    badge.textContent = 'initializing';
-    badge.className = 'health-badge init';
-    badge.title = '';
-  }
-
   document.getElementById('header-uptime').textContent =
     'uptime: ' + formatUptime(data.uptime_seconds);
 
@@ -2463,6 +2614,7 @@ function startCountdown() {
       _countdown = 10;
       fetchStatus();
       fetchQueueHealth();
+      fetchRelaySummary();
       fetchFeedbackStats();
       fetchMetricsTotals();
       fetchHourlyQuery();
@@ -2481,6 +2633,7 @@ function startCountdown() {
   _initViewFromHash();
   fetchStatus();
   fetchQueueHealth();
+  fetchRelaySummary();
   fetchFeedbackStats();
   fetchMetricsTotals();
   fetchHourlyQuery();

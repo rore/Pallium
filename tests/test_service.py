@@ -6,6 +6,7 @@ import argparse
 import os
 import sys
 import subprocess
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,6 +19,8 @@ from app.cli.service import (
     _seed_config,
     _PalliumLock,
     _find_pallium_cmd,
+    _missing_declared_credentials,
+    _processor_count,
     _start_windows,
     _cmd_restart,
     service_main,
@@ -110,6 +113,36 @@ class TestEnsureDirs:
         assert (home / "data").is_dir()
 
 
+class TestDeclaredCredentialPreflight:
+    def test_reports_only_declared_missing_credentials(self):
+        config = SimpleNamespace(
+            semantic_packages={
+                "memory": SimpleNamespace(
+                    enabled=True,
+                    implementation="agent_conversation_memory",
+                    llm_provider="remote",
+                ),
+                "demo": SimpleNamespace(
+                    enabled=True,
+                    implementation="demo_agent_memory",
+                    llm_provider=None,
+                ),
+            },
+            llm_providers={
+                "remote": SimpleNamespace(
+                    api_key=None,
+                    api_key_env="PALLIUM_REMOTE_KEY",
+                    api_key_file=None,
+                )
+            },
+        )
+        assert _missing_declared_credentials(config) == ["PALLIUM_REMOTE_KEY"]
+        assert _processor_count(config) == 0
+        config.llm_providers["remote"].api_key = "configured"
+        assert _missing_declared_credentials(config) == []
+        assert _processor_count(config) == 1
+
+
 class TestPalliumLock:
     def test_acquire_and_release(self, tmp_path: Path):
         lock = _PalliumLock(tmp_path / "test.lock")
@@ -188,11 +221,14 @@ class TestSeedConfig:
 
         dev_toml = tmp_path / "pallium.local.toml"
         dev_toml.write_text("[llm_providers.x]\nkind = \"test\"\n")
+        dev_env = tmp_path / ".env.local"
+        dev_env.write_text("TEST_KEY=secret123\n")
 
         monkeypatch.chdir(tmp_path)
         _seed_config(home)
 
         assert (home / "config" / "pallium.toml").read_text() == "[existing]\n"
+        assert (home / "config" / ".env").read_text() == "TEST_KEY=secret123\n"
 
     def test_filters_only_production_sections(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         """Only LLM providers and production packages are kept."""

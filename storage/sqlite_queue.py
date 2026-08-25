@@ -221,6 +221,62 @@ class SQLiteQueueMixin:
 
         self._with_retry(_do)
 
+    def retry_failed_source_items(self, *, failure_category: str, limit: int) -> dict[str, int]:
+        """Requeue terminal failures in one transaction without rerunning completed packages."""
+        def _do(session):
+            retried_sources = 0
+            retried_packages = 0
+            records = session.scalars(
+                select(SourceItemRecord)
+                .where(
+                    SourceItemRecord.processing_status == "failed",
+                    func.json_extract(
+                        SourceItemRecord.metadata_json,
+                        f"$.{OBSERVABILITY_METADATA_KEY}.failure_category",
+                    ) == failure_category,
+                )
+                .order_by(SourceItemRecord.processing_completed_at, SourceItemRecord.id)
+                .limit(limit)
+            ).all()
+            for record in records:
+                observability = self._observability_state_from_metadata(record.metadata_json)
+                packages = session.scalars(
+                    select(PackageProcessingStatusRecord).where(
+                        PackageProcessingStatusRecord.source_item_id == record.id
+                    )
+                ).all()
+                failed_packages = [package for package in packages if package.status == "failed"]
+                if packages and not failed_packages:
+                    continue
+                for package in failed_packages:
+                    package.status = "pending"
+                    package.attempts = 0
+                    package.error = None
+                    package.claimed_by = None
+                    package.claimed_at = None
+                    package.lease_expires_at = None
+                    package.completed_at = None
+                    package.next_attempt_at = None
+                    retried_packages += 1
+                observability["failure_category"] = None
+                metadata = self._loads(record.metadata_json)
+                metadata[OBSERVABILITY_METADATA_KEY] = observability
+                record.metadata_json = self._dumps(metadata)
+                record.processing_status = "pending"
+                record.processing_attempts = sum(package.attempts or 0 for package in packages)
+                record.processing_error = None
+                record.processing_claimed_by = None
+                record.processing_claimed_at = None
+                record.processing_lease_expires_at = None
+                record.processing_completed_at = None
+                record.processing_next_attempt_at = None
+                retried_sources += 1
+                if retried_sources >= limit:
+                    break
+            return {"source_items": retried_sources, "package_tasks": retried_packages}
+
+        return self._with_retry(_do)
+
     def commit_processed_source_item(
         self,
         *,

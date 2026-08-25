@@ -1,18 +1,20 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.config import AppConfig
 from app.main import create_app
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import _vector_index_path_for_sqlite
 from core.contracts import build_source_item
-from core.observability import IntegrationDebugLogger
+from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY
 from core.service import PalliumService
 from providers.llm.base import LLMJsonResponse, LLMProviderError
 from retrieval.lexical import LexicalRetrievalProvider
 from semantic.demo_agent_memory import DemoAgentMemoryPlugin
 from storage.sqlite import SQLiteStorageProvider
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 from tests.test_async_worker import BlockingThreadAggregationPlugin, _build_service
 
 
@@ -136,6 +138,75 @@ def test_queue_health_endpoint_reports_unclaimable_pending_and_recent_failure(mo
     assert {item["reason"]: item["count"] for item in payload["unclaimable_pending_counts"]}["missing_use_case"] == 1
     assert payload["recent_failures"][0]["failure_category"] == "llm_failure"
     assert payload["recent_failures"][0]["processing_error"] == "provider failed"
+
+
+def test_retry_failed_processing_is_loopback_bounded_and_preserves_completed_packages(test_db_url: str) -> None:
+    app = create_app(
+        AppConfig(
+            storage_backend="sqlite",
+            sqlite_url=test_db_url,
+            default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
+            vector_index=VectorIndexConfig(enabled=False),
+        )
+    )
+    storage = app.state.pallium_service._storage
+    item = build_source_item(
+        source_type="chat_message",
+        source_id="retry-failed-e2e",
+        content_type="text/plain",
+        content="A terminal provider failure.",
+        metadata={OBSERVABILITY_METADATA_KEY: {"failure_category": "llm_failure"}},
+        use_case="demo_agent_memory",
+    )
+    storage.create_source_item(item)
+    storage.create_package_processing_records(item.id, ["already_done", "needs_retry"])
+    storage.complete_package_task(item.id, "already_done")
+    storage.fail_package_task(
+        item.id,
+        "needs_retry",
+        error="provider failed",
+        next_attempt_at=None,
+        final=True,
+    )
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        no_match = client.post(
+            "/debug/queue/retry-failed",
+            json={"failure_category": "validation_failure"},
+        )
+        assert no_match.json() == {"source_items": 0, "package_tasks": 0}
+        response = client.post(
+            "/debug/queue/retry-failed",
+            json={"failure_category": "llm_failure", "limit": 1},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"source_items": 1, "package_tasks": 1}
+        status = client.get(f"/items/{item.id}/processing").json()
+        assert status["processing_status"] == "pending"
+        assert status["processing_error"] is None
+        assert status["failure_category"] is None
+        assert client.post(
+            "/debug/queue/retry-failed",
+            json={"failure_category": "", "limit": 0},
+        ).status_code == 422
+
+    with storage._session_factory() as session:
+        rows = session.execute(
+            text(
+                "SELECT package_name,status,attempts FROM package_processing_status "
+                "WHERE source_item_id=:id ORDER BY package_name"
+            ),
+            {"id": item.id},
+        ).all()
+    assert rows == [("already_done", "completed", 0), ("needs_retry", "pending", 0)]
+
+    non_loopback = TestClient(app)
+    forbidden = non_loopback.post(
+        "/debug/queue/retry-failed",
+        json={"failure_category": "llm_failure"},
+    )
+    assert forbidden.status_code == 403
 
 
 def test_query_debug_includes_candidate_flow_and_result_summary(client, drain_queue) -> None:

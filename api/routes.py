@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from api.schemas import (
     RelayAckRequest,
@@ -48,6 +48,8 @@ from api.schemas import (
     QueryRequest,
     QueryResponse,
     QueueHealthResponse,
+    RetryFailedProcessingRequest,
+    RetryFailedProcessingResponse,
     RecordOutcomeRequest,
     RecordOutcomeResponse,
     RememberMemoryRequest,
@@ -498,6 +500,22 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False, r
                 "last_skipped_protected_source_items": snapshot.retention.last_skipped_protected_source_items,
             },
         )
+
+    @router.post("/debug/queue/retry-failed", response_model=RetryFailedProcessingResponse)
+    def retry_failed_processing(
+        request: RetryFailedProcessingRequest,
+        http_request: Request,
+    ) -> RetryFailedProcessingResponse:
+        if http_request.client is None or http_request.client.host not in {"127.0.0.1", "::1"}:
+            raise HTTPException(status_code=403, detail="forbidden")
+        try:
+            result = service.retry_failed_processing(
+                failure_category=request.failure_category,
+                limit=request.limit,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        return RetryFailedProcessingResponse(**result)
 
     @router.post("/query", response_model=QueryResponse)
     def query_items(request: QueryRequest) -> QueryResponse:
