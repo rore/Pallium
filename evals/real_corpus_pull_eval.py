@@ -616,7 +616,13 @@ def run_pilot(
             "sampling": {"sampled_cases": len(snapshot.cases), "paired_cases": 0},
             "corpus": {**snapshot.counts, "attrition": snapshot.attrition, "lineage": lineage},
             "decision_gate": {"status": "blocked_no_supported_lineage", "broad_product_recommendation": "none"},
-            "results": {"model_calls": 0, "estimated_input_tokens_total": 0, "budget_is_estimate": True},
+            "results": {
+                "model_calls": 0, "judge_calls": 0, "model_judge": model_judge,
+                "max_model_calls": max_model_calls,
+                "estimated_input_tokens_total": 0,
+                "max_estimated_input_tokens": max_estimated_input_tokens,
+                "budget_is_estimate": True,
+            },
         }, {"eval": "real-corpus-pull-pilot-review", "contains_raw_private_text": True, "never_publish": True, "cases": []}
     if provider is None:
         raise ValueError("provider is required when the guarded preflight passes")
@@ -736,6 +742,8 @@ def run_pilot(
                 case_review["blind_with_history_is_a"] = int(
                     hashlib.sha256(case.case_id.encode("utf-8")).hexdigest()[:2], 16
                 ) % 2 == 0
+            if "raw" in arms:
+                case_review["raw_history"] = raw_history
             if "guarded" in arms:
                 case_review["guarded_history"] = guarded_history
             if len(arms) > 1:
@@ -847,7 +855,7 @@ def render_review_sheet(review: dict[str, Any]) -> str:
                 "no history": case["without_history_answer"],
             }
             order = sorted(candidates, key=lambda label: _hash_id(f"{case['case_id']}:{label}"))
-            raw_history = "\n\n".join(case.get("source_texts", []))
+            raw_history = case.get("raw_history") or "\n\n".join(case.get("source_texts", []))
             guarded_history = case.get("guarded_history", "")
             lines.extend([
                 "### Task", "", *block(case["query"]), "",
@@ -869,7 +877,7 @@ def render_review_sheet(review: dict[str, Any]) -> str:
         with_first = bool(case["blind_with_history_is_a"])
         answer_a = case["with_history_answer"] if with_first else case["without_history_answer"]
         answer_b = case["without_history_answer"] if with_first else case["with_history_answer"]
-        history = case.get("guarded_history") or "\n\n".join(case.get("source_texts", []))
+        history = case.get("guarded_history") or case.get("raw_history") or "\n\n".join(case.get("source_texts", []))
         lines.extend([
             "### Task", "", *block(case["query"]), "",
             "### Retrieved history", "", *block(history), "",

@@ -514,6 +514,9 @@ def test_guarded_arm_stops_before_provider_when_lineage_is_absent(tmp_path: Path
     aggregate, _ = run_pilot(snapshot, history_arm="guarded")
     assert aggregate["decision_gate"]["status"] == "blocked_no_supported_lineage"
     assert aggregate["results"]["model_calls"] == 0
+    assert aggregate["results"]["judge_calls"] == 0
+    assert aggregate["results"]["max_model_calls"] == 100
+    assert aggregate["results"]["max_estimated_input_tokens"] == 50000
 
 
 def test_guarded_preflight_recomputes_case_lineage_and_fails_closed() -> None:
@@ -562,6 +565,22 @@ def test_no_model_judge_emits_blinded_three_arm_review_with_three_calls() -> Non
     assert set(review["cases"][0]["answers"]) == {"raw", "guarded"}
     assert "Better answer: [ ] A  [ ] B  [ ] C  [ ] Tie" in render_review_sheet(review)
 
+
+def test_raw_no_judge_sheet_uses_exact_raw_prompt() -> None:
+    snapshot = CorpusSnapshot(
+        cases=(PullCase(
+            "e1", "t1", "task", ("s1",), ("SOURCE_TEXT",),
+            raw_history="RAW_SERIALIZED",
+        ),),
+        counts={"valid_cases": 1},
+        attrition={},
+    )
+    _, review = run_pilot(
+        snapshot, provider=ScriptedProvider(), history_arm="raw", model_judge=False
+    )
+    sheet = render_review_sheet(review)
+    assert "RAW_SERIALIZED" in sheet
+    assert "SOURCE_TEXT" not in sheet
 
 def test_guarded_no_judge_sheet_uses_exact_guarded_prompt() -> None:
     snapshot = CorpusSnapshot(
