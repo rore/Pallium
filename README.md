@@ -2,7 +2,7 @@
 
 # Pallium
 
-Memory sidecar for AI agents. Extracts structured memory from conversations
+Local context sidecar for AI agents. Its memory track extracts structured memory from conversations
 — decisions, facts, investigation outcomes, work checkpoints — and returns
 compact evidence-backed cards when the agent needs context from earlier
 threads.
@@ -26,7 +26,11 @@ A separate thread-rebuild near-duplicate supersession fix landed
 2026-06-28; databases that predate it may carry accumulated paraphrase
 duplicates.
 
-The system is genuinely useful in a narrow slice — carrying forward
+Agent Relay is a parallel experimental track: Claude Code, Codex, and OpenCode can send
+bounded, durable messages to a runtime or exact session for next-turn delivery. It is
+deterministic and independent of memory retrieval. See [Agent Relay](docs/agent-relay.md).
+
+The memory system is genuinely useful in a narrow slice — carrying forward
 explicit decisions, investigation outcomes, and constraints across
 sessions on the same repo — and is being measured honestly outside that
 slice. Curated-benchmark numbers below are real; live-use numbers are
@@ -274,6 +278,7 @@ reproduction commands are in [docs/benchmarks.md](docs/benchmarks.md).
 
 **Integrating Pallium:**
 - [Agent Integration](docs/agent-integration.md) — wiring into a runtime, MCP tools
+- [Agent Relay](docs/agent-relay.md) — explicit durable messages between local agent sessions
 - [Claude Code Integration](docs/claude-code-integration.md) — local memory sidecar for Claude Code
 - [Codex Integration](docs/codex-integration.md) — local memory sidecar for OpenAI Codex CLI
 - [Integration Example](docs/integration-example.md) — Slack agent walkthrough

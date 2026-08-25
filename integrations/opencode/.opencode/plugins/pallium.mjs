@@ -318,20 +318,44 @@ export default async ({ client, directory, worktree } = {}) => {
       }
     },
 
-    // Inject queued memory blocks into the system prompt (orientation +
-    // per-message memory + opt-in trigger output).
+    // Inject Relay first, then queued memory, within one bounded context.
     "experimental.chat.system.transform": async (input, output) => {
       try {
-        const sessionId = resolveSessionId(input);
-        const chunks = drainInjections(sessionId);
-        if (!chunks.length) return;
-        const text = chunks.join("\n\n");
         if (!output || !Array.isArray(output.system)) return;
+        const sessionId = resolveSessionId(input);
+        if (!sessionId) return;
+        const containerRef = pallium.resolveContainerRef(cwd, sessionId);
+        const actorRef = pallium.deriveActorRef();
+        const relayResponse = await pallium.relayRequest("POST", "/relay/turn", {
+          runtime: "opencode",
+          session_ref: sessionId,
+          container_ref: containerRef,
+          actor_ref: actorRef,
+          max_chars: 2000,
+        }, 750);
+        const deliveries = (relayResponse && relayResponse.deliveries) || [];
+        const relayText = pallium.formatRelay(deliveries, 2000);
+        const queued = drainInjections(sessionId);
+        const parts = [];
+        let used = 0;
+        for (const chunk of [relayText, ...queued]) {
+          if (!chunk) continue;
+          const added = chunk.length + (parts.length ? 2 : 0);
+          if (used + added > 4000) {
+            if (chunk !== relayText) enqueueInjection(sessionId, chunk);
+            continue;
+          }
+          parts.push(chunk);
+          used += added;
+        }
+        if (!parts.length) return;
+        const text = parts.join("\n\n");
         if (output.system.length > 0) {
           output.system[output.system.length - 1] += "\n\n" + text;
         } else {
           output.system.push(text);
         }
+        if (relayText) await pallium.acknowledgeRelay(deliveries, containerRef, actorRef);
       } catch (e) {
         log("error", `system.transform failed: ${e && e.message}`);
       }
@@ -345,6 +369,8 @@ export default async ({ client, directory, worktree } = {}) => {
         const parts = (output && output.parts) || [];
         const sessionId = resolveSessionId(output) || resolveSessionId(input) || message.sessionID || "unknown";
 
+        const containerRef = pallium.resolveContainerRef(cwd, sessionId);
+        pallium.pinContainer(sessionId, containerRef, undefined);
         const promptRaw = pallium.extractTextFromParts(parts);
         if (!promptRaw || promptRaw.length < MIN_PROMPT_LEN) return;
         if (promptRaw.startsWith("/")) return;
@@ -353,7 +379,6 @@ export default async ({ client, directory, worktree } = {}) => {
         const content = pallium.stripIdeContext(promptRaw);
         if (!content) return;
 
-        const containerRef = pallium.resolveContainerRef(cwd, sessionId);
         const actorRef = pallium.deriveActorRef();
         const queryText = content.length > 500 ? content.slice(0, 500) : content;
 
@@ -393,7 +418,13 @@ export default async ({ client, directory, worktree } = {}) => {
         } else if (type === "session.idle") {
           await ingestAssistantTurn(sessionId);
         } else if (type === "session.deleted") {
-          // Bound in-memory state: drop everything for a closed session.
+          if (sessionId) {
+            const containerRef = pallium.resolveContainerRef(cwd, sessionId);
+            await pallium.relayRequest("POST", "/relay/sessions/close", {
+              runtime: "opencode", session_ref: sessionId,
+              container_ref: containerRef, actor_ref: pallium.deriveActorRef(),
+            }, 500);
+          }
           purgeSession(sessionId);
         }
       } catch (e) {

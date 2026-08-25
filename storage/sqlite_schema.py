@@ -512,6 +512,65 @@ class OperationalFactPromotionLogRecord(Base):
     promoted_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class RelaySessionRecord(Base):
+    __tablename__ = "relay_sessions"
+
+    id = Column(String, primary_key=True)
+    runtime = Column(String, nullable=False)
+    session_ref = Column(String, nullable=False)
+    container_ref = Column(String, nullable=False)
+    actor_ref = Column(String, nullable=False)
+    title = Column(String, nullable=True)
+    alias = Column(String, nullable=True)
+    state = Column(String, nullable=False, default="active")
+    first_seen_at = Column(DateTime(timezone=True), nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), nullable=False)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("container_ref", "runtime", "session_ref", name="uq_relay_session_scope"),
+        UniqueConstraint("container_ref", "runtime", "alias", name="uq_relay_session_alias"),
+    )
+
+
+class RelayMessageRecord(Base):
+    __tablename__ = "relay_messages"
+
+    id = Column(String, primary_key=True)
+    sender_runtime = Column(String, nullable=False)
+    sender_session_ref = Column(String, nullable=False)
+    recipient_selector = Column(String, nullable=False)
+    container_ref = Column(String, nullable=False)
+    actor_ref = Column(String, nullable=False)
+    payload = Column(Text, nullable=False)
+    redacted = Column(Integer, nullable=False, default=0)
+    in_reply_to = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class RelayDeliveryRecord(Base):
+    __tablename__ = "relay_deliveries"
+
+    id = Column(String, primary_key=True)
+    message_id = Column(String, nullable=False)
+    recipient_runtime = Column(String, nullable=False)
+    recipient_session_ref = Column(String, nullable=False)
+    state = Column(String, nullable=False, default="pending")
+    claim_token = Column(String, nullable=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "message_id", "recipient_runtime", "recipient_session_ref",
+            name="uq_relay_delivery_recipient",
+        ),
+    )
+
+
 class SQLiteSchemaMixin:
     _SOURCE_ITEM_MIGRATIONS = {
         "occurred_at": "ALTER TABLE source_items ADD COLUMN occurred_at DATETIME",
@@ -587,6 +646,18 @@ class SQLiteSchemaMixin:
         ),
     }
     _INDEX_MIGRATIONS = {
+        "idx_relay_sessions_discovery": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_sessions_discovery "
+            "ON relay_sessions(container_ref, actor_ref, runtime, state, last_seen_at)"
+        ),
+        "idx_relay_deliveries_claim": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_deliveries_claim "
+            "ON relay_deliveries(recipient_runtime, recipient_session_ref, state, lease_expires_at)"
+        ),
+        "idx_relay_deliveries_message": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_deliveries_message "
+            "ON relay_deliveries(message_id)"
+        ),
         # General container+lifecycle lookup. The hot retrieval / consolidation
         # / thread-rebuild / work-trace paths all call
         # ``list_memory_objects(container_ref=…, lifecycle="active")`` (often

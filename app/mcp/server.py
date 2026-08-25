@@ -19,6 +19,7 @@ _MCP_SEARCH_MAX_CHARS = 2000
 _MCP_SEARCH_EMPTY_MAX_CHARS = 300
 _MCP_EXPANSION_MAX_CHARS = 4000
 _MCP_EXPANSION_MIN_CHARS = 256
+_MCP_RELAY_MAX_CHARS = 2000
 
 
 def _json_text(value: object) -> str:
@@ -107,6 +108,28 @@ def _bounded_error(result: dict, budget: int) -> dict:
             high = mid - 1
     compact = {"error": error[:low]}
     return compact if len(_json_text(compact)) <= budget else {}
+
+
+def _relay_text(result: object) -> str:
+    """Serialize Relay responses compactly while keeping errors visible."""
+    if len(_json_text(result)) <= _MCP_RELAY_MAX_CHARS:
+        return _json_text(result)
+    if isinstance(result, dict) and "error" in result:
+        return _json_text(_bounded_error(result, _MCP_RELAY_MAX_CHARS))
+    if isinstance(result, dict) and isinstance(result.get("deliveries"), list):
+        states: dict[str, int] = {}
+        for delivery in result["deliveries"]:
+            state = str(delivery.get("state", "unknown"))
+            states[state] = states.get(state, 0) + 1
+        summary = {
+            key: result[key]
+            for key in ("message_id", "recipient", "redacted", "in_reply_to", "created_at", "expires_at")
+            if key in result
+        }
+        summary.update(delivery_count=len(result["deliveries"]), delivery_states=states)
+        return _json_text(summary)
+    return _json_text({"error": "relay response exceeds the response budget"})
+
 
 def _compact_history(
     result: dict, query: str, limit: int = 3, container_ref: str | None = None
@@ -481,6 +504,79 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         result = await client.get_status()
         return json.dumps(result, indent=2, default=str)
 
+    @server.tool()
+    async def pallium_relay_recipients(
+        runtime: str | None = None,
+        include_inactive: bool = False,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
+    ) -> str:
+        """List Relay recipient sessions visible in the scoped container."""
+        ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        result = await PalliumMcpClient(ctx).relay_recipients(
+            runtime=runtime, include_inactive=include_inactive,
+        )
+        return _relay_text(result)
+
+    @server.tool()
+    async def pallium_relay_name(
+        runtime: str,
+        session_ref: str,
+        alias: str | None = None,
+        replace_existing: bool = False,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
+    ) -> str:
+        """Set the optional Pallium Relay name for one immutable session."""
+        ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        result = await PalliumMcpClient(ctx).relay_name(
+            alias=alias, runtime=runtime, session_ref=session_ref, replace_existing=replace_existing,
+        )
+        return _relay_text(result)
+
+    @server.tool()
+    async def pallium_relay_send(
+        message: str,
+        recipient: str,
+        runtime: str,
+        session_ref: str,
+        expires_in_seconds: int | None = None,
+        in_reply_to: str | None = None,
+        message_id: str | None = None,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
+    ) -> str:
+        """Send bounded text to an explicit Relay selector."""
+        ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        result = await PalliumMcpClient(ctx).relay_send(
+            message=message,
+            recipient=recipient,
+            runtime=runtime,
+            session_ref=session_ref,
+            expires_in_seconds=expires_in_seconds,
+            in_reply_to=in_reply_to,
+            message_id=message_id,
+        )
+        return _relay_text(result)
+
+    @server.tool()
+    async def pallium_relay_status(
+        message_id: str,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
+    ) -> str:
+        """Get compact delivery status for one Relay message."""
+        ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        result = await PalliumMcpClient(ctx).relay_status(message_id)
+        return _relay_text(result)
     # ── W3 explicit memory-write tools ─────────────────────────────
     # See docs/specs/2026-07-01-milestone-shaped-memory-contract.md §W3.
     # These tools let the agent deliberately shape memory — remember a

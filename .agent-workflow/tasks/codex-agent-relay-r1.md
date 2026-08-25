@@ -42,7 +42,6 @@ R0 established Claude Code `UserPromptSubmit`, Codex `UserPromptSubmit`/`additio
 - IDs/aliases/actors are nonblank, bounded, and reject ASCII controls; session IDs remain otherwise opaque. Payload accepts multiline/astral Unicode but rejects NUL/unsafe controls.
 - Delivery means successful context emission/mutation, not reading or downstream use.
 
-**Key conventions:**
 - HTTP endpoints: `POST /relay/turn` (atomic refresh/reactivate + bounded claim), `POST /relay/sessions/close`, `GET /relay/sessions`, `POST /relay/sessions/name`, `POST /relay/messages`, `GET /relay/messages/{message_id}`, and `POST /relay/deliveries/ack`.
 - HTTP 422 for validation; uniform non-enumerating 404 for unknown/cross-scope entities; 409 for alias/state/stale-claim conflicts and zero-recipient broadcast (with no message row); 501 when storage lacks Relay. Success returns stable IDs and public state.
 - Turn returns one claim token per delivery. Ack with the same delivered token is idempotent; stale/different tokens conflict. Lease expiry creates a new claim token; message expiry prevents claim.
@@ -76,7 +75,7 @@ Approved by user 2026-08-25T15:48:52+03:00: "yes. is the whole r1 implemented or
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Plan review
@@ -85,12 +84,16 @@ Initial review returned WITHHOLD with seven blockers. The revision adds exact en
 
 ## Implementation
 
-Not started; guarded edits wait for reviewed-plan approval.
+Implemented the scoped R1 Relay domain, SQLite persistence, HTTP and MCP surfaces, Claude Code/Codex/OpenCode next-turn delivery, compact agent guidance, and roadmap/product documentation. Runtime broadcast snapshots current recent sessions; exact IDs and transferable aliases remain pinned per delivery. Relay remains isolated from semantic memory and retrieval.
 
 ## Evidence
 
-R0 baselines: 100 Python hook/integration tests and 36 OpenCode plugin tests passed before R1 planning. `apply_patch` later hit documented Windows error 1385; this Work Record revision used one narrow deterministic replacement.
+- Focused Relay/API/MCP/hook/guidance suites: 160 passed; final targeted review suite: 67 passed.
+- OpenCode integration suite: 40 passed.
+- Full Python regression: 3,883 passed, 23 skipped, 2 xfailed.
+- Import-linter: clean; workflow checker: clean; `git diff --check`: clean.
+- E2E drives public HTTP plus real hook/plugin entrypoints and asserts public status, lifecycle, concurrency, bounds, Unicode, expiry, scope isolation, and zero memory/retrieval state.
+- `apply_patch` hit documented Windows error 1385; edits used narrow deterministic replacements limited to named files.
 
 ## Result review
-
 Pending.

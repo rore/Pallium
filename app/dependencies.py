@@ -8,6 +8,7 @@ from typing import Any
 from api.routes import create_router
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.observability import IntegrationDebugLogger, QueryStats
+from core.relay import RelayService, RelayUnavailableError
 from core.service import PalliumService
 from core.vector_index_holder import VectorIndexHolder
 from providers.embedding.base import EmbeddingProvider
@@ -512,6 +513,14 @@ def _load_or_create_vector_index(
         return None
 
 
-def build_router(service: PalliumService, *, audit_log_enabled: bool = False):
-    return create_router(service, audit_log_enabled=audit_log_enabled)
+def build_router(service: PalliumService, *, audit_log_enabled: bool = False, relay_storage=None):
+    relay_service = None
+    if relay_storage is not None:
+        try:
+            relay_service = RelayService(relay_storage)
+        except RelayUnavailableError:
+            pass
+    return create_router(
+        service, audit_log_enabled=audit_log_enabled, relay_service=relay_service
+    )
 

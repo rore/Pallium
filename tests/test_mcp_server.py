@@ -646,3 +646,90 @@ async def test_explicit_creation_tools_resolve_complete_provenance_context(
         "agent_ref": context.agent_ref,
         "visibility": context.visibility,
     } == scope
+
+@pytest.mark.asyncio
+async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    server = create_server()
+    names = {tool.name for tool in await server.list_tools()}
+    assert {
+        "pallium_relay_recipients",
+        "pallium_relay_name",
+        "pallium_relay_send",
+        "pallium_relay_status",
+    } <= names
+
+
+@pytest.mark.asyncio
+async def test_relay_send_uses_exact_scope_and_preserves_unicode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    calls: list[dict] = []
+
+    async def fake_send(**kwargs):
+        calls.append(kwargs)
+        return {"message_id": "m-1", "state": "pending"}
+
+    with patch("app.mcp.client.PalliumMcpClient.relay_send", new=AsyncMock(side_effect=fake_send)):
+        server = create_server()
+        content, _ = await server.call_tool("pallium_relay_send", {
+            "message": "הודעה → 你好",
+            "recipient": "codex:@review",
+            "runtime": "codex",
+            "session_ref": "session-1",
+            "container_ref": "git:example/repo",
+            "actor_ref": "actor-1",
+        })
+    assert calls == [{
+        "message": "הודעה → 你好",
+        "recipient": "codex:@review",
+        "runtime": "codex",
+        "session_ref": "session-1",
+        "expires_in_seconds": None,
+        "in_reply_to": None,
+        "message_id": None,
+    }]
+    assert json.loads(content[0].text)["state"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_relay_status_keeps_errors_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    error = {"error": "conflict", "status_code": 409, "detail": {"reason": "already delivered"}}
+    with patch("app.mcp.client.PalliumMcpClient.relay_status", new=AsyncMock(return_value=error)):
+        server = create_server()
+        content, _ = await server.call_tool("pallium_relay_status", {"message_id": "m-1"})
+    assert json.loads(content[0].text) == error
+
+
+@pytest.mark.asyncio
+async def test_relay_broadcast_response_keeps_success_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    result = {
+        "message_id": "m-broadcast", "recipient": "codex", "redacted": False,
+        "deliveries": [
+            {"delivery_id": f"delivery-{index}", "state": "pending", "payload": "x" * 1500}
+            for index in range(25)
+        ],
+    }
+    with patch("app.mcp.client.PalliumMcpClient.relay_send", new=AsyncMock(return_value=result)):
+        server = create_server()
+        content, _ = await server.call_tool("pallium_relay_send", {
+            "message": "handoff", "recipient": "codex", "runtime": "claude-code",
+            "session_ref": "sender",
+        })
+    summary = json.loads(content[0].text)
+    assert len(content[0].text) <= 2000
+    assert summary == {
+        "message_id": "m-broadcast", "recipient": "codex", "redacted": False,
+        "delivery_count": 25, "delivery_states": {"pending": 25},
+    }
+
+@pytest.mark.asyncio
+async def test_relay_response_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    huge = {"message_id": "m-1", "payload": "x" * 5000}
+    with patch("app.mcp.client.PalliumMcpClient.relay_status", new=AsyncMock(return_value=huge)):
+        server = create_server()
+        content, _ = await server.call_tool("pallium_relay_status", {"message_id": "m-1"})
+    assert len(content[0].text) <= 2000
+    assert json.loads(content[0].text)["error"] == "relay response exceeds the response budget"

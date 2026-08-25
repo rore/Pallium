@@ -31,6 +31,15 @@ class PalliumMcpClient:
                 params[key] = value
         return params
 
+    def _relay_scope_params(self) -> dict[str, str]:
+        """Return the exact Relay scope carried by the active context."""
+        params: dict[str, str] = {}
+        for key in ("container_ref", "actor_ref"):
+            value = getattr(self._ctx, key, None)
+            if value is not None:
+                params[key] = value
+        return params
+
     async def query(self, text: str, limit: int = 5) -> dict[str, Any]:
         payload: dict[str, Any] = {"text": text, "limit": limit}
         payload.update(self._scope_params())
@@ -198,6 +207,74 @@ class PalliumMcpClient:
                 return response.json()
         except Exception as exc:
             return {"error": str(exc)}
+
+    async def _get_or_error(self, path: str, params: dict[str, Any]) -> Any:
+        try:
+            async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
+                response = await http.get(path, params=params)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as exc:
+            try:
+                body = exc.response.json()
+            except Exception:
+                body = exc.response.text
+            return {"error": str(exc), "status_code": exc.response.status_code, "detail": body}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def relay_recipients(
+        self, *, runtime: str | None = None, include_inactive: bool = False
+    ) -> Any:
+        params = self._relay_scope_params()
+        if runtime is not None:
+            params["runtime"] = runtime
+        if include_inactive:
+            params["include_inactive"] = True
+        return await self._get_or_error("/relay/sessions", params)
+
+    async def relay_name(self, *, alias: str | None, runtime: str, session_ref: str, replace_existing: bool = False) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "runtime": runtime,
+            "session_ref": session_ref,
+            **self._relay_scope_params(),
+        }
+        if alias is not None:
+            payload["alias"] = alias
+        if replace_existing:
+            payload["replace_existing"] = True
+        return await self._post_or_error("/relay/sessions/name", payload)
+
+    async def relay_send(
+        self,
+        *,
+        message: str,
+        recipient: str,
+        runtime: str,
+        session_ref: str,
+        expires_in_seconds: int | None = None,
+        in_reply_to: str | None = None,
+        message_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "payload": message,
+            "recipient": recipient,
+            "sender_runtime": runtime,
+            "sender_session_ref": session_ref,
+            **self._relay_scope_params(),
+        }
+        for key, value in (
+            ("expires_in_seconds", expires_in_seconds),
+            ("in_reply_to", in_reply_to),
+            ("message_id", message_id),
+        ):
+            if value is not None:
+                payload[key] = value
+        return await self._post_or_error("/relay/messages", payload)
+
+    async def relay_status(self, message_id: str) -> dict[str, Any]:
+        params = self._relay_scope_params()
+        return await self._get_or_error(f"/relay/messages/{message_id}", params)
 
     async def flag_memory(
         self,

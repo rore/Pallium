@@ -1,9 +1,9 @@
 ---
 id: idea-agent-relay
 title: Agent Relay — durable context exchange between agent runtimes
-status: queued
+status: in-progress
 priority: high
-commitment: uncommitted
+commitment: committed
 milestone: pallium-relay
 ---
 
@@ -148,6 +148,19 @@ session aliases, then measure real use:
 - messages arriving too late to matter
 - demand for delivery to a future worker rather than a named runtime
 
+#### R1 implementation result — shipped for validation (2026-08-25)
+
+R1 is implemented as the full scoped slice, not a disposable proof of concept:
+
+- isolated SQLite session, message, and per-recipient delivery state
+- runtime broadcast snapshots plus exact-session and transferable-alias addressing
+- bounded, redacted send; linked replies; status; lease recovery; idempotent ack
+- HTTP and MCP surfaces with bounded tool responses
+- next-turn delivery in Claude Code, Codex, and OpenCode with Relay-first context budgets
+- session discovery, dormancy, close/reactivation, and alias-release behavior
+- public-surface E2E coverage for routing, bounds, lifecycle, concurrency, expiry, scope isolation, and absence of memory/retrieval side effects
+
+The track remains `in-progress` because the product hypothesis is not yet proven. The next work is real-use measurement against the R1 decision gate, not automatic expansion into R2.
 ### R2 — Future-recipient addressing investigation
 
 Investigate only if R1 repeatedly exposes the need. Do not assume `work_ref` solves
