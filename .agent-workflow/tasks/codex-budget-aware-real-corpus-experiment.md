@@ -1,0 +1,58 @@
+<!-- agent-workflow:start -->
+**Outcome:** Produce decision-grade, budget-capped evidence of whether Pallium history improves downstream work, reusing already-paid outputs before permitting any new model calls.
+
+**Target:** Pallium real-corpus evaluation.
+
+**Scope:** `evals/real_corpus_pull_eval.py`, `tests/test_real_corpus_pull_eval.py`, `roadmap/ideas/idea-pull-real-corpus-validation.md`, this Work Record, and ignored private reports under `.local/research/`.
+
+**Constraints:** Keep the source database read-only and private text local. The zero-cost reassessment makes no provider calls. A paid replacement pilot remains fail-closed unless preflight finds at least eight genuine direct replacements across at least four sessions and three task types. New spend is capped at 48 calls and 20,000 estimated input tokens; the first replacement pilot is capped at 12 calls. Do not change production retrieval, ranking, API, storage, visibility, or lifecycle behavior. Every reported number must be labelled as downstream-task-effect, not candidate recovery or injection precision.
+
+**Completion criteria:** Existing paid outputs receive a blinded, answerability-first agent review; evaluator controls support exact case selection, lower per-run call/token caps, and a no-model-judge path; focused tests prove each control and prove budget/preflight stops make no unintended calls; a read-only lineage inventory either qualifies a staged paid pilot or stops it at zero calls; the roadmap records the evidence, limitation, decision, and next gate.
+
+**Risk:** Elevated
+
+**Complexity:** Moderate
+
+**Reason:** All intended files are BLUE under the repository redline policy, but the repository workflow checker maps the expanded Moderate task to Elevated risk and no production boundary is touched. Complexity is Moderate because the task combines deterministic evaluator controls, a blinded reuse analysis, and a conditional staged experiment, while keeping one narrow product outcome.
+
+**Discovery:** The completed 20-case run already contains raw, guarded, and no-history answers but its automatic judge overstated value on malformed tasks. The corrected direct-claim filter invalidated its only apparent replacement case, leaving zero qualifying replacements. The evaluator already centralizes caching, lineage preflight, and hard global caps, but its CLI fixes the run at 100 calls / 50,000 estimated input tokens, cannot select exact case IDs, and always spends two judge calls per case in the three-arm run. Reusing the paid answers can answer the general-value question at zero cost; new calls are justified only for genuine direct replacements.
+
+**Material assumptions:** Prior private outputs are complete enough for a blinded reassessment; disproved by missing/corrupt answer records, which stops the reassessment rather than reconstructing answers with paid calls. The live snapshot may contain enough direct replacements; disproved if preflight finds fewer than eight or insufficient session/task diversity, which must stop the paid pilot at zero calls. Exact provider usage may remain unavailable; in that case report the conservative estimated-input cap and never claim exact cost.
+
+**Plan:** 1. Add the smallest evaluator controls for exact case IDs, configurable lower call/token caps, and disabling model judging while preserving current defaults. 2. Add focused tests for selection, bounds, zero-judge behavior, cache accounting, and fail-closed preflight. 3. Label existing cases for answerability/applicability without seeing their answers, then review valid guarded versus no-history answers in deterministic blinded order and write a private agent-review report. 4. Inventory direct replacement cases from the scratch snapshot without provider calls. 5. Only if the preregistered lineage/diversity gate passes, run four replacement cases (12 calls), expanding to eight cases and at most 32 calls / 15,000 estimated input tokens only when informative; use the absolute 48-call / 20,000-token ceiling solely for justified ambiguous repeats or missing general-value evidence. 6. Update the roadmap with the observed outcome and product decision; verify, review, and close the PR.
+
+**Verification plan:** pytest: exact selection, lower caps, no-judge output, default compatibility, atomic budget stops, and inconsistent-lineage fail-closed behavior. CLI preflight: a fresh scratch snapshot produces a zero-call aggregate when direct lineage is absent. Agent review: prior outputs are validity-labelled before deterministic blinded comparison. Workflow: checker, redline, and diff hygiene pass.
+
+**Plan review:** Self-reviewed; clean-context redline review classified the complete intended scope BLUE with no checkpoint or boundary risk and required preserving fail-closed lineage preflight and non-partial budget stops.
+
+**Approvals:** User approved execution on 2026-08-25: "ok, go".
+
+**Exceptions:** —
+
+**State:** Ready for review
+<!-- agent-workflow:end -->
+
+## Implementation
+
+- Pre-edit redline classification: BLUE; no production, API, schema, persistence, security, or runtime-config path is in scope.
+- `apply_patch` failed with the documented Windows error 1385. Per local instructions, implementation used narrowly scoped Git-native patches and deterministic replacements limited to the evaluator and test files.
+- Added exact hashed case selection, explicit lower call/token caps, and a no-model-judge answer/review path while preserving existing defaults and guarded lineage preflight.
+- Created a fresh WAL-safe snapshot and ran the real CLI preflight under 12-call / 15,000-estimated-input limits with judging disabled. Zero supported direct durable replacements caused the intended zero-call stop.
+- Reused the existing 20 paid answers. Validity was labelled before answer inspection, then guarded versus no-history answers were reviewed in deterministic blinded order; one accidentally unblinded case is isolated in the private report.
+
+## Evidence
+
+- `python -m pytest -q tests/test_real_corpus_pull_eval.py tests/test_pull_contamination.py` -> 61 passed.
+- Agent-workflow checker -> clean; final redline -> BLUE with no checkpoints or boundary/API/schema/security/runtime-config changes; `git diff --check` -> clean.
+- Fresh snapshot: 53 lookup events, 48 query-bearing events, 39 valid non-empty cases, four requester sessions (9/9/1/1), and zero direct durable replacement lineage.
+- Final CLI preflight under 12-call / 15,000-estimated-input caps -> 0 model calls, 0 estimated input tokens, status `blocked_no_supported_lineage`.
+- Zero-cost agent review: 20 prior cases -> 12 answerable, 3 partial/ambiguous, 4 invalid, 1 duplicate. On answerable cases, guarded won 5, no history won 3, 2 tied, and both failed 2. Eleven were blinded; one accidentally exposed mapping is reported separately and favored no history.
+- Private ignored artifacts: `.local/research/real_corpus_budget_aware_agent_review.json`, preflight aggregate/review/worksheet, and fresh snapshot `pallium-20260825T073054Z.db`.
+
+## Result review
+
+- Independent low-cost review found one P1 fail-closed issue: summary lineage could disagree with selected cases. Fixed by recomputing from cases, overriding stale report metadata, and aligning the CLI preflight; re-review found no remaining actionable correctness issue.
+- PR review found guarded-only worksheets displayed raw rather than guarded prompt history and exposed an existing guarded-only token-summary crash; both were fixed with a guarded review-sheet regression. A CLI error-path test now proves unknown-case rejection rather than failing earlier on missing acknowledgement.
+- Final PR re-review found blocked results omitted the new budget/judge fields and raw-arm sheets could display reconstructed rather than exact prompt history. Both were fixed with schema and raw-review regressions.
+- The study-specific minimum of eight replacements across four sessions and three task types remains an external preregistered experiment gate, not a generic evaluator rule. Hard-coding it here would prevent legitimate smaller directional pilots; this run applied the gate before invocation and stopped at zero calls.
+- Product result: historical context is promising but not proven broadly. The corpus is not decision-grade and cannot test the replacement guard. Do not spend further model budget until the preregistered direct-lineage and diversity gate is met.

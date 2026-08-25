@@ -155,3 +155,34 @@ testing the feature. Decision: ship the guard based on its focused 0/10
 regression and public lifecycle coverage, but keep this product gate in progress.
 Collect genuinely superseded decision/constraint/operational cases across more
 sessions, then repeat before Phase 2. Do not pad or claim broad product value.
+### Budget-aware reassessment — 2026-08-25
+
+The next experiment was preregistered to reuse paid outputs first and to make no
+new model calls unless the corpus contained at least eight direct durable
+replacements across four sessions and three task types.
+
+The zero-cost answerability-first agent review found that the prior 20 cases
+contained 12 answerable tasks, three partial or ambiguous tasks, four invalid
+tasks, and one duplicate. Among the 12 answerable cases, guarded history produced
+the better answer in five, no history produced the better answer in three, two
+tied, and both answers failed in two. Eleven comparisons were reviewed in
+deterministically blinded order; one accidentally exposed mapping is reported
+separately. This is agent review, not human validation, and the automatic judge
+was deliberately ignored. The result is promising but not decision-grade:
+history sometimes supplied important project context, but it also encouraged
+unsupported specificity, and eight of the original 20 cases were not clean test
+questions.
+
+A fresh WAL-safe snapshot contained 53 lookup events, 48 query-bearing events,
+39 valid non-empty cases, and four requester sessions (sample distribution
+9/9/1/1). It contained zero supported direct durable replacement claims. The
+replacement preflight therefore stopped with zero model calls and zero estimated
+input tokens. No paid pilot was run.
+
+Decision: keep this gate in progress. Before spending again, collect at least
+eight genuine decision/constraint/operational replacements across four sessions
+and three task types, and construct answerable tasks rather than keyword-fragment
+queries. Then run a four-case, 12-call, no-model-judge pilot; expand to eight cases
+only if the pilot is informative. The evaluator now supports exact case IDs,
+lower per-run call/token caps, and blinded output without automatic judge calls,
+so that future run can enforce this budget mechanically.

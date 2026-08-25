@@ -286,7 +286,7 @@ def _guarded_history(
     ))
 
 
-def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_size: int = MAX_SAMPLE_SIZE, seed: int = 0, category_labels: dict[str, str] | None = None) -> CorpusSnapshot:
+def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_size: int = MAX_SAMPLE_SIZE, seed: int = 0, category_labels: dict[str, str] | None = None, case_ids: tuple[str, ...] | None = None) -> CorpusSnapshot:
     """Load and deterministically sample valid historical-pull episodes."""
     _valid_sample_size(sample_size)
     if not container_ref or not visibility:
@@ -465,7 +465,18 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
                 has_supported_replacement=has_supported_replacement,
             ))
 
-    selected = _sample_cases(cases, sample_size=sample_size, seed=seed)
+    if case_ids is None:
+        selected = _sample_cases(cases, sample_size=sample_size, seed=seed)
+    else:
+        if not case_ids or len(case_ids) > MAX_SAMPLE_SIZE:
+            raise ValueError(f"case_ids must contain between 1 and {MAX_SAMPLE_SIZE} ids")
+        if len(set(case_ids)) != len(case_ids):
+            raise ValueError("case_ids must not contain duplicates")
+        by_case_id = {case.case_id: case for case in cases}
+        unknown = [case_id for case_id in case_ids if case_id not in by_case_id]
+        if unknown:
+            raise ValueError(f"unknown case_ids: {', '.join(unknown)}")
+        selected = [by_case_id[case_id] for case_id in case_ids]
     lineage["sampled_cases_with_supported_replacements"] = sum(
         case.has_supported_replacement for case in selected
     )
@@ -580,18 +591,38 @@ def run_pilot(
     provider: LLMProvider | None = None,
     judge_provider: LLMProvider | None = None,
     history_arm: str = "raw",
+    model_judge: bool = True,
+    max_model_calls: int = MAX_MODEL_CALLS,
+    max_estimated_input_tokens: int = MAX_TOTAL_ESTIMATED_INPUT_TOKENS,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run bounded downstream-task comparisons; no calls happen without lineage in guarded mode."""
     if history_arm not in {"raw", "guarded", "both"}:
         raise ValueError("history_arm must be raw, guarded, or both")
-    if history_arm in {"guarded", "both"} and snapshot.lineage.get("sampled_cases_with_supported_replacements", 0) == 0:
+    if not 1 <= max_model_calls <= MAX_MODEL_CALLS:
+        raise ValueError(f"max_model_calls must be between 1 and {MAX_MODEL_CALLS}")
+    if not 1 <= max_estimated_input_tokens <= MAX_TOTAL_ESTIMATED_INPUT_TOKENS:
+        raise ValueError(
+            f"max_estimated_input_tokens must be between 1 and {MAX_TOTAL_ESTIMATED_INPUT_TOKENS}"
+        )
+    supported_case_count = sum(case.has_supported_replacement for case in snapshot.cases)
+    lineage = {
+        **snapshot.lineage,
+        "sampled_cases_with_supported_replacements": supported_case_count,
+    }
+    if history_arm in {"guarded", "both"} and supported_case_count == 0:
         return {
             "eval": "real-corpus-pull-pilot",
             "claim": {"measures": CLAIM_SEAM, "preflight": "supported supersession lineage coverage is zero; no model calls made"},
             "sampling": {"sampled_cases": len(snapshot.cases), "paired_cases": 0},
-            "corpus": {**snapshot.counts, "attrition": snapshot.attrition, "lineage": snapshot.lineage},
+            "corpus": {**snapshot.counts, "attrition": snapshot.attrition, "lineage": lineage},
             "decision_gate": {"status": "blocked_no_supported_lineage", "broad_product_recommendation": "none"},
-            "results": {"model_calls": 0, "estimated_input_tokens_total": 0, "budget_is_estimate": True},
+            "results": {
+                "model_calls": 0, "judge_calls": 0, "model_judge": model_judge,
+                "max_model_calls": max_model_calls,
+                "estimated_input_tokens_total": 0,
+                "max_estimated_input_tokens": max_estimated_input_tokens,
+                "budget_is_estimate": True,
+            },
         }, {"eval": "real-corpus-pull-pilot-review", "contains_raw_private_text": True, "never_publish": True, "cases": []}
     if provider is None:
         raise ValueError("provider is required when the guarded preflight passes")
@@ -606,7 +637,7 @@ def run_pilot(
     }
     review_cases: list[dict[str, Any]] = []
     aggregate_cases: list[str] = []
-    failures = budget_failures = budget_stopped_cases = model_calls = 0
+    failures = budget_failures = budget_stopped_cases = model_calls = judge_calls = 0
     total_input_tokens = 0
     exact_input_tokens = 0
     exact_usage_calls = 0
@@ -617,7 +648,7 @@ def run_pilot(
 
     def reserve(estimate: int) -> bool:
         nonlocal total_input_tokens, model_calls
-        if model_calls >= MAX_MODEL_CALLS or total_input_tokens + estimate > MAX_TOTAL_ESTIMATED_INPUT_TOKENS:
+        if model_calls >= max_model_calls or total_input_tokens + estimate > max_estimated_input_tokens:
             return False
         total_input_tokens += estimate
         model_calls += 1
@@ -660,28 +691,30 @@ def run_pilot(
             latencies["without_history"].append(round(without_ms, 3))
             arm_results = {}
             pending_counts: list[tuple[str, str, str]] = []
-            for arm in arms:
-                judge_system, judge_user, _ = _judge_prompt(
-                    case.case_id, case.query, histories[arm],
-                    answers[arm][:MAX_ANSWER_CHARS], without_answer[:MAX_ANSWER_CHARS],
-                )
-                if not reserve(_estimate_input_tokens(judge_system, judge_user)):
-                    raise _BudgetStop
-                winner, rel, rationale, with_first, _, exact = _judge(
-                    judge_provider, case_id=case.case_id, query=case.query,
-                    history=histories[arm], with_answer=answers[arm][:MAX_ANSWER_CHARS],
-                    without_answer=without_answer[:MAX_ANSWER_CHARS],
-                )
-                if exact is None:
-                    missing_usage_calls += 1
-                else:
-                    exact_input_tokens += exact
-                    exact_usage_calls += 1
-                pending_counts.append((arm, winner, rel))
-                arm_results[arm] = {
-                    "winner": winner, "history_relevance": rel,
-                    "judge_rationale": rationale, "blind_with_history_is_a": with_first,
-                }
+            if model_judge:
+                for arm in arms:
+                    judge_system, judge_user, _ = _judge_prompt(
+                        case.case_id, case.query, histories[arm],
+                        answers[arm][:MAX_ANSWER_CHARS], without_answer[:MAX_ANSWER_CHARS],
+                    )
+                    if not reserve(_estimate_input_tokens(judge_system, judge_user)):
+                        raise _BudgetStop
+                    winner, rel, rationale, with_first, _, exact = _judge(
+                        judge_provider, case_id=case.case_id, query=case.query,
+                        history=histories[arm], with_answer=answers[arm][:MAX_ANSWER_CHARS],
+                        without_answer=without_answer[:MAX_ANSWER_CHARS],
+                    )
+                    judge_calls += 1
+                    if exact is None:
+                        missing_usage_calls += 1
+                    else:
+                        exact_input_tokens += exact
+                        exact_usage_calls += 1
+                    pending_counts.append((arm, winner, rel))
+                    arm_results[arm] = {
+                        "winner": winner, "history_relevance": rel,
+                        "judge_rationale": rationale, "blind_with_history_is_a": with_first,
+                    }
             for arm, winner, rel in pending_counts:
                 outcomes[arm][winner] += 1
                 relevance[arm][rel] += 1
@@ -695,14 +728,25 @@ def run_pilot(
             case_review.update({
                 "with_history_answer": answers[arms[0]][:MAX_ANSWER_CHARS],
                 "without_history_answer": without_answer[:MAX_ANSWER_CHARS],
-                "judge_winner": arm_results[arms[0]]["winner"],
-                "history_relevance": arm_results[arms[0]]["history_relevance"],
-                "judge_rationale": arm_results[arms[0]]["judge_rationale"],
-                "blind_with_history_is_a": arm_results[arms[0]]["blind_with_history_is_a"],
-                "arm_results": arm_results,
+                "model_judged": model_judge,
             })
-            if len(arms) > 1:
+            if model_judge:
+                case_review.update({
+                    "judge_winner": arm_results[arms[0]]["winner"],
+                    "history_relevance": arm_results[arms[0]]["history_relevance"],
+                    "judge_rationale": arm_results[arms[0]]["judge_rationale"],
+                    "blind_with_history_is_a": arm_results[arms[0]]["blind_with_history_is_a"],
+                    "arm_results": arm_results,
+                })
+            else:
+                case_review["blind_with_history_is_a"] = int(
+                    hashlib.sha256(case.case_id.encode("utf-8")).hexdigest()[:2], 16
+                ) % 2 == 0
+            if "raw" in arms:
+                case_review["raw_history"] = raw_history
+            if "guarded" in arms:
                 case_review["guarded_history"] = guarded_history
+            if len(arms) > 1:
                 case_review["answers"] = {arm: answers[arm][:MAX_ANSWER_CHARS] for arm in arms}
         except _BudgetStop:
             budget_failures += 1
@@ -717,22 +761,26 @@ def run_pilot(
 
     default_outcomes = outcomes["raw"] if arms == ["raw"] else outcomes
     default_relevance = relevance["raw"] if arms == ["raw"] else relevance
-    decision_status = "directional_read_ready" if len(aggregate_cases) >= 3 and failures <= 1 and budget_failures == 0 else "insufficient_data"
+    if not model_judge and aggregate_cases and failures <= 1 and budget_failures == 0:
+        decision_status = "awaiting_agent_review"
+    else:
+        decision_status = "directional_read_ready" if len(aggregate_cases) >= 3 and failures <= 1 and budget_failures == 0 else "insufficient_data"
     aggregate = {
         "eval": "real-corpus-pull-pilot",
         "claim": {
             "measures": CLAIM_SEAM,
             "does_not_measure": ["candidate-recovery", "injection-precision", "observed live improvement"],
             "estimation": {"method": "chars_div_4", "exact_token_ceiling": False, "unicode_may_underestimate": True, "provider_completion_pre_capped": False},
-            "limitations": {"max_cases": MAX_SAMPLE_SIZE, "judge": "single uncalibrated model judge", "paired_draws": 1, "human_spot_check": False, "linked_observed_work_after": False, "judge_sees_history": True},
+            "limitations": {"max_cases": MAX_SAMPLE_SIZE, "judge": "single uncalibrated model judge" if model_judge else "disabled; blinded agent review required", "paired_draws": 1, "human_spot_check": False, "linked_observed_work_after": False, "judge_sees_history": model_judge},
         },
         "sampling": {"sample_size_cap": MAX_SAMPLE_SIZE, "sampled_cases": len(snapshot.cases), "paired_cases": len(aggregate_cases), "case_ids": aggregate_cases},
-        "corpus": {**snapshot.counts, "attrition": snapshot.attrition, "lineage": snapshot.lineage},
+        "corpus": {**snapshot.counts, "attrition": snapshot.attrition, "lineage": lineage},
         "decision_gate": {"status": decision_status, "broad_product_recommendation": "none", "note": "directional pilot only; no broad product recommendation"},
         "results": {
             "failures": failures, "budget_failures": budget_failures, "budget_stopped_cases": budget_stopped_cases,
-            "model_calls": model_calls, "max_model_calls": MAX_MODEL_CALLS,
-            "estimated_input_tokens_total": total_input_tokens, "max_estimated_input_tokens": MAX_TOTAL_ESTIMATED_INPUT_TOKENS,
+            "model_calls": model_calls, "judge_calls": judge_calls, "model_judge": model_judge,
+            "max_model_calls": max_model_calls,
+            "estimated_input_tokens_total": total_input_tokens, "max_estimated_input_tokens": max_estimated_input_tokens,
             "exact_input_tokens_total": exact_input_tokens if missing_usage_calls == 0 and exact_usage_calls else None,
             "token_measurement": "exact" if missing_usage_calls == 0 and exact_usage_calls else "estimate",
             "usage_calls_observed": exact_usage_calls, "usage_calls_missing": missing_usage_calls,
@@ -748,7 +796,7 @@ def run_pilot(
                 }
                 for arm, by_category in category_results.items()
             },
-            "incremental_history_tokens": incremental_history_tokens if len(arms) > 1 else incremental_history_tokens["raw"],
+            "incremental_history_tokens": incremental_history_tokens if len(arms) > 1 else incremental_history_tokens[arms[0]],
             "latency_ms": {
                 "with_history_total": {arm: round(sum(latencies[arm]), 3) for arm in arms},
                 "without_history_total": round(sum(latencies["without_history"]), 3),
@@ -807,7 +855,7 @@ def render_review_sheet(review: dict[str, Any]) -> str:
                 "no history": case["without_history_answer"],
             }
             order = sorted(candidates, key=lambda label: _hash_id(f"{case['case_id']}:{label}"))
-            raw_history = "\n\n".join(case.get("source_texts", []))
+            raw_history = case.get("raw_history") or "\n\n".join(case.get("source_texts", []))
             guarded_history = case.get("guarded_history", "")
             lines.extend([
                 "### Task", "", *block(case["query"]), "",
@@ -829,7 +877,7 @@ def render_review_sheet(review: dict[str, Any]) -> str:
         with_first = bool(case["blind_with_history_is_a"])
         answer_a = case["with_history_answer"] if with_first else case["without_history_answer"]
         answer_b = case["without_history_answer"] if with_first else case["with_history_answer"]
-        history = "\n\n".join(case.get("source_texts", []))
+        history = case.get("guarded_history") or case.get("raw_history") or "\n\n".join(case.get("source_texts", []))
         lines.extend([
             "### Task", "", *block(case["query"]), "",
             "### Retrieved history", "", *block(history), "",
@@ -861,7 +909,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--history-arm", choices=("raw", "guarded", "both"), default="raw", help="Compare raw, production-shaped guarded history, or both")
     parser.add_argument("--categories-json", type=Path, default=None, help="Optional JSON mapping event id or case id to applicable/unrelated/replaced_decision")
     parser.add_argument("--sample-size", type=int, default=MAX_SAMPLE_SIZE)
+    parser.add_argument("--case-id", action="append", default=None, help="Exact hashed case id to include; repeat for multiple cases")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--max-model-calls", type=int, default=MAX_MODEL_CALLS)
+    parser.add_argument("--max-estimated-input-tokens", type=int, default=MAX_TOTAL_ESTIMATED_INPUT_TOKENS)
+    parser.add_argument("--no-model-judge", action="store_true", help="Generate blinded answers without spending calls on an automatic judge")
     parser.add_argument("--cache-dir", type=Path, default=None)
     parser.add_argument("--no-eval-cache", action="store_true")
     return parser
@@ -896,16 +948,29 @@ def main(argv: list[str] | None = None) -> int:
             sample_size=args.sample_size,
             seed=args.seed,
             category_labels=category_labels,
+            case_ids=tuple(args.case_id) if args.case_id else None,
         )
-        if args.history_arm in {"guarded", "both"} and snapshot.lineage.get("sampled_cases_with_supported_replacements", 0) == 0:
-            aggregate, review = run_pilot(snapshot, history_arm=args.history_arm)
+        if args.history_arm in {"guarded", "both"} and not any(case.has_supported_replacement for case in snapshot.cases):
+            aggregate, review = run_pilot(
+                snapshot,
+                history_arm=args.history_arm,
+                model_judge=not args.no_model_judge,
+                max_model_calls=args.max_model_calls,
+                max_estimated_input_tokens=args.max_estimated_input_tokens,
+            )
         else:
             config = AppConfig.from_env()
             provider, judge_provider = build_eval_providers(
                 config, cache_dir=args.cache_dir, no_eval_cache=args.no_eval_cache
             )
             aggregate, review = run_pilot(
-                snapshot, provider=provider, judge_provider=judge_provider, history_arm=args.history_arm
+                snapshot,
+                provider=provider,
+                judge_provider=judge_provider,
+                history_arm=args.history_arm,
+                model_judge=not args.no_model_judge,
+                max_model_calls=args.max_model_calls,
+                max_estimated_input_tokens=args.max_estimated_input_tokens,
             )
         args.aggregate_output.parent.mkdir(parents=True, exist_ok=True)
         args.review_output.parent.mkdir(parents=True, exist_ok=True)

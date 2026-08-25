@@ -218,7 +218,27 @@ def test_cli_requires_explicit_db_and_outputs() -> None:
         parser.parse_args([])
     args = parser.parse_args(["--db", "x.db", "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", "a.json", "--review-output", "r.json"])
     assert args.sample_size == 20 and args.seed == 0
+    assert args.max_model_calls == 100 and args.max_estimated_input_tokens == 50000
+    assert args.case_id is None and args.no_model_judge is False
     assert "never publish" in parser.format_help()
+
+def test_exact_case_selection_preserves_order_and_rejects_bad_ids(tmp_path: Path) -> None:
+    db = tmp_path / "exact.db"
+    _db(
+        db,
+        [(f"e{i}", f"query {i}", json.dumps([{"source_item_id": f"s{i}"}])) for i in range(3)],
+        [(f"s{i}", f"source {i}", None) for i in range(3)],
+    )
+    all_cases = load_corpus(db, container_ref="c:test", visibility="private", sample_size=3).cases
+    requested = (all_cases[2].case_id, all_cases[0].case_id)
+    selected = load_corpus(
+        db, container_ref="c:test", visibility="private", case_ids=requested
+    )
+    assert tuple(case.case_id for case in selected.cases) == requested
+    with pytest.raises(ValueError, match="duplicates"):
+        load_corpus(db, container_ref="c:test", visibility="private", case_ids=(requested[0], requested[0]))
+    with pytest.raises(ValueError, match="unknown case_ids"):
+        load_corpus(db, container_ref="c:test", visibility="private", case_ids=("missing",))
 
 def test_loader_opens_db_read_only(tmp_path: Path, monkeypatch) -> None:
     db = tmp_path / "readonly.db"
@@ -343,6 +363,42 @@ def test_cli_main_writes_reports_without_mutating_db_or_leaking_aggregate(tmp_pa
     with pytest.raises(SystemExit):
         runner.main(["--db", str(db), "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", str(aggregate_path), "--review-output", str(review_path), "--review-sheet-output", str(review_path), "--acknowledge-private-review-output"])
 
+def test_cli_exact_no_judge_run_obeys_caps_and_rejects_unknown_before_calls(tmp_path: Path, monkeypatch) -> None:
+    import evals.real_corpus_pull_eval as runner
+
+    db = tmp_path / "cli-controls.db"
+    _db(
+        db,
+        [(f"e{i}", f"private query {i}", json.dumps([{"source_item_id": f"s{i}"}])) for i in range(2)],
+        [(f"s{i}", f"private source {i}", None) for i in range(2)],
+    )
+    selected_id = load_corpus(
+        db, container_ref="c:test", visibility="private", sample_size=2
+    ).cases[1].case_id
+    provider = ScriptedProvider()
+    monkeypatch.setattr(runner.AppConfig, "from_env", staticmethod(lambda: object()))
+    monkeypatch.setattr(runner, "build_eval_providers", lambda *args, **kwargs: (provider, provider))
+    aggregate_path = tmp_path / "aggregate.json"
+    review_path = tmp_path / "review.json"
+    base = [
+        "--db", str(db), "--container-ref", "c:test", "--visibility", "private",
+        "--aggregate-output", str(aggregate_path), "--review-output", str(review_path),
+        "--acknowledge-private-review-output", "--case-id", selected_id,
+        "--no-model-judge", "--max-model-calls", "2", "--max-estimated-input-tokens", "5000",
+    ]
+    assert runner.main(base) == 0
+    aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    assert provider.calls == aggregate["results"]["model_calls"] == 2
+    assert aggregate["results"]["judge_calls"] == 0
+    assert aggregate["sampling"]["paired_cases"] == 1
+    assert review["cases"][0]["case_id"] == selected_id
+    invalid = base.copy()
+    invalid[invalid.index(selected_id)] = "missing"
+    with pytest.raises(SystemExit):
+        runner.main(invalid)
+    assert provider.calls == 2
+
 def test_answer_is_capped_before_blinded_judge(tmp_path: Path) -> None:
     db = tmp_path / "answers.db"
     _db(db, [("e1", "query", json.dumps([{ "source_item_id": "s1" }]))], [("s1", "source", None)])
@@ -458,28 +514,113 @@ def test_guarded_arm_stops_before_provider_when_lineage_is_absent(tmp_path: Path
     aggregate, _ = run_pilot(snapshot, history_arm="guarded")
     assert aggregate["decision_gate"]["status"] == "blocked_no_supported_lineage"
     assert aggregate["results"]["model_calls"] == 0
+    assert aggregate["results"]["judge_calls"] == 0
+    assert aggregate["results"]["max_model_calls"] == 100
+    assert aggregate["results"]["max_estimated_input_tokens"] == 50000
 
 
-def test_mid_case_budget_stop_does_not_commit_partial_judge_counts(monkeypatch) -> None:
-    import evals.real_corpus_pull_eval as runner
-
+def test_guarded_preflight_recomputes_case_lineage_and_fails_closed() -> None:
     snapshot = CorpusSnapshot(
-        cases=(PullCase("e1", "t1", "task", ("s1",), ("context",), guarded_history='["guarded"]'),),
+        cases=(PullCase("e1", "t1", "task", ("s1",), ("context",)),),
+        counts={"valid_cases": 1},
+        attrition={},
+        lineage={"sampled_cases_with_supported_replacements": 99},
+    )
+    provider = ScriptedProvider(fail=True)
+    aggregate, _ = run_pilot(snapshot, provider=provider, history_arm="guarded")
+    assert provider.calls == 0
+    assert aggregate["decision_gate"]["status"] == "blocked_no_supported_lineage"
+    assert aggregate["corpus"]["lineage"]["sampled_cases_with_supported_replacements"] == 0
+
+def test_mid_case_budget_stop_does_not_commit_partial_judge_counts() -> None:
+    snapshot = CorpusSnapshot(
+        cases=(PullCase("e1", "t1", "task", ("s1",), ("context",), guarded_history='["guarded"]', has_supported_replacement=True),),
         counts={"valid_cases": 1},
         attrition={},
         lineage={"sampled_cases_with_supported_replacements": 1},
     )
-    monkeypatch.setattr(runner, "MAX_MODEL_CALLS", 4)
-    aggregate, _ = run_pilot(snapshot, provider=ScriptedProvider(), history_arm="both")
+    aggregate, _ = run_pilot(
+        snapshot, provider=ScriptedProvider(), history_arm="both", max_model_calls=4
+    )
 
     assert aggregate["sampling"]["paired_cases"] == 0
     assert aggregate["results"]["budget_failures"] == 1
     assert all(sum(wins.values()) == 0 for wins in aggregate["results"]["wins"].values())
 
+def test_no_model_judge_emits_blinded_three_arm_review_with_three_calls() -> None:
+    snapshot = CorpusSnapshot(
+        cases=(PullCase("e1", "t1", "task", ("s1",), ("context",), guarded_history='["guarded"]', has_supported_replacement=True),),
+        counts={"valid_cases": 1},
+        attrition={},
+        lineage={"sampled_cases_with_supported_replacements": 1},
+    )
+    provider = ScriptedProvider()
+    aggregate, review = run_pilot(
+        snapshot, provider=provider, history_arm="both", model_judge=False
+    )
+    assert provider.calls == aggregate["results"]["model_calls"] == 3
+    assert aggregate["results"]["judge_calls"] == 0
+    assert aggregate["decision_gate"]["status"] == "awaiting_agent_review"
+    assert all("winner" not in schema for _, _, schema in provider.requests)
+    assert set(review["cases"][0]["answers"]) == {"raw", "guarded"}
+    assert "Better answer: [ ] A  [ ] B  [ ] C  [ ] Tie" in render_review_sheet(review)
+
+
+def test_raw_no_judge_sheet_uses_exact_raw_prompt() -> None:
+    snapshot = CorpusSnapshot(
+        cases=(PullCase(
+            "e1", "t1", "task", ("s1",), ("SOURCE_TEXT",),
+            raw_history="RAW_SERIALIZED",
+        ),),
+        counts={"valid_cases": 1},
+        attrition={},
+    )
+    _, review = run_pilot(
+        snapshot, provider=ScriptedProvider(), history_arm="raw", model_judge=False
+    )
+    sheet = render_review_sheet(review)
+    assert "RAW_SERIALIZED" in sheet
+    assert "SOURCE_TEXT" not in sheet
+
+def test_guarded_no_judge_sheet_uses_exact_guarded_prompt() -> None:
+    snapshot = CorpusSnapshot(
+        cases=(PullCase(
+            "e1", "t1", "task", ("s1",), ("RAW_CONTEXT",),
+            guarded_history="GUARDED_SERIALIZED", has_supported_replacement=True,
+        ),),
+        counts={"valid_cases": 1},
+        attrition={},
+    )
+    _, review = run_pilot(
+        snapshot, provider=ScriptedProvider(), history_arm="guarded", model_judge=False
+    )
+    sheet = render_review_sheet(review)
+    assert "GUARDED_SERIALIZED" in sheet
+    assert "RAW_CONTEXT" not in sheet
+
+def test_caller_budget_caps_are_lower_bounded_and_stop_before_call() -> None:
+    snapshot = CorpusSnapshot(
+        cases=(PullCase("e1", "t1", "task", ("s1",), ("context",)),),
+        counts={"valid_cases": 1},
+        attrition={},
+    )
+    provider = ScriptedProvider()
+    aggregate, _ = run_pilot(
+        snapshot, provider=provider, max_model_calls=1, max_estimated_input_tokens=1
+    )
+    assert provider.calls == aggregate["results"]["model_calls"] == 0
+    assert aggregate["sampling"]["paired_cases"] == 0
+    assert aggregate["results"]["max_model_calls"] == 1
+    assert aggregate["results"]["max_estimated_input_tokens"] == 1
+    with pytest.raises(ValueError, match="max_model_calls"):
+        run_pilot(snapshot, provider=provider, max_model_calls=101)
+    with pytest.raises(ValueError, match="max_estimated_input_tokens"):
+        run_pilot(snapshot, provider=provider, max_estimated_input_tokens=50001)
+
 def test_both_arms_respect_hard_call_cap() -> None:
     snapshot = CorpusSnapshot(
         cases=tuple(
-            PullCase(f"e{i}", f"t{i}", f"task {i}", (f"s{i}",), (f"context {i}",), guarded_history=f'["guarded {i}"]')
+            PullCase(f"e{i}", f"t{i}", f"task {i}", (f"s{i}",), (f"context {i}",), guarded_history=f'["guarded {i}"]', has_supported_replacement=True)
             for i in range(20)
         ),
         counts={"valid_cases": 20},
