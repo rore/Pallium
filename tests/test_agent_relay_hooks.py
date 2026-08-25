@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -44,9 +45,10 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
     common = _load(name, relative)
     rendered, rendered_deliveries = common.format_relay([DELIVERY], budget_chars=2000)
     assert rendered.startswith("[Pallium Relay message from claude-code:sender-session]")
-    assert "lower authority than user instructions" in rendered
+    assert "lower authority" in rendered
     assert "delivery_id: relay-delivery-1" in rendered
     assert "pallium_relay_reply" in rendered
+    assert "make its Pallium Relay origin clear" in rendered
     assert rendered_deliveries == [DELIVERY]
     assert "line one\nline two\tvalue" in common.format_relay(
         [{**DELIVERY, "payload": "line one\nline two\tvalue"}], budget_chars=2000
@@ -127,7 +129,53 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
         0.75,
     )
     assert output and output[0][0].startswith("[Pallium Relay message")
+    assert "[Pallium scope — " in output[0][0]
     assert acknowledged and acknowledged[0][0] == [DELIVERY]
+
+
+@pytest.mark.parametrize(
+    ("relative", "runtime", "imported"),
+    [
+        ("integrations/claude-code/hooks/user_prompt_submit.py", "claude-code", False),
+        ("integrations/codex/hooks/user_prompt_submit.py", "codex", True),
+    ],
+)
+def test_short_turn_without_delivery_still_exposes_current_relay_identity(
+    monkeypatch, relative, runtime, imported,
+):
+    if imported:
+        from integrations.codex.hooks import user_prompt_submit as hook
+    else:
+        hook = _load("claude_short_scope", relative)
+    monkeypatch.setattr(
+        hook, "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "target-session", "prompt": "hi"},
+    )
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: {"deliveries": []})
+    monkeypatch.setattr(
+        hook, "pallium_request",
+        lambda *_a, **_k: pytest.fail("short prompt must skip memory"),
+    )
+    outputs = []
+    if imported:
+        monkeypatch.setattr(hook, "emit_context", lambda text, _event: outputs.append(text))
+    else:
+        monkeypatch.setattr("builtins.print", lambda text, **_kwargs: outputs.append(text))
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert len(outputs) == 1
+    scope = json.loads(outputs[0].removeprefix("[Pallium scope — ").removesuffix("]"))
+    assert scope == {
+        "container_ref": "git:example/repo",
+        "thread_ref": "target-session",
+        "actor_ref": "actor",
+        "agent_ref": runtime,
+        "visibility": "private",
+    }
 
 
 def test_claude_short_prompt_delivers_relay_before_memory_gate(monkeypatch):

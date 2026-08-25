@@ -667,3 +667,122 @@ async def test_explicit_creation_mcp_to_http_rejects_bad_scope_without_write(
 
     assert result["status_code"] == expected_status
     assert counts() == before
+
+
+@pytest.mark.asyncio
+async def test_relay_mcp_client_to_http_full_named_session_round_trip(
+    pallium_asgi_app,
+) -> None:
+    scope = {
+        "container_ref": "git:github.com/example/relay",
+        "actor_ref": "relay-user",
+    }
+    context = PalliumContext(
+        base_url="http://testserver",
+        container_ref=scope["container_ref"],
+        thread_ref="sender",
+        actor_ref=scope["actor_ref"],
+        agent_ref="codex",
+        visibility="private",
+    )
+    client = PalliumMcpClient(context)
+    transport = httpx.ASGITransport(app=pallium_asgi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver", timeout=30.0
+    ) as http:
+        async def post(path, payload):
+            response = await http.post(path, json=payload)
+            if response.is_error:
+                return {
+                    "error": str(response.status_code),
+                    "status_code": response.status_code,
+                    "detail": response.json(),
+                }
+            return response.json()
+
+        async def get(path, params):
+            response = await http.get(path, params=params)
+            if response.is_error:
+                return {
+                    "error": str(response.status_code),
+                    "status_code": response.status_code,
+                    "detail": response.json(),
+                }
+            return response.json()
+
+        client._post_or_error = post
+        client._get_or_error = get
+
+        for runtime, session in (
+            ("codex", "sender"),
+            ("codex", "review-old"),
+            ("codex", "review-new"),
+        ):
+            response = await http.post(
+                "/relay/turn",
+                json={"runtime": runtime, "session_ref": session, **scope},
+            )
+            assert response.status_code == 200
+
+        assert "session_ref" in await client.relay_name(
+            alias="review",
+            current_runtime="codex",
+            current_session_ref="review-old",
+        )
+        conflict = await client.relay_name(
+            alias="review",
+            current_runtime="codex",
+            current_session_ref="review-new",
+        )
+        assert conflict["status_code"] == 409
+        assert "replace_existing=true" in conflict["detail"]["detail"]
+        transferred = await client.relay_name(
+            alias="review",
+            current_runtime="codex",
+            current_session_ref="review-new",
+            replace_existing=True,
+        )
+        assert transferred["alias"] == "review"
+
+        sent = await client.relay_send(
+            message="review this → 你好",
+            recipient="codex:@review",
+            sender_runtime="codex",
+            sender_session_ref="sender",
+        )
+        assert sent["deliveries"][0]["recipient_session_ref"] == "review-new"
+
+        received = (
+            await http.post(
+                "/relay/turn",
+                json={"runtime": "codex", "session_ref": "review-new", **scope},
+            )
+        ).json()["deliveries"][0]
+        assert received["payload"] == "review this → 你好"
+        assert (
+            await http.post(
+                "/relay/deliveries/ack",
+                json={
+                    "delivery_id": received["delivery_id"],
+                    "claim_token": received["claim_token"],
+                    **scope,
+                },
+            )
+        ).status_code == 200
+
+        reply = await client.relay_reply(
+            delivery_id=received["delivery_id"],
+            message="acknowledged ✓",
+        )
+        assert reply["sender_session_ref"] == "review-new"
+        assert reply["recipient"] == "codex:sender"
+        sender_turn = (
+            await http.post(
+                "/relay/turn",
+                json={"runtime": "codex", "session_ref": "sender", **scope},
+            )
+        ).json()
+        assert sender_turn["deliveries"][0]["payload"] == "acknowledged ✓"
+        assert (
+            await client.relay_status(sent["message_id"])
+        )["deliveries"][0]["state"] == "delivered"

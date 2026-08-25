@@ -88,7 +88,13 @@ def main() -> None:
             deliveries = (relay_response or {}).get("deliveries") or []
             relay_output, rendered_deliveries = format_relay(deliveries, budget_chars=2400)
 
-        memory_output = ""
+        separator = 2 if relay_output else 0
+        memory_budget = min(2400, max(0, 4000 - len(relay_output) - separator))
+        memory_output = format_injection(
+            [], container_ref, budget_chars=memory_budget,
+            thread_ref=session_id, actor_ref=actor_ref,
+            agent_ref="claude-code", visibility="private",
+        ) if has_session else ""
         if len(content) >= 20:
             query_text = content[:500]
             response = pallium_request("POST", "/item-and-query", {
@@ -109,8 +115,6 @@ def main() -> None:
                 "query_trigger_origin": "user_prompt_submit",
             })
             if response:
-                separator = 2 if relay_output else 0
-                memory_budget = min(2400, max(0, 4000 - len(relay_output) - separator))
                 memory_output = format_injection(
                     response.get("injectable_blocks", []),
                     container_ref,

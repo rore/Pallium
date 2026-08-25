@@ -164,6 +164,18 @@ R1 is implemented as the full scoped slice, not a disposable proof of concept:
 Live Claude Code/Codex validation confirmed alias routing, next-turn delivery, acknowledgement, and round-trip messaging. It also exposed three R1 UX defects now covered by the contract: current identity must come from injected `agent_ref`/`thread_ref`, replies must derive endpoints from the received `delivery_id`, and Claude/Codex must follow deliberate Git-project changes while ignoring transient non-Git cwd drift. A project transition best-effort closes the old scoped Relay session and releases its alias; queued deliveries remain in the old project.
 
 The track remains `in-progress` because the product hypothesis is not yet proven. The next work is real-use measurement against the R1 decision gate, not automatic expansion into R2.
+
+#### R1 acceptance hardening — complete (2026-08-25)
+
+A full caller-surface pass added one continuous MCP → HTTP → SQLite → hook lifecycle and closed the remaining smoke-test gaps:
+
+- alias conflicts now tell agents to use `replace_existing=true`; alias transfer and release are covered
+- stable message IDs reject changed expiry or redaction semantics and hide cross-scope collisions as not found
+- every eligible Claude Code, Codex, and OpenCode turn exposes its current Relay runtime/session identity, even when the prompt is short, memory is empty, or OpenCode state was purged
+- Relay envelopes require the agent to make the message origin visible to the user
+- combined E2E coverage now exercises the per-turn cap, close/reactivate behavior, queued delivery preservation, idempotent acknowledgement, reply routing, Unicode, and full alias lifecycle
+
+A live two-Codex run independently confirmed alias conflict/transfer, alias-addressed delivery on an unrelated natural turn, delivery-derived reply, visible Relay attribution, and consume-once behavior. Claude Code and OpenCode retain harness-specific automated coverage through their real hook/plugin surfaces; an actual paid model-to-model run is a release smoke check, not a substitute for those deterministic tests.
 ### R2 — Future-recipient addressing investigation
 
 Investigate only if R1 repeatedly exposes the need. Do not assume `work_ref` solves

@@ -336,9 +336,13 @@ export default async ({ client, directory, worktree } = {}) => {
         const deliveries = (relayResponse && relayResponse.deliveries) || [];
         const { text: relayText, deliveries: renderedDeliveries } = pallium.formatRelay(deliveries, 2400);
         const queued = drainInjections(sessionId);
+        const hasQueuedScope = queued.some((chunk) => chunk.startsWith("[Pallium scope — "));
+        const scopeText = hasQueuedScope ? "" : pallium.formatInjection(
+          [], containerRef, 2400, sessionId, actorRef, pallium.AGENT_REF, "private",
+        );
         const parts = [];
         let used = 0;
-        for (const chunk of [relayText, ...queued]) {
+        for (const chunk of [relayText, scopeText, ...queued]) {
           if (!chunk) continue;
           const added = [...chunk].length + (parts.length ? 2 : 0);
           if (used + added > 4000) {

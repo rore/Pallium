@@ -79,6 +79,7 @@ def test_full_broadcast_snapshot_alias_transfer_reply_and_lifecycle(client):
 
     conflict = _name(client, "codex", "review-new", "review")
     assert conflict.status_code == 409
+    assert "replace_existing=true" in conflict.json()["detail"]
     assert _name(client, "codex", "review-new", "review", replace_existing=True).status_code == 200
 
     new = _send(client, "claude-code", "sender", "codex:@review", "new target").json()
@@ -213,6 +214,21 @@ def test_message_id_idempotency_redaction_and_reply_scope(client):
         client, "claude-code", "sender", "codex:target", "changed", message_id="stable-message"
     )
     assert changed.status_code == 409
+    changed_expiry = _send(
+        client, "claude-code", "sender", "codex:target",
+        "Authorization: Bearer secret-value", message_id="stable-message",
+        expires_in_seconds=60,
+    )
+    assert changed_expiry.status_code == 409
+
+    _turn(client, "claude-code", "other-scope-sender", container_ref="git:other")
+    collision = _send(
+        client, "claude-code", "other-scope-sender", "codex:missing",
+        message_id="stable-message", container_ref="git:other",
+    )
+    assert collision.status_code == 404
+    assert collision.json()["detail"] == "relay entity not found in the requested scope"
+
     wrong_scope_parent = _send(
         client, "claude-code", "sender", "codex:target", "reply", in_reply_to="missing"
     )
@@ -243,6 +259,9 @@ def test_delivery_derived_reply_is_attributed_scoped_and_idempotent(client):
     assert duplicate.status_code == 200
     assert duplicate.json()["message_id"] == body["message_id"]
     assert len(duplicate.json()["deliveries"]) == 1
+    assert _reply(
+        client, claimed["delivery_id"], "תשובה → 你好", expires_in_seconds=60
+    ).status_code == 409
     assert _reply(client, claimed["delivery_id"], "different").status_code == 409
 
     assert _reply(client, "missing").status_code == 404
@@ -437,6 +456,52 @@ def test_expiry_boundaries_and_complete_message_turn_budget(client):
     assert len(claimed[0]["payload"]) == 1000
     assert _ack(client, claimed[0]).status_code == 200
     assert _turn(client, "codex", "budget-target")["deliveries"]
+
+
+def test_turn_message_cap_alias_release_and_queued_close_reactivation(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    assert _name(client, "codex", "target", "review").status_code == 200
+    for index in range(4):
+        assert _send(
+            client, "claude-code", "sender", "codex:@review",
+            f"message {index}", message_id=f"cap-{index}",
+        ).status_code == 200
+
+    close = client.post(
+        "/relay/sessions/close",
+        json={"runtime": "codex", "session_ref": "target", **SCOPE},
+    )
+    assert close.status_code == 200
+    assert close.json()["alias"] is None
+    assert client.post(
+        "/relay/sessions/close",
+        json={"runtime": "codex", "session_ref": "target", **SCOPE},
+    ).status_code == 200
+
+    first = _turn(client, "codex", "target")["deliveries"]
+    assert len(first) == 3
+    for delivery in first:
+        assert _ack(client, delivery).status_code == 200
+    second = _turn(client, "codex", "target")["deliveries"]
+    assert len(second) == 1
+    assert _ack(client, second[0]).status_code == 200
+    assert _turn(client, "codex", "target")["deliveries"] == []
+
+    assert _name(client, "codex", "target", "review").status_code == 200
+    released = _name(client, "codex", "target", None)
+    assert released.status_code == 200
+    assert released.json()["alias"] is None
+    assert _send(client, "claude-code", "sender", "codex:@review").status_code == 404
+
+
+@pytest.mark.parametrize("max_chars", [0, 2401])
+def test_turn_budget_rejects_out_of_range_values(client, max_chars):
+    response = client.post(
+        "/relay/turn",
+        json={"runtime": "codex", "session_ref": "target", "max_chars": max_chars, **SCOPE},
+    )
+    assert response.status_code == 422
 
 
 def test_small_turn_budget_skips_oversized_message_without_blocking_later_delivery(client):

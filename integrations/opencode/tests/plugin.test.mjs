@@ -230,7 +230,9 @@ test("session.deleted purges pending per-session state", async () => {
   await hooks["chat.message"]({}, { message: { sessionID: "sZ" }, parts: [{ type: "text", text: "a real prompt about memory injection budgets" }] });
   await hooks.event({ event: { type: "session.deleted", properties: { sessionID: "sZ" } } });
   const system = await systemTransform(hooks, "sZ");
-  assert.deepEqual(system, [], "deleted session's queued injection is purged");
+  assert.equal(system.length, 1);
+  assert.doesNotMatch(system[0], /\[Pallium memory/);
+  assert.match(system[0], /"thread_ref":"sZ"/);
 });
 
 // --- experimental.session.compacting -> ingest before compaction -----------
@@ -366,7 +368,7 @@ test("system.transform injects Relay before memory and acknowledges after mutati
   );
   assert.equal(output.system.length, 1);
   assert.ok(output.system[0].indexOf("[Pallium Relay") < output.system[0].indexOf("[Pallium memory"));
-  assert.match(output.system[0], /lower authority than user instructions/);
+  assert.match(output.system[0], /lower authority/);
   const turn = fetchCalls.find((call) => call.url.includes("/relay/turn"));
   assert.equal(turn.body.runtime, "opencode");
   assert.equal(turn.body.session_ref, "sesRelay");
@@ -377,6 +379,16 @@ test("system.transform injects Relay before memory and acknowledges after mutati
     { delivery_id: ack.body.delivery_id, claim_token: ack.body.claim_token },
     { delivery_id: "d-1", claim_token: "claim-1" },
   );
+});
+
+test("system.transform with no delivery still exposes current Relay identity", async () => {
+  installFetch({ "/relay/turn": { deliveries: [] } });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  const system = await systemTransform(hooks, "sesIdentity");
+  assert.equal(system.length, 1);
+  assert.ok(system[0].startsWith("[Pallium scope — "));
+  assert.match(system[0], /"thread_ref":"sesIdentity"/);
+  assert.match(system[0], /"agent_ref":"opencode"/);
 });
 
 test("system.transform without mutable system does not claim Relay", async () => {
