@@ -66,12 +66,12 @@ def main() -> None:
                     "session_ref": session_id,
                     "container_ref": container_ref,
                     "actor_ref": actor_ref,
-                    "max_chars": 2000,
+                    "max_chars": 2400,
                 },
                 timeout=0.75,
             )
             deliveries = (relay_response or {}).get("deliveries") or []
-            relay_output = format_relay(deliveries, budget_chars=2000)
+            relay_output = format_relay(deliveries, budget_chars=2400)
 
         memory_output = ""
         if len(content) >= 20:

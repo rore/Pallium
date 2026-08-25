@@ -295,6 +295,38 @@ def test_relay_has_no_memory_retrieval_or_processing_side_effects(client, relay_
     assert after == before
 
 
+def test_maximum_message_and_identity_envelope_is_claimable(client):
+    sender = "s" * 255
+    _turn(client, "claude-code", sender)
+    _turn(client, "codex", "target")
+    parent_id = "p" * 128
+    parent = _send(
+        client, "claude-code", sender, "codex:target", "parent", message_id=parent_id,
+    )
+    assert parent.status_code == 200
+    parent_claim = _turn(client, "codex", "target")["deliveries"][0]
+    assert _ack(client, parent_claim).status_code == 200
+
+    message_id = "m" * 128
+    sent = _send(
+        client,
+        "claude-code",
+        sender,
+        "codex:target",
+        "😀" * 1500,
+        message_id=message_id,
+        in_reply_to=parent_id,
+    )
+    assert sent.status_code == 200
+    turn = client.post(
+        "/relay/turn",
+        json={"runtime": "codex", "session_ref": "target", "max_chars": 2400, **SCOPE},
+    )
+    assert turn.status_code == 200
+    claimed = turn.json()["deliveries"]
+    assert [delivery["message_id"] for delivery in claimed] == [message_id]
+    assert _ack(client, claimed[0]).status_code == 200
+
 def test_expiry_boundaries_and_complete_message_turn_budget(client):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "target")

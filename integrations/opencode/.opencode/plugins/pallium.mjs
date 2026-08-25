@@ -331,16 +331,16 @@ export default async ({ client, directory, worktree } = {}) => {
           session_ref: sessionId,
           container_ref: containerRef,
           actor_ref: actorRef,
-          max_chars: 2000,
+          max_chars: 2400,
         }, 750);
         const deliveries = (relayResponse && relayResponse.deliveries) || [];
-        const relayText = pallium.formatRelay(deliveries, 2000);
+        const relayText = pallium.formatRelay(deliveries, 2400);
         const queued = drainInjections(sessionId);
         const parts = [];
         let used = 0;
         for (const chunk of [relayText, ...queued]) {
           if (!chunk) continue;
-          const added = chunk.length + (parts.length ? 2 : 0);
+          const added = [...chunk].length + (parts.length ? 2 : 0);
           if (used + added > 4000) {
             if (chunk !== relayText) enqueueInjection(sessionId, chunk);
             continue;

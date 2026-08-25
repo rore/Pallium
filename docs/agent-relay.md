@@ -29,7 +29,7 @@ Recent sessions are shown by default. A session becomes dormant after 24 hours w
 
 ## Delivery contract
 
-Messages contain at most 1,500 Unicode code points and expire after 24 hours by default (allowed range: 60 seconds to 7 days). A turn claims at most three complete messages within a 2,000-character Relay budget. The integration acknowledges only after adding the attributed block to model context. Interrupted claims become eligible again after a lease; stable IDs make acknowledgement idempotent.
+Messages contain at most 1,500 Unicode code points and expire after 24 hours by default (allowed range: 60 seconds to 7 days). A turn claims at most three complete messages within a 2,400-character Relay budget. The integration acknowledges only after adding the attributed block to model context. Interrupted claims become eligible again after a lease; stable IDs make acknowledgement idempotent.
 
 Replies are ordinary sends with `in_reply_to`. They do not create a live or autonomous conversation. Delivery means the runtime received the context, not that the model read or acted on it.
 

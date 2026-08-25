@@ -368,7 +368,7 @@ export async function relayRequest(method, reqPath, payload, timeoutMs) {
 }
 
 
-export function formatRelay(deliveries, budgetChars = 2000) {
+export function formatRelay(deliveries, budgetChars = 2400) {
   const chunks = [];
   let used = 0;
   for (const delivery of deliveries || []) {
@@ -397,7 +397,7 @@ export function formatRelay(deliveries, budgetChars = 2000) {
       "[End Pallium Relay message]",
     );
     const chunk = lines.join("\n");
-    const added = chunk.length + (chunks.length ? 2 : 0);
+    const added = [...chunk].length + (chunks.length ? 2 : 0);
     if (used + added > budgetChars) break;
     chunks.push(chunk);
     used += added;

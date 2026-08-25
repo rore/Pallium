@@ -269,7 +269,7 @@ def relay_request(
         return None
 
 
-def format_relay(deliveries: list[dict], budget_chars: int = 2000) -> str:
+def format_relay(deliveries: list[dict], budget_chars: int = 2400) -> str:
     """Render complete attributed peer messages; never truncate payloads."""
     chunks: list[str] = []
     used = 0

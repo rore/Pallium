@@ -337,14 +337,17 @@ test("system.transform injects Relay before memory and acknowledges after mutati
     deliveries: [{
       delivery_id: "d-1", claim_token: "claim-1", message_id: "m-1",
       sender_runtime: "claude-code", sender_session_ref: "sender-a",
-      recipient: "opencode:sesRelay", payload: "review the migration",
+      recipient: "opencode:sesRelay", payload: "😀".repeat(1500),
       redacted: false, in_reply_to: null,
       created_at: "2026-08-25T10:00:00+00:00",
       expires_at: "2026-08-26T10:00:00+00:00",
     }],
   };
-  installFetch({
-    "/item-and-query": oneBlock,
+  const largeMemory = {
+    ...oneBlock,
+    injectable_blocks: [{ ...oneBlock.injectable_blocks[0], text: "m".repeat(1200) }],
+  };  installFetch({
+    "/item-and-query": largeMemory,
     "/relay/turn": relay,
     "/relay/deliveries/ack": { delivery_id: "d-1", state: "delivered" },
   });
@@ -361,6 +364,7 @@ test("system.transform injects Relay before memory and acknowledges after mutati
   const turn = fetchCalls.find((call) => call.url.includes("/relay/turn"));
   assert.equal(turn.body.runtime, "opencode");
   assert.equal(turn.body.session_ref, "sesRelay");
+  assert.equal(turn.body.max_chars, 2400);
   const ack = fetchCalls.find((call) => call.url.includes("/relay/deliveries/ack"));
   assert.deepEqual(
     { delivery_id: ack.body.delivery_id, claim_token: ack.body.claim_token },

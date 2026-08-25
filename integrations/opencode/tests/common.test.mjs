@@ -303,5 +303,10 @@ test("formatRelay preserves complete attributed messages and enforces budget", (
   assert.match(out, /in_reply_to: m-0/);
   assert.equal(P.formatRelay([delivery], 20), "");
   assert.equal(P.formatRelay([{ ...delivery, payload: "bad\u0000value" }], 2000), "");
+  const maximum = {
+    ...delivery, message_id: "m".repeat(128), sender_session_ref: "s".repeat(255),
+    in_reply_to: "p".repeat(128), payload: "😀".repeat(1500),
+  };
+  assert.ok(P.formatRelay([maximum], 2400));
   assert.match(P.formatRelay([{ ...delivery, payload: "line one\nline two\tvalue" }]), /line one\nline two\tvalue/);
 });

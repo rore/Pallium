@@ -50,6 +50,14 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
     )
     assert common.format_relay([DELIVERY], budget_chars=20) == ""
     assert common.format_relay([{**DELIVERY, "payload": "bad\x00value"}]) == ""
+    maximum = {
+        **DELIVERY,
+        "message_id": "m" * 128,
+        "sender_session_ref": "s" * 255,
+        "in_reply_to": "p" * 128,
+        "payload": "😀" * 1500,
+    }
+    assert common.format_relay([maximum], budget_chars=2400)
 
     observed = []
 
@@ -107,7 +115,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
             "session_ref": "target-session",
             "container_ref": "git:example/repo",
             "actor_ref": "actor",
-            "max_chars": 2000,
+            "max_chars": 2400,
         },
         0.75,
     )
