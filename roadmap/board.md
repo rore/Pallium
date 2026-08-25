@@ -16,6 +16,9 @@
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
 
+# Parallel · Agent Relay
+- idea-agent-relay
+
 # Paused
 - idea-authenticated-principal-for-mutation-authz
 - investigate-thread-level-interest-and-threadless-aggregation

@@ -1,11 +1,16 @@
-Pallium's current direction is **Pallium vNext: historical agent work as a
-first-class context layer** (see "Current focus" below; strategy
-`docs/context/strategy-vnext.md`, execution
-`docs/designs/015-vnext-historical-work-execution.md`). That is the active thesis
-and the lens for prioritization.
+Pallium currently has two parallel product tracks:
 
-Everything below the current-focus section records the shipped foundation vNext
-builds on. It is context, **not** an invitation to reopen the prior
+1. **Pallium vNext: historical agent work as a first-class context layer**
+   (strategy `docs/context/strategy-vnext.md`, execution
+   `docs/designs/015-vnext-historical-work-execution.md`).
+2. **Agent Relay: explicit durable context exchange between supported local agent
+   runtimes** (`roadmap/ideas/idea-agent-relay.md`).
+
+They reuse Pallium's local service and integration foundation but test separate
+product hypotheses. Neither track gates the other.
+
+Everything below the current-focus sections records the shipped foundation these
+tracks build on. It is context, **not** an invitation to reopen the prior
 proactive-injection / routing-optimization program — that program is not the
 current direction.
 
@@ -106,6 +111,31 @@ consumption representation (~29% misleading); and cross-session transfer is comm
 but orchestrated manually today. This argues for changing the interaction model
 (deliberate pull + continuity), not abandoning historical memory — with derivation
 demoted to a continuously-evaluated optimization layer.
+
+Parallel track — Agent Relay (2026-08):
+
+Agent Relay tests a separate product hypothesis: Pallium's durable local service
+and agent integration points may be valuable as a context-exchange layer, even
+where semantic memory is not involved. An agent explicitly sends an attributed,
+scoped message to another supported runtime; Pallium persists it and delivers it
+at the recipient's next applicable turn.
+
+Initial consumers are **Claude Code, Codex, and OpenCode**. The first slice is
+named-runtime delivery within the same repository/container. Extracted
+`work_refs` are retrieval hints, not reliable delivery addresses, and must not be
+used to route Relay messages. Future-recipient addressing remains an investigation
+until a reliable shared identity source exists.
+
+Relay has two design invariants:
+
+- routing and delivery do not depend on search, embeddings, ranking, or an LLM
+- Pallium moves bounded information between agents; it does not spawn, assign,
+  wake, or continuously coordinate them
+
+The track is validation-first: define the minimum contract, ship explicit
+point-to-point relay, observe whether it materially reduces manual context copying,
+and add only extensions repeatedly demanded by real use. See
+`roadmap/ideas/idea-agent-relay.md`.
 
 Still parked (pre-vNext investigations):
 
