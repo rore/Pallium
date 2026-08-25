@@ -71,12 +71,12 @@ R0 established Claude Code `UserPromptSubmit`, Codex `UserPromptSubmit`/`additio
 Initial clean-context review withheld approval on endpoint/file contracts, hook timing/order, non-SQLite compatibility, trust-boundary validation, close/reactivation, exact lifecycle/Unicode coverage, and combined budgets. Corrected; focused clean-context re-review returned APPROVED with no blocking corrections.
 
 **Approvals:**
-Pending reviewed-plan approval.
+Approved by user 2026-08-25T15:48:52+03:00: "yes. is the whole r1 implemented or is  it just a minimal poc?"
 
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Plan review
