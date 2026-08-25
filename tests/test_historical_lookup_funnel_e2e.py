@@ -56,7 +56,8 @@ def _build_client(monkeypatch, test_db_url: str) -> TestClient:
 
 def _ingest(client: TestClient, *, source_id: str, content: str, role: str,
             artifact_kind: str, container_ref: str = CONTAINER,
-            thread_ref: str = THREAD, visibility: str = "private") -> str:
+            thread_ref: str = THREAD, visibility: str = "private",
+            actor_ref: str | None = None) -> str:
     source_type = "chat_message" if role == "user" else "assistant_artifact"
     resp = client.post("/items", json=[{
         "source_type": source_type,
@@ -67,6 +68,7 @@ def _ingest(client: TestClient, *, source_id: str, content: str, role: str,
         "role": role,
         "container_ref": container_ref,
         "thread_ref": thread_ref,
+        "actor_ref": actor_ref,
         "visibility": visibility,
     }])
     assert resp.status_code == 200, resp.text
@@ -75,12 +77,16 @@ def _ingest(client: TestClient, *, source_id: str, content: str, role: str,
 
 
 def _search_history(client: TestClient, *, container_ref: str = CONTAINER,
-                    thread_ref: str = THREAD, visibility: str = "private") -> dict:
+                    thread_ref: str = THREAD, visibility: str = "private",
+                    actor_ref: str | None = None,
+                    request_source_item_id: str | None = None) -> dict:
     resp = client.post("/query", json={
         "text": "reservation ordering duplicate holds",
         "container_ref": container_ref,
         "thread_ref": thread_ref,
+        "actor_ref": actor_ref,
         "visibility": visibility,
+        "request_source_item_id": request_source_item_id,
         "limit": 5,
         "source_only": True,
         "trigger_origin": "agent_pull",
@@ -94,7 +100,7 @@ def _events(client: TestClient, event_type: str) -> list[dict]:
     with storage._engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT id, session_id, container_ref, parent_lookup_id, exposed_json "
+                "SELECT id, session_id, container_ref, parent_lookup_id, exposed_json, request_source_item_id "
                 "FROM historical_lookup_reuse_event WHERE event_type = :et"
             ),
             {"et": event_type},
@@ -111,12 +117,17 @@ def test_full_funnel_chain_audit_off(monkeypatch, test_db_url: str) -> None:
     import json
     with _build_client(monkeypatch, test_db_url) as client:
         # Substantive session: a user turn + an assistant-work turn.
-        _ingest(client, source_id="u1", content=_USER, role="user", artifact_kind="message")
+        request_id = _ingest(
+            client, source_id="u1", content=_USER, role="user",
+            artifact_kind="message", actor_ref="actor:test",
+        )
         _ingest(client, source_id="a1", content=_WORK, role="assistant", artifact_kind="assistant_output")
 
         # search_history (source_only). Audit is OFF, so a non-null minted id
         # here proves the persistence is audit-independent.
-        result = _search_history(client)
+        result = _search_history(
+            client, actor_ref="actor:test", request_source_item_id=request_id,
+        )
         assert result["decision_reason"] == "source_only_search"
         lookup_id = result["lookup_event_id"]
         assert lookup_id is not None
@@ -125,6 +136,7 @@ def test_full_funnel_chain_audit_off(monkeypatch, test_db_url: str) -> None:
         assert len(lookups) == 1
         assert lookups[0]["id"] == lookup_id
         assert lookups[0]["session_id"] == THREAD
+        assert lookups[0]["request_source_item_id"] == request_id
 
         source_hits = [r for r in result["results"] if r["result_kind"] == "source_hit"]
         assert source_hits, result
@@ -162,6 +174,66 @@ def test_full_funnel_chain_audit_off(monkeypatch, test_db_url: str) -> None:
         assert rollup["rungs"]["incorporation"]["numerator"] == 1
         # exposed set carried real source ids, sanity check json shape.
         assert isinstance(json.loads(lookups[0]["exposed_json"]), list)
+
+
+def test_invalid_request_links_fail_uniformly_before_retrieval(
+    monkeypatch, test_db_url: str,
+) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        user_id = _ingest(
+            client, source_id="request", content="Please resume the implementation.",
+            role="user", artifact_kind="message", actor_ref="actor:test",
+        )
+        assistant_id = _ingest(
+            client, source_id="assistant", content="Prior assistant output.",
+            role="assistant", artifact_kind="assistant_output", actor_ref="actor:test",
+        )
+        forgotten_id = _ingest(
+            client, source_id="forgotten", content="Forgotten request.",
+            role="user", artifact_kind="message", actor_ref="actor:test",
+        )
+        forgotten = client.post(
+            "/source/forget",
+            json={"source_item_id": forgotten_id, "reason": "test", "actor_ref": "actor:test"},
+        )
+        assert forgotten.status_code == 200, forgotten.text
+
+        service = client.app.state.pallium_service
+
+        def retrieval_must_not_run(*_args, **_kwargs):
+            raise AssertionError("invalid request link reached retrieval")
+
+        monkeypatch.setattr(service._query_executor, "query", retrieval_must_not_run)
+        base = {
+            "text": "prior implementation",
+            "container_ref": CONTAINER,
+            "thread_ref": THREAD,
+            "actor_ref": "actor:test",
+            "visibility": "private",
+            "limit": 3,
+            "source_only": True,
+            "trigger_origin": "agent_pull",
+        }
+        invalid_payloads = [
+            {**base, "request_source_item_id": "missing"},
+            {**base, "request_source_item_id": assistant_id},
+            {**base, "request_source_item_id": forgotten_id},
+            {**base, "request_source_item_id": user_id, "container_ref": "chat:other"},
+            {**base, "request_source_item_id": user_id, "thread_ref": "thread:other"},
+            {**base, "request_source_item_id": user_id, "actor_ref": "actor:other"},
+            {**base, "request_source_item_id": user_id, "visibility": "container"},
+            {**base, "request_source_item_id": user_id, "source_only": False},
+        ]
+        expected_detail = (
+            "request_source_item_id must reference a live user request in the same scope"
+        )
+        for route in ("/query", "/query/debug"):
+            for payload in invalid_payloads:
+                response = client.post(route, json=payload)
+                assert response.status_code == 422, (route, response.text)
+                assert response.json() == {"detail": expected_detail}
+
+        assert _events(client, "lookup") == []
 
 
 # ---------------------------------------------------------------------------

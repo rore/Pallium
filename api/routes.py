@@ -45,7 +45,7 @@ from api.schemas import (
     SupersedeMemoryRequest,
     SupersedeMemoryResponse,
 )
-from core.errors import SupersessionConflictError
+from core.errors import LookupRequestLinkError, SupersessionConflictError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
 from core.turn_inference import resolve_runtime_context
@@ -422,21 +422,25 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
     def query_items(request: QueryRequest) -> QueryResponse:
         # Phase 4: validate trigger_origin (rejects unknown values).
         _trigger_origin = _validate_trigger_origin(request.trigger_origin)
-        result = service.query(
-            request.text,
-            request.limit,
-            source_type=request.source_type,
-            role=request.role,
-            artifact_kind=request.artifact_kind,
-            container_ref=request.container_ref,
-            thread_ref=request.thread_ref,
-            actor_ref=request.actor_ref,
-            work_refs=_normalize_query_work_refs(request.work_refs),
-            visibility=request.visibility_kind(),
-            runtime_context=_deserialize_runtime_context(request.runtime_context),
-            trigger_origin=_trigger_origin,
-            source_only=request.source_only,
-        )
+        try:
+            result = service.query(
+                request.text,
+                request.limit,
+                source_type=request.source_type,
+                role=request.role,
+                artifact_kind=request.artifact_kind,
+                container_ref=request.container_ref,
+                thread_ref=request.thread_ref,
+                actor_ref=request.actor_ref,
+                request_source_item_id=request.request_source_item_id,
+                work_refs=_normalize_query_work_refs(request.work_refs),
+                visibility=request.visibility_kind(),
+                runtime_context=_deserialize_runtime_context(request.runtime_context),
+                trigger_origin=_trigger_origin,
+                source_only=request.source_only,
+            )
+        except LookupRequestLinkError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
         lookup_event_id: str | None = None
         if audit_log_enabled:
             try:
@@ -478,22 +482,26 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False) -
 
     @router.post("/query/debug", response_model=QueryDebugResponse)
     def query_items_debug(request: QueryRequest) -> QueryDebugResponse:
-        result = service.query(
-            request.text,
-            request.limit,
-            source_type=request.source_type,
-            role=request.role,
-            artifact_kind=request.artifact_kind,
-            container_ref=request.container_ref,
-            thread_ref=request.thread_ref,
-            actor_ref=request.actor_ref,
-            work_refs=_normalize_query_work_refs(request.work_refs),
-            visibility=request.visibility_kind(),
-            runtime_context=_deserialize_runtime_context(request.runtime_context),
-            include_trace=True,
-            trigger_origin=_validate_trigger_origin(request.trigger_origin),
-            source_only=request.source_only,
-        )
+        try:
+            result = service.query(
+                request.text,
+                request.limit,
+                source_type=request.source_type,
+                role=request.role,
+                artifact_kind=request.artifact_kind,
+                container_ref=request.container_ref,
+                thread_ref=request.thread_ref,
+                actor_ref=request.actor_ref,
+                request_source_item_id=request.request_source_item_id,
+                work_refs=_normalize_query_work_refs(request.work_refs),
+                visibility=request.visibility_kind(),
+                runtime_context=_deserialize_runtime_context(request.runtime_context),
+                include_trace=True,
+                trigger_origin=_validate_trigger_origin(request.trigger_origin),
+                source_only=request.source_only,
+            )
+        except LookupRequestLinkError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
         if result.trace is None:
             raise ValueError("debug query must include retrieval trace")
         # Phase 4A: populate workstream ids best-effort.

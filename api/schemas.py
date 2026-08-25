@@ -100,6 +100,7 @@ class QueryRequest(BaseModel):
     artifact_kind: ArtifactKind | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
+    request_source_item_id: str | None = None
     actor_ref: str | None = None
     work_refs: list[str] | None = None
     visibility: Visibility | VisibilityContextModel | None = None

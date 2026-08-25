@@ -13,6 +13,7 @@ from capabilities.workstreams import WorkstreamCapability
 from core.consolidation_runner import ConsolidationRunner
 from core.container_ref import canonicalize_container_ref, validate_explicit_container_ref
 from core.contracts import IngestResult, ItemProcessingResult, MemoryRetentionPolicy, ProcessResult, QueryResult, build_source_item
+from core.errors import LookupRequestLinkError
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
 from core.processing import (
     DEFAULT_PROCESSING_LEASE_SECONDS,
@@ -844,6 +845,7 @@ class PalliumService:
         container_ref: str | None = None,
         thread_ref: str | None = None,
         actor_ref: str | None = None,
+        request_source_item_id: str | None = None,
         work_refs: tuple[str, ...] = (),
         visibility: str | None = None,
         runtime_context: QueryRuntimeContext | None = None,
@@ -852,6 +854,31 @@ class PalliumService:
         source_only: bool = False,
     ) -> QueryResult:
         container_ref = canonicalize_container_ref(container_ref)
+        if request_source_item_id is not None:
+            linked_source = None
+            if (
+                source_only
+                and all(
+                    isinstance(value, str) and bool(value)
+                    for value in (container_ref, thread_ref, actor_ref, visibility)
+                )
+            ):
+                try:
+                    linked_source = self._storage.get_source_item(request_source_item_id)
+                except KeyError:
+                    pass
+            if (
+                linked_source is None
+                or linked_source.forgotten
+                or linked_source.role != "user"
+                or canonicalize_container_ref(linked_source.container_ref) != container_ref
+                or linked_source.thread_ref != thread_ref
+                or linked_source.actor_ref != actor_ref
+                or linked_source.visibility != visibility
+            ):
+                raise LookupRequestLinkError(
+                    "request_source_item_id must reference a live user request in the same scope"
+                )
         runtime_context = resolve_runtime_context(
             self._storage,
             thread_ref,
@@ -947,6 +974,7 @@ class PalliumService:
                     # RAW/DERIVED/HYBRID evaluator. Scrubbed the same way stored
                     # turns are; NULL when the query text is empty.
                     "query_text": redact_sensitive(text) if text else None,
+                    "request_source_item_id": request_source_item_id,
                 })
             except Exception:
                 self._logger.warning("historical lookup event write failed", exc_info=True)

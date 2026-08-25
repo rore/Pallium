@@ -209,21 +209,52 @@ async def test_historical_search_empty_echoes_exact_requested_scope(
         "lookup_event_id": "lookup-empty",
         "decision_reason": "source_only_search",
     }
+    search_mock = AsyncMock(return_value=raw)
     with patch(
         "app.mcp.client.PalliumMcpClient.search_history",
-        new=AsyncMock(return_value=raw),
+        new=search_mock,
     ):
         server = create_server()
         content, _ = await server.call_tool("pallium_search_history", {
             "query": "missing",
-            "container_ref": "git:github.com/rore/pallium",
+            "container_ref": "git:example.com/example/repository",
+            "thread_ref": "任务:1",
             "visibility": "private",
+            "request_source_item_id": "请求:42",
+        })
+
+    assert search_mock.await_args.kwargs["request_source_item_id"] == "请求:42"
+    payload = json.loads(content[0].text)
+    assert payload["requested_container_ref"] == "git:example.com/example/repository"
+    assert "exact" in payload["empty_result_hint"]
+    assert len(content[0].text) <= 300
+
+
+@pytest.mark.asyncio
+async def test_historical_search_keeps_request_link_validation_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    detail = "request_source_item_id must reference a live user request in the same scope"
+    with patch(
+        "app.mcp.client.PalliumMcpClient.search_history",
+        new=AsyncMock(return_value={
+            "error": "Client error '422 Unprocessable Entity'",
+            "detail": {"detail": detail},
+        }),
+    ):
+        server = create_server()
+        content, _ = await server.call_tool("pallium_search_history", {
+            "query": "prior work",
+            "container_ref": "git:example/repo",
+            "thread_ref": "task:1",
+            "actor_ref": "actor:1",
+            "visibility": "private",
+            "request_source_item_id": "missing",
         })
 
     payload = json.loads(content[0].text)
-    assert payload["requested_container_ref"] == "git:github.com/rore/pallium"
-    assert "exact" in payload["empty_result_hint"]
-    assert len(content[0].text) <= 300
+    assert payload["detail"] == {"detail": detail}
 
 
 @pytest.mark.asyncio

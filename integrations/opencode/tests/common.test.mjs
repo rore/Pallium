@@ -142,9 +142,11 @@ function blocks(n) {
   return out;
 }
 
-test("formatInjection includes header/footer and all blocks under a generous budget", () => {
-  const out = P.formatInjection(blocks(3), "git:example.com/a/b", 5000);
-  assert.match(out, /^\[Pallium memory — container: git:example\.com\/a\/b\]/);
+test("formatInjection includes scope, header/footer, and all blocks under a generous budget", () => {
+  const out = P.formatInjection(blocks(3), "git:example.com/a/b", 5000, "任务:α", "actor", "opencode", "private", "请求:42");
+  assert.match(out, /^\[Pallium scope — /);
+  assert.match(out, /"request_source_item_id":"请求:42"/);
+  assert.match(out, /\[Pallium memory — container: git:example\.com\/a\/b\]/);
   assert.match(out, /\[End Pallium memory\]$/);
   assert.match(out, /ref:ref-0\]/);
   assert.match(out, /ref:ref-2\]/);
@@ -160,9 +162,14 @@ test("formatInjection trims blocks that overflow the char budget", () => {
   if (trimmed) assert.match(trimmed, /ref:ref-0\]/);
 });
 
-test("formatInjection returns empty string for no blocks", () => {
+test("formatInjection emits bounded scope without blocks and rejects unsafe identity", () => {
+  const scoped = P.formatInjection([], "c", 2400, "任务:α", "actor", "opencode", "private", "请求:42");
+  assert.match(scoped, /"request_source_item_id":"请求:42"/);
+  assert.ok(scoped.length <= 2400);
   assert.equal(P.formatInjection([], "c", 2400), "");
   assert.equal(P.formatInjection(null, "c", 2400), "");
+  assert.equal(P.formatInjection([], "c", 2400, "thread", null, null, null, "bad\nid"), "");
+  assert.equal(P.formatInjection([], "c", 10, "thread", null, null, null, "request"), "");
 });
 
 // --- turn extraction + work-trace metadata ----------------------------------

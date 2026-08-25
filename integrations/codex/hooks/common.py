@@ -263,6 +263,7 @@ def format_injection(
     actor_ref: str | None = None,
     agent_ref: str | None = None,
     visibility: str | None = None,
+    request_source_item_id: str | None = None,
 ) -> str:
     """Format bounded memory plus exact active-task telemetry scope."""
     safe_container = _safe_scope_value(container_ref)
@@ -270,7 +271,8 @@ def format_injection(
     safe_actor = _safe_scope_value(actor_ref) if isinstance(actor_ref, str) and actor_ref else None
     safe_agent = _safe_scope_value(agent_ref) if isinstance(agent_ref, str) and agent_ref else None
     safe_visibility = _safe_scope_value(visibility) if isinstance(visibility, str) and visibility else None
-    if safe_container is None or any(value is None for supplied, value in ((thread_ref, safe_thread), (actor_ref, safe_actor), (agent_ref, safe_agent), (visibility, safe_visibility)) if supplied):
+    safe_request_source_item_id = _safe_scope_value(request_source_item_id) if isinstance(request_source_item_id, str) and request_source_item_id else None
+    if safe_container is None or any(value is None for supplied, value in ((thread_ref, safe_thread), (actor_ref, safe_actor), (agent_ref, safe_agent), (visibility, safe_visibility), (request_source_item_id, safe_request_source_item_id)) if supplied):
         return ""
 
     scope_fields = {"container_ref": safe_container}
@@ -282,6 +284,8 @@ def format_injection(
         scope_fields["agent_ref"] = safe_agent
     if safe_visibility:
         scope_fields["visibility"] = safe_visibility
+    if safe_request_source_item_id:
+        scope_fields["request_source_item_id"] = safe_request_source_item_id
     scope = "[Pallium scope — " + json.dumps(
         scope_fields, ensure_ascii=False, separators=(",", ":")
     ) + "]"

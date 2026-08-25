@@ -259,8 +259,31 @@ export function redactSensitive(text) {
 
 // --- injection formatting ---------------------------------------------------
 
-export function formatInjection(injectableBlocks, containerRef, budgetChars) {
-  if (!injectableBlocks || injectableBlocks.length === 0) return "";
+function safeScopeValue(value) {
+  if (typeof value !== "string") return null;
+  return [...value].some((char) => {
+    const code = char.codePointAt(0);
+    return (code >= 0 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
+  }) ? null : value;
+}
+
+export function formatInjection(injectableBlocks, containerRef, budgetChars, threadRef = null, actorRef = null, agentRef = null, visibility = null, requestSourceItemId = null) {
+  const safeContainer = safeScopeValue(containerRef);
+  const safeThread = typeof threadRef === "string" && threadRef ? safeScopeValue(threadRef) : null;
+  const safeActor = typeof actorRef === "string" && actorRef ? safeScopeValue(actorRef) : null;
+  const safeAgent = typeof agentRef === "string" && agentRef ? safeScopeValue(agentRef) : null;
+  const safeVisibility = typeof visibility === "string" && visibility ? safeScopeValue(visibility) : null;
+  const safeRequestSourceItemId = typeof requestSourceItemId === "string" && requestSourceItemId ? safeScopeValue(requestSourceItemId) : null;
+  if (safeContainer === null || [[threadRef, safeThread], [actorRef, safeActor], [agentRef, safeAgent], [visibility, safeVisibility], [requestSourceItemId, safeRequestSourceItemId]].some(([supplied, safe]) => supplied && safe === null)) return "";
+
+  const scopeFields = { container_ref: safeContainer };
+  if (safeThread) scopeFields.thread_ref = safeThread;
+  if (safeActor) scopeFields.actor_ref = safeActor;
+  if (safeAgent) scopeFields.agent_ref = safeAgent;
+  if (safeVisibility) scopeFields.visibility = safeVisibility;
+  if (safeRequestSourceItemId) scopeFields.request_source_item_id = safeRequestSourceItemId;
+  const scope = `[Pallium scope — ${JSON.stringify(scopeFields)}]`;
+  if (!injectableBlocks || injectableBlocks.length === 0) return safeThread && scope.length <= budgetChars ? scope : "";
 
   const header = `[Pallium memory — container: ${containerRef}]\n\n`;
   const footer =
@@ -269,8 +292,6 @@ export function formatInjection(injectableBlocks, containerRef, budgetChars) {
     "more context on how a memory was derived.]\n\n" +
     "[End Pallium memory]";
 
-  const overhead = header.length + footer.length;
-  const available = budgetChars - overhead;
 
   const formattedBlocks = [];
   for (const block of injectableBlocks) {
@@ -282,20 +303,13 @@ export function formatInjection(injectableBlocks, containerRef, budgetChars) {
     formattedBlocks.push(line);
   }
 
-  const sumLen = (arr) => arr.reduce((a, b) => a + b.length, 0);
-  // NOTE: the +len-1 separator accounting deliberately matches common.py's
-  // approximation (1 char per gap, though the actual join is "\n\n").
-  let totalLen = sumLen(formattedBlocks) + formattedBlocks.length - 1;
-  while (formattedBlocks.length && totalLen > available) {
+  const prefix = scope + "\n\n";
+  while (formattedBlocks.length) {
+    const output = prefix + header + formattedBlocks.join("\n\n") + footer;
+    if (output.length <= budgetChars) return output;
     formattedBlocks.pop();
-    totalLen = sumLen(formattedBlocks) + Math.max(0, formattedBlocks.length - 1);
   }
-  if (!formattedBlocks.length) return "";
-
-  const body = formattedBlocks.join("\n\n");
-  const output = header + body + footer;
-  if (!output.trim()) return "";
-  return output;
+  return safeThread && scope.length <= budgetChars ? scope : "";
 }
 
 // --- HTTP -------------------------------------------------------------------

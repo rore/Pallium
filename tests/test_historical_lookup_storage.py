@@ -8,6 +8,7 @@ join, and empty-safety). No LLM / app wiring — pure storage + loader.
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from sqlalchemy import text
 
@@ -83,7 +84,10 @@ def _seed_substantive_session(
     )
 
 
-def _write_lookup(storage, *, container_ref, session_id, event_id=None) -> str:
+def _write_lookup(
+    storage, *, container_ref, session_id, event_id=None,
+    request_source_item_id: str | None = None,
+) -> str:
     event_id = event_id or new_id()
     storage.write_historical_lookup_event_row({
         "id": event_id,
@@ -96,6 +100,7 @@ def _write_lookup(storage, *, container_ref, session_id, event_id=None) -> str:
         "parent_lookup_id": None,
         "exposed_json": json.dumps([{"source_item_id": "s1", "raw_rank": 1, "score": 0.5}]),
         "visibility": "private",
+        "request_source_item_id": request_source_item_id,
     })
     return event_id
 
@@ -140,6 +145,55 @@ class TestSchema:
         assert "idx_historical_lookup_label_event" in indexes
 
 
+    def test_existing_event_table_gets_nullable_request_link_column(self, tmp_path) -> None:
+        db_file = tmp_path / "legacy-hist.db"
+        with sqlite3.connect(db_file) as conn:
+            conn.execute(
+                """
+                CREATE TABLE historical_lookup_reuse_event (
+                    id VARCHAR PRIMARY KEY,
+                    created_at DATETIME NOT NULL,
+                    event_type VARCHAR NOT NULL,
+                    session_id VARCHAR,
+                    container_ref VARCHAR,
+                    actor_ref VARCHAR,
+                    trigger_origin VARCHAR,
+                    parent_lookup_id VARCHAR,
+                    exposed_json TEXT NOT NULL DEFAULT '[]',
+                    visibility VARCHAR,
+                    source_session_ref VARCHAR,
+                    query_text TEXT
+                )
+                """
+            )
+
+        storage = SQLiteStorageProvider(f"sqlite:///{db_file}")
+        with storage._engine.connect() as conn:
+            columns = {
+                row[1]
+                for row in conn.execute(
+                    text("PRAGMA table_info(historical_lookup_reuse_event)")
+                )
+            }
+        assert "request_source_item_id" in columns
+
+        event_id = _write_lookup(
+            storage,
+            container_ref="c:legacy",
+            session_id="t:legacy",
+            request_source_item_id="请求:legacy",
+        )
+        with storage._engine.connect() as conn:
+            value = conn.execute(
+                text(
+                    "SELECT request_source_item_id "
+                    "FROM historical_lookup_reuse_event WHERE id = :id"
+                ),
+                {"id": event_id},
+            ).scalar_one()
+        assert value == "请求:legacy"
+
+
 # ---------------------------------------------------------------------------
 # Writer round-trips
 # ---------------------------------------------------------------------------
@@ -148,12 +202,15 @@ class TestSchema:
 class TestWriters:
     def test_event_row_round_trip(self, tmp_path) -> None:
         storage, _ = _storage(tmp_path)
-        event_id = _write_lookup(storage, container_ref="c:1", session_id="t:1")
+        event_id = _write_lookup(
+            storage, container_ref="c:1", session_id="t:1",
+            request_source_item_id="request-1",
+        )
         with storage._engine.connect() as conn:
             row = conn.execute(
                 text(
                     "SELECT event_type, session_id, container_ref, trigger_origin, "
-                    "parent_lookup_id, exposed_json FROM historical_lookup_reuse_event "
+                    "parent_lookup_id, exposed_json, request_source_item_id FROM historical_lookup_reuse_event "
                     "WHERE id = :id"
                 ),
                 {"id": event_id},
@@ -164,6 +221,7 @@ class TestWriters:
         assert row[3] == "agent_pull"
         assert row[4] is None
         assert json.loads(row[5])[0]["source_item_id"] == "s1"
+        assert row[6] == "request-1"
 
     def test_expansion_row_carries_parent(self, tmp_path) -> None:
         storage, _ = _storage(tmp_path)

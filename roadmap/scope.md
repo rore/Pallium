@@ -83,8 +83,10 @@ access counts/types.
   work enough to justify its token, latency, and contamination cost?** Measured on
   real corpus via the consolidated real-corpus decision experiment. If filtered pull
   is not net-positive, the core thesis is weak. The directional 12-case run was
-  positive but exposed a concrete superseded-guidance risk. The immediate sequence is
-  therefore: ship `add-outdated-history-guard`, then run the larger before/after
+  positive but exposed a concrete superseded-guidance risk. The outdated-history
+  guard is shipped. The immediate sequence is now: collect exact user-request-to-
+  lookup links during normal use, run a four-case no-judge pilot only when four
+  diverse answerable links exist, then expand toward the 20-case
   `idea-pull-real-corpus-validation` gate before Phase 2 earns investment.
 - **Continuous — Derived-memory evaluation (RAW/DERIVED/HYBRID + coverage/fidelity)**:
   not a sequential phase. Decompose why a DERIVED result loses into four seams

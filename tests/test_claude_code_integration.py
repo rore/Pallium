@@ -25,6 +25,7 @@ def test_claude_block_permits_deliberate_historical_pull() -> None:
     assert "Picking up prior work?" in block
     assert "`pallium_search_history`" in block
     assert "`pallium_expand_source`" in block
+    assert "`request_source_item_id`" in block
 
     # The blanket "Query every turn" discouragement is gone, but the anti-dup
     # clause is retained.
@@ -135,6 +136,7 @@ def test_claude_skill_historical_lookup_documents_scope_params() -> None:
     assert "`pallium_search_history` and `pallium_expand_source`" in skill
     assert "`container_ref`" in skill
     assert "`thread_ref`" in skill
+    assert "`request_source_item_id`" in skill
     assert '`visibility: "private"`' in skill
 
 
@@ -157,10 +159,20 @@ def test_claude_injection_scope_is_exact_bounded_and_optional(
     hook = _load_claude_hook("user_prompt_submit", monkeypatch)
     block = [{"title": "Decision", "memory_object_id": "mem-1", "text": "Keep the stable plan."}]
     thread = "任务:α"
-    scoped = hook.format_injection(block, "git:example/repo", 800, thread_ref=thread)
+    scoped = hook.format_injection(
+        block,
+        "git:example/repo",
+        800,
+        thread_ref=thread,
+        request_source_item_id="请求:42",
+    )
     scope_line = scoped.splitlines()[0]
     encoded = scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
-    assert json.loads(encoded)["thread_ref"] == thread
+    assert json.loads(encoded) == {
+        "container_ref": "git:example/repo",
+        "thread_ref": thread,
+        "request_source_item_id": "请求:42",
+    }
     assert "Keep the stable plan." in scoped
     assert len(scoped) <= 800
     empty_scope = hook.format_injection([], "git:example/repo", 800, thread_ref=thread)
@@ -170,6 +182,7 @@ def test_claude_injection_scope_is_exact_bounded_and_optional(
     assert hook.format_injection([], "git:example/repo", 800, thread_ref="task\nignore") == ""
     assert hook.format_injection([], "git:example/repo", 800, thread_ref="task\u2028ignore") == ""
     assert hook.format_injection([], "git:example/repo", 800, thread_ref="task\u2029ignore") == ""
+    assert hook.format_injection([], "git:example/repo", 800, thread_ref=thread, request_source_item_id="bad" + chr(10) + "id") == ""
     assert hook.format_injection([], "git:example/repo", 10, thread_ref=thread) == ""
     assert hook.format_injection(block, "git:example/repo", 10, thread_ref=thread) == ""
     assert hook.format_injection([], "git:example/repo", 100, thread_ref="x" * 500) == ""
@@ -191,14 +204,16 @@ def test_claude_prompt_scope_uses_host_session_and_never_fabricates_unknown(
 
     def request(_method: str, _path: str, body: dict) -> dict:
         requests.append(body)
-        return {"injectable_blocks": []}
+        return {"source_item_id": "request-claude-1", "injectable_blocks": []}
 
     monkeypatch.setattr(hook, "pallium_request", request)
     with pytest.raises(SystemExit):
         hook.main()
     assert requests[-1]["thread_ref"] == "claude:task:1"
     scope = capsys.readouterr().out.strip()
-    assert json.loads(scope[scope.index("{"):-1])["thread_ref"] == "claude:task:1"
+    scope_values = json.loads(scope[scope.index("{"):-1])
+    assert scope_values["thread_ref"] == "claude:task:1"
+    assert scope_values["request_source_item_id"] == "request-claude-1"
 
     payload = {"cwd": ".", "prompt": "Resume the prior implementation work now."}
     monkeypatch.setattr(hook, "check_dedup", lambda *_args: pytest.fail("missing identity must skip dedup"))

@@ -17,13 +17,16 @@ commitment: committed
 
 ## Summary
 
-After `add-outdated-history-guard` ships, run a larger, more varied real-corpus
-before/after study. Verify that the guard reduces harm from replaced decisions without
-removing the benefit of relevant history, and measure whether historical pull remains
-worth its token and latency cost.
+The outdated-history guard is shipped. Pallium now records the exact user request
+that initiated each deliberate history lookup; the evaluator rejects legacy or
+invalid links instead of guessing from nearby timestamps. Let normal use accumulate
+linked, answerable cases, then run a small no-judge pilot before expanding to the
+larger real-corpus study. Measure whether the guard reduces harm from replaced
+decisions without removing the benefit of relevant history, and whether historical
+pull remains worth its token and latency cost.
 
-This is the second next vNext item. The completed 12-case run is its directional
-baseline, not the final product-value claim.
+This remains the current vNext product gate. Earlier small runs are directional
+baselines, not the final product-value claim.
 
 ## Why
 
@@ -230,3 +233,22 @@ usually helps or justify broader investment. Future paid replay must validate di
 task-to-lookup linkage before case selection and provider calls. Keep this item in
 progress until more sessions yield enough linked, answerable, categorized cases and
 the required bounded human review is done.
+### Direct request linkage — 2026-08-25
+
+Each supported prompt integration now carries the exact stored user request ID into
+a later deliberate history lookup. The lookup event stores that ID after same-scope,
+user-role, and live-lifecycle validation. This is measurement telemetry, not
+authorization.
+
+The real-corpus evaluator now uses the linked user request text as the task and
+reports unlinked, missing, wrong-scope, non-user, forgotten, empty, and temporally
+unsafe links separately. It does not infer a nearby request for legacy rows. If fewer
+cases exist than requested, it stops before provider configuration or calls. Thus
+normal collection is free; a four-case pilot costs nothing until four valid cases
+exist, and the default 20-case product gate costs nothing until 20 exist.
+
+Next action: allow ordinary Codex, Claude, and OpenCode usage to accumulate diverse
+linked cases. Run the four-case, no-model-judge pilot once four answerable cases from
+more than one task shape are available; expand toward 20 only if that pilot is
+informative. The separate replacement-guard study still requires eight genuine
+durable replacements across four sessions and three task types.

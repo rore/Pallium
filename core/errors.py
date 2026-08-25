@@ -27,6 +27,10 @@ def is_transient_error(exc: Exception) -> bool:
     return any(s in message for s in _TRANSIENT_SQLITE_ERROR_SUBSTRINGS)
 
 
+class LookupRequestLinkError(ValueError):
+    """A supplied lookup-to-request telemetry link is invalid."""
+
+
 class SupersessionConflictError(Exception):
     """Raised by W3 storage methods when a supersession or correction is
     attempted on a memory that is not currently active.

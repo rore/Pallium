@@ -55,6 +55,7 @@ function makeClient(messages) {
 }
 
 const oneBlock = {
+  source_item_id: "request-opencode-1",
   should_inject: true,
   injectable_blocks: [{ title: "Prior Decision", memory_object_id: "ref-xyz", text: "we chose sqlite", expand_available: false }],
 };
@@ -84,6 +85,8 @@ test("chat.message ingests the user prompt and queues memory for the system prom
 
   const system = await systemTransform(hooks, "sesA");
   assert.equal(system.length, 1);
+  assert.match(system[0], /^\[Pallium scope — /);
+  assert.match(system[0], /"request_source_item_id":"request-opencode-1"/);
   assert.match(system[0], /\[Pallium memory — container: path:/);
   assert.match(system[0], /ref:ref-xyz\]/);
   assert.match(system[0], /\[End Pallium memory\]$/);
