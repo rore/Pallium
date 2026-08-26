@@ -31,10 +31,11 @@
     font-size: 13px;
     line-height: 1.5;
     min-height: 100vh;
+    overflow-x: hidden;
   }
 
   /* ── Layout ───────────────────────────────────── */
-  .content-wrap { max-width: 1400px; margin: 0 auto; padding: 0 20px 40px; }
+  .content-wrap { width: 100%; max-width: 1400px; min-width: 0; margin: 0 auto; padding: 0 20px 40px; }
 
   /* ── Header ───────────────────────────────────── */
   .header {
@@ -137,7 +138,7 @@
   .card {
     background: var(--card); border: 1px solid var(--border);
     border-radius: var(--radius); padding: 10px 12px;
-    display: flex; flex-direction: column;
+    display: flex; flex-direction: column; min-width: 0;
   }
 
   /* ── Dual-time atom: 24h prominent · all-time muted ───── */
@@ -329,7 +330,8 @@
   .btn.primary { color: var(--green); border-color: var(--green); }
   .btn.primary:hover { background: rgba(0,255,51,0.07); }
 
-  .mem-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .table-scroll { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; }
+  .mem-table { width: 100%; min-width: 760px; border-collapse: collapse; table-layout: fixed; }
   .mem-table th {
     padding: 6px 10px; text-align: left;
     border-bottom: 1px solid var(--border);
@@ -543,7 +545,10 @@
   .ops-summary.ok { border-left-color:var(--green); }
   .ops-summary.attention { border-left-color:var(--yellow); }
   .ops-summary.error { border-left-color:var(--red); }
-  .ops-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+  .ops-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; cursor:pointer; list-style:none; }
+  .ops-head::-webkit-details-marker { display:none; }
+  .ops-title::before { content:"▾"; color:var(--muted); margin-right:8px; }
+  .ops-summary:not([open]) .ops-title::before { content:"▸"; }
   .ops-title { font-size:17px; font-weight:650; color:var(--text); }
   .ops-updated { color:var(--muted); font-size:10px; }
   .ops-systems { display:flex; flex-wrap:wrap; gap:7px; margin-top:11px; }
@@ -577,6 +582,23 @@
     .relay-grid  { grid-template-columns: repeat(2, 1fr); }
     .hh-grid     { grid-template-columns: 1fr; }
   }
+  @media (max-width: 600px) {
+    .header { padding: 8px 12px; }
+    .header-inner { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; width: 100%; }
+    .header-title { grid-row: 1; }
+    .view-tabs { grid-row: 2; width: 100%; }
+    .health-badge { grid-row: 3; justify-self: start; }
+    .funnel-pill { grid-row: 4; justify-self: start; }
+    .view-tab { flex: 1; }
+    .header-uptime, .header-refresh { display: none; }
+    .content-wrap { padding: 0 12px 32px; }
+    .metrics-row { grid-template-columns: 1fr; }
+    .ops-head { align-items: flex-start; flex-direction: column; }
+    .ops-systems { display: grid; grid-template-columns: 1fr; width: 100%; }
+    .ops-system { white-space: normal; overflow-wrap: anywhere; }
+    .section-title { align-items: flex-start; flex-wrap: wrap; overflow-wrap: anywhere; }
+    .iq-grid, .query-grid, .relay-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
 </style>
 </head>
 <body>
@@ -602,14 +624,14 @@
   <!-- ══ VIEW A · OPERATIONAL (is Pallium healthy/working?) ══════ -->
   <div id="view-operational" class="view">
 
-  <div id="operational-summary" class="ops-summary">
-    <div class="ops-head">
+  <details id="operational-summary" class="ops-summary" open hidden>
+    <summary class="ops-head">
       <div id="ops-title" class="ops-title">Checking Pallium...</div>
       <div id="ops-updated" class="ops-updated">waiting for live status</div>
-    </div>
+    </summary>
     <div id="ops-systems" class="ops-systems"></div>
     <div id="ops-issues" class="ops-issues"></div>
-  </div>
+  </details>
 
   <!-- ── Overview (4 dual-time tiles + 24h sparkline) ──────────── -->
   <div class="section-title">Overview <span class="scope-tag">last 24h <span style="color:var(--text)">prominent</span> · all-time <span style="color:var(--muted)">muted</span></span></div>
@@ -887,6 +909,7 @@
       <button class="btn primary" onclick="reloadMemories()">Reload</button>
     </div>
 
+    <div class="table-scroll">
     <table class="mem-table">
       <thead>
         <tr>
@@ -903,6 +926,7 @@
         <tr><td colspan="7" class="no-mem">Loading…</td></tr>
       </tbody>
     </table>
+    </div>
 
     <div class="pagination">
       <div id="pagination-info" class="pagination-info">—</div>
@@ -1598,6 +1622,7 @@ function renderOperationalSummary() {
   const critical = ingestion.status !== 'ok' || _statusData.embedding_provider_ok === false || (sc24.failed || 0) > 0;
   const attention = critical || issues.length > 0;
   const summary = document.getElementById('operational-summary');
+  summary.hidden = !attention;
   summary.className = 'ops-summary ' + (critical ? 'error' : (attention ? 'attention' : 'ok'));
   document.getElementById('ops-title').textContent = critical ? 'Pallium needs attention' : (attention ? 'Pallium is operating with warnings' : 'Pallium is operating normally');
   document.getElementById('ops-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
