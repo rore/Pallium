@@ -259,6 +259,119 @@ def test_package_failure_allows_retry(test_db_url):
     assert attempts == 2  # Second attempt
 
 
+def test_expired_final_attempt_package_lease_is_terminalized(test_db_url):
+    service = _build_service(
+        test_db_url,
+        plugins={"demo": DemoAgentMemoryPlugin(), "noop": NoOpPlugin()},
+        default_use_case="demo",
+    )
+    ingest = _ingest(service, use_case="demo")
+    storage = service._storage
+    storage.create_package_processing_records(ingest.source_item_id, ["noop"])
+    storage.complete_package_task(ingest.source_item_id, "noop")
+    now = utc_now()
+
+    with storage._engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE package_processing_status "
+                "SET status='processing', attempts=3, claimed_by='dead-worker', "
+                "claimed_at=:past, lease_expires_at=:past, error='provider failed' "
+                "WHERE source_item_id=:source_item_id AND package_name='demo'"
+            ),
+            {"source_item_id": ingest.source_item_id, "past": now - timedelta(seconds=1)},
+        )
+
+    assert storage.claim_next_package_task(
+        worker_id="recovery", lease_seconds=60, max_attempts=3, now=now,
+    ) is None
+    assert storage.claim_next_package_task(
+        worker_id="recovery", lease_seconds=60, max_attempts=3, now=now,
+    ) is None
+
+    with storage._session_factory() as session:
+        from storage.sqlite_schema import PackageProcessingStatusRecord
+        package = session.scalars(
+            select(PackageProcessingStatusRecord).where(
+                PackageProcessingStatusRecord.source_item_id == ingest.source_item_id,
+                PackageProcessingStatusRecord.package_name == "demo",
+            )
+        ).one()
+    assert package.status == "failed"
+    assert package.attempts == 3
+    assert package.error == "provider failed"
+    assert package.claimed_by is None
+    assert package.lease_expires_at is None
+
+    source = service.get_item_processing(ingest.source_item_id)
+    assert source.processing_status == "failed"
+    assert source.processing_attempts == 3
+
+
+def test_expired_package_lease_below_ceiling_remains_reclaimable(test_db_url):
+    service = _build_service(
+        test_db_url,
+        plugins={"demo": DemoAgentMemoryPlugin()},
+        default_use_case="demo",
+    )
+    ingest = _ingest(service, use_case="demo")
+    storage = service._storage
+    now = utc_now()
+    with storage._engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE package_processing_status "
+                "SET status='processing', attempts=2, claimed_by='dead-worker', "
+                "claimed_at=:past, lease_expires_at=:past "
+                "WHERE source_item_id=:source_item_id"
+            ),
+            {"source_item_id": ingest.source_item_id, "past": now - timedelta(seconds=1)},
+        )
+
+    task = storage.claim_next_package_task(
+        worker_id="recovery", lease_seconds=60, max_attempts=3, now=now,
+    )
+    assert task is not None
+    assert task[1:] == ("demo", 3)
+
+
+def test_active_final_attempt_package_lease_is_not_terminalized(test_db_url):
+    service = _build_service(
+        test_db_url,
+        plugins={"demo": DemoAgentMemoryPlugin()},
+        default_use_case="demo",
+    )
+    ingest = _ingest(service, use_case="demo")
+    storage = service._storage
+    now = utc_now()
+    with storage._engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE package_processing_status "
+                "SET status='processing', attempts=3, claimed_by='live-worker', "
+                "claimed_at=:now, lease_expires_at=:future "
+                "WHERE source_item_id=:source_item_id"
+            ),
+            {
+                "source_item_id": ingest.source_item_id,
+                "now": now,
+                "future": now + timedelta(seconds=60),
+            },
+        )
+
+    assert storage.claim_next_package_task(
+        worker_id="other", lease_seconds=60, max_attempts=3, now=now,
+    ) is None
+    with storage._session_factory() as session:
+        from storage.sqlite_schema import PackageProcessingStatusRecord
+        package = session.scalars(
+            select(PackageProcessingStatusRecord).where(
+                PackageProcessingStatusRecord.source_item_id == ingest.source_item_id,
+            )
+        ).one()
+    assert package.status == "processing"
+    assert package.claimed_by == "live-worker"
+
 # ── Tests: claim_next_package_task_for_item ──────────────────────────────
 
 def test_claim_for_specific_item(test_db_url):

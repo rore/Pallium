@@ -553,6 +553,14 @@ class SQLiteQueueMixin:
         scoped_use_case_set = set(scoped_use_cases)
         with self._session_factory() as session:
             source_records = session.scalars(select(SourceItemRecord)).all()
+            expired_package_lease_source_ids = set(session.scalars(
+                select(PackageProcessingStatusRecord.source_item_id).where(
+                    PackageProcessingStatusRecord.status == "processing",
+                    PackageProcessingStatusRecord.attempts >= max_attempts,
+                    PackageProcessingStatusRecord.lease_expires_at.isnot(None),
+                    PackageProcessingStatusRecord.lease_expires_at <= normalized_now,
+                )
+            ).all())
             thread_records = session.scalars(select(ThreadProcessingLeaseRecord)).all()
             maintenance_record = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
 
@@ -577,12 +585,16 @@ class SQLiteQueueMixin:
                     pending_without_use_case_count += 1
                 if created_at is not None and (oldest_pending_created_at is None or created_at < oldest_pending_created_at):
                     oldest_pending_created_at = created_at
-                reason = self._classify_unclaimable_pending_reason(
-                    record,
-                    now=normalized_now,
-                    max_attempts=max_attempts,
-                    known_use_cases=known_use_case_set,
-                    scoped_use_cases=scoped_use_case_set,
+                reason = (
+                    "expired_package_lease_max_attempts"
+                    if record.id in expired_package_lease_source_ids
+                    else self._classify_unclaimable_pending_reason(
+                        record,
+                        now=normalized_now,
+                        max_attempts=max_attempts,
+                        known_use_cases=known_use_case_set,
+                        scoped_use_cases=scoped_use_case_set,
+                    )
                 )
                 if reason is not None:
                     unclaimable_counts[reason] = unclaimable_counts.get(reason, 0) + 1
@@ -1324,6 +1336,33 @@ class SQLiteQueueMixin:
 
         self._with_retry(_do)
 
+    def _finalize_expired_package_leases_at_attempt_limit(
+        self,
+        session: Session,
+        *,
+        now: datetime,
+        max_attempts: int,
+    ) -> None:
+        records = session.scalars(
+            select(PackageProcessingStatusRecord).where(
+                PackageProcessingStatusRecord.status == "processing",
+                PackageProcessingStatusRecord.attempts >= max_attempts,
+                PackageProcessingStatusRecord.lease_expires_at.isnot(None),
+                PackageProcessingStatusRecord.lease_expires_at <= now,
+            )
+        ).all()
+        source_item_ids = {record.source_item_id for record in records}
+        for record in records:
+            record.status = "failed"
+            record.error = record.error or "processing lease expired after maximum attempts"
+            record.claimed_by = None
+            record.claimed_at = None
+            record.lease_expires_at = None
+            record.completed_at = now
+            record.next_attempt_at = None
+        for source_item_id in source_item_ids:
+            self._sync_source_item_if_all_packages_terminal(session, source_item_id, now)
+
     def claim_next_package_task(
         self,
         *,
@@ -1368,6 +1407,11 @@ class SQLiteQueueMixin:
             """
         )
         with self._begin_immediate() as session:
+            self._finalize_expired_package_leases_at_attempt_limit(
+                session,
+                now=claimed_at,
+                max_attempts=max_attempts,
+            )
             row = session.execute(
                 statement,
                 {

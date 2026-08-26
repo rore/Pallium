@@ -119,6 +119,26 @@ def test_queue_health_endpoint_reports_unclaimable_pending_and_recent_failure(mo
     )
     client.app.state.pallium_service._storage.create_source_item(orphan)
 
+    package_orphan_response = client.post(
+        "/items",
+        json=[{
+            "source_type": "decision_note",
+            "source_id": "expired-package-lease-at-ceiling",
+            "content_type": "text/plain",
+            "content": "A package worker stopped on its final attempt.",
+        }],
+    )
+    package_orphan_id = package_orphan_response.json()[0]["source_item_id"]
+    with client.app.state.pallium_service._storage._engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE package_processing_status "
+                "SET status='processing', attempts=3, claimed_by='dead-worker', "
+                "claimed_at=datetime('now', '-1 hour'), lease_expires_at=datetime('now', '-30 minutes') "
+                "WHERE source_item_id=:source_item_id"
+            ),
+            {"source_item_id": package_orphan_id},
+        )
     create_response = client.post(
         "/items",
         json=[{
@@ -129,13 +149,22 @@ def test_queue_health_endpoint_reports_unclaimable_pending_and_recent_failure(mo
         }],
     )
     assert create_response.status_code == 200
-    client.app.state.pallium_service.drain_processing_queue(worker_id="queue-health", max_attempts=1)
-
     response = client.get("/debug/queue/health")
     assert response.status_code == 200
     payload = response.json()
     assert payload["pending_without_use_case_count"] == 1
-    assert {item["reason"]: item["count"] for item in payload["unclaimable_pending_counts"]}["missing_use_case"] == 1
+    reasons = {item["reason"]: item["count"] for item in payload["unclaimable_pending_counts"]}
+    assert reasons["missing_use_case"] == 1
+    assert reasons["expired_package_lease_max_attempts"] == 1
+
+    client.app.state.pallium_service.drain_processing_queue(worker_id="queue-health", max_attempts=1)
+    payload = client.get("/debug/queue/health").json()
+    assert "expired_package_lease_max_attempts" not in {
+        item["reason"] for item in payload["unclaimable_pending_counts"]
+    }
+    repaired = client.get(f"/items/{package_orphan_id}/processing")
+    assert repaired.status_code == 200
+    assert repaired.json()["processing_status"] == "failed"
     assert payload["recent_failures"][0]["failure_category"] == "llm_failure"
     assert payload["recent_failures"][0]["processing_error"] == "provider failed"
 

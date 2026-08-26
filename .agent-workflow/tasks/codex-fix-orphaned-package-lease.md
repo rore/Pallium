@@ -37,6 +37,8 @@
 
 Discovery, Elevated pre-edit redline classification, and the required clean-context plan review are complete. The plan is approved; no code has been edited.
 
+Implementation: added the failing final-attempt lease regression first, then added atomic package-claim reconciliation and existing-contract health classification in storage/sqlite_queue.py. Focused lifecycle tests cover the ceiling, below-ceiling reclaim, active leases, idempotence, mixed-package parent settlement, and HTTP health before/after recovery. apply_patch failed with Windows error 1385, so edits used the permitted deterministic named-file fallback.
+
 ## Evidence
 
 Pending.
