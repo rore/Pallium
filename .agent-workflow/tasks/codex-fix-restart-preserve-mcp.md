@@ -28,8 +28,8 @@ Discovery confirmed Codex launches `python -m app.run mcp` as its client-owned s
 
 ## Evidence
 
-Pending.
+The regression `test_windows_service_restart_preserves_codex_mcp_bridge` failed before the fix, then `python -m pytest tests/test_codex_integration.py tests/test_supervisor.py tests/test_supervisor_kill_tree.py -q` passed 52 tests with 6 platform skips. The workflow checker and PR Windows smoke passed. A fresh Codex agent called Pallium status before the canonical restart; the restart did not kill `app.run mcp`; after the API startup window, the same agent session called Pallium status successfully again.
 
 ## Result review
 
-Pending.
+Self-review approved for Routine risk: the diff removes only the client-owned MCP signature, retains all six service-owned sweep signatures, changes no runtime contract, and satisfies the observable same-session restart criterion.

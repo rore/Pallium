@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Restart the Pallium Windows scheduled task service.
 
