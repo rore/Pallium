@@ -43,20 +43,59 @@ retries, runtime callbacks, and hook fallback idempotent.
 
 ## Runtime Feasibility and Constraints
 
-These findings were current on 2026-08-26 and must be revalidated against the
-installed runtime versions before implementation:
+Deeper source review on 2026-08-26 corrected the initial Phase 0 verdict. The
+installed versions are Claude Code 2.1.246, Codex CLI 0.149.1, and OpenCode
+1.18.19 on native Windows.
 
-| Runtime | Supported direction | Constraint to settle before shipping |
-|---|---|---|
-| Claude Code | Native cross-session delivery starts a turn when idle and waits for a safe boundary when busy. Channels can push external MCP events into an open session. | Choose the smallest supported Pallium ingress. Channels are a research preview and require per-session launch/configuration; native delivery requires a live messaging-enabled session. Do not make an undocumented socket protocol a product dependency. Validate native Windows behavior. |
-| Codex | Managed subagents already distinguish non-waking messages from waking follow-ups. App Server can resume threads and start turns; its experimental queue can run a follow-up when the thread becomes idle. | Arbitrary interactive threads are unsafe until admission cannot race with a human turn: `turn/start` is start-or-steer and the idle check is not atomic. Prove a safe public operation or constrain support to a Pallium-managed App Server configuration. |
-| OpenCode | Its shared server exposes session status and synchronous/asynchronous session prompts, making live idle wake and background queuing natural. | Verify exact idle, busy, TUI-closed, permission, and service-restart behavior against the supported plugin/server API; do not promote automatic service startup or dormant resume into this contract. |
+| Runtime | Current verdict | Proven mechanism | Remaining qualification |
+|---|---|---|---|
+| Codex | Supported with a Pallium-managed App Server; implement first | Experimental thread/queue/add durably queues a distinct future turn, auto-dispatches while idle, preserves clientUserMessageId, emits the exact ID/text in item/started, and survives cold thread resume in official integration tests. | Feature-detect the experimental API and prove the installed 0.149.1 Windows stdio path with a disposable App Server. This does not wake an arbitrary completed codex exec process or unmanaged TUI. |
+| OpenCode | Supported with a Pallium/OpenCode plugin coordinator | Server/plugin APIs expose stable sessions and async prompts. Agent Intercom demonstrates persist-first delivery, application metadata correlation, history verification before replay, safe busy deferral, and restart recovery. | A bare prompt_async 204 is transport acknowledgement only. Pallium needs the plugin-owned durable pending ledger and a Windows E2E proof. |
+| Claude Code | Version-eligible for native live-session wake; strict busy delivery still needs a policy/proof | Official cross-session messaging starts a new turn when idle and authenticates the local inbox socket on native Windows. Installed 2.1.246 exceeds the documented 2.1.234 Windows minimum. | During an active turn Claude reads messages between tool calls, which may not create a distinct following turn. Verify native Windows delivery/correlation and either defer busy messages until idle or explicitly relax the distinct-turn invariant. Managed claude -p --resume is only for Pallium-owned workers, not concurrent arbitrary TUIs. |
 
-Each registered session should advertise only capabilities its integration can
-actually provide, such as passive delivery, idle wake, and busy queueing. Missing
-or lost capability automatically selects the durable fallback. An exited process
-is not a wakeable recipient in R1.5 even if its conversation could technically be
-resumed by launching a new runtime.
+### Admission handshakes to preserve
+
+**Codex:** initialize App Server with experimentalApi, add the Relay payload with
+clientUserMessageId = pallium:<delivery_id>, treat the queue response as queued,
+and mark admission only on item/started for a userMessage carrying the same client
+ID and exact content. turn/completed is execution completion, not delivery. Never
+use turn/steer; do not substitute turn/start for the busy queue.
+
+**OpenCode:** the plugin persists the Relay item before broker acknowledgement,
+checks recent session history for metadata.palliumRelayId, defers submission to a
+safe boundary, calls the supported prompt API, and marks admission only when
+session messages/events contain that exact ID. On restart it replays only items
+not proven admitted. A server plugin can cover normal OpenCode sessions without
+requiring every session to be launched by a Pallium wrapper.
+
+**Claude Code:** register only a live inbox with its socket/token and current
+inbound policy. Include the Pallium delivery ID in the attributed envelope and do
+not equate socket acceptance with downstream use. Idle native delivery may wake
+immediately. Busy delivery must not violate the separate-turn contract; use an
+idle notification/deferred send if that can be proven, otherwise fall back to
+next-turn Relay. A managed worker may serialize claude -p --resume under a
+per-session lock, but that is a separate managed-session capability. Channels
+remain a research-preview fallback, not the preferred local adapter.
+
+Each live session advertises only capabilities its integration actually proves:
+passive, idle_wake, and busy_queue. Missing, expired, disabled, or lost capability
+selects durable fallback. Runtime names are never global capability claims, and an
+exited arbitrary process is not wakeable merely because its conversation can be
+resumed by launching another process.
+
+### Next disposable PoC sequence
+
+Start with Codex because it has the strongest first-party contract:
+
+1. idle queue add auto-starts a distinct turn;
+2. busy queue add remains separate until the active turn finishes;
+3. clientUserMessageId and exact text appear in item/started;
+4. a queued item survives App Server restart/cold thread resume;
+5. duplicate use of one Relay ID admits exactly once;
+6. unavailable/unsupported experimental API leaves the Pallium delivery pending.
+
+Then implement the equivalent OpenCode plugin PoC. Test Claude native Windows
+2.1.246 third, explicitly deciding the busy-turn semantic before enabling it.
 
 ## In Scope
 
@@ -124,17 +163,11 @@ Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wak
 Phase 0 decision and installed-runtime evidence:
 [Relay wake feasibility](../../docs/designs/016-relay-wake-feasibility.md).
 
-Current result: no runtime cleared the complete wake-safety gate. OpenCode idle
-admission and Codex managed App Server queues are promising candidate surfaces,
-but both need race-free disposable-session proofs; the installed Claude Code
-configuration is passive-only until a Channel ingress is proven. Capability is
-registered per live session; runtime names are not global wake guarantees.
-
-Claude Code already documents idle-session wake and safe busy-session delivery.
-OpenCode exposes session status and asynchronous prompting. Codex App Server can
-resume and start turns and has an experimental follow-up queue, but safe atomic
-idle admission must be proven before its adapter ships. Do not depend on an
-undocumented runtime socket when a supported integration surface exists.
+Current result: Codex's managed experimental App Server queue is the reference
+contract and first implementation target. OpenCode is viable with a durable
+plugin coordinator. Updated Claude Code 2.1.246 is eligible for native Windows
+cross-session messaging, but its busy-turn semantics still require an explicit
+decision and local proof. None of these claims changes passive next-turn fallback.
 
 ## Research References
 
@@ -143,11 +176,14 @@ Primary runtime sources:
 - [Claude Code cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging)
 - [Claude Code Channels](https://code.claude.com/docs/en/channels)
 - [Claude Code v2.1.224 release](https://github.com/anthropics/claude-code/releases/tag/v2.1.224)
-- [Claude Code Windows wake failure report](https://github.com/anthropics/claude-code/issues/86212)
+- [Claude Code native-Windows delivery issue history](https://github.com/anthropics/claude-code/issues/86603)
 - [Codex App Server protocol](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
+- [Codex queue integration tests](https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/suite/v2/thread_queue.rs)
 - [Codex atomic idle-only admission request](https://github.com/openai/codex/issues/38289)
 - [OpenCode server API](https://opencode.ai/docs/server/)
 - [OpenCode plugin API](https://opencode.ai/docs/plugins/)
+- [OpenCode prompt acceptance without wake issue](https://github.com/anomalyco/opencode/issues/21524)
+- [Claude Agent SDK session resume](https://code.claude.com/docs/en/agent-sdk/sessions)
 
 Feasibility evidence, not dependencies or adoption evidence:
 

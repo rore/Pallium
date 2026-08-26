@@ -1,7 +1,17 @@
 # Relay wake feasibility decision
 
-**Status:** Accepted Phase 0 evidence - no adapter cleared the shipping gate (2026-08-26)  
-**Scope:** Claude Code 2.1.217, Codex CLI 0.149.1, OpenCode 1.18.19 on Windows
+**Status:** Superseded by deeper source review recorded in the roadmap (2026-08-26)
+**Scope:** Initial probes used Claude Code 2.1.217, Codex CLI 0.149.1, and OpenCode 1.18.19 on Windows; Claude is now 2.1.246
+
+> **Follow-up correction:** The original conclusion below was too conservative.
+> Official Codex App Server queue integration tests prove idle auto-dispatch,
+> busy distinct-turn queuing, exact client-ID admission, and cold-resume
+> persistence. Codex managed App Server is therefore the first implementation
+> target. OpenCode is viable with a durable plugin coordinator. Claude 2.1.246
+> clears the native-Windows version requirement, but busy messages may enter the
+> active turn at a tool boundary. The canonical current verdict and exact
+> handshakes are in the
+> [wake-first Relay roadmap item](../../roadmap/features/add-wake-first-relay-delivery.md).
 
 ## Decision
 
