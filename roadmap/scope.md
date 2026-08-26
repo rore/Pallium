@@ -18,10 +18,9 @@ Foundation in place (shipped, stable): the `agent_conversation_memory` runtime w
 multilingual support, multi-package parallel processing, hybrid retrieval
 (lexical + vector + RRF fusion), cue-free structural routing, bounded consolidation,
 thread continuity, resumed-work checkpoints, evidence-backed investigation
-carry-forward, and package-owned injection decisions. Known residual limitations
-(thread-level interest extraction, lexical scaling beyond medium corpora, systematic
-stale/superseded/contradictory-memory handling) are **parked deliberately** under
-vNext (see Parked below) — they are not active optimization targets.
+carry-forward, and package-owned injection decisions. Remaining limitations are
+represented explicitly on the board as queued hardening, paused work, completed
+investigations, or superseded directions rather than being implicitly active.
 
 Shipped since last major scope update:
 
@@ -119,31 +118,31 @@ Parallel track — Agent Relay (2026-08):
 Agent Relay tests a separate product hypothesis: Pallium's durable local service
 and agent integration points may be valuable as a context-exchange layer, even
 where semantic memory is not involved. An agent explicitly sends an attributed,
-scoped message to another supported runtime; Pallium persists it and delivers it
-at the recipient's next applicable turn.
+scoped message to another supported runtime. Shipped R1 persists it for the
+recipient's next applicable natural turn. The committed wake-first extension will
+attempt immediate activation by default and retain that R1 path as the fallback
+when wake is unsupported, unsafe, or unavailable.
 
-Initial consumers are **Claude Code, Codex, and OpenCode**. The first slice is
-named-runtime delivery within the same repository/container. Extracted
-`work_refs` are retrieval hints, not reliable delivery addresses, and must not be
-used to route Relay messages. Future-recipient addressing remains an investigation
-until a reliable shared identity source exists.
+Initial consumers are **Claude Code, Codex, and OpenCode**. R1 supports
+runtime-wide fan-out plus exact-session and Relay-alias delivery within the same
+repository/container. Extracted `work_refs` are retrieval hints, not reliable
+delivery addresses, and must not be used to route Relay messages. Future-recipient
+addressing remains an investigation until a reliable shared identity source exists.
 
 Relay has two design invariants:
 
 - routing and delivery do not depend on search, embeddings, ranking, or an LLM
-- Pallium moves bounded information between agents; it does not spawn, assign,
-  wake, or continuously coordinate them
+- Pallium may trigger a delivery turn, but it does not spawn, assign, supervise,
+  restart, or continuously coordinate agents
 
-The track is validation-first: define the minimum contract, ship explicit
-point-to-point relay, observe whether it materially reduces manual context copying,
-and add only extensions repeatedly demanded by real use. See
+R1 explicit runtime/session Relay is shipped. The next committed steps are
+wake-first delivery with deterministic next-turn fallback, followed by three
+dependency-workflow E2E scenarios whose evidence drives public positioning and
+usage guidance. Add only further extensions repeatedly demanded by real use. See
 `roadmap/ideas/idea-agent-relay.md`.
 
-Still parked (pre-vNext investigations):
-
-- investigate thread-level interest and threadless aggregation
-- investigate lexical retrieval scaling
-- bounded memory lifecycle hardening (prerequisite for Phase 4 sharing)
+Paused or parked work is listed explicitly in `roadmap/board.md`; completed
+investigations and superseded directions are not active optimization targets.
 
 Still out of scope:
 

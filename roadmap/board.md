@@ -1,6 +1,5 @@
 # P1 · Reuse Measurement
 - idea-pull-real-corpus-validation
-- idea-reuse-judge-calibration
 - idea-raw-duplicate-ingestion-and-result-diversity
 - idea-visibility-violation-metric-completeness
 - fix-roadmap-and-evidence-status-drift
@@ -11,12 +10,14 @@
 # P3 · Shared Knowledge
 - idea-visibility-vocab-reconciliation
 - idea-cross-user-raw-history-value
-- idea-shared-raw-revocation
 - add-bounded-memory-lifecycle-hardening
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
 
 # Parallel · Agent Relay
+R1 explicit runtime/session Relay is shipped. `idea-agent-relay` remains here as
+the umbrella track while the separately listed wake and validation work is open.
+
 - idea-agent-relay
 - add-wake-first-relay-delivery
 - validate-relay-dependency-workflows
@@ -26,6 +27,7 @@
 - idea-authenticated-principal-for-mutation-authz
 - investigate-thread-level-interest-and-threadless-aggregation
 - milestone-shaped-memory-contract
+- idea-shared-raw-revocation
 
 # Ideas
 - idea-contamination-detector-negation-robustness
@@ -40,6 +42,13 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-workstream-rolling-topic
+- idea-reuse-judge-calibration
+- idea-evidence-backed-agent-memory
+- idea-generic-memory-lifecycle-signals
+- idea-multi-package-source-item-processing
+- idea-optional-embedding-provider-support
+- idea-optional-llm-assisted-routing
 - add-outdated-history-guard
 - fix-vector-source-only-starvation
 - fix-lookup-and-expansion-active-attribution
@@ -79,7 +88,6 @@
 - add-conversational-knowledge-fact-extraction-package
 - add-qpp-injection-justification
 - add-idf-weighted-lexical-scoring
-- add-interest-memory-kind
 - add-actor-scoped-memory-and-container-visibility-rules
 - add-language-agnostic-query-signals-and-typed-constraint-state
 - add-structural-query-lane-narrowing-before-intent-tiebreak
@@ -133,3 +141,8 @@
 - add-first-semantic-layer-and-promotion
 - add-agent-memory-simulation
 - build-structured-retrieval-foundation
+
+# Superseded
+- add-interest-memory-kind
+- idea-measure-pull-filtering-accuracy-and-cost
+- idea-reconcile-unprompted-pull-direction-signal

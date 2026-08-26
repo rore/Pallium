@@ -1,11 +1,16 @@
 ---
 id: add-interest-memory-kind
 title: Add interest memory kind
-status: in-progress
+status: superseded
 priority: medium
 commitment: committed
 milestone: Next
 ---
+
+> Superseded by the data-driven interest-type deprecation. Production evidence
+> showed near-zero value and high false-positive noise; explicit notes and thread
+> summaries cover the useful cases. See
+> `docs/specs/2026-05-04-interest-type-deprecation.md`.
 
 ## Summary
 

@@ -1,7 +1,7 @@
 ---
 id: milestone-shaped-memory-contract
 title: Milestone — Ship a shaped memory contract
-status: in-progress
+status: paused
 priority: high
 commitment: committed
 milestone: Now

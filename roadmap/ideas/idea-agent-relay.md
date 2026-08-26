@@ -137,7 +137,7 @@ delivery, alias uniqueness and rename behavior, concurrent claims, lease recover
 acknowledgement idempotence, expiry, retries, and absence of memory or retrieval
 side effects.
 
-### R1 — Explicit runtime and session relay
+### R1 — Explicit runtime and session relay — complete
 
 Ship runtime-wide fan-out and individually addressed session delivery within a
 repository/container. Include recipient discovery and optional Pallium-managed

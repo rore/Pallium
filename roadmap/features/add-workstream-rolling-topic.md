@@ -1,7 +1,7 @@
 ---
 id: add-workstream-rolling-topic
 title: Workstream rolling-topic primitive (observability experiment, 4A diagnostic-only)
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: Next

@@ -1,7 +1,7 @@
 ---
 id: idea-retrieval-source-fetch-batching
 title: Batch per-candidate source fetches on the shared retrieval path (volume-gated)
-status: in-progress
+status: queued
 priority: medium
 commitment: uncommitted
 ---
