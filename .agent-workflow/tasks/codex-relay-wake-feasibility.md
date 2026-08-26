@@ -29,18 +29,26 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Establish/Discover: constrained PR 1 to evidence and contracts; found new public Codex `queue`, OpenCode async prompt, and Claude Channels surfaces, none yet sufficient without admission correlation.
 - Assess risk/Plan: redline BLUE, Routine/Moderate; self-reviewed evidence-only plan with explicit stop conditions.
+- Implement: recorded installed-version verdicts, exact admission handshakes, lifecycle transitions, conservative bounds, and remaining estimates; added one deterministic contract check. No production or local integration was changed.
+- Tool fallback: apply_patch failed once with documented Windows error 1385; used deterministic writes limited to the four named files.
+- Skill feedback trigger 5 did not pass the actionability filter: the missed review-result path was my assumed path, while the skill catalog correctly names templates/checkpoints/review-result.md.
 
 ## Evidence
 
-Pending.
+- Claude Code 2.1.217: public Channels docs plus local claude doctor; installed configuration classified passive-only.
+- Codex CLI 0.149.1: generated App Server queue schemas and a disposable completed-thread negative control; managed App Server remains an unproven candidate.
+- OpenCode 1.18.19: isolated loopback idle and busy probes; the idle trace correlated admission, while the busy trace and status race keep the adapter passive-only.
+- tests/fixtures/relay_wake/contract.json captures all runtime verdicts, the full wake-state/event matrix, and valid delivery/wake lifecycle transitions.
+- Focused pytest: 3 passed.
+- Workflow checker and git diff --check: clean.
 
 ## Result review
 
-Pending.
+Clean-context architecture review initially blocked overstated runtime support, sampled rather than complete lifecycle coverage, stale Work Record state, and uv.lock drift. All were addressed: every runtime is passive-only pending a full seven-case proof; the fixture covers the complete wake-state/event matrix and valid combined delivery states; uv.lock is unchanged; roadmap and evidence are aligned. Final clean-context architecture re-review: APPROVED.

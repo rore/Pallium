@@ -121,6 +121,15 @@ the receiving model can consume tokens, invoke tools, and modify files. Therefor
 
 Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wake-first-relay-delivery.md).
 
+Phase 0 decision and installed-runtime evidence:
+[Relay wake feasibility](../../docs/designs/016-relay-wake-feasibility.md).
+
+Current result: no runtime cleared the complete wake-safety gate. OpenCode idle
+admission and Codex managed App Server queues are promising candidate surfaces,
+but both need race-free disposable-session proofs; the installed Claude Code
+configuration is passive-only until a Channel ingress is proven. Capability is
+registered per live session; runtime names are not global wake guarantees.
+
 Claude Code already documents idle-session wake and safe busy-session delivery.
 OpenCode exposes session status and asynchronous prompting. Codex App Server can
 resume and start turns and has an experimental follow-up queue, but safe atomic
