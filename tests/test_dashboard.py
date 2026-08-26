@@ -241,8 +241,11 @@ class TestDashboardIntegration:
         assert "fetchStatus" in html
         assert "/dashboard/api/memories" in html
         assert "/dashboard/api/relay/summary" in html
-        assert "operational-summary" in html
+        assert '<details id="operational-summary"' in html
+        assert "summary.hidden = !attention" in html
         assert "Agent Relay" in html
+        assert 'class="table-scroll"' in html
+        assert "@media (max-width: 600px)" in html
 
     def test_dashboard_html_has_dual_time_endpoints_wired(self, tmp_path: Path) -> None:
         """Regression guard: the dashboard must call the new /metrics/totals

@@ -154,4 +154,49 @@ assert.match(elements['hh-fidelity'].innerHTML, /100% of 1 scored memories inclu
 assert.match(elements['hh-fidelity'].innerHTML, /0% of 1 scored memories drifted/);
 assert.doesNotMatch(elements['hh-fidelity'].innerHTML, /50% of 2 scored memories included unsupported claims/);
 
+const operationalStart = html.indexOf('function renderOperationalSummary() {');
+const operationalEnd = html.indexOf('function renderRelay(data) {', operationalStart);
+assert.ok(operationalStart >= 0 && operationalEnd > operationalStart);
+
+function operationalElement() {
+  return { className: '', hidden: true, innerHTML: '', open: true, textContent: '' };
+}
+const operationalElements = Object.fromEntries([
+  'operational-summary', 'ops-title', 'ops-updated', 'ops-systems', 'ops-issues', 'health-badge',
+].map(id => [id, operationalElement()]));
+const operationalDocument = { getElementById: id => operationalElements[id] };
+const operationalSource = `
+let _statusData = null, _queueData = null, _relayData = null;
+function escapeHtml(str) { return str == null ? '' : String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function fmtNum(n) { return n == null ? '—' : n.toLocaleString(); }
+function formatUptime(s) { return Math.floor(s) + 's'; }
+` + html.slice(operationalStart, operationalEnd) + `
+return function render(status, queue, relay) {
+  _statusData = status; _queueData = queue; _relayData = relay;
+  renderOperationalSummary();
+}
+`;
+const renderOperational = new Function('document', operationalSource)(operationalDocument);
+const cleanStatus = {
+  ingestion: { status: 'ok', issues: [] }, embedding_provider_ok: true,
+  vector_expected: true, vector_index_ready: true, pending_items: 0,
+};
+const cleanQueue = { status_counts_24h: { failed: 0 } };
+const cleanRelay = { status: 'idle', deliveries: { expired_last_24h: 0 } };
+renderOperational(cleanStatus, cleanQueue, cleanRelay);
+assert.equal(operationalElements['operational-summary'].hidden, true);
+
+operationalElements['operational-summary'].open = false;
+renderOperational(cleanStatus, cleanQueue, {
+  status: 'attention', deliveries: { expired_last_24h: 1 },
+});
+assert.equal(operationalElements['operational-summary'].hidden, false);
+assert.equal(operationalElements['operational-summary'].open, false);
+assert.match(operationalElements['ops-title'].textContent, /warnings/i);
+
+renderOperational({ ...cleanStatus, ingestion: { status: 'degraded', issues: [{}] } }, cleanQueue, cleanRelay);
+assert.equal(operationalElements['operational-summary'].hidden, false);
+assert.equal(operationalElements['operational-summary'].open, false);
+assert.equal(operationalElements['ops-title'].textContent, 'Pallium needs attention');
+
 console.log('plain-language dashboard renderers: all cases passed');
