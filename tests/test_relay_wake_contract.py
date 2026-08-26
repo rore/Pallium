@@ -39,13 +39,17 @@ def test_delivery_and_wake_state_combinations_have_complete_terminal_rules() -> 
     valid = set(CONTRACT["valid_combined_states"])
     transitions = CONTRACT["delivery_transitions"]
     assert set(CONTRACT["delivery_states"]) == {"pending", "claimed", "delivered", "expired"}
-    assert set(transitions["natural_turn_claim"]) == {
-        "pending/not_eligible",
-        "pending/fallback",
+    assert transitions["natural_turn_claim"] == {
+        "pending/not_eligible": "claimed/not_eligible",
+        "pending/fallback": "claimed/fallback",
     }
-    assert set(transitions["natural_ack"]) == {
-        "claimed/not_eligible",
-        "claimed/fallback",
+    assert transitions["natural_ack"] == {
+        "claimed/not_eligible": "delivered/not_eligible",
+        "claimed/fallback": "delivered/fallback",
+    }
+    assert transitions["claim_lease_expired"] == {
+        "claimed/not_eligible": "pending/not_eligible",
+        "claimed/fallback": "pending/fallback",
     }
     assert transitions["wake_admission"] == {
         "pending/triggered": "delivered/admitted"
@@ -55,5 +59,7 @@ def test_delivery_and_wake_state_combinations_have_complete_terminal_rules() -> 
         for state in valid
         if state.startswith(("pending/", "claimed/"))
     }
-    assert set(transitions["message_expired"]) == expirable
+    assert transitions["message_expired"] == {
+        state: "expired/*" for state in expirable
+    }
     assert "delivered/admitted" not in transitions["message_expired"]
