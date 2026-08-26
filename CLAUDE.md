@@ -35,6 +35,9 @@ Read when needed, not upfront:
 ## Commands
 
 ```bash
+# Restart the installed Windows service (canonical; removes the full stale process tree)
+powershell -ExecutionPolicy Bypass -File scripts/restart-service.ps1
+
 # Run tests
 python -m pytest tests/ -x -q
 
@@ -62,6 +65,8 @@ python -m evals.fact_consolidation_eval
 # Generate exploratory QA scenarios from taxonomy
 python -m evals.generated_exploratory.generator --high-risk-only --count 1 --output evals/generated_exploratory/scenarios/batch.json
 ```
+
+Never restart the Windows service through `pallium service restart`, Task Scheduler, or the launcher directly. After using the wrapper, verify `/health`, `/status`, and `/debug/queue/health` on port 19836.
 
 ## Local Config
 
