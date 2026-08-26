@@ -23,19 +23,19 @@
 
 **Verification plan:** Final-attempt expired package lease settles package and parent terminally without an extra provider attempt → focused package lifecycle regression test. Recoverable expired leases below the ceiling remain reclaimable → focused existing/new regression test. Queue health identifies the orphan before reconciliation through the existing HTTP response → `/debug/queue/health` test. Existing atomic/concurrent package claims remain correct → multi-package and concurrent-claim test slices. Live orphan leaves pending after service restart → local health endpoint plus read-only row verification.
 
-**Plan review:** Pending clean-context review.
+**Plan review:** Approved; see `## Plan review`.
 
 **Approvals:** Not required at this risk level.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- Ready to implement | Blocked | Ready for review -->
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Discovery and Elevated pre-edit redline classification completed. No code edited. Awaiting the required clean-context plan review.
+Discovery, Elevated pre-edit redline classification, and the required clean-context plan review are complete. The plan is approved; no code has been edited.
 
 ## Evidence
 
@@ -43,8 +43,15 @@ Pending.
 
 ## Plan review
 
-Pending.
+Approved by clean-context agent review on 2026-08-26. No blocking findings.
+
+Implementation conditions:
+
+- Reconcile only `processing` package rows whose lease is non-null and expired at the claim timestamp and whose attempts are at or above the supplied ceiling. Keep below-ceiling expired rows reclaimable and active leases untouched.
+- Perform reconciliation, distinct-parent synchronization, and the subsequent global package selection inside the same existing `_begin_immediate` transaction. The processor always enters through `claim_next_package_task` before the item-scoped loop, so duplicating reconciliation in `claim_next_package_task_for_item` is unnecessary unless implementation discovery finds another production caller.
+- Clear claim/lease/backoff fields, set a completion timestamp, and preserve an existing package error or supply a stable exhaustion error. Repeated processor passes must be idempotent and must not consume another provider attempt.
+- Queue health must count each affected pending parent once from package state and use the existing open-string reason/count response shape; no schema or public shape change is needed.
+- Focused coverage must include the exact ceiling boundary, below-ceiling reclaim, active versus expired lease, mixed terminal packages with parent settlement, idempotent repeated passes, and concurrent global claims. Deployment repair must use `scripts/restart-service.ps1`, then verify `/health`, `/status`, `/debug/queue/health`, and the orphan row through a read-only query.
 
 ## Result review
-
 Pending.
