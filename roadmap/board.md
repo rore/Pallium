@@ -18,6 +18,7 @@
 
 # Parallel · Agent Relay
 - idea-agent-relay
+- add-wake-first-relay-delivery
 - add-relay-retention-and-lifecycle-hardening
 
 # Paused

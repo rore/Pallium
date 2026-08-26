@@ -12,8 +12,9 @@ milestone: pallium-relay
 Test Pallium as a local durable context-exchange layer alongside, not after,
 Pallium vNext. Agent Relay lets an agent explicitly send a bounded, scoped message
 to one session or all sessions of a supported runtime. Pallium persists the message
-and delivers it at each resolved recipient's next applicable natural turn with
-attribution.
+and attempts to wake each resolved recipient immediately. If waking is unsupported,
+unsafe, or unavailable, Pallium delivers it at that recipient's next applicable
+natural turn with attribution.
 
 Initial consumers are Claude Code, Codex, and OpenCode.
 
@@ -196,6 +197,31 @@ stored indefinitely. Track the bounded cleanup slice in
 pending and active claims, delete terminal message/delivery state without orphans,
 and keep dashboard metrics useful without turning Relay into a message archive.
 
+### R1.5 — Wake-first delivery — queued
+
+Make wake the default delivery policy, without requiring sender syntax or an LLM
+poll. Pallium must persist the message before attempting activation. An eligible
+idle session starts a new turn; a busy session receives the message at a safe new
+turn boundary; an unsupported, unavailable, stale, or explicitly passive session
+retains the delivery for its next natural turn.
+
+This applies independently to every resolved recipient, including runtime-wide
+fan-out. A wake attempt is not delivery: Pallium marks a delivery complete only
+after the runtime confirms that the message entered the recipient's context, and
+the fallback must not inject a successfully admitted message twice. Wake failures
+remain observable but do not turn a durable pending delivery into a failed message.
+
+Use runtime-native mechanisms rather than inventing a Pallium scheduler: Claude
+Code cross-session messaging or Channels, Codex App Server admission, and OpenCode's
+session server. Validate the smallest supported adapter for each runtime, including
+idle, busy, user-turn races, duplicate attempts, stale sessions, restarts,
+permissions, fan-out cost, and reply-loop protection. Track implementation in
+`add-wake-first-relay-delivery`.
+
+R1.5 does not restart exited processes, spawn agents, infer recipients, or supervise
+work. Resuming an agent that is no longer running is a separate orchestration
+hypothesis.
+
 ### R2 — Future-recipient addressing investigation
 
 Investigate only if R1 repeatedly exposes the need. Do not assume `work_ref` solves
@@ -206,7 +232,7 @@ delivery is the correct product boundary.
 
 Add only capabilities repeatedly demanded by actual use, such as multiple explicit
 selectors, arbitrary named groups, correction or cancellation, historical pointers,
-or safe live delivery.
+or explicit dormant-session resumption.
 
 ## Design Invariants
 
@@ -214,7 +240,8 @@ or safe live delivery.
 - Sending is explicit and delivery is deterministic from recipient and scope.
 - Relay records remain separate from semantic memory and retrieval.
 - Delivery is not evidence of downstream use.
-- Pallium moves bounded information; it does not manage or execute agent work.
+- Pallium may trigger a delivery turn, but it does not assign, supervise, or keep
+  agent work running.
 
 ## Out of Scope Until Proven Otherwise
 
