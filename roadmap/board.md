@@ -18,6 +18,7 @@
 
 # Parallel · Agent Relay
 - idea-agent-relay
+- add-relay-retention-and-lifecycle-hardening
 
 # Paused
 - idea-authenticated-principal-for-mutation-authz

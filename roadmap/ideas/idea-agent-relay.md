@@ -186,6 +186,16 @@ supported runtimes without exposing payloads or session identifiers. Waiting
 remains neutral because delivery is next-turn; expiry in the recent window is
 the actionable failure signal. This is operational telemetry only and does not
 claim that a delivered message was useful.
+
+#### R1 retention and lifecycle hardening — queued
+
+Relay expiry currently prevents further delivery and stops causing an operational
+alert after the recent-failure window, but expired and old terminal records remain
+stored indefinitely. Track the bounded cleanup slice in
+`add-relay-retention-and-lifecycle-hardening`: reuse the existing cleaner, preserve
+pending and active claims, delete terminal message/delivery state without orphans,
+and keep dashboard metrics useful without turning Relay into a message archive.
+
 ### R2 — Future-recipient addressing investigation
 
 Investigate only if R1 repeatedly exposes the need. Do not assume `work_ref` solves
