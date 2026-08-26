@@ -66,10 +66,15 @@ test("deriveContainerRef derives a stable ref for this repo checkout", () => {
   assert.equal(ref, P.deriveContainerRef(process.cwd()));
 });
 
-test("deriveActorRef returns a non-empty string (git user.name or 'local')", () => {
-  const actor = P.deriveActorRef();
-  assert.equal(typeof actor, "string");
-  assert.ok(actor.length > 0);
+test("deriveActorRef uses the repository identity when the plugin cwd differs", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-actor-"));
+  try {
+    execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Relay Operator"], { cwd: dir });
+    assert.equal(P.deriveActorRef(dir), "Relay Operator");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // --- redaction --------------------------------------------------------------
@@ -118,17 +123,20 @@ test("checkDedup rejects an unsafe session id (no path escape, safe default)", (
 
 // --- session pinning --------------------------------------------------------
 
-test("pinContainer/resolveContainerRef pins a session and is sticky on resume", () => {
+test("session scope pins container and actor across resume, then disposes both", () => {
   const sid = "pin-session-1";
-  P.pinContainer(sid, "git:example.com/a/b");
-  assert.equal(P.getPinnedContainer(sid), "git:example.com/a/b");
-  // resolve prefers the pin over a fresh cwd derivation.
+  P.pinContainer(sid, "git:example.com/a/b", undefined, "Relay Operator");
   assert.equal(P.resolveContainerRef("/some/other/dir", sid), "git:example.com/a/b");
-  // Sticky on resume: an existing pin is preserved.
-  P.pinContainer(sid, "git:example.com/x/y", "resume");
+  assert.equal(P.resolveActorRef("/some/other/dir", sid), "Relay Operator");
+  P.pinContainer(sid, "git:example.com/a/b");
+  assert.equal(P.getPinnedActor(sid), "Relay Operator");
+  P.pinContainer(sid, "git:example.com/x/y", "resume", "Other Operator");
   assert.equal(P.getPinnedContainer(sid), "git:example.com/a/b");
-  // Invalid session ids are ignored.
-  P.pinContainer("bad id!", "git:z");
+  assert.equal(P.getPinnedActor(sid), "Relay Operator");
+  P.removeSessionPin(sid);
+  assert.equal(P.getPinnedContainer(sid), null);
+  assert.equal(P.getPinnedActor(sid), null);
+  P.pinContainer("bad id!", "git:z", undefined, "actor");
   assert.equal(P.getPinnedContainer("bad id!"), null);
 });
 

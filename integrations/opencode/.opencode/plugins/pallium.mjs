@@ -81,6 +81,7 @@ export default async ({ client, directory, worktree } = {}) => {
   // purged on `session.deleted` (see the event hook) so the long-lived server
   // process does not accumulate entries for closed sessions.
   const pendingInjections = new Map(); // sessionID -> string[]
+  const pendingRelay = new Map(); // sessionID -> claimed delivery context
   const orientedSessions = new Set(); // sessionID
   const ingestedBySession = new Map(); // sessionID -> Set(dedupKey)
   const retryCounters = new Map(); // `${sessionID}::${tool}::${target}` -> count
@@ -88,6 +89,7 @@ export default async ({ client, directory, worktree } = {}) => {
   function purgeSession(sessionId) {
     if (!sessionId) return;
     pendingInjections.delete(sessionId);
+    pendingRelay.delete(sessionId);
     orientedSessions.delete(sessionId);
     ingestedBySession.delete(sessionId);
     const prefix = `${sessionId}::`;
@@ -142,7 +144,7 @@ export default async ({ client, directory, worktree } = {}) => {
     try {
       const containerRef = pallium.deriveContainerRef(cwd);
       pallium.pinContainer(sessionId, containerRef, undefined);
-      const actorRef = pallium.deriveActorRef();
+      const actorRef = pallium.resolveActorRef(cwd, sessionId);
       const queryText = pallium.deriveOrientationQuery(cwd);
       const resp = await pallium.palliumRequest("POST", "/query", {
         text: queryText,
@@ -196,7 +198,7 @@ export default async ({ client, directory, worktree } = {}) => {
       ingestedBySession.set(sessionId, seen);
 
       const containerRef = pallium.resolveContainerRef(cwd, sessionId);
-      const actorRef = pallium.deriveActorRef();
+      const actorRef = pallium.resolveActorRef(cwd, sessionId);
 
       const item = {
         source_type: pallium.SOURCE_TYPE,
@@ -242,7 +244,7 @@ export default async ({ client, directory, worktree } = {}) => {
 
   async function handleToolTrigger(sessionId, toolName, toolInput, outputText, isError) {
     const containerRef = pallium.resolveContainerRef(cwd, sessionId);
-    const actorRef = pallium.deriveActorRef();
+    const actorRef = pallium.resolveActorRef(cwd, sessionId);
     const exitCode = isError ? 1 : pallium.inferExitCode(outputText);
     const failed = isError || exitCode !== 0;
     const blocks = [];
@@ -318,53 +320,44 @@ export default async ({ client, directory, worktree } = {}) => {
       }
     },
 
-    // Inject Relay first, then queued memory, within one bounded context.
+    // Mutate the model-bound history in place using OpenCode's synthetic reminder pattern.
+    // The Relay envelope explicitly marks peer content as lower authority.
+    "experimental.chat.messages.transform": async (_input, output) => {
+      try {
+        if (!output || !Array.isArray(output.messages)) return;
+        const user = [...output.messages].reverse().find((item) => item && item.info && item.info.role === "user");
+        const sessionId = user && resolveSessionId(user.info);
+        const pending = sessionId && pendingRelay.get(sessionId);
+        const textPart = user && Array.isArray(user.parts) && [...user.parts].reverse()
+          .find((part) => part && part.type === "text" && typeof part.text === "string");
+        if (!pending || !textPart) return;
+        textPart.text += `\n\n<system-reminder>\n${pending.text}\n</system-reminder>`;
+        pendingRelay.delete(sessionId);
+        if (pending.deliveries.length) {
+          await pallium.acknowledgeRelay(pending.deliveries, pending.containerRef, pending.actorRef);
+        }
+      } catch (e) {
+        log("error", `messages.transform failed: ${e && e.message}`);
+      }
+    },
+    // Orientation and memory still use this hook. Relay uses messages.transform
+    // because resumed sessions can discard system-transform additions.
     "experimental.chat.system.transform": async (input, output) => {
       try {
         if (!output || !Array.isArray(output.system)) return;
         const sessionId = resolveSessionId(input);
-        if (!sessionId) return;
-        const containerRef = pallium.resolveContainerRef(cwd, sessionId);
-        const actorRef = pallium.deriveActorRef();
-        const relayResponse = await pallium.relayRequest("POST", "/relay/turn", {
-          runtime: "opencode",
-          session_ref: sessionId,
-          container_ref: containerRef,
-          actor_ref: actorRef,
-          max_chars: 2400,
-        }, 750);
-        const deliveries = (relayResponse && relayResponse.deliveries) || [];
-        const { text: relayText, deliveries: renderedDeliveries } = pallium.formatRelay(deliveries, 2400);
         const queued = drainInjections(sessionId);
-        const hasQueuedScope = queued.some((chunk) => chunk.startsWith("[Pallium scope — "));
-        const scopeText = hasQueuedScope ? "" : pallium.formatInjection(
-          [], containerRef, 2400, sessionId, actorRef, pallium.AGENT_REF, "private",
-        );
-        const parts = [];
-        let used = 0;
-        for (const chunk of [relayText, scopeText, ...queued]) {
-          if (!chunk) continue;
-          const added = [...chunk].length + (parts.length ? 2 : 0);
-          if (used + added > 4000) {
-            if (chunk !== relayText) enqueueInjection(sessionId, chunk);
-            continue;
-          }
-          parts.push(chunk);
-          used += added;
-        }
-        if (!parts.length) return;
-        const text = parts.join("\n\n");
+        if (!queued.length) return;
+        const text = queued.join("\n\n");
         if (output.system.length > 0) {
           output.system[output.system.length - 1] += "\n\n" + text;
         } else {
           output.system.push(text);
         }
-        if (relayText) await pallium.acknowledgeRelay(renderedDeliveries, containerRef, actorRef);
       } catch (e) {
         log("error", `system.transform failed: ${e && e.message}`);
       }
     },
-
     // UserPromptSubmit equivalent: ingest the user message and fetch memories
     // in one /item-and-query call, queueing the blocks for system.transform.
     "chat.message": async (input, output) => {
@@ -375,6 +368,30 @@ export default async ({ client, directory, worktree } = {}) => {
 
         const containerRef = pallium.resolveContainerRef(cwd, sessionId);
         pallium.pinContainer(sessionId, containerRef, undefined);
+        const actorRef = pallium.resolveActorRef(cwd, sessionId);
+
+        // Claim on the user turn, but acknowledge only after messages.transform
+        // has attached the context to the actual model-bound history.
+        if (output && output.message && typeof output.message === "object" && !pendingRelay.has(sessionId)) {
+          const relayResponse = await pallium.relayRequest("POST", "/relay/turn", {
+            runtime: "opencode",
+            session_ref: sessionId,
+            container_ref: containerRef,
+            actor_ref: actorRef,
+            max_chars: 2400,
+          }, 750);
+          const deliveries = (relayResponse && relayResponse.deliveries) || [];
+          const { text: relayText, deliveries: renderedDeliveries } = pallium.formatRelay(deliveries, 2400);
+          const scopeText = pallium.formatInjection(
+            [], containerRef, 2400, sessionId, actorRef, pallium.AGENT_REF, "private",
+          );
+          pendingRelay.set(sessionId, {
+            text: [relayText, scopeText].filter(Boolean).join("\n\n"),
+            deliveries: renderedDeliveries,
+            containerRef,
+            actorRef,
+          });
+        }
         const promptRaw = pallium.extractTextFromParts(parts);
         if (!promptRaw || promptRaw.length < MIN_PROMPT_LEN) return;
         if (promptRaw.startsWith("/")) return;
@@ -383,7 +400,6 @@ export default async ({ client, directory, worktree } = {}) => {
         const content = pallium.stripIdeContext(promptRaw);
         if (!content) return;
 
-        const actorRef = pallium.deriveActorRef();
         const queryText = content.length > 500 ? content.slice(0, 500) : content;
 
         const resp = await pallium.palliumRequest("POST", "/item-and-query", {
@@ -426,9 +442,10 @@ export default async ({ client, directory, worktree } = {}) => {
             const containerRef = pallium.resolveContainerRef(cwd, sessionId);
             await pallium.relayRequest("POST", "/relay/sessions/close", {
               runtime: "opencode", session_ref: sessionId,
-              container_ref: containerRef, actor_ref: pallium.deriveActorRef(),
+              container_ref: containerRef, actor_ref: pallium.resolveActorRef(cwd, sessionId),
             }, 500);
           }
+          pallium.removeSessionPin(sessionId);
           purgeSession(sessionId);
         }
       } catch (e) {

@@ -94,7 +94,7 @@ claim and inject persisted Relay messages without polling or waking an agent:
 |---|---|
 | Claude Code | `UserPromptSubmit` hook |
 | Codex | `UserPromptSubmit` hook using `additionalContext` |
-| OpenCode | existing `chat.message` and system-transform plugin path |
+| OpenCode | `chat.message` claim plus model-bound `experimental.chat.messages.transform` injection |
 
 The smallest viable R1 is a hook-time mailbox:
 
@@ -161,7 +161,7 @@ R1 is implemented as the full scoped slice, not a disposable proof of concept:
 - session discovery, dormancy, close/reactivation, and alias-release behavior
 - public-surface E2E coverage for routing, bounds, lifecycle, concurrency, expiry, scope isolation, and absence of memory/retrieval side effects
 
-Live Claude Code/Codex validation confirmed alias routing, next-turn delivery, acknowledgement, and round-trip messaging. It also exposed three R1 UX defects now covered by the contract: current identity must come from injected `agent_ref`/`thread_ref`, replies must derive endpoints from the received `delivery_id`, and Claude/Codex must follow deliberate Git-project changes while ignoring transient non-Git cwd drift. A project transition best-effort closes the old scoped Relay session and releases its alias; queued deliveries remain in the old project.
+Live Claude Code/Codex/OpenCode validation confirmed alias routing, next-turn delivery, acknowledgement, and round-trip messaging. It also exposed three R1 UX defects now covered by the contract: current identity must come from injected `agent_ref`/`thread_ref`, replies must derive endpoints from the received `delivery_id`, and Claude/Codex must follow deliberate Git-project changes while ignoring transient non-Git cwd drift. A project transition best-effort closes the old scoped Relay session and releases its alias; queued deliveries remain in the old project.
 
 The track remains `in-progress` because the product hypothesis is not yet proven. The next work is real-use measurement against the R1 decision gate, not automatic expansion into R2.
 
@@ -175,7 +175,7 @@ A full caller-surface pass added one continuous MCP → HTTP → SQLite → hook
 - Relay envelopes require the agent to make the message origin visible to the user
 - combined E2E coverage now exercises the per-turn cap, close/reactivate behavior, queued delivery preservation, idempotent acknowledgement, reply routing, Unicode, and full alias lifecycle
 
-A live two-Codex run independently confirmed alias conflict/transfer, alias-addressed delivery on an unrelated natural turn, delivery-derived reply, visible Relay attribution, and consume-once behavior. Claude Code and OpenCode retain harness-specific automated coverage through their real hook/plugin surfaces; an actual paid model-to-model run is a release smoke check, not a substitute for those deterministic tests.
+A live two-Codex run independently confirmed alias conflict/transfer, alias-addressed delivery on an unrelated natural turn, delivery-derived reply, visible Relay attribution, and consume-once behavior. A live resumed OpenCode run then confirmed repository actor pinning, Codex-to-OpenCode model-visible delivery, delivery-derived OpenCode reply, and Codex receipt. OpenCode acknowledges only after its model-bound message history is mutated; the earlier system-transform path could silently discard resumed-session context and is not used for Relay. Paid model runs remain release smoke checks, not substitutes for deterministic hook/plugin coverage.
 
 #### R1 operational visibility - complete (2026-08-25)
 

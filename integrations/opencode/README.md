@@ -17,6 +17,7 @@ plugin** (JS module) that reads structured messages through the injected SDK
 |---|---|---|
 | Orientation query + inject | SessionStart | `event` → `session.created` → `POST /query` (`trigger_origin: session_start_orientation`) → injected via `experimental.chat.system.transform` |
 | Ingest user msg + inject memories | UserPromptSubmit | `chat.message` → `POST /item-and-query` (`query_trigger_origin: user_prompt_submit`) → blocks injected via `experimental.chat.system.transform` |
+| Deliver Agent Relay | UserPromptSubmit | `chat.message` claims → `experimental.chat.messages.transform` appends an attributed lower-authority reminder → acknowledge |
 | Ingest assistant turn | Stop | `event` → `session.idle` → read last assistant message via `client.session.messages` → `POST /items` |
 | Failure/retry triggers | PostToolUse | `tool.execute.after` — **off** unless `PALLIUM_POSTTOOL_TRIGGERS=1` |
 | Ingest before compaction | PreCompact | `experimental.session.compacting` → `POST /items` (best-effort) |

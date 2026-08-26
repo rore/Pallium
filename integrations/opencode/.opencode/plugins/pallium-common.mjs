@@ -119,8 +119,8 @@ export function deriveContainerRef(cwd) {
   return pathContainer(cwd);
 }
 
-export function deriveActorRef() {
-  const r = _runGit(["config", "user.name"], undefined);
+export function deriveActorRef(cwd) {
+  const r = _runGit(["config", "user.name"], cwd);
   if (r.ok && r.stdout.trim()) return r.stdout.trim();
   return "local";
 }
@@ -158,7 +158,7 @@ function _sweepOldSessionPins() {
   } catch { /* ignore */ }
 }
 
-export function pinContainer(sessionId, containerRef, source) {
+export function pinContainer(sessionId, containerRef, source, actorRef = null) {
   const sid = _safeSessionId(sessionId);
   if (sid === null || !containerRef || typeof containerRef !== "string") return;
   try {
@@ -170,7 +170,11 @@ export function pinContainer(sessionId, containerRef, source) {
   if (_RESUME_SOURCES.has(source) && fs.existsSync(fp)) return;
 
   const tmp = path.join(SESSIONS_DIR, `${sid}.json.tmp`);
-  const payload = JSON.stringify({ container_ref: containerRef, ts: Date.now() / 1000 });
+  const previous = _getSessionPin(sessionId);
+  const state = { container_ref: containerRef, ts: Date.now() / 1000 };
+  const actor = actorRef || (previous && previous.actor_ref);
+  if (typeof actor === "string" && actor) state.actor_ref = actor;
+  const payload = JSON.stringify(state);
   try {
     fs.writeFileSync(tmp, payload, "utf8");
     fs.renameSync(tmp, fp);
@@ -180,24 +184,45 @@ export function pinContainer(sessionId, containerRef, source) {
   _sweepOldSessionPins();
 }
 
-export function getPinnedContainer(sessionId) {
+function _getSessionPin(sessionId) {
   const sid = _safeSessionId(sessionId);
   if (sid === null) return null;
-  const fp = path.join(SESSIONS_DIR, `${sid}.json`);
   try {
+    const fp = path.join(SESSIONS_DIR, `${sid}.json`);
     if (!fs.existsSync(fp)) return null;
     const data = JSON.parse(fs.readFileSync(fp, "utf8"));
-    if (data && typeof data === "object" && typeof data.container_ref === "string" && data.container_ref) {
-      return data.container_ref;
-    }
+    return data && typeof data === "object" ? data : null;
   } catch { /* ignore */ }
   return null;
 }
 
+export function getPinnedContainer(sessionId) {
+  const data = _getSessionPin(sessionId);
+  return data && typeof data.container_ref === "string" && data.container_ref ? data.container_ref : null;
+}
+
+export function getPinnedActor(sessionId) {
+  const data = _getSessionPin(sessionId);
+  return data && typeof data.actor_ref === "string" && data.actor_ref ? data.actor_ref : null;
+}
+
 export function resolveContainerRef(cwd, sessionId) {
-  const pinned = getPinnedContainer(sessionId);
+  return getPinnedContainer(sessionId) || deriveContainerRef(cwd);
+}
+
+export function resolveActorRef(cwd, sessionId) {
+  const pinned = getPinnedActor(sessionId);
   if (pinned) return pinned;
-  return deriveContainerRef(cwd);
+  const actor = deriveActorRef(cwd);
+  const container = getPinnedContainer(sessionId);
+  if (container) pinContainer(sessionId, container, undefined, actor);
+  return actor;
+}
+
+export function removeSessionPin(sessionId) {
+  const sid = _safeSessionId(sessionId);
+  if (sid === null) return;
+  try { fs.unlinkSync(path.join(SESSIONS_DIR, `${sid}.json`)); } catch { /* ignore */ }
 }
 
 // --- dedup ------------------------------------------------------------------

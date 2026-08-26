@@ -65,6 +65,11 @@ async function systemTransform(hooks, sessionID) {
   await hooks["experimental.chat.system.transform"]({ message: { sessionID } }, output);
   return output.system;
 }
+async function messagesTransform(hooks, message, parts) {
+  const output = { messages: [{ info: message, parts }] };
+  await hooks["experimental.chat.messages.transform"]({}, output);
+  return output.messages[0];
+}
 
 // --- chat.message -> /item-and-query -> inject ------------------------------
 
@@ -73,7 +78,8 @@ test("chat.message ingests the user prompt and queues memory for the system prom
   const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
 
   const parts = [{ type: "text", text: "How does the injection policy abstention work here?" }];
-  await hooks["chat.message"]({}, { message: { sessionID: "sesA" }, parts });
+  const output = { message: { sessionID: "sesA", role: "user" }, parts };
+  await hooks["chat.message"]({}, output);
 
   const iq = fetchCalls.find((c) => c.url.includes("/item-and-query"));
   assert.ok(iq, "should call /item-and-query");
@@ -82,10 +88,11 @@ test("chat.message ingests the user prompt and queues memory for the system prom
   assert.equal(iq.body.thread_ref, "sesA");
   assert.equal(iq.body.query_trigger_origin, "user_prompt_submit");
   assert.match(iq.body.source_id, /^oc-[0-9a-f]{12}$/);
+  const modelMessage = await messagesTransform(hooks, output.message, output.parts);
+  assert.match(modelMessage.parts[0].text, /<system-reminder>\n\[Pallium scope — /);
 
   const system = await systemTransform(hooks, "sesA");
   assert.equal(system.length, 1);
-  assert.match(system[0], /^\[Pallium scope — /);
   assert.match(system[0], /"request_source_item_id":"request-opencode-1"/);
   assert.match(system[0], /\[Pallium memory — container: path:/);
   assert.match(system[0], /ref:ref-xyz\]/);
@@ -98,13 +105,13 @@ test("chat.message skips short prompts, slash-commands, and duplicates", async (
 
   await hooks["chat.message"]({}, { message: { sessionID: "sesB" }, parts: [{ type: "text", text: "hi" }] });
   await hooks["chat.message"]({}, { message: { sessionID: "sesB" }, parts: [{ type: "text", text: "/commit please do it now" }] });
-  assert.equal(fetchCalls.length, 0, "short + slash prompts must not hit the daemon");
+  assert.equal(fetchCalls.filter((c) => c.url.includes("/item-and-query")).length, 0, "short + slash prompts must not ingest");
 
   const longPrompt = [{ type: "text", text: "please investigate the retrieval grounding gates in detail" }];
   await hooks["chat.message"]({}, { message: { sessionID: "sesB" }, parts: longPrompt });
-  assert.equal(fetchCalls.length, 1, "first real prompt hits the daemon");
+  assert.equal(fetchCalls.filter((c) => c.url.includes("/item-and-query")).length, 1, "first real prompt ingests");
   await hooks["chat.message"]({}, { message: { sessionID: "sesB" }, parts: longPrompt });
-  assert.equal(fetchCalls.length, 1, "identical prompt within the dedup window is skipped");
+  assert.equal(fetchCalls.filter((c) => c.url.includes("/item-and-query")).length, 1, "identical prompt within the dedup window is skipped");
 });
 
 // --- event: session.created -> orientation ----------------------------------
@@ -230,9 +237,7 @@ test("session.deleted purges pending per-session state", async () => {
   await hooks["chat.message"]({}, { message: { sessionID: "sZ" }, parts: [{ type: "text", text: "a real prompt about memory injection budgets" }] });
   await hooks.event({ event: { type: "session.deleted", properties: { sessionID: "sZ" } } });
   const system = await systemTransform(hooks, "sZ");
-  assert.equal(system.length, 1);
-  assert.doesNotMatch(system[0], /\[Pallium memory/);
-  assert.match(system[0], /"thread_ref":"sZ"/);
+  assert.deepEqual(system, []);
 });
 
 // --- experimental.session.compacting -> ingest before compaction -----------
@@ -334,7 +339,7 @@ test("hooks never throw even when the daemon is unreachable", async () => {
   assert.ok(Array.isArray(system), "system.transform still returns cleanly");
 });
 
-test("system.transform injects Relay before memory and acknowledges after mutation", async () => {
+test("chat.message injects Relay as system context and acknowledges after mutation", async () => {
   const relay = {
     deliveries: [{
       delivery_id: "d-skipped", claim_token: "claim-skipped", message_id: "m-skipped",
@@ -351,24 +356,23 @@ test("system.transform injects Relay before memory and acknowledges after mutati
       expires_at: "2026-08-26T10:00:00+00:00",
     }],
   };
-  const largeMemory = {
-    ...oneBlock,
-    injectable_blocks: [{ ...oneBlock.injectable_blocks[0], text: "m".repeat(1200) }],
-  };  installFetch({
-    "/item-and-query": largeMemory,
+  installFetch({
+    "/item-and-query": oneBlock,
     "/relay/turn": relay,
     "/relay/deliveries/ack": { delivery_id: "d-1", state: "delivered" },
   });
   const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
-  const parts = [{ type: "text", text: "please inspect this migration approach carefully" }];
-  await hooks["chat.message"]({}, { message: { sessionID: "sesRelay" }, parts });
-  const output = { system: [] };
-  await hooks["experimental.chat.system.transform"](
-    { message: { sessionID: "sesRelay" } }, output,
-  );
-  assert.equal(output.system.length, 1);
-  assert.ok(output.system[0].indexOf("[Pallium Relay") < output.system[0].indexOf("[Pallium memory"));
-  assert.match(output.system[0], /lower authority/);
+  const output = {
+    message: { sessionID: "sesRelay", role: "user", system: "existing system" },
+    parts: [{ type: "text", text: "please inspect this migration approach carefully" }],
+  };
+  await hooks["chat.message"]({}, output);
+  assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/deliveries/ack")).length, 0);
+  const modelMessage = await messagesTransform(hooks, output.message, output.parts);
+  const modelText = modelMessage.parts[0].text;
+  assert.ok(modelText.startsWith("please inspect this migration approach carefully\n\n<system-reminder>\n[Pallium Relay"));
+  assert.ok(modelText.indexOf("[Pallium Relay") < modelText.indexOf("[Pallium scope"));
+  assert.match(modelText, /lower authority/);
   const turn = fetchCalls.find((call) => call.url.includes("/relay/turn"));
   assert.equal(turn.body.runtime, "opencode");
   assert.equal(turn.body.session_ref, "sesRelay");
@@ -381,29 +385,61 @@ test("system.transform injects Relay before memory and acknowledges after mutati
   );
 });
 
-test("system.transform with no delivery still exposes current Relay identity", async () => {
+test("chat.message with no delivery exposes current Relay identity", async () => {
   installFetch({ "/relay/turn": { deliveries: [] } });
   const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
-  const system = await systemTransform(hooks, "sesIdentity");
-  assert.equal(system.length, 1);
-  assert.ok(system[0].startsWith("[Pallium scope — "));
-  assert.match(system[0], /"thread_ref":"sesIdentity"/);
-  assert.match(system[0], /"agent_ref":"opencode"/);
+  const output = { message: { sessionID: "sesIdentity", role: "user" }, parts: [{ type: "text", text: "hi" }] };
+  await hooks["chat.message"]({}, output);
+  const modelMessage = await messagesTransform(hooks, output.message, output.parts);
+  assert.match(modelMessage.parts[0].text, /<system-reminder>\n\[Pallium scope — /);
+  assert.match(modelMessage.parts[0].text, /"thread_ref":"sesIdentity"/);
+  assert.match(modelMessage.parts[0].text, /"agent_ref":"opencode"/);
 });
 
-test("system.transform without mutable system does not claim Relay", async () => {
+test("Relay claim survives a transform with no model-visible text part", async () => {
+  installFetch({
+    "/relay/turn": { deliveries: [{
+      delivery_id: "d-retry", claim_token: "claim-retry", message_id: "m-retry",
+      sender_runtime: "codex", sender_session_ref: "sender-retry",
+      recipient: "opencode:sesRetry", payload: "retry me", redacted: false,
+      in_reply_to: null, created_at: "2026-08-25T10:00:00+00:00",
+      expires_at: "2026-08-26T10:00:00+00:00",
+    }] },
+    "/relay/deliveries/ack": { delivery_id: "d-retry", state: "delivered" },
+  });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  const message = { sessionID: "sesRetry", role: "user" };
+  await hooks["chat.message"]({}, { message, parts: [{ type: "image", url: "data:image/png;base64,x" }] });
+  await hooks["experimental.chat.messages.transform"]({}, { messages: [{ info: message, parts: [] }] });
+  assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/deliveries/ack")).length, 0);
+  await hooks["chat.message"]({}, { message, parts: [{ type: "text", text: "next turn" }] });
+  assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/turn")).length, 1);
+  const modelMessage = await messagesTransform(hooks, message, [{ type: "text", text: "next turn" }]);
+  assert.match(modelMessage.parts[0].text, /retry me/);
+  assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/deliveries/ack")).length, 1);
+});
+test("chat.message without mutable message does not claim Relay", async () => {
   installFetch({ "/relay/turn": { deliveries: [] } });
   const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
-  await hooks["experimental.chat.system.transform"]({ sessionID: "sesNoSystem" }, {});
+  await hooks["chat.message"]({ sessionID: "sesNoMessage" }, { parts: [{ type: "text", text: "hi" }] });
   assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/turn")).length, 0);
 });
-
-test("session.deleted closes Relay before purging local state", async () => {
+test("session.deleted closes Relay with pinned scope and removes the pin", async () => {
   installFetch({ "/relay/sessions/close": { state: "closed" } });
+  const pinDir = path.join(tmpHome, ".pallium", "hooks", "state", "sessions");
+  const pinFile = path.join(pinDir, "sesClose.json");
+  fs.mkdirSync(pinDir, { recursive: true });
+  fs.writeFileSync(pinFile, JSON.stringify({
+    container_ref: "git:example.test/team/project",
+    actor_ref: "Relay Operator",
+  }));
   const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
   await hooks.event({ event: { type: "session.deleted", properties: { sessionID: "sesClose" } } });
   const close = fetchCalls.find((call) => call.url.includes("/relay/sessions/close"));
   assert.ok(close);
   assert.equal(close.body.runtime, "opencode");
   assert.equal(close.body.session_ref, "sesClose");
+  assert.equal(close.body.container_ref, "git:example.test/team/project");
+  assert.equal(close.body.actor_ref, "Relay Operator");
+  assert.equal(fs.existsSync(pinFile), false);
 });
