@@ -413,6 +413,39 @@ def test_claim_for_specific_item(test_db_url):
     assert task3 is None
 
 
+def test_claim_for_specific_item_settles_expired_final_attempt(test_db_url):
+    service = _build_service(
+        test_db_url,
+        plugins={"demo": DemoAgentMemoryPlugin()},
+        default_use_case="demo",
+    )
+    ingest = _ingest(service, use_case="demo")
+    storage = service._storage
+    now = utc_now()
+    with storage._session_factory() as session:
+        session.execute(
+            text(
+                "UPDATE package_processing_status "
+                "SET status='processing', attempts=3, claimed_by='dead-worker', "
+                "claimed_at=:past, lease_expires_at=:past "
+                "WHERE source_item_id=:source_item_id"
+            ),
+            {"source_item_id": ingest.source_item_id, "past": now - timedelta(seconds=1)},
+        )
+        session.commit()
+
+    assert storage.claim_next_package_task_for_item(
+        ingest.source_item_id,
+        worker_id="recovery",
+        lease_seconds=60,
+        max_attempts=3,
+        now=now,
+    ) is None
+    result = service.get_item_processing(ingest.source_item_id)
+    assert result.processing_status == "failed"
+    assert result.processing_claimed_at is None
+
+
 # ── Tests: commit_package_process_result ──────────────────────────────────
 
 def test_commit_package_process_result_does_not_change_source_item_state(test_db_url):

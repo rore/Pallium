@@ -1478,6 +1478,11 @@ class SQLiteQueueMixin:
             """
         )
         with self._begin_immediate() as session:
+            self._finalize_expired_package_leases_at_attempt_limit(
+                session,
+                now=claimed_at,
+                max_attempts=max_attempts,
+            )
             row = session.execute(
                 statement,
                 {

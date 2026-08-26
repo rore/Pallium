@@ -40,7 +40,7 @@ Implementation: added the failing final-attempt lease regression first, then add
 
 ## Evidence
 
-Revision bfd6d15: the four focused regressions first reproduced two expected failures, then passed after the fix. The multi-package processing, concurrent claim, and observability slices passed 41 tests with three pre-existing Pydantic warnings. The agent-workflow checker passed after removing the template comment parsed into State. After restart through `scripts/restart-service.ps1`, independent live verification found `/health` ok with vector and embedding ready, `/status.ingestion.status` ok, no unclaimable queue reasons, and source `3704ed46-880d-4a3f-885f-d3f70dbcf529` terminal failed with claims cleared, completion timestamp set, and the historic 404 error preserved.
+Revision bfd6d15: the four focused regressions first reproduced two expected failures, then passed after the fix. After CodeRabbit identified the item-scoped claim edge, the same reconciliation was added inside `claim_next_package_task_for_item`'s existing transaction with a regression asserting settlement through the service read path. The multi-package processing, concurrent claim, and observability slices pass 42 tests with three pre-existing Pydantic warnings; diff hygiene and the agent-workflow checker pass. After restart through `scripts/restart-service.ps1`, independent live verification found `/health` ok with vector and embedding ready, `/status.ingestion.status` ok, no unclaimable queue reasons, and source `3704ed46-880d-4a3f-885f-d3f70dbcf529` terminal failed with claims cleared, completion timestamp set, and the historic 404 error preserved.
 
 ## Plan review
 
@@ -56,7 +56,7 @@ Implementation conditions:
 
 ## Result review
 
-**Verdict: Approved.** Completion criteria are satisfied. The implementation is scoped correctly: reconciliation runs atomically on the global package-claim path, preserves recoverable and active leases, reuses parent terminal synchronization, and adds the existing open-string queue-health reason shape. Independent verification passed 41 focused lifecycle, observability, and concurrent-claim tests plus the workflow checker. Post-restart live verification confirms the named orphan settled terminally, claims were cleared, its prior error was preserved, and queue health has no unclaimable cause. No unresolved assumptions, scope expansion, roadmap/docs drift, or risk reclassification.
+**Verdict: Approved.** CodeRabbit correctly identified that an exhausted lease can arise between the global claim and the later item-scoped claim, invalidating the plan-review assumption that global entry alone was sufficient. The resolution reuses the same helper inside the item-scoped method's existing immediate transaction; it adds no abstraction or contract change. The new service-read-path regression and the full 42-test focused lifecycle, observability, and concurrency suite pass, as do diff hygiene and the workflow checker. Live repair evidence remains valid. No unresolved assumptions, scope expansion, roadmap/docs drift, or risk reclassification.
 
 ## Skill feedback (unsent)
 
