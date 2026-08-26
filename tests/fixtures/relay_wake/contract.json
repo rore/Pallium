@@ -1,0 +1,45 @@
+{
+  "evidence_date": "2026-08-26",
+  "runtimes": {
+    "claude-code": {"version": "2.1.217", "classification": "passive-only", "candidate": "channel"},
+    "codex": {"version": "0.149.1", "classification": "passive-only", "candidate": "managed-app-server"},
+    "opencode": {"version": "1.18.19", "classification": "passive-only", "candidate": "plugin-safe-boundary-queue"}
+  },
+  "wake_states": ["not_eligible", "queued", "triggering", "triggered", "admitted", "fallback"],
+  "events": ["capability_disabled", "capability_expired", "session_closed", "session_reopened", "adapter_replaced", "begin_external_call", "trigger_admitted", "trigger_accepted", "trigger_failed", "admission_deadline", "message_expired", "natural_turn_claim", "wake_callback", "pallium_restart", "runtime_restart"],
+  "matrix": {
+    "not_eligible": {
+      "capability_disabled": "not_eligible", "capability_expired": "not_eligible", "session_closed": "not_eligible", "session_reopened": "not_eligible", "adapter_replaced": "not_eligible", "begin_external_call": "reject", "trigger_admitted": "reject", "trigger_accepted": "reject", "trigger_failed": "not_eligible", "admission_deadline": "not_eligible", "message_expired": "expire", "natural_turn_claim": "claim", "wake_callback": "reject", "pallium_restart": "not_eligible", "runtime_restart": "not_eligible"
+    },
+    "queued": {
+      "capability_disabled": "fallback", "capability_expired": "fallback", "session_closed": "fallback", "session_reopened": "fallback", "adapter_replaced": "fallback", "begin_external_call": "reject", "trigger_admitted": "reject", "trigger_accepted": "reject", "trigger_failed": "fallback", "admission_deadline": "fallback", "message_expired": "expire", "natural_turn_claim": "reject", "wake_callback": "reject", "pallium_restart": "queued", "runtime_restart": "fallback"
+    },
+    "triggering": {
+      "capability_disabled": "fallback", "capability_expired": "fallback", "session_closed": "fallback", "session_reopened": "fallback", "adapter_replaced": "fallback", "begin_external_call": "triggered", "trigger_admitted": "reject", "trigger_accepted": "reject", "trigger_failed": "fallback", "admission_deadline": "fallback", "message_expired": "expire", "natural_turn_claim": "reject", "wake_callback": "reject", "pallium_restart": "queued", "runtime_restart": "fallback"
+    },
+    "triggered": {
+      "capability_disabled": "wait_deadline", "capability_expired": "wait_deadline", "session_closed": "wait_deadline", "session_reopened": "wait_deadline", "adapter_replaced": "wait_deadline", "begin_external_call": "triggered", "trigger_admitted": "admitted", "trigger_accepted": "triggered", "trigger_failed": "fallback", "admission_deadline": "fallback", "message_expired": "expire", "natural_turn_claim": "reject", "wake_callback": "admitted", "pallium_restart": "wait_deadline", "runtime_restart": "wait_deadline"
+    },
+    "admitted": {
+      "capability_disabled": "admitted", "capability_expired": "admitted", "session_closed": "admitted", "session_reopened": "admitted", "adapter_replaced": "admitted", "begin_external_call": "admitted", "trigger_admitted": "admitted", "trigger_accepted": "admitted", "trigger_failed": "admitted", "admission_deadline": "admitted", "message_expired": "admitted", "natural_turn_claim": "reject", "wake_callback": "admitted", "pallium_restart": "admitted", "runtime_restart": "admitted"
+    },
+    "fallback": {
+      "capability_disabled": "fallback", "capability_expired": "fallback", "session_closed": "fallback", "session_reopened": "fallback", "adapter_replaced": "fallback", "begin_external_call": "reject", "trigger_admitted": "reject", "trigger_accepted": "reject", "trigger_failed": "fallback", "admission_deadline": "fallback", "message_expired": "expire", "natural_turn_claim": "claim", "wake_callback": "reject", "pallium_restart": "fallback", "runtime_restart": "fallback"
+    }
+  },
+  "delivery_states": ["pending", "claimed", "delivered", "expired"],
+  "valid_combined_states": ["pending/not_eligible", "claimed/not_eligible", "pending/queued", "pending/triggering", "pending/triggered", "delivered/admitted", "pending/fallback", "claimed/fallback", "delivered/fallback", "expired/*"],
+  "delivery_transitions": {
+    "natural_turn_claim": {"pending/not_eligible": "claimed/not_eligible", "pending/fallback": "claimed/fallback"},
+    "natural_ack": {"claimed/not_eligible": "delivered/not_eligible", "claimed/fallback": "delivered/fallback"},
+    "claim_lease_expired": {"claimed/not_eligible": "pending/not_eligible", "claimed/fallback": "pending/fallback"},
+    "wake_admission": {"pending/triggered": "delivered/admitted"},
+    "message_expired": {"pending/not_eligible": "expired/*", "claimed/not_eligible": "expired/*", "pending/queued": "expired/*", "pending/triggering": "expired/*", "pending/triggered": "expired/*", "pending/fallback": "expired/*", "claimed/fallback": "expired/*"}
+  },  "global_rules": {
+    "external_call_boundary": "Move triggering to triggered immediately before external I/O, so an ambiguous call can never open natural-turn delivery.",
+    "message_expiry": "Every non-delivered state expires; callback and claim capabilities are invalidated.",
+    "natural_claim_guard": "Allowed only in not_eligible or fallback.",
+    "generation_guard": "A callback must match delivery, recipient, adapter generation, and deadline.",
+    "reopen_guard": "A new generation cannot revive work reserved by an old generation."
+  }
+}
