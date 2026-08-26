@@ -15,9 +15,6 @@
 - add-cross-container-bounded-memory
 
 # Parallel · Agent Relay
-R1 explicit runtime/session Relay is shipped. `idea-agent-relay` remains here as
-the umbrella track while the separately listed wake and validation work is open.
-
 - idea-agent-relay
 - add-wake-first-relay-delivery
 - validate-relay-dependency-workflows
