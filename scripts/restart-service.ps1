@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Restart the Pallium Windows scheduled task service.
 
@@ -43,15 +43,12 @@ if (Test-Path $PidFile) {
     }
 }
 
-# Strategy 3: kill by commandline signature — catches the supervisor, its
-# child processor/cleaner/snapshot subprocesses, and the MCP subprocess,
-# even when the parent chain was severed by the wscript → pythonw
-# fire-and-forget launcher pattern. Strategies 1 and 2 alone leave the
-# supervisor + processor + cleaner alive; those processes have their own
-# imported-module cache and continue running stale code across a
-# scheduled-task restart, silently defeating the "restart to deploy new
-# code" invariant. See scripts/restart-service.md for the failure mode
-# that motivated this addition.
+# Strategy 3: kill by commandline signature — catches the supervisor and its
+# processor/cleaner/snapshot subprocesses even when the parent chain was
+# severed by the wscript → pythonw fire-and-forget launcher pattern.
+# Standalone `app.run mcp` processes are client-owned stdio bridges; killing
+# one disconnects its Codex task permanently, so service restart leaves them
+# running. They proxy the newly started HTTP service without stale service code.
 Write-Host "  Sweeping surviving Pallium subprocesses by commandline..."
 $signatures = @(
     "service_launcher.py",
@@ -59,7 +56,6 @@ $signatures = @(
     "app.cleaner",
     "app.snapshot",
     "app.run serve",
-    "app.run mcp",
     "app.run all"
 )
 foreach ($sig in $signatures) {

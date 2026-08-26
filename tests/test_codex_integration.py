@@ -298,6 +298,22 @@ def test_codex_mcp_json_has_no_stdio_noop() -> None:
     assert "--stdio" not in args
 
 
+def test_windows_service_restart_preserves_codex_mcp_bridge() -> None:
+    script = Path("scripts/restart-service.ps1").read_text(encoding="utf-8")
+    signatures = script.split("$signatures = @(", 1)[1].split(")", 1)[0]
+
+    assert '"app.run mcp"' not in signatures
+    for service_process in (
+        "service_launcher.py",
+        "app.processor",
+        "app.cleaner",
+        "app.snapshot",
+        "app.run serve",
+        "app.run all",
+    ):
+        assert f'"{service_process}"' in signatures
+
+
 def test_codex_guidance_strength_selects_block_variant() -> None:
     base = setup_codex._build_agents_md_block("base")
     strong = setup_codex._build_agents_md_block("strong")
