@@ -29,8 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
-<!-- Ready to implement | Blocked | Ready for review -->
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -41,7 +40,7 @@ Implementation: added the failing final-attempt lease regression first, then add
 
 ## Evidence
 
-Pending.
+Revision bfd6d15: the four focused regressions first reproduced two expected failures, then passed after the fix. The multi-package processing, concurrent claim, and observability slices passed 41 tests with three pre-existing Pydantic warnings. The agent-workflow checker passed after removing the template comment parsed into State. After restart through `scripts/restart-service.ps1`, independent live verification found `/health` ok with vector and embedding ready, `/status.ingestion.status` ok, no unclaimable queue reasons, and source `3704ed46-880d-4a3f-885f-d3f70dbcf529` terminal failed with claims cleared, completion timestamp set, and the historic 404 error preserved.
 
 ## Plan review
 
@@ -56,4 +55,17 @@ Implementation conditions:
 - Focused coverage must include the exact ceiling boundary, below-ceiling reclaim, active versus expired lease, mixed terminal packages with parent settlement, idempotent repeated passes, and concurrent global claims. Deployment repair must use `scripts/restart-service.ps1`, then verify `/health`, `/status`, `/debug/queue/health`, and the orphan row through a read-only query.
 
 ## Result review
-Pending.
+
+**Verdict: Approved.** Completion criteria are satisfied. The implementation is scoped correctly: reconciliation runs atomically on the global package-claim path, preserves recoverable and active leases, reuses parent terminal synchronization, and adds the existing open-string queue-health reason shape. Independent verification passed 41 focused lifecycle, observability, and concurrent-claim tests plus the workflow checker. Post-restart live verification confirms the named orphan settled terminally, claims were cleared, its prior error was preserved, and queue health has no unclaimable cause. No unresolved assumptions, scope expansion, roadmap/docs drift, or risk reclassification.
+
+## Skill feedback (unsent)
+
+**Trigger fired:** 3 — a skill instruction produced an invalid artifact.
+
+**What the skill said (or failed to say):** The expanded Work Record template places a state-values guidance comment immediately after the State value. File: templates/work-record-expanded.md, State field.
+
+**What happened:** A record copied from that template failed workrecord.state_valid; the parser included the following HTML comment in the State value. Removing the comment made the checker pass.
+
+**Suggested fix:** Move the guidance comment outside the marker block or make State parsing stop at HTML comments/end marker, with a checker test using the generated template unchanged.
+
+**Work Record:** consumer commit 614390c, .agent-workflow/tasks/codex-fix-orphaned-package-lease.md. External issue creation was not authorized by the execution environment.
