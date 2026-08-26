@@ -222,6 +222,20 @@ R1.5 does not restart exited processes, spawn agents, infer recipients, or super
 work. Resuming an agent that is no longer running is a separate orchestration
 hypothesis.
 
+### R1.6 — Dependency-workflow validation and positioning — queued after R1.5
+
+Turn the strongest observed Relay uses into durable E2E journeys: an unexpected
+cross-workstream dependency, a blocked decision round trip, and a cross-model
+review handoff. Use deterministic public-surface scenarios for regression and
+budgeted live Claude Code, Codex, and OpenCode runs for semantic evidence. The
+passing scenarios, not a generic multi-agent story, become the source for public
+docs, quickstarts, and guidance about when agents should and should not send.
+
+Track the complete research, evidence limits, scenario contracts, runtime coverage,
+metrics, documentation outputs, and non-goals in
+`validate-relay-dependency-workflows`. Do not begin it until wake-first delivery is
+implemented and its adapter contract is stable.
+
 ### R2 — Future-recipient addressing investigation
 
 Investigate only if R1 repeatedly exposes the need. Do not assume `work_ref` solves
@@ -255,6 +269,6 @@ or explicit dormant-session resumption.
 
 ## Decision Gate
 
-Continue beyond R1 only if real Claude Code, Codex, and OpenCode use shows that
-Relay materially reduces manual context copying without unacceptable wrong, stale,
-or noisy delivery.
+Advance beyond R1.6 into broader Relay capabilities only if real Claude Code,
+Codex, and OpenCode use shows that targeted dependency messages materially reduce
+manual context copying without unacceptable wrong, stale, noisy, or costly turns.
