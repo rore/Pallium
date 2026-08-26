@@ -19,7 +19,7 @@
 
 **Verification:** Focused Codex integration test, workflow checker, Windows CI smoke, and a live cross-agent MCP call before and after the canonical restart.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
