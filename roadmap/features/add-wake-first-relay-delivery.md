@@ -119,6 +119,8 @@ the receiving model can consume tokens, invoke tools, and modify files. Therefor
 
 ## Notes
 
+Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wake-first-relay-delivery.md).
+
 Claude Code already documents idle-session wake and safe busy-session delivery.
 OpenCode exposes session status and asynchronous prompting. Codex App Server can
 resume and start turns and has an experimental follow-up queue, but safe atomic
