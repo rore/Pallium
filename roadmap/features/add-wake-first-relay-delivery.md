@@ -64,15 +64,13 @@ installed versions are Claude Code 2.1.246, Codex CLI 0.149.1, and OpenCode
 
 | Runtime | Current verdict | Proven mechanism | Remaining qualification |
 |---|---|---|---|
-| Codex | **Passive-only; blocked for automatic wake** | Confirmed 2026-08-27: Codex CLI 0.149.1 exposes no exact-session ingress. The separately launched App Server is rejected. No IPC exists for the running CLI process. | Do not revisit until a supported surface that targets the exact already-running Codex session is available. |
+| Codex | **Passive-only; partial Phase 0** | `codex queue --thread` proved exact-session admission while idle and at a safe busy boundary with correlated model-visible evidence. The separately launched App Server remains rejected. Native queue idempotency failed. | Production is gated by cases 5, 6, and 7 plus coordinator-owned idempotency/fallback and `fix-relay-receive-mcp-lifecycle`. |
 | OpenCode | Supported with a Pallium/OpenCode plugin coordinator | Server/plugin APIs expose stable sessions and async prompts. Agent Intercom demonstrates persist-first delivery, application metadata correlation, history verification before replay, safe busy deferral, and restart recovery. | A bare prompt_async 204 is transport acknowledgement only. Pallium needs the plugin-owned durable pending ledger and a Windows E2E proof. Deferred to after Claude Code wake is proven. |
 | Claude Code | **Feasible via hook socket registration** | Confirmed 2026-08-27: each session exports `CLAUDE_CODE_MESSAGING_SOCKET` (named pipe path) and `CLAUDE_CODE_MESSAGING_TOKEN` to hooks including `SessionStart`. On native Windows the token is the own-child verification credential — a process holding the token that connects and authenticates with it is treated as own-child, delivered without an approval dialog when `crossSessionInbound` is at default. Session registry at `~/.claude/sessions/<pid>.json` exposes `status: idle/busy` and `peerFeatures: ["notify_idle"]`. | Prove the full adapter cycle: `SessionStart` hook registers socket + token with Pallium; Pallium connects named pipe, sends auth line, sends Relay-attributed message; idle session starts a new turn with it; admission is correlated by delivery ID in the hook on the receiving session's first applicable turn. Busy delivery must defer to idle or fall back. |
 
 ### Admission handshakes to preserve
 
-**Codex:** no wake handshake is selected. The managed App Server queue probe is
-retained only as rejected feasibility evidence: it does not reach the exact
-already-running session addressed by Relay.
+**Codex:** `codex queue --thread` is the evidenced exact-session ingress candidate, but no production handshake is selected. It reached the exact existing session while idle and at a safe busy boundary with correlated model-visible admission. A future coordinator must own one stable delivery/wake attempt, dedupe, admission observation, and fallback. The managed App Server path remains rejected because it does not reach the exact already-running session addressed by Relay.
 
 **OpenCode:** the plugin persists the Relay item before broker acknowledgement,
 checks recent session history for metadata.palliumRelayId, defers submission to a
@@ -91,15 +89,13 @@ resumed by launching another process.
 
 ### Stop conditions (updated 2026-08-27 after research)
 
-**Implementation is still blocked** until all conditions are cleared, but Codex
-is now a live-PoC priority rather than blocked indefinitely.
+**Implementation is still blocked** until all conditions are cleared.
 
 1. **Product gate:** The assigned first outcome requires unattended Claude↔Codex.
-   Research (2026-08-27) found strong source and test evidence that Codex 0.149.1
-   `codex queue --thread <T>` writes to `queue_1.sqlite` and the existing running
-   Codex TUI detects external queue changes via `QueuedItemService::watch_external_messages`.
-   This appears to be the qualifying mechanism. A live Windows PoC is required
-   before PR 5 starts. **Do not treat source evidence as a passing Phase 0 gate.**
+   Phase 0 now proves `codex queue --thread <T>` as exact-session ingress for idle
+   and safe busy-boundary admission with model-visible correlation. PR 5 remains
+   blocked until cases 5, 6, and 7 are covered and a coordinator owns dedupe and
+   fallback. Do not treat the proven subset as a production-ready adapter.
 
 2. **Claude Code live trace required:** Two paths: (A) native named-pipe —
    `CLAUDE_CODE_MESSAGING_TOKEN` is own-child only; independent Pallium daemon
@@ -117,11 +113,12 @@ evidenced from measured runtime behavior.
 
 ### Next disposable PoC sequence
 
-**Codex (live PoC priority):** `codex queue --thread T` into `queue_1.sqlite`
-watcher in existing TUI — strong source evidence, needs Windows PoC:
-1. Codex idle: queue message → same TUI wakes, `UserPromptSubmit` hook sees delivery ID → admission confirmed.
-2. Codex busy: message queues, current turn not steered, new distinct turn after.
-Both must pass all seven Phase 0 cases. App Server path remains rejected.
+**Codex (partial Phase 0):** `codex queue --thread T` proved exact-session idle
+and safe busy-boundary admission in the existing TUI. The remaining safe evidence
+gates are closed/stale/permission handling, outstanding-trigger and already-admitted
+restart recovery, and ambiguous-response fallback. Native duplicate suppression
+failed, so any future coordinator must dedupe before invoking the queue. App Server
+path remains rejected.
 
 **Claude Code:** Live PoC for Path A (non-child Pallium daemon + named pipe) or
 fall back to Path C (Channels, opt-in). `Stop` hook is idle boundary. Must pass
@@ -206,13 +203,15 @@ the receiving model can consume tokens, invoke tools, and modify files. Therefor
 Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wake-first-relay-delivery.md).
 
 Phase 0 decision and installed-runtime evidence:
-[Relay wake feasibility](../../docs/designs/016-relay-wake-feasibility.md).
+[Relay wake Phase 0 decision record](../../docs/designs/017-relay-wake-phase0.md).
 
-Current result: Codex is passive-only because the managed experimental App Server
-does not wake the existing addressed session and is rejected for Relay wake.
-OpenCode and Claude Code remain candidates only through integrations that preserve
-the identity of the user's already-running addressed session. None of these claims
-changes passive next-turn fallback.
+Current result: Codex remains passive-only despite proven exact-session `codex queue
+--thread` admission while idle and at a safe busy boundary. Cases 5, 6, and 7,
+coordinator-owned idempotency/fallback, and `fix-relay-receive-mcp-lifecycle` remain
+blocking gates; the managed experimental App Server remains rejected. OpenCode and
+Claude Code remain candidates only through integrations that preserve the identity
+of the user's already-running addressed session. None of these claims changes
+passive next-turn fallback.
 
 ## Research References
 
