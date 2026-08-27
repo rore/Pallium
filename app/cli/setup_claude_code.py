@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import urllib.error
@@ -99,8 +100,18 @@ def _hook_command(script_name: str) -> str:
 
 def _register_mcp(port: int) -> None:
     subprocess.run(["claude", "mcp", "remove", "--scope", "user", "pallium"], check=False)
+    pythonpath = str(_pallium_repo_root())
+    if existing := os.environ.get("PYTHONPATH"):
+        pythonpath += os.pathsep + existing
     subprocess.run(
-        ["claude", "mcp", "add", "--transport", "http", "--scope", "user", "pallium", f"http://127.0.0.1:{port}/mcp"],
+        [
+            "claude", "mcp", "add", "--scope", "user", "pallium",
+            "-e", "PALLIUM_MCP_TRANSPORT=stdio",
+            "-e", f"PALLIUM_BASE_URL=http://127.0.0.1:{port}",
+            "-e", "PALLIUM_AGENT_REF=claude-code",
+            "-e", f"PYTHONPATH={pythonpath}",
+            "--", _python_executable(), "-m", "app.run", "mcp",
+        ],
         check=True,
     )
 

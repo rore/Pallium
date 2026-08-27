@@ -92,7 +92,7 @@ python -m app.run setup claude-code
 
 This command:
 
-1. Registers Pallium's MCP server in `~/.claude/settings.json`
+1. Registers Pallium's session-bound stdio MCP server at Claude's user scope
 2. Registers 4 hook scripts (SessionStart, UserPromptSubmit, Stop, PreCompact)
 3. Appends Pallium agent instructions to `~/.claude/CLAUDE.md`
 4. Creates the hook state directory for dedup tracking

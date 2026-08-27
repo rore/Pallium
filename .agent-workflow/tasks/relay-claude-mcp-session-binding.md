@@ -41,19 +41,23 @@
   expiry: 2026-08-28
   compensating_validation: Exact subprocess regression, focused suite, real Claude reinstall inspection, PR CI, and review-thread resolution before merge.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 Branch: fix/relay-claude-mcp-session-binding
 
-Discovery and planning complete. No production code edited yet.
+Implemented the session-bound stdio registration by replacing Claude setup's shared HTTP registration. Added the exact subprocess regression and aligned public setup documentation. `apply_patch` failed with the documented Windows CreateProcessWithLogonW 1327 error; the three planned files were changed with narrow deterministic replacements.
 
 ## Evidence
 
-Pending implementation.
+- Focused Claude integration suite: 12 passed.
+- Claude + Relay MCP caller-surface suites: 41 passed.
+- Real local transition: `claude mcp get pallium` changed from connected HTTP to connected stdio, with the active Python command and required runtime/base URL/PYTHONPATH environment.
+- Service signals: `/health` reports `ok`; `/status` reports `embedding_provider_ok=true`; queue health has no pending work, no unclaimable work, and no active leases (recorded failures are historical 2026-08-25 authorization failures).
+- `git diff --check`: clean.
 
 ## Result review
 
-Pending.
+Self-review: the final diff is limited to installer transport selection, one caller-shape regression, and one documentation correction. No Relay protocol or identity resolution code changed.

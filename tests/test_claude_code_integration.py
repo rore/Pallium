@@ -17,6 +17,31 @@ def _base_block() -> str:
     return setup_claude_code._get_claude_md_block("base")
 
 
+def test_claude_mcp_registration_is_session_bound_stdio(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(setup_claude_code, "_pallium_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(setup_claude_code, "_python_executable", lambda: r"C:\Pallium\python.exe")
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.setattr(
+        setup_claude_code.subprocess,
+        "run",
+        lambda command, **_: calls.append(command),
+    )
+
+    setup_claude_code._register_mcp(19836)
+
+    add = calls[1]
+    assert "--transport" not in add
+    assert "PALLIUM_MCP_TRANSPORT=stdio" in add
+    assert "PALLIUM_BASE_URL=http://127.0.0.1:19836" in add
+    assert "PALLIUM_AGENT_REF=claude-code" in add
+    assert f"PYTHONPATH={tmp_path}" in add
+    assert add[-5:] == ["--", r"C:\Pallium\python.exe", "-m", "app.run", "mcp"]
+
+
 def test_claude_block_permits_deliberate_historical_pull() -> None:
     block = _base_block()
 
