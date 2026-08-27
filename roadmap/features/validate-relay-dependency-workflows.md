@@ -126,6 +126,37 @@ Use a tiny anonymized fixture repository with a deterministic defect and expecte
 corrected state. Do not assert exact model wording. Assert the referenced artifact,
 finding category, final observable behavior, attribution, and bounded turn count.
 
+### Concrete use case — developer and architect over a Minimap Spec Session
+
+The user keeps two named sessions, for example `codex:@developer` and
+`claude-code:@architect`, and gives the developer a bounded instruction such as:
+
+> Plan this task in a Minimap Spec Session. Ask the architect to review the plan
+> there. Address the architect's comments and return when the review is resolved
+> or requires my decision.
+
+The agents drive the collaboration:
+
+1. The developer writes the plan to the Minimap Spec Session.
+2. The developer explicitly sends the architect a Relay message containing the
+   Spec Session reference, requested review, and review lens.
+3. Pallium wakes the architect, or delivers once on its next natural turn.
+4. The architect reads the durable Minimap artifact, adds attributed comments, and
+   explicitly replies to the developer through Relay when its pass is complete.
+5. The developer wakes, reads and addresses the Minimap comments, and either
+   finishes, explicitly requests one more bounded review pass, or escalates a
+   consequential disagreement to the user.
+
+Minimap owns the artifact, comments, and review state. Pallium owns addressed,
+durable delivery and wake/fallback. Agents decide when to send each request or
+reply. A Minimap state transition must never automatically create a Relay delivery,
+and Pallium must not advance the review or continue the loop itself.
+
+The E2E variant must cover the initial review, reply, one explicit second pass,
+exact-session addressing, unavailable-architect fallback, duplicate-send
+protection, and user escalation instead of an unbounded agent loop. The Relay
+payload remains a small pointer plus intent; the review content stays in Minimap.
+
 ## Validation Architecture
 
 Maintain two complementary layers:
