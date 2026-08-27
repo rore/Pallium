@@ -160,6 +160,7 @@ def _mcp_env_toml(port: int) -> str:
     values = {
         "PALLIUM_MCP_TRANSPORT": "stdio",
         "PALLIUM_BASE_URL": f"http://localhost:{port}",
+        "PALLIUM_AGENT_REF": "codex",
         "PYTHONPATH": os.pathsep.join(_mcp_pythonpath_entries()),
     }
     path_value = os.pathsep.join(_mcp_path_entries())

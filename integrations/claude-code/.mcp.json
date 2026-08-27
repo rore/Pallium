@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "pallium": {
+      "type": "stdio",
+      "command": "pallium-mcp",
+      "env": {
+        "PALLIUM_MCP_TRANSPORT": "stdio",
+        "PALLIUM_BASE_URL": "http://localhost:19836",
+        "PALLIUM_AGENT_REF": "claude-code"
+      }
+    }
+  }
+}

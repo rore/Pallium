@@ -378,18 +378,14 @@ export default async ({ client, directory, worktree } = {}) => {
             session_ref: sessionId,
             container_ref: containerRef,
             actor_ref: actorRef,
-            max_chars: 2400,
           }, 750);
           const deliveries = (relayResponse && relayResponse.deliveries) || [];
-          const { text: relayText, deliveries: renderedDeliveries } = pallium.formatRelay(deliveries, 2320);
-          const backlog = relayText && relayResponse && relayResponse.has_more
-            ? "[Pallium Relay backlog: " + (relayResponse.remaining_count || 0) + " message(s) remain for a later turn.]"
-            : "";
+          const { text: relayText, deliveries: renderedDeliveries } = pallium.formatRelay(deliveries);
           const scopeText = pallium.formatInjection(
             [], containerRef, 2400, sessionId, actorRef, pallium.AGENT_REF, "private",
           );
           pendingRelay.set(sessionId, {
-            text: [relayText, backlog, scopeText].filter(Boolean).join("\n\n"),
+            text: [relayText, scopeText].filter(Boolean).join("\n\n"),
             deliveries: renderedDeliveries,
             containerRef,
             actorRef,
