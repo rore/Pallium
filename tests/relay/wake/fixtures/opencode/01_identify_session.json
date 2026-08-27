@@ -1,0 +1,28 @@
+{
+  "case": "identify_session",
+  "description": "Pallium resolves the live OpenCode session for a known session_ref via the server session list. Unknown or closed sessions are rejected.",
+  "input": {
+    "session_ref": "opencode:test-session-oc001",
+    "delivery_id": "pallium:del-oc-001"
+  },
+  "mock_server_state": {
+    "sessions": [
+      {"id": "test-session-oc001", "status": "idle", "metadata": {}}
+    ]
+  },
+  "expected_outcome": "session_resolved",
+  "expected_session_id": "test-session-oc001",
+  "negative_cases": [
+    {
+      "session_ref": "opencode:unknown-session",
+      "expected_outcome": "unavailable",
+      "reason": "session_not_found"
+    },
+    {
+      "session_ref": "opencode:closed-session-oc",
+      "mock_state": {"status": "closed"},
+      "expected_outcome": "unavailable",
+      "reason": "session_closed"
+    }
+  ]
+}

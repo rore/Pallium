@@ -1,0 +1,26 @@
+{
+  "case": "admission_correlation",
+  "description": "Admission confirmed only when a new turn in the session carries the exact palliumDeliveryId — not on inbox socket acceptance.",
+  "expected_outcome": "admitted",
+  "correlation_signals": [
+    {
+      "signal": "inbox socket accepts connection",
+      "is_admission": false,
+      "reason": "Transport accept only"
+    },
+    {
+      "signal": "new turn without palliumDeliveryId in envelope",
+      "is_admission": false,
+      "reason": "Unrelated turn"
+    },
+    {
+      "signal": "new turn with palliumDeliveryId=pallium:del-cc-004",
+      "is_admission": true,
+      "expected_outcome": "admitted",
+      "expected_wake_state": "admitted"
+    }
+  ],
+  "deduplication": {
+    "second_turn_same_delivery_id": "rejected — delivery already admitted; idempotent"
+  }
+}

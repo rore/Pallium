@@ -1,0 +1,34 @@
+{
+  "case": "identify_session",
+  "description": "Pallium resolves the live Claude Code session via its registered local inbox. Only sessions with a currently-leased inbox registration are eligible.",
+  "input": {
+    "session_ref": "claude_code:test-session-cc001",
+    "delivery_id": "pallium:del-cc-001"
+  },
+  "mock_registry_state": {
+    "sessions": [
+      {"id": "test-session-cc001", "capability": "idle_wake", "inbox_registered": true, "lease_valid": true}
+    ]
+  },
+  "expected_outcome": "session_resolved",
+  "expected_session_id": "test-session-cc001",
+  "negative_cases": [
+    {
+      "session_ref": "claude_code:unknown-session",
+      "expected_outcome": "unavailable",
+      "reason": "session_not_found"
+    },
+    {
+      "session_ref": "claude_code:expired-lease",
+      "mock_state": {"lease_valid": false},
+      "expected_outcome": "unavailable",
+      "reason": "capability_expired"
+    },
+    {
+      "session_ref": "claude_code:no-inbox",
+      "mock_state": {"inbox_registered": false},
+      "expected_outcome": "unavailable",
+      "reason": "inbox_not_registered"
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "case": "busy_queue",
+  "description": "Submit while a user-owned turn is active. Message must be queued as a separate distinct turn; must not steer or interleave with the active turn.",
+  "input": {
+    "session_ref": "codex:test-session-abc123",
+    "delivery_id": "pallium:del-003",
+    "client_user_message_id": "pallium:del-003",
+    "capability": "busy_queue",
+    "payload": "[Relay from relaydev] Queued message while busy."
+  },
+  "mock_app_server_state": {
+    "sessions": [{"id": "test-session-abc123", "status": "busy", "experimental_api": true}]
+  },
+  "expected_protocol_sequence": [
+    {
+      "call": "thread/queue/add",
+      "body": {
+        "threadId": "test-session-abc123",
+        "clientUserMessageId": "pallium:del-003",
+        "input": [{"type": "text", "text": "[Relay from relaydev] Queued message while busy. relay_id=pallium:del-003"}]
+      },
+      "response_status": 200,
+      "response_body": {
+        "queuedSubmission": {
+          "id": "qi-abc002",
+          "clientUserMessageId": "pallium:del-003",
+          "input": [{"type": "text", "text": "[Relay from relaydev] Queued message while busy. relay_id=pallium:del-003", "text_elements": []}]
+        }
+      }
+    },
+    {
+      "note": "Active turn completes (not shown). Then:"
+    },
+    {
+      "event": "item/started",
+      "body": {
+        "clientUserMessageId": "pallium:del-003",
+        "content": "[Relay from relaydev] Queued message while busy."
+      },
+      "note": "Admitted only after the active turn finishes — distinct following turn."
+    }
+  ],
+  "expected_outcome": "triggered",
+  "expected_wake_state": "triggered",
+  "note": "busy_queue capability advertised. Wake coordinator awaits item/started callback.",
+  "forbidden": [
+    "turn/steer",
+    "turn/start while session is busy",
+    "Steering message into active turn at tool boundary"
+  ]
+}

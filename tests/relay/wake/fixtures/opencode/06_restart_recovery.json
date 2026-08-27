@@ -1,0 +1,49 @@
+{
+  "case": "restart_recovery",
+  "description": "Plugin coordinator restart recovery. Plugin persists items locally; on restart it replays only items not already found in session history.",
+  "expected_outcome": "admitted",
+  "scenarios": [
+    {
+      "name": "plugin_restart_before_prompt",
+      "ledger_state": [
+        {
+          "palliumRelayId": "pallium:del-oc-006a",
+          "status": "pending"
+        }
+      ],
+      "session_history_check": "palliumRelayId not found",
+      "expected_recovery": "plugin re-submits prompt_async after restart",
+      "expected_behavior": "triggered_or_admitted"
+    },
+    {
+      "name": "plugin_restart_after_prompt_before_admission",
+      "ledger_state": [
+        {
+          "palliumRelayId": "pallium:del-oc-006b",
+          "status": "triggered"
+        }
+      ],
+      "session_history_check": "palliumRelayId not found",
+      "expected_recovery": "within deadline: await callback; past deadline: fallback",
+      "expected_behavior": "admitted_or_fallback_after_deadline"
+    },
+    {
+      "name": "plugin_restart_after_admission",
+      "ledger_state": [
+        {
+          "palliumRelayId": "pallium:del-oc-006c",
+          "status": "admitted"
+        }
+      ],
+      "session_history_check": "palliumRelayId found in session history",
+      "expected_recovery": "delivery already admitted; no second prompt_async",
+      "expected_behavior": "admitted_idempotent"
+    },
+    {
+      "name": "pallium_service_restart",
+      "delivery_wake_state": "triggered",
+      "expected_recovery": "dispatcher re-reads triggered rows; if within deadline, await callback",
+      "expected_behavior": "admitted_or_fallback_after_deadline"
+    }
+  ]
+}

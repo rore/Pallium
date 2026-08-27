@@ -118,6 +118,56 @@ class TestToolsWithMockedClient:
             assert ctx_arg.container_ref == "override-container"
 
 
+class TestBoundedErrorSurface:
+    """Verify that oversized error responses are bounded through the full MCP tools/call path."""
+
+    @pytest.mark.asyncio
+    async def test_relay_send_422_bounded_with_status_code_and_sibling_fields_preserved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """tools/call pallium_relay_send with oversized 422: bounded output, status_code kept, input stripped, sibling metadata preserved."""
+        monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+
+        oversized_422 = {
+            "error": "Client error '422 Unprocessable Content'",
+            "status_code": 422,
+            "detail": {
+                "detail": [
+                    {
+                        "type": "string_too_long",
+                        "loc": ["body", "payload"],
+                        "msg": "String should have at most 1500 characters",
+                        "input": "x" * 2000,
+                        "url": "https://example.com",
+                    }
+                ],
+                "metadata": {"request_id": "abc123"},
+            },
+        }
+
+        server = create_server()
+        with patch("app.mcp.client.PalliumMcpClient.relay_send", new_callable=AsyncMock, return_value=oversized_422):
+            content_list, _ = await server.call_tool(
+                "pallium_relay_send",
+                {
+                    "message": "test",
+                    "recipient": "codex:@relayarch",
+                    "sender_runtime": "claude-code",
+                    "sender_session_ref": "test-session",
+                    "container_ref": "git:github.com/rore/pallium",
+                    "actor_ref": "test-actor",
+                },
+            )
+
+        out = json.loads(content_list[0].text)
+        assert len(content_list[0].text) <= 2000
+        assert out["status_code"] == 422
+        assert "input" not in out["detail"]["detail"][0]
+        assert "url" not in out["detail"]["detail"][0]
+        assert out["detail"]["metadata"] == {"request_id": "abc123"}
+        assert out["detail"]["detail"][0]["msg"] == "String should have at most 1500 characters"
+
+
 class TestToolDescriptions:
     @pytest.mark.asyncio
     async def test_expected_tools_are_registered(self, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,0 +1,60 @@
+{
+  "case": "session_states",
+  "description": "Non-eligible session states for Claude Code and required fallback reasons.",
+  "expected_outcome": "unavailable",
+  "states": [
+    {
+      "state": "inbox_not_registered",
+      "mock": {
+        "inbox_registered": false
+      },
+      "expected_outcome": "unavailable",
+      "fallback_reason": "inbox_not_registered",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
+    },
+    {
+      "state": "capability_lease_expired",
+      "mock": {
+        "inbox_registered": true,
+        "lease_valid": false
+      },
+      "expected_outcome": "unavailable",
+      "fallback_reason": "capability_expired",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
+    },
+    {
+      "state": "session_closed",
+      "mock": {
+        "status": "closed",
+        "inbox_registered": false
+      },
+      "expected_outcome": "unavailable",
+      "fallback_reason": "session_closed",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
+    },
+    {
+      "state": "permission_denied",
+      "mock_response": {
+        "auth_error": true
+      },
+      "expected_outcome": "rejected",
+      "fallback_reason": "auth_failed",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
+    },
+    {
+      "state": "session_busy_idle_wake_only",
+      "mock": {
+        "status": "busy"
+      },
+      "expected_outcome": "unavailable",
+      "fallback_reason": "session_busy_idle_wake_only",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true,
+      "note": "Until busy_queue is proven; see 03_busy_queue.json"
+    }
+  ]
+}

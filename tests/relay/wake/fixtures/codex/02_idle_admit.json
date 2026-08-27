@@ -1,0 +1,56 @@
+{
+  "case": "idle_admit",
+  "description": "Submit attributed Relay turn to idle App Server via thread/queue/add. Auto-dispatch produces a distinct turn. item/started with matching clientUserMessageId is the admission signal. Probe-confirmed on Windows stdio 2026-08-27.",
+  "input": {
+    "session_ref": "codex:test-session-abc123",
+    "delivery_id": "pallium:del-002",
+    "client_user_message_id": "pallium:del-002",
+    "payload": "[Relay from relaydev] Hello from Pallium."
+  },
+  "mock_app_server_state": {
+    "sessions": [{"id": "test-session-abc123", "status": "idle", "experimental_api": true}]
+  },
+  "expected_protocol_sequence": [
+    {
+      "call": "initialize",
+      "body": {
+        "clientInfo": {"name": "pallium-wake-adapter", "version": "1.0.0"},
+        "capabilities": {"experimentalApi": true}
+      },
+      "note": "experimentalApi:true required; non-experimental schema omits thread/queue/add"
+    },
+    {
+      "call": "thread/queue/add",
+      "body": {
+        "threadId": "test-session-abc123",
+        "clientUserMessageId": "pallium:del-002",
+        "input": [{"type": "text", "text": "[Relay from relaydev] Hello from Pallium. relay_id=pallium:del-002"}]
+      },
+      "response_status": 200,
+      "response_body": {
+        "queuedSubmission": {
+          "id": "qi-abc001",
+          "clientUserMessageId": "pallium:del-002",
+          "input": [{"type": "text", "text": "[Relay from relaydev] Hello from Pallium. relay_id=pallium:del-002", "text_elements": []}]
+        }
+      },
+      "note": "Queue response is transport ACK only; clientUserMessageId preserved in queuedSubmission"
+    },
+    {
+      "event": "item/started",
+      "body": {
+        "clientUserMessageId": "pallium:del-002",
+        "content": "[Relay from relaydev] Hello from Pallium. relay_id=pallium:del-002"
+      },
+      "note": "This event is the admission signal, not the queue/add response."
+    }
+  ],
+  "expected_outcome": "admitted",
+  "expected_wake_state": "admitted",
+  "forbidden": [
+    "turn/steer",
+    "Using turn/completed as admission signal",
+    "Using queue 200 response as admission signal",
+    "Using 'experimentalApi' flag absent (schema omits thread/queue/add without --experimental)"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "case": "ambiguous_retry",
+  "description": "prompt_async returned 204 but no admission event received within the deadline. No retry because the bare prompt API does not prove idempotency for palliumRelayId.",
+  "expected_outcome": "ambiguous",
+  "input": {
+    "session_ref": "opencode:test-session-oc001",
+    "delivery_id": "pallium:del-oc-007",
+    "pallium_relay_id": "pallium:del-oc-007",
+    "payload": "[Relay from relaydev] Ambiguous test."
+  },
+  "expected_protocol_sequence": [
+    {
+      "call": "POST /session/test-session-oc001/prompt_async",
+      "response_status": 204,
+      "note": "Transport ACK; no admission event follows."
+    },
+    {
+      "event": "deadline_exceeded",
+      "after_seconds": 120,
+      "expected_outcome": "fallback",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true,
+      "retry_issued": false,
+      "reason": "Bare prompt_async idempotency not proven; retry risks double delivery."
+    }
+  ],
+  "idempotency_note": "Retry requires runtime-side idempotency proof independent of history visibility. A plugin coordinator history scan does not provide that proof: an accepted prompt_async may not yet appear in session history, so a second scan returning no match can produce a duplicate turn. Retry remains disabled until the OpenCode runtime exposes an explicit idempotency guarantee."
+}

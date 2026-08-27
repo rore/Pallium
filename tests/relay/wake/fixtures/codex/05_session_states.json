@@ -1,0 +1,85 @@
+{
+  "case": "session_states",
+  "description": "Distinct non-eligible session states and their required fallback reasons.",
+  "expected_outcome": "unavailable",
+  "states": [
+    {
+      "state": "session_not_found",
+      "mock": {
+        "sessions": []
+      },
+      "expected_outcome": "unavailable",
+      "fallback_reason": "session_not_found",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
+    },
+    {
+      "state": "session_closed",
+      "mock": {
+        "sessions": [
+          {
+            "id": "test-session-abc123",
+            "status": "closed"
+          }
+        ]
+      },
+      "expected_outcome": "unavailable",
+      "fallback_reason": "session_closed",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
+    },
+    {
+      "state": "session_stale",
+      "mock": {
+        "sessions": [
+          {
+            "id": "test-session-abc123",
+            "status": "idle",
+            "capability_expired": true
+          }
+        ]
+      },
+      "expected_outcome": "unavailable",
+      "fallback_reason": "capability_expired",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
+    },
+    {
+      "state": "experimental_api_absent",
+      "mock": {
+        "sessions": [
+          {
+            "id": "test-session-abc123",
+            "status": "idle",
+            "experimental_api": false
+          }
+        ]
+      },
+      "expected_outcome": "unavailable",
+      "fallback_reason": "experimental_api_unavailable",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
+    },
+    {
+      "state": "permission_denied",
+      "mock_response": {
+        "status": 403
+      },
+      "expected_outcome": "rejected",
+      "fallback_reason": "permission_denied",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
+    },
+    {
+      "state": "app_server_unavailable",
+      "mock_response": {
+        "connection_error": true
+      },
+      "expected_outcome": "unavailable",
+      "fallback_reason": "app_server_unreachable",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
+    }
+  ],
+  "note": "All non-eligible states must re-enable natural-turn claim via fallback. No retry on permanent failures."
+}

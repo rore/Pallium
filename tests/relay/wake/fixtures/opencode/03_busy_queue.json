@@ -1,0 +1,57 @@
+{
+  "case": "busy_queue",
+  "description": "Session is busy. Plugin coordinator holds the item in its local durable ledger and defers prompt_async until session reaches idle at a safe boundary. probe-finding 2026-08-27: parts[] required, metadata not persisted in message info — history check and admission must use text-content search.",
+  "expected_outcome": "triggered",
+  "input": {
+    "session_ref": "opencode:test-session-oc001",
+    "delivery_id": "pallium:del-oc-003",
+    "capability": "busy_queue",
+    "payload": "[Relay from relaydev] Queued while busy. relay_id=pallium:del-oc-003"
+  },
+  "mock_server_state": {
+    "sessions": [
+      {
+        "id": "test-session-oc001",
+        "status": "busy"
+      }
+    ]
+  },
+  "expected_protocol_sequence": [
+    {
+      "note": "Plugin detects busy; persists item in local ledger. Does NOT call prompt_async."
+    },
+    {
+      "event": "session/idle (session becomes idle)",
+      "note": "Plugin observes session-idle event at safe boundary."
+    },
+    {
+      "call": "GET /session/test-session-oc001/messages",
+      "note": "History check: search for relay_id= text marker in message content (metadata not persisted). If found, delivery already admitted — skip.",
+      "search_field": "content (text search)",
+      "search_value": "relay_id=pallium:del-oc-003",
+      "expected": "marker not present — proceed"
+    },
+    {
+      "call": "POST /session/test-session-oc001/prompt_async",
+      "body": {
+        "parts": [{"type": "text", "text": "[Relay from relaydev] Queued while busy. relay_id=pallium:del-oc-003"}],
+        "metadata": {"palliumRelayId": "pallium:del-oc-003"}
+      },
+      "response_status": 204,
+      "note": "parts[] required (not content key). metadata included belt-and-suspenders but not relied on for correlation."
+    },
+    {
+      "event": "message appears in session with text containing relay_id=pallium:del-oc-003",
+      "correlation_method": "text_content_search",
+      "note": "Admission confirmed only on text-content match, not on 204 ACK or metadata field.",
+      "expected_outcome": "admitted"
+    }
+  ],
+  "race_guard": "Plugin serializes on session-idle event; does not use status-then-prompt (TOCTOU race).",
+  "forbidden": [
+    "Using 'content' key in prompt_async body (returns 400)",
+    "Correlating via metadata.palliumRelayId in message info (not persisted)",
+    "GET /session/status followed immediately by POST /prompt_async without atomic idle check",
+    "Calling prompt_async while session reports busy"
+  ]
+}

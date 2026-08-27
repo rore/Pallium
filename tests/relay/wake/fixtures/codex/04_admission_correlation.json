@@ -1,0 +1,42 @@
+{
+  "case": "admission_correlation",
+  "description": "Verify that the admission signal is the item/started event carrying the exact clientUserMessageId and content — not the queue ACK, not turn/completed.",
+  "expected_outcome": "admitted",
+  "input": {
+    "session_ref": "codex:test-session-abc123",
+    "delivery_id": "pallium:del-004",
+    "client_user_message_id": "pallium:del-004",
+    "payload": "[Relay from relaydev] Correlation test."
+  },
+  "correlation_signals": [
+    {
+      "event": "thread/queue/add response",
+      "is_admission": false,
+      "reason": "Transport acknowledgement only"
+    },
+    {
+      "event": "item/started with mismatched clientUserMessageId",
+      "is_admission": false,
+      "reason": "Different message; must not admit"
+    },
+    {
+      "event": "item/started with correct clientUserMessageId but wrong content",
+      "is_admission": false,
+      "reason": "Content mismatch; must not admit"
+    },
+    {
+      "event": "item/started with clientUserMessageId=pallium:del-004 and exact content",
+      "is_admission": true,
+      "expected_outcome": "admitted",
+      "expected_wake_state": "admitted"
+    },
+    {
+      "event": "turn/completed",
+      "is_admission": false,
+      "reason": "Execution completion, not delivery admission"
+    }
+  ],
+  "deduplication": {
+    "second_item_started_same_id": "rejected — delivery already admitted; idempotent result returned"
+  }
+}

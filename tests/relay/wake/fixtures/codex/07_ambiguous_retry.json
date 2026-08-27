@@ -1,0 +1,51 @@
+{
+  "case": "ambiguous_retry",
+  "description": "queue/add accepted (200) but no item/started received within the admission deadline. Suppress retry unless the runtime proves clientUserMessageId is idempotent.",
+  "expected_outcome": "ambiguous",
+  "input": {
+    "session_ref": "codex:test-session-abc123",
+    "delivery_id": "pallium:del-007",
+    "client_user_message_id": "pallium:del-007",
+    "payload": "[Relay from relaydev] Ambiguous test."
+  },
+  "mock_app_server_state": {
+    "sessions": [
+      {
+        "id": "test-session-abc123",
+        "status": "idle",
+        "experimental_api": true
+      }
+    ]
+  },
+  "expected_protocol_sequence": [
+    {
+      "call": "thread/queue/add",
+      "body": {
+        "threadId": "test-session-abc123",
+        "clientUserMessageId": "pallium:del-007",
+        "input": [{"type": "text", "text": "[Relay from relaydev] Ambiguous test. relay_id=pallium:del-007"}]
+      },
+      "response_status": 200,
+      "response_body": {
+        "queuedSubmission": {
+          "id": "qi-abc007",
+          "clientUserMessageId": "pallium:del-007",
+          "input": [{"type": "text", "text": "[Relay from relaydev] Ambiguous test. relay_id=pallium:del-007", "text_elements": []}]
+        }
+      }
+    },
+    {
+      "event": "deadline_exceeded",
+      "after_seconds": 120,
+      "expected_outcome": "ambiguous → fallback",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true,
+      "retry_issued": false
+    }
+  ],
+  "idempotency_proven_variant": {
+    "note": "If a future Codex version proves clientUserMessageId deduplication end-to-end, update this fixture and set retry_allowed=true.",
+    "retry_allowed": false,
+    "current_status": "not_proven"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "case": "idle_admit",
+  "description": "Submit attributed Relay turn to idle Claude Code session via registered local inbox. Admission is confirmed when the next turn in that session carries the Pallium delivery ID in its envelope.",
+  "expected_outcome": "admitted",
+  "input": {
+    "session_ref": "claude_code:test-session-cc001",
+    "delivery_id": "pallium:del-cc-002",
+    "payload": "[Relay from relaydev] Hello from Pallium.",
+    "capability": "idle_wake"
+  },
+  "mock_session_state": {
+    "status": "idle",
+    "inbox_registered": true,
+    "lease_valid": true
+  },
+  "expected_protocol_sequence": [
+    {
+      "call": "inbox_deliver",
+      "envelope": {
+        "palliumDeliveryId": "pallium:del-cc-002",
+        "attribution": "relay_peer",
+        "authority": "lower",
+        "content": "[Relay from relaydev] Hello from Pallium."
+      },
+      "note": "Delivered to the registered local inbox socket with authentication token."
+    },
+    {
+      "event": "new turn started in session test-session-cc001 with palliumDeliveryId in envelope",
+      "is_admission": true,
+      "expected_outcome": "admitted",
+      "expected_wake_state": "admitted"
+    }
+  ],
+  "attribution_required": {
+    "relay_peer_attribution": true,
+    "lower_authority": true,
+    "note": "Relay-triggered turn must be attributed as lower-authority peer input. Cannot grant consent, approve permissions, or bypass sandbox."
+  },
+  "forbidden": [
+    "Undocumented socket paths",
+    "Treating inbox socket accept as admission",
+    "Omitting palliumDeliveryId from envelope"
+  ]
+}
