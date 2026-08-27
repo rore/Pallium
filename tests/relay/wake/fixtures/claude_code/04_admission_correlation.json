@@ -1,6 +1,7 @@
 {
   "case": "admission_correlation",
   "description": "Admission confirmed only when a new turn in the session carries the exact palliumDeliveryId — not on inbox socket acceptance.",
+  "expected_outcome": "admitted",
   "correlation_signals": [
     {
       "signal": "inbox socket accepts connection",

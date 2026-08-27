@@ -1,6 +1,7 @@
 {
   "case": "ambiguous_retry",
   "description": "queue/add accepted (200) but no item/started received within the admission deadline. Suppress retry unless the runtime proves clientUserMessageId is idempotent.",
+  "expected_outcome": "ambiguous",
   "input": {
     "session_ref": "codex:test-session-abc123",
     "delivery_id": "pallium:del-007",
@@ -8,13 +9,21 @@
     "payload": "[Relay from relaydev] Ambiguous test."
   },
   "mock_app_server_state": {
-    "sessions": [{"id": "test-session-abc123", "status": "idle", "experimental_api": true}]
+    "sessions": [
+      {
+        "id": "test-session-abc123",
+        "status": "idle",
+        "experimental_api": true
+      }
+    ]
   },
   "expected_protocol_sequence": [
     {
       "call": "thread/queue/add",
       "response_status": 200,
-      "response_body": {"queuedItemId": "qi-abc007"}
+      "response_body": {
+        "queuedItemId": "qi-abc007"
+      }
     },
     {
       "event": "deadline_exceeded",

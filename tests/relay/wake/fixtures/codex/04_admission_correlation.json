@@ -1,6 +1,7 @@
 {
   "case": "admission_correlation",
   "description": "Verify that the admission signal is the item/started event carrying the exact clientUserMessageId and content — not the queue ACK, not turn/completed.",
+  "expected_outcome": "admitted",
   "input": {
     "session_ref": "codex:test-session-abc123",
     "delivery_id": "pallium:del-004",

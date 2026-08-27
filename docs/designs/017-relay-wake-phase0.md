@@ -16,9 +16,9 @@ Verdicts are based on reading official documentation and integration tests. None
 
 ### Codex
 
-**Verdict:** Supported via Pallium-managed App Server. Implement first.
+**Verdict:** Supported via Pallium-managed App Server. Implement first. **Schema probe finding (2026-08-27) updates assumptions — see below.**
 
-**Proven contract (official integration tests):**
+**Claimed contract (from integration test docs — unconfirmed in installed binary):**
 - `thread/queue/add` with `clientUserMessageId` durably queues a distinct future turn.
 - An idle App Server auto-dispatches the queued turn without a separate start call.
 - A busy App Server holds the queued turn separate from the active turn until completion.
@@ -26,14 +26,24 @@ Verdicts are based on reading official documentation and integration tests. None
 - Cold thread resume: a queued item survives App Server restart and completes on resume.
 - Deduplication: one `clientUserMessageId` → at most one admission.
 
-**Remaining gates before PR 5:**
-1. Feature-detect `experimentalApi` at startup; fall back to passive if absent or if the installed binary rejects it.
-2. Prove the 0.149.1 Windows stdio transport carries the above contract end-to-end with a disposable App Server.
-3. Confirm a non-managed (ordinary interactive) Codex session is not reachable — Pallium must own the App Server instance.
+**Schema probe finding (2026-08-27):**
+- `thread/queue/add` is **NOT present** in either v1 or v2 app-server schema for 0.149.1.
+- `QueuedSubmission` type (with `clientUserMessageId`, `id`, `input`) is defined but not exposed as a callable method.
+- Nearest available injection mechanism: `Thread/injectItemsRequest` — appends raw Responses API items to model-visible history (different semantics from queue/add).
+- App-server daemon lifecycle is Unix-only; Windows E2E probe is blocked.
+- `experimentalApi` is not a valid feature flag name in 0.149.1.
 
-**Admission handshake:**
-1. Initialize App Server with `experimentalApi: true`.
-2. `thread/queue/add` with `clientUserMessageId = pallium:<delivery_id>` and the attributed Relay payload.
+**Probe evidence:** `.local/phase0-probes/codex-0.149.1-schema-probe-2026-08-27.json`
+
+**Remaining gates before PR 5:**
+1. Confirm `thread/queue/add` exists on Unix or identify the correct method name in 0.149.1.
+2. Feature-detect the correct experimental capability at startup; fall back to passive if absent.
+3. Prove the 0.149.1 Unix stdio transport carries the queue contract end-to-end with a disposable App Server.
+4. Confirm a non-managed (ordinary interactive) Codex session is not reachable — Pallium must own the App Server instance.
+
+**Admission handshake (provisional — pending gate 1):**
+1. Initialize App Server with the correct experimental feature flag (not `experimentalApi: true` — name unconfirmed).
+2. Queue submission with `clientUserMessageId = pallium:<delivery_id>` and the attributed Relay payload via the confirmed queue method.
 3. Queue response → `wake_state = triggered`.
 4. `item/started` event for a `userMessage` carrying the exact `clientUserMessageId` and content → `wake_state = admitted`, delivery complete.
 5. `turn/completed` is execution completion, not delivery admission — do not use it.
@@ -45,21 +55,24 @@ Verdicts are based on reading official documentation and integration tests. None
 
 **Proven behaviors:**
 - Server and plugin APIs expose stable session IDs and `prompt_async`.
-- An idle `prompt_async` persists a caller-controlled `metadata.palliumRelayId` and produces an assistant child whose events reference it.
+- `prompt_async` body requires a `parts` array (`[{"type":"text","text":"..."}]`); `content` key is rejected with 400.
+- `metadata.palliumRelayId` is accepted in the `prompt_async` body but **NOT persisted in message info**. Message info contains only: `id`, `sessionID`, `role`, `time`, `agent`, `model`. Correlation via metadata field lookup will fail.
+- Admission correlation must embed the relay ID in text content and search by text, not by metadata field.
 - A plugin coordinator can serialize delivery against the session-idle event boundary.
 - Session history is queryable before replaying a pending item.
-- The `Agent Intercom` reference implementation demonstrates persist-first delivery, metadata correlation, history verification before replay, safe busy deferral, and restart recovery.
+
+**Probe evidence:** `.local/phase0-probes/opencode-1.18.19-probe-2026-08-27.json`
 
 **Remaining gates before PR 4:**
-1. Prove a bare `prompt_async` 204 is transport acknowledgement only — not admission.
+1. ~~Prove a bare `prompt_async` 204 is transport acknowledgement only — not admission.~~ **Confirmed by probe 2026-08-27**: 204 is transport ACK only.
 2. Implement and prove the plugin-owned durable pending ledger that serializes against session-idle.
-3. Windows E2E smoke proof with the installed version.
+3. Prove admission via text-content event stream (metadata not persisted in message info).
 
 **Admission handshake:**
 1. Plugin persists the Relay item locally before any broker call.
-2. Plugin checks recent session history for `metadata.palliumRelayId` to detect prior admission (restart safety).
-3. At a proven safe boundary (session idle), call `prompt_async` with `metadata.palliumRelayId = pallium:<delivery_id>`.
-4. Admission: session messages or session events contain the exact `palliumRelayId` → `wake_state = admitted`.
+2. Plugin checks recent session history for `relay_id=pallium:<delivery_id>` text marker to detect prior admission (restart safety). Metadata lookup will not work — metadata is not persisted in message info.
+3. At a proven safe boundary (session idle), call `prompt_async` with `parts: [{type: "text", text: "... relay_id=pallium:<delivery_id>"}]` and `metadata.palliumRelayId` (belt-and-suspenders; metadata may be used by future event streams even if absent from message info).
+4. Admission: session messages contain the exact `relay_id=...` text marker → `wake_state = admitted`.
 5. Busy deferral: plugin holds the item in its local ledger; does not call `prompt_async` until idle.
 6. On Pallium restart: plugin replays only items not found in session history.
 
@@ -132,12 +145,11 @@ The complete machine-readable matrix (all 6 states × 15 events) is in [`tests/f
 | `fallback` | natural-turn hook claims delivery | delivery `pending→claimed` | Normal hook path |
 | `fallback` | message expiry | delivery `expired` | Terminal |
 | `not_eligible` | message expiry | delivery `expired` | Never entered wake path |
-| `queued` or `triggering` | message expiry | `fallback` (expiry wins) | Transition to fallback before expiry clears |
+| `queued` or `triggering` | message expiry | `expire` | Terminal; matches canonical matrix — expiry is not a fallback path |
 | `queued` | `capability_disabled` | `fallback` | Before trigger; immediate fallback |
 | any | session reopen (new adapter generation) | old-generation callbacks rejected | New registration creates new generation; old tokens invalid |
-| any | late or duplicate admission callback | rejected | Token is single-use; duplicate callbacks are no-ops |
+| `triggered` | late callback after deadline | `reject` | Token single-use; after `admission_deadline → fallback`, subsequent callbacks are rejected |
 | claim race: delivery arrives before session idle | `not_eligible` | delivery `pending`; natural-turn claim fires at next idle | Normal path |
-| claim race: session already idle when delivery arrives | `not_eligible` | immediate natural-turn claim | Hook fires on ingest |
 
 ## Provisional numeric parameters
 

@@ -1,6 +1,7 @@
 {
   "case": "admission_correlation",
   "description": "Admission is confirmed only when the session events contain the exact palliumRelayId — not on prompt_async 204, not on a mismatched ID.",
+  "expected_outcome": "admitted",
   "correlation_signals": [
     {
       "signal": "prompt_async 204",

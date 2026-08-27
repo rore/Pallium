@@ -1,6 +1,7 @@
 {
   "case": "ambiguous_retry",
   "description": "Inbox delivery accepted but no admission turn observed within the deadline. No retry without explicit idempotency proof from native cross-session messaging.",
+  "expected_outcome": "ambiguous",
   "input": {
     "session_ref": "claude_code:test-session-cc001",
     "delivery_id": "pallium:del-cc-007",
@@ -9,7 +10,9 @@
   "expected_protocol_sequence": [
     {
       "call": "inbox_deliver",
-      "envelope": {"palliumDeliveryId": "pallium:del-cc-007"},
+      "envelope": {
+        "palliumDeliveryId": "pallium:del-cc-007"
+      },
       "note": "Socket accepted delivery; no confirmation of turn start follows."
     },
     {

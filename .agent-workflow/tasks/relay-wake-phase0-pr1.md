@@ -1,9 +1,9 @@
 <!-- agent-workflow:start -->
 **Outcome:** Phase 0 of add-wake-first-relay-delivery documented and executable — decision record at docs/designs/017-relay-wake-phase0.md and sanitized adapter fixtures at tests/relay/wake/fixtures/; MCP relay error surface fixed in app/mcp/server.py.
 
-**Target:** docs/designs/, tests/relay/wake/fixtures/, app/mcp/server.py
+**Target:** docs/designs/, tests/relay/wake/fixtures/, app/mcp/server.py, tests/fixtures/relay_wake/contract.json
 
-**Scope:** New files: docs/designs/017-relay-wake-phase0.md, tests/relay/wake/fixtures/ (21 JSON stubs + contract). Modified: app/mcp/server.py (_bounded_error fix). New: tests/test_mcp_server_utils.py.
+**Scope:** New files: docs/designs/017-relay-wake-phase0.md, tests/relay/wake/fixtures/ (21 JSON stubs + contract). Modified: app/mcp/server.py (_bounded_error fix). New: tests/test_mcp_server_utils.py (5 tests), tests/test_relay_wake_fixtures.py (5 tests). Probe traces: .local/phase0-probes/ (gitignored).
 
 **Constraints:** No internal names (xlm/pelican/clmia/sap-dev) in committed docs or fixtures. No external system names. No production wake behavior. MCP fix must not change relay tool signatures.
 
@@ -25,7 +25,7 @@
 **Plan:** 1. Write 017 decision record synthesising Phase 0 findings. 2. Write per-runtime fixture stubs (7 cases × 3 runtimes + contract.json). 3. Fix _bounded_error in app/mcp/server.py. 4. Add unit tests in tests/test_mcp_server_utils.py. 5. Add fixture loader tests in tests/test_relay_wake_fixtures.py. 6. Commit, open PR, send to relayarch.
 
 **Verification plan:**
-- `pytest tests/test_mcp_server_utils.py tests/test_relay_wake_fixtures.py -x -q` → 9 passed (observed 2026-08-27)
+- `pytest tests/test_mcp_server_utils.py tests/test_relay_wake_fixtures.py -x -q` → 9 passed (observed 2026-08-27, re-verified after PR #73 blocker fixes)
 - `pytest tests/ -x -q` passes minus pre-existing main failure: `test_config.py::test_prompt_variants_legacy_fallback_unaffected` fails on main before this branch (confirmed by checking out main and running the test)
 
 **Plan review:** self — Elevated risk, Simple complexity; no red-zone touched, no checkpoint required.
@@ -41,8 +41,8 @@
 
 Branch: feat/relay-wake-phase0-pr1
 
-- Wrote docs/designs/017-relay-wake-phase0.md: corrected Phase 0 verdict, per-runtime admission handshakes, 7-case gate, state transition table, numeric bounds, open decisions. Updated: verdicts marked unconfirmed (probe gates listed), numeric bounds marked provisional with measurement gates, Case 3 clarified as capability-specific, transition table expanded to cover capability-disable split, expiry per state, claim race, late callbacks, and canonical matrix reference.
-- Wrote tests/relay/wake/fixtures/contract.json (adapter outcome contract, no duplicate wake_states) and 7 cases × 3 runtimes (codex, opencode, claude_code) as deterministic JSON protocol stubs.
+- Wrote docs/designs/017-relay-wake-phase0.md: corrected Phase 0 verdict, per-runtime admission handshakes, 7-case gate, state transition table, numeric bounds, open decisions. Updated: verdicts marked unconfirmed (probe gates listed), numeric bounds marked provisional with measurement gates, Case 3 clarified as capability-specific, transition table expanded to cover capability-disable split, expiry per state, claim race, late callbacks, and canonical matrix reference. Phase 0 probe evidence added per-runtime (2026-08-27): OpenCode metadata not persisted in message info, parts format required; Codex thread/queue/add not in 0.149.1 schema.
+- Wrote tests/relay/wake/fixtures/contract.json (adapter outcome contract) and 7 cases × 3 runtimes (codex, opencode, claude_code) as deterministic JSON protocol stubs. All 21 fixtures now have top-level expected_outcome. Invalid compound outcome strings in 06_restart_recovery renamed to expected_behavior. Adapter outcome contract invariant 2 fixed to include queued state.
 - Added tests/test_relay_wake_fixtures.py: 5 tests validating all 21 fixtures parse, all adapter outcomes are valid, all phase0_cases covered per runtime, busy_queue is capability-specific, and ambiguous retry is not issued without idempotency proof.
 - Fixed app/mcp/server.py: _bounded_error preserves status_code in all paths; _strip_pydantic_input now preserves sibling fields via {**detail, "detail": stripped_items} instead of reconstructing only {detail:[...]}.
 - Added tests/test_mcp_server_utils.py — 5 unit tests (no mcp package dependency), including sibling-field preservation test.

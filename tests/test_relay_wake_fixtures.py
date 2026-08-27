@@ -32,10 +32,19 @@ def test_all_expected_outcomes_are_valid() -> None:
             if fixture.get("case") == "identify_session":
                 continue  # resolver probe — outcome is session_resolved, not an adapter outcome
             outcome = _extract_outcome(fixture)
-            if outcome is not None:
-                assert outcome in VALID_OUTCOMES, (
-                    f"{runtime}/{fixture.get('case')}: unexpected outcome {outcome!r}"
-                )
+            assert outcome is not None, (
+                f"{runtime}/{fixture.get('case')}: missing top-level expected_outcome"
+            )
+            assert outcome in VALID_OUTCOMES, (
+                f"{runtime}/{fixture.get('case')}: unexpected outcome {outcome!r}"
+            )
+            # Validate nested outcomes in states[] (session_states case)
+            for state in fixture.get("states", []):
+                nested = state.get("expected_outcome")
+                if nested is not None:
+                    assert nested in VALID_OUTCOMES, (
+                        f"{runtime}/{fixture.get('case')}/states: unexpected outcome {nested!r}"
+                    )
 
 
 def test_all_phase0_cases_covered_per_runtime() -> None:

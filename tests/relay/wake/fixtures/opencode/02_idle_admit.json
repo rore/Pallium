@@ -1,32 +1,47 @@
 {
   "case": "idle_admit",
-  "description": "Plugin coordinator submits Relay turn to idle session via prompt_async with palliumRelayId. Admission is confirmed when session events contain the exact palliumRelayId.",
+  "description": "Plugin coordinator submits Relay turn to idle session via prompt_async with palliumRelayId embedded in text content. Metadata is NOT persisted in message info (probe finding: 2026-08-27); correlation must use text-content search, not metadata field lookup.",
+  "expected_outcome": "admitted",
+  "probe_evidence": "opencode-1.18.19-idle-admit-2026-08-27",
   "input": {
     "session_ref": "opencode:test-session-oc001",
     "delivery_id": "pallium:del-oc-002",
     "pallium_relay_id": "pallium:del-oc-002",
-    "payload": "[Relay from relaydev] Hello from Pallium."
+    "payload": "[Relay from relaydev] Hello from Pallium. relay_id=pallium:del-oc-002"
   },
   "mock_server_state": {
-    "sessions": [{"id": "test-session-oc001", "status": "idle"}]
+    "sessions": [
+      {
+        "id": "test-session-oc001",
+        "status": "idle"
+      }
+    ]
   },
   "expected_protocol_sequence": [
     {
-      "note": "Plugin checks session history for palliumRelayId first (restart safety).",
+      "note": "Plugin checks session history for palliumRelayId in text content (restart safety).",
       "call": "GET /session/test-session-oc001/messages",
-      "expected": "palliumRelayId not present — proceed"
+      "expected": "relay_id=pallium:del-oc-002 not present in any message text — proceed"
     },
     {
       "call": "POST /session/test-session-oc001/prompt_async",
       "body": {
-        "content": "[Relay from relaydev] Hello from Pallium.",
-        "metadata": {"palliumRelayId": "pallium:del-oc-002"}
+        "parts": [
+          {
+            "type": "text",
+            "text": "[Relay from relaydev] Hello from Pallium. relay_id=pallium:del-oc-002"
+          }
+        ],
+        "metadata": {
+          "palliumRelayId": "pallium:del-oc-002"
+        }
       },
       "response_status": 204,
-      "note": "204 is transport acknowledgement only, not admission."
+      "note": "204 is transport acknowledgement only, not admission. Body must use 'parts' array, not 'content'. metadata is sent but NOT persisted in message info."
     },
     {
-      "event": "session/message or session/event containing metadata.palliumRelayId=pallium:del-oc-002",
+      "event": "Text content containing relay_id=pallium:del-oc-002 present in session messages",
+      "correlation_method": "text_content_search",
       "is_admission": true,
       "expected_outcome": "admitted",
       "expected_wake_state": "admitted"
@@ -35,6 +50,7 @@
   "forbidden": [
     "Treating prompt_async 204 as admission",
     "Submitting without prior history check",
-    "Calling prompt_async without metadata.palliumRelayId"
+    "Using 'content' key in prompt_async body (must be 'parts' array)",
+    "Correlating via metadata field in message info (not persisted)"
   ]
 }

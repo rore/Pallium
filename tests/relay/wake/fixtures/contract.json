@@ -34,7 +34,7 @@
   },
   "invariants": [
     "Transport acknowledgement is never admission.",
-    "Natural-turn claim is blocked while wake_state is triggering or triggered.",
+    "Natural-turn claim is blocked while wake_state is queued, triggering, or triggered.",
     "Message expiry is terminal for all non-admitted states; late callbacks fail.",
     "Wake callback token is single-use, 256-bit, stored only as a hash.",
     "Session reopen creates a new adapter generation; old-generation callbacks are rejected.",

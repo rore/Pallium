@@ -1,6 +1,7 @@
 {
   "case": "idle_admit",
   "description": "Submit attributed Relay turn to idle App Server. Auto-dispatch produces a distinct turn. item/started with matching clientUserMessageId is the admission signal.",
+  "schema_probe_note": "thread/queue/add NOT found in 0.149.1 app-server schema (v1+v2). QueuedSubmission type exists but is not exposed as a callable method. Nearest available: Thread/injectItemsRequest (injects raw Responses API items). This fixture is provisional pending Unix E2E probe or schema clarification.",
   "input": {
     "session_ref": "codex:test-session-abc123",
     "delivery_id": "pallium:del-002",
@@ -13,6 +14,8 @@
   "expected_protocol_sequence": [
     {
       "call": "thread/queue/add",
+      "provisional": true,
+      "note": "Method name unconfirmed in 0.149.1 schema. Candidate: Thread/injectItemsRequest.",
       "body": {
         "clientUserMessageId": "pallium:del-002",
         "message": "[Relay from relaydev] Hello from Pallium."

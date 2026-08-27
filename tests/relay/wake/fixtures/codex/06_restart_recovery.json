@@ -1,6 +1,7 @@
 {
   "case": "restart_recovery",
   "description": "Verify behavior when either the Pallium service or the Codex App Server restarts mid-delivery.",
+  "expected_outcome": "admitted",
   "scenarios": [
     {
       "name": "pallium_restarts_before_trigger",
@@ -8,7 +9,7 @@
       "wake_state_before": "queued",
       "event": "pallium_service_restart",
       "expected_recovery": "dispatcher re-reads queued rows, re-triggers with same clientUserMessageId",
-      "expected_outcome": "triggered_or_admitted"
+      "expected_behavior": "triggered_or_admitted"
     },
     {
       "name": "pallium_restarts_while_triggered",
@@ -16,7 +17,7 @@
       "wake_state_before": "triggered",
       "event": "pallium_service_restart",
       "expected_recovery": "outstanding triggered deliveries recovered; if within deadline, await callback",
-      "expected_outcome": "admitted_or_fallback_after_deadline"
+      "expected_behavior": "admitted_or_fallback_after_deadline"
     },
     {
       "name": "app_server_restarts_before_item_started",
@@ -25,8 +26,7 @@
       "queued_item_id": "qi-abc001",
       "event": "app_server_restart",
       "cold_resume": true,
-      "expected_behavior": "Queued item survives cold thread resume; item/started emitted after restart",
-      "expected_outcome": "admitted"
+      "expected_behavior": "admitted"
     },
     {
       "name": "already_admitted_recovery",

@@ -1,6 +1,7 @@
 {
   "case": "busy_queue",
   "description": "Session is busy. Plugin coordinator holds the item in its local durable ledger and defers prompt_async until session reaches idle at a safe boundary.",
+  "expected_outcome": "triggered",
   "input": {
     "session_ref": "opencode:test-session-oc001",
     "delivery_id": "pallium:del-oc-003",
@@ -8,7 +9,12 @@
     "payload": "[Relay from relaydev] Queued while busy."
   },
   "mock_server_state": {
-    "sessions": [{"id": "test-session-oc001", "status": "busy"}]
+    "sessions": [
+      {
+        "id": "test-session-oc001",
+        "status": "busy"
+      }
+    ]
   },
   "expected_protocol_sequence": [
     {
@@ -21,14 +27,18 @@
     {
       "note": "Plugin checks history for palliumRelayId before submitting (restart safety).",
       "call": "GET /session/test-session-oc001/messages",
-      "query": {"metadata.palliumRelayId": "pallium:del-oc-003"},
+      "query": {
+        "metadata.palliumRelayId": "pallium:del-oc-003"
+      },
       "expected": "palliumRelayId not present — proceed"
     },
     {
       "call": "POST /session/test-session-oc001/prompt_async",
       "body": {
         "content": "[Relay from relaydev] Queued while busy.",
-        "metadata": {"palliumRelayId": "pallium:del-oc-003"}
+        "metadata": {
+          "palliumRelayId": "pallium:del-oc-003"
+        }
       },
       "response_status": 204
     },

@@ -1,6 +1,7 @@
 {
   "case": "ambiguous_retry",
   "description": "prompt_async returned 204 but no admission event received within the deadline. No retry because the bare prompt API does not prove idempotency for palliumRelayId.",
+  "expected_outcome": "ambiguous",
   "input": {
     "session_ref": "opencode:test-session-oc001",
     "delivery_id": "pallium:del-oc-007",
