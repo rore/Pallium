@@ -22,6 +22,7 @@
     },
     {
       "event": "session/idle (session becomes idle)",
+      "expected_wake_state": "triggered",
       "note": "Plugin observes session-idle event at safe boundary."
     },
     {
@@ -43,6 +44,7 @@
     {
       "event": "message appears in session with text containing relay_id=pallium:del-oc-003",
       "correlation_method": "text_content_search",
+      "expected_wake_state": "admitted",
       "note": "Admission confirmed only on text-content match, not on 204 ACK or metadata field.",
       "expected_outcome": "admitted"
     }

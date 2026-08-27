@@ -28,7 +28,7 @@
       "state": "session_closed",
       "mock": {
         "status": "closed",
-        "inbox_registered": false
+        "inbox_registered": true
       },
       "expected_outcome": "unavailable",
       "fallback_reason": "session_closed",

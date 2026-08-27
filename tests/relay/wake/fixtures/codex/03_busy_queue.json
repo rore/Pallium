@@ -26,7 +26,8 @@
           "clientUserMessageId": "pallium:del-003",
           "input": [{"type": "text", "text": "[Relay from relaydev] Queued message while busy. relay_id=pallium:del-003", "text_elements": []}]
         }
-      }
+      },
+      "expected_wake_state": "triggered"
     },
     {
       "note": "Active turn completes (not shown). Then:"
@@ -37,7 +38,15 @@
         "clientUserMessageId": "pallium:del-003",
         "content": "[Relay from relaydev] Queued message while busy."
       },
+      "expected_wake_state": "admitted",
       "note": "Admitted only after the active turn finishes — distinct following turn."
+    },
+    {
+      "event": "deadline_exceeded",
+      "after_seconds": 120,
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true,
+      "note": "If item/started not received before deadline; fallback path only."
     }
   ],
   "expected_outcome": "triggered",
