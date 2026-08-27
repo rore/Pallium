@@ -19,6 +19,12 @@
       "note": "Plugin observes session-idle event at safe boundary."
     },
     {
+      "note": "Plugin checks history for palliumRelayId before submitting (restart safety).",
+      "call": "GET /session/test-session-oc001/messages",
+      "query": {"metadata.palliumRelayId": "pallium:del-oc-003"},
+      "expected": "palliumRelayId not present — proceed"
+    },
+    {
       "call": "POST /session/test-session-oc001/prompt_async",
       "body": {
         "content": "[Relay from relaydev] Queued while busy.",

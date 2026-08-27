@@ -119,14 +119,15 @@ def _bounded_error(result: dict, budget: int) -> dict:
     if len(_json_text(payload)) <= budget:
         return payload
     error = str(payload.get("error") or "request failed")
+    base = {"status_code": payload["status_code"]} if "status_code" in payload else {}
     low, high = 0, len(error)
     while low < high:
         mid = (low + high + 1) // 2
-        if len(_json_text({"error": error[:mid]})) <= budget:
+        if len(_json_text({"error": error[:mid], **base})) <= budget:
             low = mid
         else:
             high = mid - 1
-    compact = {"error": error[:low]}
+    compact = {"error": error[:low], **base}
     return compact if len(_json_text(compact)) <= budget else {}
 
 

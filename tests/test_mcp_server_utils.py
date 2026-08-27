@@ -56,3 +56,17 @@ def test_bounded_error_pydantic_422_fits_budget_after_strip() -> None:
     assert out["status_code"] == 422
     assert out["detail"]["detail"][0]["msg"] == "String should have at most 1500 characters"
     assert "input" not in out["detail"]["detail"][0]
+
+
+def test_bounded_error_preserves_status_code_in_truncation_path() -> None:
+    # When error string is so long that detail was already dropped and the full
+    # error+status_code payload still exceeds budget, the binary-search path must
+    # keep status_code in the compact result.
+    result = {
+        "error": "x" * 3000,
+        "status_code": 503,
+    }
+    out = _bounded_error(result, budget=200)
+    assert out.get("status_code") == 503
+    assert "error" in out
+    assert len(_json_text(out)) <= 200
