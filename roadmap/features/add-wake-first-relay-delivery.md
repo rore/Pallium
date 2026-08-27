@@ -1,7 +1,7 @@
 ---
 id: add-wake-first-relay-delivery
 title: Add wake-first Relay delivery
-status: queued
+status: active
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -21,6 +21,21 @@ Relay does not remove manual coordination if the user must prompt an idle recipi
 merely to discover its mail. Claude Code, Codex, and OpenCode expose different
 mechanisms for starting or queuing a turn, so Pallium needs small runtime-specific
 adapters behind one observable delivery contract.
+
+## Primary Product Outcome
+
+After one user instruction, a developer session and an architect/reviewer session
+can carry a bounded implementation-review-remediation exchange through explicit
+Relay messages without the user prompting either recipient to check for mail. Each
+send wakes the addressed live session, enters its model-visible context exactly
+once, and can receive an explicit delivery-derived reply. The user re-enters only
+for a permission, product decision, unresolved failure, or requested final result.
+
+This is the main wake validation journey, not a later demo. It does not make
+Pallium a team manager: the user still starts the work, agents explicitly choose
+when and whom to message, and Pallium only persists, addresses, activates, and
+reports delivery. `fix-relay-claim-before-context-emission` (`RF-005`) is a release
+prerequisite because both wake and fallback must be loss-safe.
 
 ## Delivery Contract
 
@@ -138,6 +153,8 @@ the receiving model can consume tokens, invoke tools, and modify files. Therefor
 - sender-selected wake syntax or semantic wake decisions
 - treating runtime admission as proof that the agent understood or used a message
 - automatic agent conversations or unbounded reply chains
+- Pallium deciding that another review or implementation pass should happen; the
+  participating agent must explicitly send each handoff or reply
 
 ## Done When
 
@@ -155,6 +172,15 @@ the receiving model can consume tokens, invoke tools, and modify files. Therefor
    policy, and ordinary permission prompts.
 7. Queue, duplicate, rate, and reply-hop bounds terminate replay or reply storms
    while leaving the original durable delivery diagnosable.
+
+8. A live Claude Code developer → Codex architect → Claude Code remediation →
+   Codex verdict journey completes after one initial user instruction and no
+   intermediate user prompts. Repeat with the runtime roles reversed where the
+   installed integrations support it.
+9. That journey remains exact-once and model-visible when either recipient is
+   idle or busy, and across a Pallium or recipient-integration restart. If wake
+   cannot be admitted, the delivery remains durable and the dashboard/status
+   exposes the fallback or actionable failure rather than silently stalling.
 
 ## Notes
 
