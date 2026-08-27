@@ -70,14 +70,34 @@ def test_busy_queue_outcome_is_capability_specific() -> None:
 
 
 def test_ambiguous_retry_not_issued() -> None:
-    """Adapters without proven idempotency must not issue a retry on ambiguous."""
+    """Adapters without proven idempotency must not issue a retry on ambiguous. retry_issued must be present in at least one step."""
     for runtime in RUNTIMES:
         for fixture in _load_runtime_fixtures(runtime):
             if fixture.get("case") != "ambiguous_retry":
                 continue
-            for step in fixture.get("expected_protocol_sequence", []):
-                if "retry_issued" in step:
-                    assert step["retry_issued"] is False, (
-                        f"{runtime}/ambiguous_retry: retry_issued must be false "
-                        f"without proven idempotency"
-                    )
+            steps = fixture.get("expected_protocol_sequence", [])
+            assert steps, f"{runtime}/ambiguous_retry: expected_protocol_sequence must not be empty"
+            retry_steps = [s for s in steps if "retry_issued" in s]
+            assert retry_steps, (
+                f"{runtime}/ambiguous_retry: no step has 'retry_issued' field — "
+                f"test would be vacuous without it"
+            )
+            for step in retry_steps:
+                assert step["retry_issued"] is False, (
+                    f"{runtime}/ambiguous_retry: retry_issued must be false "
+                    f"without proven idempotency"
+                )
+
+
+def test_nested_protocol_contract() -> None:
+    """session_states entries must have state+expected_outcome; restart scenarios must have expected_behavior."""
+    for runtime in RUNTIMES:
+        for fixture in _load_runtime_fixtures(runtime):
+            case = fixture.get("case", "")
+            for state in fixture.get("states", []):
+                assert "state" in state, f"{runtime}/{case}: states[] entry missing 'state'"
+                assert "expected_outcome" in state, f"{runtime}/{case}: states[] entry missing 'expected_outcome'"
+            for scenario in fixture.get("scenarios", []):
+                assert "expected_behavior" in scenario or "expected_recovery" in scenario, (
+                    f"{runtime}/{case}: scenarios[] entry missing 'expected_behavior' or 'expected_recovery'"
+                )

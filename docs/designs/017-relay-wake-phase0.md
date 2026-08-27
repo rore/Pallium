@@ -6,45 +6,39 @@
 
 ## Per-runtime verdict
 
-Verdicts are based on reading official documentation and integration tests. None have been confirmed by running an installed-runtime probe. Each runtime's "Remaining gates" section lists what must be met before the corresponding adapter PR merges.
+Verdicts are based on official documentation, integration tests, and installed-runtime probes. Codex and OpenCode have probe-confirmed contracts (2026-08-27); Claude Code remains unconfirmed pending the busy-turn decision. Each runtime's "Remaining gates" section lists what must be met before the corresponding adapter PR merges.
 
 | Runtime | Verdict | First implementation |
 |---|---|---|
-| Codex | **Supported (unconfirmed)** — Pallium-managed App Server with experimental API | First |
-| OpenCode | **Supported (unconfirmed)** — durable plugin coordinator | Second |
+| Codex | **Supported (probe-confirmed)** — Pallium-managed App Server with experimental API | First |
+| OpenCode | **Supported (probe-confirmed)** — durable plugin coordinator | Second |
 | Claude Code | **Eligible (unconfirmed)** — native cross-session messaging; busy-turn decision required | Third |
 
 ### Codex
 
-**Verdict:** Supported via Pallium-managed App Server. Implement first. **Schema probe finding (2026-08-27) updates assumptions — see below.**
+**Verdict:** Supported via Pallium-managed App Server. Implement first.
 
-**Claimed contract (from integration test docs — unconfirmed in installed binary):**
-- `thread/queue/add` with `clientUserMessageId` durably queues a distinct future turn.
-- An idle App Server auto-dispatches the queued turn without a separate start call.
-- A busy App Server holds the queued turn separate from the active turn until completion.
-- `item/started` emits the exact `clientUserMessageId` and content — this is the admission signal.
-- Cold thread resume: a queued item survives App Server restart and completes on resume.
-- Deduplication: one `clientUserMessageId` → at most one admission.
+**Proven contract (Windows stdio probe 2026-08-27):**
+- `thread/queue/add` with `clientUserMessageId` is callable on Windows via stdio transport. Queue response preserves `clientUserMessageId` in `queuedSubmission`.
+- `initialize` with `capabilities.experimentalApi: true` accepted; server returns `userAgent` with `0.149.1` on Windows.
+- `stdio://` is the Windows default transport — daemon subcommand is Unix-only but stdio App Server works on Windows.
+- Schema requires `--experimental` flag (`generate-json-schema --experimental`); non-experimental schema omits `thread/queue/add`.
+- An idle App Server auto-dispatches the queued turn without a separate start call (from integration tests).
+- `item/started` emits the exact `clientUserMessageId` and content — this is the admission signal; queue/add response is transport ACK only.
+- Cold thread resume: a queued item survives App Server restart and completes on resume (from integration tests).
+- Deduplication: one `clientUserMessageId` → at most one admission (from integration tests).
 
-**Schema probe finding (2026-08-27):**
-- `thread/queue/add` is **NOT present** in either v1 or v2 app-server schema for 0.149.1.
-- `QueuedSubmission` type (with `clientUserMessageId`, `id`, `input`) is defined but not exposed as a callable method.
-- Nearest available injection mechanism: `Thread/injectItemsRequest` — appends raw Responses API items to model-visible history (different semantics from queue/add).
-- App-server daemon lifecycle is Unix-only; Windows E2E probe is blocked.
-- `experimentalApi` is not a valid feature flag name in 0.149.1.
-
-**Probe evidence:** `.local/phase0-probes/codex-0.149.1-schema-probe-2026-08-27.json`
+**Probe evidence:** `.local/phase0-probes/codex-0.149.1-stdio-probe-2026-08-27.json`
 
 **Remaining gates before PR 5:**
-1. Confirm `thread/queue/add` exists on Unix or identify the correct method name in 0.149.1.
-2. Feature-detect the correct experimental capability at startup; fall back to passive if absent.
-3. Prove the 0.149.1 Unix stdio transport carries the queue contract end-to-end with a disposable App Server.
-4. Confirm a non-managed (ordinary interactive) Codex session is not reachable — Pallium must own the App Server instance.
+1. Capture full `item/started` admission event with matching `clientUserMessageId` end-to-end (requires active OpenAI key processing a queued turn).
+2. Confirm a non-managed (ordinary interactive) Codex session is not reachable — Pallium must own the App Server instance.
+3. Confirm App Server lifetime policy (per-delivery-batch vs persistent daemon).
 
-**Admission handshake (provisional — pending gate 1):**
-1. Initialize App Server with the correct experimental feature flag (not `experimentalApi: true` — name unconfirmed).
-2. Queue submission with `clientUserMessageId = pallium:<delivery_id>` and the attributed Relay payload via the confirmed queue method.
-3. Queue response → `wake_state = triggered`.
+**Admission handshake:**
+1. Initialize App Server with `capabilities.experimentalApi: true`.
+2. `thread/queue/add` with `clientUserMessageId = pallium:<delivery_id>` and attributed Relay payload as `input: [{type:"text", text:"..."}]`.
+3. Queue response returns `queuedSubmission` with preserved `clientUserMessageId` → `wake_state = triggered`.
 4. `item/started` event for a `userMessage` carrying the exact `clientUserMessageId` and content → `wake_state = admitted`, delivery complete.
 5. `turn/completed` is execution completion, not delivery admission — do not use it.
 6. `turn/steer` is forbidden. `turn/start` is not a substitute for the queue path.
@@ -149,7 +143,8 @@ The complete machine-readable matrix (all 6 states × 15 events) is in [`tests/f
 | `queued` | `capability_disabled` | `fallback` | Before trigger; immediate fallback |
 | any | session reopen (new adapter generation) | old-generation callbacks rejected | New registration creates new generation; old tokens invalid |
 | `triggered` | late callback after deadline | `reject` | Token single-use; after `admission_deadline → fallback`, subsequent callbacks are rejected |
-| claim race: delivery arrives before session idle | `not_eligible` | delivery `pending`; natural-turn claim fires at next idle | Normal path |
+| `not_eligible` | coordinator CAS session-idle succeeds | `queued` | Atomic; natural-turn hook locked out until fallback |
+| `not_eligible` | coordinator CAS session-idle fails (session busy) | `not_eligible` | Natural-turn hook claims at next idle boundary; wake deferred |
 
 ## Provisional numeric parameters
 
@@ -169,8 +164,7 @@ Working values for adapter development. None have been measured against an insta
 ## Decisions still open (must resolve before PR 2)
 
 1. Claude Code busy-turn semantic: idle-only or proven separate-turn queue (see above).
-2. Codex Windows stdio disposable proof: run with installed 0.149.1 and confirm experimental API availability.
-3. Adapter locator lifetime: App Server instance is Pallium-managed; confirm whether it needs a per-delivery-batch lifetime or a persistent daemon.
+2. Adapter locator lifetime: App Server instance is Pallium-managed; confirm whether it needs a per-delivery-batch lifetime or a persistent daemon.
 
 ## Re-estimate of remaining PRs
 

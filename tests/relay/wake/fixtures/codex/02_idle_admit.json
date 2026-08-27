@@ -1,7 +1,6 @@
 {
   "case": "idle_admit",
-  "description": "Submit attributed Relay turn to idle App Server. Auto-dispatch produces a distinct turn. item/started with matching clientUserMessageId is the admission signal.",
-  "schema_probe_note": "thread/queue/add NOT found in 0.149.1 app-server schema (v1+v2). QueuedSubmission type exists but is not exposed as a callable method. Nearest available: Thread/injectItemsRequest (injects raw Responses API items). This fixture is provisional pending Unix E2E probe or schema clarification.",
+  "description": "Submit attributed Relay turn to idle App Server via thread/queue/add. Auto-dispatch produces a distinct turn. item/started with matching clientUserMessageId is the admission signal. Probe-confirmed on Windows stdio 2026-08-27.",
   "input": {
     "session_ref": "codex:test-session-abc123",
     "delivery_id": "pallium:del-002",
@@ -13,23 +12,37 @@
   },
   "expected_protocol_sequence": [
     {
-      "call": "thread/queue/add",
-      "provisional": true,
-      "note": "Method name unconfirmed in 0.149.1 schema. Candidate: Thread/injectItemsRequest.",
+      "call": "initialize",
       "body": {
+        "clientInfo": {"name": "pallium-wake-adapter", "version": "1.0.0"},
+        "capabilities": {"experimentalApi": true}
+      },
+      "note": "experimentalApi:true required; non-experimental schema omits thread/queue/add"
+    },
+    {
+      "call": "thread/queue/add",
+      "body": {
+        "threadId": "test-session-abc123",
         "clientUserMessageId": "pallium:del-002",
-        "message": "[Relay from relaydev] Hello from Pallium."
+        "input": [{"type": "text", "text": "[Relay from relaydev] Hello from Pallium. relay_id=pallium:del-002"}]
       },
       "response_status": 200,
-      "response_body": {"queuedItemId": "qi-abc001"}
+      "response_body": {
+        "queuedSubmission": {
+          "id": "qi-abc001",
+          "clientUserMessageId": "pallium:del-002",
+          "input": [{"type": "text", "text": "[Relay from relaydev] Hello from Pallium. relay_id=pallium:del-002", "text_elements": []}]
+        }
+      },
+      "note": "Queue response is transport ACK only; clientUserMessageId preserved in queuedSubmission"
     },
     {
       "event": "item/started",
       "body": {
         "clientUserMessageId": "pallium:del-002",
-        "content": "[Relay from relaydev] Hello from Pallium."
+        "content": "[Relay from relaydev] Hello from Pallium. relay_id=pallium:del-002"
       },
-      "note": "This event, not queue ACK, is the admission signal."
+      "note": "This event is the admission signal, not the queue/add response."
     }
   ],
   "expected_outcome": "admitted",
@@ -37,6 +50,7 @@
   "forbidden": [
     "turn/steer",
     "Using turn/completed as admission signal",
-    "Using queue 200 response as admission signal"
+    "Using queue 200 response as admission signal",
+    "Using 'experimentalApi' flag absent (schema omits thread/queue/add without --experimental)"
   ]
 }

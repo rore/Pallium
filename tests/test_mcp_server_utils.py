@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.mcp.server import _bounded_error, _json_text, _strip_pydantic_input
+from app.mcp.server import _bounded_error, _json_text, _relay_text, _strip_pydantic_input
 
 
 def test_bounded_error_preserves_status_code() -> None:
@@ -34,8 +34,6 @@ def test_strip_pydantic_input_removes_input_and_url() -> None:
 
 
 def test_bounded_error_pydantic_422_fits_budget_after_strip() -> None:
-    # Simulate the 422 relay_send returns when payload exceeds 1500 chars.
-    # Without stripping, 'input' alone pushes the detail over 2000 chars.
     result = {
         "error": "Client error '422 Unprocessable Content'",
         "status_code": 422,
@@ -78,9 +76,9 @@ def test_strip_pydantic_input_preserves_sibling_fields() -> None:
     assert "input" not in stripped["detail"][0]
     assert "url" not in stripped["detail"][0]
     assert stripped["detail"][0]["msg"] == "required"
-    # When error string is so long that detail was already dropped and the full
-    # error+status_code payload still exceeds budget, the binary-search path must
-    # keep status_code in the compact result.
+
+
+def test_bounded_error_binary_search_preserves_status_code() -> None:
     result = {
         "error": "x" * 3000,
         "status_code": 503,
@@ -89,3 +87,30 @@ def test_strip_pydantic_input_preserves_sibling_fields() -> None:
     assert out.get("status_code") == 503
     assert "error" in out
     assert len(_json_text(out)) <= 200
+
+
+def test_relay_text_strips_pydantic_sibling_fields() -> None:
+    """_relay_text (actual caller of _bounded_error) must strip input+sibling fields from 422 errors."""
+    import json
+
+    result = {
+        "error": "Client error '422 Unprocessable Content'",
+        "status_code": 422,
+        "detail": {
+            "detail": [
+                {
+                    "type": "string_too_long",
+                    "loc": ["body", "payload"],
+                    "msg": "too long",
+                    "input": "x" * 2000,
+                    "url": "https://example.com",
+                }
+            ],
+            "metadata": {"request_id": "abc123"},
+        },
+    }
+    out = json.loads(_relay_text(result))
+    assert out["status_code"] == 422
+    assert "input" not in out["detail"]["detail"][0]
+    assert out["detail"]["metadata"] == {"request_id": "abc123"}
+
