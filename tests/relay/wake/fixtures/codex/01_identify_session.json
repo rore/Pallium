@@ -1,0 +1,29 @@
+{
+  "case": "identify_session",
+  "description": "Pallium resolves the live App Server session for a known session_ref. Unknown or closed refs are rejected without a wake attempt.",
+  "input": {
+    "session_ref": "codex:test-session-abc123",
+    "delivery_id": "pallium:del-001",
+    "payload": "Test relay message"
+  },
+  "mock_app_server_state": {
+    "sessions": [
+      {"id": "test-session-abc123", "status": "idle", "experimental_api": true}
+    ]
+  },
+  "expected_outcome": "session_resolved",
+  "expected_session_id": "test-session-abc123",
+  "negative_cases": [
+    {
+      "session_ref": "codex:unknown-session",
+      "expected_outcome": "unavailable",
+      "reason": "session_not_found"
+    },
+    {
+      "session_ref": "codex:closed-session-xyz",
+      "mock_state": {"status": "closed"},
+      "expected_outcome": "unavailable",
+      "reason": "session_closed"
+    }
+  ]
+}

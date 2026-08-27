@@ -91,8 +91,28 @@ def _trim_update_details(payload: dict, items: list[dict], budget: int) -> None:
         item["historical_updates_omitted"] = item.get("historical_updates_omitted", 0) + 1
 
 
+def _strip_pydantic_input(detail: object) -> object:
+    """Remove 'input' and 'url' from Pydantic validation error items.
+
+    FastAPI echoes the full request value in each item's 'input' field, which
+    can inflate a 422 detail past the MCP relay budget and cause it to be dropped.
+    """
+    if isinstance(detail, dict) and isinstance(detail.get("detail"), list):
+        return {
+            "detail": [
+                {k: v for k, v in item.items() if k not in ("input", "url")}
+                if isinstance(item, dict)
+                else item
+                for item in detail["detail"]
+            ]
+        }
+    return detail
+
+
 def _bounded_error(result: dict, budget: int) -> dict:
-    payload = {key: result[key] for key in ("error", "detail") if key in result}
+    payload = {key: result[key] for key in ("error", "status_code", "detail") if key in result}
+    if "detail" in payload:
+        payload["detail"] = _strip_pydantic_input(payload["detail"])
     if len(_json_text(payload)) <= budget:
         return payload
     payload.pop("detail", None)

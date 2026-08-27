@@ -1,0 +1,33 @@
+{
+  "case": "restart_recovery",
+  "description": "Behavior after Pallium service restart or Claude Code session restart.",
+  "scenarios": [
+    {
+      "name": "pallium_restarts_before_inbox_delivery",
+      "delivery_wake_state": "queued",
+      "expected_recovery": "dispatcher re-reads queued rows; inbox still registered and lease valid — re-deliver",
+      "expected_outcome": "triggered_or_admitted"
+    },
+    {
+      "name": "pallium_restarts_after_inbox_delivery_before_turn",
+      "delivery_wake_state": "triggered",
+      "expected_recovery": "within deadline: await admission turn; past deadline: fallback",
+      "expected_outcome": "admitted_or_fallback_after_deadline"
+    },
+    {
+      "name": "claude_code_session_restarts",
+      "delivery_wake_state": "triggered",
+      "event": "session_restart_or_inbox_close",
+      "expected_recovery": "inbox socket closes; capability lease expires; delivery falls back to natural-turn path",
+      "expected_outcome": "fallback",
+      "fallback_reason": "inbox_closed_during_triggered"
+    },
+    {
+      "name": "already_admitted",
+      "delivery_wake_state": "admitted",
+      "event": "pallium_service_restart",
+      "expected_recovery": "delivery complete; no second inbox delivery",
+      "expected_outcome": "admitted_idempotent"
+    }
+  ]
+}

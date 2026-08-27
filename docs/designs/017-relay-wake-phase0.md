@@ -1,0 +1,183 @@
+# Relay wake Phase 0 decision record
+
+**Status:** Active — supersedes per-runtime verdict in 016  
+**Scope:** Installed Claude Code 2.1.246, Codex CLI 0.149.1, OpenCode 1.18.19, native Windows  
+**Gate:** Every runtime adapter in PR 3–5 must reference this record and pass all seven Phase 0 cases before merging.
+
+## Per-runtime verdict
+
+| Runtime | Verdict | First implementation |
+|---|---|---|
+| Codex | **Supported** — via Pallium-managed App Server with experimental API | First |
+| OpenCode | **Supported** — via durable plugin coordinator | Second |
+| Claude Code | **Eligible** — native cross-session messaging; busy-turn decision required | Third |
+
+### Codex
+
+**Verdict:** Supported via Pallium-managed App Server. Implement first.
+
+**Proven contract (official integration tests):**
+- `thread/queue/add` with `clientUserMessageId` durably queues a distinct future turn.
+- An idle App Server auto-dispatches the queued turn without a separate start call.
+- A busy App Server holds the queued turn separate from the active turn until completion.
+- `item/started` emits the exact `clientUserMessageId` and content — this is the admission signal.
+- Cold thread resume: a queued item survives App Server restart and completes on resume.
+- Deduplication: one `clientUserMessageId` → at most one admission.
+
+**Remaining gates before PR 5:**
+1. Feature-detect `experimentalApi` at startup; fall back to passive if absent or if the installed binary rejects it.
+2. Prove the 0.149.1 Windows stdio transport carries the above contract end-to-end with a disposable App Server.
+3. Confirm a non-managed (ordinary interactive) Codex session is not reachable — Pallium must own the App Server instance.
+
+**Admission handshake:**
+1. Initialize App Server with `experimentalApi: true`.
+2. `thread/queue/add` with `clientUserMessageId = pallium:<delivery_id>` and the attributed Relay payload.
+3. Queue response → `wake_state = triggered`.
+4. `item/started` event for a `userMessage` carrying the exact `clientUserMessageId` and content → `wake_state = admitted`, delivery complete.
+5. `turn/completed` is execution completion, not delivery admission — do not use it.
+6. `turn/steer` is forbidden. `turn/start` is not a substitute for the queue path.
+
+### OpenCode
+
+**Verdict:** Supported via Pallium-owned plugin coordinator. Implement second.
+
+**Proven behaviors:**
+- Server and plugin APIs expose stable session IDs and `prompt_async`.
+- An idle `prompt_async` persists a caller-controlled `metadata.palliumRelayId` and produces an assistant child whose events reference it.
+- A plugin coordinator can serialize delivery against the session-idle event boundary.
+- Session history is queryable before replaying a pending item.
+- The `Agent Intercom` reference implementation demonstrates persist-first delivery, metadata correlation, history verification before replay, safe busy deferral, and restart recovery.
+
+**Remaining gates before PR 4:**
+1. Prove a bare `prompt_async` 204 is transport acknowledgement only — not admission.
+2. Implement and prove the plugin-owned durable pending ledger that serializes against session-idle.
+3. Windows E2E smoke proof with the installed version.
+
+**Admission handshake:**
+1. Plugin persists the Relay item locally before any broker call.
+2. Plugin checks recent session history for `metadata.palliumRelayId` to detect prior admission (restart safety).
+3. At a proven safe boundary (session idle), call `prompt_async` with `metadata.palliumRelayId = pallium:<delivery_id>`.
+4. Admission: session messages or session events contain the exact `palliumRelayId` → `wake_state = admitted`.
+5. Busy deferral: plugin holds the item in its local ledger; does not call `prompt_async` until idle.
+6. On Pallium restart: plugin replays only items not found in session history.
+
+### Claude Code
+
+**Verdict:** Version-eligible for native cross-session messaging (2.1.246 ≥ documented 2.1.234 Windows minimum). Busy-turn semantics require an explicit decision before enabling `busy_queue` capability.
+
+**Proven:**
+- Native local inbox socket authenticates via local token; official cross-session messaging starts a new turn when idle.
+- 2.1.246 clears the documented Windows minimum version.
+- `claude -p --resume` under a per-session lock can serialize Pallium-owned worker turns.
+
+**Open decision (required before PR 3):**
+During an active turn, Claude Code reads inbox messages between tool calls. This *may* not create a distinct following turn, violating the non-negotiable "busy delivery never steers the active human-owned turn." Options:
+- a) Advertise only `idle_wake`; busy messages wait for idle (defer, safe).
+- b) Prove that inbox delivery during an active turn queues a distinct *following* turn (not mid-turn steering) and enable `busy_queue`.
+- c) Channels as an alternative ingress if native inbox doesn't satisfy the separate-turn contract.
+
+Until (a) or (b) is proven with a Windows disposable trace, Claude Code advertises only `idle_wake`.
+
+**Admission handshake (idle path):**
+1. Register the live inbox socket and local auth token as `idle_wake` capability.
+2. Submit the attributed Relay payload to the inbox.
+3. Admission: next turn started in that session carries the Pallium delivery ID in its envelope → `wake_state = admitted`.
+4. If the session is not idle, no submission; delivery remains `pending` for next-natural-turn.
+
+## Seven Phase 0 cases
+
+All adapters must prove these cases before entering implementation. The fixtures in `tests/relay/wake/fixtures/<runtime>/` encode expected protocol shapes for deterministic CI.
+
+| # | Case | Pass condition |
+|---|---|---|
+| 1 | Identify live session for `session_ref` | Pallium resolves a session registered by the integration; closed or unknown refs are rejected |
+| 2 | Submit attributed Relay turn while idle | A distinct new turn starts; delivery/idempotency ID is present in the turn envelope |
+| 3 | Submit while user-owned turn is busy | No steering of the active turn; message is queued for a subsequent distinct turn |
+| 4 | Observe positive admission event tied to delivery ID | `wake_state → admitted` only on the correlated event, not on transport ACK |
+| 5 | Distinguish closed, stale, permission-denied, unavailable | Each non-eligible state maps to a specific fallback reason; no retry on permanent failure |
+| 6 | Behavior after runtime or Pallium restart | Outstanding triggered deliveries are recovered; already-admitted deliveries are idempotent |
+| 7 | Safe retry after ambiguous response | Trigger suppressed until admission deadline; fallback released once without another wake attempt, unless the runtime proves the ID idempotent |
+
+## Normalized adapter result contract
+
+Adapters return one of five normalized outcomes to the wake coordinator:
+
+| Outcome | Meaning | Wake state after |
+|---|---|---|
+| `admitted` | Correlated admission event received | `admitted` → delivery complete |
+| `triggered` | Runtime accepted request; await callback | `triggered` → wait for deadline |
+| `unavailable` | Session closed, not found, or capability gone | `fallback` with reason |
+| `rejected` | Permanent failure (permission, version, policy) | `fallback` with reason |
+| `ambiguous` | Transport accepted but admission unconfirmed | `triggered` → wait for deadline, then `fallback` |
+
+The generic wake coordinator must not import runtime-specific types. All protocol details stay inside the adapter.
+
+## Wake state transition table
+
+| State | Event | Next state | Notes |
+|---|---|---|---|
+| `queued` | wake dispatcher reserves delivery | `triggering` | Atomic; natural-turn claim blocked until fallback |
+| `triggering` | adapter returns `triggered`/`admitted` | `triggered` / `admitted` | |
+| `triggering` | adapter returns `unavailable`/`rejected` | `fallback` | Natural-turn claim re-enabled |
+| `triggering` | adapter returns `ambiguous` | `triggered` | |
+| `triggered` | admission callback with valid token | `admitted` | Delivery complete |
+| `triggered` | admission deadline exceeded | `fallback` | Token invalidated; natural-turn claim re-enabled |
+| `triggered` | capability expiry / session close | stays `triggered` until deadline | No new trigger; awaits deadline before fallback |
+| `triggered` | message expiry | `fallback` (expiry wins) | Late callbacks rejected |
+| `admitted` | any event | `admitted` | Terminal; no expiry; callbacks idempotent |
+| `fallback` | natural-turn hook claims delivery | delivery → `claimed` | Normal hook path |
+| `fallback` | message expiry | stays `fallback`, delivery expires | |
+| `not_eligible` | message expiry | delivery expires | Never entered wake path |
+| any non-admitted | capability disable mid-attempt | depends on whether `triggering`/`triggered`; see above | Before trigger: immediate fallback. After trigger: wait for deadline. |
+| any | session reopen with new adapter generation | old generation tokens rejected | New session registration creates new generation |
+
+Key invariants:
+- Expiry is terminal for all non-admitted states; all late callbacks fail.
+- Close/capability loss before trigger → immediate fallback; after acknowledged trigger → wait for deadline.
+- Reopening a session creates a new adapter generation; old-generation callbacks are rejected.
+- Wake callback token is single-use, 256-bit, stored only as a hash, never exposed externally.
+- Natural-turn claim wins only before `triggering` or after `fallback`.
+
+## Numeric bounds (from Phase 0 evidence)
+
+These replace the provisional values from 016. Adapters choosing different values must document the measurement that justifies the change.
+
+| Parameter | Value | Basis |
+|---|---|---|
+| Admission deadline | 120 s | OpenCode idle probe took ~42 s; 3× buffer |
+| Max concurrent wake attempts | 4 | Local I/O bound; one session per adapter instance |
+| Retry on ambiguous | 0 (unless idempotency proven) | Prevents double delivery on non-idempotent runtimes |
+| Wake starts per recipient per minute | 6 | Rate-limit on accidental storm |
+| Reply hop bound | 4 | Terminates reply chains; diagnosable in audit |
+| Fan-out recipient bound | 25 | Existing Relay limit; unchanged |
+| Capability heartbeat interval | 15 s | Detects stale session before trigger |
+| Capability lease | 45 s | 3× heartbeat; allows one missed heartbeat |
+
+## Decisions still open (must resolve before PR 2)
+
+1. Claude Code busy-turn semantic: idle-only or proven separate-turn queue (see above).
+2. Codex Windows stdio disposable proof: run with installed 0.149.1 and confirm experimental API availability.
+3. Adapter locator lifetime: App Server instance is Pallium-managed; confirm whether it needs a per-delivery-batch lifetime or a persistent daemon.
+
+## Re-estimate of remaining PRs
+
+Based on Phase 0 corrected findings. Codex has the strongest first-party contract; OpenCode requires plugin work; Claude Code requires the busy-turn decision.
+
+| PR | Scope | Estimate |
+|---|---|---|
+| 2 | Durable core: wake metadata, state machine, leases, dispatcher, fake adapters, recovery | 3–5 days |
+| 3 | Claude Code adapter (idle path; busy path conditional on open decision) | 2–3 days |
+| 4 | OpenCode plugin coordinator + adapter | 3–4 days |
+| 5 | Codex App Server adapter (conditional on Windows stdio proof) | 2–3 days |
+| 6 | Cross-runtime journeys, dashboard, docs, runbook | 2–3 days |
+
+## Primary references
+
+- [Claude Code cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging)
+- [Claude Code Channels](https://code.claude.com/docs/en/channels)
+- [Codex App Server protocol](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
+- [Codex queue integration tests](https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/suite/v2/thread_queue.rs)
+- [OpenCode server API](https://opencode.ai/docs/server/)
+- [OpenCode plugin API](https://opencode.ai/docs/plugins/)
+- Phase 0 initial probes and provisional state contract: [016-relay-wake-feasibility.md](016-relay-wake-feasibility.md)
+- Full roadmap item: [add-wake-first-relay-delivery](../../roadmap/features/add-wake-first-relay-delivery.md)

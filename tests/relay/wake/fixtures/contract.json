@@ -1,0 +1,61 @@
+{
+  "_comment": "Normalized adapter result contract. Adapters return one outcome; the wake coordinator updates delivery state.",
+  "version": "1",
+  "wake_states": [
+    "not_eligible",
+    "queued",
+    "triggering",
+    "triggered",
+    "admitted",
+    "fallback"
+  ],
+  "adapter_outcomes": {
+    "admitted": {
+      "description": "Correlated admission event received; delivery complete.",
+      "next_wake_state": "admitted",
+      "delivery_terminal": true
+    },
+    "triggered": {
+      "description": "Runtime accepted request; await admission callback within deadline.",
+      "next_wake_state": "triggered",
+      "delivery_terminal": false
+    },
+    "unavailable": {
+      "description": "Session closed, not found, or capability gone; immediate fallback.",
+      "next_wake_state": "fallback",
+      "delivery_terminal": false,
+      "natural_turn_claim_allowed": true
+    },
+    "rejected": {
+      "description": "Permanent failure (permission, version, policy); fallback with reason.",
+      "next_wake_state": "fallback",
+      "delivery_terminal": false,
+      "natural_turn_claim_allowed": true
+    },
+    "ambiguous": {
+      "description": "Transport accepted but admission unconfirmed; wait for deadline then fallback.",
+      "next_wake_state": "triggered",
+      "delivery_terminal": false,
+      "retry_allowed": false,
+      "note": "No retry unless runtime proves supplied ID is idempotent."
+    }
+  },
+  "invariants": [
+    "Transport acknowledgement is never admission.",
+    "Natural-turn claim is blocked while wake_state is triggering or triggered.",
+    "Message expiry is terminal for all non-admitted states; late callbacks fail.",
+    "Wake callback token is single-use, 256-bit, stored only as a hash.",
+    "Session reopen creates a new adapter generation; old-generation callbacks are rejected.",
+    "Adapter must not import generic relay coordinator types.",
+    "Busy delivery never steers text into the active human-owned turn."
+  ],
+  "phase0_cases": [
+    "identify_session",
+    "idle_admit",
+    "busy_queue",
+    "admission_correlation",
+    "session_states",
+    "restart_recovery",
+    "ambiguous_retry"
+  ]
+}

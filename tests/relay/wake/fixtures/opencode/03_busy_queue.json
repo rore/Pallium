@@ -1,0 +1,39 @@
+{
+  "case": "busy_queue",
+  "description": "Session is busy. Plugin coordinator holds the item in its local durable ledger and defers prompt_async until session reaches idle at a safe boundary.",
+  "input": {
+    "session_ref": "opencode:test-session-oc001",
+    "delivery_id": "pallium:del-oc-003",
+    "pallium_relay_id": "pallium:del-oc-003",
+    "payload": "[Relay from relaydev] Queued while busy."
+  },
+  "mock_server_state": {
+    "sessions": [{"id": "test-session-oc001", "status": "busy"}]
+  },
+  "expected_protocol_sequence": [
+    {
+      "note": "Plugin detects busy; persists item in local ledger. Does NOT call prompt_async."
+    },
+    {
+      "event": "session/idle (session becomes idle)",
+      "note": "Plugin observes session-idle event at safe boundary."
+    },
+    {
+      "call": "POST /session/test-session-oc001/prompt_async",
+      "body": {
+        "content": "[Relay from relaydev] Queued while busy.",
+        "metadata": {"palliumRelayId": "pallium:del-oc-003"}
+      },
+      "response_status": 204
+    },
+    {
+      "event": "admission event with palliumRelayId=pallium:del-oc-003",
+      "expected_outcome": "admitted"
+    }
+  ],
+  "race_guard": "Plugin serializes on session-idle event; does not use status-then-prompt (TOCTOU race).",
+  "forbidden": [
+    "GET /session/status followed immediately by POST /prompt_async without atomic idle check",
+    "Calling prompt_async while session reports busy"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "case": "ambiguous_retry",
+  "description": "Inbox delivery accepted but no admission turn observed within the deadline. No retry without explicit idempotency proof from native cross-session messaging.",
+  "input": {
+    "session_ref": "claude_code:test-session-cc001",
+    "delivery_id": "pallium:del-cc-007",
+    "payload": "[Relay from relaydev] Ambiguous test."
+  },
+  "expected_protocol_sequence": [
+    {
+      "call": "inbox_deliver",
+      "envelope": {"palliumDeliveryId": "pallium:del-cc-007"},
+      "note": "Socket accepted delivery; no confirmation of turn start follows."
+    },
+    {
+      "event": "deadline_exceeded",
+      "after_seconds": 120,
+      "expected_outcome": "fallback",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true,
+      "retry_issued": false,
+      "reason": "Native messaging idempotency not proven; retry risks double delivery."
+    }
+  ],
+  "idempotency_note": "If cross-session messaging documents deduplication by delivery envelope ID, update this fixture and enable retry."
+}

@@ -1,0 +1,25 @@
+{
+  "case": "busy_queue",
+  "description": "Session is active (user-owned turn in progress). Busy delivery must not steer the active turn. Current policy: idle_wake only — message deferred until session is idle.",
+  "input": {
+    "session_ref": "claude_code:test-session-cc001",
+    "delivery_id": "pallium:del-cc-003",
+    "payload": "[Relay from relaydev] Message while busy.",
+    "capability": "idle_wake"
+  },
+  "mock_session_state": {"status": "busy"},
+  "expected_behavior": "No inbox delivery while busy. Delivery remains pending for natural-turn fallback.",
+  "expected_outcome": "unavailable",
+  "fallback_reason": "session_busy_idle_wake_only",
+  "natural_turn_claim_allowed": true,
+  "open_decision": {
+    "description": "If a future proof shows inbox delivery during a busy turn queues a distinct *following* turn (not mid-turn steering), busy_queue capability can be enabled.",
+    "current_status": "not_proven",
+    "required_evidence": [
+      "Windows disposable trace showing inbox message received during active turn",
+      "Confirmation it creates a distinct following turn, not tool-boundary injection",
+      "No mechanism to steer or modify the currently active human-owned turn"
+    ],
+    "see": "docs/designs/017-relay-wake-phase0.md — Claude Code open decision"
+  }
+}

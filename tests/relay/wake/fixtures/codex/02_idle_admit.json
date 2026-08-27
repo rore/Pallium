@@ -1,0 +1,39 @@
+{
+  "case": "idle_admit",
+  "description": "Submit attributed Relay turn to idle App Server. Auto-dispatch produces a distinct turn. item/started with matching clientUserMessageId is the admission signal.",
+  "input": {
+    "session_ref": "codex:test-session-abc123",
+    "delivery_id": "pallium:del-002",
+    "client_user_message_id": "pallium:del-002",
+    "payload": "[Relay from relaydev] Hello from Pallium."
+  },
+  "mock_app_server_state": {
+    "sessions": [{"id": "test-session-abc123", "status": "idle", "experimental_api": true}]
+  },
+  "expected_protocol_sequence": [
+    {
+      "call": "thread/queue/add",
+      "body": {
+        "clientUserMessageId": "pallium:del-002",
+        "message": "[Relay from relaydev] Hello from Pallium."
+      },
+      "response_status": 200,
+      "response_body": {"queuedItemId": "qi-abc001"}
+    },
+    {
+      "event": "item/started",
+      "body": {
+        "clientUserMessageId": "pallium:del-002",
+        "content": "[Relay from relaydev] Hello from Pallium."
+      },
+      "note": "This event, not queue ACK, is the admission signal."
+    }
+  ],
+  "expected_outcome": "admitted",
+  "expected_wake_state": "admitted",
+  "forbidden": [
+    "turn/steer",
+    "Using turn/completed as admission signal",
+    "Using queue 200 response as admission signal"
+  ]
+}

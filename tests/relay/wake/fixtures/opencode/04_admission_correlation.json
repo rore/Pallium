@@ -1,0 +1,34 @@
+{
+  "case": "admission_correlation",
+  "description": "Admission is confirmed only when the session events contain the exact palliumRelayId — not on prompt_async 204, not on a mismatched ID.",
+  "correlation_signals": [
+    {
+      "signal": "prompt_async 204",
+      "is_admission": false,
+      "reason": "Transport acknowledgement only"
+    },
+    {
+      "signal": "session/message with missing metadata",
+      "is_admission": false,
+      "reason": "No palliumRelayId present"
+    },
+    {
+      "signal": "session/message with palliumRelayId=pallium:del-oc-other",
+      "is_admission": false,
+      "reason": "Different delivery; must not admit"
+    },
+    {
+      "signal": "session/message with metadata.palliumRelayId=pallium:del-oc-004",
+      "is_admission": true,
+      "expected_outcome": "admitted",
+      "expected_wake_state": "admitted"
+    }
+  ],
+  "deduplication": {
+    "second_event_same_relay_id": "rejected — delivery already admitted; idempotent result"
+  },
+  "restart_history_check": {
+    "description": "Before submitting, plugin queries session history for palliumRelayId. If found, delivery is already admitted — no second prompt_async.",
+    "expected": "idempotent, no double admission"
+  }
+}

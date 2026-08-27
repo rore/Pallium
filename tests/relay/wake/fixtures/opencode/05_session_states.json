@@ -1,0 +1,43 @@
+{
+  "case": "session_states",
+  "description": "Non-eligible session states and required fallback reasons for OpenCode.",
+  "states": [
+    {
+      "state": "session_not_found",
+      "mock": {"sessions": []},
+      "expected_outcome": "unavailable",
+      "fallback_reason": "session_not_found"
+    },
+    {
+      "state": "session_closed",
+      "mock": {"sessions": [{"id": "test-session-oc001", "status": "closed"}]},
+      "expected_outcome": "unavailable",
+      "fallback_reason": "session_closed"
+    },
+    {
+      "state": "capability_expired",
+      "mock": {"sessions": [{"id": "test-session-oc001", "status": "idle", "capability_expired": true}]},
+      "expected_outcome": "unavailable",
+      "fallback_reason": "capability_expired"
+    },
+    {
+      "state": "permission_denied",
+      "mock_response": {"status": 403},
+      "expected_outcome": "rejected",
+      "fallback_reason": "permission_denied"
+    },
+    {
+      "state": "server_unavailable",
+      "mock_response": {"connection_error": true},
+      "expected_outcome": "unavailable",
+      "fallback_reason": "server_unreachable"
+    },
+    {
+      "state": "stale_session",
+      "mock": {"sessions": [{"id": "test-session-oc001", "status": "idle", "last_active_seconds_ago": 3600}]},
+      "note": "Staleness threshold is capability-lease based; adapter checks lease expiry before submitting.",
+      "expected_outcome": "unavailable",
+      "fallback_reason": "session_stale"
+    }
+  ]
+}

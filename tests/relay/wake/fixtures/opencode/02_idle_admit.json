@@ -1,0 +1,40 @@
+{
+  "case": "idle_admit",
+  "description": "Plugin coordinator submits Relay turn to idle session via prompt_async with palliumRelayId. Admission is confirmed when session events contain the exact palliumRelayId.",
+  "input": {
+    "session_ref": "opencode:test-session-oc001",
+    "delivery_id": "pallium:del-oc-002",
+    "pallium_relay_id": "pallium:del-oc-002",
+    "payload": "[Relay from relaydev] Hello from Pallium."
+  },
+  "mock_server_state": {
+    "sessions": [{"id": "test-session-oc001", "status": "idle"}]
+  },
+  "expected_protocol_sequence": [
+    {
+      "note": "Plugin checks session history for palliumRelayId first (restart safety).",
+      "call": "GET /session/test-session-oc001/messages",
+      "expected": "palliumRelayId not present — proceed"
+    },
+    {
+      "call": "POST /session/test-session-oc001/prompt_async",
+      "body": {
+        "content": "[Relay from relaydev] Hello from Pallium.",
+        "metadata": {"palliumRelayId": "pallium:del-oc-002"}
+      },
+      "response_status": 204,
+      "note": "204 is transport acknowledgement only, not admission."
+    },
+    {
+      "event": "session/message or session/event containing metadata.palliumRelayId=pallium:del-oc-002",
+      "is_admission": true,
+      "expected_outcome": "admitted",
+      "expected_wake_state": "admitted"
+    }
+  ],
+  "forbidden": [
+    "Treating prompt_async 204 as admission",
+    "Submitting without prior history check",
+    "Calling prompt_async without metadata.palliumRelayId"
+  ]
+}

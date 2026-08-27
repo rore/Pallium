@@ -1,0 +1,27 @@
+{
+  "case": "ambiguous_retry",
+  "description": "prompt_async returned 204 but no admission event received within the deadline. No retry because the bare prompt API does not prove idempotency for palliumRelayId.",
+  "input": {
+    "session_ref": "opencode:test-session-oc001",
+    "delivery_id": "pallium:del-oc-007",
+    "pallium_relay_id": "pallium:del-oc-007",
+    "payload": "[Relay from relaydev] Ambiguous test."
+  },
+  "expected_protocol_sequence": [
+    {
+      "call": "POST /session/test-session-oc001/prompt_async",
+      "response_status": 204,
+      "note": "Transport ACK; no admission event follows."
+    },
+    {
+      "event": "deadline_exceeded",
+      "after_seconds": 120,
+      "expected_outcome": "fallback",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true,
+      "retry_issued": false,
+      "reason": "Bare prompt_async idempotency not proven; retry risks double delivery."
+    }
+  ],
+  "plugin_idempotency_note": "If plugin coordinator implements its own idempotency check (history scan before second submit), retry can be enabled. Update this fixture when proven."
+}
