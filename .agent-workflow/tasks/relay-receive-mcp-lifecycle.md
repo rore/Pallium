@@ -9,11 +9,11 @@
 
 **Completion criteria:** pallium_relay_receive returns pending deliveries with opaque delivery_id; pallium_relay_ack confirms idempotently; lease expiry causes redelivery; pallium_relay_reply atomically ACKs; all listed E2E cases pass; no claim token in any MCP surface; pallium_relay_recipients description corrected; AGENTS.md guidance added.
 
-**Risk:** Elevated
+**Risk:** High
 
 **Complexity:** Moderate
 
-**Reason:** Touches app/ (watch zone), api/ (public contract), storage/ (relay persistence). All changes are additive; no existing endpoint or model changes. Elevated for watch zone + contract surface, not High because no existing behavior changes.
+**Reason:** Touches app/ (watch zone), api/ (public contract), storage/ (relay persistence). Reclassified High after architect review: `relay_reply_atomic` adds a new atomic path through the write-ahead log; receipt validation uses constant-time compare; MCP overflow protection changes _relay_text behavior. All changes are additive but the atomic reply + receipt path required non-trivial storage changes.
 
 **Discovery:** resolve_context() uses PALLIUM_AGENT_REF (runtime) and PALLIUM_THREAD_REF (session_ref) from env — exactly the integration-bound identity gate. /relay/turn already claims deliveries and returns claim_token; /relay/deliveries/ack requires claim_token. New scope-based ACK endpoint bypasses claim_token by validating (delivery_id, runtime, session_ref, container_ref, actor_ref) match and delivery is claimed+unexpired. RelayTurnResponse already has has_more and remaining_count. pallium_relay_reply already works on delivery_id; atomic ACK can be added to the reply storage path.
 
@@ -39,7 +39,7 @@
 
 **Plan review:** Elevated risk, Moderate complexity. Architecture approved 2026-08-27 by relayarch (relay-reply-6a1fa006, delivery relay-delivery-23a044aba4c24fcb838aa14f504b422e). Self-review sufficient at this risk level per agent-workflow spec; relayarch approval obtained.
 
-**Approvals:** Not required at this risk level (Elevated, not High).
+**Approvals:** relayarch approved 2026-08-27 (delivery relay-delivery-8f8def128cc54b658164f257038a8e5d). Corrections applied: constant-time compare_digest, receipt optional for delivered-state (backward compat), MCP overflow never truncates delivery handles, two-session isolation test added.
 
 **Exceptions:** —
 
@@ -49,3 +49,11 @@
 ## Implementation
 
 Branch: fix/relay-receive-mcp-lifecycle
+PR: https://github.com/rore/Pallium/pull/76
+
+### Changes delivered
+
+- **RF-008**: `max_chars=0` (unlimited) default; complete pending set drained per turn; backlog UX removed from claude-code + codex hooks
+- **P0 1**: Receipt-based MCP ACK — `receipt = sha256(claim_token)[:32]`; new `/relay/deliveries/mcp-ack`; `pallium_relay_ack` uses receipt
+- **P0 2**: `PALLIUM_AGENT_REF="codex"` in codex `.mcp.json`; AGENTS.md documents trusted per-session `PALLIUM_THREAD_REF` binding
+- **P0 3**: `relay_delivery_context` accepts `claimed` state atomically (validate receipt + mark delivered); `pallium_relay_reply` ACKs in one step

@@ -102,7 +102,7 @@ class RelayService:
             "relay_list_sessions",
             "relay_name_session",
             "relay_send",
-            "relay_delivery_context",
+            "relay_reply_atomic",
             "relay_message_status",
             "relay_ack",
             "relay_ack_by_receipt",
@@ -237,7 +237,7 @@ class RelayService:
         self,
         *,
         delivery_id: str,
-        receipt: str,
+        receipt: str | None,
         payload: str,
         container_ref: str,
         actor_ref: str,
@@ -246,24 +246,15 @@ class RelayService:
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
         delivery = _opaque(delivery_id, "delivery_id", maximum=128)
-        context = self._store.relay_delivery_context(
-            delivery_id=delivery,
-            receipt=_opaque(receipt, "receipt", maximum=64),
-            container_ref=container,
-            actor_ref=actor,
-            now=now,
-        )
         reply_id = "relay-reply-" + hashlib.sha256(delivery.encode("utf-8")).hexdigest()
-        return self.send(
-            sender_runtime=context["sender_runtime"],
-            sender_session_ref=context["sender_session_ref"],
-            recipient=context["recipient"],
+        return self._store.relay_reply_atomic(
+            delivery_id=delivery,
+            receipt=_opaque(receipt, "receipt", maximum=64) if receipt is not None else None,
+            reply_message_id=reply_id,
             payload=payload,
             container_ref=container,
             actor_ref=actor,
             expires_in_seconds=expires_in_seconds,
-            in_reply_to=context["message_id"],
-            message_id=reply_id,
             now=now,
         )
 

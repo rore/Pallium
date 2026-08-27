@@ -277,15 +277,16 @@ class PalliumMcpClient:
         *,
         delivery_id: str,
         message: str,
-        receipt: str,
+        receipt: str | None = None,
         expires_in_seconds: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "delivery_id": delivery_id,
-            "receipt": receipt,
             "payload": message,
             **self._relay_scope_params(),
         }
+        if receipt is not None:
+            payload["receipt"] = receipt
         if expires_in_seconds is not None:
             payload["expires_in_seconds"] = expires_in_seconds
         return await self._post_or_error("/relay/replies", payload)

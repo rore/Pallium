@@ -131,23 +131,18 @@ def _bounded_error(result: dict, budget: int) -> dict:
 
 
 def _relay_text(result: object) -> str:
-    """Serialize Relay responses compactly while keeping errors visible."""
+    """Serialize Relay responses compactly while keeping errors visible.
+
+    Delivery turn responses (has 'deliveries' list) are always returned in full —
+    truncating them would lose claimed delivery handles (delivery_id, receipt) that
+    the model needs to ACK or reply. The budget cap applies only to error/status responses.
+    """
+    if isinstance(result, dict) and isinstance(result.get("deliveries"), list):
+        return _json_text(result)
     if len(_json_text(result)) <= _MCP_RELAY_MAX_CHARS:
         return _json_text(result)
     if isinstance(result, dict) and "error" in result:
         return _json_text(_bounded_error(result, _MCP_RELAY_MAX_CHARS))
-    if isinstance(result, dict) and isinstance(result.get("deliveries"), list):
-        states: dict[str, int] = {}
-        for delivery in result["deliveries"]:
-            state = str(delivery.get("state", "unknown"))
-            states[state] = states.get(state, 0) + 1
-        summary = {
-            key: result[key]
-            for key in ("message_id", "recipient", "redacted", "in_reply_to", "created_at", "expires_at")
-            if key in result
-        }
-        summary.update(delivery_count=len(result["deliveries"]), delivery_states=states)
-        return _json_text(summary)
     return _json_text({"error": "relay response exceeds the response budget"})
 
 
@@ -587,13 +582,13 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     @server.tool()
     async def pallium_relay_reply(
         delivery_id: str,
-        receipt: str,
         message: str,
+        receipt: str | None = None,
         expires_in_seconds: int | None = None,
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery. Copy delivery_id and receipt from the attributed Relay block. If the delivery is still claimed (MCP receive path), this atomically ACKs and replies in one step — no prior pallium_relay_ack needed. If it is already delivered (hook path), this sends the reply without re-ACKing. Pallium derives both endpoints from delivery_id."""
+        """Reply once to a received Relay delivery. Copy delivery_id from the attributed Relay block. When replying via pallium_relay_receive (MCP path), also pass the receipt — this atomically ACKs and replies in one step; no prior pallium_relay_ack needed. When replying after a hook-injected delivery (already delivered), receipt is not required. Pallium derives both endpoints from delivery_id."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG

@@ -803,7 +803,7 @@ class RelaySendRequest(BaseModel):
 
 class RelayReplyRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)
-    receipt: str = Field(min_length=1, max_length=64)
+    receipt: str | None = Field(default=None, max_length=64)
     payload: str = Field(min_length=1, max_length=1500)
     container_ref: str = Field(min_length=1, max_length=512)
     actor_ref: str = Field(min_length=1, max_length=255)

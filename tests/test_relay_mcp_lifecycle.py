@@ -44,7 +44,7 @@ def _turn(client: TestClient, runtime: str = RUNTIME, session: str = SESSION) ->
     return resp.json()
 
 
-def _mcp_ack(client: TestClient, delivery_id: str, receipt: str, **scope_override) -> "Response":
+def _mcp_ack(client: TestClient, delivery_id: str, receipt: str, **scope_override):
     return client.post("/relay/deliveries/mcp-ack", json={
         "delivery_id": delivery_id,
         "receipt": receipt,
@@ -52,7 +52,7 @@ def _mcp_ack(client: TestClient, delivery_id: str, receipt: str, **scope_overrid
     })
 
 
-def _reply(client: TestClient, delivery_id: str, receipt: str, payload: str = "reply") -> "Response":
+def _reply(client: TestClient, delivery_id: str, receipt: str = "bogus-receipt", payload: str = "reply"):
     return client.post("/relay/replies", json={
         "delivery_id": delivery_id,
         "receipt": receipt,
@@ -293,3 +293,47 @@ def test_explicit_max_chars_still_pages(client: TestClient):
     data = resp.json()
     assert len(data["deliveries"]) < 3
     assert data["has_more"] is True
+
+
+def test_concurrent_session_isolation(client: TestClient):
+    """Two MCP sessions with different session_refs cannot receive or ACK each other's mail.
+
+    Proves that pallium_relay_receive's PALLIUM_THREAD_REF binding is load-bearing:
+    session B's turn never returns session A's deliveries, and a wrong receipt
+    from session B cannot ACK session A's claimed delivery.
+    """
+    runtime = "claude-code"
+    session_a = "iso-session-a"
+    session_b = "iso-session-b"
+    sender_session = "iso-sender"
+
+    # register all three sessions
+    for sess in (session_a, session_b, sender_session):
+        rt = runtime if sess != sender_session else "codex"
+        client.post("/relay/turn", json={"runtime": rt, "session_ref": sess, **SCOPE})
+
+    # send a message addressed specifically to session A
+    resp = client.post("/relay/messages", json={
+        "sender_runtime": "codex",
+        "sender_session_ref": sender_session,
+        "recipient": f"{runtime}:{session_a}",
+        "payload": "only-for-a",
+        **SCOPE,
+    })
+    assert resp.status_code == 200
+
+    # session B's turn sees nothing — delivery is not addressed to it
+    turn_b = client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_b, **SCOPE}).json()
+    assert turn_b["deliveries"] == []
+
+    # session A claims the delivery
+    turn_a = client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_a, **SCOPE}).json()
+    assert len(turn_a["deliveries"]) == 1
+    d = turn_a["deliveries"][0]
+    assert d["receipt"] is not None
+
+    # session B cannot ACK with a wrong receipt — 409
+    assert _mcp_ack(client, d["delivery_id"], "wrong-receipt-from-b").status_code == 409
+
+    # delivery is still claimed; session A can ACK it correctly
+    assert _mcp_ack(client, d["delivery_id"], d["receipt"]).status_code == 200
