@@ -441,6 +441,7 @@ class SQLiteRelayMixin:
         receipt: str | None,
         reply_message_id: str,
         payload: str,
+        redacted: bool,
         container_ref: str,
         actor_ref: str,
         expires_in_seconds: int,
@@ -472,7 +473,13 @@ class SQLiteRelayMixin:
                     raise RelayConflictError("receipt required when replying from claimed state")
                 if not hmac.compare_digest(_delivery_receipt(delivery.claim_token) or "", receipt):
                     raise RelayConflictError("receipt does not match current claim")
-            elif delivery.state != "delivered":
+            elif delivery.state == "delivered":
+                expected = _delivery_receipt(delivery.claim_token)
+                if receipt is not None and (
+                    expected is None or not hmac.compare_digest(expected, receipt)
+                ):
+                    raise RelayConflictError("receipt does not match delivered claim")
+            else:
                 raise RelayConflictError("only claimed or delivered relay messages can be replied to")
 
             # validate the sender session (the delivery recipient is now replying)
@@ -492,7 +499,7 @@ class SQLiteRelayMixin:
             existing = db.get(RelayMessageRecord, reply_message_id)
             if existing is not None:
                 existing_expiry_secs = round((existing.expires_at - existing.created_at).total_seconds())
-                if existing.payload != payload or existing_expiry_secs != expires_in_seconds:
+                if existing.payload != payload or bool(existing.redacted) != redacted or existing_expiry_secs != expires_in_seconds:
                     raise RelayConflictError("reply already exists with different parameters")
                 return self._relay_status_in_session(db, existing, current)
 
@@ -516,7 +523,7 @@ class SQLiteRelayMixin:
                 container_ref=container_ref,
                 actor_ref=actor_ref,
                 payload=payload,
-                redacted=0,
+                redacted=1 if redacted else 0,
                 in_reply_to=message.id,
                 created_at=current,
                 expires_at=current + timedelta(seconds=expires_in_seconds),
@@ -536,7 +543,6 @@ class SQLiteRelayMixin:
             # mark original delivery as delivered only after reply creation succeeds
             if delivery.state == "claimed":
                 delivery.state = "delivered"
-                delivery.claim_token = None
                 delivery.delivered_at = current
 
             return self._relay_status_in_session(db, reply_msg, current)
@@ -617,6 +623,9 @@ class SQLiteRelayMixin:
             if message.container_ref != container_ref or message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             if delivery.state == "delivered":
+                expected = _delivery_receipt(delivery.claim_token)
+                if expected is None or not hmac.compare_digest(expected, receipt):
+                    raise RelayConflictError("receipt does not match delivered claim")
                 return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(delivery.delivered_at)}
             if delivery.state != "claimed":
                 raise RelayConflictError("delivery is not in claimed state")
@@ -631,7 +640,6 @@ class SQLiteRelayMixin:
                 if not hmac.compare_digest(_delivery_receipt(delivery.claim_token) or "", receipt):
                     raise RelayConflictError("receipt does not match current claim")
                 delivery.state = "delivered"
-                delivery.claim_token = None
                 delivery.delivered_at = current
                 result = {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(current)}
         if expired:

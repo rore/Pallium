@@ -245,13 +245,20 @@ class RelayService:
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
+        if not RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS:
+            raise ValueError(
+                f"expires_in_seconds must be between {RELAY_MIN_EXPIRY_SECONDS} and {RELAY_MAX_EXPIRY_SECONDS}"
+            )
         delivery = _opaque(delivery_id, "delivery_id", maximum=128)
+        raw_payload = validate_payload(payload)
+        stored_payload = redact_sensitive(raw_payload)
         reply_id = "relay-reply-" + hashlib.sha256(delivery.encode("utf-8")).hexdigest()
         return self._store.relay_reply_atomic(
             delivery_id=delivery,
             receipt=_opaque(receipt, "receipt", maximum=64) if receipt is not None else None,
             reply_message_id=reply_id,
-            payload=payload,
+            payload=stored_payload,
+            redacted=stored_payload != raw_payload,
             container_ref=container,
             actor_ref=actor,
             expires_in_seconds=expires_in_seconds,

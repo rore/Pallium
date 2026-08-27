@@ -42,11 +42,11 @@ def _name(client, runtime: str, session: str, alias, **extra):
     )
 
 
-def _reply(client, delivery_id: str, payload: str = "reply", receipt: str = "bogus-receipt", **extra):
-    return client.post(
-        "/relay/replies",
-        json={"delivery_id": delivery_id, "receipt": receipt, "payload": payload, **SCOPE, **extra},
-    )
+def _reply(client, delivery_id: str, payload: str = "reply", receipt: str | None = None, **extra):
+    body = {"delivery_id": delivery_id, "payload": payload, **SCOPE, **extra}
+    if receipt is not None:
+        body["receipt"] = receipt
+    return client.post("/relay/replies", json=body)
 
 
 def _status(client, message_id: str, **scope):
@@ -496,13 +496,26 @@ def test_turn_message_cap_alias_release_and_queued_close_reactivation(client):
 
 
 @pytest.mark.parametrize("max_chars", [-1, -100])
-def test_turn_budget_rejects_out_of_range_values(client, max_chars):
+def test_turn_budget_rejects_negative_values(client, max_chars):
     response = client.post(
         "/relay/turn",
         json={"runtime": "codex", "session_ref": "target", "max_chars": max_chars, **SCOPE},
     )
     assert response.status_code == 422
 
+
+@pytest.mark.parametrize("max_chars", [0, 2401, 100_000])
+def test_turn_budget_accepts_zero_and_large_values(client, max_chars):
+    response = client.post(
+        "/relay/turn",
+        json={
+            "runtime": "codex",
+            "session_ref": f"budget-{max_chars}",
+            "max_chars": max_chars,
+            **SCOPE,
+        },
+    )
+    assert response.status_code == 200
 
 def test_small_turn_budget_skips_oversized_message_without_blocking_later_delivery(client):
     _turn(client, "claude-code", "sender")

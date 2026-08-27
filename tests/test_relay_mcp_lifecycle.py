@@ -337,3 +337,50 @@ def test_concurrent_session_isolation(client: TestClient):
 
     # delivery is still claimed; session A can ACK it correctly
     assert _mcp_ack(client, d["delivery_id"], d["receipt"]).status_code == 200
+
+
+def test_atomic_reply_redacts_and_keeps_receipt_idempotent(client: TestClient):
+    _register(client)
+    _send(client, "redact reply")
+    delivery = _turn(client)["deliveries"][0]
+
+    response = _reply(
+        client,
+        delivery["delivery_id"],
+        delivery["receipt"],
+        "Authorization: Bearer secret-reply-value",
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["redacted"] is True
+    assert "secret-reply-value" not in result["payload"]
+
+    assert _mcp_ack(client, delivery["delivery_id"], delivery["receipt"]).status_code == 200
+    assert _mcp_ack(client, delivery["delivery_id"], "wrong-receipt-after-delivery").status_code == 409
+
+
+def test_atomic_reply_failure_rolls_back_delivery_claim(client: TestClient, relay_storage):
+    _register(client)
+    _send(client, "rollback reply", sender_session="closed-original-sender")
+    delivery = _turn(client)["deliveries"][0]
+
+    close = client.post(
+        "/relay/sessions/close",
+        json={"runtime": "codex", "session_ref": "closed-original-sender", **SCOPE},
+    )
+    assert close.status_code == 200
+    response = _reply(client, delivery["delivery_id"], delivery["receipt"], "cannot deliver")
+    assert response.status_code == 404
+
+    from sqlalchemy import select
+    from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord
+
+    with relay_storage._session_factory() as db:
+        stored_delivery = db.get(RelayDeliveryRecord, delivery["delivery_id"])
+        reply = db.execute(
+            select(RelayMessageRecord).where(
+                RelayMessageRecord.in_reply_to == delivery["message_id"]
+            )
+        ).scalar_one_or_none()
+    assert stored_delivery.state == "claimed"
+    assert reply is None

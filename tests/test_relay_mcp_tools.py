@@ -59,6 +59,19 @@ def asgi_post(relay_app):
     return _post
 
 
+def bind_asgi_post(monkeypatch: pytest.MonkeyPatch, asgi_post) -> None:
+    async def _post(_client, path, payload):
+        try:
+            return await asgi_post(path, payload)
+        except httpx.HTTPStatusError as exc:
+            return {
+                "error": str(exc),
+                "status_code": exc.response.status_code,
+                "detail": exc.response.json(),
+            }
+
+    monkeypatch.setattr(PalliumMcpClient, "_post_or_error", _post)
+
 @pytest.fixture(autouse=True)
 def base_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
@@ -117,7 +130,7 @@ class TestClaimTokenSecrecy:
     @pytest.mark.asyncio
     async def test_receipt_present_in_mcp_result(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
         """receipt is visible in the MCP response; delivery_id is present for ACK."""
-        monkeypatch.setattr(PalliumMcpClient, "_post", asgi_post)
+        bind_asgi_post(monkeypatch, asgi_post)
 
         # register both sessions first
         await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
@@ -131,6 +144,7 @@ class TestClaimTokenSecrecy:
         content, _ = await server.call_tool("pallium_relay_receive", {})
         text = content[0].text
         data = json.loads(text)
+        assert "deliveries" in data, data
         assert len(data["deliveries"]) == 1
         d = data["deliveries"][0]
         assert "claim_token" not in d
@@ -142,7 +156,7 @@ class TestDrainAll:
     @pytest.mark.asyncio
     async def test_rf008_returns_all_deliveries_beyond_legacy_limit(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
         """RF-008: all pending deliveries returned in one tool call, no 2400-char cap."""
-        monkeypatch.setattr(PalliumMcpClient, "_post", asgi_post)
+        bind_asgi_post(monkeypatch, asgi_post)
 
         await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
         for i in range(4):
@@ -165,7 +179,7 @@ class TestDrainAll:
 class TestAck:
     @pytest.mark.asyncio
     async def test_ack_with_valid_receipt(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
-        monkeypatch.setattr(PalliumMcpClient, "_post", asgi_post)
+        bind_asgi_post(monkeypatch, asgi_post)
 
         await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
         await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "ack-sender", **_SCOPE})
@@ -185,7 +199,7 @@ class TestAck:
 
     @pytest.mark.asyncio
     async def test_ack_with_wrong_receipt_fails(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
-        monkeypatch.setattr(PalliumMcpClient, "_post", asgi_post)
+        bind_asgi_post(monkeypatch, asgi_post)
 
         await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
         await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "wrong-ack-sender", **_SCOPE})
@@ -203,3 +217,106 @@ class TestAck:
         })
         text = bad_ack[0].text
         assert "conflict" in text.lower() or "409" in text or is_error
+
+
+class TestFullLifecycle:
+    @pytest.mark.asyncio
+    async def test_two_session_isolation_unicode_and_atomic_redacted_reply(
+        self, monkeypatch: pytest.MonkeyPatch, asgi_post
+    ):
+        bind_asgi_post(monkeypatch, asgi_post)
+        session_a = "tool-session-a"
+        session_b = "tool-session-b"
+        sender = "tool-isolation-sender"
+        for runtime, session in (
+            (_RUNTIME, session_a),
+            (_RUNTIME, session_b),
+            ("codex", sender),
+        ):
+            await asgi_post("/relay/turn", {"runtime": runtime, "session_ref": session, **_SCOPE})
+        await asgi_post("/relay/messages", {
+            "sender_runtime": "codex",
+            "sender_session_ref": sender,
+            "recipient": f"{_RUNTIME}:{session_a}",
+            "payload": "日本語 🦾 résumé",
+            **_SCOPE,
+        })
+
+        monkeypatch.setenv("PALLIUM_THREAD_REF", session_b)
+        content, _ = await create_server().call_tool("pallium_relay_receive", {})
+        assert json.loads(content[0].text)["deliveries"] == []
+
+        monkeypatch.setenv("PALLIUM_THREAD_REF", session_a)
+        content, _ = await create_server().call_tool("pallium_relay_receive", {})
+        delivery = json.loads(content[0].text)["deliveries"][0]
+        assert delivery["payload"] == "日本語 🦾 résumé"
+
+        reply, _ = await create_server().call_tool("pallium_relay_reply", {
+            "delivery_id": delivery["delivery_id"],
+            "receipt": delivery["receipt"],
+            "message": "Authorization: Bearer secret-tool-reply",
+        })
+        result = json.loads(reply[0].text)
+        assert result["redacted"] is True
+        assert "secret-tool-reply" not in result["payload"]
+
+    @pytest.mark.asyncio
+    async def test_restart_lease_redelivery_idempotent_ack_and_hook_race(
+        self, monkeypatch: pytest.MonkeyPatch, asgi_post, relay_app
+    ):
+        bind_asgi_post(monkeypatch, asgi_post)
+        await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "lifecycle-sender", **_SCOPE})
+        await asgi_post("/relay/messages", {
+            "sender_runtime": "codex",
+            "sender_session_ref": "lifecycle-sender",
+            "recipient": f"{_RUNTIME}:{_SESSION}",
+            "payload": "redeliver me",
+            **_SCOPE,
+        })
+
+        first_server = create_server()
+        first, _ = await first_server.call_tool("pallium_relay_receive", {})
+        first_delivery = json.loads(first[0].text)["deliveries"][0]
+        second, _ = await create_server().call_tool("pallium_relay_receive", {})
+        assert json.loads(second[0].text)["deliveries"] == []
+
+        from datetime import datetime, timedelta, timezone
+        from storage.sqlite_schema import RelayDeliveryRecord
+
+        storage = relay_app.state.pallium_service._storage
+        with storage._begin_immediate() as db:
+            record = db.get(RelayDeliveryRecord, first_delivery["delivery_id"])
+            record.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+        redelivered, _ = await create_server().call_tool("pallium_relay_receive", {})
+        current = json.loads(redelivered[0].text)["deliveries"][0]
+        assert current["receipt"] != first_delivery["receipt"]
+
+        stale, _ = await create_server().call_tool("pallium_relay_ack", {
+            "delivery_id": current["delivery_id"],
+            "receipt": first_delivery["receipt"],
+        })
+        assert json.loads(stale[0].text)["status_code"] == 409
+        for _ in range(2):
+            ack, _ = await create_server().call_tool("pallium_relay_ack", {
+                "delivery_id": current["delivery_id"],
+                "receipt": current["receipt"],
+            })
+            assert json.loads(ack[0].text)["state"] == "delivered"
+
+        await asgi_post("/relay/messages", {
+            "sender_runtime": "codex",
+            "sender_session_ref": "lifecycle-sender",
+            "recipient": f"{_RUNTIME}:{_SESSION}",
+            "payload": "hook wins",
+            **_SCOPE,
+        })
+        hook_claim = await asgi_post("/relay/turn", {
+            "runtime": _RUNTIME,
+            "session_ref": _SESSION,
+            **_SCOPE,
+        })
+        assert len(hook_claim["deliveries"]) == 1
+        mcp_after_hook, _ = await create_server().call_tool("pallium_relay_receive", {})
+        assert json.loads(mcp_after_hook[0].text)["deliveries"] == []
