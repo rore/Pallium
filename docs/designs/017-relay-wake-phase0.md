@@ -107,8 +107,21 @@ exact-session ingress.
 
 ### Claude Code
 
-**Verdict:** Passive-only pending live PoC. Exact-session wake is functionally
-available via native named-pipe messaging; two paths differ in auth stability.
+**Verdict:** Passive-only pending live PoC. Exact-session wake is a candidate via native named-pipe messaging; Path A authorization and any Channels fallback remain unproven on the installed runtime.
+
+**Installed non-triggering preflight (2026-08-28):**
+Claude Code reports `2.1.246`; Pallium settings and the installed source
+`SessionStart`/`Stop` hooks are present; `/health`, `/status`, and
+`/debug/queue/health` are healthy. This preflight intentionally did not access
+a target-session registry, named pipe, or `CLAUDE_CODE_MESSAGING_TOKEN`. Path A
+non-child reachability is therefore **UNPROVEN**, not a negative result.
+
+**Target-state gate (2026-08-28):**
+Pallium reports the architect-selected `claude-code:@relaydev` session
+`93fa25ba-b5a2-4037-837d-a171e4401023` as `recent`, last seen
+`2026-08-27T17:27:44Z`; that is not proof that it is active. No trigger is
+permitted until an architect-controlled observation proves the alias maps to
+that active immutable session.
 
 **Idle boundary correction (2026-08-27 research):**
 `user_prompt_submit` hook exit is NOT the idle boundary. The correct signal is
@@ -130,18 +143,25 @@ could allow it experimentally, but this is undocumented behavior. A separate
 peer-token/key mechanism exists internally (reverse-engineered in claude-code-socket-transport
 for ≤2.1.233) but is not a public API.
 
-Live PoC required: (a) non-child Pallium process holds the token → sends to
-pipe → verify idle wake in the same session; (b) classify result as supported
-or implementation detail. If (a) fails, fall back to Path C.
+**Credential security gate before any Path A PoC:** The target-side runtime or
+hook must transfer the credential directly to an audited loopback-only
+probe/registration path without model context, command arguments, stdout/stderr,
+files, Relay, or logs. That path is not implemented or authorized in this Phase 0
+task. Path A remains **BLOCKED** pending a separate reviewed integration/probe task
+with a user-present disposable target; only then may a live PoC classify the
+independent-process result as supported or implementation detail.
 
-**Path B: Channels (supported external ingress, preview/opt-in)**
-Channels push external events into the already-open session without spawning a
-new process. Pallium sends a channel notification; the existing session receives
-it. Requires `--channels plugin:pallium` at session start; Enterprise/Team must
-allow it. Research preview. Multiple events while busy are grouped into one turn
-(weaker one-delivery-per-turn invariant than Codex queue).
+**Path B: Channels (research fallback; not preflight-confirmed on installed CLI)**
+Channels are described as pushing external events into the already-open session
+without spawning a new process, but the installed Claude Code `2.1.246` public
+help did not advertise `--channels`. No target configuration, token, pipe, or
+channel was accessed during preflight. Treat Channels as unavailable unless a
+future architect-controlled check proves the exact session was launched with a
+supported channel configuration. Multiple events while busy are reported to group
+into one turn (weaker one-delivery-per-turn invariant than Codex queue).
 
-**Path C fallback:** Path A fails → use Channels as the supported external ingress.
+**Path C fallback:** If Path A fails, use Channels only after its exact-session
+configuration and admission behavior are independently proven.
 
 **`notify_idle` / `notify_when_idle`:**
 The `notify_when_idle` option on a SendMessage call asks another Claude Code
