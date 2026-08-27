@@ -89,45 +89,45 @@ selects durable fallback. Runtime names are never global capability claims, and 
 exited arbitrary process is not wakeable merely because its conversation can be
 resumed by launching another process.
 
-### Stop conditions (architecture review 2026-08-27)
+### Stop conditions (updated 2026-08-27 after research)
 
-**Implementation is blocked** until ALL of the following are satisfied. No
-PR 2 or later may start until all three conditions are cleared.
+**Implementation is still blocked** until all conditions are cleared, but Codex
+is now a live-PoC priority rather than blocked indefinitely.
 
-1. **Product gate:** The assigned first outcome requires unattended Claude↔Codex
-   exchange. Codex exact-session ingress is currently unavailable (passive-only).
-   A Claude-only adapter is a partial product that was explicitly deferred by the
-   architecture review. Resume only when Codex exact-session wake is proven
-   OR the user explicitly changes the target.
+1. **Product gate:** The assigned first outcome requires unattended Claude↔Codex.
+   Research (2026-08-27) found strong source and test evidence that Codex 0.149.1
+   `codex queue --thread <T>` writes to `queue_1.sqlite` and the existing running
+   Codex TUI detects external queue changes via `QueuedItemService::watch_external_messages`.
+   This appears to be the qualifying mechanism. A live Windows PoC is required
+   before PR 5 starts. **Do not treat source evidence as a passing Phase 0 gate.**
 
-2. **Claude Code live trace required:** Docs-based feasibility is not sufficient.
-   A disposable live trace must prove: (a) a non-hook process holding the token
-   connects to the named pipe and the message enters the model's next turn;
-   (b) an authoritative idle boundary — `user_prompt_submit` hook exit is
-   tentative; a SessionIdle event, `notify_idle` signal, or equivalent state
-   must be observed. Both must pass all seven Phase 0 cases.
+2. **Claude Code live trace required:** Two paths: (A) native named-pipe —
+   `CLAUDE_CODE_MESSAGING_TOKEN` is own-child only; independent Pallium daemon
+   is undocumented; live PoC must confirm or deny; (B/C) Channels — supported
+   external ingress, opt-in preview, weaker one-delivery-per-turn. The `Stop`
+   hook is the correct idle boundary (not `user_prompt_submit` exit). Live PoC
+   must prove chosen path through all seven Phase 0 cases.
 
 3. **MCP receive lifecycle prerequisite:** `fix-relay-receive-mcp-lifecycle`
-   must be implemented and merged before any wake adapter PR starts. The
-   recovery/fallback contract must be complete before wake is layered on top.
+   must be implemented and merged before any wake adapter PR starts.
 
 **PR 2 shape:** Derive the smallest shared core only from two proven exact-session
-adapter traces. Do not build six wake states, callback capabilities, registry,
-dispatcher, schema, and fake adapters speculatively. Open numeric limits
-(admission deadline, rate limit, hop bound, dispatcher depth) are not decided
-until both adapters are evidenced.
+adapter live traces. Open numeric limits are not decided until both adapters are
+evidenced from measured runtime behavior.
 
 ### Next disposable PoC sequence
 
-Codex: passive-only (blocked). Do not revisit until a supported surface targets
-the exact existing running session. App Server, resumed clone, and replacement
-sessions are rejected.
+**Codex (live PoC priority):** `codex queue --thread T` into `queue_1.sqlite`
+watcher in existing TUI — strong source evidence, needs Windows PoC:
+1. Codex idle: queue message → same TUI wakes, `UserPromptSubmit` hook sees delivery ID → admission confirmed.
+2. Codex busy: message queues, current turn not steered, new distinct turn after.
+Both must pass all seven Phase 0 cases. App Server path remains rejected.
 
-Claude Code: live trace required (see stop condition 2). The docs-based
-feasibility claim is tentative pending a disposable Windows probe that proves
-exact-session pipe delivery and the authoritative idle boundary.
+**Claude Code:** Live PoC for Path A (non-child Pallium daemon + named pipe) or
+fall back to Path C (Channels, opt-in). `Stop` hook is idle boundary. Must pass
+all seven Phase 0 cases.
 
-OpenCode: deferred until after Claude Code AND Codex are both proven.
+**OpenCode:** Deferred until after Claude Code AND Codex are both proven.
 
 ## In Scope
 

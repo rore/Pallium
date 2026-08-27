@@ -16,36 +16,60 @@ Verdicts are based on official documentation, integration tests, and installed-r
 
 ### Codex
 
-**Verdict:** Passive-only. The 2026-08-27 probe reached a separately launched
-App Server, not the existing Codex session addressed by Relay. That path is
-rejected for Relay wake and must not progress to an adapter.
+**Verdict: Probable — proceed to live Windows PoC (updated 2026-08-27).**
+Strong source and integration-test evidence that `codex queue` targets the exact
+already-running Codex TUI session via a shared durable SQLite queue, without
+requiring Pallium to own or replace it. Live PoC required before PR 5 starts.
 
-**Transport-confirmed contract (partial — probe 2026-08-27):**
-- `thread/queue/add` with `clientUserMessageId` is callable on Windows via stdio transport. Queue response preserves `clientUserMessageId` in `queuedSubmission`.
-- `initialize` with `capabilities.experimentalApi: true` accepted; server returns `userAgent` with `0.149.1` on Windows.
-- `stdio://` is the Windows default transport — daemon subcommand is Unix-only but stdio App Server works on Windows.
-- Schema requires `--experimental` flag (`generate-json-schema --experimental`); non-experimental schema omits `thread/queue/add`.
+**Prior verdict (2026-08-27 probe):** Passive-only. The probe reached a
+separately launched App Server, not the existing session. That path remains
+rejected (see below).
 
-**Why the candidate fails the product gate:**
-- it creates or controls a Pallium-owned App Server rather than the addressed
-  already-running Codex session;
-- success would fragment session identity and conversation state;
-- queue admission in that substitute runtime would not satisfy Relay delivery.
+**New mechanism confirmed by source + integration tests (2026-08-27 research):**
 
-**Probe evidence:** `.local/phase0-probes/codex-0.149.1-stdio-probe-2026-08-27.json`
+`codex queue --thread <THREAD_ID> --message "<payload>"` writes a user message
+into `$CODEX_HOME/queue_1.sqlite` — the durable user-message queue. The
+already-running Codex TUI process runs `QueuedItemService::watch_external_messages`,
+which periodically checks SQLite's data version, gets thread IDs loaded in its
+own `ThreadManager`, and dispatches wake attempts for threads with external queue
+changes. No Pallium process-ownership of the target session; Pallium is the queue
+writer and the existing user-owned TUI is the only process that processes the turn.
 
-**Re-entry gate:** Resume Codex wake work only when a supported surface can target
-the exact existing session identified by Relay and can prove all seven cases in
-that same session. Do not use a managed App Server, resumed clone, or replacement
-session as evidence.
+No `#[cfg(unix)]` around the queue watcher. The daemon/socket IPC limit is
+Unix-only; the queue mechanism is cross-platform. Suitable for Windows PoC.
 
-**Rejected managed-runtime handshake (evidence only):**
-1. Initialize App Server with `capabilities.experimentalApi: true`.
-2. `thread/queue/add` with `clientUserMessageId = pallium:<delivery_id>` and attributed Relay payload as `input: [{type:"text", text:"..."}]`.
-3. Queue response returns `queuedSubmission` with preserved `clientUserMessageId` → `wake_state = triggered`.
-4. `item/started` event for a `userMessage` carrying the exact `clientUserMessageId` and content → `wake_state = admitted`, delivery complete.
-5. `turn/completed` is execution completion, not delivery admission — do not use it.
-6. `turn/steer` is forbidden. `turn/start` is not a substitute for the queue path.
+**Admission acknowledgement path:**
+`UserPromptSubmit` hook fires for queued user messages. The existing Pallium
+Codex hook can observe the delivery ID in the queued payload and call the
+Pallium loopback admission endpoint. This is a clean admission proof from the
+target session's own model-bound boundary.
+
+**Busy behavior is correct:**
+If the thread is busy, the message remains queued. When the active turn completes,
+the lifecycle contributor drains the queue and starts a new distinct turn.
+Relay invariant "busy delivery never steers the active turn" is satisfied.
+
+**Integration test coverage:**
+`externally_changed_queues_dispatch_independently_and_retry_failed_wakes` creates
+an independent second state runtime writing `"written by another process"` to a
+thread loaded in the running runtime, then verifies the running runtime detects
+the external write and starts a model turn with the externally written message.
+Also covers: independent loaded threads, delayed wake attempts, surviving while
+thread not loaded, ordinary later resume, exact queue consumption.
+
+**Live PoC required before PR 5:**
+Run two cases on Windows:
+1. Codex idle: `codex queue --thread T --message "[PALLIUM:R123] ..."` → same
+   TUI wakes, `UserPromptSubmit` hook sees R123, admission confirmed.
+2. Codex busy: R123 stays queued; current turn is not steered; after completion
+   same TUI starts a new distinct turn with R123.
+Both cases must pass all seven Phase 0 cases.
+
+**The prior Codex App Server path remains rejected:**
+It creates or controls a Pallium-owned App Server rather than the existing session.
+The July 2026 upstream issue reports predate 0.149.1 and no longer describe the
+current queue architecture. Do not use them as evidence that Codex lacks
+exact-session ingress.
 
 ### OpenCode
 
@@ -81,26 +105,57 @@ session as evidence.
 
 ### Claude Code
 
-**Verdict:** Passive-only. Native channel eligible (2.1.246 ≥ 2.1.234 Windows minimum); no probe run. Busy-turn semantics require an explicit decision before enabling `busy_queue` capability. Active wake adapter implementation blocked pending probe.
+**Verdict:** Passive-only pending live PoC. Exact-session wake is functionally
+available via native named-pipe messaging; two paths differ in auth stability.
 
-**Proven:**
-- Native local inbox socket authenticates via local token; official cross-session messaging starts a new turn when idle.
-- 2.1.246 clears the documented Windows minimum version.
+**Idle boundary correction (2026-08-27 research):**
+`user_prompt_submit` hook exit is NOT the idle boundary. The correct signal is
+the `Stop` hook, which fires when the main Claude Code agent finishes responding.
+`idle_prompt` matcher also fires when Claude is waiting for the next prompt and
+can serve as secondary telemetry. Do not treat `user_prompt_submit` exit as
+model-turn idle.
 
+**Path A: Native named-pipe (preferred, auth seam requires live PoC)**
+Each eligible session owns a named-pipe inbox. Idle delivery starts a new turn.
+Busy delivery is accepted between tool calls (exact semantics — separate
+following turn vs mid-turn steering — must be proven).
 
-**Open decision (required before PR 3):**
-During an active turn, Claude Code reads inbox messages between tool calls. This *may* not create a distinct following turn, violating the non-negotiable "busy delivery never steers the active human-owned turn." Options:
-- a) Advertise only `idle_wake`; busy messages wait for idle (defer, safe).
-- b) Prove that inbox delivery during an active turn queues a distinct *following* turn (not mid-turn steering) and enable `busy_queue`.
-- c) Channels as an alternative ingress if native inbox doesn't satisfy the separate-turn contract.
+`CLAUDE_CODE_MESSAGING_TOKEN` is documented as an own-child credential for
+hooks and Bash commands. There is no public contract stating that an independent
+long-running Pallium daemon can hold that token and qualify as own-child. On
+Windows the auth may be primarily token-based (no Unix process ancestry), which
+could allow it experimentally, but this is undocumented behavior. A separate
+peer-token/key mechanism exists internally (reverse-engineered in claude-code-socket-transport
+for ≤2.1.233) but is not a public API.
 
-Until (a) or (b) is proven with a Windows disposable trace, Claude Code advertises only `idle_wake`.
+Live PoC required: (a) non-child Pallium process holds the token → sends to
+pipe → verify idle wake in the same session; (b) classify result as supported
+or implementation detail. If (a) fails, fall back to Path C.
 
-**Admission handshake (idle path):**
-1. Register the live inbox socket and local auth token as `idle_wake` capability.
-2. Submit the attributed Relay payload to the inbox.
-3. Admission: next turn started in that session carries the Pallium delivery ID in its envelope → `wake_state = admitted`.
-4. If the session is not idle, no submission; delivery remains `pending` for next-natural-turn.
+**Path B: Channels (supported external ingress, preview/opt-in)**
+Channels push external events into the already-open session without spawning a
+new process. Pallium sends a channel notification; the existing session receives
+it. Requires `--channels plugin:pallium` at session start; Enterprise/Team must
+allow it. Research preview. Multiple events while busy are grouped into one turn
+(weaker one-delivery-per-turn invariant than Codex queue).
+
+**Path C fallback:** Path A fails → use Channels as the supported external ingress.
+
+**`notify_idle` / `notify_when_idle`:**
+The `notify_when_idle` option on a SendMessage call asks another Claude Code
+session to send one notice when it next goes idle. It is a one-shot
+inter-session signal, not a subscribe/poll stream. No public API for Pallium
+to receive an idle event stream. `Stop` hook is sufficient.
+
+**`artifact_yield`:** Internal/unproven. Do not build on it.
+
+**Remaining gates before PR 3:**
+1. Live Windows PoC: prove Path A (non-child Pallium daemon) or confirm Path C.
+2. Busy-turn semantic: prove Path A busy delivery queues a distinct following
+   turn (not mid-turn steering); or restrict to `idle_wake` only.
+3. Admission correlation: `Stop` hook on receiving session confirms delivery ID
+   present in the turn, calls loopback admission endpoint.
+All seven Phase 0 cases must pass.
 
 ## Seven Phase 0 cases
 
@@ -172,20 +227,20 @@ Working values for adapter development. None have been measured against an insta
 
 ## Decisions still open (must resolve before PR 2)
 
-1. Claude Code busy-turn semantic: idle-only or proven separate-turn queue (see above).
-2. Which candidate runtime can first prove activation of the exact existing
-   addressed session; substitute managed sessions are categorically excluded.
+1. Claude Code busy-turn semantic: prove distinct following turn or restrict to idle_wake only.
+2. Claude Code auth path: Path A (non-child daemon token) or Path C (Channels).
+3. Codex live Windows PoC: confirm queue_1.sqlite watcher fires in existing TUI, UserPromptSubmit hook sees delivery ID, busy case queues correctly.
 
 ## Re-estimate of remaining PRs
 
-Based on Phase 0 corrected findings. Codex has no qualifying existing-session ingress; OpenCode requires plugin work; Claude Code requires the busy-turn decision.
+Updated based on 2026-08-27 research findings. Codex is now live-PoC priority (was blocked).
 
 | PR | Scope | Estimate |
 |---|---|---|
 | 2 | Durable core: wake metadata, state machine, leases, dispatcher, fake adapters, recovery | 3–5 days |
-| 3 | Claude Code adapter (idle path; busy path conditional on open decision) | 2–3 days |
+| 3 | Claude Code adapter (Path A or C; idle path confirmed; busy path conditional) | 2–3 days |
 | 4 | OpenCode plugin coordinator + adapter | 3–4 days |
-| 5 | Codex adapter, only after a supported existing-session ingress appears | Not scheduled |
+| 5 | Codex adapter (queue_1.sqlite path; pending live Windows PoC) | 2–3 days |
 | 6 | Cross-runtime journeys, dashboard, docs, runbook | 2–3 days |
 
 ## Primary references
