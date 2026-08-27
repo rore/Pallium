@@ -6,20 +6,21 @@
 
 ## Per-runtime verdict
 
-Verdicts are based on official documentation, integration tests, and installed-runtime probes. All three runtimes are classified **passive-only**: natural-turn delivery is safe; active wake adapter implementation requires the full seven-case evidence listed in each runtime's "Remaining gates" section. Codex and OpenCode have partial transport-layer probes — admission and remaining cases are unobserved. Claude Code has no probe. No active wake adapter PR may merge until its runtime section is fully evidenced.
+Verdicts are based on official documentation, integration tests, and installed-runtime probes. All three runtimes are classified **passive-only**: natural-turn delivery is safe; active wake adapter implementation requires the full seven-case evidence listed in each runtime's "Remaining gates" section. Codex has proven exact-session `codex queue --thread` admission while idle and at a safe busy boundary, with correlated model-visible evidence, but remains partial and passive-only until cases 5, 6, and 7 plus coordinator-owned idempotency and fallback are evidenced. OpenCode has partial transport evidence and Claude Code has no probe. No active wake adapter PR may merge until its runtime section is fully evidenced.
 
 | Runtime | Verdict | Implementation order |
 |---|---|---|
-| Codex | **Passive-only** — managed App Server is a substitute runtime, not existing-session wake | Not scheduled |
+| Codex | **Passive-only; partial Phase 0** — exact-session `codex queue --thread` ingress is proven for idle and safe busy admission; native duplicate suppression failed | Production gated by cases 5, 6, and 7 plus coordinator-owned idempotency and fallback |
 | OpenCode | **Passive-only** — transport confirmed via probe; active wake admission unobserved | Second |
 | Claude Code | **Passive-only** — native channel eligible; no probe run | Third |
 
 ### Codex
 
-**Verdict: Probable — proceed to live Windows PoC (updated 2026-08-27).**
-Strong source and integration-test evidence that `codex queue` targets the exact
-already-running Codex TUI session via a shared durable SQLite queue, without
-requiring Pallium to own or replace it. Live PoC required before PR 5 starts.
+**Verdict: Partial — remain passive-only (updated 2026-08-27).**
+Live Windows evidence proves that `codex queue --thread` targets the exact
+already-running Codex TUI without Pallium owning or replacing it: idle and
+safe busy-boundary delivery reached correlated model-visible turns. Production
+remains gated on cases 5, 6, and 7 plus coordinator-owned idempotency and fallback.
 
 **Prior verdict (2026-08-27 probe):** Passive-only. The probe reached a
 separately launched App Server, not the existing session. That path remains
@@ -57,13 +58,14 @@ the external write and starts a model turn with the externally written message.
 Also covers: independent loaded threads, delayed wake attempts, surviving while
 thread not loaded, ordinary later resume, exact queue consumption.
 
-**Live PoC required before PR 5:**
-Run two cases on Windows:
-1. Codex idle: `codex queue --thread T --message "[PALLIUM:R123] ..."` → same
-   TUI wakes, `UserPromptSubmit` hook sees R123, admission confirmed.
-2. Codex busy: R123 stays queued; current turn is not steered; after completion
-   same TUI starts a new distinct turn with R123.
-Both cases must pass all seven Phase 0 cases.
+**Live Phase 0 result (2026-08-27):**
+1. Idle and safe busy-boundary exact-session admission passed with correlated
+   model-visible markers.
+2. Fresh post-restart wake passed, but case 6 remains PARTIAL / BLOCKED: no
+   outstanding triggered delivery was recovered and no already-admitted delivery
+   was proven exactly once.
+3. Cases 5 and 7 remain BLOCKED. Native duplicate suppression failed, so a future
+   coordinator must own dedupe and fallback before any production adapter.
 
 **The prior Codex App Server path remains rejected:**
 It creates or controls a Pallium-owned App Server rather than the existing session.
@@ -229,18 +231,18 @@ Working values for adapter development. None have been measured against an insta
 
 1. Claude Code busy-turn semantic: prove distinct following turn or restrict to idle_wake only.
 2. Claude Code auth path: Path A (non-child daemon token) or Path C (Channels).
-3. Codex live Windows PoC: confirm queue_1.sqlite watcher fires in existing TUI, UserPromptSubmit hook sees delivery ID, busy case queues correctly.
+3. Codex remaining Phase 0 gates: safely cover closed/stale/permission states, outstanding-trigger and already-admitted restart recovery, and ambiguous-response fallback with coordinator-owned dedupe.
 
 ## Re-estimate of remaining PRs
 
-Updated based on 2026-08-27 research findings. Codex is now live-PoC priority (was blocked).
+Updated based on 2026-08-27 Phase 0 evidence. Codex exact-session ingress is proven, but production remains gated.
 
 | PR | Scope | Estimate |
 |---|---|---|
 | 2 | Durable core: wake metadata, state machine, leases, dispatcher, fake adapters, recovery | 3–5 days |
 | 3 | Claude Code adapter (Path A or C; idle path confirmed; busy path conditional) | 2–3 days |
 | 4 | OpenCode plugin coordinator + adapter | 3–4 days |
-| 5 | Codex adapter (queue_1.sqlite path; pending live Windows PoC) | 2–3 days |
+| 5 | Codex adapter (queue_1.sqlite path; gated on remaining Phase 0 cases and coordinator dedupe/fallback) | 2–3 days |
 | 6 | Cross-runtime journeys, dashboard, docs, runbook | 2–3 days |
 
 ## Primary references
@@ -267,7 +269,7 @@ cleared and no Codex wake adapter may proceed.
 | 3. Busy non-steering turn | PASS | The controlled busy baseline completed before `PHASE0-BUSY-3cfab422ada3422bb7f82fa935ad29e6` entered a distinct following exact-task turn. |
 | 4. Correlated admission | PASS | Manager exact-rollout/task-history correlation and model-visible markers, not queue acceptance alone, established admission. |
 | 5. Closed/stale/permission/unavailable | BLOCKED | An unknown UUID was rejected with `no rollout found` without touching the target. Closed and permission-denied states were not forced because doing so would close the addressed task or fabricate a failure. |
-| 6. Pallium restart recovery | PASS | After `scripts/restart-service.ps1`, item `01a044f4-841d-75d3-b55e-42c2ccaecb11` admitted `PHASE0-RESTART-065c2ef792e44dbca01b0afa041b28ca` into exact-task turn `01a044f4-aa3f-7f93-bab3-34dc5e7c81cd`; `/health`, `/status`, and `/debug/queue/health` returned 200. |
+| 6. Pallium restart recovery | PARTIAL / BLOCKED | After `scripts/restart-service.ps1`, a fresh item `01a044f4-841d-75d3-b55e-42c2ccaecb11` admitted `PHASE0-RESTART-065c2ef792e44dbca01b0afa041b28ca` into exact-task turn `01a044f4-aa3f-7f93-bab3-34dc5e7c81cd`; `/health`, `/status`, and `/debug/queue/health` returned 200. This proves fresh post-restart wake only, not outstanding-trigger recovery or already-admitted exactly-once handling. |
 | 7. Safe retry after ambiguous response | BLOCKED | No safe way was available to force an ambiguous transport response. A separate duplicate probe proved **native idempotency FAIL**: identical marker `PHASE0-DUPLICATE-ea66b0165ec84f4b869b52e7ca66e2b6` was admitted in two distinct turns from queue items `01a044f5-adf2-7300-8ff0-29516413b51e` and `01a044f5-baf2-7660-a7d1-daac66519ef0`. |
 
 Consequences:
@@ -275,7 +277,7 @@ Consequences:
 - `codex queue --thread` is a viable exact-session ingress for the proven cases,
   but it has no native duplicate suppression. Any future Pallium coordinator must
   dedupe by delivery/wake-attempt identity before invoking the adapter.
-- Cases 5 and 7 remain gates. Do not implement a production adapter, registry,
+- Cases 5, 6, and 7 remain gates. Do not implement a production adapter, registry,
   dispatcher, schema, or capability advertisement from this evidence.
 - The later app-status `interrupted` label for the successful busy turn conflicts
   with persisted/model-visible admission; treat it as a runtime-observability
