@@ -16,6 +16,7 @@
 
 # Parallel · Agent Relay
 - idea-agent-relay
+- fix-relay-claim-before-context-emission
 - add-wake-first-relay-delivery
 - add-copilot-relay-integration
 - validate-relay-dependency-workflows
