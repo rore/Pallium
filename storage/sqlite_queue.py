@@ -125,7 +125,7 @@ class SQLiteQueueMixin:
                 if not is_transient_error(exc):
                     raise
                 if attempt == self._IMMEDIATE_ATTEMPTS - 1:
-                    raise ImmediateTransactionBusyError("SQLite immediate transaction is busy") from exc
+                    raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)") from exc
                 time.sleep(self._IMMEDIATE_BACKOFF_SECONDS * (attempt + 1))
         assert session is not None and conn is not None
         try:

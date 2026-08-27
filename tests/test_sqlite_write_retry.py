@@ -250,6 +250,6 @@ class TestImmediateTransactionRetry:
         storage._session_factory = lambda: session
 
         with patch("storage.sqlite_queue.time.sleep"):
-            with pytest.raises(ImmediateTransactionBusyError, match="immediate transaction is busy"):
+            with pytest.raises(ImmediateTransactionBusyError, match="database is locked"):
                 with storage._begin_immediate():
                     pass
