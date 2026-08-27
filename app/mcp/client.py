@@ -292,7 +292,7 @@ class PalliumMcpClient:
         params = self._relay_scope_params()
         return await self._get_or_error(f"/relay/messages/{message_id}", params)
 
-    async def relay_receive(self, runtime: str, session_ref: str, max_chars: int = 2400) -> Any:
+    async def relay_receive(self, runtime: str, session_ref: str, max_chars: int = 0) -> Any:
         payload: dict[str, Any] = {
             "runtime": runtime,
             "session_ref": session_ref,

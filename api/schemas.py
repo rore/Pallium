@@ -774,7 +774,7 @@ class RelayTurnRequest(BaseModel):
     container_ref: str = Field(min_length=1, max_length=512)
     actor_ref: str = Field(min_length=1, max_length=255)
     title: str | None = Field(default=None, min_length=1, max_length=255)
-    max_chars: int = Field(default=2400, ge=1, le=2400)
+    max_chars: int = Field(default=0, ge=0)
 
 
 class RelaySessionMutationRequest(BaseModel):

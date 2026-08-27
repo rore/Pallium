@@ -71,7 +71,6 @@ def _delivery_view(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -
 
 
 class SQLiteRelayMixin:
-    _BACKLOG_NOTICE_RESERVE_CHARS = 80
 
     def _relay_session(
         self,
@@ -187,18 +186,12 @@ class SQLiteRelayMixin:
                     "[End Pallium Relay message]",
                 ])
                 rendered_chars = len("\n".join(lines)) + (2 if selected else 0)
-                if used + rendered_chars > max_chars:
+                if max_chars and used + rendered_chars > max_chars:
                     continue
                 selected.append((delivery, message, rendered_chars))
                 used += rendered_chars
-                if len(selected) >= max_messages:
+                if max_messages and len(selected) >= max_messages:
                     break
-
-            if len(eligible_rows) > len(selected) and max_chars >= 1000:
-                delivery_budget = max_chars - self._BACKLOG_NOTICE_RESERVE_CHARS
-                while selected and used > delivery_budget:
-                    _, _, rendered_chars = selected.pop()
-                    used -= rendered_chars
 
             claimed: list[dict[str, Any]] = []
             for delivery, message, _ in selected:

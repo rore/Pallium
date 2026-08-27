@@ -483,12 +483,9 @@ def test_turn_message_cap_alias_release_and_queued_close_reactivation(client):
     ).status_code == 200
 
     first = _turn(client, "codex", "target")["deliveries"]
-    assert len(first) == 3
+    assert len(first) == 4
     for delivery in first:
         assert _ack(client, delivery).status_code == 200
-    second = _turn(client, "codex", "target")["deliveries"]
-    assert len(second) == 1
-    assert _ack(client, second[0]).status_code == 200
     assert _turn(client, "codex", "target")["deliveries"] == []
 
     assert _name(client, "codex", "target", "review").status_code == 200
@@ -498,7 +495,7 @@ def test_turn_message_cap_alias_release_and_queued_close_reactivation(client):
     assert _send(client, "claude-code", "sender", "codex:@review").status_code == 404
 
 
-@pytest.mark.parametrize("max_chars", [0, 2401])
+@pytest.mark.parametrize("max_chars", [-1, -100])
 def test_turn_budget_rejects_out_of_range_values(client, max_chars):
     response = client.post(
         "/relay/turn",

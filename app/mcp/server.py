@@ -618,7 +618,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
 
     @server.tool()
     async def pallium_relay_receive(
-        max_chars: int = 2400,
+        max_chars: int = 0,
     ) -> str:
         """Claim and return pending Relay deliveries for this session. Uses only integration-injected identity (PALLIUM_AGENT_REF as runtime, PALLIUM_THREAD_REF as session_ref) — no model-supplied identity accepted. Call pallium_relay_ack(delivery_id) after processing each delivery, or pallium_relay_reply to reply and ACK atomically. Unclaimed deliveries are redelivered after lease expiry."""
         ctx = resolve_context()

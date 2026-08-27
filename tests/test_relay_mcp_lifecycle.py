@@ -208,3 +208,52 @@ def test_no_double_delivery_after_ack(client: TestClient):
 
     for _ in range(3):
         assert _turn(client)["deliveries"] == []
+
+
+# ── RF-008: drain-all regression ───────────────────────────────────────────────
+
+def test_drain_all_beyond_legacy_char_limit(client: TestClient):
+    """All pending deliveries are returned in one turn regardless of combined payload size."""
+    _register(client)
+    # 4 messages; combined payload well above the old 2400-char limit
+    payloads = [f"message-{i}: {'x' * 700}" for i in range(4)]
+    for p in payloads:
+        _send(client, p, sender_session=f"drain-sender-{payloads.index(p)}")
+
+    turn = _turn(client)
+    assert len(turn["deliveries"]) == 4, f"expected 4, got {len(turn['deliveries'])}"
+    assert turn["has_more"] is False
+    assert turn["remaining_count"] == 0
+
+    # All are ACK-able; none re-appear
+    for d in turn["deliveries"]:
+        assert _mcp_ack(client, d["delivery_id"]).status_code == 200
+    assert _turn(client)["deliveries"] == []
+
+
+def test_drain_fifo_order(client: TestClient):
+    """Deliveries are returned in send order (FIFO)."""
+    _register(client)
+    for i in range(3):
+        _send(client, f"msg-{i}", sender_session=f"fifo-sender-{i}")
+
+    deliveries = _turn(client)["deliveries"]
+    assert len(deliveries) == 3
+    payloads = [d["payload"] for d in deliveries]
+    assert payloads == ["msg-0", "msg-1", "msg-2"]
+
+
+def test_explicit_max_chars_still_pages(client: TestClient):
+    """A caller-set max_chars > 0 still limits the returned set (paging contract preserved)."""
+    _register(client)
+    for i in range(3):
+        _send(client, f"page-msg-{i}", sender_session=f"page-sender-{i}")
+
+    # Request with a tiny explicit limit — must not return all 3
+    resp = client.post("/relay/turn", json={
+        "runtime": RUNTIME, "session_ref": SESSION, "max_chars": 100, **SCOPE,
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["deliveries"]) < 3
+    assert data["has_more"] is True
