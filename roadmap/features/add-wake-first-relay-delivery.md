@@ -89,11 +89,45 @@ selects durable fallback. Runtime names are never global capability claims, and 
 exited arbitrary process is not wakeable merely because its conversation can be
 resumed by launching another process.
 
+### Stop conditions (architecture review 2026-08-27)
+
+**Implementation is blocked** until ALL of the following are satisfied. No
+PR 2 or later may start until all three conditions are cleared.
+
+1. **Product gate:** The assigned first outcome requires unattended Claude↔Codex
+   exchange. Codex exact-session ingress is currently unavailable (passive-only).
+   A Claude-only adapter is a partial product that was explicitly deferred by the
+   architecture review. Resume only when Codex exact-session wake is proven
+   OR the user explicitly changes the target.
+
+2. **Claude Code live trace required:** Docs-based feasibility is not sufficient.
+   A disposable live trace must prove: (a) a non-hook process holding the token
+   connects to the named pipe and the message enters the model's next turn;
+   (b) an authoritative idle boundary — `user_prompt_submit` hook exit is
+   tentative; a SessionIdle event, `notify_idle` signal, or equivalent state
+   must be observed. Both must pass all seven Phase 0 cases.
+
+3. **MCP receive lifecycle prerequisite:** `fix-relay-receive-mcp-lifecycle`
+   must be implemented and merged before any wake adapter PR starts. The
+   recovery/fallback contract must be complete before wake is layered on top.
+
+**PR 2 shape:** Derive the smallest shared core only from two proven exact-session
+adapter traces. Do not build six wake states, callback capabilities, registry,
+dispatcher, schema, and fake adapters speculatively. Open numeric limits
+(admission deadline, rate limit, hop bound, dispatcher depth) are not decided
+until both adapters are evidenced.
+
 ### Next disposable PoC sequence
 
-Codex is blocked — no exact-session ingress proven. Do not revisit until a supported surface appears. OpenCode is deferred.
+Codex: passive-only (blocked). Do not revisit until a supported surface targets
+the exact existing running session. App Server, resumed clone, and replacement
+sessions are rejected.
 
-Claude Code is the first adapter target. The socket registration path is confirmed feasible (2026-08-27). Implement and prove the Claude Code adapter cycle end-to-end before adding any other runtime.
+Claude Code: live trace required (see stop condition 2). The docs-based
+feasibility claim is tentative pending a disposable Windows probe that proves
+exact-session pipe delivery and the authoritative idle boundary.
+
+OpenCode: deferred until after Claude Code AND Codex are both proven.
 
 ## In Scope
 

@@ -312,6 +312,35 @@ reachable ingress. Normal passive fallback is visible but is not an alert.
 - Restart the installed service only through `scripts/restart-service.ps1`, then
   verify `/health`, `/status`, and `/debug/queue/health` on port 19836.
 
+## Stop conditions (architecture review 2026-08-27)
+
+Implementation is blocked. Do not start PR 2 or later until all three conditions
+are cleared.
+
+1. **Product gate:** The assigned first outcome is unattended Claude↔Codex.
+   Codex exact-session ingress is unavailable (passive-only). A Claude-only
+   adapter is explicitly deferred. Resume only when Codex exact-session wake
+   is proven or the user changes the target.
+
+2. **Claude Code live trace required:** Docs-only feasibility is insufficient.
+   A disposable live trace must prove: (a) a non-hook process holding the token
+   connects to the named pipe and the message enters the model's next turn;
+   (b) an authoritative idle boundary — `user_prompt_submit` hook exit is
+   tentative; a `notify_idle` signal, SessionIdle event, or equivalent must be
+   observed and proven. Both must pass all seven Phase 0 cases.
+
+3. **MCP receive lifecycle prerequisite:** `fix-relay-receive-mcp-lifecycle`
+   must be implemented and merged before any wake adapter PR. The
+   recovery/fallback contract must exist before wake is added.
+
+**PR 2 shape:** Derive the smallest shared core only from two proven exact-session
+adapter live traces. Do not build six wake states, callback capabilities, registry,
+dispatcher, schema, and fake adapters speculatively.
+
+**Open numeric limits** (admission deadline, rate limit, hop bound, dispatcher
+depth) are not decided until both adapters are evidenced from measured runtime
+behavior.
+
 ## Planning decisions still required
 
 These are resolved in PR 1 from runtime evidence, not guessed during core work:
