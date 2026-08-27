@@ -30,11 +30,11 @@
 
 **Plan review:** self — Elevated risk, Simple complexity; no red-zone touched, no checkpoint required.
 
-**Approvals:** Elevated risk requires clean architecture review. Architecture gate: relayarch via Relay. Review in progress — PR #73 open for second pass.
+**Approvals:** Elevated risk requires clean architecture review. Architecture gate: relayarch via Relay. Second-pass blockers addressed 2026-08-27; PR #73 ready for merge.
 
 **Exceptions:** —
 
-**State:** Under architecture review (relayarch, second pass)
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
