@@ -6,13 +6,13 @@ Codex exact-session wake is qualified or rejected with reproducible, sanitized e
 Pallium Relay exact-session wake Phase 0.
 
 **Scope:**
-Codex live-Windows qualification traces under untracked `.local/`, this Work Record, and only evidence-backed updates to `docs/designs/017-relay-wake-phase0.md`, `tests/relay/wake/fixtures/codex/`, and their deterministic tests.
+Codex live-Windows qualification traces under untracked `.local/`, this Work Record, and only evidence-backed updates to `docs/designs/017-relay-wake-phase0.md`, `roadmap/features/add-wake-first-relay-delivery.md`, `tests/relay/wake/fixtures/codex/`, and their deterministic tests.
 
 **Constraints:**
 Target only existing session `01a039d6-68de-7210-bfbf-78a0b15df139` via `codex queue --thread`; this Work Record authorizes Codex only, and any Claude probe requires an explicit scope amendment and fresh review. Do not self-trigger the target; coordinate each manager action with `codex:@relayarch`. Do not close the addressed task; missing/closed UUID probes must be non-destructive. Do not change production core, adapters, dashboard, API, schema, OpenCode, or passive Relay. Keep raw traces and tokens out of Git. Use only `scripts/restart-service.ps1` for service restart, with health checks.
 
 **Completion criteria:**
-For each of the seven Phase 0 cases, the exact existing Codex session has a sanitized result and raw local trace that proves pass, fail, or blocker without substituting an App Server, clone, resumed replacement, or managed session. Every attempted admission uses a unique `PHASE0` marker and is proven only by its model-visible appearance in this exact task plus the manager's task-history observation; a consolidated architect checkpoint records the resulting go/no-go before any production wake work.
+For each of the seven Phase 0 cases, the exact existing Codex session has a sanitized result and raw local trace that proves pass, fail, or blocker without substituting an App Server, clone, resumed replacement, or managed session. Every attempted admission uses a unique `PHASE0` marker, except the intentional two-request duplicate probe which reuses one `PHASE0-DUPLICATE` marker, and is proven only by its model-visible appearance in this exact task plus the manager's task-history observation; a consolidated architect checkpoint records the resulting go/no-go before any production wake work.
 
 **Risk:**
 Elevated
@@ -38,7 +38,7 @@ The current session remains a live, exact Codex TUI target and its hook can obse
 6. Sanitize evidence, update the Phase 0 decision record and existing deterministic Codex fixtures/tests only when supported by traces, send the consolidated result/blocker checkpoint, and await architect go/no-go. Stop before production wake implementation.
 
 Key conventions: retain passive Relay as fallback; queue transport acknowledgement is not admission; use a unique `PHASE0` marker per attempt; never commit secrets, tokens, raw traces, or a claimed pass without marker-correlated exact-session evidence.
-Target files: `.agent-workflow/tasks/codex-add-wake-first-relay-delivery.md`; later, only if evidence warrants it, `docs/designs/017-relay-wake-phase0.md`, `tests/relay/wake/fixtures/codex/*.json`, `tests/test_relay_wake_fixtures.py`, and `tests/test_relay_wake_contract.py`.
+Target files: `.agent-workflow/tasks/codex-add-wake-first-relay-delivery.md`; later, only if evidence warrants it, `docs/designs/017-relay-wake-phase0.md`, `roadmap/features/add-wake-first-relay-delivery.md`, `tests/relay/wake/fixtures/codex/*.json`, `tests/test_relay_wake_fixtures.py`, and `tests/test_relay_wake_contract.py`.
 Stop conditions: any non-exact target, active-turn steering, missing correlated admission, unavailable/permission failure, ambiguous result without safe idempotency proof, failed health check after restart, or unavailable architect trigger coordination.
 
 **Verification plan:**
