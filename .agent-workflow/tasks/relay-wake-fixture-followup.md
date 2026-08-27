@@ -25,5 +25,5 @@
 
 **Verification:** `pytest tests/test_relay_wake_fixtures.py tests/test_mcp_server.py tests/test_relay_wake_contract.py -x -q`
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
