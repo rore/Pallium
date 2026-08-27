@@ -16,6 +16,7 @@
 
 # Parallel · Agent Relay
 - idea-agent-relay
+- fix-relay-receive-mcp-lifecycle
 - add-wake-first-relay-delivery
 - validate-relay-dependency-workflows
 - add-copilot-relay-integration
