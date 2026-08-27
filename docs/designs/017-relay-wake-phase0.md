@@ -253,3 +253,34 @@ Updated based on 2026-08-27 research findings. Codex is now live-PoC priority (w
 - [OpenCode plugin API](https://opencode.ai/docs/plugins/)
 - Phase 0 initial probes and provisional state contract: [016-relay-wake-feasibility.md](016-relay-wake-feasibility.md)
 - Full roadmap item: [add-wake-first-relay-delivery](../../roadmap/features/add-wake-first-relay-delivery.md)
+
+## 2026-08-27 — Codex live Phase 0 evidence
+
+**Verdict: partial — remain passive-only.** The exact existing Codex session accepted
+attributed queued turns without a replacement runtime, but Phase 0 is not fully
+cleared and no Codex wake adapter may proceed.
+
+| Phase 0 case | Verdict | Evidence |
+|---|---|---|
+| 1. Exact live session | PASS | Every manager trigger addressed `01a039d6-68de-7210-bfbf-78a0b15df139`; no App Server, clone, resumed replacement, or managed substitute participated. |
+| 2. Idle attributed turn | PASS | Queue item `01a044ec-adb3-75a1-9e77-2e5d0031f00a` admitted `PHASE0-IDLE-25ba0abf84154a678c6cdf96422baf89` as the next persisted user message and model-visible exact-task turn. |
+| 3. Busy non-steering turn | PASS | The controlled busy baseline completed before `PHASE0-BUSY-3cfab422ada3422bb7f82fa935ad29e6` entered a distinct following exact-task turn. |
+| 4. Correlated admission | PASS | Manager exact-rollout/task-history correlation and model-visible markers, not queue acceptance alone, established admission. |
+| 5. Closed/stale/permission/unavailable | BLOCKED | An unknown UUID was rejected with `no rollout found` without touching the target. Closed and permission-denied states were not forced because doing so would close the addressed task or fabricate a failure. |
+| 6. Pallium restart recovery | PASS | After `scripts/restart-service.ps1`, item `01a044f4-841d-75d3-b55e-42c2ccaecb11` admitted `PHASE0-RESTART-065c2ef792e44dbca01b0afa041b28ca` into exact-task turn `01a044f4-aa3f-7f93-bab3-34dc5e7c81cd`; `/health`, `/status`, and `/debug/queue/health` returned 200. |
+| 7. Safe retry after ambiguous response | BLOCKED | No safe way was available to force an ambiguous transport response. A separate duplicate probe proved **native idempotency FAIL**: identical marker `PHASE0-DUPLICATE-ea66b0165ec84f4b869b52e7ca66e2b6` was admitted in two distinct turns from queue items `01a044f5-adf2-7300-8ff0-29516413b51e` and `01a044f5-baf2-7660-a7d1-daac66519ef0`. |
+
+Consequences:
+
+- `codex queue --thread` is a viable exact-session ingress for the proven cases,
+  but it has no native duplicate suppression. Any future Pallium coordinator must
+  dedupe by delivery/wake-attempt identity before invoking the adapter.
+- Cases 5 and 7 remain gates. Do not implement a production adapter, registry,
+  dispatcher, schema, or capability advertisement from this evidence.
+- The later app-status `interrupted` label for the successful busy turn conflicts
+  with persisted/model-visible admission; treat it as a runtime-observability
+  follow-up, not a negative admission result.
+- Direct Codex MCP Relay receive lacked an injected session binding in this task.
+  `fix-relay-receive-mcp-lifecycle` remains a prerequisite before adapter work.
+
+Raw traces remain under `.local/phase0-probes/` and are intentionally untracked.

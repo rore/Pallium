@@ -69,3 +69,21 @@ Not required at this risk level.
 
 2026-08-27 — Codex busy case PASS. Architect task-history evidence shows the `BUSY-BASELINE` turn completed at 20:36:57 and a distinct queued-item turn started at 20:37:02 with marker `PHASE0-BUSY-3cfab422ada3422bb7f82fa935ad29e6`; no active-turn steering occurred. A later app-snapshot `interrupted` label is retained as an observability discrepancy, not treated as evidence that erases model-visible admission.
 2026-08-27 — Safe remaining probes: nonexistent UUID `00000000-0000-0000-0000-000000000000` was rejected by `codex queue` with no rollout found, without touching the target; `scripts/restart-service.ps1` completed and `/health`, `/status`, and `/debug/queue/health` each returned HTTP 200. Sanitized raw evidence: `.local/phase0-probes/codex-preflight-20260827-233109/safe-probe-verdict.json`.
+
+2026-08-27 — Consolidated Codex Phase 0 verdict (architect-controlled):
+
+| Case | Verdict | Sanitized evidence |
+|---|---|---|
+| 1. Exact live session | PASS | All manager-triggered queue operations targeted `01a039d6-68de-7210-bfbf-78a0b15df139`; no App Server, clone, resumed replacement, or managed substitute was used. |
+| 2. Idle attributed turn | PASS | Queue item `01a044ec-adb3-75a1-9e77-2e5d0031f00a` produced the marker `PHASE0-IDLE-25ba0abf84154a678c6cdf96422baf89` as the next persisted user message and model-visible exact-task turn. |
+| 3. Busy non-steering turn | PASS | The controlled baseline completed at 20:36:57; marker `PHASE0-BUSY-3cfab422ada3422bb7f82fa935ad29e6` entered a distinct following turn at 20:37:02, not the active turn. |
+| 4. Correlated admission | PASS | Manager exact-rollout/task-history evidence correlated each PASS marker to the addressed task’s persisted user message and model-visible response; queue write alone was never treated as admission. |
+| 5. Closed/stale/permission/unavailable | BLOCKED | Unknown UUID was rejected non-destructively (`no rollout found`), proving unavailable handling only. Closing the addressed task or forcing permission denial is out of scope and was not attempted. |
+| 6. Pallium restart recovery | PASS | After `scripts/restart-service.ps1`, queue item `01a044f4-841d-75d3-b55e-42c2ccaecb11` produced exact-task turn `01a044f4-aa3f-7f93-bab3-34dc5e7c81cd` with marker `PHASE0-RESTART-065c2ef792e44dbca01b0afa041b28ca`; all required endpoints returned HTTP 200. |
+| 7. Ambiguous-response retry | BLOCKED | A forced ambiguous transport response could not be safely produced without manufacturing evidence. Separate duplicate probe failed native idempotency: items `01a044f5-adf2-7300-8ff0-29516413b51e` and `01a044f5-baf2-7660-a7d1-daac66519ef0` produced two distinct target turns with the same marker. |
+
+The Codex exact-session queue mechanism is proven for idle, busy-safe-boundary, correlated admission, and Pallium-restart delivery, but Phase 0 is not fully cleared: case 5 and case 7 remain BLOCKED. Native queue idempotency is explicitly FAIL; any future coordinator must dedupe before invoking `codex queue` using the Pallium delivery/wake-attempt identity. Passive Relay remains unchanged and no production wake implementation was started.
+
+Follow-up observations outside this Phase 0 scope: (1) the app snapshot later labeled the successful busy turn `interrupted`, contradicting persisted/task-history model-visible admission; preserve this observability discrepancy for runtime diagnostics. (2) direct Codex MCP `pallium_relay_receive` lacked a bound session identity in this task, while the installed UserPromptSubmit hook had the correct session context; track `fix-relay-receive-mcp-lifecycle` separately before adapter work.
+
+2026-08-27 — Phase 0 evidence complete to the safe boundary. State transitioned to `Ready for review`; final architecture review requested before any scope amendment or production work.
