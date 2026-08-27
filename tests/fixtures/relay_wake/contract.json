@@ -2,7 +2,7 @@
   "evidence_date": "2026-08-26",
   "runtimes": {
     "claude-code": {"version": "2.1.246", "classification": "passive-only", "candidate": "channel"},
-    "codex": {"version": "0.149.1", "classification": "passive-only", "candidate": "managed-app-server"},
+    "codex": {"version": "0.149.1", "classification": "passive-only", "candidate": null},
     "opencode": {"version": "1.18.19", "classification": "passive-only", "candidate": "plugin-safe-boundary-queue"}
   },
   "wake_states": ["not_eligible", "queued", "triggering", "triggered", "admitted", "fallback"],

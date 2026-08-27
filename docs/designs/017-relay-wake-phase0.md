@@ -8,15 +8,17 @@
 
 Verdicts are based on official documentation, integration tests, and installed-runtime probes. All three runtimes are classified **passive-only**: natural-turn delivery is safe; active wake adapter implementation requires the full seven-case evidence listed in each runtime's "Remaining gates" section. Codex and OpenCode have partial transport-layer probes — admission and remaining cases are unobserved. Claude Code has no probe. No active wake adapter PR may merge until its runtime section is fully evidenced.
 
-| Runtime | Verdict | First implementation |
+| Runtime | Verdict | Implementation order |
 |---|---|---|
-| Codex | **Passive-only** — transport confirmed via probe; active wake admission unobserved | First |
+| Codex | **Passive-only** — managed App Server is a substitute runtime, not existing-session wake | Not scheduled |
 | OpenCode | **Passive-only** — transport confirmed via probe; active wake admission unobserved | Second |
 | Claude Code | **Passive-only** — native channel eligible; no probe run | Third |
 
 ### Codex
 
-**Verdict:** Passive-only. Transport layer confirmed via probe (2026-08-27); active wake admission not yet observed. Active wake adapter implementation blocked pending full seven-case evidence.
+**Verdict:** Passive-only. The 2026-08-27 probe reached a separately launched
+App Server, not the existing Codex session addressed by Relay. That path is
+rejected for Relay wake and must not progress to an adapter.
 
 **Transport-confirmed contract (partial — probe 2026-08-27):**
 - `thread/queue/add` with `clientUserMessageId` is callable on Windows via stdio transport. Queue response preserves `clientUserMessageId` in `queuedSubmission`.
@@ -24,21 +26,20 @@ Verdicts are based on official documentation, integration tests, and installed-r
 - `stdio://` is the Windows default transport — daemon subcommand is Unix-only but stdio App Server works on Windows.
 - Schema requires `--experimental` flag (`generate-json-schema --experimental`); non-experimental schema omits `thread/queue/add`.
 
-**Not yet observed (required before PR 5):**
-- `item/started` admission event with matching `clientUserMessageId` end-to-end (`full_turn_verified: false`).
-- Busy-session behavior: queued item held while active turn runs, then dispatched as distinct following turn.
-- App Server restart recovery with outstanding queued item.
-- Session-states behavior (closed, stale, permission-denied, unavailable).
-- Ambiguous-retry behavior: deadline exceeded without `item/started`.
+**Why the candidate fails the product gate:**
+- it creates or controls a Pallium-owned App Server rather than the addressed
+  already-running Codex session;
+- success would fragment session identity and conversation state;
+- queue admission in that substitute runtime would not satisfy Relay delivery.
 
 **Probe evidence:** `.local/phase0-probes/codex-0.149.1-stdio-probe-2026-08-27.json`
 
-**Remaining gates before PR 5:**
-1. Capture full `item/started` admission event with matching `clientUserMessageId` end-to-end (requires active OpenAI key processing a queued turn).
-2. Confirm a non-managed (ordinary interactive) Codex session is not reachable — Pallium must own the App Server instance.
-3. Confirm App Server lifetime policy (per-delivery-batch vs persistent daemon).
+**Re-entry gate:** Resume Codex wake work only when a supported surface can target
+the exact existing session identified by Relay and can prove all seven cases in
+that same session. Do not use a managed App Server, resumed clone, or replacement
+session as evidence.
 
-**Admission handshake:**
+**Rejected managed-runtime handshake (evidence only):**
 1. Initialize App Server with `capabilities.experimentalApi: true`.
 2. `thread/queue/add` with `clientUserMessageId = pallium:<delivery_id>` and attributed Relay payload as `input: [{type:"text", text:"..."}]`.
 3. Queue response returns `queuedSubmission` with preserved `clientUserMessageId` → `wake_state = triggered`.
@@ -85,7 +86,7 @@ Verdicts are based on official documentation, integration tests, and installed-r
 **Proven:**
 - Native local inbox socket authenticates via local token; official cross-session messaging starts a new turn when idle.
 - 2.1.246 clears the documented Windows minimum version.
-- `claude -p --resume` under a per-session lock can serialize Pallium-owned worker turns.
+
 
 **Open decision (required before PR 3):**
 During an active turn, Claude Code reads inbox messages between tool calls. This *may* not create a distinct following turn, violating the non-negotiable "busy delivery never steers the active human-owned turn." Options:
@@ -172,18 +173,19 @@ Working values for adapter development. None have been measured against an insta
 ## Decisions still open (must resolve before PR 2)
 
 1. Claude Code busy-turn semantic: idle-only or proven separate-turn queue (see above).
-2. Adapter locator lifetime: App Server instance is Pallium-managed; confirm whether it needs a per-delivery-batch lifetime or a persistent daemon.
+2. Which candidate runtime can first prove activation of the exact existing
+   addressed session; substitute managed sessions are categorically excluded.
 
 ## Re-estimate of remaining PRs
 
-Based on Phase 0 corrected findings. Codex has the strongest first-party contract; OpenCode requires plugin work; Claude Code requires the busy-turn decision.
+Based on Phase 0 corrected findings. Codex has no qualifying existing-session ingress; OpenCode requires plugin work; Claude Code requires the busy-turn decision.
 
 | PR | Scope | Estimate |
 |---|---|---|
 | 2 | Durable core: wake metadata, state machine, leases, dispatcher, fake adapters, recovery | 3–5 days |
 | 3 | Claude Code adapter (idle path; busy path conditional on open decision) | 2–3 days |
 | 4 | OpenCode plugin coordinator + adapter | 3–4 days |
-| 5 | Codex App Server adapter (conditional on Windows stdio proof) | 2–3 days |
+| 5 | Codex adapter, only after a supported existing-session ingress appears | Not scheduled |
 | 6 | Cross-runtime journeys, dashboard, docs, runbook | 2–3 days |
 
 ## Primary references

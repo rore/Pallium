@@ -24,6 +24,9 @@ capability, with an integration-side passive opt-out.
   supports Pallium's stable idempotency key.
 - Unsupported, passive, stale, closed, or unavailable sessions retain normal
   next-turn delivery; an exited runtime is not relaunched.
+- The recipient is the exact existing session selected by Relay. Launching,
+  resuming, cloning, or managing another session is not wake and cannot satisfy
+  feasibility or completion gates.
 - Busy delivery never steers text into the active human-owned turn.
 - No automatic replies, agent spawning, task assignment, or semantic wake choice.
 - Runtime-wide addressing keeps the existing 25-recipient fan-out bound.
@@ -59,9 +62,9 @@ Expected decisions:
   capability prerequisite.
 - **OpenCode:** use its supported server/plugin session status and prompt APIs.
   Confirm idle/busy queue semantics and the event that proves prompt admission.
-- **Codex:** ship only if App Server exposes race-free start-or-queue admission for
-  arbitrary interactive threads. Otherwise record Codex as passive-only and defer
-  its adapter; do not approximate atomicity with `status` followed by `turn/start`.
+- **Codex:** ship only if a supported integration reaches the exact existing
+  addressed session. A Pallium-managed App Server, resumed clone, or replacement
+  process is out of scope even if it provides race-free queue admission.
 
 Gate: no runtime adapter enters implementation without passing all seven cases.
 Failure for one runtime does not block supported runtimes because passive Relay is
@@ -234,11 +237,12 @@ negative cases fall back exactly once.
 
 Exit: idle and busy OpenCode deliveries meet the same admission/fallback contract.
 
-### PR 5 — Codex adapter, conditional
+### PR 5 — Codex adapter, blocked pending existing-session ingress
 
-- Proceed only if PR 1 proves race-free admission for arbitrary supported Codex
-  sessions or explicitly scopes support to a Pallium-managed App Server mode.
-- Do not silently change ordinary Codex sessions into managed sessions.
+- Proceed only if a supported surface proves race-free admission in the exact
+  existing Codex session selected by Relay.
+- Never substitute a Pallium-managed App Server, resumed clone, or replacement
+  session. Those are different products and do not satisfy Relay wake.
 - Add the same real-surface E2E matrix as other supported adapters.
 
 Exit: Codex meets the same contract, or remains visibly passive-only with no
@@ -315,7 +319,8 @@ These are resolved in PR 1 from runtime evidence, not guessed during core work:
 1. exact supported runtime versions and feature flags;
 2. exact admission callback/event for each runtime;
 3. whether Claude Channels or native messaging is the smaller supported ingress;
-4. whether Codex can support arbitrary interactive sessions safely;
+4. whether Codex exposes supported ingress into the exact existing addressed
+   session; otherwise it remains passive-only;
 5. adapter locator lifetime and whether any runtime needs ephemeral registration;
 6. numeric admission deadline, dispatcher bound, rate limit and reply-hop bound,
    chosen from measured runtime behavior rather than arbitrary constants.

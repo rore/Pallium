@@ -3,13 +3,13 @@
 **Status:** Superseded by deeper source review recorded in the roadmap (2026-08-26)
 **Scope:** Initial probes used Claude Code 2.1.217, Codex CLI 0.149.1, and OpenCode 1.18.19 on Windows; Claude is now 2.1.246
 
-> **Follow-up correction:** The original conclusion below was too conservative.
-> Official Codex App Server queue integration tests prove idle auto-dispatch,
-> busy distinct-turn queuing, exact client-ID admission, and cold-resume
-> persistence. Codex managed App Server is therefore the first implementation
-> target. OpenCode is viable with a durable plugin coordinator. Claude 2.1.246
-> clears the native-Windows version requirement, but busy messages may enter the
-> active turn at a tool boundary. The canonical current verdict and exact
+> **Product correction (2026-08-27):** The later managed-runtime conclusion was outside the Relay product boundary.
+> Official Codex App Server queue tests describe a separately managed runtime;
+> even if its queue and admission contract are technically sound, that runtime
+> does not wake the exact existing addressed session. It is rejected as an
+> implementation target. OpenCode and Claude remain candidates only where their
+> integrations preserve the identity of the already-running addressed session.
+> The canonical current verdict and exact
 > handshakes are in the
 > [wake-first Relay roadmap item](../../roadmap/features/add-wake-first-relay-delivery.md).
 
@@ -24,7 +24,7 @@ delivery remains pending.
 | Runtime | Classification | Evidence | Missing gate |
 |---|---|---|---|
 | Claude Code | passive-only | Channels document external-event ingress for an open, configured session | No Channel is configured locally and no correlated admission was proven. |
-| Codex | passive-only; managed App Server is the candidate | Installed schemas expose correlated queue add/start operations | A completed-thread queue acknowledgement did not admit a turn; no disposable managed App Server trace proved the full handshake. |
+| Codex | passive-only; no qualifying candidate | Installed schemas expose queue operations only on a separately managed App Server | No supported ingress into the exact existing addressed Codex session is known. |
 | OpenCode | passive-only; plugin/server is the candidate | An idle async prompt produced an assistant child correlated by parent ID | Status followed by prompt is not atomic, and a busy prompt interleaved with the active turn. |
 
 A runtime can contain wakeable, passive, stale, and closed sessions. These results
@@ -51,8 +51,9 @@ returned/notified turn. Queue acknowledgement is not admission.
 
 A disposable completed codex exec thread accepted the queue command but produced
 no second turn. This negative control rules out ordinary completed sessions.
-A disposable Pallium-managed App Server trace must still prove all seven Phase 0
-cases before this candidate advertises wake.
+The managed App Server path is rejected for Relay wake because it substitutes a
+Pallium-owned runtime for the user's addressed session. Preserve the probe only as
+negative evidence; do not continue its seven-case qualification.
 
 ### OpenCode
 
@@ -104,7 +105,7 @@ otherwise the core would be speculative.
 | Task | Scope | Estimate |
 |---|---|---:|
 | 1.1 | OpenCode plugin-owned safe-boundary queue and seven-case disposable proof | 1-2 days |
-| 1.2 | Codex managed App Server disposable queue/admission proof | 1-2 days |
+| 1.2 | Codex existing-session ingress research, only after a supported surface appears | Not scheduled |
 | 1.3 | Claude Channel bootstrap/proof when local prerequisites are available | 1-3 days |
 | 2 | Durable state, leases, races, dispatcher, fake-adapter E2E, telemetry after one proof passes | 3-5 days |
 | 3-5 | Runtime adapters that individually pass the gate | 2-4 days each |

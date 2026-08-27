@@ -43,7 +43,7 @@
 ## Evidence
 
 - Claude Code 2.1.217: public Channels docs plus local claude doctor; installed configuration classified passive-only.
-- Codex CLI 0.149.1: generated App Server queue schemas and a disposable completed-thread negative control; managed App Server remains an unproven candidate.
+- Codex CLI 0.149.1: generated App Server queue schemas and a disposable completed-thread negative control; the managed App Server path is rejected because it targets a substitute runtime.
 - OpenCode 1.18.19: isolated loopback idle and busy probes; the idle trace correlated admission, while the busy trace and status race keep the adapter passive-only.
 - tests/fixtures/relay_wake/contract.json captures all runtime verdicts, the full wake-state/event matrix, and valid delivery/wake lifecycle transitions.
 - Focused pytest: 3 passed.
@@ -52,3 +52,7 @@
 ## Result review
 
 Clean-context architecture review initially blocked overstated runtime support, sampled rather than complete lifecycle coverage, stale Work Record state, and uv.lock drift. All were addressed: every runtime is passive-only pending a full seven-case proof; the fixture covers the complete wake-state/event matrix and valid combined delivery states; uv.lock is unchanged; roadmap and evidence are aligned. Final clean-context architecture re-review: APPROVED. CodeRabbit requested target-state assertions for four lifecycle maps; the valid finding was fixed and reverified.
+
+## Post-merge product correction (2026-08-27)
+
+The managed Codex App Server candidate was rejected because it controls a substitute Pallium-owned runtime rather than the exact existing session addressed by Relay. Future wake feasibility work must prove identity-preserving activation in the already-running addressed session before protocol depth, admission semantics, or implementation order are considered. Codex remains passive-only with no scheduled adapter until such a supported ingress exists.

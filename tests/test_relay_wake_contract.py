@@ -13,7 +13,9 @@ def test_no_runtime_is_promoted_without_the_complete_phase_zero_proof() -> None:
     for runtime in CONTRACT["runtimes"].values():
         assert runtime["version"]
         assert runtime["classification"] == "passive-only"
-        assert runtime["candidate"]
+        assert "candidate" in runtime
+
+    assert CONTRACT["runtimes"]["codex"]["candidate"] is None
 
 
 def test_transition_matrix_covers_every_required_event_in_every_wake_state() -> None:
