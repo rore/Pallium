@@ -45,6 +45,7 @@ pallium.db.schema.lock
 *.schema.lock
 
 .local/
+.playwright-mcp/
 
 tmp/
 
