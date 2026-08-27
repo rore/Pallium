@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -38,6 +39,14 @@ def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int) -
     }
 
 
+def _render_safe(value: str) -> bool:
+    return not any(
+        (unicodedata.category(char) == "Cc" and char not in "\n\r\t")
+        or unicodedata.category(char) in {"Zl", "Zp"}
+        for char in value
+    )
+
+
 def _delivery_view(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -> dict[str, Any]:
     return {
         "delivery_id": delivery.id,
@@ -62,6 +71,8 @@ def _delivery_view(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -
 
 
 class SQLiteRelayMixin:
+    _BACKLOG_NOTICE_RESERVE_CHARS = 80
+
     def _relay_session(
         self,
         db,
@@ -156,9 +167,10 @@ class SQLiteRelayMixin:
                 .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
             ).all()
 
-            claimed: list[dict[str, Any]] = []
+            eligible_rows = [(delivery, message) for delivery, message in rows if _render_safe(message.payload)]
+            selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, int]] = []
             used = 0
-            for delivery, message in rows:
+            for delivery, message in eligible_rows:
                 lines = [
                     f"[Pallium Relay message from {message.sender_runtime}:{message.sender_session_ref}]",
                     f"message_id: {message.id}",
@@ -174,9 +186,22 @@ class SQLiteRelayMixin:
                     message.payload,
                     "[End Pallium Relay message]",
                 ])
-                rendered_chars = len("\n".join(lines)) + (2 if claimed else 0)
+                rendered_chars = len("\n".join(lines)) + (2 if selected else 0)
                 if used + rendered_chars > max_chars:
                     continue
+                selected.append((delivery, message, rendered_chars))
+                used += rendered_chars
+                if len(selected) >= max_messages:
+                    break
+
+            if len(eligible_rows) > len(selected) and max_chars >= 1000:
+                delivery_budget = max_chars - self._BACKLOG_NOTICE_RESERVE_CHARS
+                while selected and used > delivery_budget:
+                    _, _, rendered_chars = selected.pop()
+                    used -= rendered_chars
+
+            claimed: list[dict[str, Any]] = []
+            for delivery, message, _ in selected:
                 token = f"relay-claim-{uuid.uuid4().hex}"
                 delivery.state = "claimed"
                 delivery.claim_token = token
@@ -184,13 +209,12 @@ class SQLiteRelayMixin:
                 delivery.lease_expires_at = current + timedelta(seconds=lease_seconds)
                 delivery.attempts = int(delivery.attempts or 0) + 1
                 claimed.append(_delivery_view(delivery, message))
-                used += rendered_chars
-                if len(claimed) >= max_messages:
-                    break
 
             return {
                 "session": _session_view(registered, current, 24 * 60 * 60),
                 "deliveries": claimed,
+                "has_more": len(eligible_rows) > len(claimed),
+                "remaining_count": len(eligible_rows) - len(claimed),
             }
 
     def relay_close_session(

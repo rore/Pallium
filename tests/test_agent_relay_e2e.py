@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from api.routes import create_router
+from core.errors import ImmediateTransactionBusyError
+from storage.sqlite_schema import RelayMessageRecord
 
 
 SCOPE = {"container_ref": "git:example.test/team/relay", "actor_ref": "local-user"}
@@ -158,6 +160,7 @@ def test_aliases_are_actor_scoped_and_replacement_cannot_clear_another_actor(cli
         ("line one\nline two\tvalue", 200),
         ("unsafe\x00value", 422),
         ("unsafe\x1fvalue", 422),
+        ("unsafe\u2028value", 422),
     ],
 )
 def test_payload_boundaries_unicode_and_controls(client, payload, expected):
@@ -529,3 +532,66 @@ def test_non_relay_router_returns_501_only_for_relay(client):
     fallback = TestClient(app)
     assert fallback.post("/relay/turn", json={"runtime": "codex", "session_ref": "s", **SCOPE}).status_code == 501
     assert fallback.get("/items/missing/processing").status_code == 404
+
+
+def test_turn_reports_backlog_and_only_claims_rendered_deliveries(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "backlog-target")
+    for index in range(3):
+        assert _send(
+            client, "claude-code", "sender", "codex:backlog-target",
+            "x" * 1000, message_id=f"backlog-{index}",
+        ).status_code == 200
+
+    delivered: list[str] = []
+    while True:
+        turn = _turn(client, "codex", "backlog-target")
+        claimed = turn["deliveries"]
+        assert claimed
+        assert turn["remaining_count"] == 3 - len(delivered) - len(claimed)
+        assert turn["has_more"] is (turn["remaining_count"] > 0)
+        for delivery in claimed:
+            assert _ack(client, delivery).status_code == 200
+            delivered.append(delivery["message_id"])
+        if not turn["has_more"]:
+            break
+
+    assert delivered == ["backlog-0", "backlog-1", "backlog-2"]
+
+
+def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, relay_storage, monkeypatch):
+    def busy_transaction():
+        raise ImmediateTransactionBusyError("database is locked")
+
+    monkeypatch.setattr(relay_storage, "_begin_immediate", busy_transaction)
+    response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "busy", **SCOPE})
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "1"
+    assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
+
+def test_turn_does_not_claim_a_legacy_payload_that_the_formatter_rejects(client, relay_storage):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "legacy-target")
+    sent = _send(client, "claude-code", "sender", "codex:legacy-target", "safe").json()
+    with relay_storage._session_factory.begin() as db:
+        db.get(RelayMessageRecord, sent["message_id"]).payload = "unsafe\u2028legacy"
+
+    turn = _turn(client, "codex", "legacy-target")
+    assert turn["deliveries"] == []
+    assert turn["has_more"] is False
+    assert turn["remaining_count"] == 0
+
+def test_turn_skips_legacy_unsafe_rows_and_drains_later_safe_delivery(client, relay_storage):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "mixed-legacy-target")
+    unsafe = _send(client, "claude-code", "sender", "codex:mixed-legacy-target", "unsafe").json()
+    safe = _send(client, "claude-code", "sender", "codex:mixed-legacy-target", "safe").json()
+    with relay_storage._session_factory.begin() as db:
+        db.get(RelayMessageRecord, unsafe["message_id"]).payload = "unsafe\u2028legacy"
+
+    turn = _turn(client, "codex", "mixed-legacy-target")
+    assert [delivery["message_id"] for delivery in turn["deliveries"]] == [safe["message_id"]]
+    assert turn["has_more"] is False
+    assert turn["remaining_count"] == 0
+    assert _ack(client, turn["deliveries"][0]).status_code == 200
+    assert _turn(client, "codex", "mixed-legacy-target")["deliveries"] == []
