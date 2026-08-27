@@ -107,8 +107,14 @@ exact-session ingress.
 
 ### Claude Code
 
-**Verdict:** Passive-only pending live PoC. Exact-session wake is functionally
-available via native named-pipe messaging; two paths differ in auth stability.
+**Verdict:** Passive-only pending live PoC. Exact-session wake is a candidate via native named-pipe messaging; Path A authorization and any Channels fallback remain unproven on the installed runtime.
+
+**Installed non-triggering preflight (2026-08-28):**
+Claude Code reports `2.1.246`; Pallium settings and the installed source
+`SessionStart`/`Stop` hooks are present; `/health`, `/status`, and
+`/debug/queue/health` are healthy. This preflight intentionally did not access
+a target-session registry, named pipe, or `CLAUDE_CODE_MESSAGING_TOKEN`. Path A
+non-child reachability is therefore **UNPROVEN**, not a negative result.
 
 **Idle boundary correction (2026-08-27 research):**
 `user_prompt_submit` hook exit is NOT the idle boundary. The correct signal is
@@ -134,14 +140,17 @@ Live PoC required: (a) non-child Pallium process holds the token → sends to
 pipe → verify idle wake in the same session; (b) classify result as supported
 or implementation detail. If (a) fails, fall back to Path C.
 
-**Path B: Channels (supported external ingress, preview/opt-in)**
-Channels push external events into the already-open session without spawning a
-new process. Pallium sends a channel notification; the existing session receives
-it. Requires `--channels plugin:pallium` at session start; Enterprise/Team must
-allow it. Research preview. Multiple events while busy are grouped into one turn
-(weaker one-delivery-per-turn invariant than Codex queue).
+**Path B: Channels (research fallback; not preflight-confirmed on installed CLI)**
+Channels are described as pushing external events into the already-open session
+without spawning a new process, but the installed Claude Code `2.1.246` public
+help did not advertise `--channels`. No target configuration, token, pipe, or
+channel was accessed during preflight. Treat Channels as unavailable unless a
+future architect-controlled check proves the exact session was launched with a
+supported channel configuration. Multiple events while busy are reported to group
+into one turn (weaker one-delivery-per-turn invariant than Codex queue).
 
-**Path C fallback:** Path A fails → use Channels as the supported external ingress.
+**Path C fallback:** If Path A fails, use Channels only after its exact-session
+configuration and admission behavior are independently proven.
 
 **`notify_idle` / `notify_when_idle`:**
 The `notify_when_idle` option on a SendMessage call asks another Claude Code
