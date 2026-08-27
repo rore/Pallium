@@ -69,6 +69,33 @@ through Relay status or storage-backed public reads. Cover:
 - expired delivery, lease expiry, and an immediate following natural turn
 - Claude Code, Codex, and OpenCode lifecycle behavior
 
+## Field incident ledger
+
+This is the canonical ledger for defects discovered while using Relay across real
+agent sessions. Give every new incident the next `RF-*` identifier before fixing
+it. An incident closes only with a reproducible contract, a caller-surface E2E
+regression, and a live smoke check where the runtime is available. Do not close an
+incident from a unit test or a successful retry alone.
+
+| ID | Observed incident | Disposition | Required evidence |
+|---|---|---|---|
+| `RF-001` | A reply was sent with the receiving Claude identity instead of the active Codex identity, producing a self-addressed duplicate acknowledgement. | Fixed in R1 acceptance hardening: replies derive both endpoints from the received `delivery_id`; agents do not reconstruct sender identity. | `test_delivery_derived_reply_is_attributed_scoped_and_idempotent` plus the live Claude↔Codex round trip. |
+| `RF-002` | Agents could not reliably address or reuse a human-friendly alias when an older session held it. | Fixed in R1 acceptance hardening: alias conflict is explicit and deliberate `replace_existing=true` transfers the alias while preserving scope isolation. | `test_full_broadcast_snapshot_alias_transfer_reply_and_lifecycle`, `test_aliases_are_actor_scoped_and_replacement_cannot_clear_another_actor`, and the live two-Codex alias transfer. |
+| `RF-003` | A deliberate change to another Git project did not update Relay container scope, so a valid alias in the target project appeared missing. | Fixed in R1 hardening: Claude/Codex follow deliberate Git-project transitions, best-effort close the old scoped session, and ignore transient non-Git cwd drift. | Hook coverage `test_deliberate_git_project_switch_updates_pin`, `test_transient_non_git_cwd_does_not_replace_git_pin`, and `test_failed_project_close_is_retried`, plus a live cross-project smoke check. |
+| `RF-004` | OpenCode could acknowledge Relay before the resumed session's model-visible history was mutated, silently losing the message. | Fixed in R1 acceptance hardening: resumed OpenCode delivery uses the model-bound message path and acknowledges only after that mutation succeeds. | OpenCode plugin cases “chat.message injects Relay as system context and acknowledges after mutation” and “Relay claim survives a transform with no model-visible text part,” plus the recorded resumed OpenCode live round trip. |
+| `RF-005` | Claude/Codex hooks claimed messages before slower memory enrichment; a hook timeout left messages invisible until the 60-second lease expired, with no model context and no acknowledgement. The same failure window may exist in OpenCode. | **Open — blocking.** This feature owns the fix. Relay emission must be independent of memory retrieval and interruption-safe across claim, model-visible mutation, and acknowledgement. | The full Required E2E matrix above for all three integrations, updated local installs, and a live cross-session smoke check. |
+
+Wake-on-send is a separately tracked product gap, not `RF-006`; see
+`add-wake-first-relay-delivery`. Deterministic scope rejection across different
+containers and later delivery of an explicit but semantically stale message are
+expected Relay behavior, not defects.
+
+When an incident is reported, record the observable symptom first. Do not assign
+root cause or mark it duplicate until storage state, integration logs, and the
+recipient-visible turn agree. If a claimed message must be recovered manually,
+acknowledge it exactly once after capturing the delivery and retain the incident
+evidence in the owning Work Record.
+
 ## Done When
 
 1. The live reproduction no longer produces an invisible claimed delivery.
