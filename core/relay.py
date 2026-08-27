@@ -105,6 +105,7 @@ class RelayService:
             "relay_delivery_context",
             "relay_message_status",
             "relay_ack",
+            "relay_ack_by_scope",
         )
         if not all(callable(getattr(store, name, None)) for name in required):
             raise RelayUnavailableError("relay is not supported by the configured storage")
@@ -285,6 +286,26 @@ class RelayService:
         return self._store.relay_ack(
             delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
             claim_token=_opaque(claim_token, "claim_token", maximum=128),
+            container_ref=container,
+            actor_ref=actor,
+            now=now,
+        )
+
+    def ack_by_scope(
+        self,
+        *,
+        delivery_id: str,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        actor_ref: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        container, actor = self._scope(container_ref, actor_ref)
+        return self._store.relay_ack_by_scope(
+            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
+            runtime=validate_runtime(runtime),
+            session_ref=_opaque(session_ref, "session_ref", maximum=255),
             container_ref=container,
             actor_ref=actor,
             now=now,

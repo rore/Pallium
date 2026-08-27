@@ -531,7 +531,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """List Relay recipient sessions visible in the scoped container."""
+        """Address book of Relay sessions visible in the scoped container. Not an inbox — use pallium_relay_receive to claim pending deliveries."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
@@ -592,7 +592,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery. Copy delivery_id from the attributed Relay block; Pallium derives both endpoints and the parent message deterministically."""
+        """Reply once to a received Relay delivery. Copy delivery_id from the attributed Relay block; Pallium derives both endpoints and the parent message deterministically. The delivery must already be acknowledged (delivered state) before replying — in the hook path the integration does this automatically; in the MCP receive path call pallium_relay_ack first."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
@@ -615,6 +615,44 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_status(message_id)
         return _relay_text(result)
+
+    @server.tool()
+    async def pallium_relay_receive(
+        max_chars: int = 2400,
+    ) -> str:
+        """Claim and return pending Relay deliveries for this session. Uses only integration-injected identity (PALLIUM_AGENT_REF as runtime, PALLIUM_THREAD_REF as session_ref) — no model-supplied identity accepted. Call pallium_relay_ack(delivery_id) after processing each delivery, or pallium_relay_reply to reply and ACK atomically. Unclaimed deliveries are redelivered after lease expiry."""
+        ctx = resolve_context()
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        runtime = ctx.agent_ref
+        session_ref = ctx.thread_ref
+        if not runtime:
+            return "Error: PALLIUM_AGENT_REF is not set. Relay receive requires integration-injected runtime identity."
+        if not session_ref:
+            return "Error: PALLIUM_THREAD_REF is not set. Relay receive requires integration-injected session identity."
+        result = await PalliumMcpClient(ctx).relay_receive(runtime=runtime, session_ref=session_ref, max_chars=max_chars)
+        if isinstance(result, dict) and "deliveries" in result:
+            for d in result["deliveries"]:
+                d.pop("claim_token", None)
+        return _relay_text(result)
+
+    @server.tool()
+    async def pallium_relay_ack(
+        delivery_id: str,
+    ) -> str:
+        """Idempotently acknowledge a Relay delivery after you have the payload. Uses integration-injected identity only. Call this after pallium_relay_receive once you have processed the delivery. If you are replying, use pallium_relay_reply instead — it ACKs atomically."""
+        ctx = resolve_context()
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        runtime = ctx.agent_ref
+        session_ref = ctx.thread_ref
+        if not runtime:
+            return "Error: PALLIUM_AGENT_REF is not set. Relay ACK requires integration-injected runtime identity."
+        if not session_ref:
+            return "Error: PALLIUM_THREAD_REF is not set. Relay ACK requires integration-injected session identity."
+        result = await PalliumMcpClient(ctx).relay_mcp_ack(delivery_id=delivery_id, runtime=runtime, session_ref=session_ref)
+        return _relay_text(result)
+
     # ── W3 explicit memory-write tools ─────────────────────────────
     # See docs/specs/2026-07-01-milestone-shaped-memory-contract.md §W3.
     # These tools let the agent deliberately shape memory — remember a

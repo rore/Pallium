@@ -872,3 +872,11 @@ class RelayAckResponse(BaseModel):
     delivery_id: str
     state: str
     delivered_at: datetime
+
+
+class RelayMcpAckRequest(BaseModel):
+    delivery_id: str = Field(min_length=1, max_length=128)
+    runtime: str = Field(min_length=1, max_length=64)
+    session_ref: str = Field(min_length=1, max_length=255)
+    container_ref: str = Field(min_length=1, max_length=512)
+    actor_ref: str = Field(min_length=1, max_length=255)

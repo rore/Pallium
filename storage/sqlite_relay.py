@@ -506,6 +506,59 @@ class SQLiteRelayMixin:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             return self._relay_status_in_session(db, message, current)
 
+    def relay_ack_by_scope(
+        self,
+        *,
+        delivery_id: str,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        actor_ref: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """ACK a claimed delivery using recipient scope instead of claim_token.
+
+        Used by the MCP receive path where claim tokens are never given to the model.
+        Validates that the delivery's recipient matches the provided scope.
+        Idempotent: returns success if already delivered.
+        """
+        current = _now(now)
+        with self._begin_immediate() as db:
+            row = db.execute(
+                select(RelayDeliveryRecord, RelayMessageRecord)
+                .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                .where(RelayDeliveryRecord.id == delivery_id)
+            ).one_or_none()
+            if row is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            delivery, message = row
+            if message.container_ref != container_ref or message.actor_ref != actor_ref:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            if (
+                delivery.recipient_runtime != runtime
+                or delivery.recipient_session_ref != session_ref
+            ):
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            if delivery.state == "delivered":
+                return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(delivery.delivered_at)}
+            if delivery.state != "claimed":
+                raise RelayConflictError("delivery is not in claimed state")
+            if _now(message.expires_at) <= current:
+                delivery.state = "expired"
+                delivery.claim_token = None
+                expired = True
+            else:
+                expired = False
+                if delivery.lease_expires_at is None or _now(delivery.lease_expires_at) <= current:
+                    raise RelayConflictError("claim lease has expired")
+                delivery.state = "delivered"
+                delivery.claim_token = None
+                delivery.delivered_at = current
+                result = {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(current)}
+        if expired:
+            raise RelayConflictError("message has expired")
+        return result
+
     def relay_ack(
         self,
         *,
