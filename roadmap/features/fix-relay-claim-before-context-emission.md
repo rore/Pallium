@@ -65,6 +65,8 @@ through Relay status or storage-backed public reads. Cover:
 - interruption at each claim-to-emission and emission-to-ack boundary
 - one and multiple deliveries near the rendering budget
 - acknowledgement failure followed by exactly-once visible recovery
+- claim response consumed but its token lost before rendering or acknowledgement;
+  after lease recovery the delivery becomes model-visible and is acknowledged once
 - Unicode payloads and malformed/non-renderable delivery handling
 - expired delivery, lease expiry, and an immediate following natural turn
 - Claude Code, Codex, and OpenCode lifecycle behavior
