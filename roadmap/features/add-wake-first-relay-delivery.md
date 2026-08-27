@@ -64,9 +64,9 @@ installed versions are Claude Code 2.1.246, Codex CLI 0.149.1, and OpenCode
 
 | Runtime | Current verdict | Proven mechanism | Remaining qualification |
 |---|---|---|---|
-| Codex | **Passive-only; no qualifying existing-session ingress is known** | A separately launched App Server accepts `thread/queue/add`, but that controls a Pallium-owned runtime rather than the addressed Codex session. It is not a Relay wake mechanism. | Revisit only when a supported integration can target the exact already-running Codex session, preserve its identity, and prove correlated admission there. |
-| OpenCode | Supported with a Pallium/OpenCode plugin coordinator | Server/plugin APIs expose stable sessions and async prompts. Agent Intercom demonstrates persist-first delivery, application metadata correlation, history verification before replay, safe busy deferral, and restart recovery. | A bare prompt_async 204 is transport acknowledgement only. Pallium needs the plugin-owned durable pending ledger and a Windows E2E proof. |
-| Claude Code | Version-eligible for native live-session wake; strict busy delivery still needs a policy/proof | Official cross-session messaging starts a new turn when idle and authenticates the local inbox socket on native Windows. Installed 2.1.246 exceeds the documented 2.1.234 Windows minimum. | During an active turn Claude reads messages between tool calls, which may not create a distinct following turn. Verify native Windows delivery/correlation and either defer busy messages until idle or explicitly relax the distinct-turn invariant. |
+| Codex | **Passive-only; blocked for automatic wake** | Confirmed 2026-08-27: Codex CLI 0.149.1 exposes no exact-session ingress. The separately launched App Server is rejected. No IPC exists for the running CLI process. | Do not revisit until a supported surface that targets the exact already-running Codex session is available. |
+| OpenCode | Supported with a Pallium/OpenCode plugin coordinator | Server/plugin APIs expose stable sessions and async prompts. Agent Intercom demonstrates persist-first delivery, application metadata correlation, history verification before replay, safe busy deferral, and restart recovery. | A bare prompt_async 204 is transport acknowledgement only. Pallium needs the plugin-owned durable pending ledger and a Windows E2E proof. Deferred to after Claude Code wake is proven. |
+| Claude Code | **Feasible via hook socket registration** | Confirmed 2026-08-27: each session exports `CLAUDE_CODE_MESSAGING_SOCKET` (named pipe path) and `CLAUDE_CODE_MESSAGING_TOKEN` to hooks including `SessionStart`. On native Windows the token is the own-child verification credential — a process holding the token that connects and authenticates with it is treated as own-child, delivered without an approval dialog when `crossSessionInbound` is at default. Session registry at `~/.claude/sessions/<pid>.json` exposes `status: idle/busy` and `peerFeatures: ["notify_idle"]`. | Prove the full adapter cycle: `SessionStart` hook registers socket + token with Pallium; Pallium connects named pipe, sends auth line, sends Relay-attributed message; idle session starts a new turn with it; admission is correlated by delivery ID in the hook on the receiving session's first applicable turn. Busy delivery must defer to idle or fall back. |
 
 ### Admission handshakes to preserve
 
@@ -81,13 +81,7 @@ session messages/events contain that exact ID. On restart it replays only items
 not proven admitted. A server plugin can cover normal OpenCode sessions without
 requiring every session to be launched by a Pallium wrapper.
 
-**Claude Code:** register only a live inbox with its socket/token and current
-inbound policy. Include the Pallium delivery ID in the attributed envelope and do
-not equate socket acceptance with downstream use. Idle native delivery may wake
-immediately. Busy delivery must not violate the separate-turn contract; use an
-idle notification/deferred send if that can be proven, otherwise fall back to
-next-turn Relay. Channels remain a research-preview fallback, not the preferred
-local adapter.
+**Claude Code:** `SessionStart` hook registers `CLAUDE_CODE_MESSAGING_SOCKET` (named pipe path) and `CLAUDE_CODE_MESSAGING_TOKEN` with Pallium alongside initial session status. The `user_prompt_submit` hook updates status to `busy` on entry and `idle` on exit. To wake, Pallium opens the named pipe, sends `{"type":"auth","token":"<token>"}` as the first line, then sends the Relay-attributed message. On Windows the token is the own-child credential — a connecting process that provides it is treated as own-child and delivered without an approval dialog under the default `crossSessionInbound`. An idle session starts a new turn; a busy session defers until status returns to `idle` or falls back to durable next-turn. Admission is correlated when the receiving session's hook sees the `delivery_id` in its Relay turn context and acknowledges it. Include the delivery ID in the attributed envelope and do not equate socket acceptance with downstream use.
 
 Each live session advertises only capabilities its integration actually proves:
 passive, idle_wake, and busy_queue. Missing, expired, disabled, or lost capability
@@ -97,10 +91,9 @@ resumed by launching another process.
 
 ### Next disposable PoC sequence
 
-Test only integrations that can reach the exact existing addressed session.
-Start with Claude native messaging and the OpenCode plugin path. Revisit Codex
-only if a supported existing-session ingress becomes available; do not spend a
-Relay implementation cycle proving a substitute Pallium-owned runtime.
+Codex is blocked — no exact-session ingress proven. Do not revisit until a supported surface appears. OpenCode is deferred.
+
+Claude Code is the first adapter target. The socket registration path is confirmed feasible (2026-08-27). Implement and prove the Claude Code adapter cycle end-to-end before adding any other runtime.
 
 ## In Scope
 
