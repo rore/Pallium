@@ -16,7 +16,6 @@
 
 # Parallel · Agent Relay
 - idea-agent-relay
-- fix-relay-claim-before-context-emission
 - add-wake-first-relay-delivery
 - add-copilot-relay-integration
 - validate-relay-dependency-workflows
@@ -41,6 +40,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- fix-relay-claim-before-context-emission
 - add-workstream-rolling-topic
 - idea-reuse-judge-calibration
 - idea-evidence-backed-agent-memory
