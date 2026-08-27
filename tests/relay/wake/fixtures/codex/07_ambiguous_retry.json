@@ -20,9 +20,18 @@
   "expected_protocol_sequence": [
     {
       "call": "thread/queue/add",
+      "body": {
+        "threadId": "test-session-abc123",
+        "clientUserMessageId": "pallium:del-007",
+        "input": [{"type": "text", "text": "[Relay from relaydev] Ambiguous test. relay_id=pallium:del-007"}]
+      },
       "response_status": 200,
       "response_body": {
-        "queuedItemId": "qi-abc007"
+        "queuedSubmission": {
+          "id": "qi-abc007",
+          "clientUserMessageId": "pallium:del-007",
+          "input": [{"type": "text", "text": "[Relay from relaydev] Ambiguous test. relay_id=pallium:del-007", "text_elements": []}]
+        }
       }
     },
     {

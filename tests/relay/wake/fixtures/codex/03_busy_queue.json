@@ -5,6 +5,7 @@
     "session_ref": "codex:test-session-abc123",
     "delivery_id": "pallium:del-003",
     "client_user_message_id": "pallium:del-003",
+    "capability": "busy_queue",
     "payload": "[Relay from relaydev] Queued message while busy."
   },
   "mock_app_server_state": {
@@ -14,11 +15,18 @@
     {
       "call": "thread/queue/add",
       "body": {
+        "threadId": "test-session-abc123",
         "clientUserMessageId": "pallium:del-003",
-        "message": "[Relay from relaydev] Queued message while busy."
+        "input": [{"type": "text", "text": "[Relay from relaydev] Queued message while busy. relay_id=pallium:del-003"}]
       },
       "response_status": 200,
-      "response_body": {"queuedItemId": "qi-abc002", "position": 1}
+      "response_body": {
+        "queuedSubmission": {
+          "id": "qi-abc002",
+          "clientUserMessageId": "pallium:del-003",
+          "input": [{"type": "text", "text": "[Relay from relaydev] Queued message while busy. relay_id=pallium:del-003", "text_elements": []}]
+        }
+      }
     },
     {
       "note": "Active turn completes (not shown). Then:"

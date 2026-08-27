@@ -6,27 +6,30 @@
 
 ## Per-runtime verdict
 
-Verdicts are based on official documentation, integration tests, and installed-runtime probes. Codex and OpenCode have probe-confirmed contracts (2026-08-27); Claude Code remains unconfirmed pending the busy-turn decision. Each runtime's "Remaining gates" section lists what must be met before the corresponding adapter PR merges.
+Verdicts are based on official documentation, integration tests, and installed-runtime probes. Codex and OpenCode have transport-layer probes (partial — see runtime sections for what was and was not observed); Claude Code has no probe. Each runtime's "Remaining gates" section lists what must be met before the corresponding adapter PR merges.
 
 | Runtime | Verdict | First implementation |
 |---|---|---|
-| Codex | **Supported (probe-confirmed)** — Pallium-managed App Server with experimental API | First |
-| OpenCode | **Supported (probe-confirmed)** — durable plugin coordinator | Second |
+| Codex | **Supported (transport-confirmed, partial)** — Pallium-managed App Server with experimental API | First |
+| OpenCode | **Supported (transport-confirmed, partial)** — durable plugin coordinator | Second |
 | Claude Code | **Eligible (unconfirmed)** — native cross-session messaging; busy-turn decision required | Third |
 
 ### Codex
 
 **Verdict:** Supported via Pallium-managed App Server. Implement first.
 
-**Proven contract (Windows stdio probe 2026-08-27):**
+**Transport-confirmed contract (partial — probe 2026-08-27):**
 - `thread/queue/add` with `clientUserMessageId` is callable on Windows via stdio transport. Queue response preserves `clientUserMessageId` in `queuedSubmission`.
 - `initialize` with `capabilities.experimentalApi: true` accepted; server returns `userAgent` with `0.149.1` on Windows.
 - `stdio://` is the Windows default transport — daemon subcommand is Unix-only but stdio App Server works on Windows.
 - Schema requires `--experimental` flag (`generate-json-schema --experimental`); non-experimental schema omits `thread/queue/add`.
-- An idle App Server auto-dispatches the queued turn without a separate start call (from integration tests).
-- `item/started` emits the exact `clientUserMessageId` and content — this is the admission signal; queue/add response is transport ACK only.
-- Cold thread resume: a queued item survives App Server restart and completes on resume (from integration tests).
-- Deduplication: one `clientUserMessageId` → at most one admission (from integration tests).
+
+**Not yet observed (required before PR 5):**
+- `item/started` admission event with matching `clientUserMessageId` end-to-end (`full_turn_verified: false`).
+- Busy-session behavior: queued item held while active turn runs, then dispatched as distinct following turn.
+- App Server restart recovery with outstanding queued item.
+- Session-states behavior (closed, stale, permission-denied, unavailable).
+- Ambiguous-retry behavior: deadline exceeded without `item/started`.
 
 **Probe evidence:** `.local/phase0-probes/codex-0.149.1-stdio-probe-2026-08-27.json`
 
@@ -47,13 +50,18 @@ Verdicts are based on official documentation, integration tests, and installed-r
 
 **Verdict:** Supported via Pallium-owned plugin coordinator. Implement second.
 
-**Proven behaviors:**
+**Transport-confirmed behaviors (partial — probe 2026-08-27):**
 - Server and plugin APIs expose stable session IDs and `prompt_async`.
 - `prompt_async` body requires a `parts` array (`[{"type":"text","text":"..."}]`); `content` key is rejected with 400.
 - `metadata.palliumRelayId` is accepted in the `prompt_async` body but **NOT persisted in message info**. Message info contains only: `id`, `sessionID`, `role`, `time`, `agent`, `model`. Correlation via metadata field lookup will fail.
 - Admission correlation must embed the relay ID in text content and search by text, not by metadata field.
-- A plugin coordinator can serialize delivery against the session-idle event boundary.
-- Session history is queryable before replaying a pending item.
+
+**Not yet observed (required before PR 4):**
+- Model-visible admission: session message containing the relay ID text marker confirmed in event stream.
+- Busy-deferral: plugin holds item in ledger while session busy, submits at idle boundary.
+- App restart recovery.
+- Session-states behavior.
+- Ambiguous-retry behavior.
 
 **Probe evidence:** `.local/phase0-probes/opencode-1.18.19-probe-2026-08-27.json`
 

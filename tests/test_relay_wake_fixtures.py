@@ -55,17 +55,23 @@ def test_all_phase0_cases_covered_per_runtime() -> None:
 
 
 def test_busy_queue_outcome_is_capability_specific() -> None:
-    """idle_wake-only adapters must yield unavailable, not triggered/admitted."""
+    """idle_wake-only adapters must yield unavailable; busy_queue adapters must yield triggered."""
     for runtime in RUNTIMES:
         for fixture in _load_runtime_fixtures(runtime):
             if fixture.get("case") != "busy_queue":
                 continue
             capability = (fixture.get("input") or {}).get("capability")
             outcome = _extract_outcome(fixture)
+            assert capability is not None, (
+                f"{runtime}/busy_queue: input.capability must be set to make this test non-vacuous"
+            )
             if capability == "idle_wake":
                 assert outcome == "unavailable", (
-                    f"{runtime}/busy_queue with idle_wake capability must yield "
-                    f"unavailable, got {outcome!r}"
+                    f"{runtime}/busy_queue with idle_wake capability must yield unavailable, got {outcome!r}"
+                )
+            elif capability == "busy_queue":
+                assert outcome == "triggered", (
+                    f"{runtime}/busy_queue with busy_queue capability must yield triggered, got {outcome!r}"
                 )
 
 

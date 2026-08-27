@@ -1,35 +1,42 @@
 {
   "case": "admission_correlation",
-  "description": "Admission is confirmed only when the session events contain the exact palliumRelayId — not on prompt_async 204, not on a mismatched ID.",
+  "description": "Admission is confirmed only when a session message contains the exact relay_id= text marker. probe-finding 2026-08-27: metadata.palliumRelayId is NOT persisted in message info — correlation must use text-content search, not metadata field lookup.",
   "expected_outcome": "admitted",
   "correlation_signals": [
     {
       "signal": "prompt_async 204",
       "is_admission": false,
-      "reason": "Transport acknowledgement only"
+      "reason": "Transport acknowledgement only; model has not seen the message yet"
     },
     {
-      "signal": "session/message with missing metadata",
+      "signal": "session message without relay_id= text marker",
       "is_admission": false,
-      "reason": "No palliumRelayId present"
+      "reason": "No relay ID present in content; must not admit"
     },
     {
-      "signal": "session/message with palliumRelayId=pallium:del-oc-other",
+      "signal": "session message with relay_id=pallium:del-oc-other in content",
       "is_admission": false,
       "reason": "Different delivery; must not admit"
     },
     {
-      "signal": "session/message with metadata.palliumRelayId=pallium:del-oc-004",
+      "signal": "session message with relay_id=pallium:del-oc-004 in content",
       "is_admission": true,
+      "correlation_method": "text_content_search",
       "expected_outcome": "admitted",
-      "expected_wake_state": "admitted"
+      "expected_wake_state": "admitted",
+      "note": "Text-content match. metadata.palliumRelayId is NOT in message info (probe-confirmed 2026-08-27) and must not be used for correlation."
     }
+  ],
+  "forbidden": [
+    "Correlating via metadata.palliumRelayId in message info (not persisted — probe-confirmed 2026-08-27)",
+    "Treating 204 as admission"
   ],
   "deduplication": {
     "second_event_same_relay_id": "rejected — delivery already admitted; idempotent result"
   },
   "restart_history_check": {
-    "description": "Before submitting, plugin queries session history for palliumRelayId. If found, delivery is already admitted — no second prompt_async.",
+    "description": "Before submitting, plugin searches session message content for relay_id=<delivery_id>. If found, delivery is already admitted — no second prompt_async.",
+    "search_field": "content (text search)",
     "expected": "idempotent, no double admission"
   }
 }

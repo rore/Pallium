@@ -26,7 +26,7 @@
       "queued_item_id": "qi-abc001",
       "event": "app_server_restart",
       "cold_resume": true,
-      "expected_behavior": "admitted"
+      "expected_behavior": "adapter re-initializes; queue survives restart (per integration tests); item/started with matching clientUserMessageId confirms admission after resume — admitted only on correlated event, not assumed"
     },
     {
       "name": "already_admitted_recovery",
