@@ -96,13 +96,15 @@ def test_ambiguous_retry_not_issued() -> None:
 
 
 def test_nested_protocol_contract() -> None:
-    """session_states entries must have state+expected_outcome; restart scenarios must have expected_behavior."""
+    """session_states entries must have state+expected_outcome+expected_wake_state+natural_turn_claim_allowed; restart scenarios must have expected_behavior."""
     for runtime in RUNTIMES:
         for fixture in _load_runtime_fixtures(runtime):
             case = fixture.get("case", "")
             for state in fixture.get("states", []):
                 assert "state" in state, f"{runtime}/{case}: states[] entry missing 'state'"
                 assert "expected_outcome" in state, f"{runtime}/{case}: states[] entry missing 'expected_outcome'"
+                assert "expected_wake_state" in state, f"{runtime}/{case}: states[] entry missing 'expected_wake_state'"
+                assert "natural_turn_claim_allowed" in state, f"{runtime}/{case}: states[] entry missing 'natural_turn_claim_allowed'"
             for scenario in fixture.get("scenarios", []):
                 assert "expected_behavior" in scenario or "expected_recovery" in scenario, (
                     f"{runtime}/{case}: scenarios[] entry missing 'expected_behavior' or 'expected_recovery'"

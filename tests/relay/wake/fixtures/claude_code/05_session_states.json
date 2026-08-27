@@ -9,7 +9,9 @@
         "inbox_registered": false
       },
       "expected_outcome": "unavailable",
-      "fallback_reason": "inbox_not_registered"
+      "fallback_reason": "inbox_not_registered",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
     },
     {
       "state": "capability_lease_expired",
@@ -18,7 +20,9 @@
         "lease_valid": false
       },
       "expected_outcome": "unavailable",
-      "fallback_reason": "capability_expired"
+      "fallback_reason": "capability_expired",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
     },
     {
       "state": "session_closed",
@@ -27,7 +31,9 @@
         "inbox_registered": false
       },
       "expected_outcome": "unavailable",
-      "fallback_reason": "session_closed"
+      "fallback_reason": "session_closed",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
     },
     {
       "state": "permission_denied",
@@ -35,7 +41,9 @@
         "auth_error": true
       },
       "expected_outcome": "rejected",
-      "fallback_reason": "auth_failed"
+      "fallback_reason": "auth_failed",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true
     },
     {
       "state": "session_busy_idle_wake_only",
@@ -44,6 +52,8 @@
       },
       "expected_outcome": "unavailable",
       "fallback_reason": "session_busy_idle_wake_only",
+      "expected_wake_state": "fallback",
+      "natural_turn_claim_allowed": true,
       "note": "Until busy_queue is proven; see 03_busy_queue.json"
     }
   ]
