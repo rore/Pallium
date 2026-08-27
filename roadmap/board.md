@@ -21,6 +21,7 @@
 - validate-relay-dependency-workflows
 - add-copilot-relay-integration
 - add-relay-retention-and-lifecycle-hardening
+- idea-deferred-relay
 
 # Paused
 - idea-authenticated-principal-for-mutation-authz
