@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -47,12 +49,19 @@ def _render_safe(value: str) -> bool:
     )
 
 
+def _delivery_receipt(claim_token: str | None) -> str | None:
+    if claim_token is None:
+        return None
+    return hashlib.sha256(claim_token.encode()).hexdigest()[:32]
+
+
 def _delivery_view(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -> dict[str, Any]:
     return {
         "delivery_id": delivery.id,
         "message_id": message.id,
         "state": delivery.state,
         "claim_token": delivery.claim_token if delivery.state == "claimed" else None,
+        "receipt": _delivery_receipt(delivery.claim_token) if delivery.state == "claimed" else None,
         "recipient_runtime": delivery.recipient_runtime,
         "recipient_session_ref": delivery.recipient_session_ref,
         "sender_runtime": message.sender_runtime,
@@ -71,7 +80,6 @@ def _delivery_view(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -
 
 
 class SQLiteRelayMixin:
-    _BACKLOG_NOTICE_RESERVE_CHARS = 80
 
     def _relay_session(
         self,
@@ -187,18 +195,12 @@ class SQLiteRelayMixin:
                     "[End Pallium Relay message]",
                 ])
                 rendered_chars = len("\n".join(lines)) + (2 if selected else 0)
-                if used + rendered_chars > max_chars:
+                if max_chars and used + rendered_chars > max_chars:
                     continue
                 selected.append((delivery, message, rendered_chars))
                 used += rendered_chars
-                if len(selected) >= max_messages:
+                if max_messages and len(selected) >= max_messages:
                     break
-
-            if len(eligible_rows) > len(selected) and max_chars >= 1000:
-                delivery_budget = max_chars - self._BACKLOG_NOTICE_RESERVE_CHARS
-                while selected and used > delivery_budget:
-                    _, _, rendered_chars = selected.pop()
-                    used -= rendered_chars
 
             claimed: list[dict[str, Any]] = []
             for delivery, message, _ in selected:
@@ -432,13 +434,26 @@ class SQLiteRelayMixin:
             db.flush()
             return self._relay_status_in_session(db, message, current)
 
-    def relay_delivery_context(
+    def relay_reply_atomic(
         self,
         *,
         delivery_id: str,
+        receipt: str | None,
+        reply_message_id: str,
+        payload: str,
+        redacted: bool,
         container_ref: str,
         actor_ref: str,
-    ) -> dict[str, str]:
+        expires_in_seconds: int,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Validate, create reply, and optionally mark delivery delivered — all in one transaction.
+
+        receipt is required when delivery.state == 'claimed' (MCP receive path).
+        For delivery.state == 'delivered' (hook-ACK-then-reply path), receipt is not checked.
+        Delivery is marked delivered only after the reply message is successfully created.
+        """
+        current = _now(now)
         def run(db):
             row = db.execute(
                 select(RelayDeliveryRecord, RelayMessageRecord)
@@ -450,14 +465,87 @@ class SQLiteRelayMixin:
             delivery, message = row
             if message.container_ref != container_ref or message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
-            if delivery.state != "delivered":
-                raise RelayConflictError("only delivered relay messages can be replied to")
-            return {
-                "message_id": message.id,
-                "sender_runtime": delivery.recipient_runtime,
-                "sender_session_ref": delivery.recipient_session_ref,
-                "recipient": f"{message.sender_runtime}:{message.sender_session_ref}",
-            }
+
+            if delivery.state == "claimed":
+                if delivery.lease_expires_at is None or _now(delivery.lease_expires_at) <= current:
+                    raise RelayConflictError("claim lease has expired")
+                if receipt is None:
+                    raise RelayConflictError("receipt required when replying from claimed state")
+                if not hmac.compare_digest(_delivery_receipt(delivery.claim_token) or "", receipt):
+                    raise RelayConflictError("receipt does not match current claim")
+            elif delivery.state == "delivered":
+                expected = _delivery_receipt(delivery.claim_token)
+                if receipt is not None and (
+                    expected is None or not hmac.compare_digest(expected, receipt)
+                ):
+                    raise RelayConflictError("receipt does not match delivered claim")
+            else:
+                raise RelayConflictError("only claimed or delivered relay messages can be replied to")
+
+            # validate the sender session (the delivery recipient is now replying)
+            sender_runtime = delivery.recipient_runtime
+            sender_session_ref = delivery.recipient_session_ref
+            sender = self._relay_session(db, container_ref=container_ref, runtime=sender_runtime, session_ref=sender_session_ref)
+            if sender is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            self._require_actor(sender, actor_ref)
+
+            # recipient of the reply is the original message sender
+            recipient_runtime = message.sender_runtime
+            recipient_session_ref = message.sender_session_ref
+            recipient_selector = f"{recipient_runtime}:{recipient_session_ref}"
+
+            # idempotency: reply_message_id is deterministic so a second attempt returns the existing message
+            existing = db.get(RelayMessageRecord, reply_message_id)
+            if existing is not None:
+                existing_expiry_secs = round((existing.expires_at - existing.created_at).total_seconds())
+                if existing.payload != payload or bool(existing.redacted) != redacted or existing_expiry_secs != expires_in_seconds:
+                    raise RelayConflictError("reply already exists with different parameters")
+                return self._relay_status_in_session(db, existing, current)
+
+            recipient_session = db.execute(
+                select(RelaySessionRecord).where(
+                    RelaySessionRecord.container_ref == container_ref,
+                    RelaySessionRecord.actor_ref == actor_ref,
+                    RelaySessionRecord.runtime == recipient_runtime,
+                    RelaySessionRecord.session_ref == recipient_session_ref,
+                    RelaySessionRecord.state == "active",
+                )
+            ).scalar_one_or_none()
+            if recipient_session is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+
+            reply_msg = RelayMessageRecord(
+                id=reply_message_id,
+                sender_runtime=sender_runtime,
+                sender_session_ref=sender_session_ref,
+                recipient_selector=recipient_selector,
+                container_ref=container_ref,
+                actor_ref=actor_ref,
+                payload=payload,
+                redacted=1 if redacted else 0,
+                in_reply_to=message.id,
+                created_at=current,
+                expires_at=current + timedelta(seconds=expires_in_seconds),
+            )
+            db.add(reply_msg)
+            db.flush()
+            db.add(RelayDeliveryRecord(
+                id=f"relay-delivery-{uuid.uuid4().hex}",
+                message_id=reply_message_id,
+                recipient_runtime=recipient_runtime,
+                recipient_session_ref=recipient_session_ref,
+                state="pending",
+                attempts=0,
+            ))
+            db.flush()
+
+            # mark original delivery as delivered only after reply creation succeeds
+            if delivery.state == "claimed":
+                delivery.state = "delivered"
+                delivery.delivered_at = current
+
+            return self._relay_status_in_session(db, reply_msg, current)
 
         return self._with_retry(run)
 
@@ -505,6 +593,58 @@ class SQLiteRelayMixin:
             if message is None or message.container_ref != container_ref or message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             return self._relay_status_in_session(db, message, current)
+
+    def relay_ack_by_receipt(
+        self,
+        *,
+        delivery_id: str,
+        receipt: str,
+        container_ref: str,
+        actor_ref: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """ACK a claimed delivery using the receipt returned at claim time.
+
+        receipt = sha256(claim_token)[:32] — proves the caller received this specific
+        claim generation. If the lease expired and the delivery was re-claimed, the
+        receipt from the stale claim will not match the new claim_token → 409.
+        Idempotent: returns success if already delivered.
+        """
+        current = _now(now)
+        with self._begin_immediate() as db:
+            row = db.execute(
+                select(RelayDeliveryRecord, RelayMessageRecord)
+                .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                .where(RelayDeliveryRecord.id == delivery_id)
+            ).one_or_none()
+            if row is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            delivery, message = row
+            if message.container_ref != container_ref or message.actor_ref != actor_ref:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            if delivery.state == "delivered":
+                expected = _delivery_receipt(delivery.claim_token)
+                if expected is None or not hmac.compare_digest(expected, receipt):
+                    raise RelayConflictError("receipt does not match delivered claim")
+                return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(delivery.delivered_at)}
+            if delivery.state != "claimed":
+                raise RelayConflictError("delivery is not in claimed state")
+            if _now(message.expires_at) <= current:
+                delivery.state = "expired"
+                delivery.claim_token = None
+                expired = True
+            else:
+                expired = False
+                if delivery.lease_expires_at is None or _now(delivery.lease_expires_at) <= current:
+                    raise RelayConflictError("claim lease has expired")
+                if not hmac.compare_digest(_delivery_receipt(delivery.claim_token) or "", receipt):
+                    raise RelayConflictError("receipt does not match current claim")
+                delivery.state = "delivered"
+                delivery.delivered_at = current
+                result = {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(current)}
+        if expired:
+            raise RelayConflictError("message has expired")
+        return result
 
     def relay_ack(
         self,

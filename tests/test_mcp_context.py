@@ -108,3 +108,55 @@ def test_github_container_canonicalization_applies_to_env(monkeypatch: pytest.Mo
 )
 def test_unknown_container_refs_are_preserved(value: str) -> None:
     assert _canonicalize_container_ref(value) == value
+
+
+def test_codex_thread_ref_comes_from_runtime_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+    monkeypatch.setenv("CODEX_THREAD_ID", "codex-session-123")
+    assert resolve_context().thread_ref == "codex-session-123"
+
+
+def test_explicit_thread_ref_overrides_runtime_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.setenv("PALLIUM_THREAD_REF", "pallium-session")
+    monkeypatch.setenv("CODEX_THREAD_ID", "codex-session")
+    assert resolve_context().thread_ref == "pallium-session"
+
+
+def test_claude_thread_ref_comes_from_parent_session_registry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import json
+    import app.mcp.context as context
+
+    registry = tmp_path / ".claude" / "sessions"
+    registry.mkdir(parents=True)
+    (registry / "123.json").write_text(
+        json.dumps({"pid": 123, "sessionId": "claude-session-456"}), encoding="utf-8"
+    )
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "claude-code")
+    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.setattr(context.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(context.os, "getppid", lambda: 123)
+    assert resolve_context().thread_ref == "claude-session-456"
+
+
+def test_claude_registry_pid_mismatch_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import json
+    import app.mcp.context as context
+
+    registry = tmp_path / ".claude" / "sessions"
+    registry.mkdir(parents=True)
+    (registry / "123.json").write_text(
+        json.dumps({"pid": 999, "sessionId": "wrong-session"}), encoding="utf-8"
+    )
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "claude-code")
+    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.setattr(context.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(context.os, "getppid", lambda: 123)
+    assert resolve_context().thread_ref is None

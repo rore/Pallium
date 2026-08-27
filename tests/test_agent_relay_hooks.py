@@ -124,7 +124,6 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
             "session_ref": "target-session",
             "container_ref": "git:example/repo",
             "actor_ref": "actor",
-            "max_chars": 2400,
         },
         0.75,
     )
@@ -337,7 +336,6 @@ def test_claude_relay_uses_utf8_and_skips_memory_after_a_claim(monkeypatch):
 
     rendered = output.buffer.getvalue().decode("utf-8")
     assert "→" in rendered
-    assert "backlog: 1 message(s)" in rendered
     assert acknowledgements == [[{**DELIVERY, "payload": "review → then continue"}]]
 
 @pytest.mark.parametrize(

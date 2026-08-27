@@ -102,9 +102,10 @@ class RelayService:
             "relay_list_sessions",
             "relay_name_session",
             "relay_send",
-            "relay_delivery_context",
+            "relay_reply_atomic",
             "relay_message_status",
             "relay_ack",
+            "relay_ack_by_receipt",
         )
         if not all(callable(getattr(store, name, None)) for name in required):
             raise RelayUnavailableError("relay is not supported by the configured storage")
@@ -125,12 +126,12 @@ class RelayService:
         container_ref: str,
         actor_ref: str,
         title: str | None = None,
-        max_chars: int = RELAY_TURN_MAX_CHARS,
+        max_chars: int = 0,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
-        if not 1 <= max_chars <= RELAY_TURN_MAX_CHARS:
-            raise ValueError(f"max_chars must be between 1 and {RELAY_TURN_MAX_CHARS}")
+        if max_chars < 0:
+            raise ValueError("max_chars must be >= 0 (0 = no limit)")
         return self._store.relay_turn(
             runtime=validate_runtime(runtime),
             session_ref=_opaque(session_ref, "session_ref"),
@@ -138,7 +139,7 @@ class RelayService:
             actor_ref=actor,
             title=None if title is None else _opaque(title, "title", maximum=255),
             max_chars=max_chars,
-            max_messages=RELAY_TURN_MAX_MESSAGES,
+            max_messages=0,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
             now=now,
         )
@@ -236,6 +237,7 @@ class RelayService:
         self,
         *,
         delivery_id: str,
+        receipt: str | None,
         payload: str,
         container_ref: str,
         actor_ref: str,
@@ -243,23 +245,23 @@ class RelayService:
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
+        if not RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS:
+            raise ValueError(
+                f"expires_in_seconds must be between {RELAY_MIN_EXPIRY_SECONDS} and {RELAY_MAX_EXPIRY_SECONDS}"
+            )
         delivery = _opaque(delivery_id, "delivery_id", maximum=128)
-        context = self._store.relay_delivery_context(
-            delivery_id=delivery,
-            container_ref=container,
-            actor_ref=actor,
-        )
+        raw_payload = validate_payload(payload)
+        stored_payload = redact_sensitive(raw_payload)
         reply_id = "relay-reply-" + hashlib.sha256(delivery.encode("utf-8")).hexdigest()
-        return self.send(
-            sender_runtime=context["sender_runtime"],
-            sender_session_ref=context["sender_session_ref"],
-            recipient=context["recipient"],
-            payload=payload,
+        return self._store.relay_reply_atomic(
+            delivery_id=delivery,
+            receipt=_opaque(receipt, "receipt", maximum=64) if receipt is not None else None,
+            reply_message_id=reply_id,
+            payload=stored_payload,
+            redacted=stored_payload != raw_payload,
             container_ref=container,
             actor_ref=actor,
             expires_in_seconds=expires_in_seconds,
-            in_reply_to=context["message_id"],
-            message_id=reply_id,
             now=now,
         )
 
@@ -285,6 +287,24 @@ class RelayService:
         return self._store.relay_ack(
             delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
             claim_token=_opaque(claim_token, "claim_token", maximum=128),
+            container_ref=container,
+            actor_ref=actor,
+            now=now,
+        )
+
+    def ack_by_receipt(
+        self,
+        *,
+        delivery_id: str,
+        receipt: str,
+        container_ref: str,
+        actor_ref: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        container, actor = self._scope(container_ref, actor_ref)
+        return self._store.relay_ack_by_receipt(
+            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
+            receipt=_opaque(receipt, "receipt", maximum=64),
             container_ref=container,
             actor_ref=actor,
             now=now,

@@ -774,7 +774,7 @@ class RelayTurnRequest(BaseModel):
     container_ref: str = Field(min_length=1, max_length=512)
     actor_ref: str = Field(min_length=1, max_length=255)
     title: str | None = Field(default=None, min_length=1, max_length=255)
-    max_chars: int = Field(default=2400, ge=1, le=2400)
+    max_chars: int = Field(default=0, ge=0)
 
 
 class RelaySessionMutationRequest(BaseModel):
@@ -803,6 +803,7 @@ class RelaySendRequest(BaseModel):
 
 class RelayReplyRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)
+    receipt: str | None = Field(default=None, max_length=64)
     payload: str = Field(min_length=1, max_length=1500)
     container_ref: str = Field(min_length=1, max_length=512)
     actor_ref: str = Field(min_length=1, max_length=255)
@@ -832,6 +833,7 @@ class RelayDeliveryResponse(BaseModel):
     message_id: str
     state: str
     claim_token: str | None = None
+    receipt: str | None = None
     recipient_runtime: str
     recipient_session_ref: str
     sender_runtime: str
@@ -872,3 +874,10 @@ class RelayAckResponse(BaseModel):
     delivery_id: str
     state: str
     delivered_at: datetime
+
+
+class RelayMcpAckRequest(BaseModel):
+    delivery_id: str = Field(min_length=1, max_length=128)
+    receipt: str = Field(min_length=1, max_length=64)
+    container_ref: str = Field(min_length=1, max_length=512)
+    actor_ref: str = Field(min_length=1, max_length=255)

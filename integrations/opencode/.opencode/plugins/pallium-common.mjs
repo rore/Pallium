@@ -393,7 +393,7 @@ export async function relayRequest(method, reqPath, payload, timeoutMs) {
 }
 
 
-export function formatRelay(deliveries, budgetChars = 2400) {
+export function formatRelay(deliveries, budgetChars = 0) {
   const chunks = [];
   const rendered = [];
   let used = 0;
@@ -426,7 +426,7 @@ export function formatRelay(deliveries, budgetChars = 2400) {
     );
     const chunk = lines.join("\n");
     const added = [...chunk].length + (chunks.length ? 2 : 0);
-    if (used + added > budgetChars) break;
+    if (budgetChars > 0 && used + added > budgetChars) break;
     chunks.push(chunk);
     rendered.push(delivery);
     used += added;

@@ -67,3 +67,15 @@ These are real cross-layer couplings the code lives with today. One is **tripwir
 - **`core ↔ semantic` peer tangle** — `core/{service,routing,query,processing,consolidation_runner}.py` import from `semantic`; `semantic` imports `core.models` and `core.contracts`. Not enforceable as a `layers` contract; gated via red-zone on the relevant `core/*` files.
 - **`core → capabilities`** — `core/consolidation_runner.py` and `core/service.py` import `capabilities.*`. Deliberate orchestration coupling, not an accident; gated via red-zone on those `core/*` files.
 
+### Agent Relay: hook delivery vs MCP receive
+
+Relay deliveries reach an agent through two paths. Never mix them in the same session.
+
+**Hook delivery (normal path):** The integration injects pending deliveries into the agent's context at turn start via the `user_prompt_submit` hook. The hook owns claim, emission, and ACK. The agent does not call any MCP tool for this — the delivery is already in its context. Calling `pallium_relay_receive` in the same session as a hook delivery creates a race and risks double-claim.
+
+**MCP receive (recovery / non-hook integrations):** When the integration has no hook, or when a delivery was missed (e.g. crash-after-claim → lease expired → redelivery), the agent calls `pallium_relay_receive` to claim and retrieve pending deliveries. After processing each delivery, call `pallium_relay_ack(delivery_id, receipt)` to confirm. If replying, call `pallium_relay_reply` instead — it ACKs atomically; no separate ACK is needed.
+
+**Never use curl or HTTP directly for relay ACK.** The `/relay/deliveries/ack` endpoint requires a `claim_token` that is never exposed to the model. Use `pallium_relay_ack` (receipt-based, no claim token) or `pallium_relay_reply` (atomic ACK + reply).
+
+**MCP identity (for relay receive to work):** `pallium_relay_receive` accepts no model-supplied runtime or session identity. `PALLIUM_AGENT_REF` is static in the integration's MCP configuration. Session identity resolves from `PALLIUM_THREAD_REF` when a launcher supplies it, otherwise from the owning runtime: inherited `CODEX_THREAD_ID` / `CODEX_SESSION_ID` for Codex, or the parent Claude process's local session-registry entry for Claude Code. Resolution fails closed when no supported runtime-owned session identity is available.
+

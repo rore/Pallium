@@ -277,6 +277,7 @@ class PalliumMcpClient:
         *,
         delivery_id: str,
         message: str,
+        receipt: str | None = None,
         expires_in_seconds: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -284,6 +285,8 @@ class PalliumMcpClient:
             "payload": message,
             **self._relay_scope_params(),
         }
+        if receipt is not None:
+            payload["receipt"] = receipt
         if expires_in_seconds is not None:
             payload["expires_in_seconds"] = expires_in_seconds
         return await self._post_or_error("/relay/replies", payload)
@@ -291,6 +294,23 @@ class PalliumMcpClient:
     async def relay_status(self, message_id: str) -> dict[str, Any]:
         params = self._relay_scope_params()
         return await self._get_or_error(f"/relay/messages/{message_id}", params)
+
+    async def relay_receive(self, runtime: str, session_ref: str, max_chars: int = 0) -> Any:
+        payload: dict[str, Any] = {
+            "runtime": runtime,
+            "session_ref": session_ref,
+            "max_chars": max_chars,
+            **self._relay_scope_params(),
+        }
+        return await self._post_or_error("/relay/turn", payload)
+
+    async def relay_mcp_ack(self, delivery_id: str, receipt: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "delivery_id": delivery_id,
+            "receipt": receipt,
+            **self._relay_scope_params(),
+        }
+        return await self._post_or_error("/relay/deliveries/mcp-ack", payload)
 
     async def flag_memory(
         self,

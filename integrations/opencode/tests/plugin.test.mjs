@@ -376,7 +376,7 @@ test("chat.message injects Relay as system context and acknowledges after mutati
   const turn = fetchCalls.find((call) => call.url.includes("/relay/turn"));
   assert.equal(turn.body.runtime, "opencode");
   assert.equal(turn.body.session_ref, "sesRelay");
-  assert.equal(turn.body.max_chars, 2400);
+  assert.equal(turn.body.max_chars, undefined);
   const ack = fetchCalls.find((call) => call.url.includes("/relay/deliveries/ack"));
   assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/deliveries/ack")).length, 1);
   assert.deepEqual(

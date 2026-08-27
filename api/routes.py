@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from api.schemas import (
     RelayAckRequest,
     RelayAckResponse,
+    RelayMcpAckRequest,
     RelayMessageResponse,
     RelayReplyRequest,
     RelaySendRequest,
@@ -412,6 +413,11 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False, r
     @router.post("/relay/deliveries/ack", response_model=RelayAckResponse)
     def relay_ack(request: RelayAckRequest):
         return _relay_call(lambda: _relay().acknowledge(**request.model_dump()))
+
+    @router.post("/relay/deliveries/mcp-ack", response_model=RelayAckResponse)
+    def relay_mcp_ack(request: RelayMcpAckRequest):
+        return _relay_call(lambda: _relay().ack_by_receipt(**request.model_dump()))
+
     def _ingest_one(request: ItemCreateRequest) -> ItemCreateResponse:
         result = service.ingest_item(
             source_type=request.source_type,

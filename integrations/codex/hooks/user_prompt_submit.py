@@ -87,17 +87,12 @@ def main() -> None:
                     "session_ref": session_id,
                     "container_ref": container_ref,
                     "actor_ref": actor_ref,
-                    "max_chars": 2400,
                 },
                 timeout=0.75,
             )
             deliveries = (relay_response or {}).get("deliveries") or []
-            relay_output, rendered_deliveries = format_relay(deliveries, budget_chars=2320)
+            relay_output, rendered_deliveries = format_relay(deliveries)
             if rendered_deliveries:
-                if (relay_response or {}).get("has_more"):
-                    relay_output += "\n\n[Pallium Relay backlog: %d message(s) remain for a later turn.]" % (
-                        (relay_response or {}).get("remaining_count", 0),
-                    )
                 emit_context(relay_output, "UserPromptSubmit")
                 acknowledge_relay(rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref)
                 sys.exit(0)
