@@ -30,7 +30,7 @@
 
 **Plan review:** self — Elevated risk, Simple complexity; no red-zone touched, no checkpoint required.
 
-**Approvals:** Elevated risk requires clean architecture review. Architecture gate: relayarch via Relay. Second-pass blockers addressed 2026-08-27; PR #73 ready for merge.
+**Approvals:** Elevated risk requires clean architecture review. Architecture gate: relayarch via Relay. Third-pass review in progress.
 
 **Exceptions:** —
 

@@ -9,6 +9,11 @@
   },
   "mock_session_state": {"status": "busy"},
   "expected_behavior": "No inbox delivery while busy. Delivery remains pending for natural-turn fallback.",
+  "expected_protocol_sequence": [
+    {
+      "note": "Session is busy and adapter advertises idle_wake only. No inbox call is made. Delivery held pending; natural-turn claim allowed on fallback."
+    }
+  ],
   "expected_outcome": "unavailable",
   "fallback_reason": "session_busy_idle_wake_only",
   "natural_turn_claim_allowed": true,

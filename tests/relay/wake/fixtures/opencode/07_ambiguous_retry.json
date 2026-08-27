@@ -24,5 +24,5 @@
       "reason": "Bare prompt_async idempotency not proven; retry risks double delivery."
     }
   ],
-  "plugin_idempotency_note": "If plugin coordinator implements its own idempotency check (history scan before second submit), retry can be enabled. Update this fixture when proven."
+  "idempotency_note": "Retry requires runtime-side idempotency proof independent of history visibility. A plugin coordinator history scan does not provide that proof: an accepted prompt_async may not yet appear in session history, so a second scan returning no match can produce a duplicate turn. Retry remains disabled until the OpenCode runtime exposes an explicit idempotency guarantee."
 }

@@ -160,6 +160,7 @@ class TestBoundedErrorSurface:
             )
 
         out = json.loads(content_list[0].text)
+        assert len(content_list[0].text) <= 2000
         assert out["status_code"] == 422
         assert "input" not in out["detail"]["detail"][0]
         assert "url" not in out["detail"]["detail"][0]

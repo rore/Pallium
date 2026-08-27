@@ -6,17 +6,17 @@
 
 ## Per-runtime verdict
 
-Verdicts are based on official documentation, integration tests, and installed-runtime probes. Codex and OpenCode have transport-layer probes (partial — see runtime sections for what was and was not observed); Claude Code has no probe. Each runtime's "Remaining gates" section lists what must be met before the corresponding adapter PR merges.
+Verdicts are based on official documentation, integration tests, and installed-runtime probes. All three runtimes are classified **passive-only**: natural-turn delivery is safe; active wake adapter implementation requires the full seven-case evidence listed in each runtime's "Remaining gates" section. Codex and OpenCode have partial transport-layer probes — admission and remaining cases are unobserved. Claude Code has no probe. No active wake adapter PR may merge until its runtime section is fully evidenced.
 
 | Runtime | Verdict | First implementation |
 |---|---|---|
-| Codex | **Supported (transport-confirmed, partial)** — Pallium-managed App Server with experimental API | First |
-| OpenCode | **Supported (transport-confirmed, partial)** — durable plugin coordinator | Second |
-| Claude Code | **Eligible (unconfirmed)** — native cross-session messaging; busy-turn decision required | Third |
+| Codex | **Passive-only** — transport confirmed via probe; active wake admission unobserved | First |
+| OpenCode | **Passive-only** — transport confirmed via probe; active wake admission unobserved | Second |
+| Claude Code | **Passive-only** — native channel eligible; no probe run | Third |
 
 ### Codex
 
-**Verdict:** Supported via Pallium-managed App Server. Implement first.
+**Verdict:** Passive-only. Transport layer confirmed via probe (2026-08-27); active wake admission not yet observed. Active wake adapter implementation blocked pending full seven-case evidence.
 
 **Transport-confirmed contract (partial — probe 2026-08-27):**
 - `thread/queue/add` with `clientUserMessageId` is callable on Windows via stdio transport. Queue response preserves `clientUserMessageId` in `queuedSubmission`.
@@ -48,7 +48,7 @@ Verdicts are based on official documentation, integration tests, and installed-r
 
 ### OpenCode
 
-**Verdict:** Supported via Pallium-owned plugin coordinator. Implement second.
+**Verdict:** Passive-only. Transport layer confirmed via probe (2026-08-27); active wake admission not yet observed. Active wake adapter implementation blocked pending full seven-case evidence.
 
 **Transport-confirmed behaviors (partial — probe 2026-08-27):**
 - Server and plugin APIs expose stable session IDs and `prompt_async`.
@@ -80,7 +80,7 @@ Verdicts are based on official documentation, integration tests, and installed-r
 
 ### Claude Code
 
-**Verdict:** Version-eligible for native cross-session messaging (2.1.246 ≥ documented 2.1.234 Windows minimum). Busy-turn semantics require an explicit decision before enabling `busy_queue` capability.
+**Verdict:** Passive-only. Native channel eligible (2.1.246 ≥ 2.1.234 Windows minimum); no probe run. Busy-turn semantics require an explicit decision before enabling `busy_queue` capability. Active wake adapter implementation blocked pending probe.
 
 **Proven:**
 - Native local inbox socket authenticates via local token; official cross-session messaging starts a new turn when idle.

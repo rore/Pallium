@@ -96,7 +96,15 @@ def test_ambiguous_retry_not_issued() -> None:
 
 
 def test_nested_protocol_contract() -> None:
-    """session_states entries must have state+expected_outcome+expected_wake_state+natural_turn_claim_allowed; restart scenarios must have expected_behavior."""
+    """session_states entries must have required fields; case-specific arrays must be non-empty."""
+    CASE_REQUIRED_ARRAY: dict[str, str] = {
+        "idle_admit": "expected_protocol_sequence",
+        "busy_queue": "expected_protocol_sequence",
+        "ambiguous_retry": "expected_protocol_sequence",
+        "restart_recovery": "scenarios",
+        "session_states": "states",
+        "admission_correlation": "correlation_signals",
+    }
     for runtime in RUNTIMES:
         for fixture in _load_runtime_fixtures(runtime):
             case = fixture.get("case", "")
@@ -108,4 +116,9 @@ def test_nested_protocol_contract() -> None:
             for scenario in fixture.get("scenarios", []):
                 assert "expected_behavior" in scenario or "expected_recovery" in scenario, (
                     f"{runtime}/{case}: scenarios[] entry missing 'expected_behavior' or 'expected_recovery'"
+                )
+            if case in CASE_REQUIRED_ARRAY:
+                field = CASE_REQUIRED_ARRAY[case]
+                assert fixture.get(field), (
+                    f"{runtime}/{case}: '{field}' must be present and non-empty"
                 )
