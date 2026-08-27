@@ -851,6 +851,8 @@ class RelayDeliveryResponse(BaseModel):
 class RelayTurnResponse(BaseModel):
     session: RelaySessionResponse
     deliveries: list[RelayDeliveryResponse]
+    has_more: bool
+    remaining_count: int = Field(ge=0)
 
 
 class RelayMessageResponse(BaseModel):

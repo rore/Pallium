@@ -129,7 +129,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
         0.75,
     )
     assert output and output[0][0].startswith("[Pallium Relay message")
-    assert "[Pallium scope — " in output[0][0]
+    assert "[Pallium scope — " not in output[0][0]
     assert acknowledged and acknowledged[0][0] == [DELIVERY]
 
 
@@ -304,3 +304,72 @@ def test_codex_combined_output_is_relay_first_and_bounded(monkeypatch):
         hook.main()
     assert outputs[0].startswith("[Pallium Relay")
     assert len(outputs[0]) <= 4000
+
+
+def test_claude_relay_uses_utf8_and_skips_memory_after_a_claim(monkeypatch):
+    from io import BytesIO
+
+    hook = _load("claude_utf8", "integrations/claude-code/hooks/user_prompt_submit.py")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "utf8", "prompt": "a sufficiently long prompt that must not query memory"})
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(
+        hook,
+        "relay_request",
+        lambda *_args, **_kwargs: {"deliveries": [{**DELIVERY, "payload": "review → then continue"}], "has_more": True, "remaining_count": 1},
+    )
+    monkeypatch.setattr(hook, "pallium_request", lambda *_args, **_kwargs: pytest.fail("claimed Relay must not wait for memory"))
+    acknowledgements = []
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda deliveries, **_scope: acknowledgements.append(deliveries))
+
+    class Cp1252Output:
+        encoding = "cp1252"
+
+        def __init__(self):
+            self.buffer = BytesIO()
+
+    output = Cp1252Output()
+    monkeypatch.setattr(hook.sys, "stdout", output)
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    rendered = output.buffer.getvalue().decode("utf-8")
+    assert "→" in rendered
+    assert "backlog: 1 message(s)" in rendered
+    assert acknowledgements == [[{**DELIVERY, "payload": "review → then continue"}]]
+
+@pytest.mark.parametrize(
+    ("name", "relative", "runtime"),
+    [
+        ("claude_unsafe_backlog", "integrations/claude-code/hooks/user_prompt_submit.py", "claude-code"),
+        ("codex_unsafe_backlog", "integrations/codex/hooks/user_prompt_submit.py", "codex"),
+    ],
+)
+def test_unsafe_only_relay_backlog_does_not_skip_memory(monkeypatch, name, relative, runtime):
+    hook = _load(name, relative)
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "unsafe", "prompt": "a sufficiently long prompt for memory retrieval"})
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: {"deliveries": [{**DELIVERY, "payload": "unsafe\x00legacy"}], "has_more": True, "remaining_count": 1})
+    memory_calls = []
+    monkeypatch.setattr(hook, "pallium_request", lambda *args, **kwargs: memory_calls.append((args, kwargs)) or None)
+    acknowledgements = []
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda deliveries, **_scope: acknowledgements.append(deliveries))
+    emitted = []
+    if runtime == "codex":
+        monkeypatch.setattr(hook, "emit_context", lambda *args: emitted.append(args))
+    else:
+        monkeypatch.setattr("builtins.print", lambda *args, **kwargs: emitted.append(args))
+
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    assert memory_calls
+    assert acknowledgements == []
+    assert emitted
+    assert emitted[0][0].startswith("[Pallium scope — ")
+    assert "[Pallium Relay message" not in emitted[0][0]

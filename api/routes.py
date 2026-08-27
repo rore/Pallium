@@ -57,7 +57,7 @@ from api.schemas import (
     SupersedeMemoryRequest,
     SupersedeMemoryResponse,
 )
-from core.errors import LookupRequestLinkError, SupersessionConflictError
+from core.errors import ImmediateTransactionBusyError, LookupRequestLinkError, SupersessionConflictError
 from core.relay import RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
@@ -350,6 +350,12 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False, r
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RelayUnavailableError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
+        except ImmediateTransactionBusyError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "relay_busy", "retryable": True},
+                headers={"Retry-After": "1"},
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

@@ -10,9 +10,11 @@ import time
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError as SAOperationalError
 
 from core.contracts import build_source_item
+from core.errors import ImmediateTransactionBusyError
 from storage.sqlite import SQLiteStorageProvider
 
 
@@ -178,3 +180,76 @@ class TestConcurrentWriteDoesNotFail:
         feedback_thread.join(timeout=15)
 
         assert not errors, f"Feedback write failed: {errors[0]}"
+
+
+class TestImmediateTransactionRetry:
+    @pytest.fixture
+    def storage(self, tmp_path):
+        return SQLiteStorageProvider(f"sqlite:///{tmp_path / 'immediate_retry.db'}")
+
+    def test_immediate_transaction_retries_acquisition_without_replaying_work(self, storage):
+        attempts = []
+        sessions = []
+
+        def session_factory():
+            session = MagicMock()
+            connection = MagicMock()
+            session.connection.return_value = connection
+
+            def execute(statement):
+                if str(statement) == "BEGIN IMMEDIATE":
+                    attempts.append(1)
+                    if len(attempts) < 3:
+                        raise _make_sa_operational_error("database is locked")
+
+            connection.execute.side_effect = execute
+            sessions.append(session)
+            return session
+
+        storage._session_factory = session_factory
+        with patch("storage.sqlite_queue.time.sleep") as sleep:
+            with storage._begin_immediate() as active:
+                assert active is sessions[-1]
+
+        assert len(attempts) == 3
+        assert sleep.call_count == 2
+        assert sessions[0].close.called and sessions[1].close.called
+        assert sessions[-1].flush.call_count == 1
+
+    def test_immediate_transaction_restores_the_pooled_busy_timeout(self, storage):
+        def timeout() -> int:
+            with storage._session_factory() as session:
+                return session.execute(text("PRAGMA busy_timeout")).scalar_one()
+
+        before = timeout()
+        with storage._begin_immediate():
+            pass
+        assert timeout() == before == 15_000
+    def test_immediate_transaction_busy_rolls_back_without_partial_commit(self, storage):
+        session = MagicMock()
+        connection = MagicMock()
+        session.connection.return_value = connection
+        storage._session_factory = lambda: session
+
+        with pytest.raises(ValueError, match="abort"):
+            with storage._begin_immediate():
+                raise ValueError("abort")
+
+        statements = [str(call.args[0]) for call in connection.execute.call_args_list]
+        assert "BEGIN IMMEDIATE" in statements
+        assert "ROLLBACK" in statements
+        assert "COMMIT" not in statements
+
+    def test_immediate_transaction_busy_has_a_stable_error(self, storage):
+        session = MagicMock()
+        connection = MagicMock()
+        session.connection.return_value = connection
+        connection.execute.side_effect = lambda statement: (_ for _ in ()).throw(
+            _make_sa_operational_error("database is locked")
+        ) if str(statement) == "BEGIN IMMEDIATE" else None
+        storage._session_factory = lambda: session
+
+        with patch("storage.sqlite_queue.time.sleep"):
+            with pytest.raises(ImmediateTransactionBusyError, match="immediate transaction is busy"):
+                with storage._begin_immediate():
+                    pass

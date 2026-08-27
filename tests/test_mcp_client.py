@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -286,6 +287,21 @@ class TestRelay:
         with patch("httpx.AsyncClient.get", side_effect=Exception("relay unavailable")):
             result = await PalliumMcpClient(ctx).relay_recipients()
         assert result["error"] == "relay unavailable"
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "kwargs"),
+        [
+            ("relay_send", {"message": "handoff", "recipient": "codex:session-1", "sender_runtime": "codex", "sender_session_ref": "sender"}),
+            ("relay_reply", {"delivery_id": "delivery-1", "message": "ack"}),
+        ],
+    )
+    async def test_relay_busy_error_remains_retryable_for_send_and_reply(self, ctx: PalliumContext, method: str, kwargs: dict) -> None:
+        body = {"detail": {"code": "relay_busy", "retryable": True}}
+        response = _mock_response(status_code=503, json_data=body)
+        response.raise_for_status.side_effect = httpx.HTTPStatusError("busy", request=MagicMock(), response=response)
+        with patch("httpx.AsyncClient.post", return_value=response):
+            result = await getattr(PalliumMcpClient(ctx), method)(**kwargs)
+        assert result["detail"] == body
     @pytest.mark.asyncio
     async def test_name_omits_optional_alias_and_replace_flag(self, ctx: PalliumContext) -> None:
         response = _mock_response(json_data={"session_ref": "session-1"})

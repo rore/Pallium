@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -45,7 +46,7 @@ def _opaque(value: str | None, field: str, *, maximum: int = 255) -> str:
         raise ValueError(f"{field} is required, non-blank, and must not have surrounding whitespace")
     if len(value) > maximum:
         raise ValueError(f"{field} exceeds {maximum} characters")
-    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+    if any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in value):
         raise ValueError(f"{field} contains control characters")
     return value
 
@@ -69,7 +70,11 @@ def validate_payload(value: str) -> str:
         raise ValueError("payload is required and must be non-blank")
     if len(value) > RELAY_MESSAGE_MAX_CHARS:
         raise ValueError(f"payload exceeds {RELAY_MESSAGE_MAX_CHARS} Unicode code points")
-    if any((ord(char) < 32 and char not in "\n\r\t") or ord(char) == 127 for char in value):
+    if any(
+        (unicodedata.category(char) == "Cc" and char not in "\n\r\t")
+        or unicodedata.category(char) in {"Zl", "Zp"}
+        for char in value
+    ):
         raise ValueError("payload contains unsafe control characters")
     return value
 

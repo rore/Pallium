@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
@@ -9,6 +10,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from core.contracts import ProcessResult, PromotionHint, SupersessionHint
+from core.errors import ImmediateTransactionBusyError, is_transient_error
 from core.visibility import visibility_matches_exact
 from core.models import new_id, utc_now
 from core.observability import OBSERVABILITY_METADATA_KEY
@@ -84,6 +86,11 @@ _MERGE_HISTORY_KEEP_LAST = 16
 
 
 class SQLiteQueueMixin:
+    _IMMEDIATE_ATTEMPTS = 3
+    _IMMEDIATE_BUSY_TIMEOUT_MS = 100
+    _DEFAULT_BUSY_TIMEOUT_MS = 15_000
+    _IMMEDIATE_BACKOFF_SECONDS = 0.05
+
     @contextmanager
     def _begin_immediate(self):
         """Start a transaction with BEGIN IMMEDIATE for exclusive claim operations.
@@ -97,10 +104,31 @@ class SQLiteQueueMixin:
         concurrent claim attempts so only one process evaluates the subquery at a
         time.
         """
-        session = self._session_factory()
+        session = None
+        conn = None
+        for attempt in range(self._IMMEDIATE_ATTEMPTS):
+            session = self._session_factory()
+            try:
+                conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+                conn.execute(text(f"PRAGMA busy_timeout={self._IMMEDIATE_BUSY_TIMEOUT_MS}"))
+                conn.execute(text("BEGIN IMMEDIATE"))
+                break
+            except Exception as exc:
+                if conn is not None:
+                    try:
+                        conn.execute(text(f"PRAGMA busy_timeout={self._DEFAULT_BUSY_TIMEOUT_MS}"))
+                    except Exception:
+                        pass
+                session.close()
+                session = None
+                conn = None
+                if not is_transient_error(exc):
+                    raise
+                if attempt == self._IMMEDIATE_ATTEMPTS - 1:
+                    raise ImmediateTransactionBusyError("SQLite immediate transaction is busy") from exc
+                time.sleep(self._IMMEDIATE_BACKOFF_SECONDS * (attempt + 1))
+        assert session is not None and conn is not None
         try:
-            conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
-            conn.execute(text("BEGIN IMMEDIATE"))
             yield session
             session.flush()
             conn.execute(text("COMMIT"))
@@ -111,7 +139,12 @@ class SQLiteQueueMixin:
                 pass
             raise
         finally:
-            session.close()
+            try:
+                conn.execute(text(f"PRAGMA busy_timeout={self._DEFAULT_BUSY_TIMEOUT_MS}"))
+            except Exception:
+                pass
+            finally:
+                session.close()
 
     def claim_next_source_item(
         self,
