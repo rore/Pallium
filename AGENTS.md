@@ -73,7 +73,7 @@ Relay deliveries reach an agent through two paths. Never mix them in the same se
 
 **Hook delivery (normal path):** The integration injects pending deliveries into the agent's context at turn start via the `user_prompt_submit` hook. The hook owns claim, emission, and ACK. The agent does not call any MCP tool for this — the delivery is already in its context. Calling `pallium_relay_receive` in the same session as a hook delivery creates a race and risks double-claim.
 
-**MCP receive (recovery / non-hook integrations):** When the integration has no hook, or when a delivery was missed (e.g. crash-after-claim → lease expired → redelivery), the agent calls `pallium_relay_receive` to claim and retrieve pending deliveries. After processing each delivery, call `pallium_relay_ack(delivery_id)` to confirm. If replying, call `pallium_relay_reply` instead — it ACKs atomically; no separate ACK is needed.
+**MCP receive (recovery / non-hook integrations):** When the integration has no hook, or when a delivery was missed (e.g. crash-after-claim → lease expired → redelivery), the agent calls `pallium_relay_receive` to claim and retrieve pending deliveries. After processing each delivery, call `pallium_relay_ack(delivery_id, receipt)` to confirm. If replying, call `pallium_relay_reply` instead — it ACKs atomically; no separate ACK is needed.
 
 **Never use curl or HTTP directly for relay ACK.** The `/relay/deliveries/ack` endpoint requires a `claim_token` that is never exposed to the model. Use `pallium_relay_ack` (scope-based, no token) or `pallium_relay_reply` (atomic ACK + reply).
 
