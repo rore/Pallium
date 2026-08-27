@@ -7,13 +7,15 @@
       "name": "pallium_restarts_before_inbox_delivery",
       "delivery_wake_state": "queued",
       "expected_recovery": "dispatcher re-reads queued rows; inbox still registered and lease valid — re-deliver",
-      "expected_behavior": "triggered_or_admitted"
+      "expected_behavior": "triggered_or_admitted",
+      "expected_wake_state": "triggered"
     },
     {
       "name": "pallium_restarts_after_inbox_delivery_before_turn",
       "delivery_wake_state": "triggered",
       "expected_recovery": "within deadline: await admission turn; past deadline: fallback",
-      "expected_behavior": "admitted_or_fallback_after_deadline"
+      "expected_behavior": "admitted_or_fallback_after_deadline",
+      "expected_wake_state": "admitted"
     },
     {
       "name": "claude_code_session_restarts",
@@ -21,14 +23,16 @@
       "event": "session_restart_or_inbox_close",
       "expected_recovery": "inbox socket closes; capability lease expires; delivery falls back to natural-turn path",
       "fallback_reason": "inbox_closed_during_triggered",
-      "expected_behavior": "fallback"
+      "expected_behavior": "fallback",
+      "expected_wake_state": "fallback"
     },
     {
       "name": "already_admitted",
       "delivery_wake_state": "admitted",
       "event": "pallium_service_restart",
       "expected_recovery": "delivery complete; no second inbox delivery",
-      "expected_behavior": "admitted_idempotent"
+      "expected_behavior": "admitted_idempotent",
+      "expected_wake_state": "admitted"
     }
   ]
 }

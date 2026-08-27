@@ -9,7 +9,8 @@
       "wake_state_before": "queued",
       "event": "pallium_service_restart",
       "expected_recovery": "dispatcher re-reads queued rows, re-triggers with same clientUserMessageId",
-      "expected_behavior": "triggered_or_admitted"
+      "expected_behavior": "triggered_or_admitted",
+      "expected_wake_state": "triggered"
     },
     {
       "name": "pallium_restarts_while_triggered",
@@ -17,7 +18,8 @@
       "wake_state_before": "triggered",
       "event": "pallium_service_restart",
       "expected_recovery": "outstanding triggered deliveries recovered; if within deadline, await callback",
-      "expected_behavior": "admitted_or_fallback_after_deadline"
+      "expected_behavior": "admitted_or_fallback_after_deadline",
+      "expected_wake_state": "admitted"
     },
     {
       "name": "app_server_restarts_before_item_started",
@@ -26,14 +28,16 @@
       "queued_item_id": "qi-abc001",
       "event": "app_server_restart",
       "cold_resume": true,
-      "expected_behavior": "adapter re-initializes; queue survives restart (per integration tests); item/started with matching clientUserMessageId confirms admission after resume — admitted only on correlated event, not assumed"
+      "expected_behavior": "adapter re-initializes; queue survives restart (per integration tests); item/started with matching clientUserMessageId confirms admission after resume — admitted only on correlated event, not assumed",
+      "expected_wake_state": "admitted"
     },
     {
       "name": "already_admitted_recovery",
       "delivery_state_before": "delivered",
       "wake_state_before": "admitted",
       "event": "pallium_service_restart",
-      "expected_recovery": "delivery already complete; idempotent — no second wake attempt"
+      "expected_recovery": "delivery already complete; idempotent — no second wake attempt",
+      "expected_wake_state": "admitted"
     }
   ]
 }

@@ -45,6 +45,13 @@ def test_all_expected_outcomes_are_valid() -> None:
                     assert nested in VALID_OUTCOMES, (
                         f"{runtime}/{fixture.get('case')}/states: unexpected outcome {nested!r}"
                     )
+                    contract_wake = ADAPTER_CONTRACT["adapter_outcomes"][nested].get("next_wake_state")
+                    if contract_wake:
+                        actual_wake = state.get("expected_wake_state")
+                        assert actual_wake == contract_wake, (
+                            f"{runtime}/{fixture.get('case')}/states: expected_wake_state {actual_wake!r} "
+                            f"does not match contract next_wake_state {contract_wake!r} for outcome {nested!r}"
+                        )
 
 
 def test_all_phase0_cases_covered_per_runtime() -> None:
@@ -81,6 +88,9 @@ def test_ambiguous_retry_not_issued() -> None:
         for fixture in _load_runtime_fixtures(runtime):
             if fixture.get("case") != "ambiguous_retry":
                 continue
+            assert _extract_outcome(fixture) == "ambiguous", (
+                f"{runtime}/ambiguous_retry: expected_outcome must be 'ambiguous'"
+            )
             steps = fixture.get("expected_protocol_sequence", [])
             assert steps, f"{runtime}/ambiguous_retry: expected_protocol_sequence must not be empty"
             retry_steps = [s for s in steps if "retry_issued" in s]
@@ -117,6 +127,14 @@ def test_nested_protocol_contract() -> None:
                 assert "expected_behavior" in scenario or "expected_recovery" in scenario, (
                     f"{runtime}/{case}: scenarios[] entry missing 'expected_behavior' or 'expected_recovery'"
                 )
+                assert "expected_wake_state" in scenario, (
+                    f"{runtime}/{case}: scenarios[] entry {scenario.get('name', '?')!r} missing 'expected_wake_state'"
+                )
+            for step in fixture.get("expected_protocol_sequence", []):
+                if "event" in step:
+                    assert "expected_wake_state" in step, (
+                        f"{runtime}/{case}: event step {step['event']!r} missing 'expected_wake_state'"
+                    )
             if case in CASE_REQUIRED_ARRAY:
                 field = CASE_REQUIRED_ARRAY[case]
                 assert fixture.get(field), (

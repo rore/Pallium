@@ -71,7 +71,8 @@
           {
             "id": "test-session-oc001",
             "status": "idle",
-            "last_active_seconds_ago": 3600
+            "lease_expires_at": "2000-01-01T00:00:00Z",
+            "lease_duration_seconds": 3600
           }
         ]
       },

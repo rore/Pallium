@@ -6,11 +6,14 @@
     "session_ref": "opencode:test-session-oc001",
     "delivery_id": "pallium:del-oc-007",
     "pallium_relay_id": "pallium:del-oc-007",
-    "payload": "[Relay from relaydev] Ambiguous test."
+    "payload": "[Relay from relaydev] Ambiguous test. relay_id=pallium:del-oc-007"
   },
   "expected_protocol_sequence": [
     {
       "call": "POST /session/test-session-oc001/prompt_async",
+      "body": {
+        "parts": [{"type": "text", "text": "[Relay from relaydev] Ambiguous test. relay_id=pallium:del-oc-007"}]
+      },
       "response_status": 204,
       "note": "Transport ACK; no admission event follows."
     },

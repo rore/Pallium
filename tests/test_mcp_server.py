@@ -154,7 +154,7 @@ class TestBoundedErrorSurface:
                     "recipient": "codex:@relayarch",
                     "sender_runtime": "claude-code",
                     "sender_session_ref": "test-session",
-                    "container_ref": "git:github.com/rore/pallium",
+                    "container_ref": "git:example.com/test/repo",
                     "actor_ref": "test-actor",
                 },
             )

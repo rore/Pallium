@@ -42,6 +42,7 @@
         "clientUserMessageId": "pallium:del-002",
         "content": "[Relay from relaydev] Hello from Pallium. relay_id=pallium:del-002"
       },
+      "expected_wake_state": "admitted",
       "note": "This event is the admission signal, not the queue/add response."
     }
   ],

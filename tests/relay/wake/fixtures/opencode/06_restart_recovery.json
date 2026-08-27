@@ -13,7 +13,8 @@
       ],
       "session_history_check": "palliumRelayId not found",
       "expected_recovery": "plugin re-submits prompt_async after restart",
-      "expected_behavior": "triggered_or_admitted"
+      "expected_behavior": "triggered_or_admitted",
+      "expected_wake_state": "triggered"
     },
     {
       "name": "plugin_restart_after_prompt_before_admission",
@@ -25,7 +26,8 @@
       ],
       "session_history_check": "palliumRelayId not found",
       "expected_recovery": "within deadline: await callback; past deadline: fallback",
-      "expected_behavior": "admitted_or_fallback_after_deadline"
+      "expected_behavior": "admitted_or_fallback_after_deadline",
+      "expected_wake_state": "admitted"
     },
     {
       "name": "plugin_restart_after_admission",
@@ -37,13 +39,15 @@
       ],
       "session_history_check": "palliumRelayId found in session history",
       "expected_recovery": "delivery already admitted; no second prompt_async",
-      "expected_behavior": "admitted_idempotent"
+      "expected_behavior": "admitted_idempotent",
+      "expected_wake_state": "admitted"
     },
     {
       "name": "pallium_service_restart",
       "delivery_wake_state": "triggered",
       "expected_recovery": "dispatcher re-reads triggered rows; if within deadline, await callback",
-      "expected_behavior": "admitted_or_fallback_after_deadline"
+      "expected_behavior": "admitted_or_fallback_after_deadline",
+      "expected_wake_state": "admitted"
     }
   ]
 }
