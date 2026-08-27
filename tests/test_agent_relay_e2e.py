@@ -42,10 +42,10 @@ def _name(client, runtime: str, session: str, alias, **extra):
     )
 
 
-def _reply(client, delivery_id: str, payload: str = "reply", **extra):
+def _reply(client, delivery_id: str, payload: str = "reply", receipt: str = "bogus-receipt", **extra):
     return client.post(
         "/relay/replies",
-        json={"delivery_id": delivery_id, "payload": payload, **SCOPE, **extra},
+        json={"delivery_id": delivery_id, "receipt": receipt, "payload": payload, **SCOPE, **extra},
     )
 
 

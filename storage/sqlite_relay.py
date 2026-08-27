@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -47,12 +48,19 @@ def _render_safe(value: str) -> bool:
     )
 
 
+def _delivery_receipt(claim_token: str | None) -> str | None:
+    if claim_token is None:
+        return None
+    return hashlib.sha256(claim_token.encode()).hexdigest()[:32]
+
+
 def _delivery_view(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -> dict[str, Any]:
     return {
         "delivery_id": delivery.id,
         "message_id": message.id,
         "state": delivery.state,
         "claim_token": delivery.claim_token if delivery.state == "claimed" else None,
+        "receipt": _delivery_receipt(delivery.claim_token) if delivery.state == "claimed" else None,
         "recipient_runtime": delivery.recipient_runtime,
         "recipient_session_ref": delivery.recipient_session_ref,
         "sender_runtime": message.sender_runtime,
@@ -429,9 +437,12 @@ class SQLiteRelayMixin:
         self,
         *,
         delivery_id: str,
+        receipt: str,
         container_ref: str,
         actor_ref: str,
+        now: datetime | None = None,
     ) -> dict[str, str]:
+        current = _now(now)
         def run(db):
             row = db.execute(
                 select(RelayDeliveryRecord, RelayMessageRecord)
@@ -443,8 +454,16 @@ class SQLiteRelayMixin:
             delivery, message = row
             if message.container_ref != container_ref or message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
-            if delivery.state != "delivered":
-                raise RelayConflictError("only delivered relay messages can be replied to")
+            if delivery.state == "claimed":
+                if delivery.lease_expires_at is None or _now(delivery.lease_expires_at) <= current:
+                    raise RelayConflictError("claim lease has expired")
+                if _delivery_receipt(delivery.claim_token) != receipt:
+                    raise RelayConflictError("receipt does not match current claim")
+                delivery.state = "delivered"
+                delivery.claim_token = None
+                delivery.delivered_at = current
+            elif delivery.state != "delivered":
+                raise RelayConflictError("only claimed or delivered relay messages can be replied to")
             return {
                 "message_id": message.id,
                 "sender_runtime": delivery.recipient_runtime,
@@ -499,20 +518,20 @@ class SQLiteRelayMixin:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             return self._relay_status_in_session(db, message, current)
 
-    def relay_ack_by_scope(
+    def relay_ack_by_receipt(
         self,
         *,
         delivery_id: str,
-        runtime: str,
-        session_ref: str,
+        receipt: str,
         container_ref: str,
         actor_ref: str,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        """ACK a claimed delivery using recipient scope instead of claim_token.
+        """ACK a claimed delivery using the receipt returned at claim time.
 
-        Used by the MCP receive path where claim tokens are never given to the model.
-        Validates that the delivery's recipient matches the provided scope.
+        receipt = sha256(claim_token)[:32] — proves the caller received this specific
+        claim generation. If the lease expired and the delivery was re-claimed, the
+        receipt from the stale claim will not match the new claim_token → 409.
         Idempotent: returns success if already delivered.
         """
         current = _now(now)
@@ -527,11 +546,6 @@ class SQLiteRelayMixin:
             delivery, message = row
             if message.container_ref != container_ref or message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
-            if (
-                delivery.recipient_runtime != runtime
-                or delivery.recipient_session_ref != session_ref
-            ):
-                raise RelayNotFoundError("relay entity not found in the requested scope")
             if delivery.state == "delivered":
                 return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(delivery.delivered_at)}
             if delivery.state != "claimed":
@@ -544,6 +558,8 @@ class SQLiteRelayMixin:
                 expired = False
                 if delivery.lease_expires_at is None or _now(delivery.lease_expires_at) <= current:
                     raise RelayConflictError("claim lease has expired")
+                if _delivery_receipt(delivery.claim_token) != receipt:
+                    raise RelayConflictError("receipt does not match current claim")
                 delivery.state = "delivered"
                 delivery.claim_token = None
                 delivery.delivered_at = current

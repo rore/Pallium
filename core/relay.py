@@ -105,7 +105,7 @@ class RelayService:
             "relay_delivery_context",
             "relay_message_status",
             "relay_ack",
-            "relay_ack_by_scope",
+            "relay_ack_by_receipt",
         )
         if not all(callable(getattr(store, name, None)) for name in required):
             raise RelayUnavailableError("relay is not supported by the configured storage")
@@ -237,6 +237,7 @@ class RelayService:
         self,
         *,
         delivery_id: str,
+        receipt: str,
         payload: str,
         container_ref: str,
         actor_ref: str,
@@ -247,8 +248,10 @@ class RelayService:
         delivery = _opaque(delivery_id, "delivery_id", maximum=128)
         context = self._store.relay_delivery_context(
             delivery_id=delivery,
+            receipt=_opaque(receipt, "receipt", maximum=64),
             container_ref=container,
             actor_ref=actor,
+            now=now,
         )
         reply_id = "relay-reply-" + hashlib.sha256(delivery.encode("utf-8")).hexdigest()
         return self.send(
@@ -291,21 +294,19 @@ class RelayService:
             now=now,
         )
 
-    def ack_by_scope(
+    def ack_by_receipt(
         self,
         *,
         delivery_id: str,
-        runtime: str,
-        session_ref: str,
+        receipt: str,
         container_ref: str,
         actor_ref: str,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
-        return self._store.relay_ack_by_scope(
+        return self._store.relay_ack_by_receipt(
             delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
-            runtime=validate_runtime(runtime),
-            session_ref=_opaque(session_ref, "session_ref", maximum=255),
+            receipt=_opaque(receipt, "receipt", maximum=64),
             container_ref=container,
             actor_ref=actor,
             now=now,

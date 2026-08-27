@@ -587,17 +587,19 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     @server.tool()
     async def pallium_relay_reply(
         delivery_id: str,
+        receipt: str,
         message: str,
         expires_in_seconds: int | None = None,
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery. Copy delivery_id from the attributed Relay block; Pallium derives both endpoints and the parent message deterministically. The delivery must already be acknowledged (delivered state) before replying — in the hook path the integration does this automatically; in the MCP receive path call pallium_relay_ack first."""
+        """Reply once to a received Relay delivery. Copy delivery_id and receipt from the attributed Relay block. If the delivery is still claimed (MCP receive path), this atomically ACKs and replies in one step — no prior pallium_relay_ack needed. If it is already delivered (hook path), this sends the reply without re-ACKing. Pallium derives both endpoints from delivery_id."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_reply(
             delivery_id=delivery_id,
+            receipt=receipt,
             message=message,
             expires_in_seconds=expires_in_seconds,
         )
@@ -633,24 +635,19 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         result = await PalliumMcpClient(ctx).relay_receive(runtime=runtime, session_ref=session_ref, max_chars=max_chars)
         if isinstance(result, dict) and "deliveries" in result:
             for d in result["deliveries"]:
-                d.pop("claim_token", None)
+                d.pop("claim_token", None)  # receipt stays; claim_token is never exposed
         return _relay_text(result)
 
     @server.tool()
     async def pallium_relay_ack(
         delivery_id: str,
+        receipt: str,
     ) -> str:
-        """Idempotently acknowledge a Relay delivery after you have the payload. Uses integration-injected identity only. Call this after pallium_relay_receive once you have processed the delivery. If you are replying, use pallium_relay_reply instead — it ACKs atomically."""
+        """Idempotently acknowledge a Relay delivery after you have the payload. Pass the receipt returned by pallium_relay_receive — it proves you received this specific claim generation and prevents stale ACKs from a prior expired claim. If you are replying, use pallium_relay_reply instead — it ACKs atomically; no separate pallium_relay_ack needed."""
         ctx = resolve_context()
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
-        runtime = ctx.agent_ref
-        session_ref = ctx.thread_ref
-        if not runtime:
-            return "Error: PALLIUM_AGENT_REF is not set. Relay ACK requires integration-injected runtime identity."
-        if not session_ref:
-            return "Error: PALLIUM_THREAD_REF is not set. Relay ACK requires integration-injected session identity."
-        result = await PalliumMcpClient(ctx).relay_mcp_ack(delivery_id=delivery_id, runtime=runtime, session_ref=session_ref)
+        result = await PalliumMcpClient(ctx).relay_mcp_ack(delivery_id=delivery_id, receipt=receipt)
         return _relay_text(result)
 
     # ── W3 explicit memory-write tools ─────────────────────────────

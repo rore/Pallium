@@ -416,7 +416,7 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False, r
 
     @router.post("/relay/deliveries/mcp-ack", response_model=RelayAckResponse)
     def relay_mcp_ack(request: RelayMcpAckRequest):
-        return _relay_call(lambda: _relay().ack_by_scope(**request.model_dump()))
+        return _relay_call(lambda: _relay().ack_by_receipt(**request.model_dump()))
 
     def _ingest_one(request: ItemCreateRequest) -> ItemCreateResponse:
         result = service.ingest_item(

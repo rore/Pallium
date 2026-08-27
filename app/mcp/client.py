@@ -277,10 +277,12 @@ class PalliumMcpClient:
         *,
         delivery_id: str,
         message: str,
+        receipt: str,
         expires_in_seconds: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "delivery_id": delivery_id,
+            "receipt": receipt,
             "payload": message,
             **self._relay_scope_params(),
         }
@@ -301,11 +303,10 @@ class PalliumMcpClient:
         }
         return await self._post_or_error("/relay/turn", payload)
 
-    async def relay_mcp_ack(self, delivery_id: str, runtime: str, session_ref: str) -> dict[str, Any]:
+    async def relay_mcp_ack(self, delivery_id: str, receipt: str) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "delivery_id": delivery_id,
-            "runtime": runtime,
-            "session_ref": session_ref,
+            "receipt": receipt,
             **self._relay_scope_params(),
         }
         return await self._post_or_error("/relay/deliveries/mcp-ack", payload)
