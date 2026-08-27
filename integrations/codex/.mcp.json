@@ -4,7 +4,8 @@
       "command": "pallium-mcp",
       "env": {
         "PALLIUM_MCP_TRANSPORT": "stdio",
-        "PALLIUM_BASE_URL": "http://localhost:19836"
+        "PALLIUM_BASE_URL": "http://localhost:19836",
+        "PALLIUM_AGENT_REF": "codex"
       },
       "startup_timeout_sec": 10,
       "tool_timeout_sec": 30

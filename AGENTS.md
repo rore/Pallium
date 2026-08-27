@@ -77,3 +77,5 @@ Relay deliveries reach an agent through two paths. Never mix them in the same se
 
 **Never use curl or HTTP directly for relay ACK.** The `/relay/deliveries/ack` endpoint requires a `claim_token` that is never exposed to the model. Use `pallium_relay_ack` (scope-based, no token) or `pallium_relay_reply` (atomic ACK + reply).
 
+**MCP identity (for relay receive to work):** `pallium_relay_receive` uses only integration-injected env vars — `PALLIUM_AGENT_REF` (runtime, e.g. `"codex"`) and `PALLIUM_THREAD_REF` (session ID). Both must be set before the MCP server process starts. `PALLIUM_AGENT_REF` is static and belongs in the integration's MCP server `env` config. `PALLIUM_THREAD_REF` is session-scoped and must be injected at session launch by the integration launcher.
+
