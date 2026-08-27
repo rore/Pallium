@@ -98,14 +98,13 @@ def _strip_pydantic_input(detail: object) -> object:
     can inflate a 422 detail past the MCP relay budget and cause it to be dropped.
     """
     if isinstance(detail, dict) and isinstance(detail.get("detail"), list):
-        return {
-            "detail": [
-                {k: v for k, v in item.items() if k not in ("input", "url")}
-                if isinstance(item, dict)
-                else item
-                for item in detail["detail"]
-            ]
-        }
+        stripped = [
+            {k: v for k, v in item.items() if k not in ("input", "url")}
+            if isinstance(item, dict)
+            else item
+            for item in detail["detail"]
+        ]
+        return {**detail, "detail": stripped}
     return detail
 
 

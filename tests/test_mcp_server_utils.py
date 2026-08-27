@@ -58,7 +58,26 @@ def test_bounded_error_pydantic_422_fits_budget_after_strip() -> None:
     assert "input" not in out["detail"]["detail"][0]
 
 
-def test_bounded_error_preserves_status_code_in_truncation_path() -> None:
+def test_strip_pydantic_input_preserves_sibling_fields() -> None:
+    detail = {
+        "detail": [
+            {
+                "type": "missing",
+                "loc": ["body", "actor_ref"],
+                "msg": "required",
+                "input": "x" * 500,
+                "url": "https://example.com",
+            }
+        ],
+        "metadata": {"request_id": "abc123"},
+        "extra": "preserved",
+    }
+    stripped = _strip_pydantic_input(detail)
+    assert stripped["metadata"] == {"request_id": "abc123"}
+    assert stripped["extra"] == "preserved"
+    assert "input" not in stripped["detail"][0]
+    assert "url" not in stripped["detail"][0]
+    assert stripped["detail"][0]["msg"] == "required"
     # When error string is so long that detail was already dropped and the full
     # error+status_code payload still exceeds budget, the binary-search path must
     # keep status_code in the compact result.

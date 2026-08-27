@@ -1,16 +1,18 @@
 # Relay wake Phase 0 decision record
 
-**Status:** Active — supersedes per-runtime verdict in 016  
-**Scope:** Installed Claude Code 2.1.246, Codex CLI 0.149.1, OpenCode 1.18.19, native Windows  
+**Status:** Active — supersedes per-runtime verdict in 016
+**Scope:** Installed Claude Code 2.1.246, Codex CLI 0.149.1, OpenCode 1.18.19, native Windows
 **Gate:** Every runtime adapter in PR 3–5 must reference this record and pass all seven Phase 0 cases before merging.
 
 ## Per-runtime verdict
 
+Verdicts are based on reading official documentation and integration tests. None have been confirmed by running an installed-runtime probe. Each runtime's "Remaining gates" section lists what must be met before the corresponding adapter PR merges.
+
 | Runtime | Verdict | First implementation |
 |---|---|---|
-| Codex | **Supported** — via Pallium-managed App Server with experimental API | First |
-| OpenCode | **Supported** — via durable plugin coordinator | Second |
-| Claude Code | **Eligible** — native cross-session messaging; busy-turn decision required | Third |
+| Codex | **Supported (unconfirmed)** — Pallium-managed App Server with experimental API | First |
+| OpenCode | **Supported (unconfirmed)** — durable plugin coordinator | Second |
+| Claude Code | **Eligible (unconfirmed)** — native cross-session messaging; busy-turn decision required | Third |
 
 ### Codex
 
@@ -92,7 +94,7 @@ All adapters must prove these cases before entering implementation. The fixtures
 |---|---|---|
 | 1 | Identify live session for `session_ref` | Pallium resolves a session registered by the integration; closed or unknown refs are rejected |
 | 2 | Submit attributed Relay turn while idle | A distinct new turn starts; delivery/idempotency ID is present in the turn envelope |
-| 3 | Submit while user-owned turn is busy | No steering of the active turn; message is queued for a subsequent distinct turn |
+| 3 | Submit while user-owned turn is busy | No steering of the active turn. `busy_queue` adapters: message queued for a subsequent distinct turn. `idle_wake`-only adapters (e.g. Claude Code in current policy): `unavailable` outcome, natural-turn fallback enabled. Claude Code correctly yields `unavailable` — this is a pass, not a failure. |
 | 4 | Observe positive admission event tied to delivery ID | `wake_state → admitted` only on the correlated event, not on transport ACK |
 | 5 | Distinguish closed, stale, permission-denied, unavailable | Each non-eligible state maps to a specific fallback reason; no retry on permanent failure |
 | 6 | Behavior after runtime or Pallium restart | Outstanding triggered deliveries are recovered; already-admitted deliveries are idempotent |
@@ -114,44 +116,43 @@ The generic wake coordinator must not import runtime-specific types. All protoco
 
 ## Wake state transition table
 
+The complete machine-readable matrix (all 6 states × 15 events) is in [`tests/fixtures/relay_wake/contract.json`](../../tests/fixtures/relay_wake/contract.json). The rows below cover the cases most likely to have implementation surprises.
+
 | State | Event | Next state | Notes |
 |---|---|---|---|
 | `queued` | wake dispatcher reserves delivery | `triggering` | Atomic; natural-turn claim blocked until fallback |
 | `triggering` | adapter returns `triggered`/`admitted` | `triggered` / `admitted` | |
 | `triggering` | adapter returns `unavailable`/`rejected` | `fallback` | Natural-turn claim re-enabled |
-| `triggering` | adapter returns `ambiguous` | `triggered` | |
+| `triggering` | adapter returns `ambiguous` | `triggered` | Wait for deadline; no retry unless idempotency proven |
 | `triggered` | admission callback with valid token | `admitted` | Delivery complete |
 | `triggered` | admission deadline exceeded | `fallback` | Token invalidated; natural-turn claim re-enabled |
-| `triggered` | capability expiry / session close | stays `triggered` until deadline | No new trigger; awaits deadline before fallback |
-| `triggered` | message expiry | `fallback` (expiry wins) | Late callbacks rejected |
+| `triggered` | `capability_disabled` or session close | `triggered` (stays until deadline) | No new trigger attempt; deadline still governs |
+| `triggered` | message expiry | `fallback` | Expiry wins; late callbacks rejected |
 | `admitted` | any event | `admitted` | Terminal; no expiry; callbacks idempotent |
-| `fallback` | natural-turn hook claims delivery | delivery → `claimed` | Normal hook path |
-| `fallback` | message expiry | stays `fallback`, delivery expires | |
-| `not_eligible` | message expiry | delivery expires | Never entered wake path |
-| any non-admitted | capability disable mid-attempt | depends on whether `triggering`/`triggered`; see above | Before trigger: immediate fallback. After trigger: wait for deadline. |
-| any | session reopen with new adapter generation | old generation tokens rejected | New session registration creates new generation |
+| `fallback` | natural-turn hook claims delivery | delivery `pending→claimed` | Normal hook path |
+| `fallback` | message expiry | delivery `expired` | Terminal |
+| `not_eligible` | message expiry | delivery `expired` | Never entered wake path |
+| `queued` or `triggering` | message expiry | `fallback` (expiry wins) | Transition to fallback before expiry clears |
+| `queued` | `capability_disabled` | `fallback` | Before trigger; immediate fallback |
+| any | session reopen (new adapter generation) | old-generation callbacks rejected | New registration creates new generation; old tokens invalid |
+| any | late or duplicate admission callback | rejected | Token is single-use; duplicate callbacks are no-ops |
+| claim race: delivery arrives before session idle | `not_eligible` | delivery `pending`; natural-turn claim fires at next idle | Normal path |
+| claim race: session already idle when delivery arrives | `not_eligible` | immediate natural-turn claim | Hook fires on ingest |
 
-Key invariants:
-- Expiry is terminal for all non-admitted states; all late callbacks fail.
-- Close/capability loss before trigger → immediate fallback; after acknowledged trigger → wait for deadline.
-- Reopening a session creates a new adapter generation; old-generation callbacks are rejected.
-- Wake callback token is single-use, 256-bit, stored only as a hash, never exposed externally.
-- Natural-turn claim wins only before `triggering` or after `fallback`.
+## Provisional numeric parameters
 
-## Numeric bounds (from Phase 0 evidence)
+Working values for adapter development. None have been measured against an installed runtime. Each parameter lists the basis for the estimate and the gate that must confirm or replace it before the corresponding adapter PR merges.
 
-These replace the provisional values from 016. Adapters choosing different values must document the measurement that justifies the change.
-
-| Parameter | Value | Basis |
-|---|---|---|
-| Admission deadline | 120 s | OpenCode idle probe took ~42 s; 3× buffer |
-| Max concurrent wake attempts | 4 | Local I/O bound; one session per adapter instance |
-| Retry on ambiguous | 0 (unless idempotency proven) | Prevents double delivery on non-idempotent runtimes |
-| Wake starts per recipient per minute | 6 | Rate-limit on accidental storm |
-| Reply hop bound | 4 | Terminates reply chains; diagnosable in audit |
-| Fan-out recipient bound | 25 | Existing Relay limit; unchanged |
-| Capability heartbeat interval | 15 s | Detects stale session before trigger |
-| Capability lease | 45 s | 3× heartbeat; allows one missed heartbeat |
+| Parameter | Provisional value | Basis | Gate |
+|---|---|---|---|
+| Admission deadline | 120 s | One ~42 s observed idle turn; 3× buffer — not a captured trace | PR 4: measure with OpenCode plugin probe |
+| Max concurrent wake attempts | 4 | Estimated local I/O bound; not measured | Gate: load probe before PR 2 |
+| Retry on ambiguous | 0 | Policy — prevents double delivery on non-idempotent runtimes | Runtime-specific idempotency proof required to enable |
+| Wake starts per recipient per minute | 6 | Estimated storm guard; not measured | Gate: measure before PR 2 |
+| Reply hop bound | 4 | Existing Relay audit bound; not a wake-specific measurement | Carries over from Relay contract; validate in PR 2 |
+| Fan-out recipient bound | 25 | Existing Relay limit | Unchanged; validate in PR 2 |
+| Capability heartbeat interval | 15 s | Unconfirmed | Gate: measure against each runtime before PR 3–5 |
+| Capability lease | 45 s | 3× heartbeat; provisional | Gate: same as heartbeat |
 
 ## Decisions still open (must resolve before PR 2)
 

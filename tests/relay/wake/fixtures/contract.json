@@ -1,14 +1,6 @@
 {
-  "_comment": "Normalized adapter result contract. Adapters return one outcome; the wake coordinator updates delivery state.",
+  "_comment": "Adapter outcome contract for the wake coordinator. For the full wake-state transition matrix, see tests/fixtures/relay_wake/contract.json.",
   "version": "1",
-  "wake_states": [
-    "not_eligible",
-    "queued",
-    "triggering",
-    "triggered",
-    "admitted",
-    "fallback"
-  ],
   "adapter_outcomes": {
     "admitted": {
       "description": "Correlated admission event received; delivery complete.",

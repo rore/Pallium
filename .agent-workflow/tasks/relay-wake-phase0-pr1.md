@@ -7,7 +7,7 @@
 
 **Constraints:** No internal names (xlm/pelican/clmia/sap-dev) in committed docs or fixtures. No external system names. No production wake behavior. MCP fix must not change relay tool signatures.
 
-**Completion criteria:** 017 decision record written covering all three runtimes; fixture files cover 7 cases per runtime; _bounded_error preserves status_code and strips Pydantic input field; tests pass; CI passes.
+**Completion criteria:** 017 decision record written covering all three runtimes; fixture files cover 7 cases per runtime; all fixtures validated by tests/test_relay_wake_fixtures.py; _bounded_error preserves status_code and strips Pydantic input+sibling fields; tests pass; CI passes.
 
 **Risk:** Elevated
 
@@ -15,15 +15,18 @@
 
 **Reason:** app/mcp/server.py is in the watch zone (app/**); redline detects Elevated. No red-zone paths touched; no checkpoint required.
 
-**Discovery:** app/mcp/server.py MCP bug found during relay 422 debugging: _bounded_error dropped status_code (extracted only error+detail keys) and Pydantic 422 detail inflated past 2000-char budget due to input field echoing the full payload. Both fixed together.
+**Discovery:** app/mcp/server.py MCP bug found during relay 422 debugging: _bounded_error dropped status_code (extracted only error+detail keys), Pydantic 422 detail inflated past 2000-char budget due to input field echoing the full payload, and _strip_pydantic_input reconstructed detail as only {detail:[...]} silently dropping sibling fields. All three fixed together.
 
 **Material assumptions:**
-- All fixture files are reference data only; no production behavior depends on them until adapter PRs (3–5).
+- All fixture files are reference data validated by tests/test_relay_wake_fixtures.py; no production behavior depends on them until adapter PRs (3–5).
 - The _bounded_error fix is a pure error-surface improvement; it does not change relay semantics.
+- Phase 0 verdicts are based on official documentation and integration tests; installed-runtime probes are listed as unmet gates in 017.
 
-**Plan:** 1. Write 017 decision record synthesising Phase 0 findings. 2. Write per-runtime fixture stubs (7 cases × 3 runtimes + contract.json). 3. Fix _bounded_error in app/mcp/server.py. 4. Add unit tests in tests/test_mcp_server_utils.py. 5. Commit, open PR, send to relayarch.
+**Plan:** 1. Write 017 decision record synthesising Phase 0 findings. 2. Write per-runtime fixture stubs (7 cases × 3 runtimes + contract.json). 3. Fix _bounded_error in app/mcp/server.py. 4. Add unit tests in tests/test_mcp_server_utils.py. 5. Add fixture loader tests in tests/test_relay_wake_fixtures.py. 6. Commit, open PR, send to relayarch.
 
-**Verification plan:** pytest tests/ -x -q passes (minus pre-existing main failure); all 3 _bounded_error unit tests pass; fixture JSON files valid and present; 017 decision record covers all three runtimes.
+**Verification plan:**
+- `pytest tests/test_mcp_server_utils.py tests/test_relay_wake_fixtures.py -x -q` → 9 passed (observed 2026-08-27)
+- `pytest tests/ -x -q` passes minus pre-existing main failure: `test_config.py::test_prompt_variants_legacy_fallback_unaffected` fails on main before this branch (confirmed by checking out main and running the test)
 
 **Plan review:** self — Elevated risk, Simple complexity; no red-zone touched, no checkpoint required.
 
@@ -38,9 +41,9 @@
 
 Branch: feat/relay-wake-phase0-pr1
 
-- Wrote docs/designs/017-relay-wake-phase0.md: corrected Phase 0 verdict, per-runtime admission handshakes, 7-case gate, state transition table, numeric bounds, open decisions.
-- Wrote tests/relay/wake/fixtures/contract.json and 7 cases × 3 runtimes (codex, opencode, claude_code) as deterministic JSON protocol stubs.
-- Fixed app/mcp/server.py: _bounded_error now includes status_code extraction and _strip_pydantic_input strips input/url fields before budget check.
-- Added tests/test_mcp_server_utils.py — 3 unit tests, no mcp package dependency.
+- Wrote docs/designs/017-relay-wake-phase0.md: corrected Phase 0 verdict, per-runtime admission handshakes, 7-case gate, state transition table, numeric bounds, open decisions. Updated: verdicts marked unconfirmed (probe gates listed), numeric bounds marked provisional with measurement gates, Case 3 clarified as capability-specific, transition table expanded to cover capability-disable split, expiry per state, claim race, late callbacks, and canonical matrix reference.
+- Wrote tests/relay/wake/fixtures/contract.json (adapter outcome contract, no duplicate wake_states) and 7 cases × 3 runtimes (codex, opencode, claude_code) as deterministic JSON protocol stubs.
+- Added tests/test_relay_wake_fixtures.py: 5 tests validating all 21 fixtures parse, all adapter outcomes are valid, all phase0_cases covered per runtime, busy_queue is capability-specific, and ambiguous retry is not issued without idempotency proof.
+- Fixed app/mcp/server.py: _bounded_error preserves status_code in all paths; _strip_pydantic_input now preserves sibling fields via {**detail, "detail": stripped_items} instead of reconstructing only {detail:[...]}.
+- Added tests/test_mcp_server_utils.py — 5 unit tests (no mcp package dependency), including sibling-field preservation test.
 - Pre-existing failure confirmed: test_config.py::test_prompt_variants_legacy_fallback_unaffected fails on main before this branch.
-- Risk re-classified Routine→Elevated post-commit: app/mcp/server.py is in watch zone (app/**).
