@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 import json
 import os
 import subprocess
@@ -23,6 +24,7 @@ from core.claude_wake import (
     ClaudeWakeRegistry,
     MAX_ACTOR_CHARS,
     MAX_CONTAINER_CHARS,
+    MAX_REGISTRATIONS,
     MAX_RUNTIME_CHARS,
     MAX_SESSION_CHARS,
     MAX_SOCKET_CHARS,
@@ -170,7 +172,7 @@ def test_hook_registration_suppresses_credential_on_transport_failure(monkeypatc
     secret = "never-print-this"
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", secret)
-    monkeypatch.setattr(common.urllib.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError(secret)))
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=lambda *_a, **_k: (_ for _ in ()).throw(OSError(secret))))
     assert not common.register_claude_wake("session", "git:example/repo", "local")
     captured = capsys.readouterr()
     assert secret not in captured.out
@@ -346,6 +348,54 @@ def test_concurrent_expiry_is_safe() -> None:
     assert results == [False, False]
 
 
+def test_registry_capacity_prunes_expired_and_preserves_existing_updates() -> None:
+    now = [0.0]
+    registry = ClaudeWakeRegistry(clock=lambda: now[0])
+    for index in range(MAX_REGISTRATIONS):
+        registry.register(**{**PAYLOAD, "session_ref": f"session-{index}"})
+    registry.register(**{**PAYLOAD, "session_ref": "session-0", "token": "replacement"})
+    with pytest.raises(ValueError, match="capacity"):
+        registry.register(**{**PAYLOAD, "session_ref": "overflow"})
+    now[0] = TTL_SECONDS + 1
+    registry.register(**{**PAYLOAD, "session_ref": "after-expiry"})
+    assert registry.probe(
+        runtime=PAYLOAD["runtime"],
+        session_ref="after-expiry",
+        container_ref=PAYLOAD["container_ref"],
+        actor_ref=PAYLOAD["actor_ref"],
+        transport=lambda *_: True,
+    )
+
+
+def test_hook_enforces_encoded_body_limit_before_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    common = _load_claude_hook("common", monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "é" * MAX_TOKEN_CHARS)
+    monkeypatch.setattr(
+        common.urllib.request,
+        "build_opener",
+        lambda *_args: pytest.fail("oversized encoded body must not open"),
+    )
+    assert not common.register_claude_wake("session", "git:example/repo", "local")
+
+
+def test_hook_disables_proxies_and_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
+    common = _load_claude_hook("common", monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
+    handlers: list[object] = []
+
+    def build_opener(*configured: object):
+        handlers.extend(configured)
+        return SimpleNamespace(open=lambda *_args, **_kwargs: nullcontext())
+
+    monkeypatch.setattr(common.urllib.request, "build_opener", build_opener)
+    assert common.register_claude_wake("session", "git:example/repo", "local")
+    assert any(isinstance(handler, common.urllib.request.ProxyHandler) and handler.proxies == {} for handler in handlers)
+    redirect_handler = next(handler for handler in handlers if isinstance(handler, common._RejectCredentialRedirects))
+    assert redirect_handler.redirect_request(None, None, 307, None, {}, "https://example.invalid") is None
+
+
 @pytest.mark.parametrize("case", ["missing", "none", "empty", "oversized"])
 def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest.MonkeyPatch) -> None:
     stop = _load_claude_hook("stop", monkeypatch)
@@ -400,7 +450,7 @@ def test_hook_timeout_or_http_failure_is_silent(failure: Exception, monkeypatch:
     common = _load_claude_hook("common", monkeypatch)
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "transport-secret")
-    monkeypatch.setattr(common.urllib.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(failure))
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=lambda *_a, **_k: (_ for _ in ()).throw(failure)))
     assert not common.register_claude_wake("session", "git:example/repo", "local")
     captured = capsys.readouterr()
     assert "transport-secret" not in captured.out + captured.err

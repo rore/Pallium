@@ -10,6 +10,7 @@ import unicodedata
 
 RUNTIME = "claude-code"
 TTL_SECONDS = 900
+MAX_REGISTRATIONS = 256
 MAX_RUNTIME_CHARS = 32
 MAX_SESSION_CHARS = 512
 MAX_CONTAINER_CHARS = 512
@@ -72,8 +73,17 @@ class ClaudeWakeRegistry:
         ):
             raise ValueError("invalid registration")
         with self._lock:
+            now = self._clock()
+            self._registrations = {
+                key: registration
+                for key, registration in self._registrations.items()
+                if registration.expires_at > now
+            }
+            key = (runtime, session_ref)
+            if key not in self._registrations and len(self._registrations) >= MAX_REGISTRATIONS:
+                raise ValueError("registration capacity reached")
             self._generation += 1
-            self._registrations[(runtime, session_ref)] = _Registration(
+            self._registrations[key] = _Registration(
                 runtime=runtime,
                 session_ref=session_ref,
                 container_ref=container_ref,
@@ -81,7 +91,7 @@ class ClaudeWakeRegistry:
                 socket_path=socket_path,
                 token=token,
                 generation=self._generation,
-                expires_at=self._clock() + TTL_SECONDS,
+                expires_at=now + TTL_SECONDS,
             )
 
     def probe(
