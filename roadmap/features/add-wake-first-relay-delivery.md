@@ -94,7 +94,7 @@ selects durable fallback. Runtime names are never global capability claims, and 
 exited arbitrary process is not wakeable merely because its conversation can be
 resumed by launching another process.
 
-### Stop conditions (updated 2026-08-27 after research)
+### Remaining production gates (updated 2026-08-28 after qualification)
 
 **Implementation is still blocked** until all conditions are cleared.
 
@@ -111,8 +111,9 @@ resumed by launching another process.
    macOS/Linux UDS E2E. Never send native ingress while busy and never retry an
    ambiguous write without coordinator proof that no admission occurred.
 
-3. **MCP receive lifecycle prerequisite:** `fix-relay-receive-mcp-lifecycle`
-   must be implemented and merged before any wake adapter PR starts.
+3. **MCP receive lifecycle foundation — complete:**
+   `fix-relay-receive-mcp-lifecycle` is merged. Wake can reuse receipt-based
+   recovery without raw HTTP or model-visible claim tokens.
 
 **PR 2 shape:** Derive the smallest shared core only from two proven exact-session
 adapter live traces. Open numeric limits are not decided until both adapters are
@@ -214,13 +215,15 @@ Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wak
 Phase 0 decision and installed-runtime evidence:
 [Relay wake Phase 0 decision record](../../docs/designs/017-relay-wake-phase0.md).
 
-Current result: Codex remains passive-only despite proven exact-session `codex queue
---thread` admission while idle and at a safe busy boundary. Cases 5, 6, and 7,
-coordinator-owned idempotency/fallback, and `fix-relay-receive-mcp-lifecycle` remain
-blocking gates; the managed experimental App Server remains rejected. OpenCode and
-Claude Code remain candidates only through integrations that preserve the identity
-of the user's already-running addressed session. None of these claims changes
-passive next-turn fallback.
+Current result: exact-session ingress is proven for Codex through `codex queue
+--thread` and for verified-idle Claude Code on native Windows through its registered
+named-pipe inbox. Claude Channels were unavailable in the qualified environment;
+busy native Claude ingress is unsafe, and neither transport provides sufficient
+deduplication. The next production slice is therefore a shared persist-first wake
+coordinator with dedupe, admission correlation, and durable fallback, followed by
+the Claude idle-only and Codex queue adapters. OpenCode remains deferred until the
+automatic Claude↔Codex handoff works. None of these claims changes passive
+next-turn fallback.
 
 ## Research References
 

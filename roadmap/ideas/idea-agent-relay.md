@@ -197,7 +197,7 @@ stored indefinitely. Track the bounded cleanup slice in
 pending and active claims, delete terminal message/delivery state without orphans,
 and keep dashboard metrics useful without turning Relay into a message archive.
 
-### R1.5 — Wake-first delivery — queued
+### R1.5 — Wake-first delivery — active
 
 Make wake the default delivery policy, without requiring sender syntax or an LLM
 poll. Pallium must persist the message before attempting activation. An eligible
@@ -211,12 +211,13 @@ after the runtime confirms that the message entered the recipient's context, and
 the fallback must not inject a successfully admitted message twice. Wake failures
 remain observable but do not turn a durable pending delivery into a failed message.
 
-Use runtime-native mechanisms rather than inventing a Pallium scheduler: Claude
-Code cross-session messaging or Channels, Codex App Server admission, and OpenCode's
-session server. Validate the smallest supported adapter for each runtime, including
-idle, busy, user-turn races, duplicate attempts, stale sessions, restarts,
-permissions, fan-out cost, and reply-loop protection. Track implementation in
-`add-wake-first-relay-delivery`.
+Use only qualified runtime-native mechanisms. Claude Code native Windows idle wake
+and Codex `queue --thread` exact-session admission are proven candidates; Claude
+Channels were unavailable and Codex App Server was rejected for this use. Pallium
+must deduplicate before ingress, admit Claude only when verified idle, correlate
+model-visible admission, and retain durable fallback for busy, stale, restart, or
+ambiguous outcomes. OpenCode is deferred until Claude↔Codex handoff works. Track
+implementation in `add-wake-first-relay-delivery`.
 
 R1.5 does not restart exited processes, spawn agents, infer recipients, or supervise
 work. Resuming an agent that is no longer running is a separate orchestration
@@ -227,7 +228,8 @@ hypothesis.
 Turn the strongest observed Relay uses into durable E2E journeys: an unexpected
 cross-workstream dependency, a blocked decision round trip, and a cross-model
 review handoff. Use deterministic public-surface scenarios for regression and
-budgeted live Claude Code, Codex, and OpenCode runs for semantic evidence. The
+budgeted live Claude Code and Codex runs first; add OpenCode after its wake adapter
+is qualified. The
 passing scenarios, not a generic multi-agent story, become the source for public
 docs, quickstarts, and guidance about when agents should and should not send.
 

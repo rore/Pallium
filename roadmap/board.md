@@ -16,7 +16,6 @@
 
 # Parallel · Agent Relay
 - idea-agent-relay
-- fix-relay-receive-mcp-lifecycle
 - add-wake-first-relay-delivery
 - validate-relay-dependency-workflows
 - add-copilot-relay-integration
@@ -42,6 +41,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- fix-relay-receive-mcp-lifecycle
 - fix-relay-claim-before-context-emission
 - add-workstream-rolling-topic
 - idea-reuse-judge-calibration

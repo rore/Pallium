@@ -22,10 +22,11 @@ This item validates a product hypothesis; it does not add a workflow engine:
 
 ## Sequencing
 
-This work starts only after wake-first delivery is implemented and stable across
-Claude Code, Codex, and OpenCode. Its scenarios depend on observing real wake,
-safe busy-turn queuing, replies, and deterministic next-turn fallback. Findings may
-produce focused bugs, but must not silently expand Relay into orchestration.
+This work starts after automatic Claude↔Codex wake and fallback are implemented and
+stable. Its first scenarios cover real safe wake, busy deferral or deterministic
+next-turn fallback, and replies across those two runtimes. Add OpenCode coverage
+after its wake adapter is qualified. Findings may produce focused bugs, but must
+not silently expand Relay into orchestration.
 
 ## Research Result Preserved
 

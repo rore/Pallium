@@ -1,7 +1,7 @@
 ---
 id: fix-relay-receive-mcp-lifecycle
 title: Add MCP relay receive and acknowledgement lifecycle
-status: active
+status: done
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -10,14 +10,12 @@ lane: defect
 
 ## Summary
 
-Agents have no supported MCP path for mid-turn or recovery mail handling. The
-only available tools are passive (hook injection) or address-book queries
-(`pallium_relay_recipients`). When hook delivery fails or a message arrives
-mid-turn, agents fall back to raw HTTP `/relay/turn` and manual ACK, exposing
-claim tokens and creating claimed-but-not-delivered state. This is a defect in
-the MCP surface, confirmed by live transcript evidence (2026-08-27).
+Agents now have a supported MCP path for recovery mail handling without raw HTTP
+or exposed claim tokens. `pallium_relay_receive` claims through injected session
+identity, `pallium_relay_ack` confirms by opaque receipt, and
+`pallium_relay_reply` atomically acknowledges while replying.
 
-## What is missing
+## Shipped contract (2026-08-27)
 
 1. `pallium_relay_receive` — claims pending deliveries using injected session
    scope, returns payload plus an opaque receipt/lease; no model-supplied
