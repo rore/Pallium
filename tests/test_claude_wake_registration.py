@@ -309,6 +309,43 @@ def test_registration_validates_every_field_boundary(field: str, maximum: int) -
             assert value not in response.text
 
 
+@pytest.mark.parametrize("value", [None, 1, [], {}])
+def test_registration_rejects_wrong_typed_secret_fields(value: object) -> None:
+    response = _client(ClaudeWakeRegistry()).post(
+        "/internal/claude-wake/register", json={**PAYLOAD, "token": value},
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "invalid registration"}
+
+
+def test_concurrent_expiry_is_safe() -> None:
+    now = [0.0]
+    registry = ClaudeWakeRegistry(clock=lambda: now[0])
+    registry.register(**PAYLOAD)
+    now[0] = TTL_SECONDS + 1
+    barrier = threading.Barrier(3)
+    results: list[bool] = []
+
+    def probe() -> None:
+        barrier.wait()
+        results.append(registry.probe(
+            runtime=PAYLOAD["runtime"],
+            session_ref=PAYLOAD["session_ref"],
+            container_ref=PAYLOAD["container_ref"],
+            actor_ref=PAYLOAD["actor_ref"],
+            transport=lambda *_: pytest.fail("expired credentials must not transport"),
+        ))
+
+    workers = [threading.Thread(target=probe) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    barrier.wait()
+    for worker in workers:
+        worker.join(timeout=1)
+        assert not worker.is_alive()
+    assert results == [False, False]
+
+
 @pytest.mark.parametrize("case", ["missing", "none", "empty", "oversized"])
 def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest.MonkeyPatch) -> None:
     stop = _load_claude_hook("stop", monkeypatch)
