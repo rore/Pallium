@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
 
 from api.schemas import (
     RelayAckRequest,
@@ -58,6 +60,7 @@ from api.schemas import (
     SupersedeMemoryRequest,
     SupersedeMemoryResponse,
 )
+from core.claude_wake import ClaudeWakeRegistry
 from core.errors import ImmediateTransactionBusyError, LookupRequestLinkError, SupersessionConflictError
 from core.relay import RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
@@ -250,6 +253,7 @@ def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
 
 
 logger = logging.getLogger(__name__)
+_CLAUDE_WAKE_BODY_MAX_BYTES = 16_384
 
 _EXPAND_PAYLOAD_EXCLUDED_KEYS: frozenset[str] = frozenset({
     "semantic_provenance",
@@ -334,8 +338,15 @@ def _maybe_write_query_audit(
         return None
 
 
-def create_router(service: PalliumService, *, audit_log_enabled: bool = False, relay_service: RelayService | None = None) -> APIRouter:
+def create_router(
+    service: PalliumService,
+    *,
+    audit_log_enabled: bool = False,
+    relay_service: RelayService | None = None,
+    claude_wake_registry: ClaudeWakeRegistry | None = None,
+) -> APIRouter:
     router = APIRouter()
+    wake_registry = claude_wake_registry or ClaudeWakeRegistry()
 
     def _relay() -> RelayService:
         if relay_service is None:
@@ -417,6 +428,36 @@ def create_router(service: PalliumService, *, audit_log_enabled: bool = False, r
     @router.post("/relay/deliveries/mcp-ack", response_model=RelayAckResponse)
     def relay_mcp_ack(request: RelayMcpAckRequest):
         return _relay_call(lambda: _relay().ack_by_receipt(**request.model_dump()))
+
+    @router.post("/internal/claude-wake/register", status_code=204)
+    async def register_claude_wake(http_request: Request) -> Response:
+        client = http_request.client
+        if client is None or client.host not in {"127.0.0.1", "::1"}:
+            raise HTTPException(status_code=403, detail="forbidden")
+        content_length = http_request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if not 0 <= int(content_length) <= _CLAUDE_WAKE_BODY_MAX_BYTES:
+                    raise ValueError
+            except ValueError:
+                raise HTTPException(status_code=400, detail="invalid registration")
+        try:
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in http_request.stream():
+                size += len(chunk)
+                if size > _CLAUDE_WAKE_BODY_MAX_BYTES:
+                    raise ValueError
+                chunks.append(chunk)
+            payload = json.loads(b"".join(chunks))
+            if not isinstance(payload, dict) or set(payload) != {
+                "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token",
+            }:
+                raise ValueError
+            wake_registry.register(**payload)
+        except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="invalid registration")
+        return Response(status_code=204)
 
     def _ingest_one(request: ItemCreateRequest) -> ItemCreateResponse:
         result = service.ingest_item(

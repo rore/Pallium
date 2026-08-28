@@ -145,10 +145,13 @@ for ≤2.1.233) but is not a public API.
 
 **Credential security gate before any Path A PoC:** The target-side runtime or
 hook must transfer the credential directly to an audited loopback-only
-probe/registration path without model context, command arguments, stdout/stderr,
-files, Relay, or logs. That path is not implemented or authorized in this Phase 0
-task. Path A remains **BLOCKED** pending a separate reviewed integration/probe task
-with a user-present disposable target; only then may a live PoC classify the
+registration path without model context, command arguments, stdout/stderr, files,
+Relay, or logs. The approved registration foundation is memory-only, accepts only
+an exact `claude-code` session from an IPv4/IPv6 loopback peer under the same-user trust assumption, expires
+entries after 900 seconds, and refreshes from `SessionStart` and `Stop`. It has no
+public probe, status, or clear surface; production opens no named pipe. Path A
+remains **BLOCKED** pending a separate reviewed live probe task with a
+user-present disposable target; only then may a live PoC classify the
 independent-process result as supported or implementation detail.
 
 **Path B: Channels (research fallback; not preflight-confirmed on installed CLI)**

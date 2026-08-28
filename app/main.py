@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from app.asyncio_windows_accept import apply_patch as _apply_accept_patch
 from app.config import AppConfig
 from app.dashboard import mount_dashboard
-from app.dependencies import build_router, build_service, build_storage_provider
+from app.dependencies import build_claude_wake_registry, build_router, build_service, build_storage_provider
 from app.snapshot import resolve_live_db_path
 from core.observability import QueryStats
 from core.service import PalliumService
@@ -489,9 +489,13 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         })
 
     mount_dashboard(app)
+    claude_wake_registry = build_claude_wake_registry()
+    app.state.claude_wake_registry = claude_wake_registry
     app.include_router(build_router(
-        service, audit_log_enabled=resolved_config.observability.query_audit_log,
+        service,
+        audit_log_enabled=resolved_config.observability.query_audit_log,
         relay_storage=build_result.storage,
+        claude_wake_registry=claude_wake_registry,
     ))
     if mcp_available and mcp_app is not None:
         app.mount("", mcp_app)
