@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from api.routes import create_router
+from core.claude_wake import ClaudeWakeRegistry
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.relay import RelayService, RelayUnavailableError
@@ -513,7 +514,17 @@ def _load_or_create_vector_index(
         return None
 
 
-def build_router(service: PalliumService, *, audit_log_enabled: bool = False, relay_storage=None):
+def build_claude_wake_registry() -> ClaudeWakeRegistry:
+    return ClaudeWakeRegistry()
+
+
+def build_router(
+    service: PalliumService,
+    *,
+    audit_log_enabled: bool = False,
+    relay_storage=None,
+    claude_wake_registry: ClaudeWakeRegistry | None = None,
+):
     relay_service = None
     if relay_storage is not None:
         try:
@@ -521,6 +532,8 @@ def build_router(service: PalliumService, *, audit_log_enabled: bool = False, re
         except RelayUnavailableError:
             pass
     return create_router(
-        service, audit_log_enabled=audit_log_enabled, relay_service=relay_service
+        service,
+        audit_log_enabled=audit_log_enabled,
+        relay_service=relay_service,
+        claude_wake_registry=claude_wake_registry or build_claude_wake_registry(),
     )
-

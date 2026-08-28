@@ -59,7 +59,7 @@ Approved by user 2026-08-28T06:14:21Z: "work independently"
 **Exceptions:**
 —
 
-**State:** Ready
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Checkpoint: api-review
@@ -76,4 +76,4 @@ Verification plan: Hook subprocess/environment -> loopback HTTP -> registry, int
 
 ## Implementation
 
-2026-08-28 — Created from synced `origin/main` `6288fb3005d74e0528656057ee8746583881b337` on `codex/add-claude-wake-registration`. Planning only. Revised after two clean-context architect reviews: fixed 900-second TTL, Start/Stop refresh, no clear/probe HTTP surface, manual secret parsing, generation-safe state, dependency injection through `app.dependencies.build_router`, and expanded E2E boundary. Next: obtain reviewed-plan acceptance and required verbatim human approval before any guarded code.
+2026-08-28 — Created from synced `origin/main` `6288fb3005d74e0528656057ee8746583881b337` on `codex/add-claude-wake-registration`. Implemented the accepted registration-only slice: process-memory registry, 900-second expiry, generation-safe replacement, registration-only IPv4/IPv6 loopback route with bounded manual JSON parsing, per-app dependency wiring, and fail-silent SessionStart/Stop refresh. No coordinator, SessionEnd, clear/status/probe HTTP surface, real named-pipe I/O, persistence, or live target operation. Verification: `pytest tests/test_claude_wake_registration.py tests/test_claude_code_integration.py tests/test_agent_relay_e2e.py -q` — 55 passed; final redline/workflow checks pending.

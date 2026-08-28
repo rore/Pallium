@@ -25,6 +25,9 @@ HTTP_TIMEOUT = 6
 SUBPROCESS_TIMEOUT = 3
 STATE_DIR = Path.home() / ".pallium" / "hooks" / "state"
 DEDUP_EXPIRY_SECONDS = 300
+CLAUDE_WAKE_REGISTER_PATH = "/internal/claude-wake/register"
+_CREDENTIAL_HTTP_TIMEOUT = 1
+_CREDENTIAL_LIMITS = (32, 512, 512, 255, 4096, 8192)
 
 
 def read_hook_input() -> dict:
@@ -282,6 +285,46 @@ def pallium_request(
         print(f"pallium hook: {method} {path} failed: {exc}", file=sys.stderr)
         return None
 
+
+def _credential_value(value: object, maximum: int) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and len(value) <= maximum
+        and not any(unicodedata.category(char) == "Cc" for char in value)
+    )
+
+
+def register_claude_wake(
+    session_ref: object,
+    container_ref: object,
+    actor_ref: object,
+) -> bool:
+    """Best-effort credential handoff with no diagnostic output."""
+    socket_path = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
+    token = os.environ.get("CLAUDE_CODE_MESSAGING_TOKEN")
+    values = ("claude-code", session_ref, container_ref, actor_ref, socket_path, token)
+    if not all(_credential_value(value, maximum) for value, maximum in zip(values, _CREDENTIAL_LIMITS)):
+        return False
+    body = json.dumps({
+        "runtime": "claude-code",
+        "session_ref": session_ref,
+        "container_ref": container_ref,
+        "actor_ref": actor_ref,
+        "socket_path": socket_path,
+        "token": token,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        f"{PALLIUM_BASE_URL}{CLAUDE_WAKE_REGISTER_PATH}",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_CREDENTIAL_HTTP_TIMEOUT):
+            return True
+    except Exception:
+        return False
 
 def relay_request(
     method: str, path: str, payload: Any, *, timeout: float

@@ -67,6 +67,12 @@ installed versions are Claude Code 2.1.246, Codex CLI 0.149.1, and OpenCode
 | Codex | **Passive-only; partial Phase 0** | `codex queue --thread` proved exact-session admission while idle and at a safe busy boundary with correlated model-visible evidence. The separately launched App Server remains rejected. Native queue idempotency failed. | Production is gated by cases 5, 6, and 7 plus coordinator-owned idempotency/fallback and `fix-relay-receive-mcp-lifecycle`. |
 | OpenCode | Supported with a Pallium/OpenCode plugin coordinator | Server/plugin APIs expose stable sessions and async prompts. Agent Intercom demonstrates persist-first delivery, application metadata correlation, history verification before replay, safe busy deferral, and restart recovery. | A bare prompt_async 204 is transport acknowledgement only. Pallium needs the plugin-owned durable pending ledger and a Windows E2E proof. Deferred to after Claude Code wake is proven. |
 | Claude Code | **Feasible via hook socket registration** | Confirmed 2026-08-27: each session exports `CLAUDE_CODE_MESSAGING_SOCKET` (named pipe path) and `CLAUDE_CODE_MESSAGING_TOKEN` to hooks including `SessionStart`. On native Windows the token is the own-child verification credential — a process holding the token that connects and authenticates with it is treated as own-child, delivered without an approval dialog when `crossSessionInbound` is at default. Session registry at `~/.claude/sessions/<pid>.json` exposes `status: idle/busy` and `peerFeatures: ["notify_idle"]`. | Prove the full adapter cycle: `SessionStart` hook registers socket + token with Pallium; Pallium connects named pipe, sends auth line, sends Relay-attributed message; idle session starts a new turn with it; admission is correlated by delivery ID in the hook on the receiving session's first applicable turn. Busy delivery must defer to idle or fall back. |
+**Claude registration foundation (2026-08-28):** `SessionStart` and `Stop` now
+refresh an exact-session credential through a loopback-only, memory-only
+registration endpoint with fixed 900-second expiry. The endpoint has no public
+probe, status, or clear operation; the service has no named-pipe transport in this
+slice, and restart falls back because credentials are not persisted. This is a
+security handoff only, not evidence of target admission or coordinator readiness.
 
 ### Admission handshakes to preserve
 

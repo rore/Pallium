@@ -27,6 +27,7 @@ from common import (
     pallium_request,
     read_hook_input,
     read_turn,
+    register_claude_wake,
     resolve_container_ref,
 )
 from usage_audit_matcher import classify_memory_reference
@@ -74,7 +75,7 @@ def _populate_usage_audit_rows(session_id: str, assistant_text: str) -> None:
                     "observation_window_turns": 1,
                 },
             )
-        except Exception as exc:
+        except Exception:
             print(
                 f"pallium stop hook: usage-audit populate failed for "
                 f"row {row.get('id')!r}: {exc}",
@@ -131,6 +132,9 @@ def main() -> None:
         session_id = payload.get("session_id")
         cwd = payload.get("cwd", ".")
         transcript_path = payload.get("transcript_path", "")
+        container_ref = resolve_container_ref(cwd, session_id)
+        actor_ref = derive_actor_ref()
+        register_claude_wake(session_id, container_ref, actor_ref)
 
         if not transcript_path:
             return
@@ -143,9 +147,6 @@ def main() -> None:
         content = turn_data.assistant_text
         if len(content) > CONTENT_LENGTH_GATE:
             return
-
-        container_ref = resolve_container_ref(cwd, session_id)
-        actor_ref = derive_actor_ref()
 
         metadata = {}
         work_trace_meta = build_work_trace_metadata(turn_data)
@@ -175,8 +176,8 @@ def main() -> None:
         # observed the assistant's response.
         _populate_usage_audit_rows(session_id, content)
 
-    except Exception as exc:
-        print(f"pallium stop hook error: {exc}", file=sys.stderr)
+    except Exception:
+        print("pallium stop hook error", file=sys.stderr)
 
     sys.exit(0)
 
