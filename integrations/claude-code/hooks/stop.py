@@ -75,10 +75,9 @@ def _populate_usage_audit_rows(session_id: str, assistant_text: str) -> None:
                     "observation_window_turns": 1,
                 },
             )
-        except Exception:
+        except Exception as exc:
             print(
-                f"pallium stop hook: usage-audit populate failed for "
-                f"row {row.get('id')!r}: {exc}",
+                f"pallium stop hook: usage-audit populate failed: {type(exc).__name__}",
                 file=sys.stderr,
             )
 

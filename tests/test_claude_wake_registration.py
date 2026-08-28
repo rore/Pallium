@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -10,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 from api.routes import create_router
@@ -18,7 +19,16 @@ from app.config import AppConfig
 from app.main import create_app
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
-from core.claude_wake import ClaudeWakeRegistry, TTL_SECONDS
+from core.claude_wake import (
+    ClaudeWakeRegistry,
+    MAX_ACTOR_CHARS,
+    MAX_CONTAINER_CHARS,
+    MAX_RUNTIME_CHARS,
+    MAX_SESSION_CHARS,
+    MAX_SOCKET_CHARS,
+    MAX_TOKEN_CHARS,
+    TTL_SECONDS,
+)
 from tests.test_claude_code_integration import _load_claude_hook
 
 
@@ -114,6 +124,13 @@ def test_replace_expiry_and_callback_reentry_are_generation_safe() -> None:
         transport=transport,
     )
     assert completed.is_set()
+    assert not registry.probe(
+        runtime=PAYLOAD["runtime"],
+        session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"],
+        actor_ref=PAYLOAD["actor_ref"],
+        transport=None,
+    )
     now[0] += TTL_SECONDS + 1
     assert not registry.probe(
         runtime=PAYLOAD["runtime"],
@@ -232,3 +249,122 @@ def test_app_instances_have_separate_memory_only_registries(tmp_path: Path) -> N
     first = create_app(config("first.db"))
     second = create_app(config("second.db"))
     assert first.state.claude_wake_registry is not second.state.claude_wake_registry
+
+def _registration_endpoint(registry: ClaudeWakeRegistry):
+    app = FastAPI()
+    app.include_router(create_router(object(), claude_wake_registry=registry))
+    return next(route.endpoint for route in app.routes if route.path == "/internal/claude-wake/register")
+
+
+def test_streaming_registration_rejects_missing_length_overflow_negative_length_and_client_none() -> None:
+    endpoint = _registration_endpoint(ClaudeWakeRegistry())
+
+    async def invoke(chunks: list[bytes], *, client, content_length: str | None = None):
+        remaining = list(chunks)
+
+        async def receive():
+            body = remaining.pop(0)
+            return {"type": "http.request", "body": body, "more_body": bool(remaining)}
+
+        headers = [] if content_length is None else [(b"content-length", content_length.encode())]
+        request = Request({"type": "http", "method": "POST", "path": "/internal/claude-wake/register", "headers": headers, "client": client}, receive)
+        return await endpoint(request)
+
+    with pytest.raises(HTTPException) as overflow:
+        asyncio.run(invoke([b"x" * 16_000, b"x" * 1_000], client=("127.0.0.1", 1)))
+    assert overflow.value.status_code == 400
+    with pytest.raises(HTTPException) as negative:
+        asyncio.run(invoke([b"{}"], client=("127.0.0.1", 1), content_length="-1"))
+    assert negative.value.status_code == 400
+    with pytest.raises(HTTPException) as absent_client:
+        asyncio.run(invoke([b"{}"], client=None))
+    assert absent_client.value.status_code == 403
+
+
+@pytest.mark.parametrize("body", [b"{", b"[]", b'{"runtime":"claude-code"}', b'{"extra":true}'])
+def test_registration_malformed_wrong_shape_missing_or_extra_is_secret_free(body: bytes) -> None:
+    secret = "shape-secret"
+    response = _client(ClaudeWakeRegistry()).post("/internal/claude-wake/register", content=body + secret.encode() if body == b"{" else body)
+    assert response.status_code == 400
+    assert secret not in response.text
+
+
+@pytest.mark.parametrize(
+    "field,maximum",
+    [
+        ("runtime", MAX_RUNTIME_CHARS),
+        ("session_ref", MAX_SESSION_CHARS),
+        ("container_ref", MAX_CONTAINER_CHARS),
+        ("actor_ref", MAX_ACTOR_CHARS),
+        ("socket_path", MAX_SOCKET_CHARS),
+        ("token", MAX_TOKEN_CHARS),
+    ],
+)
+def test_registration_validates_every_field_boundary(field: str, maximum: int) -> None:
+    client = _client(ClaudeWakeRegistry())
+    for value in ("", "x" * (maximum + 1), "safe\x00value"):
+        response = client.post("/internal/claude-wake/register", json={**PAYLOAD, field: value})
+        assert response.status_code == 400
+        if value:
+            assert value not in response.text
+
+
+@pytest.mark.parametrize("case", ["missing", "none", "empty", "oversized"])
+def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    stop = _load_claude_hook("stop", monkeypatch)
+    calls: list[tuple[object, object, object]] = []
+    payload = {"cwd": ".", "session_id": "session-1", "transcript_path": "" if case == "missing" else "turn.jsonl"}
+    monkeypatch.setattr(stop, "read_hook_input", lambda: payload)
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda *_args: "git:example/repo")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(stop, "register_claude_wake", lambda *args: calls.append(args))
+    if case == "none":
+        monkeypatch.setattr(stop, "read_turn", lambda _path: None)
+    elif case == "empty":
+        monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(assistant_text="", tool_calls=[]))
+    elif case == "oversized":
+        monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(assistant_text="x" * 20_001, tool_calls=[]))
+    stop.main()
+    assert calls == [("session-1", "git:example/repo", "local")]
+
+
+def test_usage_audit_failure_is_generic_and_later_rows_continue(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    stop = _load_claude_hook("stop", monkeypatch)
+    secret = "audit-secret"
+    posts: list[str] = []
+    monkeypatch.setattr(stop, "pallium_request", lambda method, path, body: {"rows": [{"id": "bad", "memory_object_id": "bad"}, {"id": "good", "memory_object_id": "good"}]} if method == "GET" else posts.append(path))
+    monkeypatch.setattr(stop, "_fetch_memory_match_text", lambda memory_id: (_ for _ in ()).throw(RuntimeError(secret)) if memory_id == "bad" else "good")
+    monkeypatch.setattr(stop, "classify_memory_reference", lambda **_kwargs: (False, None))
+    stop._populate_usage_audit_rows("session", "assistant text")
+    assert posts == ["/memory-usage-audit/good"]
+    captured = capsys.readouterr()
+    assert secret not in captured.err
+    assert "RuntimeError" in captured.err
+
+@pytest.mark.parametrize(
+    "field,maximum",
+    [
+        ("session_ref", MAX_SESSION_CHARS),
+        ("container_ref", MAX_CONTAINER_CHARS),
+        ("actor_ref", MAX_ACTOR_CHARS),
+        ("socket_path", MAX_SOCKET_CHARS),
+        ("token", MAX_TOKEN_CHARS),
+    ],
+)
+def test_registration_accepts_each_non_runtime_maximum(field: str, maximum: int) -> None:
+    response = _client(ClaudeWakeRegistry()).post(
+        "/internal/claude-wake/register", json={**PAYLOAD, field: "x" * maximum},
+    )
+    assert response.status_code == 204
+
+
+@pytest.mark.parametrize("failure", [TimeoutError("timeout-secret"), OSError("http-secret")])
+def test_hook_timeout_or_http_failure_is_silent(failure: Exception, monkeypatch: pytest.MonkeyPatch, caplog, capsys) -> None:
+    common = _load_claude_hook("common", monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "transport-secret")
+    monkeypatch.setattr(common.urllib.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(failure))
+    assert not common.register_claude_wake("session", "git:example/repo", "local")
+    captured = capsys.readouterr()
+    assert "transport-secret" not in captured.out + captured.err
+    assert not caplog.records

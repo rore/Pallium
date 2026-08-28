@@ -437,15 +437,19 @@ def create_router(
         content_length = http_request.headers.get("content-length")
         if content_length is not None:
             try:
-                if int(content_length) > _CLAUDE_WAKE_BODY_MAX_BYTES:
+                if not 0 <= int(content_length) <= _CLAUDE_WAKE_BODY_MAX_BYTES:
                     raise ValueError
             except ValueError:
                 raise HTTPException(status_code=400, detail="invalid registration")
         try:
-            body = await http_request.body()
-            if len(body) > _CLAUDE_WAKE_BODY_MAX_BYTES:
-                raise ValueError
-            payload = json.loads(body)
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in http_request.stream():
+                size += len(chunk)
+                if size > _CLAUDE_WAKE_BODY_MAX_BYTES:
+                    raise ValueError
+                chunks.append(chunk)
+            payload = json.loads(b"".join(chunks))
             if not isinstance(payload, dict) or set(payload) != {
                 "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token",
             }:
