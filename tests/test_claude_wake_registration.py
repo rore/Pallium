@@ -253,9 +253,8 @@ def test_app_instances_have_separate_memory_only_registries(tmp_path: Path) -> N
     assert first.state.claude_wake_registry is not second.state.claude_wake_registry
 
 def _registration_endpoint(registry: ClaudeWakeRegistry):
-    app = FastAPI()
-    app.include_router(create_router(object(), claude_wake_registry=registry))
-    return next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/internal/claude-wake/register")
+    router = create_router(object(), claude_wake_registry=registry)
+    return next(route.endpoint for route in router.routes if route.path == "/internal/claude-wake/register")
 
 
 def test_streaming_registration_rejects_missing_length_overflow_negative_length_and_client_none() -> None:
