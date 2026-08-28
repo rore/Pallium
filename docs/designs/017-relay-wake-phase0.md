@@ -1,18 +1,18 @@
 # Relay wake Phase 0 decision record
 
 **Status:** Active — supersedes per-runtime verdict in 016
-**Scope:** Installed Claude Code 2.1.246, Codex CLI 0.149.1, OpenCode 1.18.19, native Windows
+**Scope:** Installed Claude Code 2.1.250, Codex CLI 0.149.1, OpenCode 1.18.19, native Windows
 **Gate:** Every runtime adapter in PR 3–5 must reference this record and pass all seven Phase 0 cases before merging.
 
 ## Per-runtime verdict
 
-Verdicts are based on official documentation, integration tests, and installed-runtime probes. All three runtimes are classified **passive-only**: natural-turn delivery is safe; active wake adapter implementation requires the full seven-case evidence listed in each runtime's "Remaining gates" section. Codex has proven exact-session `codex queue --thread` admission while idle and at a safe busy boundary, with correlated model-visible evidence, but remains partial and passive-only until cases 5, 6, and 7 plus coordinator-owned idempotency and fallback are evidenced. OpenCode has partial transport evidence and Claude Code has no probe. No active wake adapter PR may merge until its runtime section is fully evidenced.
+Verdicts are based on official documentation, integration tests, and installed-runtime probes. All three runtimes remain **passive-only** for production. Codex has proven exact-session `codex queue --thread` admission while idle and at a safe busy boundary. Claude Code has now proven exact-session idle wake through its native authenticated Windows inbox, but direct busy ingress is unsafe for Relay semantics and native duplicate suppression failed. OpenCode has partial transport evidence. No active wake adapter PR may merge until its runtime section is fully evidenced and coordinator-owned dedupe, admission, and fallback are implemented.
 
 | Runtime | Verdict | Implementation order |
 |---|---|---|
 | Codex | **Passive-only; partial Phase 0** — exact-session `codex queue --thread` ingress is proven for idle and safe busy admission; native duplicate suppression failed | Production gated by cases 5, 6, and 7 plus coordinator-owned idempotency and fallback |
 | OpenCode | **Passive-only** — transport confirmed via probe; active wake admission unobserved | Second |
-| Claude Code | **Passive-only** — native channel eligible; no probe run | Third |
+| Claude Code | **Passive-only; partial Phase 0** — exact-session native Windows idle wake proven; busy ingress unsafe and native dedupe failed | Next, after idle-only coordinator gates |
 
 ### Codex
 
@@ -107,80 +107,70 @@ exact-session ingress.
 
 ### Claude Code
 
-**Verdict:** Passive-only pending live PoC. Exact-session wake is a candidate via native named-pipe messaging; Path A authorization and any Channels fallback remain unproven on the installed runtime.
+**Verdict: Partial — remain passive-only (updated 2026-08-28).** Native
+Windows exact-session wake is feasible through Claude Code's authenticated
+per-session named pipe, but only at a verified idle boundary. Direct busy
+submission is not Relay-safe, duplicate frames are admitted twice, and the
+production admission callback/recovery coordinator does not yet exist.
 
-**Installed non-triggering preflight (2026-08-28):**
-Claude Code reports `2.1.246`; Pallium settings and the installed source
-`SessionStart`/`Stop` hooks are present; `/health`, `/status`, and
-`/debug/queue/health` are healthy. This preflight intentionally did not access
-a target-session registry, named pipe, or `CLAUDE_CODE_MESSAGING_TOKEN`. Path A
-non-child reachability is therefore **UNPROVEN**, not a negative result.
+**Bounded runtime qualification (Claude Code 2.1.246 → 2.1.250):**
 
-**Target-state gate (2026-08-28):**
-Pallium reports the architect-selected `claude-code:@relaydev` session
-`93fa25ba-b5a2-4037-837d-a171e4401023` as `recent`, last seen
-`2026-08-27T17:27:44Z`; that is not proof that it is active. No trigger is
-permitted until an architect-controlled observation proves the alias maps to
-that active immutable session.
+- The official noninteractive self-update upgraded the installed runtime from
+  2.1.246 to 2.1.250 without changing Claude settings or terminating existing
+  sessions.
+- The documented hidden development-Channel flag was exercised with an ignored,
+  strict temporary MCP configuration on fresh disposable sessions. Both before
+  and after the update, Claude reported Channels unavailable and ignored the
+  development-channel flag. Channels are therefore not a usable fallback in the
+  current account/provider environment; absence from `--help` was not used as
+  evidence.
+- `--session-id` is supported. Every live probe used a fresh disposable session
+  with an explicit immutable ID; no existing session was resumed or contacted.
+- A disposable loopback-only Pallium app received the normal `SessionStart` hook
+  registration into its in-memory `ClaudeWakeRegistry`. Its injected transport
+  used the credential only inside that same process. Socket/token values never
+  entered model context, Relay, arguments, files, output, logs, responses, or
+  commits.
 
-**Idle boundary correction (2026-08-27 research):**
-`user_prompt_submit` hook exit is NOT the idle boundary. The correct signal is
-the `Stop` hook, which fires when the main Claude Code agent finishes responding.
-`idle_prompt` matcher also fires when Claude is waiting for the next prompt and
-can serve as secondary telemetry. Do not treat `user_prompt_submit` exit as
-model-turn idle.
+**Native Windows results:**
 
-**Path A: Native named-pipe (preferred, auth seam requires live PoC)**
-Each eligible session owns a named-pipe inbox. Idle delivery starts a new turn.
-Busy delivery is accepted between tool calls (exact semantics — separate
-following turn vs mid-turn steering — must be proven).
+| Phase 0 case | Verdict | Sanitized evidence |
+|---|---|---|
+| 1. Exact live session | PASS | One addressed disposable session received the marker; a simultaneously live non-target session did not. |
+| 2. Idle attributed turn | PASS | A transport write to a verified-idle target started a distinct model-visible turn and Claude returned the unique marker. Transport ACK and model-visible admission were observed separately. |
+| 3. Busy non-steering | FAIL for direct ingress / policy PASS only as `idle_wake` | During a 25-second tool call, native ingress inserted the wake into the active user turn. Claude completed the original request and did not process the wake as a distinct subsequent turn. Pallium must never invoke this transport while busy; defer to verified idle or use durable next-turn fallback. |
+| 4. Correlated admission | PARTIAL | The disposable test correlated the exact marker in target history, but production still needs the receiving `Stop` hook to report the delivery ID before Relay marks admission. Pipe write is not admission. |
+| 5. Closed/stale/unavailable | PARTIAL | After target exit, the registered pipe rejected transport with a missing-endpoint error. Production must classify this as stale/unavailable, clear the capability, and release fallback. Permission-denied remains unforced. |
+| 6. Runtime/Pallium restart | PARTIAL | Every fresh runtime launch re-registered successfully through `SessionStart`; a closed endpoint was not reusable. Outstanding-trigger and already-admitted exactly-once recovery remain unproven. |
+| 7. Ambiguous/duplicate | FAIL natively | Two byte-identical frames carrying the same message ID produced two queue operations and two user admissions. Pallium must deduplicate before native ingress and must not blind-retry an ambiguous write. |
 
-`CLAUDE_CODE_MESSAGING_TOKEN` is documented as an own-child credential for
-hooks and Bash commands. There is no public contract stating that an independent
-long-running Pallium daemon can hold that token and qualify as own-child. On
-Windows the auth may be primarily token-based (no Unix process ancestry), which
-could allow it experimentally, but this is undocumented behavior. A separate
-peer-token/key mechanism exists internally (reverse-engineered in claude-code-socket-transport
-for ≤2.1.233) but is not a public API.
+**Idle and security boundaries:** `Stop` is the primary idle boundary;
+`user_prompt_submit` exit is not. `idle_prompt` may be secondary telemetry. The
+approved registration remains loopback-only, memory-only, fixed-TTL, and
+redacted. The production adapter may advertise only `idle_wake`, never
+`busy_queue`, until a future supported runtime contract proves distinct queued
+turns. A process restart loses the memory-only registration by design and falls
+back until the fresh session registers again.
 
-**Credential security gate before any Path A PoC:** The target-side runtime or
-hook must transfer the credential directly to an audited loopback-only
-registration path without model context, command arguments, stdout/stderr, files,
-Relay, or logs. The approved registration foundation is memory-only, accepts only
-an exact `claude-code` session from an IPv4/IPv6 loopback peer under the same-user trust assumption, expires
-entries after 900 seconds, and refreshes from `SessionStart` and `Stop`. It has no
-public probe, status, or clear surface; production opens no named pipe. Path A
-remains **BLOCKED** pending a separate reviewed live probe task with a
-user-present disposable target; only then may a live PoC classify the
-independent-process result as supported or implementation detail.
+**Channels decision:** Keep the official Channels path documented as a future
+alternative, not an implementation dependency. It is preview/organization-gated
+and unavailable in the qualified environment even on 2.1.250. Requalify only
+when the runtime/account actually accepts the documented hidden flag; do not add
+an installer, plugin, or persistent user configuration workaround.
 
-**Path B: Channels (research fallback; not preflight-confirmed on installed CLI)**
-Channels are described as pushing external events into the already-open session
-without spawning a new process, but the installed Claude Code `2.1.246` public
-help did not advertise `--channels`. No target configuration, token, pipe, or
-channel was accessed during preflight. Treat Channels as unavailable unless a
-future architect-controlled check proves the exact session was launched with a
-supported channel configuration. Multiple events while busy are reported to group
-into one turn (weaker one-delivery-per-turn invariant than Codex queue).
+**Remaining gates before a production Claude adapter:**
 
-**Path C fallback:** If Path A fails, use Channels only after its exact-session
-configuration and admission behavior are independently proven.
-
-**`notify_idle` / `notify_when_idle`:**
-The `notify_when_idle` option on a SendMessage call asks another Claude Code
-session to send one notice when it next goes idle. It is a one-shot
-inter-session signal, not a subscribe/poll stream. No public API for Pallium
-to receive an idle event stream. `Stop` hook is sufficient.
-
-**`artifact_yield`:** Internal/unproven. Do not build on it.
-
-**Remaining gates before PR 3:**
-1. Live Windows PoC: prove Path A (non-child Pallium daemon) or confirm Path C.
-2. Busy-turn semantic: prove Path A busy delivery queues a distinct following
-   turn (not mid-turn steering); or restrict to `idle_wake` only.
-3. Admission correlation: `Stop` hook on receiving session confirms delivery ID
-   present in the turn, calls loopback admission endpoint.
-All seven Phase 0 cases must pass.
+1. Coordinator-owned persist-first dedupe and one-attempt suppression before any
+   native write; no retry after an ambiguous transport result.
+2. Verified-idle dispatch from `Stop`/capability state, with busy, expired,
+   missing, closed, or transport-error outcomes releasing durable next-turn
+   fallback without opening the pipe.
+3. Receiving-session admission correlation by exact delivery ID through the
+   audited loopback callback; transport success alone cannot ACK Relay.
+4. Restart E2E for outstanding and already-admitted deliveries, plus the
+   remaining permission/unavailable error mapping.
+5. Native macOS and Linux UDS E2E. Windows evidence is not a cross-platform
+   guarantee; keep those platforms passive until separately proven.
 
 ## Seven Phase 0 cases
 
@@ -250,10 +240,10 @@ Working values for adapter development. None have been measured against an insta
 | Capability heartbeat interval | 15 s | Unconfirmed | Gate: measure against each runtime before PR 3–5 |
 | Capability lease | 45 s | 3× heartbeat; provisional | Gate: same as heartbeat |
 
-## Decisions still open (must resolve before PR 2)
+## Remaining production gates (must resolve before adapter PRs)
 
-1. Claude Code busy-turn semantic: prove distinct following turn or restrict to idle_wake only.
-2. Claude Code auth path: Path A (non-child daemon token) or Path C (Channels).
+1. Claude Code is `idle_wake` only: coordinator-owned idle gating, dedupe, exact admission, restart/error fallback, and macOS/Linux UDS E2E remain.
+2. Channels is unavailable in the qualified environment; keep it deferred until the documented hidden flag is accepted by a future runtime/account combination.
 3. Codex remaining Phase 0 gates: safely cover closed/stale/permission states, outstanding-trigger and already-admitted restart recovery, and ambiguous-response fallback with coordinator-owned dedupe.
 
 ## Re-estimate of remaining PRs
@@ -263,7 +253,7 @@ Updated based on 2026-08-27 Phase 0 evidence. Codex exact-session ingress is pro
 | PR | Scope | Estimate |
 |---|---|---|
 | 2 | Durable core: wake metadata, state machine, leases, dispatcher, fake adapters, recovery | 3–5 days |
-| 3 | Claude Code adapter (Path A or C; idle path confirmed; busy path conditional) | 2–3 days |
+| 3 | Claude Code native idle-wake adapter; coordinator dedupe/admission/fallback; Windows E2E | 2–3 days |
 | 4 | OpenCode plugin coordinator + adapter | 3–4 days |
 | 5 | Codex adapter (queue_1.sqlite path; gated on remaining Phase 0 cases and coordinator dedupe/fallback) | 2–3 days |
 | 6 | Cross-runtime journeys, dashboard, docs, runbook | 2–3 days |
