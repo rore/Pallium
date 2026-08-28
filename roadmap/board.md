@@ -1,3 +1,11 @@
+# Parallel · Agent Relay
+- idea-agent-relay
+- add-wake-first-relay-delivery
+- validate-relay-dependency-workflows
+- add-relay-retention-and-lifecycle-hardening
+- idea-deferred-relay
+- add-copilot-relay-integration
+
 # P1 · Reuse Measurement
 - idea-pull-real-corpus-validation
 - idea-raw-duplicate-ingestion-and-result-diversity
@@ -13,14 +21,6 @@
 - add-bounded-memory-lifecycle-hardening
 - add-explicit-shared-memory-derivation
 - add-cross-container-bounded-memory
-
-# Parallel · Agent Relay
-- idea-agent-relay
-- add-wake-first-relay-delivery
-- validate-relay-dependency-workflows
-- add-copilot-relay-integration
-- add-relay-retention-and-lifecycle-hardening
-- idea-deferred-relay
 
 # Paused
 - idea-authenticated-principal-for-mutation-authz
