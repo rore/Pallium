@@ -58,6 +58,7 @@
 - Busy evidence: target history showed the launch-time user request, active tool call, injected marker inside that active turn, and the original `ACTIVE-DONE` response; there was no distinct wake response.
 - Closed/restart evidence: after target exit, transport returned only a missing-endpoint error; each fresh disposable launch produced a new valid registration and successful later idle proof.
 - Security evidence: probe logs contain only event names, non-secret markers, message IDs, counts, and error types. Socket/token values remained hook → loopback registry → injected transport memory and are absent from tracked changes.
+- Independent manager review: `.\.venv\Scripts\python.exe -m pytest tests\test_claude_wake_registration.py tests\test_relay_wake_fixtures.py -q` → 47 passed; `scripts\agent-workflow-check.py --slug codex-qualify-claude-wake-ingress` → clean; committed-diff secret/endpoint scan → no matches.
 
 ## Plan review
 
