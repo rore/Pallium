@@ -213,6 +213,7 @@ class TestRelay:
         with patch("httpx.AsyncClient.post", side_effect=[turn, publication]) as post:
             result = await PalliumMcpClient(ctx).relay_receive("codex", "target")
         assert result["deliveries"] == [candidate]
+        assert "payload" not in result["deliveries"][0]
         assert post.call_count == 2
         assert post.call_args_list[1].args[0].endswith("/relay/deliveries/publication")
         assert post.call_args_list[1].kwargs["json"]["claim_token"] == "claim"

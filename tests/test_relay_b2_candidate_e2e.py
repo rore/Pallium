@@ -245,3 +245,53 @@ def test_candidate_admission_witness_delivers_and_allows_multipart_reply(batch_c
     })
     assert reply.status_code == 200, reply.text
     assert reply.json()["payload"] == "reply onereply two"
+
+
+def test_legacy_turn_blocks_unclaimed_parts_without_raw_exposure(client: TestClient, batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    sent = _send_parts(batch_client, "sender", "codex:target", ["one", "two"], "preclaim-parts")
+    assert _turn(client, "codex", "target")["deliveries"] == []
+    status = client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()
+    assert status["payload"] == "onetwo"
+    assert "[\"one\",\"two\"]" not in status["payload"]
+
+
+def test_candidate_admission_is_idempotent_and_late_witness_resolves_uncertain(batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    _send(batch_client, "sender", "codex:target", "first", "admit-retry")
+    first = _turn(batch_client, "codex", "target")["deliveries"][0]
+    assert _publication(batch_client, first).status_code == 200
+    assert _admit(batch_client, first).status_code == 200
+    assert _admit(batch_client, first).status_code == 200
+
+    _send(batch_client, "sender", "codex:target", "second", "late-witness")
+    late = _turn(batch_client, "codex", "target")["deliveries"][0]
+    assert _publication(batch_client, late).status_code == 200
+    storage = batch_client.app.state.batch_storage
+    with storage._engine.begin() as connection:
+        connection.execute(text("UPDATE relay_deliveries SET lease_expires_at=:past WHERE id=:id"), {"past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": late["delivery_id"]})
+    assert _turn(batch_client, "codex", "target")["deliveries"] == []
+    assert _admit(batch_client, late, "late-fixture-readback").status_code == 200
+    status = batch_client.get("/relay/messages/late-witness", params=SCOPE).json()
+    assert status["deliveries"][0]["state"] == "delivered"
+
+
+def test_candidate_rejects_permanently_oversized_escaped_parts_before_acceptance(batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    parts = ["a\n" * 749 + "a"] * 8
+    response = batch_client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender",
+        "recipient": "codex:target", "parts": parts, "message_id": "oversized", **SCOPE,
+    })
+    assert response.status_code == 409
+
+
+def test_request_retry_conflicts_when_serialized_payload_format_changes(batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    base = {"sender_runtime": "claude-code", "sender_session_ref": "sender", "recipient": "codex:target", "request_id": "same", **SCOPE}
+    assert batch_client.post("/relay/messages", json={**base, "payload": '["one","two"]'}).status_code == 200
+    assert batch_client.post("/relay/messages", json={**base, "parts": ["one", "two"]}).status_code == 409

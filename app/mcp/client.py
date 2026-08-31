@@ -340,6 +340,7 @@ class PalliumMcpClient:
                 delivery_id=fields[0], claim_token=fields[1], envelope_digest=fields[2],
             )
             if "error" not in started:
+                delivery.pop("payload", None)
                 admitted.append(delivery)
         result["deliveries"] = admitted
         result["remaining_count"] = int(result.get("remaining_count", 0)) + (
