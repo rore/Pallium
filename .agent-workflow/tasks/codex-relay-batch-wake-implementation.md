@@ -14,7 +14,7 @@
 **Plan review:** The coordinator accepted the external review conditions through Relay on 2026-08-31; the user directly approved all architect instructions. Implement after documenting the conflict truth table and adding failing regressions, then return one consolidated commit/diff/test review. The local Codex parent-owns-stdio-pipe assumption is operational only, not cryptographic provenance. The prior G2/G3 review remains separate; no batch gate is opened.
 **Approvals:** Approved by user 2026-08-31: "yes"; Approved by user 2026-08-31: "i approve everything the architect tells you to do"
 **Exceptions:** —
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Scoped receive-identity plan — review only
@@ -188,3 +188,9 @@ Architect direction supersedes the per-turn binding candidate: do not add hook/s
 - Replaced the shared resolver's reuse of session validation with Relay-specific field checks: `container_ref` is printable, non-blank, exact, and at most 512 characters; `actor_ref` has the corresponding 255-character limit. Session metadata parsing is unchanged.
 - A configured scope is now either absent as a pair or valid as a pair. Blank, over-limit, or one-sided configured values fail closed before explicit selectors can override them or the Relay client can send HTTP. Valid explicit values retain canonical GitHub-container equivalence and reject actor-only conflicts.
 - `.venv\Scripts\python.exe -m pytest tests/test_relay_mcp_tools.py tests/test_mcp_context.py tests/test_mcp_server.py tests/test_relay_mcp_lifecycle.py -q` → 183 passed; four pre-existing Pydantic forward-reference warnings. `git diff --check` passed. No installed reload occurred; `uv.lock` remains unrelated and uncommitted.
+
+## Manager scope-fix acceptance (2026-08-31)
+
+Reviewed 96fe79f and independently reran the focused context, MCP server, Relay tool and lifecycle suites: 183 passed, four pre-existing Pydantic warnings. The container 512 / actor 255 limits and invalid configured-scope rejection close the review findings. Identity and explicit-scope fix implementation reviews are approved; this does not close the batch/wake milestone.
+
+Current blocker is installed-runtime validation: the active Codex MCP receive schema still exposes only max_chars. Restart/reconnect Codex's MCP host before testing receive with explicit injected scope and runtime-owned identity in both existing tasks. Do not restart the Pallium HTTP service. After reload, verify schema, use a controlled recovery turn (not concurrent hook receipt), send a unique scoped test message, receive and receipt-ACK/reply, and inspect status. Preserve unrelated uv.lock; no merge or installed success is claimed yet. apply_patch failed with Windows error 1327; this exact Work Record was updated with the permitted deterministic PowerShell fallback.
