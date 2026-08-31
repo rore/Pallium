@@ -15,6 +15,7 @@ Do not run this plan yet. It requires an explicitly approved, isolated qualifica
 - The repository hook emits UserPromptSubmit additional context after its Relay turn/publication sequence. It has no immutable full-envelope context-commit witness, and its legacy acknowledgement is not one.
 - This desktop task received a queue-style notification without an injected Relay envelope; supported MCP recovery was required. That is not a failed G1 probe, but it prevents treating this desktop session as proof that the installed CLI hook fires for queued turns.
 - A read-only Pallium status request did not complete in the check window. Treat service responsiveness as unproven until the isolated environment has a bounded health check; do not restart or repair the installed service here.
+- The official Codex hook reference is version-sensitive: its default additional-context limit is approximate, and unlimited additional context applies only when the installed runtime supports it. It also declares `transcript_path` unstable, so a transcript alone cannot be the G2 witness.
 
 Therefore the queue command and hook registration are available prerequisites, not G1/G2/G3 evidence. The missing admission witness is the present blocker to G2, and the absence of a measured context budget blocks G3.
 
@@ -50,7 +51,7 @@ G1 passes only when both idle and busy evidence identify the installed UserPromp
 3. Exercise stale pre-publication ownership in the isolated harness: replace or expire generation A before output, then attempt A's publication. It must be rejected before emission; only generation B can proceed.
 4. Interrupt after publication-start but before the witness. Preserve the delivery as `uncertain`. Release it only on a trusted proof of both non-admission and impossible late publication; lease expiry, missing history, or timeout alone is not proof. A later positive witness records admission and does not replay the batch.
 
-The current hook does not expose the required witness. If the exact runtime cannot expose one without a separately reviewed change, G2 is a genuine blocker: leave candidate delivery and wake disabled rather than substituting an ACK.
+The current hook does not expose the required witness. A `transcript_path` is explicitly not a stable hook interface, so it cannot substitute for one. If the exact runtime cannot expose a witness without a separately reviewed change, G2 is a genuine blocker: leave candidate delivery and wake disabled rather than substituting an ACK.
 
 ## G3 — 64-delivery headroom
 
