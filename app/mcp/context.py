@@ -13,6 +13,9 @@ from typing import Any
 from core.container_ref import canonicalize_container_ref
 
 
+_CODEX_TURN_METADATA_MAX_CHARS = 4096
+
+
 @dataclass(frozen=True)
 class PalliumContext:
     """Resolved Pallium connection and scope context."""
@@ -63,16 +66,24 @@ def codex_request_metadata_status(request_meta: Mapping[str, Any] | None) -> dic
     if raw is None:
         return {"source": "absent", "shape": "absent"}
     if isinstance(raw, str):
+        if len(raw) > _CODEX_TURN_METADATA_MAX_CHARS:
+            return {"source": "codex_turn_metadata", "shape": "invalid"}
         try:
             raw = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):
             return {"source": "codex_turn_metadata", "shape": "invalid"}
     if not isinstance(raw, Mapping):
         return {"source": "codex_turn_metadata", "shape": "invalid"}
 
     def identity(*keys: str) -> tuple[bool, bool, str | None, str | None]:
         supplied = [raw[key] for key in keys if key in raw]
-        values = [value.strip() for value in supplied if isinstance(value, str) and 0 < len(value.strip()) <= 255]
+        values = [
+            value.strip()
+            for value in supplied
+            if isinstance(value, str)
+            and 0 < len(value.strip()) <= 255
+            and value.strip().isprintable()
+        ]
         valid = bool(supplied) and len(values) == len(supplied) and len(set(values)) == 1
         value = values[0] if valid else None
         return bool(supplied), valid, sha256(value.encode()).hexdigest() if value else None, value

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from hashlib import sha256
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 pytest.importorskip("mcp", reason="mcp[cli] not installed")
+
+from mcp.shared.memory import create_connected_server_and_client_session
 
 from app.mcp.server import _bounded_expansion, _compact_history, _json_text, _trim_update_details, create_server
 
@@ -818,3 +822,88 @@ async def test_relay_status_diagnostic_is_non_claiming_and_receive_stays_fail_cl
     receive, _ = await server.call_tool("pallium_relay_receive", {})
     assert json.loads(diagnostic[0].text) == {"source": "absent", "shape": "absent"}
     assert "PALLIUM_THREAD_REF" in receive[0].text
+@pytest.mark.asyncio
+async def test_relay_status_diagnostic_is_non_claiming_and_receive_stays_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    server = create_server()
+    diagnostic, _ = await server.call_tool("pallium_relay_status", {"runtime_diagnostic": True})
+    receive, _ = await server.call_tool("pallium_relay_receive", {})
+    assert json.loads(diagnostic[0].text) == {"source": "absent", "shape": "absent"}
+    assert "PALLIUM_THREAD_REF" in receive[0].text
+
+
+@pytest.mark.asyncio
+async def test_relay_status_diagnostic_uses_request_local_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    expected = {
+        "source": "codex_turn_metadata",
+        "shape": "object",
+        "thread_id": {"present": False, "valid": False, "sha256": None},
+        "turn_id": {"present": False, "valid": False},
+        "identity_conflict": False,
+    }
+    status_client = AsyncMock()
+    receive_client = AsyncMock()
+    ack_client = AsyncMock()
+    reply_client = AsyncMock()
+    with patch("app.mcp.client.PalliumMcpClient.relay_status", new=status_client), patch(
+        "app.mcp.client.PalliumMcpClient.relay_receive", new=receive_client
+    ), patch("app.mcp.client.PalliumMcpClient.relay_mcp_ack", new=ack_client), patch(
+        "app.mcp.client.PalliumMcpClient.relay_reply", new=reply_client
+    ):
+        async with create_connected_server_and_client_session(create_server()) as client:
+            result_a, result_b = await asyncio.gather(
+                client.call_tool(
+                    "pallium_relay_status",
+                    {"runtime_diagnostic": True},
+                    meta={"x-codex-turn-metadata": json.dumps({"session_id": "task-a"})},
+                ),
+                client.call_tool(
+                    "pallium_relay_status",
+                    {"runtime_diagnostic": True},
+                    meta={"x-codex-turn-metadata": json.dumps({"session_id": "task-b"})},
+                ),
+            )
+            missing = await client.call_tool("pallium_relay_status", {"runtime_diagnostic": True})
+            malformed = await client.call_tool(
+                "pallium_relay_status", {"runtime_diagnostic": True}, meta={"x-codex-turn-metadata": "["}
+            )
+            conflict = await client.call_tool(
+                "pallium_relay_status",
+                {"runtime_diagnostic": True},
+                meta={"x-codex-turn-metadata": json.dumps({"thread_id": "a", "session_id": "b"})},
+            )
+            forged = await client.call_tool(
+                "pallium_relay_status",
+                {"runtime_diagnostic": True, "metadata": {"x-codex-turn-metadata": {"session_id": "forged"}}},
+            )
+            mutually_exclusive = await client.call_tool(
+                "pallium_relay_status", {"runtime_diagnostic": True, "message_id": "message-1"}
+            )
+
+    expected_a = {
+        **expected,
+        "session_id": {"present": True, "valid": True, "sha256": sha256(b"task-a").hexdigest()},
+    }
+    expected_b = {
+        **expected,
+        "session_id": {"present": True, "valid": True, "sha256": sha256(b"task-b").hexdigest()},
+    }
+    assert json.loads(result_a.content[0].text) == expected_a
+    assert json.loads(result_b.content[0].text) == expected_b
+    assert json.loads(missing.content[0].text) == {"source": "absent", "shape": "absent"}
+    assert json.loads(malformed.content[0].text) == {"source": "codex_turn_metadata", "shape": "invalid"}
+    assert json.loads(conflict.content[0].text)["identity_conflict"] is True
+    assert json.loads(forged.content[0].text) == {"source": "absent", "shape": "absent"}
+    assert json.loads(mutually_exclusive.content[0].text) == {
+        "error": "message_id and runtime_diagnostic are mutually exclusive"
+    }
+    status_client.assert_not_awaited()
+    receive_client.assert_not_awaited()
+    ack_client.assert_not_awaited()
+    reply_client.assert_not_awaited()

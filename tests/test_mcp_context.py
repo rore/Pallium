@@ -190,3 +190,19 @@ def test_codex_request_metadata_status_reports_conflict_and_task_isolation() -> 
     second = codex_request_metadata_status({"x-codex-turn-metadata": {"session_id": "task-b"}})
     assert conflict["identity_conflict"] is True
     assert first["session_id"] != second["session_id"]
+
+
+@pytest.mark.parametrize("value", ["\ud800", "safe\x00", "x" * 256])
+def test_codex_request_metadata_status_rejects_unsafe_identity_values(value: str) -> None:
+    status = codex_request_metadata_status({"x-codex-turn-metadata": {"session_id": value}})
+    assert status["session_id"] == {"present": True, "valid": False, "sha256": None}
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["[" * 1000, '{"session_id":"' + "x" * 4096 + '"}'],
+)
+def test_codex_request_metadata_status_rejects_deep_or_oversized_json(raw: str) -> None:
+    assert codex_request_metadata_status({"x-codex-turn-metadata": raw}) == {
+        "source": "codex_turn_metadata", "shape": "invalid"
+    }
