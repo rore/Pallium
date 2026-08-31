@@ -1,6 +1,6 @@
 # Relay batches and Codex-first wake
 
-Status: proposed, awaiting independent architecture review (2026-08-31).
+Status: design review closed; agreed revisions applied (2026-08-31). Runtime evidence gates G1-G3 remain open before production implementation/enabling wake.
 Roadmap: [wake-first Relay](../../roadmap/features/add-wake-first-relay-delivery.md).
 Work Record: [design review](../../.agent-workflow/tasks/codex-relay-batch-wake-design.md).
 
@@ -38,7 +38,13 @@ Extend the existing send/reply operations; do not create a parallel messaging AP
   before committing anything. Send commits the batch and every recipient delivery
   in one transaction, without adapter calls. No partial success on fan-out admission.
 - The commit sequence, not sender timestamps, establishes FIFO for each recipient.
-  Store a monotonically allocated ordering value under the existing write transaction.
+  Store RelayMessageRecord.commit_seq as a unique non-null integer allocated by a
+  durable SQLite counter updated inside the send transaction. Never use wall time
+  or MAX(remaining rows), which can reuse values after cleanup.
+  Claim selection orders by commit_seq, not created_at or random delivery ID.
+  Migration assigns old rows a deterministic created_at/message_id order once
+  (historical commit order cannot be recovered), then seeds the counter above it.
+  E10/E11 assert concurrent commits, equal/backward timestamps, restart and cleanup.
 - After commit, payload, ordering, expiry and recipient snapshot cannot change.
   Alias transfers, retries and newly opened sessions never retarget old work.
 
@@ -48,8 +54,19 @@ binds its parent delivery. Persist a unique mapping to the batch in the same
 transaction. A same-key retry with the same canonical redacted content, selector,
 parent and expiry duration returns the original result, even after alias movement.
 A mismatch returns a structured conflict. Retry never extends expiry.
+On a request-key uniqueness conflict, compare all canonical redacted request fields: equal returns the original result; any mismatch returns 409 with no new batch or ACK. Payload content/hash is comparison data, never part of the unique request key.
 No unredacted payload is stored for fingerprinting. Validate current caller scope
 before returning a previous result; do not re-resolve recipients on a valid retry.
+
+Persist RelayRequestRecord with a database UNIQUE constraint over container_ref,
+actor_ref, sender_runtime, sender_session_ref, operation_kind, parent_delivery_key
+and request_id; parent_delivery_key is non-null (empty for sends), avoiding SQLite
+NULL uniqueness gaps. Store message_id plus canonical redacted comparison fields.
+The message and its delivery rows are the resolved recipient snapshot, not a fresh
+alias lookup. Retain that snapshot and compact result through the retry window,
+including after payload cleanup; cleanup must preserve the request tombstone.
+The unique insert, batch and recipient snapshot commit together. Concurrent retry
+tests assert one result, including alias transfer and cleanup boundaries.
 
 The MCP caller supplies and reuses request_id across a lost tool response; the
 client must retain it across its own HTTP retries. Existing legacy sends without
@@ -67,6 +84,10 @@ Check expiry and claim generation in reply just as in ACK, including sweep races
 ## 3. Bounds, rendering and compatibility
 
 Proposed initial policy bounds (not measured runtime guarantees):
+
+Rate and queue bounds limit bursts; reply depth limits linked chains. They do not
+prove termination or cap lifetime cost when agents create fresh-send conversations.
+Automatic conversation policy is outside this milestone; do not claim otherwise.
 
 | Bound | Proposal |
 |---|---|
@@ -97,7 +118,14 @@ existing redaction policy. Bounds apply before and after redaction/rendering.
 
 Storage proposal: extend RelayMessageRecord with payload_format. Existing rows
 default to text_v1; parts_v1 stores canonical redacted parts JSON in the existing
-payload column. One codec owns decoding and whole-message projection. No second
+payload column. One codec owns decoding and whole-message projection.
+Dispatch validation by payload_format: text_v1 retains core/relay.py's singleton
+validator; parts_v1 validates each decoded part against the 1500-code-point limit,
+never the serialized array as one singleton. Reject stored JSON over 131072 UTF-8
+bytes before decoding; canonical serialization must also fit that ceiling.
+Decoded shape, per-part and whole-render limits remain mandatory on every read.
+The existing redacted boolean means any part was redacted. Cross-part span mapping
+is transient redaction work; store only the redacted parts, not original spans/text. No second
 authoritative copy and no database row per part. API v2 responses expose parts,
 part_count and a complete text projection; status never truncates into apparent
 completeness. Use compact status without payload unless explicitly retrieved.
@@ -131,6 +159,16 @@ activation reservation coalesces sends; adapter calls occur OUTSIDE SQL transact
 A regular turn may claim a pending batch whether or not a notification is queued.
 The activation reservation never reserves payload ownership. Notification failure
 or uncertainty therefore does not prevent regular-turn delivery.
+Admission on either path clears the covered work reservation and rechecks remaining
+pending work in the same transaction; completion cannot clear a newer reservation.
+Before adapter dispatch, compare-and-set validates the reservation generation.
+Cancel an obsolete not-yet-dispatched notification. A dispatched/unknown notification
+remains separately tracked until consumed or definitively reconciled; admission must
+not erase that evidence or authorize another ambiguous queue submission.
+New work may use an already queued turn. If its trigger remains uncertain, retain
+visible passive fallback rather than silently wedging or duplicating wake attempts.
+E09/E10 must cover reserve -> regular admission -> new send, with the old trigger
+not dispatched, queued, consumed and unknown, including a late old completion.
 
 Before triggering, recheck pending eligible work and recipient capability.
 A user turn may drain it immediately afterward: one harmless empty wake is possible;
@@ -183,6 +221,28 @@ for the failure cases. Positive full-envelope history evidence can prove admissi
 negative history evidence cannot rule out delayed publication.
 
 This evidence is an unresolved release gate, not an invented runtime capability.
+
+Evidence gates for slice A:
+
+- G1: capture a queue-origin turn running the installed pre-model claim/render hook
+  and admitting the pending batch, including a busy boundary. E14 tests unsupported
+  hooks separately from disabled capability, stale transport and permission refusal.
+  Failure keeps wake passive; it does not authorize a second injection channel.
+- G2 / E08: read back the entire envelope and ordered parts keyed to batch,
+  attempt and digest, and demonstrate stale-publication rejection. Partial readback
+  is insufficient. No proof means visible uncertainty and no automatic replay,
+  not an exactly-once claim. Pallium owns the expiry deadline; runtime timestamps
+  alone cannot establish pre/post-expiry admission under clock skew. If time bounds
+  straddle expiry, record unknown timing, not a fabricated late-admission violation.
+- G3 / E02/E15: measure maximum fully rendered input and cumulative context headroom
+  while draining a 64-delivery backlog. Sixty-four is storage capacity, not one
+  turn's payload. Enforce both per-turn bounds and safe later-turn headroom; pause
+  visibly if safe drain is unavailable. Lower provisional caps before acceptance
+  if measurements fail; never truncate accepted batches.
+- E17 checks declared part count plus the terminal marker before replying.
+  E18 captures both transcripts and asserts zero intervening user prompts or
+  surrogate agent/app pings during the automatic exchange.
+
 Until resolved, retain honest at-least-once legacy delivery semantics and never
 claim strict no-loss/no-duplicate behavior for new wake/batch release. User-requested
 regular-turn fallback remains available after DEFINITIVE non-admission; uncertainty
