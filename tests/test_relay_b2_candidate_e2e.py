@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import sys
@@ -8,9 +10,13 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import httpx
+from unittest.mock import patch
 from sqlalchemy import text
 
 from api.routes import create_router
+from app.mcp.client import PalliumMcpClient
+from app.mcp.context import PalliumContext
 from core.relay import RelayService
 from storage.relay_migration import migrate_relay_batch_claims
 
@@ -304,6 +310,35 @@ def test_candidate_admission_is_idempotent_and_late_witness_resolves_uncertain(b
     status = batch_client.get("/relay/messages/late-witness", params=SCOPE).json()
     assert status["deliveries"][0]["state"] == "delivered"
 
+
+def test_actual_mcp_output_can_be_witnessed_then_replied(batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target-small")
+    _turn(batch_client, "codex", "target")
+    _send_parts(batch_client, "sender", "codex:target-small", ["hello"], "mcp-budget")
+    _send_parts(batch_client, "sender", "codex:target", ["hello"], "mcp-witness")
+    ctx = PalliumContext(base_url="http://relay.test", container_ref=SCOPE["container_ref"], thread_ref="target", actor_ref=SCOPE["actor_ref"], agent_ref="codex", visibility="private")
+    small_ctx = PalliumContext(base_url="http://relay.test", container_ref=SCOPE["container_ref"], thread_ref="target-small", actor_ref=SCOPE["actor_ref"], agent_ref="codex", visibility="private")
+
+    async def exercise() -> tuple[dict, dict]:
+        transport = httpx.ASGITransport(app=batch_client.app)
+        real_client = httpx.AsyncClient
+        with patch("app.mcp.client.httpx.AsyncClient", lambda **kwargs: real_client(transport=transport, **kwargs)):
+            bounded = await PalliumMcpClient(small_ctx).relay_receive("codex", "target-small", max_chars=1000)
+            assert len(json.dumps(bounded, ensure_ascii=False, separators=(",", ":"))) <= 1000
+            assert bounded["deliveries"] == []
+            mcp = PalliumMcpClient(ctx)
+            received = await mcp.relay_receive("codex", "target", max_chars=2000)
+            delivery = received["deliveries"][0]
+            witnessed_delivery = batch_client.get("/relay/messages/mcp-witness", params=SCOPE).json()["deliveries"][0]
+            witnessed = _admit(batch_client, witnessed_delivery)
+            assert witnessed.status_code == 200
+            replied = await mcp.relay_reply(delivery_id=delivery["delivery_id"], receipt=delivery["receipt"], message="ack")
+            return received, replied
+
+    received, replied = asyncio.run(exercise())
+    assert received["deliveries"][0]["envelope"].endswith("[End Pallium Relay batch]")
+    assert replied["in_reply_to"] == "mcp-witness"
 
 def test_candidate_rejects_mixed_fanout_and_pending_capacity(client: TestClient, batch_client: TestClient) -> None:
     _turn(batch_client, "claude-code", "sender")

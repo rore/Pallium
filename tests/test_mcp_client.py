@@ -231,7 +231,7 @@ class TestRelay:
         with patch("httpx.AsyncClient.post", side_effect=[turn, publication]) as post:
             result = await PalliumMcpClient(ctx).relay_receive("codex", "target", max_chars=1000)
         assert len(json.dumps(result, ensure_ascii=False, separators=(",", ":"))) <= 1000
-        assert post.call_args_list[0].kwargs["json"]["max_chars"] == 488
+        assert post.call_args_list[0].kwargs["json"]["max_chars"] == 744
         assert "claim_token" not in result["deliveries"][0]
         assert "payload" not in result["deliveries"][0]
 

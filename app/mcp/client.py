@@ -321,7 +321,7 @@ class PalliumMcpClient:
 
     async def relay_receive(self, runtime: str, session_ref: str, max_chars: int = 0) -> Any:
         # Reserve the final MCP JSON wrapper before claiming a candidate envelope.
-        turn_max_chars = max(0, max_chars - 512) if max_chars else 0
+        turn_max_chars = max(0, max_chars - 256) if max_chars else 0
         payload: dict[str, Any] = {
             "runtime": runtime,
             "session_ref": session_ref,
