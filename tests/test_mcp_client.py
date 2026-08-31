@@ -237,6 +237,20 @@ class TestRelay:
         assert post.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_receive_caps_default_candidate_projection_before_publication(self, ctx: PalliumContext) -> None:
+        candidates = [
+            {"delivery_id": f"d-{index}", "message_id": f"m-{index}", "claim_token": f"claim-{index}", "receipt": f"receipt-{index}",
+             "envelope_digest": "a" * 64, "claim_generation": 1, "protocol_version": "batch_v2_candidate", "envelope": "x" * 1300}
+            for index in range(2)
+        ]
+        turn = _mock_response(json_data={"deliveries": candidates, "remaining_count": 0, "has_more": False})
+        with patch("httpx.AsyncClient.post", return_value=turn) as post:
+            result = await PalliumMcpClient(ctx).relay_receive("codex", "target")
+        assert result["deliveries"] == []
+        assert result["remaining_count"] == 2
+        assert result["has_more"] is True
+        assert post.call_count == 1
+    @pytest.mark.asyncio
     async def test_receive_reserves_final_json_budget_before_publication(self, ctx: PalliumContext) -> None:
         candidate = {
             "delivery_id": "d-1", "message_id": "m-1", "claim_token": "claim", "receipt": "receipt",

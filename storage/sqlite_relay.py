@@ -16,8 +16,8 @@ from storage.relay_codec import RelayCodecError, decode_parts
 from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
 
 
-def _now(value: datetime | None = None) -> datetime:
-    current = value or datetime.now(timezone.utc)
+def _now(value: datetime | str | None = None) -> datetime:
+    current = datetime.fromisoformat(value) if isinstance(value, str) else value or datetime.now(timezone.utc)
     return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
 
 
@@ -295,9 +295,9 @@ class SQLiteRelayMixin:
                 has_batch_claims = False
             for table in ("relay_deliveries", "relay_messages"):
                 protected = (
-                    "AND state != 'uncertain' AND id NOT IN (SELECT delivery_id FROM relay_batch_claims WHERE publication_started_at IS NOT NULL AND admitted_at IS NULL)"
+                    "AND state != 'uncertain' AND id NOT IN (SELECT delivery_id FROM relay_batch_claims WHERE publication_started_at IS NOT NULL AND admission_observed_at IS NULL)"
                     if has_batch_claims and table == "relay_deliveries" else
-                    "AND id NOT IN (SELECT message_id FROM relay_deliveries WHERE state='uncertain' OR id IN (SELECT delivery_id FROM relay_batch_claims WHERE publication_started_at IS NOT NULL AND admitted_at IS NULL))"
+                    "AND id NOT IN (SELECT message_id FROM relay_deliveries WHERE state='uncertain' OR id IN (SELECT delivery_id FROM relay_batch_claims WHERE publication_started_at IS NOT NULL AND admission_observed_at IS NULL))"
                     if has_batch_claims else ""
                 )
                 db.execute(text(f"""
@@ -544,7 +544,7 @@ class SQLiteRelayMixin:
                 ON CONFLICT(delivery_id) DO UPDATE SET claim_generation=:generation,
                     publication_started_at=NULL, publication_digest=:digest, publication_chars=:chars,
                     publication_bytes=:bytes, uncertain_at=NULL, uncertain_reason=NULL, blocked_reason=NULL,
-                    admitted_at=NULL, admission_evidence=NULL, admission_timing=NULL
+                    admitted_at=NULL, admission_evidence=NULL, admission_observed_at=NULL, admission_timing=NULL
             """), {"delivery_id": delivery.id, "generation": generation, "digest": digest, "chars": chars, "bytes": bytes_})
             claim = _candidate_claim(db, delivery.id)
             claimed.append(_candidate_view(delivery, message, claim, envelope, "".join(_message_parts(db, message))))
@@ -855,7 +855,7 @@ class SQLiteRelayMixin:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
 
             candidate_claim = self._reconcile_delivery(db, delivery, message, current)
-            if candidate_claim is not None and candidate_claim["admitted_at"] is None:
+            if candidate_claim is not None and candidate_claim["admission_observed_at"] is None:
                 raise RelayConflictError("candidate delivery requires admission evidence")
             if delivery.state == "claimed":
                 if delivery.lease_expires_at is None or _now(delivery.lease_expires_at) <= current:
@@ -1046,9 +1046,9 @@ class SQLiteRelayMixin:
 
     def relay_admit(
         self, *, delivery_id: str, claim_token: str, envelope_digest: str, evidence: str,
-        container_ref: str, actor_ref: str, now: datetime | None = None,
+        admitted_at: datetime | None = None, container_ref: str, actor_ref: str, now: datetime | None = None,
     ) -> dict[str, Any]:
-        """Persist a verified fixture witness; matching retries and late positives are reconcilable."""
+        """Persist an observation and optional verified actual admission time."""
         current = _now(now)
         with self._begin_immediate() as db:
             row = db.execute(select(RelayDeliveryRecord, RelayMessageRecord).join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id).where(RelayDeliveryRecord.id == delivery_id)).one_or_none()
@@ -1062,16 +1062,25 @@ class SQLiteRelayMixin:
                 raise RelayConflictError("candidate publication is not admissible")
             if not hmac.compare_digest(delivery.claim_token or "", claim_token) or not hmac.compare_digest(claim["publication_digest"] or "", envelope_digest):
                 raise RelayConflictError("candidate admission does not match current generation")
-            if claim["admitted_at"] is not None:
-                return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(delivery.delivered_at), "admission_timing": claim["admission_timing"]}
+            proven_at = None if admitted_at is None else _now(admitted_at)
+            if claim["admission_observed_at"] is not None:
+                if claim["admission_evidence"] != evidence or (None if claim["admitted_at"] is None else _now(claim["admitted_at"])) != proven_at:
+                    raise RelayConflictError("candidate admission evidence cannot be rewritten")
+                return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(delivery.delivered_at), "admitted_at": _iso(claim["admitted_at"]), "admission_observed_at": _iso(claim["admission_observed_at"]), "admission_timing": claim["admission_timing"]}
             if delivery.state not in {"claimed", "uncertain"}:
                 raise RelayConflictError("candidate admission is not reconcilable")
-            timing = "after_expiry" if _now(message.expires_at) <= current else "before_expiry"
-            db.execute(text("UPDATE relay_batch_claims SET admitted_at=:current, admission_evidence=:evidence, admission_timing=:timing WHERE delivery_id=:delivery_id"), {"current": current, "evidence": evidence, "timing": timing, "delivery_id": delivery_id})
+            if proven_at is not None:
+                publication_at = _now(claim["publication_started_at"])
+                if proven_at > current or proven_at < publication_at:
+                    raise RelayConflictError("proven admission time is outside the publication attempt")
+                expiry = _now(message.expires_at)
+                timing = "before_expiry" if proven_at < expiry else "after_expiry" if proven_at > expiry else "unknown"
+            else:
+                timing = "unknown"
+            db.execute(text("UPDATE relay_batch_claims SET admitted_at=:admitted_at, admission_evidence=:evidence, admission_observed_at=:observed_at, admission_timing=:timing WHERE delivery_id=:delivery_id"), {"admitted_at": proven_at, "evidence": evidence, "observed_at": current, "timing": timing, "delivery_id": delivery_id})
             delivery.state = "delivered"
             delivery.delivered_at = current
-            return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(current), "admission_timing": timing}
-
+            return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(current), "admitted_at": _iso(proven_at), "admission_observed_at": _iso(current), "admission_timing": timing}
     def relay_ack_by_receipt(
         self, *, delivery_id: str, receipt: str, container_ref: str, actor_ref: str,
         now: datetime | None = None,
@@ -1085,7 +1094,7 @@ class SQLiteRelayMixin:
             if message.container_ref != container_ref or message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             claim = self._reconcile_delivery(db, delivery, message, current)
-            if claim is not None and claim["admitted_at"] is None:
+            if claim is not None and claim["admission_observed_at"] is None:
                 raise RelayConflictError("candidate delivery requires admission evidence")
             expected = _delivery_receipt(delivery.claim_token)
             if expected is None or not hmac.compare_digest(expected, receipt):
@@ -1110,7 +1119,7 @@ class SQLiteRelayMixin:
             if message.container_ref != container_ref or message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             claim = self._reconcile_delivery(db, delivery, message, current)
-            if claim is not None and claim["admitted_at"] is None:
+            if claim is not None and claim["admission_observed_at"] is None:
                 raise RelayConflictError("candidate delivery requires admission evidence")
             if not hmac.compare_digest(delivery.claim_token or "", claim_token):
                 raise RelayConflictError("claim token is stale")

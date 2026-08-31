@@ -174,11 +174,14 @@ def _send_parts(client: TestClient, sender: str, recipient: str, parts: list[str
     return response.json()
 
 
-def _admit(client: TestClient, delivery: dict, evidence: str = "fixture-readback"):
-    return client.post("/relay/deliveries/admission", json={
+def _admit(client: TestClient, delivery: dict, evidence: str = "fixture-readback", admitted_at: datetime | None = None):
+    payload = {
         "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"],
         "envelope_digest": delivery["envelope_digest"], "evidence": evidence, **SCOPE,
-    })
+    }
+    if admitted_at is not None:
+        payload["admitted_at"] = admitted_at.isoformat()
+    return client.post("/relay/deliveries/admission", json=payload)
 
 
 def test_candidate_renders_real_six_parts_through_hook_formatter(batch_client: TestClient) -> None:
@@ -248,7 +251,7 @@ def test_candidate_admission_witness_delivers_and_allows_multipart_reply(batch_c
     _send_parts(batch_client, "sender", "codex:target", [f"part {index}" for index in range(6)], "parent")
     delivery = _turn(batch_client, "codex", "target")["deliveries"][0]
     assert _publication(batch_client, delivery).status_code == 200
-    admitted = _admit(batch_client, delivery)
+    admitted = _admit(batch_client, delivery, admitted_at=datetime.now(timezone.utc))
     assert admitted.status_code == 200
     assert admitted.json()["admission_timing"] == "before_expiry"
     reply = batch_client.post("/relay/replies", json={
@@ -485,10 +488,10 @@ def test_candidate_reconciles_wrong_and_late_positive_admission_evidence(batch_c
     assert batch_client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]["state"] == "uncertain"
     late = _admit(batch_client, delivery, "late-after-expiry")
     assert late.status_code == 200
-    assert late.json()["admission_timing"] == "after_expiry"
+    assert late.json()["admission_timing"] == "unknown"
     delivered = batch_client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]
     assert delivered["state"] == "delivered"
-    assert delivered["admission_timing"] == "after_expiry"
+    assert delivered["admission_timing"] == "unknown"
 
 def test_candidate_rejects_mixed_fanout_and_pending_capacity(client: TestClient, batch_client: TestClient) -> None:
     _turn(batch_client, "claude-code", "sender")

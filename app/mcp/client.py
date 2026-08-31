@@ -348,7 +348,9 @@ class PalliumMcpClient:
             }))
             projected.append(candidate_pairs[-1][1])
         probe = {**result, "deliveries": projected}
-        if max_chars and len(json.dumps(probe, ensure_ascii=False, separators=(",", ":"), default=str)) > max_chars:
+        candidate_budget = min(max_chars or 2_000, 2_000)
+        probe_text = json.dumps(probe, ensure_ascii=False, separators=(",", ":"), default=str)
+        if candidate_pairs and (len(probe_text) > candidate_budget or len(probe_text.encode("utf-8")) > candidate_budget):
             result["deliveries"] = [delivery for delivery in projected if delivery.get("protocol_version") != "batch_v2_candidate"]
             result["remaining_count"] = int(result.get("remaining_count", 0)) + len(candidate_pairs)
             result["has_more"] = bool(result.get("has_more") or result["remaining_count"])

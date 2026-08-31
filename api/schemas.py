@@ -843,13 +843,16 @@ class RelayPublicationResponse(BaseModel):
 
 class RelayAdmissionRequest(RelayPublicationRequest):
     evidence: str = Field(min_length=1, max_length=255)
+    admitted_at: datetime | None = None
 
 
 class RelayAdmissionResponse(BaseModel):
     delivery_id: str
     state: str
     delivered_at: datetime
-    admission_timing: str | None = None
+    admitted_at: datetime | None = None
+    admission_observed_at: datetime
+    admission_timing: str
 
 class RelayAckRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)
@@ -900,6 +903,7 @@ class RelayDeliveryResponse(BaseModel):
     uncertain_reason: str | None = None
     blocked_reason: str | None = None
     admitted_at: datetime | None = None
+    admission_observed_at: datetime | None = None
     admission_timing: str | None = None
 
 
