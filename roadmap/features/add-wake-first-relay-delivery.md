@@ -61,6 +61,21 @@ This is an independently acceptable dogfood milestone, not completion of the ful
 wake feature. Enable only qualified runtime/OS combinations; cross-platform
 support remains required and unqualified combinations stay passive.
 
+### Batch and fallback design review (2026-08-31)
+
+Canonical proposed milestone-1 design:
+[Relay batches and Codex-first wake](../../docs/designs/relay-batch-codex-wake.md).
+It adds atomic multipart send/reply, whole-batch regular-turn delivery, retry
+identities, bounded backlog drainage, and MCP/skill usability as release criteria.
+The proposed Codex wake is notification-only; batch payloads use the same inbox
+path as regular user turns. Queue-triggered hook/admission/fencing evidence and
+independent review by `claude-code:@claude_arch` remain mandatory before coding.
+This revision supersedes conflicting older state/timeout rules and unconditional
+exactly-once language below: uncertain batch publication is not proof of failure and needs reconciliation
+before replay. Uncertain notification-only wake does not reserve payloads or
+prevent a regular turn from claiming still-pending batches.
+No runtime or batch implementation is claimed complete.
+
 ## Delivery Contract
 
 1. Persist the message and immutable per-recipient deliveries before attempting

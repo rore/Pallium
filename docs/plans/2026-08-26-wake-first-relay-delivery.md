@@ -1,6 +1,11 @@
 # Wake-first Relay delivery implementation plan
 
-Status: draft for clean-context architecture review
+Status: superseded for milestone 1 by [Relay batches and Codex-first wake](../designs/relay-batch-codex-wake.md), proposed for independent review on 2026-08-31.
+
+Historical planning below is retained for traceability, not as implementation
+instructions. In particular, timeout-to-fallback, separate wake payload injection,
+exactly-once claims and the provisional state inventory MUST NOT be implemented
+from this document. Use the new design and its explicit evidence/review gates.
 Roadmap item: `add-wake-first-relay-delivery`
 
 Priority revision (2026-08-31): Codex↔Codex dogfood is milestone 1, Claude↔Codex
