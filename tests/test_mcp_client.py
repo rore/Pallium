@@ -220,6 +220,23 @@ class TestRelay:
         assert post.call_args_list[1].args[0].endswith("/relay/deliveries/publication")
         assert post.call_args_list[1].kwargs["json"]["claim_token"] == "claim"
     @pytest.mark.asyncio
+    async def test_receive_stops_at_the_first_candidate_publication_refusal(self, ctx: PalliumContext) -> None:
+        candidates = [
+            {"delivery_id": f"d-{index}", "claim_token": f"claim-{index}", "envelope_digest": "a" * 64,
+             "protocol_version": "batch_v2_candidate", "envelope": "envelope", "receipt": f"receipt-{index}"}
+            for index in range(2)
+        ]
+        turn = _mock_response(json_data={"deliveries": candidates, "remaining_count": 0, "has_more": False})
+        refusal = _mock_response(status_code=409, json_data={"detail": "refused"})
+        refusal.raise_for_status.side_effect = httpx.HTTPStatusError("refused", request=MagicMock(), response=refusal)
+        with patch("httpx.AsyncClient.post", side_effect=[turn, refusal]) as post:
+            result = await PalliumMcpClient(ctx).relay_receive("codex", "target")
+        assert result["deliveries"] == []
+        assert result["remaining_count"] == 2
+        assert result["has_more"] is True
+        assert post.call_count == 2
+
+    @pytest.mark.asyncio
     async def test_receive_reserves_final_json_budget_before_publication(self, ctx: PalliumContext) -> None:
         candidate = {
             "delivery_id": "d-1", "message_id": "m-1", "claim_token": "claim", "receipt": "receipt",

@@ -286,6 +286,17 @@ def test_codex_candidate_envelope_is_fenced_and_never_auto_acked(monkeypatch):
     common.acknowledge_relay([candidate], container_ref="container", actor_ref="actor")
     assert [path for path, _ in calls] == ["/relay/deliveries/publication"]
 
+def test_codex_candidate_publication_refusal_blocks_the_fifo_suffix(monkeypatch):
+    common = _load("codex_candidate_refusal", "integrations/codex/hooks/common.py")
+    candidates = []
+    for index in range(2):
+        envelope = f"[Pallium Relay batch from claude-code:sender-{index}]\n[Pallium scope — {{}}]\n[End Pallium Relay batch]"
+        candidates.append({**DELIVERY, "delivery_id": f"delivery-{index}", "claim_token": f"claim-{index}", "protocol_version": "batch_v2_candidate", "envelope": envelope, "envelope_digest": __import__("hashlib").sha256(envelope.encode()).hexdigest()})
+    calls = []
+    monkeypatch.setattr(common, "relay_request", lambda method, path, body, *, timeout: calls.append((path, body)) or None)
+    assert common.begin_relay_publication(candidates, container_ref="container", actor_ref="actor") == []
+    assert len(calls) == 1
+
 def test_codex_combined_output_is_relay_first_and_bounded(monkeypatch):
     hook = _load("codex_hook", "integrations/codex/hooks/user_prompt_submit.py")
 

@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -145,3 +145,5 @@ accepted and G2/G3/live activation remain gated. No new plan approval is needed.
 - 2026-08-31: Deterministic lifecycle matrix expanded and independently verified: fresh candidate service instances reclaim an unpublished expired generation while retaining a published expiry as uncertain; candidate busy transactions surface the existing retryable 503 contract; retention cleanup removes orphaned B2 claim rows only after delivery cleanup; wrong admission digest leaves the claim unchanged, and matching late positive evidence after publication expiry resolves it to delivered. Focused suite: 121 passed, 4 existing Pydantic warnings.
 
 - 2026-08-31: Candidate contention coverage added: two simultaneous disposable HTTP turns against the same recipient produce exactly one generation-one delivery and leave truthful backlog on the competing turn. Focused suite: 122 passed, 4 existing Pydantic warnings.
+
+- 2026-08-31 supplemental correction evidence: expired unexposed candidate rows are reconciled before the 64-delivery admission count; a first MCP or hook publication refusal stops its FIFO suffix; retention preserves published/unadmitted uncertain rows; and cleanup remains compatible with B1-only databases. Candidate admission now records an observable `admitted_at` observation plus `admission_timing` (`before_expiry` or `after_expiry`); a wrong digest leaves it unset, while a verified late witness is explicit. File-backed provider disposal/reopen reclaims an unpublished expired generation, and a separate provider holding `BEGIN IMMEDIATE` produces the retryable busy contract. The B2-only depth limit no longer changes legacy reply chains. The established legacy MCP `max_chars=0` drain-all behavior is intentionally unchanged; B2 remains fixture-only, so no activation-facing MCP ceiling change is made. Independent focused verification: `uv run pytest -q tests/test_relay_b2_candidate_e2e.py tests/test_agent_relay_hooks.py tests/test_mcp_client.py tests/test_relay_mcp_lifecycle.py tests/test_agent_relay_e2e.py` → **128 passed**, 4 existing `IncompleteFieldDefinitionWarning` warnings. Candidate remains unactivated; G2/G3, activation, migration rollout, wake, and live service actions remain out of scope.

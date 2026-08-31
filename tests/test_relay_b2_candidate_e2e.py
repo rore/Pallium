@@ -21,6 +21,7 @@ from app.mcp.context import PalliumContext
 from core.errors import ImmediateTransactionBusyError
 from core.relay import RelayService
 from storage.relay_migration import migrate_relay_batch_claims
+from storage.sqlite import SQLiteStorageProvider
 
 SCOPE = {"container_ref": "git:example.test/team/relay", "actor_ref": "local-user"}
 
@@ -247,7 +248,9 @@ def test_candidate_admission_witness_delivers_and_allows_multipart_reply(batch_c
     _send_parts(batch_client, "sender", "codex:target", [f"part {index}" for index in range(6)], "parent")
     delivery = _turn(batch_client, "codex", "target")["deliveries"][0]
     assert _publication(batch_client, delivery).status_code == 200
-    assert _admit(batch_client, delivery).status_code == 200
+    admitted = _admit(batch_client, delivery)
+    assert admitted.status_code == 200
+    assert admitted.json()["admission_timing"] == "before_expiry"
     reply = batch_client.post("/relay/replies", json={
         "delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"],
         "parts": ["reply one", "reply two"], **SCOPE,
@@ -343,6 +346,27 @@ def test_actual_mcp_output_can_be_witnessed_then_replied(batch_client: TestClien
     assert received["deliveries"][0]["envelope"].endswith("[End Pallium Relay batch]")
     assert replied["in_reply_to"] == "mcp-witness"
 
+def test_candidate_reconciles_expired_capacity_and_retains_published_uncertainty(batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    for index in range(64):
+        _send(batch_client, "sender", "codex:target", f"expired {index}", f"expired-capacity-{index}")
+    storage = batch_client.app.state.batch_storage
+    with storage._engine.begin() as connection:
+        connection.execute(text("UPDATE relay_messages SET expires_at=:past WHERE id LIKE 'expired-capacity-%'"), {"past": datetime.now(timezone.utc) - timedelta(seconds=1)})
+    assert _send(batch_client, "sender", "codex:target", "fresh", "fresh-after-expiry")["message_id"] == "fresh-after-expiry"
+
+    exposed = _turn(batch_client, "codex", "target")["deliveries"][0]
+    assert _publication(batch_client, exposed).status_code == 200
+    with storage._engine.begin() as connection:
+        connection.execute(text("UPDATE relay_messages SET created_at=:created, expires_at=:expired WHERE id=:id"), {
+            "id": exposed["message_id"], "created": datetime.now(timezone.utc) - timedelta(days=9), "expired": datetime.now(timezone.utc) - timedelta(days=8),
+        })
+    status = batch_client.get(f"/relay/messages/{exposed['message_id']}", params=SCOPE)
+    assert status.json()["deliveries"][0]["state"] == "uncertain"
+    _send(batch_client, "sender", "codex:target", "cleanup", "cleanup-after-uncertain")
+    assert batch_client.get(f"/relay/messages/{exposed['message_id']}", params=SCOPE).status_code == 200
+
 def test_candidate_restart_reconciles_unpublished_and_published_claims(batch_client: TestClient) -> None:
     _turn(batch_client, "claude-code", "sender")
     _turn(batch_client, "codex", "unpublished")
@@ -366,6 +390,44 @@ def test_candidate_restart_reconciles_unpublished_and_published_claims(batch_cli
     assert restarted.get("/relay/messages/restart-uncertain", params=SCOPE).json()["deliveries"][0]["state"] == "uncertain"
 
 
+def test_candidate_file_backed_restart_reopens_persisted_claims(batch_client: TestClient, test_db_url: str) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    _send(batch_client, "sender", "codex:target", "retry", "file-restart")
+    delivery = _turn(batch_client, "codex", "target")["deliveries"][0]
+    storage = batch_client.app.state.batch_storage
+    with storage._engine.begin() as connection:
+        connection.execute(text("UPDATE relay_deliveries SET lease_expires_at=:past WHERE id=:id"), {
+            "past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": delivery["delivery_id"],
+        })
+    storage._engine.dispose()
+    reopened_storage = SQLiteStorageProvider(test_db_url)
+    try:
+        app = FastAPI()
+        app.include_router(create_router(
+            batch_client.app.state.pallium_service,
+            relay_service=RelayService(reopened_storage, batch_candidate_enabled=True),
+        ))
+        reopened = TestClient(app)
+        replacement = _turn(reopened, "codex", "target")["deliveries"][0]
+        assert replacement["claim_generation"] == 2
+    finally:
+        reopened_storage._engine.dispose()
+
+
+def test_candidate_independent_connection_contention_is_retryable(batch_client: TestClient, test_db_url: str) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    contender = SQLiteStorageProvider(test_db_url)
+    try:
+        with contender._engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+            connection.execute(text("BEGIN IMMEDIATE"))
+            response = batch_client.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **SCOPE})
+            assert response.status_code == 503
+            assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
+            connection.execute(text("ROLLBACK"))
+    finally:
+        contender._engine.dispose()
 def test_candidate_contended_turn_claims_exactly_one_generation(batch_client: TestClient) -> None:
     _turn(batch_client, "claude-code", "sender")
     _turn(batch_client, "codex", "target")
@@ -414,13 +476,19 @@ def test_candidate_reconciles_wrong_and_late_positive_admission_evidence(batch_c
     assert _publication(batch_client, delivery).status_code == 200
     wrong = {**delivery, "envelope_digest": "0" * 64}
     assert _admit(batch_client, wrong).status_code == 409
-    assert batch_client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]["state"] == "claimed"
+    unchanged = batch_client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]
+    assert unchanged["state"] == "claimed"
+    assert unchanged["admission_timing"] is None
     storage = batch_client.app.state.batch_storage
     with storage._engine.begin() as connection:
         connection.execute(text("UPDATE relay_messages SET expires_at=:past WHERE id=:id"), {"past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": sent["message_id"]})
     assert batch_client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]["state"] == "uncertain"
-    assert _admit(batch_client, delivery, "late-after-expiry").status_code == 200
-    assert batch_client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
+    late = _admit(batch_client, delivery, "late-after-expiry")
+    assert late.status_code == 200
+    assert late.json()["admission_timing"] == "after_expiry"
+    delivered = batch_client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]
+    assert delivered["state"] == "delivered"
+    assert delivered["admission_timing"] == "after_expiry"
 
 def test_candidate_rejects_mixed_fanout_and_pending_capacity(client: TestClient, batch_client: TestClient) -> None:
     _turn(batch_client, "claude-code", "sender")
@@ -458,6 +526,18 @@ def test_candidate_rejects_reply_chains_deeper_than_four(batch_client: TestClien
     })
     assert rejected.status_code == 409
 
+def test_legacy_reply_depth_stays_unbounded(client: TestClient) -> None:
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    parent_id = "legacy-depth-0"
+    _send(client, "sender", "codex:target", "root", parent_id)
+    for depth in range(1, 7):
+        response = client.post("/relay/messages", json={
+            "sender_runtime": "claude-code", "sender_session_ref": "sender", "recipient": "codex:target",
+            "payload": f"depth {depth}", "message_id": f"legacy-depth-{depth}", "in_reply_to": parent_id, **SCOPE,
+        })
+        assert response.status_code == 200, response.text
+        parent_id = f"legacy-depth-{depth}"
 def test_candidate_rejects_permanently_oversized_escaped_parts_before_acceptance(batch_client: TestClient) -> None:
     _turn(batch_client, "claude-code", "sender")
     _turn(batch_client, "codex", "target")

@@ -361,6 +361,8 @@ class PalliumMcpClient:
             )
             if "error" not in started:
                 admitted.append(view)
+            else:
+                break
         admitted_ids = {delivery["delivery_id"] for delivery in admitted}
         result["deliveries"] = [
             delivery for delivery in projected

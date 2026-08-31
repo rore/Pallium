@@ -849,6 +849,7 @@ class RelayAdmissionResponse(BaseModel):
     delivery_id: str
     state: str
     delivered_at: datetime
+    admission_timing: str | None = None
 
 class RelayAckRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)
@@ -898,6 +899,8 @@ class RelayDeliveryResponse(BaseModel):
     uncertain_at: datetime | None = None
     uncertain_reason: str | None = None
     blocked_reason: str | None = None
+    admitted_at: datetime | None = None
+    admission_timing: str | None = None
 
 
 class RelayTurnResponse(BaseModel):

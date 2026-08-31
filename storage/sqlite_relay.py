@@ -114,7 +114,7 @@ def _batch_envelope(
 def _validate_batch_acceptance(
     db, parts: list[str], *, recipients: list[RelaySessionRecord], sender_runtime: str,
     sender_session_ref: str, message_id: str, container_ref: str, actor_ref: str,
-    in_reply_to: str | None,
+    in_reply_to: str | None, current: datetime,
 ) -> None:
     for target in recipients:
         capability = db.execute(text("""
@@ -123,13 +123,10 @@ def _validate_batch_acceptance(
         """), {"container_ref": container_ref, "actor_ref": actor_ref, "runtime": target.runtime, "session_ref": target.session_ref}).mappings().one_or_none()
         if capability is None or int(capability["protocol_version"]) != 2:
             raise RelayConflictError("candidate Relay recipient is incompatible")
-        pending = db.execute(text("""
-            SELECT COUNT(*) FROM relay_deliveries AS delivery JOIN relay_messages AS message ON message.id=delivery.message_id
-            WHERE delivery.recipient_runtime=:runtime AND delivery.recipient_session_ref=:session_ref
-            AND message.container_ref=:container_ref AND message.actor_ref=:actor_ref
-            AND delivery.state IN ('pending', 'claimed', 'uncertain', 'blocked')
-        """), {"runtime": target.runtime, "session_ref": target.session_ref, "container_ref": container_ref, "actor_ref": actor_ref}).scalar_one()
-        if int(pending) >= 64:
+        pending = _candidate_pending_count(
+            db, target=target, container_ref=container_ref, actor_ref=actor_ref, current=current,
+        )
+        if pending >= 64:
             raise RelayConflictError("candidate Relay recipient is at pending capacity")
         envelope = _render_batch_envelope(
             parts, sender_runtime=sender_runtime, sender_session_ref=sender_session_ref,
@@ -140,6 +137,24 @@ def _validate_batch_acceptance(
         )
         if len(envelope) > int(capability["max_chars"]) or len(envelope.encode("utf-8")) > int(capability["max_bytes"]):
             raise RelayConflictError("Relay batch exceeds recipient capability budget")
+
+def _candidate_pending_count(
+    db, *, target: RelaySessionRecord, container_ref: str, actor_ref: str, current: datetime,
+) -> int:
+    rows = db.execute(
+        select(RelayDeliveryRecord, RelayMessageRecord)
+        .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+        .where(
+            RelayDeliveryRecord.recipient_runtime == target.runtime,
+            RelayDeliveryRecord.recipient_session_ref == target.session_ref,
+            RelayMessageRecord.container_ref == container_ref,
+            RelayMessageRecord.actor_ref == actor_ref,
+            RelayDeliveryRecord.state.in_(("pending", "claimed", "uncertain", "blocked")),
+        )
+    ).all()
+    for delivery, message in rows:
+        SQLiteRelayMixin._reconcile_delivery(db, delivery, message, current)
+    return sum(delivery.state in {"pending", "claimed", "uncertain", "blocked"} for delivery, _ in rows)
 
 def _reply_depth(db, message: RelayMessageRecord) -> int:
     depth = 0
@@ -194,6 +209,8 @@ def _candidate_view(
         "uncertain_at": _iso(claim["uncertain_at"]),
         "uncertain_reason": claim["uncertain_reason"],
         "blocked_reason": claim["blocked_reason"],
+        "admitted_at": _iso(claim["admitted_at"]),
+        "admission_timing": claim["admission_timing"],
     })
     if envelope is not None:
         view["envelope"] = envelope
@@ -271,7 +288,18 @@ class SQLiteRelayMixin:
         """Release only results whose request window and retained ancestry ended."""
         try:
             db.execute(text("DELETE FROM relay_requests WHERE retention_until <= :current"), {"current": current})
+            try:
+                db.execute(text("SELECT 1 FROM relay_batch_claims LIMIT 1"))
+                has_batch_claims = True
+            except OperationalError:
+                has_batch_claims = False
             for table in ("relay_deliveries", "relay_messages"):
+                protected = (
+                    "AND state != 'uncertain' AND id NOT IN (SELECT delivery_id FROM relay_batch_claims WHERE publication_started_at IS NOT NULL AND admitted_at IS NULL)"
+                    if has_batch_claims and table == "relay_deliveries" else
+                    "AND id NOT IN (SELECT message_id FROM relay_deliveries WHERE state='uncertain' OR id IN (SELECT delivery_id FROM relay_batch_claims WHERE publication_started_at IS NOT NULL AND admitted_at IS NULL))"
+                    if has_batch_claims else ""
+                )
                 db.execute(text(f"""
                     WITH RECURSIVE kept(id) AS (
                         SELECT message_id FROM relay_requests
@@ -283,8 +311,10 @@ class SQLiteRelayMixin:
                     DELETE FROM {table}
                     WHERE {"message_id" if table == "relay_deliveries" else "id"} NOT IN (SELECT id FROM kept)
                     AND {"message_id IN (SELECT id FROM relay_messages WHERE expires_at <= :cutoff)" if table == "relay_deliveries" else "expires_at <= :cutoff"}
+                    {protected}
                 """), {"cutoff": current - timedelta(days=7)})
-            db.execute(text("DELETE FROM relay_batch_claims WHERE delivery_id NOT IN (SELECT id FROM relay_deliveries)"))
+            if has_batch_claims:
+                db.execute(text("DELETE FROM relay_batch_claims WHERE delivery_id NOT IN (SELECT id FROM relay_deliveries)"))
         except OperationalError:
             # Legacy traffic stays compatible until the explicit B1 migration runs.
             return
@@ -514,7 +544,7 @@ class SQLiteRelayMixin:
                 ON CONFLICT(delivery_id) DO UPDATE SET claim_generation=:generation,
                     publication_started_at=NULL, publication_digest=:digest, publication_chars=:chars,
                     publication_bytes=:bytes, uncertain_at=NULL, uncertain_reason=NULL, blocked_reason=NULL,
-                    admitted_at=NULL, admission_evidence=NULL
+                    admitted_at=NULL, admission_evidence=NULL, admission_timing=NULL
             """), {"delivery_id": delivery.id, "generation": generation, "digest": digest, "chars": chars, "bytes": bytes_})
             claim = _candidate_claim(db, delivery.id)
             claimed.append(_candidate_view(delivery, message, claim, envelope, "".join(_message_parts(db, message))))
@@ -685,7 +715,7 @@ class SQLiteRelayMixin:
                 parent = db.get(RelayMessageRecord, in_reply_to)
                 if parent is None or parent.container_ref != container_ref or parent.actor_ref != actor_ref:
                     raise RelayNotFoundError("relay entity not found in the requested scope")
-                if _reply_depth(db, parent) >= 4:
+                if candidate_batch and _reply_depth(db, parent) >= 4:
                     raise RelayConflictError("Relay reply depth exceeds 4")
 
             existing_message = db.get(RelayMessageRecord, message_id)
@@ -742,7 +772,7 @@ class SQLiteRelayMixin:
                     _validate_batch_acceptance(
                         db, (decode_parts(payload) if payload_format == "parts_v1" else [payload]), recipients=recipients, sender_runtime=sender_runtime,
                         sender_session_ref=sender_session_ref, message_id=message_id,
-                        container_ref=container_ref, actor_ref=actor_ref, in_reply_to=in_reply_to,
+                        container_ref=container_ref, actor_ref=actor_ref, in_reply_to=in_reply_to, current=current,
                     )
                 except RelayCodecError as exc:
                     raise RelayConflictError("invalid multipart Relay payload") from exc
@@ -855,7 +885,7 @@ class SQLiteRelayMixin:
             recipient_runtime = message.sender_runtime
             recipient_session_ref = message.sender_session_ref
             recipient_selector = f"{recipient_runtime}:{recipient_session_ref}"
-            if _reply_depth(db, message) >= 4:
+            if candidate_batch and _reply_depth(db, message) >= 4:
                 raise RelayConflictError("Relay reply depth exceeds 4")
 
             if request_id is not None:
@@ -898,7 +928,7 @@ class SQLiteRelayMixin:
                     _validate_batch_acceptance(
                         db, (decode_parts(payload) if payload_format == "parts_v1" else [payload]), recipients=[recipient_session], sender_runtime=sender_runtime,
                         sender_session_ref=sender_session_ref, message_id=reply_message_id,
-                        container_ref=container_ref, actor_ref=actor_ref, in_reply_to=message.id,
+                        container_ref=container_ref, actor_ref=actor_ref, in_reply_to=message.id, current=current,
                     )
                 except RelayCodecError as exc:
                     raise RelayConflictError("invalid multipart Relay payload") from exc
@@ -1033,13 +1063,15 @@ class SQLiteRelayMixin:
             if not hmac.compare_digest(delivery.claim_token or "", claim_token) or not hmac.compare_digest(claim["publication_digest"] or "", envelope_digest):
                 raise RelayConflictError("candidate admission does not match current generation")
             if claim["admitted_at"] is not None:
-                return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(delivery.delivered_at)}
+                return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(delivery.delivered_at), "admission_timing": claim["admission_timing"]}
             if delivery.state not in {"claimed", "uncertain"}:
                 raise RelayConflictError("candidate admission is not reconcilable")
-            db.execute(text("UPDATE relay_batch_claims SET admitted_at=:current, admission_evidence=:evidence WHERE delivery_id=:delivery_id"), {"current": current, "evidence": evidence, "delivery_id": delivery_id})
+            timing = "after_expiry" if _now(message.expires_at) <= current else "before_expiry"
+            db.execute(text("UPDATE relay_batch_claims SET admitted_at=:current, admission_evidence=:evidence, admission_timing=:timing WHERE delivery_id=:delivery_id"), {"current": current, "evidence": evidence, "timing": timing, "delivery_id": delivery_id})
             delivery.state = "delivered"
             delivery.delivered_at = current
-            return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(current)}
+            return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(current), "admission_timing": timing}
+
     def relay_ack_by_receipt(
         self, *, delivery_id: str, receipt: str, container_ref: str, actor_ref: str,
         now: datetime | None = None,

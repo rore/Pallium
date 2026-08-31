@@ -395,8 +395,9 @@ def begin_relay_publication(
             },
             timeout=0.5,
         )
-        if started is not None:
-            ready.append(delivery)
+        if started is None:
+            break
+        ready.append(delivery)
     return ready
 
 
