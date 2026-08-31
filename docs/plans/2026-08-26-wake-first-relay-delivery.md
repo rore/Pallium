@@ -3,6 +3,13 @@
 Status: draft for clean-context architecture review
 Roadmap item: `add-wake-first-relay-delivery`
 
+Priority revision (2026-08-31): Codex↔Codex dogfood is milestone 1, Claude↔Codex
+is milestone 2, OpenCode follows. The roadmap's milestone acceptance is canonical.
+Milestone 1 must work between the existing architect and Relay developer sessions
+without a separate user/agent ping or manual queue/app-tool activation in either
+direction. Use that developer through Relay, not a substitute subagent. Update
+local Codex integrations and complete architect review before accepting it.
+
 ## Outcome
 
 After Pallium durably creates Relay deliveries, it automatically attempts to
@@ -56,21 +63,25 @@ For each runtime, prove these cases through its supported public surface:
 
 Expected decisions:
 
-- **Claude Code:** choose documented native cross-session messaging or Channels;
-  reject undocumented sockets. Confirm Windows behavior and whether admission is
-  observable. If Channels require launch-time setup, document that as the wake
-  capability prerequisite.
+- **Claude Code (milestone 2):** the 2026-08-28 qualification proved native
+  Windows idle ingress; busy ingress is unsafe and Channels were unavailable.
+  Preserve idle-only dispatch and qualify admission/fallback before enabling it.
 - **OpenCode:** use its supported server/plugin session status and prompt APIs.
   Confirm idle/busy queue semantics and the event that proves prompt admission.
-- **Codex:** ship only if a supported integration reaches the exact existing
-  addressed session. A Pallium-managed App Server, resumed clone, or replacement
-  process is out of scope even if it provides race-free queue admission.
+- **Codex (milestone 1):** build on the recorded `codex queue --thread`
+  idle/busy admission evidence, qualify the actual architect/developer pair, and
+  close stale/permission, restart, and ambiguous-response cases. A managed App
+  Server, resumed clone, or replacement process remains out of scope.
 
 Gate: no runtime adapter enters implementation without passing all seven cases.
 Failure for one runtime does not block supported runtimes because passive Relay is
 the defined fallback.
 
 ## Target architecture
+
+The following is a design inventory, not a requirement to build every mechanism
+up front. For milestone 1, retain only what the Codex admission/recovery contract
+needs; derive further shared abstractions when the Claude adapter requires them.
 
 ### Durable delivery and activation state
 
@@ -217,36 +228,43 @@ dashboard summary, and focused Relay tests.
 
 Exit: deterministic fake-adapter E2E proves every state/race/restart transition.
 
-### PR 3 — Claude Code adapter
+### PR 3 — Codex adapter and milestone 1 dogfood acceptance
 
-- Implement only the public ingress proven in PR 1.
-- Update installers/configuration so live sessions advertise truthful capability.
-- Preserve passive operation when preview flags, servers or channels are absent.
-- Add its real-surface E2E harness and enable only after the live Windows smoke
-  matrix passes.
+- Implement `codex queue --thread` only after the remaining Codex safety cases
+  and actual architect/developer session ingress are qualified.
+- Reuse the minimal PR 2 coordinator for dedupe, admission and durable fallback;
+  never substitute a managed App Server, resumed clone, or replacement session.
+- Update local Codex integration installation and operational diagnostics.
+- Run caller-surface E2E for idle/busy, user-turn races, wake/fallback races,
+  duplicates, queued bursts, expiry, stale sessions, permissions, restart and
+  ambiguous outcomes; preserve attribution and sandbox/approval boundaries.
+- Run a bounded live task → result → review → remediation/verdict exchange using
+  the two existing Codex sessions. Every handoff uses Relay; no separate user or
+  agent ping, manual queue command, or app-tool activation may advance the run.
 
-Exit: idle and busy Claude deliveries are admitted without a user prompt; all
-negative cases fall back exactly once.
+Exit: milestone 1 is accepted only after this bidirectional no-ping journey,
+regressions, local install verification and architect review pass. Claude and
+OpenCode remain passive and do not block it.
 
-### PR 4 — OpenCode adapter
+### PR 4 — Claude Code adapter and milestone 2 handoff
+
+- Extend the coordinator only for the qualified native idle-only ingress.
+- Never inject while busy; defer safely and retain next-turn fallback.
+- Update installers and add real-surface tests for idle admission, busy deferral,
+  duplicate suppression, stale/restart/error fallback and admission correlation.
+- Validate the unattended Claude↔Codex journey after the Codex milestone.
+
+Exit: the qualified cross-runtime pair completes the bounded handoff without
+manual pings; unqualified runtime/OS combinations remain passive.
+
+### PR 5 — OpenCode adapter
 
 - Implement only the server/plugin handshake proven in PR 1.
 - Update installation and capability heartbeat lifecycle.
-- Add its real-surface E2E harness and enable only after the live Windows smoke
-  matrix passes.
+- Add its real-surface E2E harness and enable only after its live smoke matrix
+  passes.
 
 Exit: idle and busy OpenCode deliveries meet the same admission/fallback contract.
-
-### PR 5 — Codex adapter, blocked pending existing-session ingress
-
-- Proceed only if a supported surface proves race-free admission in the exact
-  existing Codex session selected by Relay.
-- Never substitute a Pallium-managed App Server, resumed clone, or replacement
-  session. Those are different products and do not satisfy Relay wake.
-- Add the same real-surface E2E matrix as other supported adapters.
-
-Exit: Codex meets the same contract, or remains visibly passive-only with no
-degradation to Relay.
 
 ### PR 6 — cross-runtime regression journeys and public UX
 
@@ -312,34 +330,24 @@ reachable ingress. Normal passive fallback is visible but is not an alert.
 - Restart the installed service only through `scripts/restart-service.ps1`, then
   verify `/health`, `/status`, and `/debug/queue/health` on port 19836.
 
-## Stop conditions (architecture review 2026-08-27)
+## Runtime-specific gates (priority revised 2026-08-31)
 
-Implementation is blocked. Do not start PR 2 or later until all three conditions
-are cleared.
+The earlier all-runtime implementation block is superseded. Codex-first work does
+not wait for Claude or OpenCode, but does not waive the safety gates.
 
-1. **Product gate:** The assigned first outcome is unattended Claude↔Codex.
-   Codex exact-session ingress is unavailable (passive-only). A Claude-only
-   adapter is explicitly deferred. Resume only when Codex exact-session wake
-   is proven or the user changes the target.
+1. **Codex milestone:** existing-session idle/busy ingress is partially proven.
+   Close Phase 0 cases 5–7, confirm the actual architect/developer pair, and agree
+   the admission/recovery contract before enabling production wake.
+2. **Claude milestone:** native Windows idle wake is proven; busy ingress is
+   unsafe and Channels were unavailable. Its coordinator/adapter admission,
+   dedupe and fallback gates apply when adding Claude, not to milestone 1.
+3. **MCP receive foundation:** `fix-relay-receive-mcp-lifecycle` is merged;
+   reuse receipt-based recovery without raw HTTP or exposed claim tokens.
 
-2. **Claude Code live trace required:** Docs-only feasibility is insufficient.
-   A disposable live trace must prove: (a) a non-hook process holding the token
-   connects to the named pipe and the message enters the model's next turn;
-   (b) an authoritative idle boundary — `user_prompt_submit` hook exit is
-   tentative; a `notify_idle` signal, SessionIdle event, or equivalent must be
-   observed and proven. Both must pass all seven Phase 0 cases.
-
-3. **MCP receive lifecycle prerequisite:** `fix-relay-receive-mcp-lifecycle`
-   must be implemented and merged before any wake adapter PR. The
-   recovery/fallback contract must exist before wake is added.
-
-**PR 2 shape:** Derive the smallest shared core only from two proven exact-session
-adapter live traces. Do not build six wake states, callback capabilities, registry,
-dispatcher, schema, and fake adapters speculatively.
-
-**Open numeric limits** (admission deadline, rate limit, hop bound, dispatcher
-depth) are not decided until both adapters are evidenced from measured runtime
-behavior.
+**PR 2 scope:** implement the smallest coordinator required by Codex evidence.
+Do not require two adapter traces or build the full architecture inventory
+speculatively. Choose bounded admission, rate, hop and queue limits from Codex
+behavior, then revisit only when a later adapter requires it.
 
 ## Planning decisions still required
 
@@ -347,9 +355,10 @@ These are resolved in PR 1 from runtime evidence, not guessed during core work:
 
 1. exact supported runtime versions and feature flags;
 2. exact admission callback/event for each runtime;
-3. whether Claude Channels or native messaging is the smaller supported ingress;
-4. whether Codex exposes supported ingress into the exact existing addressed
-   session; otherwise it remains passive-only;
+3. for milestone 2, qualify the native Claude idle-only adapter; Channels stays
+   deferred unless new evidence changes its availability;
+4. the Codex admission/recovery handshake for the actual existing addressed
+   sessions, building on the recorded queue ingress evidence;
 5. adapter locator lifetime and whether any runtime needs ephemeral registration;
 6. numeric admission deadline, dispatcher bound, rate limit and reply-hop bound,
    chosen from measured runtime behavior rather than arbitrary constants.
@@ -372,6 +381,11 @@ expiry, natural-turn claim and callback. The default rules are:
   admit work reserved by the old generation.
 
 ## Completion gate
+
+Milestone 1 is independently acceptable when the Codex adapter, no-ping live
+round trip, required failure regressions, local installations and architect review
+pass. Keep the overall wake feature active for Claude and OpenCode follow-up;
+cross-platform enablement requires evidence for each runtime/OS combination.
 
 Wake-first is done only when every supported runtime passes the full lifecycle
 matrix, every unsupported path demonstrably falls back exactly once, dashboard

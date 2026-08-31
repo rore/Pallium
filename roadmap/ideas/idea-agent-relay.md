@@ -199,6 +199,12 @@ and keep dashboard metrics useful without turning Relay into a message archive.
 
 ### R1.5 — Wake-first delivery — active
 
+Priority (2026-08-31): ship Codex↔Codex dogfood first. The existing architect and
+developer must exchange Relay sends and replies with automatic exact-session wake
+in both directions, without separate human/agent pings. Build only the coordinator
+and Codex adapter needed for that safe milestone; Claude↔Codex follows, then
+OpenCode. The full multi-runtime feature stays active after the Codex milestone.
+
 Make wake the default delivery policy, without requiring sender syntax or an LLM
 poll. Pallium must persist the message before attempting activation. An eligible
 idle session starts a new turn; a busy session receives the message at a safe new

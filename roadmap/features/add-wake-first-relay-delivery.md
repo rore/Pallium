@@ -37,6 +37,30 @@ when and whom to message, and Pallium only persists, addresses, activates, and
 reports delivery. `fix-relay-claim-before-context-emission` (`RF-005`) is a release
 prerequisite because both wake and fallback must be loss-safe.
 
+### Milestone order (user priority, 2026-08-31)
+
+1. **Codex↔Codex dogfood first:** the existing Codex architect and developer
+   sessions exchange a bounded task → result → review → remediation/verdict
+   sequence through Relay alone. Send and reply activate the exact recipient in
+   both directions; neither the user nor either agent sends a separate ping,
+   invokes the queue manually, or uses an app messaging tool to advance the test.
+   Qualify the actual sessions used for work, not just disposable TUI substitutes.
+2. **Claude↔Codex next:** add Claude's qualified idle-only adapter and validate the
+   cross-runtime journey. Claude qualification does not block milestone 1.
+3. **OpenCode later:** add its adapter after the first two milestones.
+
+Milestone 1 includes the smallest persist-first coordinator needed by Codex,
+dedupe, correlated admission, safe busy queuing, wake/fallback claim-race protection,
+restart/ambiguous-outcome recovery, expiry, bounded bursts/replies, and visible
+fallback reasons. Exercise these through caller-surface regression tests plus a
+live no-ping round trip; update local Codex integrations before acceptance.
+Use the existing Relay developer session for implementation and architect review,
+not a substitute subagent. Other runtimes retain next-turn delivery.
+
+This is an independently acceptable dogfood milestone, not completion of the full
+wake feature. Enable only qualified runtime/OS combinations; cross-platform
+support remains required and unqualified combinations stay passive.
+
 ## Delivery Contract
 
 1. Persist the message and immutable per-recipient deliveries before attempting
@@ -94,15 +118,16 @@ selects durable fallback. Runtime names are never global capability claims, and 
 exited arbitrary process is not wakeable merely because its conversation can be
 resumed by launching another process.
 
-### Remaining production gates (updated 2026-08-28 after qualification)
+### Remaining production gates (priority updated 2026-08-31)
 
-**Implementation is still blocked** until all conditions are cleared.
+Gate each runtime independently. Codex-first work may proceed without waiting for
+Claude or OpenCode; enabling live wake still requires the relevant safety evidence.
 
-1. **Product gate:** The assigned first outcome requires unattended Claude↔Codex.
-   Phase 0 now proves `codex queue --thread <T>` as exact-session ingress for idle
-   and safe busy-boundary admission with model-visible correlation. PR 5 remains
-   blocked until cases 5, 6, and 7 are covered and a coordinator owns dedupe and
-   fallback. Do not treat the proven subset as a production-ready adapter.
+1. **Codex-first product gate:** The first outcome is unattended Codex↔Codex.
+   Phase 0 proves `codex queue --thread <T>` for idle and safe busy-boundary
+   admission in the tested sessions. Qualify the actual architect/developer pair,
+   close cases 5, 6, and 7, and implement coordinator-owned dedupe and fallback
+   before enabling wake. The proven subset is not a production-ready adapter.
 
 2. **Claude Code production gates:** Native Windows exact-session idle wake is
    proven on 2.1.250; Channels is unavailable in the qualified environment.
@@ -115,11 +140,11 @@ resumed by launching another process.
    `fix-relay-receive-mcp-lifecycle` is merged. Wake can reuse receipt-based
    recovery without raw HTTP or model-visible claim tokens.
 
-**PR 2 shape:** Derive the smallest shared core only from two proven exact-session
-adapter live traces. Open numeric limits are not decided until both adapters are
-evidenced from measured runtime behavior.
+**Core scope:** Derive the smallest coordinator from the Codex delivery trace.
+Do not wait for a second adapter or build speculative multi-runtime machinery.
+Choose bounded limits from Codex evidence; revisit only when adding another adapter.
 
-### Next disposable PoC sequence
+### Implementation sequence — Codex first
 
 **Codex (partial Phase 0):** `codex queue --thread T` proved exact-session idle
 and safe busy-boundary admission in the existing TUI. The remaining safe evidence
@@ -128,7 +153,7 @@ restart recovery, and ambiguous-response fallback. Native duplicate suppression
 failed, so any future coordinator must dedupe before invoking the queue. App Server
 path remains rejected.
 
-**Claude Code (partial Phase 0):** Implement the smallest coordinator slice only
+**Claude Code (after Codex dogfood):** Extend the coordinator only
 for verified-idle native delivery: persist/dedupe before write, exact delivery-ID
 admission from `Stop`, and fallback on busy/stale/error/restart. Add deterministic
 Windows E2E for the observed exact-target, duplicate, busy, and closed boundaries.
@@ -219,11 +244,10 @@ Current result: exact-session ingress is proven for Codex through `codex queue
 --thread` and for verified-idle Claude Code on native Windows through its registered
 named-pipe inbox. Claude Channels were unavailable in the qualified environment;
 busy native Claude ingress is unsafe, and neither transport provides sufficient
-deduplication. The next production slice is therefore a shared persist-first wake
-coordinator with dedupe, admission correlation, and durable fallback, followed by
-the Claude idle-only and Codex queue adapters. OpenCode remains deferred until the
-automatic Claude↔Codex handoff works. None of these claims changes passive
-next-turn fallback.
+deduplication. The next production slice is the smallest persist-first coordinator
+plus Codex queue adapter and a live Codex↔Codex no-ping acceptance run. Claude's
+idle-only adapter follows; OpenCode remains deferred until the automatic
+Claude↔Codex handoff works. None of these claims changes passive next-turn fallback.
 
 ## Research References
 
