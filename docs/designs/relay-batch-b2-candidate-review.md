@@ -196,3 +196,30 @@ Report a blocker only for a concrete contract contradiction, missing authority o
 unavailable dependency. Update WR state to implementation in progress, not a
 complete candidate awaiting acceptance. Do not reopen B1 or touch live config,
 database or installations.
+
+## In-progress lifecycle evidence — b730e5f / e3ae685
+
+Not another approval gate. Developer continues existing B2 implementation.
+Manager reran combined B1/B2/MCP/hook suites at b730e5f: 266 passed, four existing
+warnings. Further disposable HTTP/MCP probes:
+
+- Fill 64 pending deliveries, expire their message timestamps, submit fresh work
+  without a status/recipient turn: admission rejects at capacity. Reconcile expired
+  unexposed work before counting; retain genuinely uncertain exposure.
+- Two candidate messages; refuse publication for the first only: real MCP client
+  returns the second. Hook publication loop has the same continue behavior. Preserve
+  FIFO across publication failures and expose the unpublished suffix as backlog.
+- Publish a candidate, move expiry eight days into the past, confirm uncertain,
+  then send another message: cleanup makes original status 404. Preserve unresolved
+  exposure and reconciliation evidence through cleanup.
+
+These were sent through Relay with exact reproductions. The e3ae685 fresh-router
+test reuses the same storage engine, not a database/process restart. Injecting a
+busy exception proves error mapping, not real lock contention or rollback. Add
+file-backed dispose/reopen and independent-connection contention/fault tests.
+Admission records observation time as delivered_at; complete the agreed pre-/post-
+expiry admission timing and safe negative reconciliation contract.
+
+Review default max_chars=0/above-ceiling final MCP budgets, legacy compatibility
+of unconditional depth limits, and the remaining previously listed matrix items.
+No public activation or live-data mutation was performed by this review.
