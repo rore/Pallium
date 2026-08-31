@@ -96,3 +96,62 @@ proposal is requested unless the approved contract proves infeasible.
 No live migration, installation, public activation, wake coordinator or other
 runtime adapter work is authorized by this review.
 
+
+## Correction review — b3c592d / 80d815d
+
+Verdict: useful corrections, but B2 remains incomplete. Independent rerun: 108
+passed, four existing warnings. Actual six-part envelopes now render; the earlier
+published-candidate legacy reclaim, pre-publication expiry and unwitnessed ACK/reply
+paths have regression coverage. Do not redo those fixes.
+
+Further disposable HTTP probes against old/new routers sharing a temporary DB:
+
+| Probe | Observed | Required |
+|---|---|---|
+| Multipart send; legacy turn BEFORE any candidate claim | text_v1 delivery containing raw parts JSON | Reject incompatible acceptance; block downgraded reads before exposing payload |
+| Same valid admission callback twice | 200 then 409 | Idempotent result for the same verified attempt |
+| Publish, expire lease, become uncertain, submit matching positive witness | 409 | Reconcile verified late evidence without replay; retain admission/observation timing |
+| Eight 1499-character newline-heavy parts | Send 200, then permanent envelope_exceeds_turn_budget | Validate fully escaped envelope before acceptance |
+| Same request key: singleton '["one","two"]', then parts ['one','two'] | Both 200, same message ID | Conflict: payload format belongs to canonical request identity |
+| Eight 1500-character parts in current MCP JSON projection | 25,889 characters for a 12,580-character envelope | Bound final MCP output; avoid redundant payload plus envelope |
+
+Reproduction: tests.conftest.client.__wrapped__ and
+ tests.test_relay_b2_candidate_e2e.batch_client.__wrapped__ on temporary SQLite,
+using their turn/send_parts/publication/admit helpers. For the size case, parts
+were ['a\n' * 749 + 'a'] * 8. For late evidence, move lease_expires_at to the past
+in the disposable DB, turn again, then repeat admission with the original proof.
+No live data changed.
+
+### Consolidated remaining work (existing approved B2 scope)
+
+1. Know recipient capability/budget before send/reply acceptance; check payload
+   format on every read, not just claim-row existence. Add explicit disposable
+   capability fixtures, mixed-fan-out rejection and downgrade blocks. Legacy
+   callers must never receive unclaimed parts_v1 JSON; backlog/status stay truthful.
+2. Validate fully rendered size before atomic acceptance, including quoting,
+   attribution and recipient scope. Share final-output accounting with hook/MCP.
+   MCP currently returns payload AND envelope; hook output omits candidate backlog
+   metadata. Test actual output boundaries. Smaller temporary receive budgets may
+   block pending work, but globally impossible work must not be accepted.
+3. Include payload_format in canonical comparisons for send/reply request retries
+   and legacy message-ID retries. Test identical serialized text with different
+   formats; do not change the logical request key. Any schema adjustment needs
+   explicit migration/compatibility tests as already required.
+4. Complete fixture admission/reconciliation: same-proof retry, stale/wrong proof,
+   late positive evidence before/after expiry, and safe negative evidence only
+   when publication cannot arrive later. Uncertain must be resolvable without
+   blind replay. Fixture evidence is not G2 runtime proof; tokens stay private.
+5. Exercise REAL MCP receive -> output -> fixture witness -> ACK/reply, and actual
+   hook publication/output for multipart. MCP currently only starts publication;
+   its advertised receipt ACK/reply rejects until a separate witness. Do not call
+   this a completed MCP lifecycle or turn receipt ACK into durable admission proof.
+6. Complete remaining deterministic E01-E18 cases in the Work Record, including
+   restart, contention/crash, capacity, depth and cleanup. Separate actual-runtime
+   G2/G3 and wake-only qualification. The honest partial labels are useful, but
+   E02/E07/E08 must not imply the full contract is verified.
+
+Continue under existing approval, without another plan review or per-fix approval
+requests. Return one consolidated checkpoint when deterministic implementation and
+regressions are complete; stop only for a concrete design contradiction or new
+permission requirement. Preserve unrelated working-tree changes. No activation,
+install, live migration or wake implementation is authorized by this review.

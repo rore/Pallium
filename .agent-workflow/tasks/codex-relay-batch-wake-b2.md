@@ -124,3 +124,10 @@ No C notification coordinator or Claude/OpenCode wake is in scope.
 - E18 — qualification-only: no live architect/developer or wake exchange is authorized.
 - 2026-08-31 verification after correction: independent focused run `uv run pytest -q tests/test_relay_b2_candidate_e2e.py tests/test_agent_relay_hooks.py tests/test_mcp_client.py tests/test_relay_mcp_lifecycle.py tests/test_agent_relay_e2e.py` → **108 passed**, four existing `IncompleteFieldDefinitionWarning` warnings. `uv run python -m py_compile` passed for the changed B2 storage/core/API/hook/test surfaces and `git diff --check` is clean. This proves deterministic fixture behavior only; the E01–E18 matrix above retains G2/G3 and incomplete scenarios explicitly.
 - 2026-08-31 Relay usability follow-up (discovered while returning the consolidated checkpoint): `pallium_relay_reply` surfaced a raw HTTP 422 when a valid review report exceeded the service's 1,500-character legacy singleton payload limit. This is not a B2 lifecycle change and is not fixed in this High-risk correction pass. Follow-up task: make Relay reply tooling preflight the codec/render limit and return a clear local actionable error (or, after separate review, support explicit multipart reply submission) without silently truncating or retrying.
+Manager correction review (b3c592d/80d815d): 108 focused tests independently pass,
+but disposable HTTP probes reproduce pre-claim legacy multipart exposure,
+non-idempotent/unreconcilable admission, acceptance of permanently oversized
+batches, payload-format retry collision and over-budget MCP projection.
+See docs/designs/relay-batch-b2-candidate-review.md, correction-review section.
+Continue already-approved deterministic implementation/regressions; B2 is not
+accepted and G2/G3/live activation remain gated. No new plan approval is needed.
