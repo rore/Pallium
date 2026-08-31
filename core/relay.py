@@ -202,6 +202,25 @@ class RelayService:
             actor_ref=actor,
             now=now,
         )
+    def reconcile_non_admission(
+        self, *, delivery_id: str, claim_token: str, envelope_digest: str,
+        non_admission_evidence: str, publication_fence_evidence: str,
+        container_ref: str, actor_ref: str,
+    ) -> dict[str, Any]:
+        if not self._batch_candidate_enabled:
+            raise RelayUnavailableError("candidate reconciliation is disabled")
+        operation = getattr(self._store, "relay_reconcile_non_admission", None)
+        if not callable(operation):
+            raise RelayUnavailableError("candidate reconciliation is not supported by the configured storage")
+        container, actor = self._scope(container_ref, actor_ref)
+        return operation(
+            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
+            claim_token=_opaque(claim_token, "claim_token", maximum=128),
+            envelope_digest=_opaque(envelope_digest, "envelope_digest", maximum=64),
+            non_admission_evidence=_opaque(non_admission_evidence, "non_admission_evidence", maximum=255),
+            publication_fence_evidence=_opaque(publication_fence_evidence, "publication_fence_evidence", maximum=255),
+            container_ref=container, actor_ref=actor,
+        )
     def close_session(self, **scope: Any) -> dict[str, Any]:
         container, actor = self._scope(scope["container_ref"], scope["actor_ref"])
         return self._store.relay_close_session(

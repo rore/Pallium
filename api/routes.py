@@ -10,6 +10,8 @@ from fastapi.responses import Response
 from api.schemas import (
     RelayAdmissionRequest,
     RelayAdmissionResponse,
+    RelayNegativeReconciliationRequest,
+    RelayNegativeReconciliationResponse,
     RelayAckRequest,
     RelayAckResponse,
     RelayPublicationRequest,
@@ -431,6 +433,9 @@ def create_router(
     @router.post("/relay/deliveries/admission", response_model=RelayAdmissionResponse)
     def relay_admit(request: RelayAdmissionRequest):
         return _relay_call(lambda: _relay().admit(**request.model_dump()))
+    @router.post("/relay/deliveries/non-admission", response_model=RelayNegativeReconciliationResponse)
+    def relay_non_admission(request: RelayNegativeReconciliationRequest):
+        return _relay_call(lambda: _relay().reconcile_non_admission(**request.model_dump()))
     @router.post("/relay/deliveries/ack", response_model=RelayAckResponse)
     def relay_ack(request: RelayAckRequest):
         return _relay_call(lambda: _relay().acknowledge(**request.model_dump()))

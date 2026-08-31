@@ -854,6 +854,16 @@ class RelayAdmissionResponse(BaseModel):
     admission_observed_at: datetime
     admission_timing: str
 
+class RelayNegativeReconciliationRequest(RelayPublicationRequest):
+    non_admission_evidence: str = Field(min_length=1, max_length=255)
+    publication_fence_evidence: str = Field(min_length=1, max_length=255)
+
+
+class RelayNegativeReconciliationResponse(BaseModel):
+    delivery_id: str
+    state: str
+    released_generation: int
+
 class RelayAckRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)
     claim_token: str = Field(min_length=1, max_length=128)

@@ -246,10 +246,10 @@ class TestRelay:
         turn = _mock_response(json_data={"deliveries": candidates, "remaining_count": 0, "has_more": False})
         with patch("httpx.AsyncClient.post", return_value=turn) as post:
             result = await PalliumMcpClient(ctx).relay_receive("codex", "target")
-        assert result["deliveries"] == []
-        assert result["remaining_count"] == 2
-        assert result["has_more"] is True
-        assert post.call_count == 1
+        assert [delivery["delivery_id"] for delivery in result["deliveries"]] == ["d-0", "d-1"]
+        assert result["remaining_count"] == 0
+        assert result["has_more"] is False
+        assert post.call_count == 3
     @pytest.mark.asyncio
     async def test_receive_reserves_final_json_budget_before_publication(self, ctx: PalliumContext) -> None:
         candidate = {

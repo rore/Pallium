@@ -347,13 +347,23 @@ class PalliumMcpClient:
                 if key in delivery
             }))
             projected.append(candidate_pairs[-1][1])
-        probe = {**result, "deliveries": projected}
-        candidate_budget = min(max_chars or 2_000, 2_000)
-        probe_text = json.dumps(probe, ensure_ascii=False, separators=(",", ":"), default=str)
-        if candidate_pairs and (len(probe_text) > candidate_budget or len(probe_text.encode("utf-8")) > candidate_budget):
-            result["deliveries"] = [delivery for delivery in projected if delivery.get("protocol_version") != "batch_v2_candidate"]
-            result["remaining_count"] = int(result.get("remaining_count", 0)) + len(candidate_pairs)
-            result["has_more"] = bool(result.get("has_more") or result["remaining_count"])
+        candidate_char_budget = min(max_chars or 16_384, 16_384)
+        candidate_byte_budget = 65_536
+        non_candidates = [delivery for delivery in projected if delivery.get("protocol_version") != "batch_v2_candidate"]
+        fitting = []
+        for pair in candidate_pairs:
+            trial = {**result, "deliveries": [*non_candidates, *(view for _, view in fitting), pair[1]]}
+            trial_text = json.dumps(trial, ensure_ascii=False, separators=(",", ":"), default=str)
+            if len(trial_text) > candidate_char_budget or len(trial_text.encode("utf-8")) > candidate_byte_budget:
+                break
+            fitting.append(pair)
+        deferred = len(candidate_pairs) - len(fitting)
+        candidate_pairs = fitting
+        projected = [*non_candidates, *(view for _, view in candidate_pairs)]
+        if deferred and not candidate_pairs:
+            result["deliveries"] = non_candidates
+            result["remaining_count"] = int(result.get("remaining_count", 0)) + deferred
+            result["has_more"] = True
             return result
         admitted = []
         for delivery, view in candidate_pairs:
@@ -370,7 +380,7 @@ class PalliumMcpClient:
             delivery for delivery in projected
             if delivery.get("protocol_version") != "batch_v2_candidate" or delivery.get("delivery_id") in admitted_ids
         ]
-        result["remaining_count"] = int(result.get("remaining_count", 0)) + len(candidate_pairs) - len(admitted)
+        result["remaining_count"] = int(result.get("remaining_count", 0)) + deferred + len(candidate_pairs) - len(admitted)
         result["has_more"] = bool(result.get("has_more") or result["remaining_count"])
         return result
     async def relay_mcp_ack(self, delivery_id: str, receipt: str) -> dict[str, Any]:

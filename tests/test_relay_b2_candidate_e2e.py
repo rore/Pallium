@@ -471,6 +471,35 @@ def test_candidate_busy_is_retryable_and_cleanup_releases_orphaned_claim(batch_c
     assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
 
 
+def _negative(client: TestClient, delivery: dict, **extra):
+    return client.post("/relay/deliveries/non-admission", json={
+        "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"],
+        "envelope_digest": delivery["envelope_digest"], "non_admission_evidence": "fixture-no-output",
+        "publication_fence_evidence": "fixture-expired-lease", **SCOPE, **extra,
+    })
+
+
+def test_candidate_dual_proof_releases_only_live_uncertain_generation(batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    sent = _send(batch_client, "sender", "codex:target", "retry", "negative-reconcile")
+    delivery = _turn(batch_client, "codex", "target")["deliveries"][0]
+    assert _publication(batch_client, delivery).status_code == 200
+    assert _negative(batch_client, delivery, publication_fence_evidence="").status_code == 422
+    storage = batch_client.app.state.batch_storage
+    with storage._engine.begin() as connection:
+        connection.execute(text("UPDATE relay_deliveries SET lease_expires_at=:past WHERE id=:id"), {"past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": delivery["delivery_id"]})
+    assert _turn(batch_client, "codex", "target")["deliveries"] == []
+    assert _negative(batch_client, {**delivery, "envelope_digest": "0" * 64}).status_code == 409
+    released = _negative(batch_client, delivery)
+    assert released.status_code == 200, released.text
+    replacement = _turn(batch_client, "codex", "target")["deliveries"][0]
+    assert replacement["claim_generation"] == 2
+    assert _publication(batch_client, delivery).status_code == 409
+    with storage._engine.begin() as connection:
+        connection.execute(text("UPDATE relay_messages SET expires_at=:past WHERE id=:id"), {"past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": sent["message_id"]})
+    assert _negative(batch_client, replacement).status_code == 409
+
 def test_candidate_reconciles_wrong_and_late_positive_admission_evidence(batch_client: TestClient) -> None:
     _turn(batch_client, "claude-code", "sender")
     _turn(batch_client, "codex", "target")

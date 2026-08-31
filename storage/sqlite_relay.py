@@ -210,6 +210,7 @@ def _candidate_view(
         "uncertain_reason": claim["uncertain_reason"],
         "blocked_reason": claim["blocked_reason"],
         "admitted_at": _iso(claim["admitted_at"]),
+        "admission_observed_at": _iso(claim["admission_observed_at"]),
         "admission_timing": claim["admission_timing"],
     })
     if envelope is not None:
@@ -1081,6 +1082,33 @@ class SQLiteRelayMixin:
             delivery.state = "delivered"
             delivery.delivered_at = current
             return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(current), "admitted_at": _iso(proven_at), "admission_observed_at": _iso(current), "admission_timing": timing}
+    def relay_reconcile_non_admission(
+        self, *, delivery_id: str, claim_token: str, envelope_digest: str,
+        non_admission_evidence: str, publication_fence_evidence: str,
+        container_ref: str, actor_ref: str, now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Fixture-only dual-proof release; ambiguity is deliberately retained."""
+        current = _now(now)
+        with self._begin_immediate() as db:
+            row = db.execute(select(RelayDeliveryRecord, RelayMessageRecord).join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id).where(RelayDeliveryRecord.id == delivery_id)).one_or_none()
+            if row is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            delivery, message = row
+            if message.container_ref != container_ref or message.actor_ref != actor_ref:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            claim = self._reconcile_delivery(db, delivery, message, current)
+            if claim is None or delivery.state != "uncertain" or claim["publication_started_at"] is None:
+                raise RelayConflictError("candidate non-admission is not reconcilable")
+            if _now(message.expires_at) <= current or delivery.lease_expires_at is None or _now(delivery.lease_expires_at) > current:
+                raise RelayConflictError("candidate publication is not safely fenced")
+            if not hmac.compare_digest(delivery.claim_token or "", claim_token) or not hmac.compare_digest(claim["publication_digest"] or "", envelope_digest):
+                raise RelayConflictError("candidate non-admission does not match current generation")
+            db.execute(text("UPDATE relay_batch_claims SET negative_evidence=:negative_evidence, negative_fence_evidence=:fence_evidence, negative_observed_at=:current, negative_generation=:generation WHERE delivery_id=:delivery_id"), {"negative_evidence": non_admission_evidence, "fence_evidence": publication_fence_evidence, "current": current, "generation": claim["claim_generation"], "delivery_id": delivery_id})
+            delivery.state = "pending"
+            delivery.claim_token = None
+            delivery.claimed_at = None
+            delivery.lease_expires_at = None
+            return {"delivery_id": delivery.id, "state": "pending", "released_generation": int(claim["claim_generation"])}
     def relay_ack_by_receipt(
         self, *, delivery_id: str, receipt: str, container_ref: str, actor_ref: str,
         now: datetime | None = None,
