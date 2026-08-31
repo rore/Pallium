@@ -29,8 +29,8 @@ Inspected core/relay.py, storage/sqlite_relay.py (send, turn, reply, both ACKs a
 
 ## Plan review
 
-Awaiting the named external architect. Ask for a single complete review artifact plus a short Relay verdict/pointer while the current 1500-character cap prevents consolidated long replies. That is a temporary review-workflow workaround, not a required product UX.
+Awaiting the named external architect in Minimap Spec Session relay-batch-codex-wake-5f4497cb, attached to docs/designs/relay-batch-codex-wake.md. The user requested visible anchored discussion: Claude comments/suggests, Codex replies in the same threads, user controls application. Review brief cmt_000001 and Relay venue update relay-msg-8e53e76347b841f5b12996e36fcdca9f supersede the separate review-artifact request. Relay carries notices only; Minimap does not wake agents.
 
 ## Recovery
 
-Design revision 9543503 is committed and published on codex/relay-batch-wake-design. Review request relay-msg-dd80e21718f04f26a71abb32c4005f4e was sent to claude-code:@claude_arch on 2026-08-31; delivery is pending. Reviewer may write only docs/designs/relay-batch-codex-wake-review.md and reply with its pointer. Next: receive the verdict, inspect the complete artifact, adjudicate blockers, and update this record before implementation readiness is claimed. No production changes or tests ran. Future production work needs its own risk-classified record and approvals. Existing uv.lock remains untouched.
+Design revision 9543503 is committed and published on codex/relay-batch-wake-design. Review request relay-msg-dd80e21718f04f26a71abb32c4005f4e was sent to claude-code:@claude_arch on 2026-08-31; delivery is pending. Review venue was changed by the user to the Minimap Spec Session listed above; the earlier separate-artifact instruction is superseded. Next: receive the verdict, read all Minimap comment/suggestion bodies and replies, adjudicate blockers, and update this record before implementation readiness is claimed. No production changes or tests ran. Future production work needs its own risk-classified record and approvals. Existing uv.lock remains untouched.
