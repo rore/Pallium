@@ -212,3 +212,31 @@ def test_cleanup_retains_unresolved_exposure_and_its_ancestry(batch_client):
     status = batch_client.get(f"/relay/messages/{child['message_id']}", params=SCOPE)
     assert status.status_code == 200
     assert status.json()["deliveries"][0]["state"] == "uncertain"
+
+
+def test_projection_reserves_persisted_row_count_range():
+    from core.relay import relay_candidate_projection, relay_candidate_projection_size
+    deliveries = [{"envelope": "x" * 14000}]
+    projection = relay_candidate_projection(
+        deliveries, remaining_count=2**63 - 1, blocked_count=2**63 - 1,
+        blocked_reasons=("envelope_exceeds_turn_budget", "publication_unconfirmed",
+                         "expired_after_publication", "invalid_payload"),
+    )
+    output = json.dumps(projection, ensure_ascii=False, separators=(",", ":"))
+    chars, bytes_ = relay_candidate_projection_size(deliveries)
+    assert chars >= len(output) and bytes_ >= len(output.encode("utf-8"))
+
+
+def test_candidate_mcp_handles_pre_capability_backlog_over_99(client, batch_client):
+    # Same disposable DB, default legacy writer before candidate capability exists.
+    _register(client, "migrated-backlog")
+    for index in range(128):
+        _send(client, "sender", "codex:migrated-backlog", "x" * 1490, f"old-{index}")
+    received = _receive(batch_client, "migrated-backlog")
+    selected = received["deliveries"]
+    assert selected
+    assert [d["message_id"] for d in selected] == [f"old-{i}" for i in range(len(selected))]
+    assert received["remaining_count"] == 128 - len(selected)
+    assert received["remaining_count"] > 99 and received["has_more"]
+    output = json.dumps(received, ensure_ascii=False, separators=(",", ":"))
+    assert len(output) <= 16_384 and len(output.encode("utf-8")) <= 65_536

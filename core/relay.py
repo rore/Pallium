@@ -42,9 +42,9 @@ def relay_candidate_projection(deliveries, *, remaining_count=0, blocked_count=0
 
 
 def relay_candidate_projection_size(deliveries):
-    """Reserve bounded backlog metadata, including publication-failure outcomes."""
+    """Reserve SQLite row-count bounds, including migrated legacy backlogs."""
     response = relay_candidate_projection(
-        deliveries, remaining_count=99, blocked_count=99,
+        deliveries, remaining_count=2**63 - 1, blocked_count=2**63 - 1,
         blocked_reasons=("envelope_exceeds_turn_budget", "publication_unconfirmed",
                          "expired_after_publication", "invalid_payload"),
     )

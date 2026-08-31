@@ -1,6 +1,10 @@
-# B2 candidate review — b06aa89 — 2026-08-31
+# B2 candidate review — 2026-08-31
 
-Verdict: CHANGES REQUIRED. This is not complete B2; G2/G3 qualification and
+Current verdict: deterministic candidate accepted after final manager fixes and
+independent Relay Dev review; 296 tests pass. G2/G3, PR merge and activation are
+not complete. See the final result below. Earlier findings are historical.
+
+Original b06aa89 verdict: CHANGES REQUIRED. G2/G3 qualification and
 activation remain blocked. Independent targeted rerun: 103 passed, four existing
 warnings. Those tests do not establish the promised whole-batch/lifecycle contract.
 
@@ -256,7 +260,7 @@ G2/G3 and real runtime proof remain release gates; no migration/install/live cha
 
 Coordination observation: native queue notifications during a long busy developer
 turn remained queued while its progress reports reached the manager. Confirmed
-Relay status was pending until a notification-only app message created the next
+Relay status was pending; after a notification-only app message, the next turn provided a
 receipt opportunity. All substantive instructions stayed in Relay; MCP recovery
 was used only without hook injection. This is not evidence of automatic wake.
 
@@ -279,3 +283,52 @@ or solve them by lowering the approved public bounds. Private fixture attestatio
 are not production proof; expired lease alone never fences a late publisher.
 The full G2 proof requirement still gates activation. Continue existing approved
 implementation, then run these controls plus the combined regressions.
+
+## Final manager patch — 7621ab4
+
+The executable closure criteria above are now green, including repeated terminal
+reads and wrong-credential negative retries. Acceptance and MCP emission share the
+same JSON projection accounting; accepted complete batches are not stranded by a
+transport wrapper. Cleanup retains unresolved publication and its reply ancestors,
+while proven non-admission can expire and be removed. Independent combined run:
+294 passed, four existing Pydantic warnings; import-boundary check has no violations.
+The existing Relay developer is reviewing this final delta read-only. Earlier
+findings above are historical evidence, not a claim they remain open after this
+patch. Final candidate verdict follows that review.
+
+### Next qualification and rollout sequence (not executed)
+
+1. Close independent candidate review and record exact immutable commit/test evidence.
+2. Define a disposable Codex qualification plan before runtime edits/probes: use
+   the existing-session queue transport, one shared turn hook, and bounded generic
+   payloads. No managed App Server, second payload path, or production DB migration.
+3. G1/G2: qualify idle and busy queue turns; read back the FULL attributed envelope,
+   ordered parts, terminal marker, session and attempt identity. A transport ACK,
+   model paraphrase, receipt ACK or partial transcript does not prove admission.
+   Demonstrate stale pre-publication rejection. Already-started publication remains
+   uncertain unless a trusted witness proves admission or proves BOTH non-admission
+   and impossible late publication; timeout alone never releases it.
+4. G3: measure per-turn rendered char/byte bounds and cumulative headroom while
+   draining 64 durable deliveries over multiple turns. Cover late arrivals,
+   restart, disabled/unavailable wake, regular-turn fallback and no silent gaps.
+   Stop visibly if headroom/admission cannot be established; never truncate.
+5. Only after those gates: review the live schema inventory and backup/restore
+   rehearsal, including any withdrawn prototype tables. Deploy compatible readers
+   and explicit migrations before enabling new writers/capabilities. Old/new
+   runtime/API/schema combinations must fail closed without breaking legacy mail.
+6. Implement/qualify the bounded notification coordinator and actual Codex-to-Codex
+   no-ping task/result/review round trip. Update installations only via the approved
+   rollout; keep Claude development deferred until the shared contract is stable
+   and milestone 1 is genuinely demonstrated. No new permission is inferred here.
+
+### Final result
+
+Relay Dev returned one count-range sizing concern (review message
+relay-msg-6a2fcaec5efe4f26853aa56771c2e03b); all other final-delta areas passed.
+The manager removed the small-count assumption in favor of SQLite's signed row
+count range and verified a real pre-capability 128-item backlog plus a projection
+bound assertion. Existing reserved reason-string space meant the reported
+overshoot was not independently reproduced; this is a justified conservative
+tightening, not an invented production incident. Final combined result: 296
+passed, four existing warnings. Candidate review is accepted. No live rollout,
+runtime admission/headroom qualification, or automatic wake is claimed.

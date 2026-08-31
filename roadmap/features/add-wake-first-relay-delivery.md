@@ -74,7 +74,16 @@ This revision supersedes conflicting older state/timeout rules and unconditional
 exactly-once language below: uncertain batch publication is not proof of failure and needs reconciliation
 before replay. Uncertain notification-only wake does not reserve payloads or
 prevent a regular turn from claiming still-pending batches.
-No runtime or batch implementation is claimed complete.
+Production batch delivery and wake are not enabled. The B1 foundation is accepted;
+B2 candidate code has been implemented in disposable environments. Its final
+hardening (starting at `7621ab4`, plus the count-range review correction) passes
+296 combined Relay tests and the import-boundary
+check; independent final candidate review is accepted. This is not runtime qualification.
+See [candidate review and qualification order](../../docs/designs/relay-batch-b2-candidate-review.md)
+and [B2 Work Record](../../.agent-workflow/tasks/codex-relay-batch-wake-b2.md).
+G2/G3 gate the new passive batch path as well as wake. Next is full-envelope
+Codex context/admission and backlog-headroom qualification, then reviewed migration
+and compatible integration rollout before activation. Claude remains deferred.
 
 ## Delivery Contract
 

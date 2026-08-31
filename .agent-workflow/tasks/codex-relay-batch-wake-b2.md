@@ -183,3 +183,19 @@ admission/fencing, headroom, live migration and activation are still unproven.
 A claimed but unexposed MCP suffix retains its lease and retries safely after
 expiry; a published uncertain prefix does not replay automatically. This is
 candidate logic, not a claim that production wake is ready.
+
+## Final independent result review
+
+Relay Dev reviewed 7621ab4 read-only against 8457137 and returned
+relay-msg-6a2fcaec5efe4f26853aa56771c2e03b. It found one sizing-assumption concern
+for migrated backlogs over 99; negative authority, terminal expiry, ancestry
+retention and explicit migration otherwise passed its review. Manager assessed
+the concern independently: existing reserved reason strings also provided spare
+space, so an actual overflow was not established by that report. Nevertheless,
+small-count assumptions are unnecessary: sizing now reserves the signed SQLite
+row-count range, with a bound assertion and real 128-item legacy-to-candidate MCP
+regression. No extra architecture or review cycle was needed for this tightening.
+Final combined verification: **296 passed, 4 existing warnings** (18 manager
+acceptance cases). Candidate implementation review accepted; this is NOT runtime
+qualification, PR merge, installation or activation. State remains Ready for
+review for the PR workflow. G2/G3 and the live-schema repair/rollout remain gates.
