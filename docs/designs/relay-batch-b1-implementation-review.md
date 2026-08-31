@@ -118,3 +118,62 @@ The next B1 attempt needs a safe mixed-version migration/activation approach
 before guarded edits, disposable test DBs and bounded source edits. No batch
 support is approved. This addendum used the documented exact-file fallback
 after apply_patch failed with Windows sandbox error 1327.
+
+## Consolidated rebuilt B1 review — 2026-08-31
+
+Verdict: CHANGES REQUIRED; not complete B1. Independently reran the six reported
+suites: 213 passed, four existing warnings. Migration foundation remains approved
+and uncalled. The following are contract issues, not requests for a new design cycle.
+
+1. **Retry retention must preserve reply dependencies.** The new global cleanup
+   deletes a parent message/delivery based solely on its own expiry. Reply retry
+   first loads that parent, even if the reply is still retained.
+   HTTP reproduction: deliver a parent with 60-second expiry; create a keyed reply
+   with seven-day expiry. Advance to parent expiry + seven days + one second;
+   an unrelated successful send commits cleanup. Reply status is still 200,
+   but retrying the identical keyed reply returns 404. This was reproduced on
+   disposable SQLite. Preserve the minimal parent/receipt/routing evidence through
+   every dependent retry window, or make retry resolution independent of deleted
+   parents while still validating caller scope/receipt. Cover a chain deeper than
+   two, differing expiries, cleanup races and eventual release of retained ancestors.
+
+2. **Do not recycle message identity after request retention.** The new retention
+   test explicitly expects the same message_id with a fresh delivery after cleanup.
+   A previously accepted message ID must not come to identify a different payload
+   or recipient snapshot: retained replies, status links and agent context still
+   refer to it. Request-key reuse after the window must either be safely rejected
+   under a documented contract or create a fresh message ID through a persisted
+   scoped request mapping. The approved request-record design already separates
+   these identities; a deterministic message ID alone is not an equivalent
+   replacement. Test a retained reply pointing at the old send, then key reuse
+   with changed content/alias; the old reference must never retarget.
+
+3. **New MCP versus old API must fail closed for keyed operations.** The prior
+   HTTP models silently ignore unknown request_id fields. The new client forwards
+   that field without checking support; an older API can accept repeated sends
+   as separate messages while the caller believes retries are protected.
+   Keep the new client surface unexposed until coordinated activation, or add a
+   bounded capability check that rejects unsupported keyed operations before POST.
+   Test an old-server contract, not just request forwarding mocks. Source checkout
+   sharing means a fresh MCP process can load new code before the API upgrades.
+   Do not blindly replay a keyed write after an ambiguous network response.
+
+4. **Finish or explicitly defer the remaining B1 deliverables.** No canonical
+   parts codec/persisted format exists in the rebuilt source. Multipart public
+   rejection is correct until B2, but is not implementation of B1's codec.
+   The approved scoped request-record/snapshot design has also been replaced
+   without demonstrating equivalent lifecycle semantics (items 1–2).
+   Finish the internal codec with bounds, malformed-storage and cross-part
+   redaction tests, keeping its public acceptance disabled. Maintain the original
+   B1/B2 boundary; no whole-batch delivery or wake work is requested here.
+
+5. **Align exposed tool guidance with keyed behavior.** The MCP reply docstring
+   still says "Reply once" and neither tool explains request_id retry versus a
+   new logical message, actual limits or retry window. If keyed tools remain
+   exposed, update descriptions and the source skill/examples together; otherwise
+   defer their exposure. This is the user-requested agent UX contract.
+
+The old-writer sequence fix and immediate reply transaction are accepted.
+Do not roll them back or seek another broad architecture approval. Apply one
+bounded correction pass with regressions, retain the startup/deployment block,
+and report incomplete gates honestly. Preserve unrelated uv.lock.
