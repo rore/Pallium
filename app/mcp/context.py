@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
+from typing import Any
 
 from core.container_ref import canonicalize_container_ref
 
@@ -53,6 +56,38 @@ def _runtime_thread_ref(agent_ref: str | None) -> str | None:
         return None
     session_id = session_id.strip()
     return session_id if 0 < len(session_id) <= 255 else None
+
+def codex_request_metadata_status(request_meta: Mapping[str, Any] | None) -> dict[str, object]:
+    """Return an allowlisted, non-claiming view of Codex turn metadata."""
+    raw = request_meta.get("x-codex-turn-metadata") if isinstance(request_meta, Mapping) else None
+    if raw is None:
+        return {"source": "absent", "shape": "absent"}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return {"source": "codex_turn_metadata", "shape": "invalid"}
+    if not isinstance(raw, Mapping):
+        return {"source": "codex_turn_metadata", "shape": "invalid"}
+
+    def identity(*keys: str) -> tuple[bool, bool, str | None, str | None]:
+        supplied = [raw[key] for key in keys if key in raw]
+        values = [value.strip() for value in supplied if isinstance(value, str) and 0 < len(value.strip()) <= 255]
+        valid = bool(supplied) and len(values) == len(supplied) and len(set(values)) == 1
+        value = values[0] if valid else None
+        return bool(supplied), valid, sha256(value.encode()).hexdigest() if value else None, value
+
+    thread_present, thread_valid, thread_hash, thread = identity("thread_id", "threadId")
+    session_present, session_valid, session_hash, session = identity("session_id", "sessionId")
+    turn_present, turn_valid, _, _ = identity("turn_id", "turnId")
+    return {
+        "source": "codex_turn_metadata",
+        "shape": "object",
+        "thread_id": {"present": thread_present, "valid": thread_valid, "sha256": thread_hash},
+        "session_id": {"present": session_present, "valid": session_valid, "sha256": session_hash},
+        "turn_id": {"present": turn_present, "valid": turn_valid},
+        "identity_conflict": bool(thread and session and thread != session),
+    }
 
 def resolve_context(
     *,

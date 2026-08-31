@@ -713,6 +713,7 @@ async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> No
     tools = {tool.name: tool for tool in await server.list_tools()}
     assert "replace_existing=true" in tools["pallium_relay_name"].description
     assert "codex:@review" in tools["pallium_relay_send"].description
+    assert "context" not in tools["pallium_relay_status"].inputSchema["properties"]
 
 
 @pytest.mark.asyncio
@@ -803,3 +804,17 @@ async def test_relay_response_is_bounded(monkeypatch: pytest.MonkeyPatch) -> Non
         content, _ = await server.call_tool("pallium_relay_status", {"message_id": "m-1"})
     assert len(content[0].text) <= 2000
     assert json.loads(content[0].text)["error"] == "relay response exceeds the response budget"
+
+
+@pytest.mark.asyncio
+async def test_relay_status_diagnostic_is_non_claiming_and_receive_stays_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    server = create_server()
+    diagnostic, _ = await server.call_tool("pallium_relay_status", {"runtime_diagnostic": True})
+    receive, _ = await server.call_tool("pallium_relay_receive", {})
+    assert json.loads(diagnostic[0].text) == {"source": "absent", "shape": "absent"}
+    assert "PALLIUM_THREAD_REF" in receive[0].text

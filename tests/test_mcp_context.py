@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from app.mcp.context import PalliumContext, _canonicalize_container_ref, resolve_context
+from app.mcp.context import PalliumContext, _canonicalize_container_ref, codex_request_metadata_status, resolve_context
 
 
 class TestResolveContext:
@@ -160,3 +162,31 @@ def test_claude_registry_pid_mismatch_fails_closed(
     monkeypatch.setattr(context.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(context.os, "getppid", lambda: 123)
     assert resolve_context().thread_ref is None
+
+def test_codex_request_metadata_status_is_allowlisted_and_hashed() -> None:
+    status = codex_request_metadata_status({
+        "x-codex-turn-metadata": json.dumps({"thread_id": "thread-a", "session_id": "thread-a", "turn_id": "turn-a", "secret": "never exposed"}),
+    })
+    expected_hash = "8b983fb92d2eb12751695722fdb4e498211e50d79e72d25f44764b6a77f6348d"
+    assert status == {
+        "source": "codex_turn_metadata", "shape": "object",
+        "thread_id": {"present": True, "valid": True, "sha256": expected_hash},
+        "session_id": {"present": True, "valid": True, "sha256": expected_hash},
+        "turn_id": {"present": True, "valid": True}, "identity_conflict": False,
+    }
+    assert "secret" not in json.dumps(status)
+
+
+def test_codex_request_metadata_status_rejects_absent_or_malformed_metadata() -> None:
+    assert codex_request_metadata_status(None) == {"source": "absent", "shape": "absent"}
+    assert codex_request_metadata_status({"x-codex-turn-metadata": "["}) == {
+        "source": "codex_turn_metadata", "shape": "invalid"
+    }
+
+
+def test_codex_request_metadata_status_reports_conflict_and_task_isolation() -> None:
+    conflict = codex_request_metadata_status({"x-codex-turn-metadata": {"thread_id": "a", "session_id": "b"}})
+    first = codex_request_metadata_status({"x-codex-turn-metadata": {"session_id": "task-a"}})
+    second = codex_request_metadata_status({"x-codex-turn-metadata": {"session_id": "task-b"}})
+    assert conflict["identity_conflict"] is True
+    assert first["session_id"] != second["session_id"]

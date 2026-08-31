@@ -14,12 +14,14 @@
 **Plan review:** The coordinator authorized this diagnostic-only slice through Relay; the user directly approved all architect instructions. The previous clean-context G2/G3 review remains recorded. This narrow slice needs no reload and cannot change receive identity behavior; its diff/test summary returns to the coordinator for review before any further action.
 **Approvals:** Approved by user 2026-08-31: "yes"; Approved by user 2026-08-31: "i approve everything the architect tells you to do"
 **Exceptions:** —
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-08-31: Created `codex/relay-batch-wake-implementation` from `4560f6b` in the existing checkout. No production, service, configuration, or test changes were made. Awaiting review of this preflight and the G1-G3 protocol.
+
+- 2026-08-31: Implemented the authorized diagnostic-only slice: `pallium_relay_status(runtime_diagnostic=true)` reads only injected FastMCP request metadata, reports allowlisted source/shape, presence/validity, and SHA-256 digests for validated thread/session IDs, and makes no receive, claim, ACK, configuration, or service change. The injected `Context` remains absent from the model-visible tool schema. Windows `apply_patch` failed with the documented process-launch restriction, so the four named files were updated using scoped deterministic PowerShell replacements.
 
 ## Evidence
 
@@ -56,6 +58,13 @@ Pre-edit classification is HIGH: `storage/sqlite_schema.py` requires persistence
 | E17 | Agent receives whole six-part batch and handles retry/status/reply | ordinary task with no coaching/external artifact | installed MCP + skill | isolated session/transcript; one bounded real-agent run |
 | E18 | Automatic exchange has no surrogate prompt/ping; control uses ordinary turn | task→result→review→remediation; wake disabled control | two installed Codex sessions | clean sessions/queue; real-agent G1/G2 evidence |
 
+
+### Diagnostic-only evidence (2026-08-31)
+
+- Focused MCP contract checks passed: `.venv\Scripts\python.exe -m pytest tests/test_mcp_context.py tests/test_mcp_server.py -q` → **67 passed**. The suite retains four pre-existing FastMCP/Pydantic forward-reference warnings.
+- `python -m compileall -q app/mcp/context.py app/mcp/server.py` and `git diff --check` passed.
+- Regression coverage asserts absent and malformed metadata, exact SHA-256 output without raw/secret fields, conflicting identities, independent session hashes, context omission from the model schema, normal status behavior, and unchanged fail-closed receive behavior without a runtime session ID.
+- No installed MCP reload or live metadata probe was run. This is diagnostic instrumentation only, not G1 context-admission or receive-binding evidence.
 ### Runtime binding diagnosis (2026-08-31)
 
 Observed: this Codex desktop session's `pallium_relay_receive` returns `PALLIUM_THREAD_REF is not set`; the coordinating Codex task reports the same failure. The failure is not a successful Relay exchange and no delivery was claimed.
@@ -75,4 +84,4 @@ This amendment supersedes the earlier conclusion that missing process environmen
 - **Review/risk.** `build/relay-dogfood-preflight-redline.json` remains GRAY with no boundary violation/checkpoint for the dogfood paths; the Work Record remains High/Large due the retained API/persistence batch scope. New manager and clean-context review are required before code or diagnostic reload.
 ## Recovery
 
-Current branch: `codex/relay-batch-wake-implementation`; baseline: `4560f6befe87deba2e17be5e0bd9cd9b6d69cd2f`; unrelated `uv.lock` remains modified and unstaged. Next action after review: run only the three isolated G1-G3 probes, record their exact outcome here, and stop on the first unsupported hook/admission/headroom result.
+Current branch: `codex/relay-batch-wake-implementation`; baseline: `4560f6befe87deba2e17be5e0bd9cd9b6d69cd2f`; unrelated `uv.lock` remains modified and unstaged. Next action only after coordinator review: inspect the consolidated diff/test summary, then decide whether an installed-MCP diagnostic reload/probe is authorized. Do not bind receive identity, claim/ACK, alter config/service, or continue G1-G3 from this patch alone.

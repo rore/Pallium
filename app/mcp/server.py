@@ -10,8 +10,10 @@ import json
 import os
 from typing import Literal
 
+from mcp.server.fastmcp import Context
+
 from app.mcp.client import PalliumMcpClient
-from app.mcp.context import resolve_context
+from app.mcp.context import codex_request_metadata_status, resolve_context
 from retrieval.common import build_excerpt
 
 
@@ -607,17 +609,29 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
 
     @server.tool()
     async def pallium_relay_status(
-        message_id: str,
+        message_id: str | None = None,
+        runtime_diagnostic: bool = False,
         container_ref: str | None = None,
         actor_ref: str | None = None,
+        context: Context = None,
     ) -> str:
-        """Get compact delivery status for one Relay message."""
+        """Get compact delivery status, or a non-claiming Codex metadata diagnostic."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
+        if runtime_diagnostic:
+            if message_id is not None:
+                return _json_text({"error": "message_id and runtime_diagnostic are mutually exclusive"})
+            try:
+                meta = context.request_context.meta
+            except ValueError:
+                meta = None
+            extra = getattr(meta, "model_extra", None)
+            return _json_text(codex_request_metadata_status(extra if ctx.agent_ref == "codex" else None))
+        if message_id is None:
+            return _json_text({"error": "message_id is required unless runtime_diagnostic is true"})
         result = await PalliumMcpClient(ctx).relay_status(message_id)
         return _relay_text(result)
-
     @server.tool()
     async def pallium_relay_receive(
         max_chars: int = 0,
