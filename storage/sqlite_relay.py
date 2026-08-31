@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import and_, delete, or_, select, text, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from core.relay import RelayConflictError, RelayNotFoundError
+from core.relay import RelayConflictError, RelayNotFoundError, relay_candidate_projection_size
 from storage.relay_codec import RelayCodecError, decode_parts
 from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
 
@@ -132,10 +132,16 @@ def _validate_batch_acceptance(
             parts, sender_runtime=sender_runtime, sender_session_ref=sender_session_ref,
             message_id=message_id, delivery_id="relay-delivery-" + "0" * 32,
             recipient_session_ref=target.session_ref, recipient_runtime=target.runtime,
-            container_ref=container_ref, actor_ref=actor_ref, generation=1,
+            container_ref=container_ref, actor_ref=actor_ref, generation=2**63 - 1,
             in_reply_to=in_reply_to,
         )
-        if len(envelope) + 512 > int(capability["max_chars"]) or len(envelope.encode("utf-8")) + 512 > int(capability["max_bytes"]):
+        chars, bytes_ = relay_candidate_projection_size([{
+            "delivery_id": "relay-delivery-" + "0" * 32, "message_id": message_id,
+            "receipt": "0" * 32, "protocol_version": "batch_v2_candidate",
+            "claim_generation": 2**63 - 1, "envelope_digest": "0" * 64,
+            "envelope": envelope,
+        }])
+        if chars > min(int(capability["max_chars"]), 16_384) or bytes_ > min(int(capability["max_bytes"]), 65_536):
             raise RelayConflictError("Relay batch exceeds recipient capability budget")
 
 def _candidate_pending_count(
@@ -249,10 +255,12 @@ class SQLiteRelayMixin:
                 delivery.state = "pending"
             return None
         started = claim["publication_started_at"] is not None
-        if claim["negative_observed_at"] is not None and delivery.state == "pending" and _now(message.expires_at) <= current:
-            delivery.state = "expired"
-            delivery.claim_token = None
-        elif delivery.state != "delivered" and _now(message.expires_at) <= current:
+        if claim["negative_observed_at"] is not None and delivery.state in {"pending", "expired"}:
+            if _now(message.expires_at) <= current:
+                delivery.state = "expired"
+                delivery.claim_token = None
+            return claim  # This generation's exposure was definitively reconciled.
+        if delivery.state != "delivered" and _now(message.expires_at) <= current:
             if started:
                 delivery.state = "uncertain"
                 db.execute(text("UPDATE relay_batch_claims SET uncertain_at=:current, uncertain_reason='expired_after_publication' WHERE delivery_id=:delivery_id"), {"current": current, "delivery_id": delivery.id})
@@ -297,16 +305,19 @@ class SQLiteRelayMixin:
                 has_batch_claims = True
             except OperationalError:
                 has_batch_claims = False
+            exposed_roots = """
+                UNION SELECT delivery.message_id FROM relay_deliveries AS delivery
+                LEFT JOIN relay_batch_claims AS claim ON claim.delivery_id=delivery.id
+                WHERE delivery.state='uncertain' OR
+                    (claim.publication_started_at IS NOT NULL
+                     AND claim.admission_observed_at IS NULL
+                     AND claim.negative_observed_at IS NULL)
+            """ if has_batch_claims else ""
             for table in ("relay_deliveries", "relay_messages"):
-                protected = (
-                    "AND state != 'uncertain' AND id NOT IN (SELECT delivery_id FROM relay_batch_claims WHERE publication_started_at IS NOT NULL AND admission_observed_at IS NULL)"
-                    if has_batch_claims and table == "relay_deliveries" else
-                    "AND id NOT IN (SELECT message_id FROM relay_deliveries WHERE state='uncertain' OR id IN (SELECT delivery_id FROM relay_batch_claims WHERE publication_started_at IS NOT NULL AND admission_observed_at IS NULL))"
-                    if has_batch_claims else ""
-                )
                 db.execute(text(f"""
                     WITH RECURSIVE kept(id) AS (
                         SELECT message_id FROM relay_requests
+                        {exposed_roots}
                         UNION
                         SELECT message.in_reply_to FROM relay_messages AS message
                         JOIN kept ON message.id = kept.id
@@ -315,7 +326,6 @@ class SQLiteRelayMixin:
                     DELETE FROM {table}
                     WHERE {"message_id" if table == "relay_deliveries" else "id"} NOT IN (SELECT id FROM kept)
                     AND {"message_id IN (SELECT id FROM relay_messages WHERE expires_at <= :cutoff)" if table == "relay_deliveries" else "expires_at <= :cutoff"}
-                    {protected}
                 """), {"cutoff": current - timedelta(days=7)})
             if has_batch_claims:
                 db.execute(text("DELETE FROM relay_batch_claims WHERE delivery_id NOT IN (SELECT id FROM relay_deliveries)"))
@@ -548,7 +558,7 @@ class SQLiteRelayMixin:
                 ON CONFLICT(delivery_id) DO UPDATE SET claim_generation=:generation,
                     publication_started_at=NULL, publication_digest=:digest, publication_chars=:chars,
                     publication_bytes=:bytes, uncertain_at=NULL, uncertain_reason=NULL, blocked_reason=NULL,
-                    admitted_at=NULL, admission_evidence=NULL, admission_observed_at=NULL, admission_timing=NULL, negative_evidence=NULL, negative_fence_evidence=NULL, negative_observed_at=NULL, negative_generation=NULL
+                    admitted_at=NULL, admission_evidence=NULL, admission_observed_at=NULL, admission_timing=NULL, negative_evidence=NULL, negative_fence_evidence=NULL, negative_observed_at=NULL, negative_generation=NULL, negative_claim_hash=NULL
             """), {"delivery_id": delivery.id, "generation": generation, "digest": digest, "chars": chars, "bytes": bytes_})
             claim = _candidate_claim(db, delivery.id)
             claimed.append(_candidate_view(delivery, message, claim, envelope, "".join(_message_parts(db, message))))
@@ -1101,7 +1111,7 @@ class SQLiteRelayMixin:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             claim = self._reconcile_delivery(db, delivery, message, current)
             if claim is not None and claim["negative_observed_at"] is not None:
-                if claim["negative_evidence"] == non_admission_evidence and claim["negative_fence_evidence"] == publication_fence_evidence and int(claim["negative_generation"]) == int(claim["claim_generation"]):
+                if hmac.compare_digest(claim["negative_claim_hash"] or "", hashlib.sha256(claim_token.encode("utf-8")).hexdigest()) and hmac.compare_digest(claim["publication_digest"] or "", envelope_digest) and claim["negative_evidence"] == non_admission_evidence and claim["negative_fence_evidence"] == publication_fence_evidence and int(claim["negative_generation"]) == int(claim["claim_generation"]):
                     return {"delivery_id": delivery.id, "state": delivery.state, "released_generation": int(claim["negative_generation"])} 
                 raise RelayConflictError("candidate non-admission evidence cannot be rewritten")
             if claim is None or delivery.state != "uncertain" or claim["publication_started_at"] is None:
@@ -1110,7 +1120,7 @@ class SQLiteRelayMixin:
                 raise RelayConflictError("candidate publication is not safely fenced")
             if not hmac.compare_digest(delivery.claim_token or "", claim_token) or not hmac.compare_digest(claim["publication_digest"] or "", envelope_digest):
                 raise RelayConflictError("candidate non-admission does not match current generation")
-            db.execute(text("UPDATE relay_batch_claims SET negative_evidence=:negative_evidence, negative_fence_evidence=:fence_evidence, negative_observed_at=:current, negative_generation=:generation WHERE delivery_id=:delivery_id"), {"negative_evidence": non_admission_evidence, "fence_evidence": publication_fence_evidence, "current": current, "generation": claim["claim_generation"], "delivery_id": delivery_id})
+            db.execute(text("UPDATE relay_batch_claims SET negative_evidence=:negative_evidence, negative_fence_evidence=:fence_evidence, negative_observed_at=:current, negative_generation=:generation, negative_claim_hash=:claim_hash WHERE delivery_id=:delivery_id"), {"negative_evidence": non_admission_evidence, "fence_evidence": publication_fence_evidence, "claim_hash": hashlib.sha256(claim_token.encode("utf-8")).hexdigest(), "current": current, "generation": claim["claim_generation"], "delivery_id": delivery_id})
             delivery.state = "pending"
             delivery.claim_token = None
             delivery.claimed_at = None

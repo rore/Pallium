@@ -7,14 +7,13 @@ explicit overrides with env var defaults) is the server layer's responsibility.
 
 from __future__ import annotations
 
-import json
-
 import uuid
 from typing import Any
 
 import httpx
 
 from app.mcp.context import PalliumContext
+from core.relay import relay_candidate_projection, relay_candidate_projection_size
 
 
 class PalliumMcpClient:
@@ -320,69 +319,44 @@ class PalliumMcpClient:
         )
 
     async def relay_receive(self, runtime: str, session_ref: str, max_chars: int = 0) -> Any:
-        # Reserve the final MCP JSON wrapper before claiming a candidate envelope.
-        turn_max_chars = max(0, max_chars - 256) if max_chars else 0
-        payload: dict[str, Any] = {
-            "runtime": runtime,
-            "session_ref": session_ref,
-            "max_chars": turn_max_chars,
+        result = await self._post_or_error("/relay/turn", {
+            "runtime": runtime, "session_ref": session_ref, "max_chars": max_chars,
             **self._relay_scope_params(),
-        }
-        result = await self._post_or_error("/relay/turn", payload)
+        })
         if not isinstance(result, dict) or not isinstance(result.get("deliveries"), list):
             return result
-        original = result["deliveries"]
-        candidate_pairs = []
-        projected = []
-        for delivery in original:
-            if delivery.get("protocol_version") != "batch_v2_candidate":
-                projected.append(delivery)
-                continue
-            fields = (delivery.get("delivery_id"), delivery.get("claim_token"), delivery.get("envelope_digest"))
-            if not all(isinstance(value, str) and value for value in fields):
-                continue
-            candidate_pairs.append((delivery, {
-                key: delivery[key]
-                for key in ("delivery_id", "message_id", "receipt", "protocol_version", "claim_generation", "envelope_digest", "envelope")
-                if key in delivery
-            }))
-            projected.append(candidate_pairs[-1][1])
-        candidate_char_budget = min(max_chars or 16_384, 16_384)
-        candidate_byte_budget = 65_536
-        non_candidates = [delivery for delivery in projected if delivery.get("protocol_version") != "batch_v2_candidate"]
-        fitting = []
-        for pair in candidate_pairs:
-            trial = {**result, "deliveries": [*non_candidates, *(view for _, view in fitting), pair[1]]}
-            trial_text = json.dumps(trial, ensure_ascii=False, separators=(",", ":"), default=str)
-            if len(trial_text) > candidate_char_budget or len(trial_text.encode("utf-8")) > candidate_byte_budget:
+        deliveries = result["deliveries"]
+        if not any(d.get("protocol_version") == "batch_v2_candidate" for d in deliveries):
+            return result  # Preserve the legacy response and zero-budget behavior.
+        if not all(d.get("protocol_version") == "batch_v2_candidate" for d in deliveries):
+            return {"error": "mixed Relay delivery protocols; recover after lease expiry"}
+        required = ("delivery_id", "claim_token", "envelope_digest")
+        if any(not all(isinstance(d.get(key), str) and d[key] for key in required) for d in deliveries):
+            return {"error": "invalid Relay candidate; no publication started"}
+        max_candidate_chars = min(max_chars or 16_384, 16_384)
+        selected = []
+        for delivery in deliveries:
+            chars, bytes_ = relay_candidate_projection_size([*selected, delivery])
+            if chars > max_candidate_chars or bytes_ > 65_536:
                 break
-            fitting.append(pair)
-        deferred = len(candidate_pairs) - len(fitting)
-        candidate_pairs = fitting
-        projected = [*non_candidates, *(view for _, view in candidate_pairs)]
-        if deferred and not candidate_pairs:
-            result["deliveries"] = non_candidates
-            result["remaining_count"] = int(result.get("remaining_count", 0)) + deferred
-            result["has_more"] = True
-            return result
-        admitted = []
-        for delivery, view in candidate_pairs:
+            selected.append(delivery)
+        published = []
+        for delivery in selected:
             started = await self.relay_start_publication(
                 delivery_id=delivery["delivery_id"], claim_token=delivery["claim_token"],
                 envelope_digest=delivery["envelope_digest"],
             )
-            if "error" not in started:
-                admitted.append(view)
-            else:
+            if "error" in started:
                 break
-        admitted_ids = {delivery["delivery_id"] for delivery in admitted}
-        result["deliveries"] = [
-            delivery for delivery in projected
-            if delivery.get("protocol_version") != "batch_v2_candidate" or delivery.get("delivery_id") in admitted_ids
-        ]
-        result["remaining_count"] = int(result.get("remaining_count", 0)) + deferred + len(candidate_pairs) - len(admitted)
-        result["has_more"] = bool(result.get("has_more") or result["remaining_count"])
-        return result
+            published.append(delivery)
+        # The unexposed suffix retains its lease and may be reclaimed safely later.
+        return relay_candidate_projection(
+            published,
+            remaining_count=int(result.get("remaining_count", 0)) + len(deliveries) - len(published),
+            blocked_count=int(result.get("blocked_count", 0)),
+            blocked_reasons=result.get("blocked_reasons", ()),
+        )
+
     async def relay_mcp_ack(self, delivery_id: str, receipt: str) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "delivery_id": delivery_id,

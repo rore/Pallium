@@ -110,11 +110,12 @@ def migrate_relay_batch_claims(connection, *, fail_at: str | None = None) -> Non
                 negative_evidence TEXT,
                 negative_fence_evidence TEXT,
                 negative_observed_at DATETIME,
-                negative_generation INTEGER
+                negative_generation INTEGER,
+                negative_claim_hash TEXT
             )
         """))
         columns = {row[1] for row in connection.execute(text("PRAGMA table_info(relay_batch_claims)"))}
-        for column, definition in (("admitted_at", "DATETIME"), ("admission_evidence", "TEXT"), ("admission_observed_at", "DATETIME"), ("admission_timing", "TEXT"), ("negative_evidence", "TEXT"), ("negative_fence_evidence", "TEXT"), ("negative_observed_at", "DATETIME"), ("negative_generation", "INTEGER")):
+        for column, definition in (("admitted_at", "DATETIME"), ("admission_evidence", "TEXT"), ("admission_observed_at", "DATETIME"), ("admission_timing", "TEXT"), ("negative_evidence", "TEXT"), ("negative_fence_evidence", "TEXT"), ("negative_observed_at", "DATETIME"), ("negative_generation", "INTEGER"), ("negative_claim_hash", "TEXT")):
             if column not in columns:
                 connection.execute(text(f"ALTER TABLE relay_batch_claims ADD COLUMN {column} {definition}"))
         if fail_at == "ddl":

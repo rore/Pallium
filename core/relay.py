@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 import uuid
@@ -25,6 +26,30 @@ RELAY_CLAIM_LEASE_SECONDS = 60
 RELAY_BATCH_TURN_MAX_CHARS = 16_384
 RELAY_BATCH_TURN_MAX_BYTES = 65_536
 RELAY_BATCH_TURN_MAX_MESSAGES = 8
+
+
+def relay_candidate_projection(deliveries, *, remaining_count=0, blocked_count=0, blocked_reasons=()):
+    """The complete model-visible candidate response; never include private tokens."""
+    keys = ("delivery_id", "message_id", "receipt", "protocol_version",
+            "claim_generation", "envelope_digest", "envelope")
+    return {
+        "deliveries": [{key: item[key] for key in keys if key in item} for item in deliveries],
+        "has_more": remaining_count > 0,
+        "remaining_count": remaining_count,
+        "blocked_count": blocked_count,
+        "blocked_reasons": list(blocked_reasons),
+    }
+
+
+def relay_candidate_projection_size(deliveries):
+    """Reserve bounded backlog metadata, including publication-failure outcomes."""
+    response = relay_candidate_projection(
+        deliveries, remaining_count=99, blocked_count=99,
+        blocked_reasons=("envelope_exceeds_turn_budget", "publication_unconfirmed",
+                         "expired_after_publication", "invalid_payload"),
+    )
+    encoded = json.dumps(response, ensure_ascii=False, separators=(",", ":"))
+    return len(encoded), len(encoded.encode("utf-8"))
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 

@@ -14,7 +14,7 @@ from app.mcp.client import PalliumMcpClient
 from app.mcp.context import PalliumContext
 from storage.sqlite_relay import _render_batch_envelope
 from tests.test_relay_b2_candidate_e2e import (
-    SCOPE, batch_client, _turn, _send, _send_parts, _publication,
+    SCOPE, batch_client, _turn, _send, _send_parts, _publication, _admit,
 )
 
 
@@ -119,3 +119,96 @@ def test_expiry_after_proven_non_admission_does_not_restore_uncertainty(batch_cl
     status = batch_client.get("/relay/messages/negative", params=SCOPE).json()
     assert status["deliveries"][0]["state"] == "expired"
     assert _turn(batch_client, "codex", "negative")["deliveries"] == []
+
+@pytest.mark.parametrize("field,bad", [("claim_token", "wrong"), ("envelope_digest", "0" * 64)])
+def test_negative_retry_still_validates_attempt(batch_client, field, bad):
+    request = _release_request(batch_client)
+    assert batch_client.post("/relay/deliveries/non-admission", json=request).status_code == 200
+    assert batch_client.post("/relay/deliveries/non-admission", json={**request, field: bad}).status_code == 409
+    assert batch_client.get("/relay/messages/negative", params=SCOPE).json()["deliveries"][0]["state"] == "pending"
+
+
+def test_resolved_expiry_is_stable_and_cleanup_releases_claim(batch_client):
+    request = _release_request(batch_client)
+    assert batch_client.post("/relay/deliveries/non-admission", json=request).status_code == 200
+    with batch_client.app.state.batch_storage._engine.begin() as db:
+        db.execute(text("UPDATE relay_messages SET expires_at=:past WHERE id='negative'"), {
+            "past": datetime.now(timezone.utc) - timedelta(days=8),
+        })
+    for _ in range(3):
+        status = batch_client.get("/relay/messages/negative", params=SCOPE).json()
+        assert status["deliveries"][0]["state"] == "expired"
+    _send(batch_client, "sender", "codex:negative", "cleanup", "cleanup")
+    assert batch_client.get("/relay/messages/negative", params=SCOPE).status_code == 404
+    with batch_client.app.state.batch_storage._engine.connect() as db:
+        assert db.execute(text("SELECT COUNT(*) FROM relay_batch_claims WHERE delivery_id=:id"), {
+            "id": request["delivery_id"],
+        }).scalar_one() == 0
+
+
+@pytest.mark.parametrize("lines", [0, 80, 120, 140, 160, 200])
+def test_every_accepted_escaped_boundary_fits_mcp(batch_client, lines):
+    _register(batch_client, "boundary")
+    parts = ["a\n" * lines + "x" * (1500 - 2 * lines)] * 8
+    response = batch_client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender",
+        "recipient": "codex:boundary", "parts": parts, "message_id": "boundary", **SCOPE,
+    })
+    if response.status_code == 409:
+        assert "budget" in response.json()["detail"].lower()
+        assert batch_client.get("/relay/messages/boundary", params=SCOPE).status_code == 404
+    else:
+        assert response.status_code == 200, response.text
+        received = _receive(batch_client, "boundary")
+        assert len(received["deliveries"]) == 1
+        assert "part_count: 8" in received["deliveries"][0]["envelope"]
+        output = json.dumps(received, ensure_ascii=False, separators=(",", ":"))
+        assert len(output) <= 16_384 and len(output.encode("utf-8")) <= 65_536
+
+
+def test_mcp_fifo_prefix_eventually_drains_without_publication_of_suffix(batch_client):
+    _register(batch_client, "prefix")
+    for index in range(3):
+        _send_parts(batch_client, "sender", "codex:prefix", ["🌍\n" * 400] * 3, f"prefix-{index}")
+    seen = []
+    for _ in range(3):
+        received = _receive(batch_client, "prefix")
+        assert received["deliveries"]
+        output = json.dumps(received, ensure_ascii=False, separators=(",", ":"))
+        assert len(output) <= 16_384 and len(output.encode("utf-8")) <= 65_536
+        for delivery in received["deliveries"]:
+            seen.append(delivery["message_id"])
+            private = batch_client.get(f"/relay/messages/{delivery['message_id']}", params=SCOPE).json()["deliveries"][0]
+            assert _admit(batch_client, private).status_code == 200
+        with batch_client.app.state.batch_storage._engine.begin() as db:
+            # A claimed-but-unexposed suffix may safely retry after lease expiry.
+            rows = db.execute(text("SELECT c.publication_started_at FROM relay_batch_claims c JOIN relay_deliveries d ON d.id=c.delivery_id WHERE d.state='claimed'")).all()
+            assert all(row[0] is None for row in rows)
+            db.execute(text("UPDATE relay_deliveries SET lease_expires_at=:past WHERE state='claimed'"), {
+                "past": datetime.now(timezone.utc) - timedelta(seconds=1),
+            })
+        if not received["has_more"]:
+            break
+    assert seen == [f"prefix-{index}" for index in range(3)]
+    assert _receive(batch_client, "prefix")["deliveries"] == []
+
+
+def test_cleanup_retains_unresolved_exposure_and_its_ancestry(batch_client):
+    _register(batch_client, "ancestry")
+    _send(batch_client, "sender", "codex:ancestry", "parent", "ancestor")
+    parent = _turn(batch_client, "codex", "ancestry")["deliveries"][0]
+    assert _publication(batch_client, parent).status_code == 200
+    assert _admit(batch_client, parent).status_code == 200
+    reply = batch_client.post("/relay/replies", json={
+        "delivery_id": parent["delivery_id"], "receipt": parent["receipt"], "payload": "child", **SCOPE,
+    })
+    assert reply.status_code == 200, reply.text
+    child = _turn(batch_client, "claude-code", "sender")["deliveries"][0]
+    assert _publication(batch_client, child).status_code == 200
+    with batch_client.app.state.batch_storage._engine.begin() as db:
+        db.execute(text("UPDATE relay_messages SET expires_at=:past"), {"past": datetime.now(timezone.utc) - timedelta(days=8)})
+    _send(batch_client, "sender", "codex:ancestry", "trigger cleanup", "trigger")
+    assert batch_client.get("/relay/messages/ancestor", params=SCOPE).status_code == 200
+    status = batch_client.get(f"/relay/messages/{child['message_id']}", params=SCOPE)
+    assert status.status_code == 200
+    assert status.json()["deliveries"][0]["state"] == "uncertain"

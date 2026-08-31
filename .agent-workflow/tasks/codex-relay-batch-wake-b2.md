@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -150,3 +150,36 @@ accepted and G2/G3/live activation remain gated. No new plan approval is needed.
 - 2026-08-31 architect semantic correction received through recovered Relay delivery `relay-delivery-09404aa63c4c4b40aac7c1d027c661c6` and ACKed. The prior admission timing inferred actual admission from witness observation time. Within approved E12 scope, observed time is separate from optional proven admission time; no proof produces `unknown`, proof is bounded by the publication attempt, and retries cannot rewrite evidence. No activation, live migration, wake, or service action.
 
 Manager closure review of df894c7: runnable acceptance tests in tests/test_relay_b2_architect_acceptance.py reproduce three remaining failures (maximum accepted MCP no-progress, negative callback retry, expiry after proven non-admission). Ordinary six-part control passes; eight-part control added. These are intentionally red, not accepted implementation. Continue existing scope; no live activation. See candidate review document.
+
+## Manager final hardening ownership
+
+Relay Dev has been asked to hold edits while the manager closes the same approved
+B2 contract. Planned paths: core/relay.py, app/mcp/client.py,
+storage/sqlite_relay.py, storage/relay_migration.py and manager acceptance tests.
+Reuse one candidate MCP projection and exact JSON size calculation for acceptance
+and output; preserve legacy behavior. Persist a hash for negative callback retry
+validation, keep resolved expiry stable on repeated reads, and let cleanup retain
+unresolved exposure/ancestry while removing fully reconciled expired work.
+Verification: manager surface regressions plus the combined Relay suites; request
+one independent read-only Relay Dev review afterward. No live/config/install action.
+
+## Manager final verification — 2026-08-31
+
+The final patch shares the complete candidate MCP projection between acceptance
+and output budgeting (including JSON escaping); legacy receive is unchanged.
+Negative callback retries validate the original private claim hash and digest.
+Repeated expiry reads keep proven non-admission expired, and cleanup retains
+unresolved exposure plus reply ancestry but releases reconciled expired rows.
+Fixture fence evidence means an explicitly simulated stopped publisher; lease
+expiry by itself is not evidence that a publisher cannot still emit.
+
+Independent combined Relay verification: **294 passed, 4 existing warnings**.
+This includes 16 architect acceptance cases through disposable HTTP/MCP, covering
+six/eight parts, sampled escaped-size boundaries, Unicode FIFO prefix drain,
+negative retry credentials, repeated expiry and cleanup/ancestry retention.
+Workflow check: advisory only for historical inherited commit-order; no blocking
+predicate. Final independent developer review is pending. G2/G3, actual runtime
+admission/fencing, headroom, live migration and activation are still unproven.
+A claimed but unexposed MCP suffix retains its lease and retries safely after
+expiry; a published uncertain prefix does not replay automatically. This is
+candidate logic, not a claim that production wake is ready.

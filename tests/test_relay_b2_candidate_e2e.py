@@ -475,7 +475,7 @@ def _negative(client: TestClient, delivery: dict, **extra):
     return client.post("/relay/deliveries/non-admission", json={
         "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"],
         "envelope_digest": delivery["envelope_digest"], "non_admission_evidence": "fixture-no-output",
-        "publication_fence_evidence": "fixture-expired-lease", **SCOPE, **extra,
+        "publication_fence_evidence": "fixture-runtime-confirmed-publisher-stopped", **SCOPE, **extra,
     })
 
 
