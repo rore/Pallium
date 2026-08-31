@@ -5,6 +5,7 @@
 - add-relay-retention-and-lifecycle-hardening
 - idea-deferred-relay
 - add-copilot-relay-integration
+- fix-relay-hook-reply-scope-resolution
 
 # P1 · Reuse Measurement
 - idea-pull-real-corpus-validation

@@ -157,3 +157,7 @@ Verification: `.venv\Scripts\python.exe -m pytest tests/test_mcp_context.py test
 ### Recovery update — final review
 
 Next action: send the consolidated correction, test, and scope summary through the hook-delivered Relay reply and notify the architect session per the user's standing instruction. Await any further review; do not reload installed MCP, change configuration/service, make a production claim, or continue batch/G1-G3 work from this slice.
+
+### Relay dogfood follow-up (2026-08-31)
+
+The first hook-delivered `pallium_relay_reply` with only delivery ID/message returned 422 because `container_ref` and `actor_ref` were omitted; retrying with the injected scope succeeded. Recorded the generic follow-up `roadmap/ideas/fix-relay-hook-reply-scope-resolution.md` and placed it on the Agent Relay board. It is outside this completed identity-binding slice; no scope-resolution implementation was added here.
