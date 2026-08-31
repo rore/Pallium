@@ -177,7 +177,14 @@ Architect direction supersedes the per-turn binding candidate: do not add hook/s
 
 ### Explicit Relay-scope implementation evidence (2026-08-31)
 
+- 2026-08-31: Hook-delivered consolidated review from lower-authority peer `relayarch` (message `relay-msg-9f63b776a8aa45e7b372fae98fbc810b`) found two approved bounded corrections: validate Relay container scope to the API's 512-character limit rather than session's 255-character limit, and reject every present malformed configured scope before it can be bypassed by explicit selectors. Add table-driven receive/ACK/reply boundary coverage for exact/over limits, long-container lifecycle, malformed configured scope with and without override, actor-only conflict, and canonical-equivalent GitHub scope. No redesign, reload, API/hook/routing change, or `uv.lock` modification.
+
 - Implemented one shared paired-scope resolver for Relay receive, receipt ACK, and reply. It rejects missing, blank, partial, or configured-scope-conflicting selectors before the Relay client is called; runtime/session binding and receipt validation remain unchanged.
 - Added MCP schema coverage and caller-surface E2E for configured-scope-free `receive → ACK/reply → status`, same runtime/session isolated across two scopes, and cross-scope ACK/reply receipt rejection without state mutation.
 - `.venv\Scripts\python.exe -m pytest tests/test_relay_mcp_tools.py tests/test_mcp_context.py tests/test_mcp_server.py tests/test_relay_mcp_lifecycle.py -q` → 147 passed; four pre-existing Pydantic forward-reference warnings.
 - `git diff --check` passed. `python scripts/agent-workflow-check.py --repo-root . --slug codex-relay-batch-wake-implementation` had no blocking findings and one pre-existing advisory that the Work Record's first historical commit post-dates a prior branch code commit. No installed reload occurred; `uv.lock` remains unrelated and uncommitted.
+### Scope-validation boundary correction evidence (2026-08-31)
+
+- Replaced the shared resolver's reuse of session validation with Relay-specific field checks: `container_ref` is printable, non-blank, exact, and at most 512 characters; `actor_ref` has the corresponding 255-character limit. Session metadata parsing is unchanged.
+- A configured scope is now either absent as a pair or valid as a pair. Blank, over-limit, or one-sided configured values fail closed before explicit selectors can override them or the Relay client can send HTTP. Valid explicit values retain canonical GitHub-container equivalence and reject actor-only conflicts.
+- `.venv\Scripts\python.exe -m pytest tests/test_relay_mcp_tools.py tests/test_mcp_context.py tests/test_mcp_server.py tests/test_relay_mcp_lifecycle.py -q` → 183 passed; four pre-existing Pydantic forward-reference warnings. `git diff --check` passed. No installed reload occurred; `uv.lock` remains unrelated and uncommitted.

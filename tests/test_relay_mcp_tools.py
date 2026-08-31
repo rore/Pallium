@@ -350,31 +350,32 @@ class TestFullLifecycle:
         assert json.loads(mcp_after_hook[0].text)["deliveries"] == []
 @pytest.mark.asyncio
 async def test_trusted_codex_request_metadata_receives_per_session_and_acks(monkeypatch, asgi_post, asgi_get):
+    scope = {"container_ref": "git:example.test/" + "c" * 283, "actor_ref": "tool-actor"}
     monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
     for key in ("PALLIUM_THREAD_REF", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "PALLIUM_CONTAINER_REF", "PALLIUM_ACTOR_REF"):
         monkeypatch.delenv(key, raising=False)
     bind_asgi_post(monkeypatch, asgi_post)
     bind_asgi_get(monkeypatch, asgi_get)
     for session in ("meta-a", "meta-b", "sender"):
-        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": session, **_SCOPE})
+        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": session, **scope})
     messages = {}
     for session, payload in (("meta-a", "only-a"), ("meta-b", "only-b")):
         messages[session] = await asgi_post("/relay/messages", {
             "sender_runtime": "codex", "sender_session_ref": "sender", "recipient": f"codex:{session}",
-            "payload": payload, **_SCOPE,
+            "payload": payload, **scope,
         })
     async with create_connected_server_and_client_session(create_server(trust_codex_request_metadata=True)) as client:
         a, b = await asyncio.gather(
-            client.call_tool("pallium_relay_receive", {**_SCOPE}, meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-a", "session_id": "meta-a", "turn_id": "turn-a"})}),
-            client.call_tool("pallium_relay_receive", {**_SCOPE}, meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-b", "session_id": "meta-b", "turn_id": "turn-b"})}),
+            client.call_tool("pallium_relay_receive", {**scope}, meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-a", "session_id": "meta-a", "turn_id": "turn-a"})}),
+            client.call_tool("pallium_relay_receive", {**scope}, meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-b", "session_id": "meta-b", "turn_id": "turn-b"})}),
         )
         delivery_a = json.loads(a.content[0].text)["deliveries"][0]
         delivery_b = json.loads(b.content[0].text)["deliveries"][0]
-        await client.call_tool("pallium_relay_ack", {"delivery_id": delivery_a["delivery_id"], "receipt": delivery_a["receipt"], **_SCOPE})
-        await client.call_tool("pallium_relay_reply", {"delivery_id": delivery_b["delivery_id"], "receipt": delivery_b["receipt"], "message": "reply-b", **_SCOPE})
+        await client.call_tool("pallium_relay_ack", {"delivery_id": delivery_a["delivery_id"], "receipt": delivery_a["receipt"], **scope})
+        await client.call_tool("pallium_relay_reply", {"delivery_id": delivery_b["delivery_id"], "receipt": delivery_b["receipt"], "message": "reply-b", **scope})
         status_a, status_b = await asyncio.gather(
-            client.call_tool("pallium_relay_status", {"message_id": messages["meta-a"]["message_id"], **_SCOPE}),
-            client.call_tool("pallium_relay_status", {"message_id": messages["meta-b"]["message_id"], **_SCOPE}),
+            client.call_tool("pallium_relay_status", {"message_id": messages["meta-a"]["message_id"], **scope}),
+            client.call_tool("pallium_relay_status", {"message_id": messages["meta-b"]["message_id"], **scope}),
         )
     assert [d["payload"] for d in json.loads(a.content[0].text)["deliveries"]] == ["only-a"]
     assert [d["payload"] for d in json.loads(b.content[0].text)["deliveries"]] == ["only-b"]
@@ -550,3 +551,51 @@ async def test_explicit_scope_keeps_shared_runtime_sessions_and_receipts_isolate
     assert json.loads(wrong_ack.content[0].text)["status_code"] == 404
     assert json.loads(wrong_reply.content[0].text)["status_code"] == 404
     assert json.loads(status_a.content[0].text)["deliveries"][0]["state"] == "claimed"
+
+
+_RELAY_SCOPE_TOOL_METHODS = {
+    "pallium_relay_receive": ("relay_receive", {}),
+    "pallium_relay_ack": ("relay_mcp_ack", {"delivery_id": "delivery", "receipt": "receipt"}),
+    "pallium_relay_reply": ("relay_reply", {"delivery_id": "delivery", "message": "reply"}),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", _RELAY_SCOPE_TOOL_METHODS)
+@pytest.mark.parametrize(
+    ("configured_scope", "explicit_scope", "allowed"),
+    [
+        (None, ("c" * 512, "a" * 255), True),
+        (None, ("c" * 513, "a" * 255), False),
+        (None, ("c" * 512, "a" * 256), False),
+        ({"container_ref": "", "actor_ref": "actor"}, None, False),
+        ({"container_ref": "", "actor_ref": "actor"}, ("container", "actor"), False),
+        ({"container_ref": "container", "actor_ref": ""}, None, False),
+        ({"container_ref": "container", "actor_ref": ""}, ("container", "actor"), False),
+        ({"container_ref": "c" * 513, "actor_ref": "actor"}, None, False),
+        ({"container_ref": "container", "actor_ref": "a" * 256}, ("container", "actor"), False),
+        ({"container_ref": "container"}, ("container", "actor"), False),
+        ({"container_ref": "git:example.test/scope", "actor_ref": "actor-a"}, ("git:example.test/scope", "actor-b"), False),
+        ({"container_ref": "git:github.com/Owner/Repo.git", "actor_ref": "actor"}, ("git:github.com/owner/repo", "actor"), True),
+    ],
+)
+async def test_relay_scope_limits_and_config_cannot_be_bypassed(
+    monkeypatch, tool, configured_scope, explicit_scope, allowed
+):
+    for key in ("PALLIUM_CONTAINER_REF", "PALLIUM_ACTOR_REF"):
+        monkeypatch.delenv(key, raising=False)
+    if configured_scope:
+        for key, value in configured_scope.items():
+            monkeypatch.setenv(f"PALLIUM_{key.upper()}", value)
+    client_method, base_arguments = _RELAY_SCOPE_TOOL_METHODS[tool]
+    arguments = dict(base_arguments)
+    if explicit_scope:
+        arguments.update(container_ref=explicit_scope[0], actor_ref=explicit_scope[1])
+    http_call = AsyncMock(return_value={})
+    with patch.object(PalliumMcpClient, client_method, new=http_call):
+        content, _ = await create_server().call_tool(tool, arguments)
+    if allowed:
+        http_call.assert_awaited_once()
+    else:
+        assert "Relay scope" in content[0].text
+        http_call.assert_not_awaited()
