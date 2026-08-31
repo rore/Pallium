@@ -135,7 +135,7 @@ def _validate_batch_acceptance(
             container_ref=container_ref, actor_ref=actor_ref, generation=1,
             in_reply_to=in_reply_to,
         )
-        if len(envelope) > int(capability["max_chars"]) or len(envelope.encode("utf-8")) > int(capability["max_bytes"]):
+        if len(envelope) + 512 > int(capability["max_chars"]) or len(envelope.encode("utf-8")) + 512 > int(capability["max_bytes"]):
             raise RelayConflictError("Relay batch exceeds recipient capability budget")
 
 def _candidate_pending_count(
@@ -249,7 +249,10 @@ class SQLiteRelayMixin:
                 delivery.state = "pending"
             return None
         started = claim["publication_started_at"] is not None
-        if delivery.state != "delivered" and _now(message.expires_at) <= current:
+        if claim["negative_observed_at"] is not None and delivery.state == "pending" and _now(message.expires_at) <= current:
+            delivery.state = "expired"
+            delivery.claim_token = None
+        elif delivery.state != "delivered" and _now(message.expires_at) <= current:
             if started:
                 delivery.state = "uncertain"
                 db.execute(text("UPDATE relay_batch_claims SET uncertain_at=:current, uncertain_reason='expired_after_publication' WHERE delivery_id=:delivery_id"), {"current": current, "delivery_id": delivery.id})
@@ -545,7 +548,7 @@ class SQLiteRelayMixin:
                 ON CONFLICT(delivery_id) DO UPDATE SET claim_generation=:generation,
                     publication_started_at=NULL, publication_digest=:digest, publication_chars=:chars,
                     publication_bytes=:bytes, uncertain_at=NULL, uncertain_reason=NULL, blocked_reason=NULL,
-                    admitted_at=NULL, admission_evidence=NULL, admission_observed_at=NULL, admission_timing=NULL
+                    admitted_at=NULL, admission_evidence=NULL, admission_observed_at=NULL, admission_timing=NULL, negative_evidence=NULL, negative_fence_evidence=NULL, negative_observed_at=NULL, negative_generation=NULL
             """), {"delivery_id": delivery.id, "generation": generation, "digest": digest, "chars": chars, "bytes": bytes_})
             claim = _candidate_claim(db, delivery.id)
             claimed.append(_candidate_view(delivery, message, claim, envelope, "".join(_message_parts(db, message))))
@@ -1097,6 +1100,10 @@ class SQLiteRelayMixin:
             if message.container_ref != container_ref or message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             claim = self._reconcile_delivery(db, delivery, message, current)
+            if claim is not None and claim["negative_observed_at"] is not None:
+                if claim["negative_evidence"] == non_admission_evidence and claim["negative_fence_evidence"] == publication_fence_evidence and int(claim["negative_generation"]) == int(claim["claim_generation"]):
+                    return {"delivery_id": delivery.id, "state": delivery.state, "released_generation": int(claim["negative_generation"])} 
+                raise RelayConflictError("candidate non-admission evidence cannot be rewritten")
             if claim is None or delivery.state != "uncertain" or claim["publication_started_at"] is None:
                 raise RelayConflictError("candidate non-admission is not reconcilable")
             if _now(message.expires_at) <= current or delivery.lease_expires_at is None or _now(delivery.lease_expires_at) > current:
