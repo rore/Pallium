@@ -199,3 +199,7 @@ Final combined verification: **296 passed, 4 existing warnings** (18 manager
 acceptance cases). Candidate implementation review accepted; this is NOT runtime
 qualification, PR merge, installation or activation. State remains Ready for
 review for the PR workflow. G2/G3 and the live-schema repair/rollout remain gates.
+
+## G1/G2/G3 qualification planning — 2026-08-31
+
+Documentation-only follow-on under the existing user authorization and accepted B2 candidate boundary: [Codex qualification plan](../../docs/designs/relay-codex-qualification-plan.md). It records the exact notification-only `codex queue --thread` plus same-inbox-hook shape, idle/busy/restart/fallback probes, full-envelope witness and stale-publication criteria, 64-delivery headroom measurement, isolation, and rollback. Read-only local checks confirmed Codex CLI 0.149.1, queue command availability, `codex_hooks` registration, and the installed three-hook configuration. They also found no immutable full-envelope context-commit witness in the current hook; a status request did not return in the bounded check window. These are prerequisites and genuine G2/G3 blockers, not activation evidence. No queue trigger, service action, installation, migration, runtime/code edit, or enablement occurred; unrelated `storage/sqlite_schema.py` and `uv.lock` changes remain untouched.

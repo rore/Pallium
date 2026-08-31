@@ -1,0 +1,72 @@
+# Codex Relay G1/G2/G3 qualification plan
+
+Status: planning only (2026-08-31). This is the next gate after the accepted B2 candidate; it neither enables passive batch delivery nor wake.
+
+## Scope and decision boundary
+
+Use the installed local Codex CLI, its existing `UserPromptSubmit` inbox hook, and `codex queue --thread <exact-session> --message <notification>` only. The queue message is a bounded notification with an opaque activation ID: it carries no batch text, receipt, claim token, or second delivery path. The queued and ordinary turns must enter the same hook and storage-owned inbox claim path.
+
+Do not run this plan yet. It requires an explicitly approved, isolated qualification environment and two named local Codex sessions. No production database, normal work session, managed App Server, installation, migration, runtime edit, activation, or surrogate app/agent ping is in this plan.
+
+## Current read-only evidence
+
+- Local `codex-cli 0.149.1` exposes `codex queue --thread ... --message ...`.
+- The local configuration has `codex_hooks = true`, Pallium stdio MCP, and the installed SessionStart, UserPromptSubmit, and Stop hook registrations.
+- The repository hook emits UserPromptSubmit additional context after its Relay turn/publication sequence. It has no immutable full-envelope context-commit witness, and its legacy acknowledgement is not one.
+- This desktop task received a queue-style notification without an injected Relay envelope; supported MCP recovery was required. That is not a failed G1 probe, but it prevents treating this desktop session as proof that the installed CLI hook fires for queued turns.
+- A read-only Pallium status request did not complete in the check window. Treat service responsiveness as unproven until the isolated environment has a bounded health check; do not restart or repair the installed service here.
+
+Therefore the queue command and hook registration are available prerequisites, not G1/G2/G3 evidence. The missing admission witness is the present blocker to G2, and the absence of a measured context budget blocks G3.
+
+## Isolation and rollback preflight
+
+1. An operator names two disposable sessions on this exact CLI/hook build and confirms neither is a normal work session. Record their immutable session IDs, Codex version, hook file hashes, config-profile hash, and local time.
+2. Use a separately provisioned disposable Pallium database and endpoint with no production records. The profile must register the same hook executable and stdio MCP shape as the installed configuration. If that parity cannot be demonstrated, stop: a synthetic hook is not a qualification result.
+3. Snapshot the disposable database, profile, hook registration, and session transcripts before each probe. Rollback means stop queueing, close the two sessions, restore or discard only that disposable database/profile, and retain transcripts and Relay audit IDs. Never roll back by running an unaware binary over batch-format rows.
+4. Predeclare generic payload fixtures, exact expected envelope digest/length, and the single allowed notification text. Do not put content or private capability material in the queue message.
+
+## G1 — same-hook queue delivery
+
+### Idle probe
+
+1. Commit one bounded generic batch to the target's isolated inbox and record delivery ID, claim generation, exact full envelope, digest, and byte/code point lengths.
+2. Queue one notification to the exact target session while it is idle.
+3. Capture the queue result, target hook invocation, and the target's pre-model context artifact. Verify the hook selected the committed delivery once and emitted the exact attributed envelope, ordered parts, count, and terminal marker.
+4. Open a normal user turn after the queued turn. It must share the inbox path: no duplicate injection, no second claim, no fabricated reply, and truthful empty/backlog status.
+
+### Busy, restart, and fallback probes
+
+1. With the target demonstrably in an active turn, queue the same notification once. Capture whether it is accepted, deferred, or refused; do not issue a second notification to compensate.
+2. At the next supported turn boundary, require the same hook and one generation-bound claim. A busy refusal or unsupported hook leaves the batch pending for an ordinary user turn; it does not create a second payload path.
+3. Restart only the disposable target/session harness between reservation and publication. Prove an unpublished expired generation is reclaimed once; a started publication is visible as `uncertain`.
+4. Repeat with queue unavailable/disabled. A normal user turn must drain the same pending inbox, with no silent gap and no app/agent ping used as delivery.
+
+G1 passes only when both idle and busy evidence identify the installed UserPromptSubmit hook and the same storage owner. Queue acceptance alone, notification display, or a model response is insufficient.
+
+## G2 — full-envelope admission and stale publication
+
+1. Define the witness before any probe: an immutable runtime artifact must show the complete `hookSpecificOutput.additionalContext` at the pre-model boundary, tied to exact session, queued turn, delivery, generation, digest, ordered parts, count, and terminal marker. A partial transcript, tool receipt, model paraphrase, or queue response fails this criterion.
+2. Run the idle and busy G1 probes with the witness enabled. Recompute the envelope digest and both lengths from the captured artifact; require exact equality with the storage claim. Record actual admission time separately from witness-observation time.
+3. Exercise stale pre-publication ownership in the isolated harness: replace or expire generation A before output, then attempt A's publication. It must be rejected before emission; only generation B can proceed.
+4. Interrupt after publication-start but before the witness. Preserve the delivery as `uncertain`. Release it only on a trusted proof of both non-admission and impossible late publication; lease expiry, missing history, or timeout alone is not proof. A later positive witness records admission and does not replay the batch.
+
+The current hook does not expose the required witness. If the exact runtime cannot expose one without a separately reviewed change, G2 is a genuine blocker: leave candidate delivery and wake disabled rather than substituting an ACK.
+
+## G3 — 64-delivery headroom
+
+1. Load 64 durable, valid, worst-case generic batches into the isolated target inbox. Include escaped Unicode, maximum ordered-part shape, attribution, backlog metadata, and a late arrival after the first drain. Measure full rendered envelope code points and UTF-8 bytes, not payload length or tokens.
+2. Drain strictly FIFO across as many turns as the configured complete-batch bounds require. For every turn capture actual injected context bytes/chars, runtime context capacity and remaining headroom before/after injection, claimed IDs/generations, and backlog state.
+3. Repeat once with the target busy at notification time and once after a disposable-session restart. Verify no skipped oldest batch, truncation, duplicate admission, or silent post-restart gap.
+4. Set a lower provisional capability only if the measured minimum safe headroom supports it. If any accepted envelope cannot fit an empty measured budget, keep it visibly blocked; never truncate or silently lower an already-accepted contract.
+
+G3 passes only with raw per-turn measurements and a documented safe drain limit. The durable 64-item capacity is not a promise that all 64 fit one turn.
+
+## Gate record and next decision
+
+| Gate | Current status | Evidence required to close | Failure outcome |
+|---|---|---|---|
+| G1 | Unproven | Idle + busy queued turns invoking the same installed inbox hook | Wake remains passive; ordinary-turn fallback only |
+| G2 | Blocked by missing witness | Immutable full-envelope pre-model artifact plus stale-publication result | Keep published attempts uncertain; no automatic replay |
+| G3 | Unproven | 64-item, multi-turn headroom measurements with FIFO/restart/fallback coverage | Retain/visible-block work; do not enable candidate or wake |
+
+Only a separate review of completed evidence may authorize the next action. The later rollout decision remains separate: inspect live schema and backup/restore only then; deploy compatible readers and explicit migrations before any new writer or capability is enabled.
