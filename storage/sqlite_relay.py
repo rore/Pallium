@@ -284,6 +284,7 @@ class SQLiteRelayMixin:
                     WHERE {"message_id" if table == "relay_deliveries" else "id"} NOT IN (SELECT id FROM kept)
                     AND {"message_id IN (SELECT id FROM relay_messages WHERE expires_at <= :cutoff)" if table == "relay_deliveries" else "expires_at <= :cutoff"}
                 """), {"cutoff": current - timedelta(days=7)})
+            db.execute(text("DELETE FROM relay_batch_claims WHERE delivery_id NOT IN (SELECT id FROM relay_deliveries)"))
         except OperationalError:
             # Legacy traffic stays compatible until the explicit B1 migration runs.
             return

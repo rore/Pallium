@@ -17,6 +17,7 @@ from sqlalchemy import text
 from api.routes import create_router
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import PalliumContext
+from core.errors import ImmediateTransactionBusyError
 from core.relay import RelayService
 from storage.relay_migration import migrate_relay_batch_claims
 
@@ -65,6 +66,7 @@ def batch_client(client: TestClient) -> TestClient:
         relay_service=RelayService(storage, batch_candidate_enabled=True),
     ))
     app.state.batch_storage = storage
+    app.state.pallium_service = client.app.state.pallium_service
     return TestClient(app)
 
 
@@ -339,6 +341,68 @@ def test_actual_mcp_output_can_be_witnessed_then_replied(batch_client: TestClien
     received, replied = asyncio.run(exercise())
     assert received["deliveries"][0]["envelope"].endswith("[End Pallium Relay batch]")
     assert replied["in_reply_to"] == "mcp-witness"
+
+def test_candidate_restart_reconciles_unpublished_and_published_claims(batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "unpublished")
+    _turn(batch_client, "codex", "published")
+    _send(batch_client, "sender", "codex:unpublished", "retry", "restart-retry")
+    _send(batch_client, "sender", "codex:published", "uncertain", "restart-uncertain")
+    unpublished = _turn(batch_client, "codex", "unpublished")["deliveries"][0]
+    published = _turn(batch_client, "codex", "published")["deliveries"][0]
+    assert _publication(batch_client, published).status_code == 200
+    storage = batch_client.app.state.batch_storage
+    with storage._engine.begin() as connection:
+        connection.execute(text("UPDATE relay_deliveries SET lease_expires_at=:past WHERE id IN (:unpublished, :published)"), {
+            "past": datetime.now(timezone.utc) - timedelta(seconds=1), "unpublished": unpublished["delivery_id"], "published": published["delivery_id"],
+        })
+    app = FastAPI()
+    app.include_router(create_router(batch_client.app.state.pallium_service, relay_service=RelayService(storage, batch_candidate_enabled=True)))
+    restarted = TestClient(app)
+    replacement = _turn(restarted, "codex", "unpublished")["deliveries"][0]
+    assert replacement["claim_generation"] == 2
+    assert _turn(restarted, "codex", "published")["deliveries"] == []
+    assert restarted.get("/relay/messages/restart-uncertain", params=SCOPE).json()["deliveries"][0]["state"] == "uncertain"
+
+
+def test_candidate_busy_is_retryable_and_cleanup_releases_orphaned_claim(batch_client: TestClient, monkeypatch) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    sent = _send(batch_client, "sender", "codex:target", "old", "cleanup-claim")
+    delivery = _turn(batch_client, "codex", "target")["deliveries"][0]
+    storage = batch_client.app.state.batch_storage
+    with storage._engine.begin() as connection:
+        connection.execute(text("UPDATE relay_messages SET created_at=:created, expires_at=:expired WHERE id=:id"), {
+            "id": sent["message_id"], "created": datetime.now(timezone.utc) - timedelta(days=9), "expired": datetime.now(timezone.utc) - timedelta(days=8),
+        })
+    _send(batch_client, "sender", "codex:target", "trigger", "cleanup-trigger")
+    with storage._engine.connect() as connection:
+        assert connection.execute(text("SELECT COUNT(*) FROM relay_batch_claims WHERE delivery_id=:id"), {"id": delivery["delivery_id"]}).scalar_one() == 0
+
+    def busy_transaction():
+        raise ImmediateTransactionBusyError("database is locked")
+
+    monkeypatch.setattr(storage, "_begin_immediate", busy_transaction)
+    response = batch_client.post("/relay/turn", json={"runtime": "codex", "session_ref": "busy", **SCOPE})
+    assert response.status_code == 503
+    assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
+
+
+def test_candidate_reconciles_wrong_and_late_positive_admission_evidence(batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    sent = _send(batch_client, "sender", "codex:target", "evidence", "evidence-timing")
+    delivery = _turn(batch_client, "codex", "target")["deliveries"][0]
+    assert _publication(batch_client, delivery).status_code == 200
+    wrong = {**delivery, "envelope_digest": "0" * 64}
+    assert _admit(batch_client, wrong).status_code == 409
+    assert batch_client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]["state"] == "claimed"
+    storage = batch_client.app.state.batch_storage
+    with storage._engine.begin() as connection:
+        connection.execute(text("UPDATE relay_messages SET expires_at=:past WHERE id=:id"), {"past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": sent["message_id"]})
+    assert batch_client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]["state"] == "uncertain"
+    assert _admit(batch_client, delivery, "late-after-expiry").status_code == 200
+    assert batch_client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
 
 def test_candidate_rejects_mixed_fanout_and_pending_capacity(client: TestClient, batch_client: TestClient) -> None:
     _turn(batch_client, "claude-code", "sender")
