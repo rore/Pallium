@@ -272,3 +272,7 @@ The reload blocker is closed. Next is release/PR verification for these reviewed
 ### B1 migration foundation approved (2026-08-31)
 
 - Architect independently accepted the uncalled DB-owned allocator foundation. Commit only the helper, prototype regressions, and Work Record; preserve unrelated `uv.lock` and the architect review document. The helper stays uncalled by startup.
+### B1 foundation acceptance and B2 handoff (2026-08-31)
+
+- Architect accepted the consolidated B1 foundation after an independent `229/229` focused-suite run (four existing warnings) and clean diff check. The accepted reviewed snapshot is commit `c3dd006` (`feat: add relay B1 persistence foundation`), including the architect's codec compatibility corrections and review artifact. No deployment or migration activation occurred; `uv.lock` remains unrelated and uncommitted.
+- B2 now has a separate review-only Work Record on `codex/relay-batch-wake-b2`. Guarded B2 implementation remains blocked pending manager review; B1 findings are closed and must not be reopened without a new defect.
