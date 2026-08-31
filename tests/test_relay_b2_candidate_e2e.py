@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 from datetime import datetime, timedelta, timezone
 import importlib.util
@@ -364,6 +365,23 @@ def test_candidate_restart_reconciles_unpublished_and_published_claims(batch_cli
     assert _turn(restarted, "codex", "published")["deliveries"] == []
     assert restarted.get("/relay/messages/restart-uncertain", params=SCOPE).json()["deliveries"][0]["state"] == "uncertain"
 
+
+def test_candidate_contended_turn_claims_exactly_one_generation(batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    _send(batch_client, "sender", "codex:target", "race", "contention-race")
+
+    def claim() -> dict:
+        response = TestClient(batch_client.app).post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **SCOPE})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        turns = list(pool.map(lambda _: claim(), range(2)))
+    deliveries = [delivery for turn in turns for delivery in turn["deliveries"]]
+    assert len(deliveries) == 1
+    assert deliveries[0]["claim_generation"] == 1
+    assert any(turn["has_more"] for turn in turns)
 
 def test_candidate_busy_is_retryable_and_cleanup_releases_orphaned_claim(batch_client: TestClient, monkeypatch) -> None:
     _turn(batch_client, "claude-code", "sender")
