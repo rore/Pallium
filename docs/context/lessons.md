@@ -1,5 +1,34 @@
 # Lessons
 
+## Change safety — compatibility, migration and activation order (2026-08-31)
+
+Every schema, persisted-format or API change must define compatibility and rollout
+before implementation, not as a release cleanup task.
+
+- Identify every reader, writer and migration entry point, including independently
+  restarted workers, hooks and local integrations. Sharing a source checkout can
+  expose unmerged code without an intentional service deployment.
+- State which old/new code and old/new data combinations are supported. Additive
+  columns or indexes can still break old writers, defaults, retries and readers.
+- Specify the actual order: compatible groundwork, atomic migration/backfill,
+  coordinated consumer/writer upgrade, verification, then capability activation.
+  Remove compatibility paths only when old consumers can no longer use them.
+  If mixed versions cannot be supported, require an explicit coordinated outage.
+- Define rollback before and after new-format data is accepted. Reverting source
+  is not database rollback; preserve accepted data and retry identities.
+- Verify fresh install, upgrade from real legacy data, old writer/new schema,
+  unsupported new writer/old schema rejection, concurrent process startup,
+  interrupted migration, retry/reopen and rollback. Test through caller surfaces
+  with disposable databases; never let a test implicitly migrate the live store.
+
+Review must name the supported combinations, ordered activation steps and evidence.
+A happy-path fresh database is not sufficient.
+
+Incident: a new unique sequence index broke an old running Relay writer that
+omitted the column and therefore inserted its default value. Source rollback did
+not remove that index. See the
+[B1 review and recovery](../designs/relay-batch-b1-implementation-review.md).
+
 ## Invariants (2026-07-01 — apply to every retrieval / eval PR)
 
 These two rules are enforceable in PR review. Any PR touching retrieval,
