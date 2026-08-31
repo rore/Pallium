@@ -85,3 +85,34 @@ def migrate_relay_commit_sequences(connection, *, fail_at: str | None = None) ->
     except BaseException:
         connection.exec_driver_sql("ROLLBACK")
         raise
+
+
+def migrate_relay_batch_claims(connection, *, fail_at: str | None = None) -> None:
+    """Explicit, uncalled B2 migration; legacy tables and writers stay unchanged."""
+    migrate_relay_commit_sequences(connection)
+    connection.exec_driver_sql("BEGIN IMMEDIATE")
+    try:
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS relay_batch_claims (
+                delivery_id TEXT PRIMARY KEY,
+                claim_generation INTEGER NOT NULL DEFAULT 0,
+                publication_started_at DATETIME,
+                publication_digest TEXT,
+                publication_chars INTEGER,
+                publication_bytes INTEGER,
+                uncertain_at DATETIME,
+                uncertain_reason TEXT,
+                blocked_reason TEXT
+            )
+        """))
+        if fail_at == "ddl":
+            raise RuntimeError("injected B2 ddl fault")
+        connection.execute(text("CREATE TABLE IF NOT EXISTS relay_batch_protocol (version INTEGER PRIMARY KEY)"))
+        connection.execute(text("INSERT OR IGNORE INTO relay_batch_protocol(version) VALUES (2)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS idx_relay_batch_claims_publication ON relay_batch_claims(publication_started_at, claim_generation)"))
+        if fail_at == "index":
+            raise RuntimeError("injected B2 index fault")
+        connection.exec_driver_sql("COMMIT")
+    except BaseException:
+        connection.exec_driver_sql("ROLLBACK")
+        raise

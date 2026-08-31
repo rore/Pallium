@@ -143,7 +143,7 @@ def test_short_turn_without_delivery_still_exposes_current_relay_identity(
     monkeypatch, relative, runtime, imported,
 ):
     if imported:
-        from integrations.codex.hooks import user_prompt_submit as hook
+        hook = _load("codex_hook", "integrations/codex/hooks/user_prompt_submit.py")
     else:
         hook = _load("claude_short_scope", relative)
     monkeypatch.setattr(
@@ -183,7 +183,7 @@ def test_claude_short_prompt_delivers_relay_before_memory_gate(monkeypatch):
 
 
 def test_codex_short_prompt_delivers_relay_before_memory_gate(monkeypatch):
-    from integrations.codex.hooks import user_prompt_submit as hook
+    hook = _load("codex_hook", "integrations/codex/hooks/user_prompt_submit.py")
 
     _exercise_short_prompt(hook, monkeypatch, codex=True)
 
@@ -198,7 +198,7 @@ def test_failed_project_close_is_retried(
     monkeypatch, relative, runtime, imported
 ):
     if imported:
-        from integrations.codex.hooks import user_prompt_submit as hook
+        hook = _load("codex_hook", "integrations/codex/hooks/user_prompt_submit.py")
     else:
         hook = _load("claude_switch", relative)
     monkeypatch.setattr(
@@ -246,31 +246,48 @@ def test_failed_project_close_is_retried(
     }
     assert state["pending"] == []
 
-@pytest.mark.parametrize(
-    ("relative", "imported"),
-    [
-        ("integrations/claude-code/hooks/user_prompt_submit.py", False),
-        ("integrations/codex/hooks/user_prompt_submit.py", True),
-    ],
-)
-def test_slash_and_duplicate_turns_never_claim(monkeypatch, relative, imported):
-    if imported:
-        from integrations.codex.hooks import user_prompt_submit as hook
-    else:
-        hook = _load("claude_skip", relative)
-    payload = {"cwd": ".", "session_id": "target", "prompt": "/command"}
-    monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
+def test_slash_turn_never_claims(monkeypatch):
+    hook = _load("codex_hook", "integrations/codex/hooks/user_prompt_submit.py")
+
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "target", "prompt": "/command"})
     monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: pytest.fail("slash command must not claim"))
     hook.main()
 
-    payload["prompt"] = "a duplicate model prompt"
-    monkeypatch.setattr(hook, "check_dedup", lambda *_: True)
-    monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: pytest.fail("duplicate must not claim"))
-    hook.main()
 
+def test_codex_duplicate_prompt_still_drains_new_relay_mail(monkeypatch):
+    hook = _load("codex_hook", "integrations/codex/hooks/user_prompt_submit.py")
+
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "target", "prompt": "same prompt"})
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: True)
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    calls = []
+    monkeypatch.setattr(hook, "relay_request", lambda method, path, body, *, timeout: calls.append((path, body)) or {"deliveries": [DELIVERY]})
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda *_a, **_k: None)
+    output = []
+    monkeypatch.setattr(hook, "emit_context", lambda text, _event: output.append(text))
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert calls[0][0] == "/relay/turn"
+    assert output[0].startswith("[Pallium Relay message")
+
+
+def test_codex_candidate_envelope_is_fenced_and_never_auto_acked(monkeypatch):
+    common = _load("codex_candidate", "integrations/codex/hooks/common.py")
+    envelope = "[Pallium Relay batch from claude-code:sender]\\n[Pallium scope — {}]\\n[End Pallium Relay batch]"
+    candidate = {**DELIVERY, "protocol_version": "batch_v2_candidate", "envelope": envelope,
+                 "envelope_digest": __import__("hashlib").sha256(envelope.encode()).hexdigest()}
+    rendered, selected = common.format_relay([candidate])
+    assert rendered == envelope
+    calls = []
+    monkeypatch.setattr(common, "relay_request", lambda method, path, body, *, timeout: calls.append((path, body)) or {"ok": True})
+    assert common.begin_relay_publication(selected, container_ref="container", actor_ref="actor") == [candidate]
+    common.acknowledge_relay([candidate], container_ref="container", actor_ref="actor")
+    assert [path for path, _ in calls] == ["/relay/deliveries/publication"]
 
 def test_codex_combined_output_is_relay_first_and_bounded(monkeypatch):
-    from integrations.codex.hooks import user_prompt_submit as hook
+    hook = _load("codex_hook", "integrations/codex/hooks/user_prompt_submit.py")
 
     payload = {
         "cwd": ".",

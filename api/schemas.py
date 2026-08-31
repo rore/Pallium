@@ -814,6 +814,20 @@ class RelayReplyRequest(BaseModel):
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
+class RelayPublicationRequest(BaseModel):
+    delivery_id: str = Field(min_length=1, max_length=128)
+    claim_token: str = Field(min_length=1, max_length=128)
+    envelope_digest: str = Field(min_length=64, max_length=64)
+    container_ref: str = Field(min_length=1, max_length=512)
+    actor_ref: str = Field(min_length=1, max_length=255)
+
+
+class RelayPublicationResponse(BaseModel):
+    delivery_id: str
+    claim_generation: int
+    envelope_digest: str
+    publication_started_at: datetime
+
 class RelayAckRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)
     claim_token: str = Field(min_length=1, max_length=128)
@@ -852,6 +866,16 @@ class RelayDeliveryResponse(BaseModel):
     lease_expires_at: datetime | None = None
     delivered_at: datetime | None = None
     attempts: int
+    protocol_version: str = "text_v1"
+    claim_generation: int = 0
+    envelope_digest: str | None = None
+    envelope: str | None = None
+    envelope_chars: int | None = None
+    envelope_bytes: int | None = None
+    publication_started_at: datetime | None = None
+    uncertain_at: datetime | None = None
+    uncertain_reason: str | None = None
+    blocked_reason: str | None = None
 
 
 class RelayTurnResponse(BaseModel):
@@ -859,6 +883,8 @@ class RelayTurnResponse(BaseModel):
     deliveries: list[RelayDeliveryResponse]
     has_more: bool
     remaining_count: int = Field(ge=0)
+    blocked_count: int = Field(default=0, ge=0)
+    blocked_reasons: list[str] = []
 
 
 class RelayMessageResponse(BaseModel):

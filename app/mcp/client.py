@@ -304,6 +304,19 @@ class PalliumMcpClient:
         params = self._relay_scope_params()
         return await self._get_or_error(f"/relay/messages/{message_id}", params)
 
+    async def relay_start_publication(
+        self, *, delivery_id: str, claim_token: str, envelope_digest: str,
+    ) -> dict[str, Any]:
+        return await self._post_or_error(
+            "/relay/deliveries/publication",
+            {
+                "delivery_id": delivery_id,
+                "claim_token": claim_token,
+                "envelope_digest": envelope_digest,
+                **self._relay_scope_params(),
+            },
+        )
+
     async def relay_receive(self, runtime: str, session_ref: str, max_chars: int = 0) -> Any:
         payload: dict[str, Any] = {
             "runtime": runtime,
@@ -311,8 +324,29 @@ class PalliumMcpClient:
             "max_chars": max_chars,
             **self._relay_scope_params(),
         }
-        return await self._post_or_error("/relay/turn", payload)
-
+        result = await self._post_or_error("/relay/turn", payload)
+        if not isinstance(result, dict) or not isinstance(result.get("deliveries"), list):
+            return result
+        original_count = len(result["deliveries"])
+        admitted = []
+        for delivery in result["deliveries"]:
+            if delivery.get("protocol_version") != "batch_v2_candidate":
+                admitted.append(delivery)
+                continue
+            fields = (delivery.get("delivery_id"), delivery.get("claim_token"), delivery.get("envelope_digest"))
+            if not all(isinstance(value, str) and value for value in fields):
+                continue
+            started = await self.relay_start_publication(
+                delivery_id=fields[0], claim_token=fields[1], envelope_digest=fields[2],
+            )
+            if "error" not in started:
+                admitted.append(delivery)
+        result["deliveries"] = admitted
+        result["remaining_count"] = int(result.get("remaining_count", 0)) + (
+            original_count - len(admitted)
+        )
+        result["has_more"] = bool(result.get("has_more") or result["remaining_count"])
+        return result
     async def relay_mcp_ack(self, delivery_id: str, receipt: str) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "delivery_id": delivery_id,

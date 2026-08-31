@@ -21,6 +21,9 @@ RELAY_MIN_EXPIRY_SECONDS = 60
 RELAY_MAX_EXPIRY_SECONDS = 7 * 24 * 60 * 60
 RELAY_RECENT_SECONDS = 24 * 60 * 60
 RELAY_CLAIM_LEASE_SECONDS = 60
+RELAY_BATCH_TURN_MAX_CHARS = 16_384
+RELAY_BATCH_TURN_MAX_BYTES = 65_536
+RELAY_BATCH_TURN_MAX_MESSAGES = 8
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
@@ -95,7 +98,7 @@ def parse_selector(value: str) -> tuple[str, str, str | None]:
 class RelayService:
     """Validated Relay boundary over the optional SQLite relay capability."""
 
-    def __init__(self, store: Any) -> None:
+    def __init__(self, store: Any, *, batch_candidate_enabled: bool = False) -> None:
         required = (
             "relay_turn",
             "relay_close_session",
@@ -110,6 +113,8 @@ class RelayService:
         if not all(callable(getattr(store, name, None)) for name in required):
             raise RelayUnavailableError("relay is not supported by the configured storage")
         self._store = store
+        # Only disposable fixtures opt in; production defaults to legacy Relay.
+        self._batch_candidate_enabled = batch_candidate_enabled
 
     @staticmethod
     def _scope(container_ref: str, actor_ref: str) -> tuple[str, str]:
@@ -139,11 +144,35 @@ class RelayService:
             actor_ref=actor,
             title=None if title is None else _opaque(title, "title", maximum=255),
             max_chars=max_chars,
-            max_messages=0,
+            max_messages=RELAY_BATCH_TURN_MAX_MESSAGES if self._batch_candidate_enabled else 0,
+            max_bytes=RELAY_BATCH_TURN_MAX_BYTES if self._batch_candidate_enabled else 0,
+            candidate_batch=self._batch_candidate_enabled,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
             now=now,
         )
 
+    def start_publication(
+        self,
+        *,
+        delivery_id: str,
+        claim_token: str,
+        envelope_digest: str,
+        container_ref: str,
+        actor_ref: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        container, actor = self._scope(container_ref, actor_ref)
+        operation = getattr(self._store, "relay_start_publication", None)
+        if not callable(operation):
+            raise RelayUnavailableError("batch publication is not supported by the configured storage")
+        return operation(
+            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
+            claim_token=_opaque(claim_token, "claim_token", maximum=128),
+            envelope_digest=_opaque(envelope_digest, "envelope_digest", maximum=64),
+            container_ref=container,
+            actor_ref=actor,
+            now=now,
+        )
     def close_session(self, **scope: Any) -> dict[str, Any]:
         container, actor = self._scope(scope["container_ref"], scope["actor_ref"])
         return self._store.relay_close_session(

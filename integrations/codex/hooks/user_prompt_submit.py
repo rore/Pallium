@@ -17,6 +17,7 @@ _spec.loader.exec_module(_common)  # type: ignore[union-attr]
 AGENT_REF = _common.AGENT_REF
 SOURCE_TYPE = _common.SOURCE_TYPE
 acknowledge_relay = _common.acknowledge_relay
+begin_relay_publication = _common.begin_relay_publication
 check_dedup = _common.check_dedup
 derive_actor_ref = _common.derive_actor_ref
 emit_context = _common.emit_context
@@ -48,8 +49,7 @@ def main() -> None:
 
         if not isinstance(prompt, str) or not prompt or prompt.startswith("/"):
             return
-        if session_id and check_dedup(prompt, session_id):
-            return
+        duplicate_prompt = bool(session_id and check_dedup(prompt, session_id))
         has_session = isinstance(session_id, str) and bool(session_id)
         container_ref = resolve_container_ref(cwd, session_id if has_session else None, True)
         actor_ref = derive_actor_ref()
@@ -92,11 +92,17 @@ def main() -> None:
             )
             deliveries = (relay_response or {}).get("deliveries") or []
             relay_output, rendered_deliveries = format_relay(deliveries)
+            rendered_deliveries = begin_relay_publication(
+                rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref,
+            )
+            relay_output, rendered_deliveries = format_relay(rendered_deliveries)
             if rendered_deliveries:
                 emit_context(relay_output, "UserPromptSubmit")
                 acknowledge_relay(rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref)
                 sys.exit(0)
 
+        if duplicate_prompt:
+            return
         separator = 2 if relay_output else 0
         memory_budget = min(2400, max(0, 4000 - len(relay_output) - separator))
         memory_output = format_injection(

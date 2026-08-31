@@ -10,6 +10,8 @@ from fastapi.responses import Response
 from api.schemas import (
     RelayAckRequest,
     RelayAckResponse,
+    RelayPublicationRequest,
+    RelayPublicationResponse,
     RelayMcpAckRequest,
     RelayMessageResponse,
     RelayReplyRequest,
@@ -421,6 +423,9 @@ def create_router(
             )
         )
 
+    @router.post("/relay/deliveries/publication", response_model=RelayPublicationResponse)
+    def relay_start_publication(request: RelayPublicationRequest):
+        return _relay_call(lambda: _relay().start_publication(**request.model_dump()))
     @router.post("/relay/deliveries/ack", response_model=RelayAckResponse)
     def relay_ack(request: RelayAckRequest):
         return _relay_call(lambda: _relay().acknowledge(**request.model_dump()))

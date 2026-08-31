@@ -203,6 +203,20 @@ class TestExplicitMemoryCreation:
         }
 class TestRelay:
     @pytest.mark.asyncio
+    async def test_receive_fences_candidate_before_returning_it(self, ctx: PalliumContext) -> None:
+        candidate = {
+            "delivery_id": "d-1", "claim_token": "claim", "envelope_digest": "a" * 64,
+            "protocol_version": "batch_v2_candidate", "payload": "handoff",
+        }
+        turn = _mock_response(json_data={"deliveries": [candidate], "remaining_count": 0, "has_more": False})
+        publication = _mock_response(json_data={"delivery_id": "d-1"})
+        with patch("httpx.AsyncClient.post", side_effect=[turn, publication]) as post:
+            result = await PalliumMcpClient(ctx).relay_receive("codex", "target")
+        assert result["deliveries"] == [candidate]
+        assert post.call_count == 2
+        assert post.call_args_list[1].args[0].endswith("/relay/deliveries/publication")
+        assert post.call_args_list[1].kwargs["json"]["claim_token"] == "claim"
+    @pytest.mark.asyncio
     async def test_recipients_forwards_unicode_runtime_and_scope(self, ctx: PalliumContext) -> None:
         response = _mock_response(json_data={"sessions": []})
         with patch("httpx.AsyncClient.get", return_value=response) as mock_get:
