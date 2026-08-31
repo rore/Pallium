@@ -56,6 +56,13 @@ Pre-edit classification is HIGH: `storage/sqlite_schema.py` requires persistence
 | E17 | Agent receives whole six-part batch and handles retry/status/reply | ordinary task with no coaching/external artifact | installed MCP + skill | isolated session/transcript; one bounded real-agent run |
 | E18 | Automatic exchange has no surrogate prompt/ping; control uses ordinary turn | task→result→review→remediation; wake disabled control | two installed Codex sessions | clean sessions/queue; real-agent G1/G2 evidence |
 
+### Runtime binding diagnosis (2026-08-31)
+
+Observed: this Codex desktop session's `pallium_relay_receive` returns `PALLIUM_THREAD_REF is not set`; the coordinating Codex task reports the same failure. The failure is not a successful Relay exchange and no delivery was claimed.
+
+Cause: the installed `mcp_servers.pallium` stdio configuration supplies static `PALLIUM_AGENT_REF = "codex"` but no `PALLIUM_THREAD_REF`. `app/mcp/context.py` correctly refuses model-supplied identity and can only fall back to `CODEX_THREAD_ID` or `CODEX_SESSION_ID`; neither is inherited by this MCP process. In contrast, the `UserPromptSubmit` hook receives `session_id` in Codex's hook payload and calls `/relay/turn` with it. Thus normal user-turn hook delivery can be session-bound while explicit MCP receive cannot be bound in this desktop host.
+
+Implication: this is a runtime/session-binding qualification failure, not a queue or admission result. Keep explicit MCP receive fail-closed; do not create a shared static ID, infer from the address book, call raw HTTP, or use an app ping as evidence of delivery. Any future fix must establish a runtime-owned per-turn MCP session binding and prove it through G1/G2 before wake or recovery behavior changes.
 ## Recovery
 
 Current branch: `codex/relay-batch-wake-implementation`; baseline: `4560f6befe87deba2e17be5e0bd9cd9b6d69cd2f`; unrelated `uv.lock` remains modified and unstaged. Next action after review: run only the three isolated G1-G3 probes, record their exact outcome here, and stop on the first unsupported hook/admission/headroom result.
