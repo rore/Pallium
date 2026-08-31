@@ -676,7 +676,10 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, trust_codex_requ
         if isinstance(result, dict) and "deliveries" in result:
             for d in result["deliveries"]:
                 d.pop("claim_token", None)  # receipt stays; claim_token is never exposed
-        return _json_text(result)
+        response = _json_text(result)
+        if max_chars and len(response) > max_chars:
+            return _json_text({"error": "relay response exceeds max_chars", "min_max_chars": len(response)})
+        return response
     @server.tool()
     async def pallium_relay_ack(
         delivery_id: str,

@@ -111,6 +111,45 @@ def _batch_envelope(
         actor_ref=actor_ref, generation=generation, in_reply_to=message.in_reply_to,
     )
 
+def _validate_batch_acceptance(
+    db, parts: list[str], *, recipients: list[RelaySessionRecord], sender_runtime: str,
+    sender_session_ref: str, message_id: str, container_ref: str, actor_ref: str,
+    in_reply_to: str | None,
+) -> None:
+    for target in recipients:
+        capability = db.execute(text("""
+            SELECT protocol_version, max_chars, max_bytes FROM relay_batch_capabilities
+            WHERE container_ref=:container_ref AND actor_ref=:actor_ref AND runtime=:runtime AND session_ref=:session_ref
+        """), {"container_ref": container_ref, "actor_ref": actor_ref, "runtime": target.runtime, "session_ref": target.session_ref}).mappings().one_or_none()
+        if capability is None or int(capability["protocol_version"]) != 2:
+            raise RelayConflictError("candidate Relay recipient is incompatible")
+        pending = db.execute(text("""
+            SELECT COUNT(*) FROM relay_deliveries AS delivery JOIN relay_messages AS message ON message.id=delivery.message_id
+            WHERE delivery.recipient_runtime=:runtime AND delivery.recipient_session_ref=:session_ref
+            AND message.container_ref=:container_ref AND message.actor_ref=:actor_ref
+            AND delivery.state IN ('pending', 'claimed', 'uncertain', 'blocked')
+        """), {"runtime": target.runtime, "session_ref": target.session_ref, "container_ref": container_ref, "actor_ref": actor_ref}).scalar_one()
+        if int(pending) >= 64:
+            raise RelayConflictError("candidate Relay recipient is at pending capacity")
+        envelope = _render_batch_envelope(
+            parts, sender_runtime=sender_runtime, sender_session_ref=sender_session_ref,
+            message_id=message_id, delivery_id="relay-delivery-" + "0" * 32,
+            recipient_session_ref=target.session_ref, recipient_runtime=target.runtime,
+            container_ref=container_ref, actor_ref=actor_ref, generation=1,
+            in_reply_to=in_reply_to,
+        )
+        if len(envelope) > int(capability["max_chars"]) or len(envelope.encode("utf-8")) > int(capability["max_bytes"]):
+            raise RelayConflictError("Relay batch exceeds recipient capability budget")
+
+def _reply_depth(db, message: RelayMessageRecord) -> int:
+    depth = 0
+    while message.in_reply_to is not None:
+        depth += 1
+        message = db.get(RelayMessageRecord, message.in_reply_to)
+        if message is None:
+            raise RelayConflictError("Relay reply ancestry is unavailable")
+    return depth
+
 def _delivery_receipt(claim_token: str | None) -> str | None:
     if claim_token is None:
         return None
@@ -168,7 +207,12 @@ class SQLiteRelayMixin:
     def _relay_delivery_view(db, delivery: RelayDeliveryRecord, message: RelayMessageRecord) -> dict[str, Any]:
         claim = _candidate_claim(db, delivery.id)
         if claim is None:
-            return _delivery_view(delivery, message)
+            view = _delivery_view(delivery, message)
+            try:
+                view["payload"] = "".join(_message_parts(db, message))
+            except RelayCodecError:
+                view["payload"] = "[invalid Relay batch]"
+            return view
         try:
             payload = "".join(_message_parts(db, message))
         except RelayCodecError:
@@ -334,14 +378,17 @@ class SQLiteRelayMixin:
                 .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
             ).all()
             eligible_rows: list[tuple[RelayDeliveryRecord, RelayMessageRecord]] = []
-            for delivery, message in rows:
+            barrier_remaining = 0
+            for index, (delivery, message) in enumerate(rows):
                 if _message_format(db, message) != "text_v1":
                     # Old readers cannot safely render encoded parts, even before first claim.
+                    barrier_remaining = len(rows) - index
                     break
-                if self._reconcile_delivery(db, delivery, message, current) is not None:
-                    # Candidate ownership is a FIFO barrier for every legacy entry point.
+                if self._reconcile_delivery(db, delivery, message, current) is not None or delivery.state != "pending":
+                    # Existing ownership is a FIFO barrier for every legacy entry point.
+                    barrier_remaining = len(rows) - index
                     break
-                if delivery.state != "pending" or not _render_safe(message.payload):
+                if not _render_safe(message.payload):
                     continue
                 eligible_rows.append((delivery, message))
             selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, int]] = []
@@ -383,8 +430,8 @@ class SQLiteRelayMixin:
             return {
                 "session": _session_view(registered, current, 24 * 60 * 60),
                 "deliveries": claimed,
-                "has_more": len(eligible_rows) > len(claimed),
-                "remaining_count": len(eligible_rows) - len(claimed),
+                "has_more": len(eligible_rows) - len(claimed) + barrier_remaining > 0,
+                "remaining_count": len(eligible_rows) - len(claimed) + barrier_remaining,
             }
 
     def _relay_turn_batch_candidate(
@@ -399,6 +446,11 @@ class SQLiteRelayMixin:
             raise RelayConflictError("batch candidate requires the explicit B2 migration") from exc
         if enabled != 1:
             raise RelayConflictError("batch candidate requires the explicit B2 migration")
+        db.execute(text("""
+            INSERT INTO relay_batch_capabilities(container_ref, actor_ref, runtime, session_ref, protocol_version, max_chars, max_bytes)
+            VALUES (:container_ref, :actor_ref, :runtime, :session_ref, 2, 16384, 65536)
+            ON CONFLICT(container_ref, actor_ref, runtime, session_ref) DO UPDATE SET protocol_version=2, max_chars=16384, max_bytes=65536
+        """), {"container_ref": container_ref, "actor_ref": actor_ref, "runtime": runtime, "session_ref": session_ref})
         rows = db.execute(
             select(RelayDeliveryRecord, RelayMessageRecord)
             .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
@@ -595,6 +647,7 @@ class SQLiteRelayMixin:
         broadcast_recent_seconds: int,
         broadcast_max_recipients: int,
         now: datetime | None = None,
+        candidate_batch: bool = False,
     ) -> dict[str, Any]:
         current = _now(now)
         with self._begin_immediate() as db:
@@ -631,6 +684,8 @@ class SQLiteRelayMixin:
                 parent = db.get(RelayMessageRecord, in_reply_to)
                 if parent is None or parent.container_ref != container_ref or parent.actor_ref != actor_ref:
                     raise RelayNotFoundError("relay entity not found in the requested scope")
+                if _reply_depth(db, parent) >= 4:
+                    raise RelayConflictError("Relay reply depth exceeds 4")
 
             existing_message = db.get(RelayMessageRecord, message_id)
             if existing_message is not None:
@@ -681,21 +736,15 @@ class SQLiteRelayMixin:
                     f"recipient resolves to more than {broadcast_max_recipients} sessions"
                 )
 
-            if payload_format == "parts_v1":
+            if candidate_batch:
                 try:
-                    parts = decode_parts(payload)
+                    _validate_batch_acceptance(
+                        db, (decode_parts(payload) if payload_format == "parts_v1" else [payload]), recipients=recipients, sender_runtime=sender_runtime,
+                        sender_session_ref=sender_session_ref, message_id=message_id,
+                        container_ref=container_ref, actor_ref=actor_ref, in_reply_to=in_reply_to,
+                    )
                 except RelayCodecError as exc:
                     raise RelayConflictError("invalid multipart Relay payload") from exc
-                for target in recipients:
-                    envelope = _render_batch_envelope(
-                        parts, sender_runtime=sender_runtime, sender_session_ref=sender_session_ref,
-                        message_id=message_id, delivery_id="relay-delivery-" + "0" * 32,
-                        recipient_session_ref=target.session_ref, recipient_runtime=target.runtime,
-                        container_ref=container_ref, actor_ref=actor_ref, generation=1,
-                        in_reply_to=in_reply_to,
-                    )
-                    if len(envelope) > 16_384 or len(envelope.encode("utf-8")) > 65_536:
-                        raise RelayConflictError("Relay batch exceeds the final rendered envelope budget")
             message = RelayMessageRecord(
                 id=message_id,
                 sender_runtime=sender_runtime,
@@ -752,6 +801,7 @@ class SQLiteRelayMixin:
         actor_ref: str,
         expires_in_seconds: int,
         now: datetime | None = None,
+        candidate_batch: bool = False,
     ) -> dict[str, Any]:
         """Validate, create reply, and optionally mark delivery delivered — all in one transaction.
 
@@ -804,6 +854,8 @@ class SQLiteRelayMixin:
             recipient_runtime = message.sender_runtime
             recipient_session_ref = message.sender_session_ref
             recipient_selector = f"{recipient_runtime}:{recipient_session_ref}"
+            if _reply_depth(db, message) >= 4:
+                raise RelayConflictError("Relay reply depth exceeds 4")
 
             if request_id is not None:
                 prior = self._request_row(
@@ -840,6 +892,15 @@ class SQLiteRelayMixin:
             ).scalar_one_or_none()
             if recipient_session is None:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
+            if candidate_batch:
+                try:
+                    _validate_batch_acceptance(
+                        db, (decode_parts(payload) if payload_format == "parts_v1" else [payload]), recipients=[recipient_session], sender_runtime=sender_runtime,
+                        sender_session_ref=sender_session_ref, message_id=reply_message_id,
+                        container_ref=container_ref, actor_ref=actor_ref, in_reply_to=message.id,
+                    )
+                except RelayCodecError as exc:
+                    raise RelayConflictError("invalid multipart Relay payload") from exc
 
             reply_msg = RelayMessageRecord(
                 id=reply_message_id,

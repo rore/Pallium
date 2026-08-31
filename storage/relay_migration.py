@@ -113,6 +113,14 @@ def migrate_relay_batch_claims(connection, *, fail_at: str | None = None) -> Non
                 connection.execute(text(f"ALTER TABLE relay_batch_claims ADD COLUMN {column} {definition}"))
         if fail_at == "ddl":
             raise RuntimeError("injected B2 ddl fault")
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS relay_batch_capabilities (
+                container_ref TEXT NOT NULL, actor_ref TEXT NOT NULL, runtime TEXT NOT NULL,
+                session_ref TEXT NOT NULL, protocol_version INTEGER NOT NULL,
+                max_chars INTEGER NOT NULL, max_bytes INTEGER NOT NULL,
+                PRIMARY KEY (container_ref, actor_ref, runtime, session_ref)
+            )
+        """))
         connection.execute(text("CREATE TABLE IF NOT EXISTS relay_batch_protocol (version INTEGER PRIMARY KEY)"))
         connection.execute(text("INSERT OR IGNORE INTO relay_batch_protocol(version) VALUES (2)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_relay_batch_claims_publication ON relay_batch_claims(publication_started_at, claim_generation)"))

@@ -212,11 +212,29 @@ class TestRelay:
         publication = _mock_response(json_data={"delivery_id": "d-1"})
         with patch("httpx.AsyncClient.post", side_effect=[turn, publication]) as post:
             result = await PalliumMcpClient(ctx).relay_receive("codex", "target")
-        assert result["deliveries"] == [candidate]
+        assert result["deliveries"][0]["envelope_digest"] == candidate["envelope_digest"]
+        assert "claim_token" not in result["deliveries"][0]
+        assert "payload" not in result["deliveries"][0]
         assert "payload" not in result["deliveries"][0]
         assert post.call_count == 2
         assert post.call_args_list[1].args[0].endswith("/relay/deliveries/publication")
         assert post.call_args_list[1].kwargs["json"]["claim_token"] == "claim"
+    @pytest.mark.asyncio
+    async def test_receive_reserves_final_json_budget_before_publication(self, ctx: PalliumContext) -> None:
+        candidate = {
+            "delivery_id": "d-1", "message_id": "m-1", "claim_token": "claim", "receipt": "receipt",
+            "envelope_digest": "a" * 64, "claim_generation": 1,
+            "protocol_version": "batch_v2_candidate", "payload": "hello", "envelope": "hello" * 80,
+        }
+        turn = _mock_response(json_data={"session": {"runtime": "codex", "session_ref": "target"}, "deliveries": [candidate], "remaining_count": 0, "has_more": False})
+        publication = _mock_response(json_data={"delivery_id": "d-1"})
+        with patch("httpx.AsyncClient.post", side_effect=[turn, publication]) as post:
+            result = await PalliumMcpClient(ctx).relay_receive("codex", "target", max_chars=1000)
+        assert len(json.dumps(result, ensure_ascii=False, separators=(",", ":"))) <= 1000
+        assert post.call_args_list[0].kwargs["json"]["max_chars"] == 488
+        assert "claim_token" not in result["deliveries"][0]
+        assert "payload" not in result["deliveries"][0]
+
     @pytest.mark.asyncio
     async def test_recipients_forwards_unicode_runtime_and_scope(self, ctx: PalliumContext) -> None:
         response = _mock_response(json_data={"sessions": []})

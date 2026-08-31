@@ -257,6 +257,33 @@ def test_legacy_turn_blocks_unclaimed_parts_without_raw_exposure(client: TestCli
     assert "[\"one\",\"two\"]" not in status["payload"]
 
 
+def test_legacy_barrier_status_projects_parts_and_reports_pending_backlog(client: TestClient, batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    sent = _send_parts(batch_client, "sender", "codex:target", ["one", "two"], "preclaim-status")
+    legacy = _turn(client, "codex", "target")
+    assert legacy["deliveries"] == []
+    assert legacy["has_more"] is True
+    assert legacy["remaining_count"] == 1
+    status = client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()
+    assert status["deliveries"][0]["payload"] == "onetwo"
+    assert "[\"one\",\"two\"]" not in status["deliveries"][0]["payload"]
+
+
+def test_candidate_rejects_oversized_multipart_reply_before_creation(batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    _send_parts(batch_client, "sender", "codex:target", ["parent"], "reply-parent")
+    parent = _turn(batch_client, "codex", "target")["deliveries"][0]
+    assert _publication(batch_client, parent).status_code == 200
+    assert _admit(batch_client, parent).status_code == 200
+    reply = batch_client.post("/relay/replies", json={
+        "delivery_id": parent["delivery_id"], "receipt": parent["receipt"],
+        "parts": ["a\n" * 749 + "a"] * 8, **SCOPE,
+    })
+    assert reply.status_code == 409
+    assert _turn(batch_client, "claude-code", "sender")["deliveries"] == []
+
 def test_candidate_admission_is_idempotent_and_late_witness_resolves_uncertain(batch_client: TestClient) -> None:
     _turn(batch_client, "claude-code", "sender")
     _turn(batch_client, "codex", "target")
@@ -277,6 +304,42 @@ def test_candidate_admission_is_idempotent_and_late_witness_resolves_uncertain(b
     status = batch_client.get("/relay/messages/late-witness", params=SCOPE).json()
     assert status["deliveries"][0]["state"] == "delivered"
 
+
+def test_candidate_rejects_mixed_fanout_and_pending_capacity(client: TestClient, batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "candidate")
+    _turn(client, "codex", "legacy")
+    mixed = batch_client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender", "recipient": "codex",
+        "payload": "mixed", "message_id": "mixed", **SCOPE,
+    })
+    assert mixed.status_code == 409
+    for index in range(64):
+        _send(batch_client, "sender", "codex:candidate", f"queued {index}", f"queued-{index}")
+    full = batch_client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender", "recipient": "codex:candidate",
+        "payload": "overflow", "message_id": "queued-overflow", **SCOPE,
+    })
+    assert full.status_code == 409
+
+
+def test_candidate_rejects_reply_chains_deeper_than_four(batch_client: TestClient) -> None:
+    _turn(batch_client, "claude-code", "sender")
+    _turn(batch_client, "codex", "target")
+    parent_id = "depth-0"
+    _send(batch_client, "sender", "codex:target", "root", parent_id)
+    for depth in range(1, 5):
+        response = batch_client.post("/relay/messages", json={
+            "sender_runtime": "claude-code", "sender_session_ref": "sender", "recipient": "codex:target",
+            "payload": f"depth {depth}", "message_id": f"depth-{depth}", "in_reply_to": parent_id, **SCOPE,
+        })
+        assert response.status_code == 200, response.text
+        parent_id = f"depth-{depth}"
+    rejected = batch_client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender", "recipient": "codex:target",
+        "payload": "too deep", "message_id": "depth-5", "in_reply_to": parent_id, **SCOPE,
+    })
+    assert rejected.status_code == 409
 
 def test_candidate_rejects_permanently_oversized_escaped_parts_before_acceptance(batch_client: TestClient) -> None:
     _turn(batch_client, "claude-code", "sender")

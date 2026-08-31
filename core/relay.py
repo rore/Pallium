@@ -306,6 +306,7 @@ class RelayService:
             in_reply_to=None if in_reply_to is None else _opaque(in_reply_to, "in_reply_to", maximum=128),
             broadcast_recent_seconds=RELAY_RECENT_SECONDS,
             broadcast_max_recipients=RELAY_BROADCAST_MAX_RECIPIENTS,
+            candidate_batch=self._batch_candidate_enabled,
             now=now,
         )
     def reply(
@@ -355,6 +356,7 @@ class RelayService:
             container_ref=container,
             actor_ref=actor,
             expires_in_seconds=expires_in_seconds,
+            candidate_batch=self._batch_candidate_enabled,
             now=now,
         )
     def message_status(self, *, message_id: str, container_ref: str, actor_ref: str) -> dict[str, Any]:
