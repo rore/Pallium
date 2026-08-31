@@ -223,3 +223,39 @@ expiry admission timing and safe negative reconciliation contract.
 Review default max_chars=0/above-ceiling final MCP budgets, legacy compatibility
 of unconditional depth limits, and the remaining previously listed matrix items.
 No public activation or live-data mutation was performed by this review.
+
+## Consolidated review — cae7016
+
+Independent combined B1/B2/MCP/hook run: 276 passed, four existing warnings.
+Accept the corrections for expired capacity, published/uncertain retention,
+publication-failure FIFO, file-backed reopen, real independent-provider contention
+and legacy depth compatibility. No live activation is approved.
+
+Three bounded contract gaps remain before B2 closure:
+
+1. Actual admission and observation are distinct. Current admission_timing compares
+   now with expiry, falsely classifying a late observation as late admission. Keep
+   observed_at separate from verified admitted_at; use unknown timing without proof.
+   Late observation of pre-expiry admission must not be a violation. Validate
+   evidence against the attempt/publication and make retries immutable.
+2. Candidate MCP output needs the declared final char/byte ceiling with default zero
+   or oversized caller budgets. Reproduction: eight sends, each one 1300-character
+   part; default real MCP receive returns 17,119 JSON characters after publication.
+   Preserve legacy zero semantics but do not let candidate traffic bypass bounds.
+   Plan final projection before publication; preserve FIFO/progress and never drop
+   already-published work because a later serialization guard rejects it.
+3. Finish the fixture-only safe negative reconciliation contract: verified
+   non-admission AND impossible late publication are both required to release the
+   same delivery with generation fencing. Ambiguous outcomes remain uncertain.
+   Wrong/stale/repeated evidence, expiry and restart must have surface regressions.
+
+Developer received these through Relay; continuation is approved, not a fresh plan
+approval gate. Return one closure checkpoint with actual hook/MCP output assertions
+and an accurate E-matrix separating implemented, qualification-only and incomplete.
+G2/G3 and real runtime proof remain release gates; no migration/install/live changes.
+
+Coordination observation: native queue notifications during a long busy developer
+turn remained queued while its progress reports reached the manager. Confirmed
+Relay status was pending until a notification-only app message created the next
+receipt opportunity. All substantive instructions stayed in Relay; MCP recovery
+was used only without hook injection. This is not evidence of automatic wake.
