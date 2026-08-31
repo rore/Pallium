@@ -119,3 +119,11 @@ Architect Relay review specifies the local trust assumption precisely: the confi
 ### Recovery update
 
 Next action: obtain one focused external architecture review of the scoped plan, record its verdict, and return it through Relay. Do not implement, reload, claim, mutate identity/configuration, restart a service, or substitute an app delegation ping for native queue activation.
+### External architecture review (2026-08-31)
+
+Conditional approve of the scoped plan. Acceptance details for any implementation are now explicit:
+
+1. Request metadata is caller-controlled MCP `_meta`; local-stdio acceptance rests only on the documented operational assumption that the configured Codex parent exclusively owns that pipe. The code and tests must not claim protocol-level provenance authentication. Generic `create_server()` and every network transport keep an immutable metadata-trust value of `False`, regardless of `PALLIUM_MCP_TRANSPORT` or request metadata.
+2. The conflict algorithm must be defined and tested before coding. Any present-but-invalid or one-sided metadata fails closed with zero client call. Valid metadata requires matching thread/session IDs and a valid turn ID. Each configured/runtime identity candidate (`PALLIUM_THREAD_REF`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID`) must agree with the request identity; any disagreement fails closed. Do not compare only `resolve_context().thread_ref`, because its current priority would hide contradictory environment values.
+
+The requested hidden `Context`, request-local closure state, no-global-mutation rule, and unchanged claim/receipt/ACK/reply handling are otherwise approved. The next step is manager acceptance of this review through Relay; implementation remains blocked.
