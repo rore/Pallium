@@ -1,7 +1,7 @@
 <!-- agent-workflow:start -->
 **Outcome:** Codex-to-Codex Relay exchanges can submit and deliver bounded whole batches through the regular-turn path, with notification-only wake only after G1-G3 evidence proves it safe.
 **Target:** Pallium Relay milestone 1.
-**Scope:** Review-only plan for a narrow request-local Codex Relay receive-identity slice in `app/mcp/context.py`, `app/mcp/server.py`, `tests/test_mcp_context.py`, `tests/test_mcp_server.py`, `tests/test_relay_mcp_tools.py`, and `integrations/codex/skills/pallium-memory/SKILL.md`. Implementation remains blocked pending focused external architecture review. Any later implementation may bind identity only from a hidden FastMCP request `Context` when `main()` explicitly constructs the server for local Codex stdio; default factories and network mounts remain disabled regardless of environment. No claims, ACK/reply changes, reload, service/config change, or G1-G3/batch work is included.
+**Scope:** Implement only the narrow request-local Codex Relay receive-identity fix in `app/mcp/context.py`, `app/mcp/server.py`, `tests/test_mcp_context.py`, `tests/test_mcp_server.py`, `tests/test_relay_mcp_tools.py`, scoped MCP lifecycle E2E, and relevant MCP/usage guidance. The immutable per-server metadata-trust flag defaults false and is enabled only by `main()`'s actual local Codex stdio bootstrap. No claim/ACK/reply semantic change, installed reload, service/config change, batching, coordinator, or G1-G3 work is included.
 **Constraints:** Preserve unrelated `uv.lock`. No live trigger, production edit, service/config change, managed runtime, Claude/OpenCode wake adapter, second injection path, or redesign before this checkpoint is reviewed. Runtime adapters stay out of core; no raw claim token/HTTP guidance.
 **Completion criteria:** Each applicable E01-E18 case drives its HTTP, MCP, or hook surface and observes status plus integration output; G1-G3 qualify the installed Codex runtime before wake is enabled; the no-ping exchange and wake-disabled regular-turn control have recorded evidence.
 **Risk:** High
@@ -11,10 +11,10 @@
 **Material assumptions:** (1) A queued turn on the installed Codex runtime reaches the same pre-model claim/render hook as a normal/busy-boundary turn; G1 disproves this and keeps wake passive. (2) The runtime can witness full-envelope context admission and fence stale publishers; G2 disproves this and retains visible uncertainty without automatic replay. (3) The bounded batch envelope fits the real model context while draining a 64-delivery backlog; G3 disproves this and lowers/rejects limits before acceptance. (4) Pre-edit redline classification has no boundary violation; any such result stops implementation rather than being worked around.
 **Plan:** (1) Review this preflight and run the smallest coordinated G1/G2/G3 qualification with no production mutation. (2) If a gate fails, record the evidence and return the adapter/admission design to review; do not implement a workaround channel. (3) If all gates pass, obtain API, persistence, architecture/runtime, and security review checkpoints before guarded edits. (4) Implement B's batch/passive path and its parameterized E01-E08/E10-E16 E2E coverage before C's notification coordinator; keep both wake and ordinary turns on one claim/render/admit path. (5) Implement C only after B passes; run D's installed-runtime, no-ping qualification and release/rollback checks. Reclassify on scope change.
 **Verification plan:** G1 queued-turn hook and busy-boundary execution → captured installed-Codex hook transcript and status. G2 whole-envelope admission plus stale-publication fencing → full-envelope/digest witness with controlled interruption. G3 bounded 64-delivery drain headroom → installed-runtime size/context measurement. E01-E16 → parameterized HTTP/MCP/hook E2E cases on a fresh SQLite database with controlled clock/transport. E17-E18 → one bounded installed two-Codex run plus a wake-disabled regular-turn control, recording runtime/version/OS, captured full envelope, status, and cleanup. No test treats queue success, sender markers, model acknowledgement, or missing history as context-admission proof.
-**Plan review:** The coordinator authorized the diagnostic slice and then the following plan through Relay; the user directly approved all architect instructions. Two live task-local diagnostics matched their runtime-owned hashes. Before any receive-binding edit, one focused external architecture review must evaluate the explicit-local-stdio construction boundary, provenance assumption, fail-closed conflict rules, and fallback matrix. The prior G2/G3 review remains separate; no batch gate is opened.
+**Plan review:** The coordinator accepted the external review conditions through Relay on 2026-08-31; the user directly approved all architect instructions. Implement after documenting the conflict truth table and adding failing regressions, then return one consolidated commit/diff/test review. The local Codex parent-owns-stdio-pipe assumption is operational only, not cryptographic provenance. The prior G2/G3 review remains separate; no batch gate is opened.
 **Approvals:** Approved by user 2026-08-31: "yes"; Approved by user 2026-08-31: "i approve everything the architect tells you to do"
 **Exceptions:** —
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Scoped receive-identity plan — review only
@@ -23,6 +23,17 @@
 2. Reuse the validated metadata parser for a request-local receive context. Inject hidden FastMCP `Context` only into `pallium_relay_receive`; on the trusted path, require valid matching `thread_id` and `session_id` plus a valid `turn_id`. Present-but-conflicting metadata or environment identity fails closed with no client call. Missing metadata may retain the current validated runtime-owned environment fallback; other runtimes retain their existing behavior.
 3. Keep all receive/receipt/ACK/reply semantics unchanged after a session reference is selected. Do not expose identity metadata, add model arguments, mutate environment, or change service/configuration.
 4. Add focused MCP and tool-layer regressions for trusted concurrent A/B request isolation, malformed/conflicting/no-call, hidden-schema/model-argument rejection, network-forgery denial even with stdio-looking environment, `main()` stdio bootstrap wiring, and unchanged legacy environment/receipt lifecycle behavior. Update Codex Relay guidance to state the integration-owned identity boundary and fail-closed behavior.
+### Conflict truth table
+
+| Request metadata | Environment identity candidates | Trust/runtime | Receive identity / observable result |
+| --- | --- | --- | --- |
+| absent | one valid resolved legacy candidate | any legacy/non-Codex, or trusted Codex | preserve current environment-backed receive |
+| absent | no candidate | trusted Codex | current `PALLIUM_THREAD_REF` fail-closed result; no client call |
+| valid equal thread/session + valid turn | none | trusted Codex stdio | use request-local session reference |
+| valid equal thread/session + valid turn | all present candidates equal it | trusted Codex stdio | use request-local session reference |
+| present invalid, null, one-sided, malformed, over-limit, or conflicting | any | trusted Codex stdio | fail closed; no fallback or client call |
+| valid request metadata | any disagreeing env candidate | trusted Codex stdio | fail closed; no client call |
+| any request metadata | any | untrusted/default/network server or non-Codex | request metadata ignored; preserve legacy behavior |
 ## Implementation
 
 - 2026-08-31: Created `codex/relay-batch-wake-implementation` from `4560f6b` in the existing checkout. No production, service, configuration, or test changes were made. Awaiting review of this preflight and the G1-G3 protocol.
@@ -127,3 +138,12 @@ Conditional approve of the scoped plan. Acceptance details for any implementatio
 2. The conflict algorithm must be defined and tested before coding. Any present-but-invalid or one-sided metadata fails closed with zero client call. Valid metadata requires matching thread/session IDs and a valid turn ID. Each configured/runtime identity candidate (`PALLIUM_THREAD_REF`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID`) must agree with the request identity; any disagreement fails closed. Do not compare only `resolve_context().thread_ref`, because its current priority would hide contradictory environment values.
 
 The requested hidden `Context`, request-local closure state, no-global-mutation rule, and unchanged claim/receipt/ACK/reply handling are otherwise approved. The next step is manager acceptance of this review through Relay; implementation remains blocked.
+### Receive-identity implementation (2026-08-31)
+
+Implemented the accepted bounded slice. `create_server()` now has immutable `trust_codex_request_metadata=False`; only `main()` sets it true for the actual Codex stdio bootstrap. `pallium_relay_receive` receives a hidden FastMCP `Context` only on that trusted server and uses the same bounded parser as the diagnostic. Complete matching request thread/session plus turn identity is request-local; all present runtime/environment candidates must agree. Invalid, null, one-sided, malformed, oversized, conflicting, or disagreeing metadata fails closed before any client call. Absent metadata retains legacy integration-owned environment resolution; non-Codex/default/network paths ignore request metadata. Claim token stripping, receipt/ACK/reply semantics, service/configuration, installed reload, batching, and coordinator behavior are unchanged.
+
+Verification: `.venv\\Scripts\\python.exe -m pytest tests/test_mcp_context.py tests/test_mcp_server.py tests/test_relay_mcp_tools.py tests/test_relay_mcp_lifecycle.py -q` → **119 passed**, with four pre-existing FastMCP/Pydantic forward-reference warnings. `python -m compileall -q app/mcp/context.py app/mcp/server.py` and `git diff --check` passed. Coverage includes the truth table, direct stdio bootstrap, network-forgery denial despite stdio-looking environment, hidden Context schema, real in-memory MCP concurrent two-session receive plus ACK against disposable HTTP/storage, malformed/no-call, and unchanged lifecycle behavior.
+
+### Recovery update — implementation review
+
+Next action: return one consolidated commit/diff/test summary to the architect and await review. Do not reload installed MCP, change configuration/service, make a production claim, or continue batch/G1-G3 work from this slice.

@@ -13,7 +13,7 @@ pytest.importorskip("mcp", reason="mcp[cli] not installed")
 
 from mcp.shared.memory import create_connected_server_and_client_session
 
-from app.mcp.server import _bounded_expansion, _compact_history, _json_text, _trim_update_details, create_server
+from app.mcp.server import _bounded_expansion, _compact_history, _json_text, _trim_update_details, create_server, main as mcp_main
 
 
 class TestSelfGating:
@@ -896,3 +896,15 @@ async def test_relay_status_diagnostic_uses_request_local_metadata(monkeypatch: 
     receive_client.assert_not_awaited()
     ack_client.assert_not_awaited()
     reply_client.assert_not_awaited()
+@pytest.mark.parametrize(
+    ("transport", "agent", "trusted"),
+    [("stdio", "codex", True), ("streamable-http", "codex", False), ("stdio", "claude-code", False)],
+)
+def test_main_sets_request_metadata_trust_only_for_codex_stdio(monkeypatch, transport, agent, trusted):
+    monkeypatch.setenv("PALLIUM_MCP_TRANSPORT", transport)
+    monkeypatch.setenv("PALLIUM_AGENT_REF", agent)
+    server = MagicMock()
+    with patch("app.mcp.server.create_server", return_value=server) as create:
+        mcp_main()
+    assert create.call_args.kwargs["trust_codex_request_metadata"] is trusted
+    server.run.assert_called_once_with(transport=transport)

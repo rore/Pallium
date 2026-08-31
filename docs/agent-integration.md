@@ -386,6 +386,9 @@ agent must pass scope parameters explicitly on each tool call. The
 integrating runtime should include `container_ref` in the injected memory
 header so the agent can read and pass it.
 
+### Relay receive identity
+
+Relay receive never accepts a session identifier from model arguments. In the default and network MCP server configurations, request metadata cannot supply Relay identity. A configured local Codex stdio bootstrap may use its request-local integration metadata under the operational assumption that the configured Codex parent owns that pipe; this is not cryptographic attestation and does not protect a compromised local host. Missing, malformed, conflicting, or environment-disagreeing metadata fails closed; normal legacy integration-owned environment identity remains the fallback only when metadata is genuinely absent.
 ### Registration
 
 For Claude Code (standalone mode):

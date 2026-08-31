@@ -13,7 +13,7 @@ from typing import Literal
 from mcp.server.fastmcp import Context
 
 from app.mcp.client import PalliumMcpClient
-from app.mcp.context import codex_request_metadata_status, resolve_context
+from app.mcp.context import codex_request_metadata_status, codex_request_receive_session_ref, resolve_context
 from retrieval.common import build_excerpt
 
 
@@ -285,7 +285,7 @@ NOT_CONFIGURED_MSG = (
 )
 
 
-def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
+def create_server(*, host: str = "127.0.0.1", port: int = 8001, trust_codex_request_metadata: bool = False) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
     from mcp.server.fastmcp import FastMCP
     # stateless_http: every Pallium MCP tool is a single-shot RPC, so we don't
@@ -635,13 +635,25 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     @server.tool()
     async def pallium_relay_receive(
         max_chars: int = 0,
+        context: Context = None,
     ) -> str:
-        """Claim and return pending Relay deliveries for this session. Uses only integration-injected identity (PALLIUM_AGENT_REF as runtime, PALLIUM_THREAD_REF as session_ref) — no model-supplied identity accepted. Call pallium_relay_ack(delivery_id, receipt) after processing each delivery, or pallium_relay_reply to reply and ACK atomically. Unclaimed deliveries are redelivered after lease expiry."""
+        """Claim and return pending Relay deliveries for this session. Uses only integration-owned identity; trusted request metadata is local-Codex-stdio only. Call pallium_relay_ack(delivery_id, receipt) after processing each delivery, or pallium_relay_reply to reply and ACK atomically. Unclaimed deliveries are redelivered after lease expiry."""
         ctx = resolve_context()
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         runtime = ctx.agent_ref
         session_ref = ctx.thread_ref
+        if trust_codex_request_metadata and runtime == "codex":
+            try:
+                meta = context.request_context.meta
+            except ValueError:
+                meta = None
+            request_session_ref, blocked = codex_request_receive_session_ref(
+                getattr(meta, "model_extra", None)
+            )
+            if blocked:
+                return "Error: Codex request identity is invalid or conflicts with runtime identity."
+            session_ref = request_session_ref or session_ref
         if not runtime:
             return "Error: PALLIUM_AGENT_REF is not set. Relay receive requires integration-injected runtime identity."
         if not session_ref:
@@ -651,7 +663,6 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             for d in result["deliveries"]:
                 d.pop("claim_token", None)  # receipt stays; claim_token is never exposed
         return _json_text(result)
-
     @server.tool()
     async def pallium_relay_ack(
         delivery_id: str,
@@ -878,7 +889,11 @@ def main() -> None:
     transport: Literal["stdio", "sse", "streamable-http"] = transport_val  # type: ignore[assignment]
     host = os.environ.get("FASTMCP_HOST", "127.0.0.1")
     port = int(os.environ.get("FASTMCP_PORT", "8001"))
-    server = create_server(host=host, port=port)
+    server = create_server(
+        host=host,
+        port=port,
+        trust_codex_request_metadata=(transport == "stdio" and os.environ.get("PALLIUM_AGENT_REF") == "codex"),
+    )
     server.run(transport=transport)
 
 

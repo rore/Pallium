@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from app.mcp.context import PalliumContext, _canonicalize_container_ref, codex_request_metadata_status, resolve_context
+from app.mcp.context import PalliumContext, _canonicalize_container_ref, codex_request_metadata_status, codex_request_receive_session_ref, resolve_context
 
 
 class TestResolveContext:
@@ -206,3 +206,19 @@ def test_codex_request_metadata_status_rejects_deep_or_oversized_json(raw: str) 
     assert codex_request_metadata_status({"x-codex-turn-metadata": raw}) == {
         "source": "codex_turn_metadata", "shape": "invalid"
     }
+@pytest.mark.parametrize(
+    ("metadata", "env", "expected", "blocked"),
+    [
+        (None, {}, None, False),
+        ({"x-codex-turn-metadata": {"thread_id": "s", "session_id": "s", "turn_id": "t"}}, {}, "s", False),
+        ({"x-codex-turn-metadata": {"thread_id": "s", "session_id": "s", "turn_id": "t"}}, {"PALLIUM_THREAD_REF": "s", "CODEX_THREAD_ID": "s", "CODEX_SESSION_ID": "s"}, "s", False),
+        ({"x-codex-turn-metadata": {"thread_id": "s", "session_id": "s", "turn_id": "t"}}, {"PALLIUM_THREAD_REF": "other"}, None, True),
+        ({"x-codex-turn-metadata": {"thread_id": "s", "session_id": "s", "turn_id": "t"}}, {"CODEX_THREAD_ID": "other"}, None, True),
+        ({"x-codex-turn-metadata": {"thread_id": "s", "session_id": "s", "turn_id": "t"}}, {"CODEX_SESSION_ID": "other"}, None, True),
+        ({"x-codex-turn-metadata": {"thread_id": "s", "turn_id": "t"}}, {}, None, True),
+        ({"x-codex-turn-metadata": {"thread_id": "s", "session_id": "x", "turn_id": "t"}}, {}, None, True),
+        ({"x-codex-turn-metadata": {"thread_id": None, "session_id": "s", "turn_id": "t"}}, {}, None, True),
+    ],
+)
+def test_codex_request_receive_session_ref_requires_complete_agreeing_identity(metadata, env, expected, blocked) -> None:
+    assert codex_request_receive_session_ref(metadata, env) == (expected, blocked)

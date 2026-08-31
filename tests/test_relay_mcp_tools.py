@@ -9,6 +9,7 @@ Tests the FastMCP tool wrapper behaviors that HTTP-layer tests cannot reach:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -16,6 +17,8 @@ import httpx
 import pytest
 
 pytest.importorskip("mcp", reason="mcp[cli] not installed")
+
+from mcp.shared.memory import create_connected_server_and_client_session
 
 from app.config import AppConfig
 from app.main import create_app
@@ -320,3 +323,55 @@ class TestFullLifecycle:
         assert len(hook_claim["deliveries"]) == 1
         mcp_after_hook, _ = await create_server().call_tool("pallium_relay_receive", {})
         assert json.loads(mcp_after_hook[0].text)["deliveries"] == []
+@pytest.mark.asyncio
+async def test_trusted_codex_request_metadata_receives_per_session_and_acks(monkeypatch, asgi_post):
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    bind_asgi_post(monkeypatch, asgi_post)
+    for session in ("meta-a", "meta-b", "sender"):
+        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": session, **_SCOPE})
+    for session, payload in (("meta-a", "only-a"), ("meta-b", "only-b")):
+        await asgi_post("/relay/messages", {
+            "sender_runtime": "codex", "sender_session_ref": "sender", "recipient": f"codex:{session}",
+            "payload": payload, **_SCOPE,
+        })
+    async with create_connected_server_and_client_session(create_server(trust_codex_request_metadata=True)) as client:
+        a, b = await asyncio.gather(
+            client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-a", "session_id": "meta-a", "turn_id": "turn-a"})}),
+            client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-b", "session_id": "meta-b", "turn_id": "turn-b"})}),
+        )
+        delivery = json.loads(a.content[0].text)["deliveries"][0]
+        ack = await client.call_tool("pallium_relay_ack", {"delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"]})
+    assert [d["payload"] for d in json.loads(a.content[0].text)["deliveries"]] == ["only-a"]
+    assert [d["payload"] for d in json.loads(b.content[0].text)["deliveries"]] == ["only-b"]
+    assert json.loads(ack.content[0].text)["state"] == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_default_server_denies_forged_request_metadata_even_with_stdio_env(monkeypatch):
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.setenv("PALLIUM_MCP_TRANSPORT", "stdio")
+    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    receive = AsyncMock()
+    with patch.object(PalliumMcpClient, "relay_receive", new=receive):
+        async with create_connected_server_and_client_session(create_server()) as client:
+            result = await client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": json.dumps({"thread_id": "forged", "session_id": "forged", "turn_id": "turn"})})
+    assert "PALLIUM_THREAD_REF" in result.content[0].text
+    receive.assert_not_awaited()
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata", ["[", json.dumps({"thread_id": "only-thread", "turn_id": "turn"}), json.dumps({"thread_id": None, "session_id": "s", "turn_id": "turn"})])
+async def test_trusted_codex_metadata_failures_do_not_call_receive(monkeypatch, metadata):
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    receive = AsyncMock()
+    with patch.object(PalliumMcpClient, "relay_receive", new=receive):
+        async with create_connected_server_and_client_session(create_server(trust_codex_request_metadata=True)) as client:
+            result = await client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": metadata})
+    assert "Codex request identity" in result.content[0].text
+    receive.assert_not_awaited()

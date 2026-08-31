@@ -60,45 +60,111 @@ def _runtime_thread_ref(agent_ref: str | None) -> str | None:
     session_id = session_id.strip()
     return session_id if 0 < len(session_id) <= 255 else None
 
-def codex_request_metadata_status(request_meta: Mapping[str, Any] | None) -> dict[str, object]:
-    """Return an allowlisted, non-claiming view of Codex turn metadata."""
+@dataclass(frozen=True)
+class _CodexRequestMetadata:
+    source: str
+    shape: str
+    thread_present: bool = False
+    thread_valid: bool = False
+    thread_ref: str | None = None
+    session_present: bool = False
+    session_valid: bool = False
+    session_ref: str | None = None
+    turn_present: bool = False
+    turn_valid: bool = False
+
+    def status(self) -> dict[str, object]:
+        if self.source == "absent" or self.shape == "invalid":
+            return {"source": self.source, "shape": self.shape}
+        return {
+            "source": self.source,
+            "shape": self.shape,
+            "thread_id": {
+                "present": self.thread_present,
+                "valid": self.thread_valid,
+                "sha256": sha256(self.thread_ref.encode()).hexdigest() if self.thread_ref else None,
+            },
+            "session_id": {
+                "present": self.session_present,
+                "valid": self.session_valid,
+                "sha256": sha256(self.session_ref.encode()).hexdigest() if self.session_ref else None,
+            },
+            "turn_id": {"present": self.turn_present, "valid": self.turn_valid},
+            "identity_conflict": bool(
+                self.thread_ref and self.session_ref and self.thread_ref != self.session_ref
+            ),
+        }
+
+
+def _valid_identifier(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if 0 < len(value) <= 255 and value.isprintable() else None
+
+
+def _parse_codex_request_metadata(request_meta: Mapping[str, Any] | None) -> _CodexRequestMetadata:
     raw = request_meta.get("x-codex-turn-metadata") if isinstance(request_meta, Mapping) else None
     if raw is None:
-        return {"source": "absent", "shape": "absent"}
+        return _CodexRequestMetadata(source="absent", shape="absent")
     if isinstance(raw, str):
         if len(raw) > _CODEX_TURN_METADATA_MAX_CHARS:
-            return {"source": "codex_turn_metadata", "shape": "invalid"}
+            return _CodexRequestMetadata(source="codex_turn_metadata", shape="invalid")
         try:
             raw = json.loads(raw)
         except (ValueError, RecursionError):
-            return {"source": "codex_turn_metadata", "shape": "invalid"}
+            return _CodexRequestMetadata(source="codex_turn_metadata", shape="invalid")
     if not isinstance(raw, Mapping):
-        return {"source": "codex_turn_metadata", "shape": "invalid"}
+        return _CodexRequestMetadata(source="codex_turn_metadata", shape="invalid")
 
-    def identity(*keys: str) -> tuple[bool, bool, str | None, str | None]:
+    def identity(*keys: str) -> tuple[bool, bool, str | None]:
         supplied = [raw[key] for key in keys if key in raw]
-        values = [
-            value.strip()
-            for value in supplied
-            if isinstance(value, str)
-            and 0 < len(value.strip()) <= 255
-            and value.strip().isprintable()
-        ]
-        valid = bool(supplied) and len(values) == len(supplied) and len(set(values)) == 1
-        value = values[0] if valid else None
-        return bool(supplied), valid, sha256(value.encode()).hexdigest() if value else None, value
+        values = [_valid_identifier(value) for value in supplied]
+        valid = bool(supplied) and all(values) and len(set(values)) == 1
+        return bool(supplied), bool(valid), values[0] if valid else None
 
-    thread_present, thread_valid, thread_hash, thread = identity("thread_id", "threadId")
-    session_present, session_valid, session_hash, session = identity("session_id", "sessionId")
-    turn_present, turn_valid, _, _ = identity("turn_id", "turnId")
-    return {
-        "source": "codex_turn_metadata",
-        "shape": "object",
-        "thread_id": {"present": thread_present, "valid": thread_valid, "sha256": thread_hash},
-        "session_id": {"present": session_present, "valid": session_valid, "sha256": session_hash},
-        "turn_id": {"present": turn_present, "valid": turn_valid},
-        "identity_conflict": bool(thread and session and thread != session),
-    }
+    thread_present, thread_valid, thread_ref = identity("thread_id", "threadId")
+    session_present, session_valid, session_ref = identity("session_id", "sessionId")
+    turn_present, turn_valid, _ = identity("turn_id", "turnId")
+    return _CodexRequestMetadata(
+        source="codex_turn_metadata",
+        shape="object",
+        thread_present=thread_present,
+        thread_valid=thread_valid,
+        thread_ref=thread_ref,
+        session_present=session_present,
+        session_valid=session_valid,
+        session_ref=session_ref,
+        turn_present=turn_present,
+        turn_valid=turn_valid,
+    )
+
+
+def codex_request_metadata_status(request_meta: Mapping[str, Any] | None) -> dict[str, object]:
+    """Return an allowlisted, non-claiming view of Codex turn metadata."""
+    return _parse_codex_request_metadata(request_meta).status()
+
+
+def codex_request_receive_session_ref(
+    request_meta: Mapping[str, Any] | None,
+    env: Mapping[str, object] = os.environ,
+) -> tuple[str | None, bool]:
+    """Return (request-local session_ref, blocked); absent metadata permits legacy fallback."""
+    metadata = _parse_codex_request_metadata(request_meta)
+    if metadata.source == "absent":
+        return None, False
+    if not (
+        metadata.shape == "object"
+        and metadata.thread_valid
+        and metadata.session_valid
+        and metadata.turn_valid
+        and metadata.thread_ref == metadata.session_ref
+    ):
+        return None, True
+    for key in ("PALLIUM_THREAD_REF", "CODEX_THREAD_ID", "CODEX_SESSION_ID"):
+        if key in env and _valid_identifier(env[key]) != metadata.session_ref:
+            return None, True
+    return metadata.session_ref, False
 
 def resolve_context(
     *,
