@@ -320,7 +320,7 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0) -> tuple[str, li
                 continue
             if hashlib.sha256(envelope.encode("utf-8")).hexdigest() != digest:
                 continue
-            if any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in envelope):
+            if any((unicodedata.category(char) == "Cc" and char not in "\n\r\t") or unicodedata.category(char) in {"Cs", "Zl", "Zp"} for char in envelope):
                 continue
             chunk = envelope
         else:

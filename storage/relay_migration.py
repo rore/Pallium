@@ -102,9 +102,15 @@ def migrate_relay_batch_claims(connection, *, fail_at: str | None = None) -> Non
                 publication_bytes INTEGER,
                 uncertain_at DATETIME,
                 uncertain_reason TEXT,
-                blocked_reason TEXT
+                blocked_reason TEXT,
+                admitted_at DATETIME,
+                admission_evidence TEXT
             )
         """))
+        columns = {row[1] for row in connection.execute(text("PRAGMA table_info(relay_batch_claims)"))}
+        for column, definition in (("admitted_at", "DATETIME"), ("admission_evidence", "TEXT")):
+            if column not in columns:
+                connection.execute(text(f"ALTER TABLE relay_batch_claims ADD COLUMN {column} {definition}"))
         if fail_at == "ddl":
             raise RuntimeError("injected B2 ddl fault")
         connection.execute(text("CREATE TABLE IF NOT EXISTS relay_batch_protocol (version INTEGER PRIMARY KEY)"))

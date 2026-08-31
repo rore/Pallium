@@ -794,7 +794,8 @@ class RelaySendRequest(BaseModel):
     sender_runtime: RelayRuntime
     sender_session_ref: str = Field(min_length=1, max_length=255)
     recipient: str = Field(min_length=1, max_length=320)
-    payload: str = Field(min_length=1, max_length=1500)
+    payload: str | None = Field(default=None, min_length=1, max_length=1500)
+    parts: list[str] | None = Field(default=None, min_length=1, max_length=8)
     container_ref: str = Field(min_length=1, max_length=512)
     actor_ref: str = Field(min_length=1, max_length=255)
     expires_in_seconds: int = Field(default=86400, ge=60, le=604800)
@@ -802,17 +803,29 @@ class RelaySendRequest(BaseModel):
     message_id: str | None = Field(default=None, min_length=1, max_length=128)
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
+    @model_validator(mode="after")
+    def require_one_payload_form(self):
+        if (self.payload is None) == (self.parts is None):
+            raise ValueError("provide exactly one of payload or parts")
+        return self
+
 
 class RelayReplyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     delivery_id: str = Field(min_length=1, max_length=128)
     receipt: str | None = Field(default=None, max_length=64)
-    payload: str = Field(min_length=1, max_length=1500)
+    payload: str | None = Field(default=None, min_length=1, max_length=1500)
+    parts: list[str] | None = Field(default=None, min_length=1, max_length=8)
     container_ref: str = Field(min_length=1, max_length=512)
     actor_ref: str = Field(min_length=1, max_length=255)
     expires_in_seconds: int = Field(default=86400, ge=60, le=604800)
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
+    @model_validator(mode="after")
+    def require_one_payload_form(self):
+        if (self.payload is None) == (self.parts is None):
+            raise ValueError("provide exactly one of payload or parts")
+        return self
 
 class RelayPublicationRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)
@@ -827,6 +840,15 @@ class RelayPublicationResponse(BaseModel):
     claim_generation: int
     envelope_digest: str
     publication_started_at: datetime
+
+class RelayAdmissionRequest(RelayPublicationRequest):
+    evidence: str = Field(min_length=1, max_length=255)
+
+
+class RelayAdmissionResponse(BaseModel):
+    delivery_id: str
+    state: str
+    delivered_at: datetime
 
 class RelayAckRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)

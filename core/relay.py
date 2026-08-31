@@ -9,6 +9,7 @@ from typing import Any
 
 from core.container_ref import validate_explicit_container_ref
 from redaction import redact_sensitive
+from storage.relay_codec import RelayCodecError, parts_projection, prepare_parts
 
 
 RELAY_RUNTIMES = frozenset({"claude-code", "codex", "opencode"})
@@ -143,7 +144,7 @@ class RelayService:
             container_ref=container,
             actor_ref=actor,
             title=None if title is None else _opaque(title, "title", maximum=255),
-            max_chars=max_chars,
+            max_chars=min(max_chars or RELAY_BATCH_TURN_MAX_CHARS, RELAY_BATCH_TURN_MAX_CHARS) if self._batch_candidate_enabled else max_chars,
             max_messages=RELAY_BATCH_TURN_MAX_MESSAGES if self._batch_candidate_enabled else 0,
             max_bytes=RELAY_BATCH_TURN_MAX_BYTES if self._batch_candidate_enabled else 0,
             candidate_batch=self._batch_candidate_enabled,
@@ -169,6 +170,32 @@ class RelayService:
             delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
             claim_token=_opaque(claim_token, "claim_token", maximum=128),
             envelope_digest=_opaque(envelope_digest, "envelope_digest", maximum=64),
+            container_ref=container,
+            actor_ref=actor,
+            now=now,
+        )
+    def admit(
+        self,
+        *,
+        delivery_id: str,
+        claim_token: str,
+        envelope_digest: str,
+        evidence: str,
+        container_ref: str,
+        actor_ref: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        if not self._batch_candidate_enabled:
+            raise RelayUnavailableError("candidate admission is disabled")
+        container, actor = self._scope(container_ref, actor_ref)
+        operation = getattr(self._store, "relay_admit", None)
+        if not callable(operation):
+            raise RelayUnavailableError("candidate admission is not supported by the configured storage")
+        return operation(
+            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
+            claim_token=_opaque(claim_token, "claim_token", maximum=128),
+            envelope_digest=_opaque(envelope_digest, "envelope_digest", maximum=64),
+            evidence=_opaque(evidence, "evidence", maximum=255),
             container_ref=container,
             actor_ref=actor,
             now=now,
@@ -227,7 +254,8 @@ class RelayService:
         sender_runtime: str,
         sender_session_ref: str,
         recipient: str,
-        payload: str,
+        payload: str | None,
+        parts: list[str] | None = None,
         container_ref: str,
         actor_ref: str,
         expires_in_seconds: int = RELAY_DEFAULT_EXPIRY_SECONDS,
@@ -238,12 +266,25 @@ class RelayService:
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
         if not RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS:
-            raise ValueError(
-                f"expires_in_seconds must be between {RELAY_MIN_EXPIRY_SECONDS} and {RELAY_MAX_EXPIRY_SECONDS}"
-            )
+            raise ValueError(f"expires_in_seconds must be between {RELAY_MIN_EXPIRY_SECONDS} and {RELAY_MAX_EXPIRY_SECONDS}")
         recipient_runtime, recipient_kind, recipient_value = parse_selector(recipient)
-        raw_payload = validate_payload(payload)
-        stored_payload = redact_sensitive(raw_payload)
+        if parts is not None:
+            if payload is not None or not self._batch_candidate_enabled:
+                raise RelayConflictError("multipart relay is only available in the explicit B2 fixture candidate")
+            try:
+                stored_payload = prepare_parts(parts)
+                raw_payload = "".join(parts)
+                redacted = parts_projection(stored_payload) != raw_payload
+            except RelayCodecError as exc:
+                raise ValueError(str(exc)) from exc
+            payload_format = "parts_v1"
+        else:
+            if payload is None:
+                raise ValueError("payload is required")
+            raw_payload = validate_payload(payload)
+            stored_payload = redact_sensitive(raw_payload)
+            redacted = stored_payload != raw_payload
+            payload_format = "text_v1"
         request = None if request_id is None else _opaque(request_id, "request_id", maximum=128)
         if request is not None and message_id is not None:
             raise ValueError("request_id and message_id cannot be combined")
@@ -257,7 +298,8 @@ class RelayService:
             recipient_kind=recipient_kind,
             recipient_value=recipient_value,
             payload=stored_payload,
-            redacted=stored_payload != raw_payload,
+            payload_format=payload_format,
+            redacted=redacted,
             container_ref=container,
             actor_ref=actor,
             expires_in_seconds=expires_in_seconds,
@@ -266,13 +308,13 @@ class RelayService:
             broadcast_max_recipients=RELAY_BROADCAST_MAX_RECIPIENTS,
             now=now,
         )
-
     def reply(
         self,
         *,
         delivery_id: str,
         receipt: str | None,
-        payload: str,
+        payload: str | None,
+        parts: list[str] | None = None,
         container_ref: str,
         actor_ref: str,
         expires_in_seconds: int = RELAY_DEFAULT_EXPIRY_SECONDS,
@@ -281,12 +323,25 @@ class RelayService:
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
         if not RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS:
-            raise ValueError(
-                f"expires_in_seconds must be between {RELAY_MIN_EXPIRY_SECONDS} and {RELAY_MAX_EXPIRY_SECONDS}"
-            )
+            raise ValueError(f"expires_in_seconds must be between {RELAY_MIN_EXPIRY_SECONDS} and {RELAY_MAX_EXPIRY_SECONDS}")
         delivery = _opaque(delivery_id, "delivery_id", maximum=128)
-        raw_payload = validate_payload(payload)
-        stored_payload = redact_sensitive(raw_payload)
+        if parts is not None:
+            if payload is not None or not self._batch_candidate_enabled:
+                raise RelayConflictError("multipart relay is only available in the explicit B2 fixture candidate")
+            try:
+                stored_payload = prepare_parts(parts)
+                raw_payload = "".join(parts)
+                redacted = parts_projection(stored_payload) != raw_payload
+            except RelayCodecError as exc:
+                raise ValueError(str(exc)) from exc
+            payload_format = "parts_v1"
+        else:
+            if payload is None:
+                raise ValueError("payload is required")
+            raw_payload = validate_payload(payload)
+            stored_payload = redact_sensitive(raw_payload)
+            redacted = stored_payload != raw_payload
+            payload_format = "text_v1"
         request = None if request_id is None else _opaque(request_id, "request_id", maximum=128)
         reply_id = "relay-reply-" + (hashlib.sha256(delivery.encode("utf-8")).hexdigest() if request is None else uuid.uuid4().hex)
         return self._store.relay_reply_atomic(
@@ -295,13 +350,13 @@ class RelayService:
             reply_message_id=reply_id,
             request_id=request,
             payload=stored_payload,
-            redacted=stored_payload != raw_payload,
+            payload_format=payload_format,
+            redacted=redacted,
             container_ref=container,
             actor_ref=actor,
             expires_in_seconds=expires_in_seconds,
             now=now,
         )
-
     def message_status(self, *, message_id: str, container_ref: str, actor_ref: str) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
         return self._store.relay_message_status(

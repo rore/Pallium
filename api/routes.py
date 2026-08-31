@@ -8,6 +8,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from api.schemas import (
+    RelayAdmissionRequest,
+    RelayAdmissionResponse,
     RelayAckRequest,
     RelayAckResponse,
     RelayPublicationRequest,
@@ -426,6 +428,9 @@ def create_router(
     @router.post("/relay/deliveries/publication", response_model=RelayPublicationResponse)
     def relay_start_publication(request: RelayPublicationRequest):
         return _relay_call(lambda: _relay().start_publication(**request.model_dump()))
+    @router.post("/relay/deliveries/admission", response_model=RelayAdmissionResponse)
+    def relay_admit(request: RelayAdmissionRequest):
+        return _relay_call(lambda: _relay().admit(**request.model_dump()))
     @router.post("/relay/deliveries/ack", response_model=RelayAckResponse)
     def relay_ack(request: RelayAckRequest):
         return _relay_call(lambda: _relay().acknowledge(**request.model_dump()))
