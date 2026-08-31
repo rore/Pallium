@@ -85,6 +85,21 @@ def bind_asgi_post(monkeypatch: pytest.MonkeyPatch, asgi_post) -> None:
 
     monkeypatch.setattr(PalliumMcpClient, "_post_or_error", _post)
 
+
+def bind_asgi_get(monkeypatch: pytest.MonkeyPatch, asgi_get) -> None:
+    async def _get(_client, path, params):
+        try:
+            return await asgi_get(path, params)
+        except httpx.HTTPStatusError as exc:
+            return {
+                "error": str(exc),
+                "status_code": exc.response.status_code,
+                "detail": exc.response.json(),
+            }
+
+    monkeypatch.setattr(PalliumMcpClient, "_get_or_error", _get)
+
+
 @pytest.fixture(autouse=True)
 def base_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
@@ -336,10 +351,10 @@ class TestFullLifecycle:
 @pytest.mark.asyncio
 async def test_trusted_codex_request_metadata_receives_per_session_and_acks(monkeypatch, asgi_post, asgi_get):
     monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
-    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
-    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
-    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    for key in ("PALLIUM_THREAD_REF", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "PALLIUM_CONTAINER_REF", "PALLIUM_ACTOR_REF"):
+        monkeypatch.delenv(key, raising=False)
     bind_asgi_post(monkeypatch, asgi_post)
+    bind_asgi_get(monkeypatch, asgi_get)
     for session in ("meta-a", "meta-b", "sender"):
         await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": session, **_SCOPE})
     messages = {}
@@ -350,22 +365,21 @@ async def test_trusted_codex_request_metadata_receives_per_session_and_acks(monk
         })
     async with create_connected_server_and_client_session(create_server(trust_codex_request_metadata=True)) as client:
         a, b = await asyncio.gather(
-            client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-a", "session_id": "meta-a", "turn_id": "turn-a"})}),
-            client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-b", "session_id": "meta-b", "turn_id": "turn-b"})}),
+            client.call_tool("pallium_relay_receive", {**_SCOPE}, meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-a", "session_id": "meta-a", "turn_id": "turn-a"})}),
+            client.call_tool("pallium_relay_receive", {**_SCOPE}, meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-b", "session_id": "meta-b", "turn_id": "turn-b"})}),
         )
         delivery_a = json.loads(a.content[0].text)["deliveries"][0]
         delivery_b = json.loads(b.content[0].text)["deliveries"][0]
-        await client.call_tool("pallium_relay_ack", {"delivery_id": delivery_a["delivery_id"], "receipt": delivery_a["receipt"]})
-        await client.call_tool("pallium_relay_reply", {"delivery_id": delivery_b["delivery_id"], "receipt": delivery_b["receipt"], "message": "reply-b"})
-    status_a, status_b = await asyncio.gather(
-        asgi_get(f"/relay/messages/{messages['meta-a']['message_id']}", _SCOPE),
-        asgi_get(f"/relay/messages/{messages['meta-b']['message_id']}", _SCOPE),
-    )
+        await client.call_tool("pallium_relay_ack", {"delivery_id": delivery_a["delivery_id"], "receipt": delivery_a["receipt"], **_SCOPE})
+        await client.call_tool("pallium_relay_reply", {"delivery_id": delivery_b["delivery_id"], "receipt": delivery_b["receipt"], "message": "reply-b", **_SCOPE})
+        status_a, status_b = await asyncio.gather(
+            client.call_tool("pallium_relay_status", {"message_id": messages["meta-a"]["message_id"], **_SCOPE}),
+            client.call_tool("pallium_relay_status", {"message_id": messages["meta-b"]["message_id"], **_SCOPE}),
+        )
     assert [d["payload"] for d in json.loads(a.content[0].text)["deliveries"]] == ["only-a"]
     assert [d["payload"] for d in json.loads(b.content[0].text)["deliveries"]] == ["only-b"]
-    assert status_a["deliveries"][0]["state"] == "delivered"
-    assert status_b["deliveries"][0]["state"] == "delivered"
-
+    assert json.loads(status_a.content[0].text)["deliveries"][0]["state"] == "delivered"
+    assert json.loads(status_b.content[0].text)["deliveries"][0]["state"] == "delivered"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("request_meta", [{}, {"x-codex-turn-metadata": None}])
@@ -472,3 +486,67 @@ async def test_invalid_wire_metadata_never_claims_valid_fallback(monkeypatch, as
     status = await asgi_get(f"/relay/messages/{sent['message_id']}", _SCOPE)
     assert status["deliveries"][0]["state"] == "pending"
     assert status["deliveries"][0]["attempts"] == 0
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "arguments", "configured"),
+    [
+        ("pallium_relay_receive", {}, False),
+        ("pallium_relay_receive", {"container_ref": "", "actor_ref": _SCOPE["actor_ref"]}, False),
+        ("pallium_relay_receive", {"container_ref": _SCOPE["container_ref"]}, False),
+        ("pallium_relay_receive", {"container_ref": "git:other/scope", "actor_ref": _SCOPE["actor_ref"]}, True),
+        ("pallium_relay_ack", {"delivery_id": "delivery", "receipt": "receipt"}, False),
+        ("pallium_relay_ack", {"delivery_id": "delivery", "receipt": "receipt", "container_ref": "", "actor_ref": _SCOPE["actor_ref"]}, False),
+        ("pallium_relay_ack", {"delivery_id": "delivery", "receipt": "receipt", "container_ref": _SCOPE["container_ref"]}, False),
+        ("pallium_relay_ack", {"delivery_id": "delivery", "receipt": "receipt", "container_ref": "git:other/scope", "actor_ref": _SCOPE["actor_ref"]}, True),
+        ("pallium_relay_reply", {"delivery_id": "delivery", "message": "reply"}, False),
+        ("pallium_relay_reply", {"delivery_id": "delivery", "message": "reply", "container_ref": "", "actor_ref": _SCOPE["actor_ref"]}, False),
+        ("pallium_relay_reply", {"delivery_id": "delivery", "message": "reply", "container_ref": _SCOPE["container_ref"]}, False),
+        ("pallium_relay_reply", {"delivery_id": "delivery", "message": "reply", "container_ref": "git:other/scope", "actor_ref": _SCOPE["actor_ref"]}, True),
+    ],
+)
+async def test_relay_scope_rejections_never_call_http(monkeypatch, tool, arguments, configured):
+    if not configured:
+        monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
+        monkeypatch.delenv("PALLIUM_ACTOR_REF", raising=False)
+    client_method = {"pallium_relay_receive": "relay_receive", "pallium_relay_ack": "relay_mcp_ack", "pallium_relay_reply": "relay_reply"}[tool]
+    http_call = AsyncMock()
+    with patch.object(PalliumMcpClient, client_method, new=http_call):
+        content, _ = await create_server().call_tool(tool, arguments)
+    assert "Relay scope" in content[0].text
+    http_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_explicit_scope_keeps_shared_runtime_sessions_and_receipts_isolated(monkeypatch, asgi_post, asgi_get):
+    scope_a = {"container_ref": "git:example.test/scope-a", "actor_ref": "actor-a"}
+    scope_b = {"container_ref": "git:example.test/scope-b", "actor_ref": "actor-b"}
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    for key in ("PALLIUM_THREAD_REF", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "PALLIUM_CONTAINER_REF", "PALLIUM_ACTOR_REF"):
+        monkeypatch.delenv(key, raising=False)
+    bind_asgi_post(monkeypatch, asgi_post)
+    bind_asgi_get(monkeypatch, asgi_get)
+    messages = {}
+    for scope, payload in ((scope_a, "only-a"), (scope_b, "only-b")):
+        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "shared", **scope})
+        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "sender", **scope})
+        messages[scope["container_ref"]] = await asgi_post("/relay/messages", {
+            "sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "codex:shared",
+            "payload": payload, **scope,
+        })
+    metadata = {"x-codex-turn-metadata": json.dumps({"thread_id": "shared", "session_id": "shared", "turn_id": "turn"})}
+    async with create_connected_server_and_client_session(create_server(trust_codex_request_metadata=True)) as client:
+        received_a = await client.call_tool("pallium_relay_receive", {**scope_a}, meta=metadata)
+        received_b = await client.call_tool("pallium_relay_receive", {**scope_b}, meta=metadata)
+        delivery_a = json.loads(received_a.content[0].text)["deliveries"][0]
+        delivery_b = json.loads(received_b.content[0].text)["deliveries"][0]
+        wrong_ack = await client.call_tool("pallium_relay_ack", {"delivery_id": delivery_a["delivery_id"], "receipt": delivery_a["receipt"], **scope_b})
+        wrong_reply = await client.call_tool("pallium_relay_reply", {"delivery_id": delivery_a["delivery_id"], "receipt": delivery_a["receipt"], "message": "wrong scope", **scope_b})
+        status_a = await client.call_tool("pallium_relay_status", {"message_id": messages[scope_a["container_ref"]]["message_id"], **scope_a})
+        await client.call_tool("pallium_relay_ack", {"delivery_id": delivery_a["delivery_id"], "receipt": delivery_a["receipt"], **scope_a})
+        await client.call_tool("pallium_relay_ack", {"delivery_id": delivery_b["delivery_id"], "receipt": delivery_b["receipt"], **scope_b})
+    assert [d["payload"] for d in json.loads(received_a.content[0].text)["deliveries"]] == ["only-a"]
+    assert [d["payload"] for d in json.loads(received_b.content[0].text)["deliveries"]] == ["only-b"]
+    assert json.loads(wrong_ack.content[0].text)["status_code"] == 404
+    assert json.loads(wrong_reply.content[0].text)["status_code"] == 404
+    assert json.loads(status_a.content[0].text)["deliveries"][0]["state"] == "claimed"

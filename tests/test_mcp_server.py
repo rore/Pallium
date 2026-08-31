@@ -719,6 +719,8 @@ async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> No
     assert "codex:@review" in tools["pallium_relay_send"].description
     assert "context" not in tools["pallium_relay_status"].inputSchema["properties"]
     assert "context" not in tools["pallium_relay_receive"].inputSchema["properties"]
+    for name in ("pallium_relay_receive", "pallium_relay_ack"):
+        assert {"container_ref", "actor_ref"} <= tools[name].inputSchema["properties"].keys()
 
 
 @pytest.mark.asyncio

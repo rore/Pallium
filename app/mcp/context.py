@@ -190,3 +190,32 @@ def resolve_context(
         agent_ref=resolved_agent,
         visibility=visibility if visibility is not None else os.environ.get("PALLIUM_VISIBILITY"),
     )
+
+
+def resolve_relay_context(
+    *, container_ref: str | None = None, actor_ref: str | None = None
+) -> tuple[PalliumContext | None, str | None]:
+    """Resolve paired Relay scope without allowing a model argument to override config."""
+    supplied_container = _valid_identifier(container_ref)
+    supplied_actor = _valid_identifier(actor_ref)
+    if (container_ref is None) != (actor_ref is None):
+        return None, "Error: Relay scope requires both container_ref and actor_ref."
+    if container_ref is not None and (
+        supplied_container != container_ref or supplied_actor != actor_ref
+    ):
+        return None, "Error: Relay scope requires paired non-blank container_ref and actor_ref."
+
+    configured = resolve_context()
+    if container_ref is None:
+        if not configured.container_ref or not _valid_identifier(configured.actor_ref):
+            return None, "Error: Relay scope requires both container_ref and actor_ref."
+        return configured, None
+
+    requested_container = _canonicalize_container_ref(supplied_container)
+    configured_actor = _valid_identifier(configured.actor_ref)
+    if (
+        (configured.container_ref is not None and requested_container != configured.container_ref)
+        or (configured_actor is not None and supplied_actor != configured_actor)
+    ):
+        return None, "Error: Relay scope conflicts with configured trusted scope."
+    return resolve_context(container_ref=requested_container, actor_ref=supplied_actor), None

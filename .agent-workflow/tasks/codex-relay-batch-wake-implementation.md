@@ -36,6 +36,7 @@
 | any request metadata | any | untrusted/default/network server or non-Codex | request metadata ignored; preserve legacy behavior |
 ## Implementation
 
+- 2026-08-31: Claude architecture approval (hook-delivered via `relayarch`, message `relay-msg-3c9bf8fd396e4841b043f6ef24d175a6`) approved the committed `b2306f9` explicit Relay-scope candidate. Per the standing user approval, implement only optional `container_ref` and `actor_ref` selectors on Relay receive and receipt ACK, with the existing reply selector made fail-closed on configured-scope conflicts. Selectors are paired, non-blank, and exact; missing, partial, blank, or conflicting values make no Relay HTTP call. They do not replace runtime session binding or receipt validation. Update only reply/tool/skill guidance and the agreed MCP lifecycle E2E matrix; do not add scope persistence, API/hook/routing changes, or reload the installed service. Preserve `uv.lock`.
 - 2026-08-31: Created `codex/relay-batch-wake-implementation` from `4560f6b` in the existing checkout. No production, service, configuration, or test changes were made. Awaiting review of this preflight and the G1-G3 protocol.
 
 - 2026-08-31: Implemented the authorized diagnostic-only slice: `pallium_relay_status(runtime_diagnostic=true)` reads only injected FastMCP request metadata, reports allowlisted source/shape, presence/validity, and SHA-256 digests for validated thread/session IDs, and makes no receive, claim, ACK, configuration, or service change. The injected `Context` remains absent from the model-visible tool schema. Windows `apply_patch` failed with the documented process-launch restriction, so the four named files were updated using scoped deterministic PowerShell replacements.
@@ -173,3 +174,10 @@ All Relay client methods depend on `container_ref` and `actor_ref`, including re
 ### Bounded explicit-scope candidate (2026-08-31)
 
 Architect direction supersedes the per-turn binding candidate: do not add hook/storage scope state. The smallest candidate is optional explicit `container_ref` plus `actor_ref` on receive and receipt ACK, exactly like reply/send/status. They are selectors copied from current injected scope, not runtime identity or authentication; both must be present, nonblank, and agree with configured scope when configured, otherwise fail before HTTP. Receive runtime/session stays integration-owned; receipt semantics stay unchanged. The incident now contains the focused MCP/HTTP E2E matrix and a request for architecture review before implementation.
+
+### Explicit Relay-scope implementation evidence (2026-08-31)
+
+- Implemented one shared paired-scope resolver for Relay receive, receipt ACK, and reply. It rejects missing, blank, partial, or configured-scope-conflicting selectors before the Relay client is called; runtime/session binding and receipt validation remain unchanged.
+- Added MCP schema coverage and caller-surface E2E for configured-scope-free `receive → ACK/reply → status`, same runtime/session isolated across two scopes, and cross-scope ACK/reply receipt rejection without state mutation.
+- `.venv\Scripts\python.exe -m pytest tests/test_relay_mcp_tools.py tests/test_mcp_context.py tests/test_mcp_server.py tests/test_relay_mcp_lifecycle.py -q` → 147 passed; four pre-existing Pydantic forward-reference warnings.
+- `git diff --check` passed. `python scripts/agent-workflow-check.py --repo-root . --slug codex-relay-batch-wake-implementation` had no blocking findings and one pre-existing advisory that the Work Record's first historical commit post-dates a prior branch code commit. No installed reload occurred; `uv.lock` remains unrelated and uncommitted.

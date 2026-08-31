@@ -13,7 +13,7 @@ from typing import Literal
 from mcp.server.fastmcp import Context
 
 from app.mcp.client import PalliumMcpClient
-from app.mcp.context import codex_request_metadata_status, codex_request_receive_session_ref, resolve_context
+from app.mcp.context import codex_request_metadata_status, codex_request_receive_session_ref, resolve_context, resolve_relay_context
 from retrieval.common import build_excerpt
 
 
@@ -595,8 +595,10 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, trust_codex_requ
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery. Copy delivery_id from the attributed Relay block. When replying via pallium_relay_receive (MCP path), also pass the receipt — this atomically ACKs and replies in one step; no prior pallium_relay_ack needed. When replying after a hook-injected delivery (already delivered), receipt is not required. Pallium derives both endpoints from delivery_id."""
-        ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
+        """Reply once to a received Relay delivery. Copy delivery_id from the attributed Relay block. When replying via pallium_relay_receive (MCP path), also pass the receipt — this atomically ACKs and replies in one step; no prior pallium_relay_ack needed. When replying after a hook-injected delivery (already delivered), receipt is not required. If this MCP configuration has no Relay scope, copy both container_ref and actor_ref from the injected scope. Pallium derives both endpoints from delivery_id."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
+        if scope_error:
+            return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_reply(
@@ -606,7 +608,6 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, trust_codex_requ
             expires_in_seconds=expires_in_seconds,
         )
         return _relay_text(result)
-
     @server.tool()
     async def pallium_relay_status(
         message_id: str | None = None,
@@ -635,10 +636,19 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, trust_codex_requ
     @server.tool()
     async def pallium_relay_receive(
         max_chars: int = 0,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
         context: Context = None,
     ) -> str:
-        """Claim and return pending Relay deliveries for this session. Uses only integration-owned identity; trusted request metadata is local-Codex-stdio only. Call pallium_relay_ack(delivery_id, receipt) after processing each delivery, or pallium_relay_reply to reply and ACK atomically. Unclaimed deliveries are redelivered after lease expiry."""
-        ctx = resolve_context()
+        """Claim pending Relay deliveries for this runtime session. Copy both container_ref and actor_ref from injected scope when this MCP configuration has no Relay scope. Uses only integration-owned runtime/session identity; trusted request metadata is local-Codex-stdio only. Call pallium_relay_ack(delivery_id, receipt) after processing each delivery, or pallium_relay_reply to reply and ACK atomically. Unclaimed deliveries are redelivered after lease expiry."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
+        if scope_error:
+            legacy_ctx = resolve_context()
+            if not legacy_ctx.agent_ref:
+                return "Error: PALLIUM_AGENT_REF is not set. Relay receive requires integration-injected runtime identity."
+            if not legacy_ctx.thread_ref and not (trust_codex_request_metadata and legacy_ctx.agent_ref == "codex"):
+                return "Error: PALLIUM_THREAD_REF is not set. Relay receive requires integration-injected session identity."
+            return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         runtime = ctx.agent_ref
@@ -667,9 +677,13 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, trust_codex_requ
     async def pallium_relay_ack(
         delivery_id: str,
         receipt: str,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
     ) -> str:
-        """Idempotently acknowledge a Relay delivery after you have the payload. Pass the receipt returned by pallium_relay_receive — it proves you received this specific claim generation and prevents stale ACKs from a prior expired claim. If you are replying, use pallium_relay_reply instead — it ACKs atomically; no separate pallium_relay_ack needed."""
-        ctx = resolve_context()
+        """Idempotently acknowledge a Relay delivery after you have the payload. Copy both container_ref and actor_ref from injected scope when this MCP configuration has no Relay scope. Pass the receipt returned by pallium_relay_receive — it proves you received this specific claim generation and prevents stale ACKs from a prior expired claim. If you are replying, use pallium_relay_reply instead — it ACKs atomically; no separate pallium_relay_ack needed."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
+        if scope_error:
+            return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_mcp_ack(delivery_id=delivery_id, receipt=receipt)
