@@ -14,7 +14,7 @@
 **Plan review:** The coordinator authorized this diagnostic-only slice through Relay; the user directly approved all architect instructions. The previous clean-context G2/G3 review remains recorded. This narrow slice needs no reload and cannot change receive identity behavior; its diff/test summary returns to the coordinator for review before any further action.
 **Approvals:** Approved by user 2026-08-31: "yes"; Approved by user 2026-08-31: "i approve everything the architect tells you to do"
 **Exceptions:** —
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -89,3 +89,9 @@ This amendment supersedes the earlier conclusion that missing process environmen
 ## Recovery
 
 Current branch: `codex/relay-batch-wake-implementation`; baseline: `4560f6befe87deba2e17be5e0bd9cd9b6d69cd2f`; unrelated `uv.lock` remains modified and unstaged. Next action only after coordinator review: inspect the consolidated diff/test summary, then decide whether an installed-MCP diagnostic reload/probe is authorized. Do not bind receive identity, claim/ACK, alter config/service, or continue G1-G3 from this patch alone.
+
+### Manager diagnostic review (2026-08-31)
+
+Reviewed 12079dc: Unicode failure corrected; request-local protocol tests exercise real MCP calls and assert no status/receive/ACK/reply HTTP methods invoked. Independently ran tests/test_mcp_context.py, tests/test_mcp_server.py and tests/test_relay_mcp_tools.py: 83 passed, four pre-existing warnings. Removed an identical duplicate test definition directly (no extra review cycle). apply_patch hit Windows error 1327; exact-file deterministic PowerShell fallback used.
+
+Diagnostic-only patch approved. Active manager MCP tool schema still lacks runtime_diagnostic, so installed metadata presence remains unobserved. The Codex MCP connection must be reloaded before two-session diagnostic calls; the installed codex mcp command has no reload subcommand, and no app reload tool is exposed. Do not restart the Pallium HTTP service as a substitute, kill unrelated processes or fabricate metadata. Next: reconnect the existing Codex Pallium MCP sessions, call pallium_relay_status(runtime_diagnostic=true) in each, compare hashes to known runtime-owned session IDs, then review the smallest identity-binding fix. No claims or wake/coordinator completion inferred.
