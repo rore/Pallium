@@ -332,3 +332,12 @@ overshoot was not independently reproduced; this is a justified conservative
 tightening, not an invented production incident. Final combined result: 296
 passed, four existing warnings. Candidate review is accepted. No live rollout,
 runtime admission/headroom qualification, or automatic wake is claimed.
+
+Coverage boundary: this accepts the reviewed candidate fixes, not every E01-E18
+release scenario. The Work Record's partial matrix remains a release obligation,
+including dedicated malformed multipart/secret-split, disk-full/keyed-send/alias,
+recipient lifecycle, sibling-reply and independent fan-out E2E combinations.
+Some shared legacy/B1 behavior is already covered, but that is not a substitute
+for candidate-surface assertions. Consolidate the remaining deterministic cases
+before release alongside G1-G3 qualification; do not mark the full B2/passive or
+wake feature Done merely from the 296-test count.

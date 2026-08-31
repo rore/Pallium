@@ -6,7 +6,7 @@ Status: planning only (2026-08-31). This is the next gate after the accepted B2 
 
 Use the installed local Codex CLI, its existing `UserPromptSubmit` inbox hook, and `codex queue --thread <exact-session> --message <notification>` only. The queue message is a bounded notification with an opaque activation ID: it carries no batch text, receipt, claim token, or second delivery path. The queued and ordinary turns must enter the same hook and storage-owned inbox claim path.
 
-Do not run this plan yet. It requires an explicitly approved, isolated qualification environment and two named local Codex sessions. No production database, normal work session, managed App Server, installation, migration, runtime edit, activation, or surrogate app/agent ping is in this plan.
+Do not run live probes under this documentation-only plan. Disposable sessions may establish isolation and preliminary evidence, but milestone acceptance must use the actual existing architect/developer sessions as required by the roadmap; disposable CLI substitutes alone cannot qualify desktop dogfood. Any temporary per-session hook/profile change requires a separately reviewed isolation/restore plan. No production database, managed replacement App Server, installation, migration, runtime edit, activation, or surrogate app/agent ping is authorized here.
 
 ## Current read-only evidence
 
@@ -17,7 +17,7 @@ Do not run this plan yet. It requires an explicitly approved, isolated qualifica
 - A read-only Pallium status request did not complete in the check window. Treat service responsiveness as unproven until the isolated environment has a bounded health check; do not restart or repair the installed service here.
 - The official Codex hook reference is version-sensitive: its default additional-context limit is approximate, and unlimited additional context applies only when the installed runtime supports it. It also declares `transcript_path` unstable, so a transcript alone cannot be the G2 witness.
 
-Therefore the queue command and hook registration are available prerequisites, not G1/G2/G3 evidence. The missing admission witness is the present blocker to G2, and the absence of a measured context budget blocks G3.
+Therefore the queue command and hook registration are available prerequisites, not G1/G2/G3 evidence. G2 and G3 remain unproven. An absent witness in the Pallium hook is not proof that the runtime lacks a usable readback interface; investigate the installed runtime interfaces below before declaring technical infeasibility.
 
 ## Isolation and rollback preflight
 
@@ -67,7 +67,42 @@ G3 passes only with raw per-turn measurements and a documented safe drain limit.
 | Gate | Current status | Evidence required to close | Failure outcome |
 |---|---|---|---|
 | G1 | Unproven | Idle + busy queued turns invoking the same installed inbox hook | Wake remains passive; ordinary-turn fallback only |
-| G2 | Blocked by missing witness | Immutable full-envelope pre-model artifact plus stale-publication result | Keep published attempts uncertain; no automatic replay |
+| G2 | Unproven; runtime readback candidate identified | Immutable full-envelope pre-model artifact plus stale-publication result | Keep published attempts uncertain; no automatic replay |
 | G3 | Unproven | 64-item, multi-turn headroom measurements with FIFO/restart/fallback coverage | Retain/visible-block work; do not enable candidate or wake |
 
 Only a separate review of completed evidence may authorize the next action. The later rollout decision remains separate: inspect live schema and backup/restore only then; deploy compatible readers and explicit migrations before any new writer or capability is enabled.
+
+## Manager review and immediate next task — 2026-08-31
+
+Accept the bounded test matrix with the corrections above. Do not require a human
+to select substitute sessions, and do not equate a missing hook-owned witness with
+an unavailable runtime capability. No live probe was authorized or performed.
+
+A read-only schema export from the installed `codex-cli 0.149.1` using
+`codex app-server generate-json-schema --experimental --out <temporary-directory>`
+identified:
+
+- `v2/ThreadReadResponse.json`: `ThreadItem` includes `hookPrompt`, whose fragments
+  contain `hookRunId` and `text`; `ThreadReadParams.includeTurns=true` requests
+  persisted turn items. This is a candidate full-text readback, not yet proof of
+  model admission, completeness, immutability or support in the desktop host.
+- `v2/HookCompletedNotification.json`: hook run IDs, entries with kind `context`,
+  status and timing. Completion/output alone is not model admission.
+- `v2/ThreadTokenUsageUpdatedNotification.json`: exact thread/turn IDs, token usage
+  and optional `modelContextWindow`. This may support G3 measurements but does not
+  promise remaining headroom or safe automatic compaction.
+- `codex debug prompt-input --help` describes a model-visible prompt renderer, but
+  exposes no exact-existing-thread selector; do not treat it as that thread's
+  immutable history or use it to launch a substitute runtime.
+
+Next task is a bounded, read-only witness feasibility probe against the existing
+runtime: establish whether supported existing-host access exposes complete
+`hookPrompt` fragments and their admission semantics, with version-pinned evidence
+and no new server, turn, config change or delivery mutation. If existing-host
+access is unavailable, state the exact missing connection/API rather than calling
+all Codex wake impossible. Then review the smallest isolated live probe separately.
+
+Official reference checked: https://learn.chatgpt.com/docs/hooks. It documents the
+2,500-token default additional-context threshold and warns transcript format is
+unstable. Version qualification is required; the warning does not itself prohibit
+verified readback through a runtime-owned structured history API.
