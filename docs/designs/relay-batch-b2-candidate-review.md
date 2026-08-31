@@ -155,3 +155,44 @@ requests. Return one consolidated checkpoint when deterministic implementation a
 regressions are complete; stop only for a concrete design contradiction or new
 permission requirement. Preserve unrelated working-tree changes. No activation,
 install, live migration or wake implementation is authorized by this review.
+
+## Second correction review — 1b52222
+
+112 focused tests independently pass (four existing warnings). The narrow fixes
+for legacy turn raw-parts injection, format-aware retry identity, admission retry
+and late lease evidence are improvements. This is not B2 acceptance: the preceding
+review required shared acceptance/read/output paths and complete deterministic
+work, not only fixes for the exact probe inputs.
+
+Remaining reproduced sibling paths, same disposable HTTP fixtures:
+
+- After sending parts ['one','two'], GET status still returns raw JSON in
+  deliveries[0].payload although top-level payload is decoded. Before candidate
+  claim, legacy turn returns has_more=false, remaining_count=0 despite blocking
+  that delivery. Project every status/read path and report the barrier truthfully.
+- Publish/admit a parent; reply with ['a\n' * 749 + 'a'] * 8. Reply returns 200;
+  recipient turn reports envelope_exceeds_turn_budget. The new preflight exists
+  only in send. Use ONE shared acceptance validator for send AND reply, including
+  capability/capacity/depth and final rendered bounds; no duplicate policy.
+- Real PalliumMcpClient.relay_receive with only HTTP transport bridged to the
+  disposable TestClient: max_chars=1000, one 'hello' part, 1740-character final
+  JSON after server claim-token removal. Removing duplicate payload helps but
+  does not enforce final serialization/metadata bounds. Plan claim/publication
+  around actual supported output; do not publish then drop excess output.
+- That real MCP receive followed by receipt ACK returns 409 requiring admission
+  evidence. This is expected safety before witnessing, NOT a completed usable
+  lifecycle. Test actual output -> separate verified fixture witness -> ACK/reply.
+  Never fabricate runtime proof or weaken admission checks.
+
+Previously requested capability/mixed-fan-out, safe negative reconciliation,
+expiry evidence timestamps, restart/crash/contention, capacity/depth/cleanup and
+hook/MCP output/backlog regressions remain deterministic B2, not G2/G3.
+Actual runtime proof, wake scheduling and live rollout remain separate gates.
+
+Continue immediately under existing approval. Finish all six numbered items in
+the preceding review and the deterministic matrix before another final review
+request. Commit internal milestones as useful; they do not need manager approval.
+Report a blocker only for a concrete contract contradiction, missing authority or
+unavailable dependency. Update WR state to implementation in progress, not a
+complete candidate awaiting acceptance. Do not reopen B1 or touch live config,
+database or installations.
