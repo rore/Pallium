@@ -106,3 +106,28 @@ Official reference checked: https://learn.chatgpt.com/docs/hooks. It documents t
 2,500-token default additional-context threshold and warns transcript format is
 unstable. Version qualification is required; the warning does not itself prohibit
 verified readback through a runtime-owned structured history API.
+
+## Existing desktop witness feasibility — read-only result
+
+The supported desktop `read_thread` surface was queried for this active task with
+turn/output inclusion. It returns thread metadata and turn summaries, but not a
+hook run ID, `hookPrompt.fragments`, hook-completion context entries, or a model
+context-window update. It therefore cannot read back the proposed witness from
+the existing desktop-owned runtime.
+
+The installed CLI exposes an offline app-server schema generator and an
+app-server proxy command, but this task has no supported, authenticated
+app-server connection bound to the desktop host. Starting or attaching a new
+transport would be the prohibited transport scaffolding, not read-only
+qualification. The schema's `ThreadItem.hookPrompt` and related notifications
+are candidates only: even complete fragments would still need a runtime semantic
+that proves pre-model context commitment.
+
+This is not evidence that G2 is runtime-infeasible. The exact missing capability
+is a supported desktop-bound read operation or subscription that returns persisted
+`ThreadReadResponse` hook-prompt fragments with their hook-run/session/turn
+identity, plus hook-completion and token-window semantics for the same turn. It
+must establish whether the full fragment was committed before model execution;
+raw transcript files remain excluded because their format is not stable. Until
+that connection exists, G2 remains blocked and G3 cannot measure actual desktop
+headroom. No server, turn, configuration, or delivery probe was created.
