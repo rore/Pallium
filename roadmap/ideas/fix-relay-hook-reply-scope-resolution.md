@@ -1,6 +1,6 @@
 ---
 id: fix-relay-hook-reply-scope-resolution
-title: Make hook-delivered Relay replies resolve injected scope
+title: Make Relay MCP scope explicit and fail closed
 status: queued
 priority: high
 commitment: uncommitted
@@ -10,10 +10,11 @@ lane: defect
 
 ## Summary
 
-A hook-delivered Relay reply with only its delivery ID and message returned HTTP 422
-because the MCP client omitted `container_ref` and `actor_ref`, despite the tool
-contract treating them as integration-resolved optional scope. Retrying with the
-injected scope succeeded. This makes the documented hook reply path unreliable.
+A hook-delivered Relay reply with only its delivery ID and message returned HTTP
+422 because the MCP client omitted `container_ref` and `actor_ref`, despite the
+tool contract treating them as integration-resolved optional scope. Retrying
+with the injected scope succeeded. This affects every Relay MCP call, not only
+reply.
 
 ## Diagnosis (2026-08-31)
 
@@ -30,55 +31,55 @@ one session can have multiple rows after a project switch, including an old
 active row when best-effort close fails. Its `last_seen_at` cannot be matched to
 the MCP request's `turn_id`, so selecting a latest row would make stale scope an
 authorization source. CWD, aliases, and a delivery ID are not safe substitutes.
+
+## Reviewed bounded candidate (2026-08-31)
+
+Do not build a scope store. Add optional `container_ref` and `actor_ref` to MCP
+receive and receipt ACK, matching the existing reply/send/status selectors.
+They are explicit scope selectors copied from the current injected Pallium
+scope, never runtime/session identity or authentication. Preserve the existing
+environment fallback; reject missing, blank, partial, or environment-conflicting
+explicit scope before any Relay HTTP call. Reply already has these selectors, so
+correct its tool/skill wording instead of promising automatic resolution.
+
 ## In Scope
 
-- Trace scope resolution from the hook-delivered tool call through the MCP client
-  and Relay reply endpoint.
-- Qualify whether `UserPromptSubmit` exposes the same runtime-owned `turn_id`
-  carried in local Codex MCP request metadata. Do not assume it from a session
-  ID or synthesize one.
-- Only if that correlation exists, have the hook publish an atomically replaced,
-  short-lived binding keyed by `(runtime, session_ref, turn_id)` after a
-  successful Relay turn registration. It must contain the hook-derived
-  `container_ref` and `actor_ref`; the MCP process must never derive either
-  from CWD, aliases, a delivery, or model arguments.
-- Let only the configured local Codex stdio server consume an exact, fresh
-  binding from its trusted request metadata. Generic factory and network paths
-  remain denied. A present explicit scope must agree exactly; any absent,
-  stale, malformed, conflicting, or ambiguous binding fails closed before a
-  Relay HTTP call.
-- Apply that resolver consistently to every Relay MCP call, including receive
-  and receipt ACK, not just reply.
-- Keep explicit scope validation and atomic reply/ACK behavior unchanged.
+- Add optional `container_ref` plus `actor_ref` selectors to receive and receipt
+  ACK, resolving both together against configured environment scope.
+- Preserve runtime/session binding: receive still accepts neither model runtime
+  nor model session; local Codex metadata only supplies its existing trusted
+  request-local session identity. Receipt binding and atomic reply semantics do
+  not change.
+- Update reply guidance to require the exact injected scope selectors when the
+  MCP process has no configured scope; do not claim delivery-ID-only routing.
+- Add the focused E2E coverage below through the same HTTP/MCP surfaces callers
+  use.
 
 ## Out of Scope
 
-- Changing Relay routing, receive identity, queue wake behavior, service
-  configuration, or raw HTTP guidance.
+- Hook or storage scope state, Relay routing, receive identity, queue wake,
+  service/configuration changes, API changes, raw HTTP guidance, and G2/G3.
 
 ## Done When
 
-1. A hook-delivered reply succeeds with delivery ID and message only when its
-   exact integration-owned scope binding is present.
-2. Receive, receipt ACK, reply, send, status, naming, and recipient discovery
-   obtain the same bound scope; no tool relies on a process-global scope.
-3. Missing, corrupted, expired, mismatched-session, mismatched-turn,
-   conflicting explicit scope, and ambiguous project-switch bindings fail
-   closed with no Relay HTTP call or partial ACK/reply.
-4. E2E drives two concurrent sessions through their own bindings; then a
-   project switch, failed old-project close, stale binding, duplicate reply,
-   and normal status reads. It asserts no cross-scope delivery and the complete
-   create → receive → ACK/reply → status lifecycle.
-5. Generic/default and network servers reject the same metadata/binding inputs.
-
-If the hook does not expose a matching runtime-owned turn ID, this automatic
-scope plan is blocked. The honest interim contract is explicit scope only for
-send/reply/status/name/recipients; installed recovery receive and ACK remain
-unavailable rather than guessing scope.
+1. A local-Codex metadata-bound receive with explicit scope reaches only its
+   exact project/actor; receipt ACK, reply, and status then complete through
+   their normal surfaces.
+2. Missing, blank, partial, or environment-conflicting explicit scope fails
+   before HTTP. No delivery is claimed and no receipt ACK/reply is partial.
+3. Cross-scope receipts cannot ACK or reply, and one runtime/session registered
+   in two project scopes remains separated.
+4. The E2E matrix drives create → receive → ACK/reply → status, concurrent
+   sessions, duplicate reply/idempotence, missing scope, environment conflict,
+   and cross-project misuse through HTTP plus real in-memory MCP.
+5. Generic/default and network servers retain current metadata denial; no hook,
+   storage, API, service, or wake behavior changes.
 
 ## Notes
 
 Dogfood incident 2026-08-31: the first `pallium_relay_reply` call returned 422
 for missing `container_ref` and `actor_ref`; the same reply succeeded when those
-injected values were supplied. This is a generic MCP scope-resolution defect, not
-an identity-binding or wake qualification result.
+injected values were supplied. This is a generic MCP scope-resolution defect,
+not an identity-binding or wake qualification result. The per-turn binding
+candidate was diagnosed and deliberately rejected as larger and unsafe without
+turn correlation.
