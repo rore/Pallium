@@ -368,7 +368,8 @@ async def test_trusted_codex_request_metadata_receives_per_session_and_acks(monk
 
 
 @pytest.mark.asyncio
-async def test_trusted_codex_absent_metadata_preserves_runtime_fallback(monkeypatch, asgi_post):
+@pytest.mark.parametrize("request_meta", [{}, {"x-codex-turn-metadata": None}])
+async def test_trusted_codex_absent_metadata_preserves_runtime_fallback(monkeypatch, asgi_post, request_meta):
     monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
     monkeypatch.setenv("PALLIUM_THREAD_REF", "fallback")
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
@@ -381,7 +382,7 @@ async def test_trusted_codex_absent_metadata_preserves_runtime_fallback(monkeypa
         "payload": "legacy", **_SCOPE,
     })
     async with create_connected_server_and_client_session(create_server(trust_codex_request_metadata=True)) as client:
-        result = await client.call_tool("pallium_relay_receive")
+        result = await client.call_tool("pallium_relay_receive", meta=request_meta)
     assert [d["payload"] for d in json.loads(result.content[0].text)["deliveries"]] == ["legacy"]
 
 
@@ -450,3 +451,24 @@ async def test_trusted_codex_metadata_rejects_forged_model_context(monkeypatch):
             result = await client.call_tool("pallium_relay_receive", {"context": {"thread_id": "forged"}})
     assert "PALLIUM_THREAD_REF" in result.content[0].text
     receive.assert_not_awaited()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata", ["null", "[", {"thread_id": "fallback"}, {"thread_id": "fallback", "session_id": "other", "turn_id": "turn"}])
+async def test_invalid_wire_metadata_never_claims_valid_fallback(monkeypatch, asgi_post, asgi_get, metadata):
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.setenv("PALLIUM_THREAD_REF", "fallback")
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    bind_asgi_post(monkeypatch, asgi_post)
+    for session in ("fallback", "sender"):
+        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": session, **_SCOPE})
+    sent = await asgi_post("/relay/messages", {
+        "sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "codex:fallback",
+        "payload": "must-stay-pending", **_SCOPE,
+    })
+    async with create_connected_server_and_client_session(create_server(trust_codex_request_metadata=True)) as client:
+        result = await client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": metadata})
+    assert "Codex request identity" in result.content[0].text
+    status = await asgi_get(f"/relay/messages/{sent['message_id']}", _SCOPE)
+    assert status["deliveries"][0]["state"] == "pending"
+    assert status["deliveries"][0]["attempts"] == 0
