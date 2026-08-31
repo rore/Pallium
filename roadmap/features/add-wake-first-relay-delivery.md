@@ -77,13 +77,16 @@ prevent a regular turn from claiming still-pending batches.
 Production batch delivery and wake are not enabled. The B1 foundation is accepted;
 B2 candidate code has been implemented in disposable environments. Its final
 hardening (starting at `7621ab4`, plus the count-range review correction) passes
-296 combined Relay tests and the import-boundary
+310 combined Relay tests and the import-boundary
 check; independent final candidate review is accepted. This is not runtime qualification.
 See [candidate review and qualification order](../../docs/designs/relay-batch-b2-candidate-review.md)
 and [B2 Work Record](../../.agent-workflow/tasks/codex-relay-batch-wake-b2.md).
 G2/G3 gate the new passive batch path as well as wake. Next is full-envelope
 Codex context/admission and backlog-headroom qualification, then reviewed migration
-and compatible integration rollout before activation. Claude remains deferred.
+and compatible integration rollout before activation. The current desktop witness
+access gap is recorded in the [qualification plan](../../docs/designs/relay-codex-qualification-plan.md);
+no replacement runtime or weaker delivery guarantee is authorized. Remaining
+deterministic E2E matrix items also gate release. Claude remains deferred.
 
 ## Delivery Contract
 

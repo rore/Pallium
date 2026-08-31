@@ -216,3 +216,26 @@ infeasible. The recorded missing capability is a desktop-bound read/subscription
 for persisted hook fragments plus same-turn completion/token semantics that prove
 pre-model context commitment. G2 stays blocked and G3 unmeasured; no turn,
 server, configuration, or delivery action occurred.
+
+## Additional acceptance coverage and actual qualification blocker
+
+Manager added candidate-surface E01 malformed send-form rejection with no partial
+rows/claims, E03 split-secret plus forged-marker HTTP-to-MCP checks, and E13
+independent fan-out completion. The final combined suite now has **310 passed,
+4 existing warnings**, including 32 manager acceptance cases. No production code
+changed after the reviewed count-bound tightening. Remaining partial E-matrix
+items still gate release; this is not a blanket full-feature completion claim.
+
+Qualification planning/read-only review is committed in relay-codex-qualification-plan.md.
+Manager independently confirmed the desktop task read surface lacks hook fragments;
+the installed native existing-host proxy fails to connect (Windows error 10050).
+A new runtime or weaker admission contract was not substituted. Need a supported
+existing-desktop witness connection or separately reviewed alternative before G2/G3
+can close. No live database, install, service restart or wake activation occurred.
+
+Dogfood instruction issue to retain for E17: a receiver deferred ACK while doing
+several minutes of work, then its atomic reply needed lease recovery. Receiving
+content and completing the requested work are distinct: acknowledge received
+content promptly before long work, then reply later from delivered state. Clarify
+this consistently in MCP/installed skills and regression UX; it is not evidence
+of a lost message. The manager ACKed its incoming checkpoints before reviewing.

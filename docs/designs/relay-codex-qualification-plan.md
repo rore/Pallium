@@ -131,3 +131,20 @@ must establish whether the full fragment was committed before model execution;
 raw transcript files remain excluded because their format is not stable. Until
 that connection exists, G2 remains blocked and G3 cannot measure actual desktop
 headroom. No server, turn, configuration, or delivery probe was created.
+
+### Manager connection check
+
+The prohibition is against a replacement managed runtime or ad hoc transport
+scaffolding, not a supported read-only client attaching to the existing host.
+A bounded `codex app-server proxy` invocation with only an `initialize` request
+failed before connection: `failed to connect to socket ... app-server-control.sock`,
+Windows `os error 10050` (socket operation encountered a dead network). No server,
+turn or runtime configuration was created/changed. The local path is intentionally
+omitted from this public record.
+
+Thus the app task tool lacks the required detail and the CLI's default existing-
+host connection is unavailable on this machine. Do not infer from this error that
+all runtime transports or OSs are unsupported. Qualification is currently blocked
+on a usable supported existing-desktop readback connection (or separately reviewed
+alternative evidence), not on another revision of the batch storage algorithm.
+Do not silently weaken the agreed admission contract or activate to work around it.
