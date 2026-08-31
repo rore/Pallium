@@ -1,7 +1,7 @@
 <!-- agent-workflow:start -->
 **Outcome:** Codex-to-Codex Relay exchanges can submit and deliver bounded whole batches through the regular-turn path, with notification-only wake only after G1-G3 evidence proves it safe.
 **Target:** Pallium Relay milestone 1.
-**Scope:** Implement only the narrow request-local Codex Relay receive-identity fix in `app/mcp/context.py`, `app/mcp/server.py`, `tests/test_mcp_context.py`, `tests/test_mcp_server.py`, `tests/test_relay_mcp_tools.py`, scoped MCP lifecycle E2E, and relevant MCP/usage guidance. The immutable per-server metadata-trust flag defaults false and is enabled only by `main()`'s actual local Codex stdio bootstrap. No claim/ACK/reply semantic change, installed reload, service/config change, batching, coordinator, or G1-G3 work is included.
+**Scope:** Implement only the narrow request-local Codex Relay receive-identity fix in `app/mcp/context.py`, `app/mcp/server.py`, `tests/test_mcp_context.py`, `tests/test_mcp_server.py`, `tests/test_relay_mcp_tools.py`, scoped MCP lifecycle E2E, and `AGENTS.md` plus relevant MCP/usage guidance. The immutable per-server metadata-trust flag defaults false and is enabled only by `main()`'s actual local Codex stdio bootstrap. No claim/ACK/reply semantic change, installed reload, service/config change, batching, coordinator, or G1-G3 work is included.
 **Constraints:** Preserve unrelated `uv.lock`. No live trigger, production edit, service/config change, managed runtime, Claude/OpenCode wake adapter, second injection path, or redesign before this checkpoint is reviewed. Runtime adapters stay out of core; no raw claim token/HTTP guidance.
 **Completion criteria:** Each applicable E01-E18 case drives its HTTP, MCP, or hook surface and observes status plus integration output; G1-G3 qualify the installed Codex runtime before wake is enabled; the no-ping exchange and wake-disabled regular-turn control have recorded evidence.
 **Risk:** High
@@ -147,3 +147,13 @@ Verification: `.venv\\Scripts\\python.exe -m pytest tests/test_mcp_context.py te
 ### Recovery update — implementation review
 
 Next action: return one consolidated commit/diff/test summary to the architect and await review. Do not reload installed MCP, change configuration/service, make a production claim, or continue batch/G1-G3 work from this slice.
+
+### Consolidated final-review correction (2026-08-31)
+
+Corrected the parser boundary so a present `x-codex-turn-metadata: null` is invalid rather than absent; only an omitted header retains legacy environment fallback. The FastMCP wire layer normalizes a null `_meta` entry away, so the direct parser regression proves the explicit-present distinction and the in-memory MCP regression proves the resulting no-claim fallback. Extended the protocol suite with all three runtime-candidate conflicts, malformed/deep/oversized/control inputs, hidden forged Context/model arguments, absent trusted-metadata fallback, and concurrent per-session receive followed by receipt ACK and receipt-bound reply. The original messages' delivery states are read through the ordinary HTTP status endpoint and both are `delivered`.
+
+Verification: `.venv\Scripts\python.exe -m pytest tests/test_mcp_context.py tests/test_mcp_server.py tests/test_relay_mcp_tools.py tests/test_relay_mcp_lifecycle.py -q` → **129 passed**, with four pre-existing FastMCP/Pydantic forward-reference warnings. `compileall` and `git diff --check` passed. No installed reload, service/configuration change, production claim, or G1-G3/batch work occurred; unrelated `uv.lock` remains unstaged.
+
+### Recovery update — final review
+
+Next action: send the consolidated correction, test, and scope summary through the hook-delivered Relay reply and notify the architect session per the user's standing instruction. Await any further review; do not reload installed MCP, change configuration/service, make a production claim, or continue batch/G1-G3 work from this slice.

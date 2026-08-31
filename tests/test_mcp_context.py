@@ -179,6 +179,7 @@ def test_codex_request_metadata_status_is_allowlisted_and_hashed() -> None:
 
 def test_codex_request_metadata_status_rejects_absent_or_malformed_metadata() -> None:
     assert codex_request_metadata_status(None) == {"source": "absent", "shape": "absent"}
+    assert codex_request_metadata_status({"x-codex-turn-metadata": None}) == {"source": "codex_turn_metadata", "shape": "invalid"}
     assert codex_request_metadata_status({"x-codex-turn-metadata": "["}) == {
         "source": "codex_turn_metadata", "shape": "invalid"
     }
@@ -210,6 +211,7 @@ def test_codex_request_metadata_status_rejects_deep_or_oversized_json(raw: str) 
     ("metadata", "env", "expected", "blocked"),
     [
         (None, {}, None, False),
+        ({"x-codex-turn-metadata": None}, {"PALLIUM_THREAD_REF": "fallback-session"}, None, True),
         ({"x-codex-turn-metadata": {"thread_id": "s", "session_id": "s", "turn_id": "t"}}, {}, "s", False),
         ({"x-codex-turn-metadata": {"thread_id": "s", "session_id": "s", "turn_id": "t"}}, {"PALLIUM_THREAD_REF": "s", "CODEX_THREAD_ID": "s", "CODEX_SESSION_ID": "s"}, "s", False),
         ({"x-codex-turn-metadata": {"thread_id": "s", "session_id": "s", "turn_id": "t"}}, {"PALLIUM_THREAD_REF": "other"}, None, True),

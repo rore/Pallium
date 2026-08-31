@@ -104,9 +104,11 @@ def _valid_identifier(value: object) -> str | None:
 
 
 def _parse_codex_request_metadata(request_meta: Mapping[str, Any] | None) -> _CodexRequestMetadata:
-    raw = request_meta.get("x-codex-turn-metadata") if isinstance(request_meta, Mapping) else None
-    if raw is None:
+    if not isinstance(request_meta, Mapping) or "x-codex-turn-metadata" not in request_meta:
         return _CodexRequestMetadata(source="absent", shape="absent")
+    raw = request_meta["x-codex-turn-metadata"]
+    if raw is None:
+        return _CodexRequestMetadata(source="codex_turn_metadata", shape="invalid")
     if isinstance(raw, str):
         if len(raw) > _CODEX_TURN_METADATA_MAX_CHARS:
             return _CodexRequestMetadata(source="codex_turn_metadata", shape="invalid")

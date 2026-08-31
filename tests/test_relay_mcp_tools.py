@@ -62,6 +62,16 @@ def asgi_post(relay_app):
     return _post
 
 
+@pytest.fixture()
+def asgi_get(relay_app):
+    async def _get(path, params):
+        transport = httpx.ASGITransport(app=relay_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", timeout=30.0) as http:
+            response = await http.get(path, params=params)
+            response.raise_for_status()
+            return response.json()
+    return _get
+
 def bind_asgi_post(monkeypatch: pytest.MonkeyPatch, asgi_post) -> None:
     async def _post(_client, path, payload):
         try:
@@ -324,7 +334,7 @@ class TestFullLifecycle:
         mcp_after_hook, _ = await create_server().call_tool("pallium_relay_receive", {})
         assert json.loads(mcp_after_hook[0].text)["deliveries"] == []
 @pytest.mark.asyncio
-async def test_trusted_codex_request_metadata_receives_per_session_and_acks(monkeypatch, asgi_post):
+async def test_trusted_codex_request_metadata_receives_per_session_and_acks(monkeypatch, asgi_post, asgi_get):
     monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
     monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
@@ -332,8 +342,9 @@ async def test_trusted_codex_request_metadata_receives_per_session_and_acks(monk
     bind_asgi_post(monkeypatch, asgi_post)
     for session in ("meta-a", "meta-b", "sender"):
         await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": session, **_SCOPE})
+    messages = {}
     for session, payload in (("meta-a", "only-a"), ("meta-b", "only-b")):
-        await asgi_post("/relay/messages", {
+        messages[session] = await asgi_post("/relay/messages", {
             "sender_runtime": "codex", "sender_session_ref": "sender", "recipient": f"codex:{session}",
             "payload": payload, **_SCOPE,
         })
@@ -342,11 +353,36 @@ async def test_trusted_codex_request_metadata_receives_per_session_and_acks(monk
             client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-a", "session_id": "meta-a", "turn_id": "turn-a"})}),
             client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": json.dumps({"thread_id": "meta-b", "session_id": "meta-b", "turn_id": "turn-b"})}),
         )
-        delivery = json.loads(a.content[0].text)["deliveries"][0]
-        ack = await client.call_tool("pallium_relay_ack", {"delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"]})
+        delivery_a = json.loads(a.content[0].text)["deliveries"][0]
+        delivery_b = json.loads(b.content[0].text)["deliveries"][0]
+        await client.call_tool("pallium_relay_ack", {"delivery_id": delivery_a["delivery_id"], "receipt": delivery_a["receipt"]})
+        await client.call_tool("pallium_relay_reply", {"delivery_id": delivery_b["delivery_id"], "receipt": delivery_b["receipt"], "message": "reply-b"})
+    status_a, status_b = await asyncio.gather(
+        asgi_get(f"/relay/messages/{messages['meta-a']['message_id']}", _SCOPE),
+        asgi_get(f"/relay/messages/{messages['meta-b']['message_id']}", _SCOPE),
+    )
     assert [d["payload"] for d in json.loads(a.content[0].text)["deliveries"]] == ["only-a"]
     assert [d["payload"] for d in json.loads(b.content[0].text)["deliveries"]] == ["only-b"]
-    assert json.loads(ack.content[0].text)["state"] == "delivered"
+    assert status_a["deliveries"][0]["state"] == "delivered"
+    assert status_b["deliveries"][0]["state"] == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_trusted_codex_absent_metadata_preserves_runtime_fallback(monkeypatch, asgi_post):
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.setenv("PALLIUM_THREAD_REF", "fallback")
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    bind_asgi_post(monkeypatch, asgi_post)
+    for session in ("fallback", "sender"):
+        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": session, **_SCOPE})
+    await asgi_post("/relay/messages", {
+        "sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "codex:fallback",
+        "payload": "legacy", **_SCOPE,
+    })
+    async with create_connected_server_and_client_session(create_server(trust_codex_request_metadata=True)) as client:
+        result = await client.call_tool("pallium_relay_receive")
+    assert [d["payload"] for d in json.loads(result.content[0].text)["deliveries"]] == ["legacy"]
 
 
 @pytest.mark.asyncio
@@ -362,9 +398,19 @@ async def test_default_server_denies_forged_request_metadata_even_with_stdio_env
             result = await client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": json.dumps({"thread_id": "forged", "session_id": "forged", "turn_id": "turn"})})
     assert "PALLIUM_THREAD_REF" in result.content[0].text
     receive.assert_not_awaited()
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("metadata", ["[", json.dumps({"thread_id": "only-thread", "turn_id": "turn"}), json.dumps({"thread_id": None, "session_id": "s", "turn_id": "turn"})])
-async def test_trusted_codex_metadata_failures_do_not_call_receive(monkeypatch, metadata):
+@pytest.mark.parametrize(("request_meta", "expected_error"), [
+    ({"x-codex-turn-metadata": None}, "PALLIUM_THREAD_REF"),
+    ({"x-codex-turn-metadata": "["}, "Codex request identity"),
+    ({"x-codex-turn-metadata": json.dumps({"thread_id": "only-thread", "turn_id": "turn"})}, "Codex request identity"),
+    ({"x-codex-turn-metadata": json.dumps({"thread_id": None, "session_id": "s", "turn_id": "turn"})}, "Codex request identity"),
+    ({"x-codex-turn-metadata": json.dumps({"thread_id": "safe\x00", "session_id": "safe\x00", "turn_id": "turn"})}, "Codex request identity"),
+    ({"x-codex-turn-metadata": json.dumps({"thread_id": "x" * 4096})}, "Codex request identity"),
+    ({"x-codex-turn-metadata": "[" * 1000}, "Codex request identity"),
+])
+async def test_trusted_codex_metadata_failures_do_not_call_receive(monkeypatch, request_meta, expected_error):
     monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
     monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
@@ -372,6 +418,35 @@ async def test_trusted_codex_metadata_failures_do_not_call_receive(monkeypatch, 
     receive = AsyncMock()
     with patch.object(PalliumMcpClient, "relay_receive", new=receive):
         async with create_connected_server_and_client_session(create_server(trust_codex_request_metadata=True)) as client:
-            result = await client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": metadata})
+            result = await client.call_tool("pallium_relay_receive", meta=request_meta)
+    assert expected_error in result.content[0].text
+    receive.assert_not_awaited()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("env_key", ["PALLIUM_THREAD_REF", "CODEX_THREAD_ID", "CODEX_SESSION_ID"])
+async def test_trusted_codex_metadata_environment_conflicts_do_not_call_receive(monkeypatch, env_key):
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    monkeypatch.setenv(env_key, "other")
+    receive = AsyncMock()
+    with patch.object(PalliumMcpClient, "relay_receive", new=receive):
+        async with create_connected_server_and_client_session(create_server(trust_codex_request_metadata=True)) as client:
+            result = await client.call_tool("pallium_relay_receive", meta={"x-codex-turn-metadata": json.dumps({"thread_id": "safe", "session_id": "safe", "turn_id": "turn"})})
     assert "Codex request identity" in result.content[0].text
+    receive.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_trusted_codex_metadata_rejects_forged_model_context(monkeypatch):
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    receive = AsyncMock()
+    with patch.object(PalliumMcpClient, "relay_receive", new=receive):
+        async with create_connected_server_and_client_session(create_server(trust_codex_request_metadata=True)) as client:
+            result = await client.call_tool("pallium_relay_receive", {"context": {"thread_id": "forged"}})
+    assert "PALLIUM_THREAD_REF" in result.content[0].text
     receive.assert_not_awaited()
