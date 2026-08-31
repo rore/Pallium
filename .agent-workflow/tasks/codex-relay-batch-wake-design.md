@@ -33,4 +33,4 @@ Awaiting the named external architect. Ask for a single complete review artifact
 
 ## Recovery
 
-Finish documentation checks, record the review request ID, and stop before code. Future production work must use its own risk-classified Work Record and required approvals.
+Design revision 9543503 is committed and published on codex/relay-batch-wake-design. Review request relay-msg-dd80e21718f04f26a71abb32c4005f4e was sent to claude-code:@claude_arch on 2026-08-31; delivery is pending. Reviewer may write only docs/designs/relay-batch-codex-wake-review.md and reply with its pointer. Next: receive the verdict, inspect the complete artifact, adjudicate blockers, and update this record before implementation readiness is claimed. No production changes or tests ran. Future production work needs its own risk-classified record and approvals. Existing uv.lock remains untouched.
