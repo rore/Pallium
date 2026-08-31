@@ -748,6 +748,7 @@ async def test_relay_send_uses_exact_scope_and_preserves_unicode(monkeypatch: py
         "sender_runtime": "codex",
         "sender_session_ref": "session-1",
         "expires_in_seconds": None,
+        "request_id": None,
     }]
     assert json.loads(content[0].text)["state"] == "pending"
 
@@ -764,7 +765,7 @@ async def test_relay_reply_uses_delivery_without_model_supplied_identity(monkeyp
             "actor_ref": "actor-1",
         })
     reply.assert_awaited_once_with(
-        delivery_id="delivery-1", receipt=None, message="ack ✓", expires_in_seconds=None
+        delivery_id="delivery-1", receipt=None, message="ack ✓", expires_in_seconds=None, request_id=None
     )
     assert json.loads(content[0].text)["message_id"] == "reply-1"
 

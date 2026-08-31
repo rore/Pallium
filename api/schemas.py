@@ -790,6 +790,7 @@ class RelaySessionNameRequest(RelaySessionMutationRequest):
 
 
 class RelaySendRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     sender_runtime: RelayRuntime
     sender_session_ref: str = Field(min_length=1, max_length=255)
     recipient: str = Field(min_length=1, max_length=320)
@@ -799,15 +800,18 @@ class RelaySendRequest(BaseModel):
     expires_in_seconds: int = Field(default=86400, ge=60, le=604800)
     in_reply_to: str | None = Field(default=None, min_length=1, max_length=128)
     message_id: str | None = Field(default=None, min_length=1, max_length=128)
+    request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class RelayReplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     delivery_id: str = Field(min_length=1, max_length=128)
     receipt: str | None = Field(default=None, max_length=64)
     payload: str = Field(min_length=1, max_length=1500)
     container_ref: str = Field(min_length=1, max_length=512)
     actor_ref: str = Field(min_length=1, max_length=255)
     expires_in_seconds: int = Field(default=86400, ge=60, le=604800)
+    request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class RelayAckRequest(BaseModel):

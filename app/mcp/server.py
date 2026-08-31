@@ -570,10 +570,11 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, trust_codex_requ
         sender_runtime: str,
         sender_session_ref: str,
         expires_in_seconds: int | None = None,
+        request_id: str | None = None,
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Send new bounded text to runtime, exact-session, or alias selector: codex, codex:<session_ref>, or codex:@review (and equivalent supported runtimes). Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for a received message."""
+        """Send one new bounded text message to runtime, exact-session, or alias selector; request_id fails closed until coordinated API activation: codex, codex:<session_ref>, or codex:@review (and equivalent supported runtimes). Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for a received message."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
@@ -583,6 +584,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, trust_codex_requ
             sender_runtime=sender_runtime,
             sender_session_ref=sender_session_ref,
             expires_in_seconds=expires_in_seconds,
+            request_id=request_id,
         )
         return _relay_text(result)
 
@@ -592,10 +594,11 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, trust_codex_requ
         message: str,
         receipt: str | None = None,
         expires_in_seconds: int | None = None,
+        request_id: str | None = None,
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery. Copy delivery_id from the attributed Relay block. When replying via pallium_relay_receive (MCP path), also pass the receipt — this atomically ACKs and replies in one step; no prior pallium_relay_ack needed. When replying after a hook-injected delivery (already delivered), receipt is not required. If this MCP configuration has no Relay scope, copy both container_ref and actor_ref from the injected scope. Pallium derives both endpoints from delivery_id."""
+        """Reply once to a received Relay delivery; request_id fails closed until coordinated API activation. Copy delivery_id from the attributed Relay block. When replying via pallium_relay_receive (MCP path), also pass the receipt — this atomically ACKs and replies in one step; no prior pallium_relay_ack needed. When replying after a hook-injected delivery (already delivered), receipt is not required. If this MCP configuration has no Relay scope, copy both container_ref and actor_ref from the injected scope. Pallium derives both endpoints from delivery_id."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
         if scope_error:
             return scope_error
@@ -606,6 +609,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, trust_codex_requ
             receipt=receipt,
             message=message,
             expires_in_seconds=expires_in_seconds,
+            request_id=request_id,
         )
         return _relay_text(result)
     @server.tool()

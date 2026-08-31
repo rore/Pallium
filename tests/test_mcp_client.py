@@ -315,3 +315,17 @@ class TestRelay:
             "container_ref": "test-container",
             "actor_ref": "test-actor",
         }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "kwargs"),
+        [
+            ("relay_send", {"message": "x", "recipient": "codex:target", "sender_runtime": "codex", "sender_session_ref": "s", "request_id": "key"}),
+            ("relay_reply", {"delivery_id": "d", "message": "x", "request_id": "key"}),
+        ],
+    )
+    async def test_keyed_relay_mcp_operations_fail_closed_without_post(self, ctx: PalliumContext, method: str, kwargs: dict) -> None:
+        with patch("httpx.AsyncClient.post") as post:
+            result = await getattr(PalliumMcpClient(ctx), method)(**kwargs)
+        assert "coordinated API activation" in result["error"]
+        post.assert_not_called()

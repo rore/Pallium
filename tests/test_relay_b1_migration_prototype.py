@@ -105,3 +105,45 @@ def test_repeated_and_concurrent_migration_initialization_is_idempotent(tmp_path
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT commit_seq FROM relay_messages").fetchone() == (1,)
         assert db.execute("SELECT next_seq FROM relay_commit_counters WHERE key='relay'").fetchone() == (1,)
+
+def test_migrated_database_serializes_parallel_keyed_replies(client):
+    relay_storage = client.app.state.pallium_service._storage
+    from tests.test_agent_relay_e2e import _reply, _send, _turn
+
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    _send(client, "claude-code", "sender", "codex:target", "one")
+    _send(client, "claude-code", "sender", "codex:target", "two")
+    with relay_storage._engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        migrate_relay_commit_sequences(connection)
+    deliveries = _turn(client, "codex", "target")["deliveries"]
+
+    def reply(item: tuple[int, dict]) -> int:
+        index, delivery = item
+        return _reply(
+            client,
+            delivery["delivery_id"],
+            f"reply-{index}",
+            receipt=delivery["receipt"],
+            request_id=f"parallel-{index}",
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(reply, enumerate(deliveries))) == [200, 200]
+    with relay_storage._engine.connect() as connection:
+        sequences = connection.execute(text("SELECT commit_seq FROM relay_messages ORDER BY commit_seq")).scalars().all()
+    assert sequences == list(range(1, len(sequences) + 1))
+
+def test_migration_rejects_incompatible_request_table_without_partial_schema(tmp_path):
+    path = tmp_path / "incompatible-request.db"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE relay_messages (id TEXT PRIMARY KEY, created_at TEXT NOT NULL)")
+        db.execute("CREATE TABLE relay_requests (id TEXT PRIMARY KEY, payload TEXT)")
+    engine = create_engine(f"sqlite:///{path}", future=True)
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        with pytest.raises(RuntimeError, match="unsupported B1 shape"):
+            migrate_relay_commit_sequences(connection)
+    with sqlite3.connect(path) as db:
+        assert [row[1] for row in db.execute("PRAGMA table_info(relay_messages)")] == ["id", "created_at"]
+        assert [row[1] for row in db.execute("PRAGMA table_info(relay_requests)")] == ["id", "payload"]
+        assert db.execute("SELECT name FROM sqlite_master WHERE name='relay_commit_counters'").fetchone() is None

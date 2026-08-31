@@ -204,6 +204,7 @@ class RelayService:
         expires_in_seconds: int = RELAY_DEFAULT_EXPIRY_SECONDS,
         in_reply_to: str | None = None,
         message_id: str | None = None,
+        request_id: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
@@ -214,8 +215,12 @@ class RelayService:
         recipient_runtime, recipient_kind, recipient_value = parse_selector(recipient)
         raw_payload = validate_payload(payload)
         stored_payload = redact_sensitive(raw_payload)
+        request = None if request_id is None else _opaque(request_id, "request_id", maximum=128)
+        if request is not None and message_id is not None:
+            raise ValueError("request_id and message_id cannot be combined")
         return self._store.relay_send(
             message_id=_opaque(message_id, "message_id", maximum=128) if message_id else f"relay-msg-{uuid.uuid4().hex}",
+            request_id=request,
             sender_runtime=validate_runtime(sender_runtime),
             sender_session_ref=_opaque(sender_session_ref, "sender_session_ref"),
             recipient=recipient,
@@ -242,6 +247,7 @@ class RelayService:
         container_ref: str,
         actor_ref: str,
         expires_in_seconds: int = RELAY_DEFAULT_EXPIRY_SECONDS,
+        request_id: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
@@ -252,11 +258,13 @@ class RelayService:
         delivery = _opaque(delivery_id, "delivery_id", maximum=128)
         raw_payload = validate_payload(payload)
         stored_payload = redact_sensitive(raw_payload)
-        reply_id = "relay-reply-" + hashlib.sha256(delivery.encode("utf-8")).hexdigest()
+        request = None if request_id is None else _opaque(request_id, "request_id", maximum=128)
+        reply_id = "relay-reply-" + (hashlib.sha256(delivery.encode("utf-8")).hexdigest() if request is None else uuid.uuid4().hex)
         return self._store.relay_reply_atomic(
             delivery_id=delivery,
             receipt=_opaque(receipt, "receipt", maximum=64) if receipt is not None else None,
             reply_message_id=reply_id,
+            request_id=request,
             payload=stored_payload,
             redacted=stored_payload != raw_payload,
             container_ref=container,

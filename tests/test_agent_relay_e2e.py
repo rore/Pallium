@@ -49,6 +49,13 @@ def _reply(client, delivery_id: str, payload: str = "reply", receipt: str | None
     return client.post("/relay/replies", json=body)
 
 
+def _migrate_relay(client) -> None:
+    from storage.relay_migration import migrate_relay_commit_sequences
+
+    storage = client.app.state.pallium_service._storage
+    with storage._engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        migrate_relay_commit_sequences(connection)
+
 def _status(client, message_id: str, **scope):
     return client.get("/relay/messages/" + message_id, params={**SCOPE, **scope})
 
@@ -605,3 +612,107 @@ def test_turn_skips_legacy_unsafe_rows_and_drains_later_safe_delivery(client, re
     assert turn["remaining_count"] == 0
     assert _ack(client, turn["deliveries"][0]).status_code == 200
     assert _turn(client, "codex", "mixed-legacy-target")["deliveries"] == []
+
+def test_request_id_retries_are_scoped_and_public_parts_are_rejected(client, relay_storage):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    _migrate_relay(client)
+
+    with relay_storage._session_factory() as db:
+        before = db.query(RelayMessageRecord).count()
+    assert _send(client, "claude-code", "sender", "codex:target", parts=["one", "two"]).status_code == 422
+    with relay_storage._session_factory() as db:
+        assert db.query(RelayMessageRecord).count() == before
+
+    first = _send(client, "claude-code", "sender", "codex:target", "first", request_id="request-1")
+    assert first.status_code == 200
+    same = _send(client, "claude-code", "sender", "codex:target", "first", request_id="request-1")
+    assert same.status_code == 200
+    assert same.json()["message_id"] == first.json()["message_id"]
+    assert len(same.json()["deliveries"]) == 1
+    assert _send(client, "claude-code", "sender", "codex:target", "changed", request_id="request-1").status_code == 409
+    assert _send(client, "claude-code", "sender", "codex:target", "first", request_id="request-2", message_id="legacy").status_code == 422
+
+
+def test_keyed_replies_are_atomic_and_legacy_reply_id_is_stable(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    _migrate_relay(client)
+    sent = _send(client, "claude-code", "sender", "codex:target").json()
+    delivery = _turn(client, "codex", "target")["deliveries"][0]
+
+    legacy = _reply(client, delivery["delivery_id"], receipt=delivery["receipt"])
+    assert legacy.status_code == 200
+    assert _reply(client, delivery["delivery_id"], receipt=delivery["receipt"]).json()["message_id"] == legacy.json()["message_id"]
+
+    first = _reply(client, delivery["delivery_id"], "one", receipt=delivery["receipt"], request_id="one")
+    assert first.status_code == 200
+    assert _reply(client, delivery["delivery_id"], "one", receipt=delivery["receipt"], request_id="one").json()["message_id"] == first.json()["message_id"]
+    second = _reply(client, delivery["delivery_id"], "two", receipt=delivery["receipt"], request_id="two")
+    assert second.status_code == 200
+    assert second.json()["message_id"] != first.json()["message_id"]
+    assert _reply(client, delivery["delivery_id"], "changed", receipt=delivery["receipt"], request_id="one").status_code == 409
+    assert _status(client, sent["message_id"]).json()["deliveries"][0]["state"] == "delivered"
+
+def test_request_id_result_is_retained_for_seven_days_then_cleaned(client, relay_storage):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    _migrate_relay(client)
+    first = _send(client, "claude-code", "sender", "codex:target", request_id="retained").json()
+    now = datetime.now(timezone.utc)
+
+    with relay_storage._engine.begin() as connection:
+        connection.execute(
+            text("UPDATE relay_messages SET created_at=:created, expires_at=:expires WHERE id=:id"),
+            {
+                "id": first["message_id"],
+                "created": now - timedelta(days=7),
+                "expires": now - timedelta(days=6),
+            },
+        )
+    retained = _send(client, "claude-code", "sender", "codex:target", request_id="retained")
+    assert retained.status_code == 200
+    assert retained.json()["message_id"] == first["message_id"]
+
+    with relay_storage._engine.begin() as connection:
+        connection.execute(
+            text("UPDATE relay_messages SET created_at=:created, expires_at=:expires WHERE id=:id"),
+            {
+                "id": first["message_id"],
+                "created": now - timedelta(days=9),
+                "expires": now - timedelta(days=8),
+            },
+        )
+        connection.execute(text("UPDATE relay_requests SET retention_until=:past"), {"past": now - timedelta(seconds=1)})
+    renewed = _send(client, "claude-code", "sender", "codex:target", request_id="retained")
+    assert renewed.status_code == 200
+    assert renewed.json()["message_id"] != first["message_id"]
+    assert renewed.json()["deliveries"][0]["delivery_id"] != first["deliveries"][0]["delivery_id"]
+
+def test_request_retention_keeps_reply_ancestry_until_last_key_expires(client, relay_storage):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    _migrate_relay(client)
+    root = _send(client, "claude-code", "sender", "codex:target", expires_in_seconds=60).json()
+    root_delivery = _turn(client, "codex", "target")["deliveries"][0]
+    first = _reply(client, root_delivery["delivery_id"], "first", receipt=root_delivery["receipt"], request_id="first-key", expires_in_seconds=604800).json()
+    first_delivery = _turn(client, "claude-code", "sender")["deliveries"][0]
+    second = _reply(client, first_delivery["delivery_id"], "second", receipt=first_delivery["receipt"], request_id="second-key", expires_in_seconds=604800).json()
+    now = datetime.now(timezone.utc)
+
+    with relay_storage._engine.begin() as connection:
+        connection.execute(text("UPDATE relay_messages SET expires_at=:past WHERE id IN (:root, :first)"), {"past": now - timedelta(days=8), "root": root["message_id"], "first": first["message_id"]})
+        connection.execute(text("UPDATE relay_requests SET retention_until=:past WHERE request_id='first-key'"), {"past": now - timedelta(seconds=1)})
+    assert _send(client, "claude-code", "sender", "codex:target", "cleanup").status_code == 200
+    retry = _reply(client, first_delivery["delivery_id"], "second", receipt=first_delivery["receipt"], request_id="second-key", expires_in_seconds=604800)
+    assert retry.status_code == 200
+    assert retry.json()["message_id"] == second["message_id"]
+
+    with relay_storage._engine.begin() as connection:
+        connection.execute(text("UPDATE relay_messages SET expires_at=:past WHERE id=:id"), {"past": now - timedelta(days=8), "id": second["message_id"]})
+        connection.execute(text("UPDATE relay_requests SET retention_until=:past WHERE request_id='second-key'"), {"past": now - timedelta(seconds=1)})
+    assert _send(client, "claude-code", "sender", "codex:target", "release").status_code == 200
+    with relay_storage._session_factory() as db:
+        assert db.get(RelayMessageRecord, root["message_id"]) is None
+        assert db.get(RelayMessageRecord, first["message_id"]) is None
+        assert db.get(RelayMessageRecord, second["message_id"]) is None

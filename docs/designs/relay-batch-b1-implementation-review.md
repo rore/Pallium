@@ -177,3 +177,32 @@ The old-writer sequence fix and immediate reply transaction are accepted.
 Do not roll them back or seek another broad architecture approval. Apply one
 bounded correction pass with regressions, retain the startup/deployment block,
 and report incomplete gates honestly. Preserve unrelated uv.lock.
+
+## B1 foundation acceptance — 2026-08-31
+
+APPROVED as an internal, unactivated foundation. The scoped request mapping,
+fresh post-retention message identities, retained reply ancestry, MCP keyed-call
+fail-closed boundary, migration shape validation and redacted ordered preparation
+resolve the consolidated review findings. Startup has no migration caller.
+
+The manager directly corrected two small codec issues to avoid another review
+round: preserve the existing multiline/tab/CR payload contract and map malformed
+stored surrogates to RelayCodecError. Three regression cases cover those changes.
+apply_patch failed with Windows sandbox error 1327; exact-file deterministic
+replacement was used only for the codec/tests and this acceptance note.
+
+Independent focused verification after the manager correction: 229 passed, four
+existing Pydantic warnings, across codec, migration, HTTP Relay E2E, MCP lifecycle,
+MCP client/server/tools. git diff --check passed. No service restart, installation
+or live migration occurred. No lint result is claimed.
+
+This approval is not batch delivery, Codex wake, G2/G3, or release acceptance.
+Public multipart and keyed MCP remain disabled. The recovered local request-table
+shape will intentionally fail migration validation; coordinated deployment must
+address that explicitly on a backup first, never delete it implicitly at startup.
+Full attributed-envelope budgets and publication/admission semantics remain B2.
+
+Next: commit reviewed B1 source/tests/Work Record, preserve unrelated uv.lock,
+and prepare one bounded B2 execution checkpoint against the approved design.
+Keep startup/installation/live DB changes blocked. Claude wake remains deferred
+until stable shared delivery and actual Codex no-ping/fallback E2E evidence.

@@ -7,8 +7,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import and_, delete, or_, select, text, update
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from core.relay import RelayConflictError, RelayNotFoundError
 from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
@@ -80,6 +80,51 @@ def _delivery_view(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -
 
 
 class SQLiteRelayMixin:
+
+    @staticmethod
+    def _request_row(
+        db, *, container_ref: str, actor_ref: str, sender_runtime: str,
+        sender_session_ref: str, operation_kind: str, parent_delivery_key: str,
+        request_id: str,
+    ):
+        try:
+            return db.execute(text("""
+                SELECT * FROM relay_requests WHERE container_ref=:container_ref AND actor_ref=:actor_ref
+                AND sender_runtime=:sender_runtime AND sender_session_ref=:sender_session_ref
+                AND operation_kind=:operation_kind AND parent_delivery_key=:parent_delivery_key
+                AND request_id=:request_id
+            """), locals()).mappings().one_or_none()
+        except OperationalError as exc:
+            raise RelayConflictError("keyed relay operations require the explicit B1 migration") from exc
+
+    @staticmethod
+    def _request_matches(row, *, recipient_selector: str, payload: str, redacted: bool, in_reply_to: str | None, expires_in_seconds: int) -> bool:
+        return row["recipient_selector"] == recipient_selector and row["payload_hash"] == hashlib.sha256(payload.encode("utf-8")).hexdigest() and bool(row["redacted"]) == redacted and row["in_reply_to"] == in_reply_to and row["expires_in_seconds"] == expires_in_seconds
+
+    @staticmethod
+    def _store_request(db, *, container_ref: str, actor_ref: str, sender_runtime: str, sender_session_ref: str, operation_kind: str, parent_delivery_key: str, request_id: str, message: RelayMessageRecord, recipient_selector: str, expires_in_seconds: int) -> None:
+        db.execute(text("""INSERT INTO relay_requests (container_ref, actor_ref, sender_runtime, sender_session_ref, operation_kind, parent_delivery_key, request_id, message_id, recipient_selector, payload_hash, redacted, in_reply_to, expires_in_seconds, retention_until) VALUES (:container_ref, :actor_ref, :sender_runtime, :sender_session_ref, :operation_kind, :parent_delivery_key, :request_id, :message_id, :recipient_selector, :payload_hash, :redacted, :in_reply_to, :expires_in_seconds, :retention_until)"""), {"container_ref": container_ref, "actor_ref": actor_ref, "sender_runtime": sender_runtime, "sender_session_ref": sender_session_ref, "operation_kind": operation_kind, "parent_delivery_key": parent_delivery_key, "request_id": request_id, "message_id": message.id, "recipient_selector": recipient_selector, "payload_hash": hashlib.sha256(message.payload.encode("utf-8")).hexdigest(), "redacted": message.redacted, "in_reply_to": message.in_reply_to, "expires_in_seconds": expires_in_seconds, "retention_until": message.expires_at + timedelta(days=7)})
+    @staticmethod
+    def _cleanup_relay_retention(db, current: datetime) -> None:
+        """Release only results whose request window and retained ancestry ended."""
+        try:
+            db.execute(text("DELETE FROM relay_requests WHERE retention_until <= :current"), {"current": current})
+            for table in ("relay_deliveries", "relay_messages"):
+                db.execute(text(f"""
+                    WITH RECURSIVE kept(id) AS (
+                        SELECT message_id FROM relay_requests
+                        UNION
+                        SELECT message.in_reply_to FROM relay_messages AS message
+                        JOIN kept ON message.id = kept.id
+                        WHERE message.in_reply_to IS NOT NULL
+                    )
+                    DELETE FROM {table}
+                    WHERE {"message_id" if table == "relay_deliveries" else "id"} NOT IN (SELECT id FROM kept)
+                    AND {"message_id IN (SELECT id FROM relay_messages WHERE expires_at <= :cutoff)" if table == "relay_deliveries" else "expires_at <= :cutoff"}
+                """), {"cutoff": current - timedelta(days=7)})
+        except OperationalError:
+            # Legacy traffic stays compatible until the explicit B1 migration runs.
+            return
 
     def _relay_session(
         self,
@@ -322,6 +367,7 @@ class SQLiteRelayMixin:
         self,
         *,
         message_id: str,
+        request_id: str | None,
         sender_runtime: str,
         sender_session_ref: str,
         recipient: str,
@@ -340,6 +386,7 @@ class SQLiteRelayMixin:
     ) -> dict[str, Any]:
         current = _now(now)
         with self._begin_immediate() as db:
+            self._cleanup_relay_retention(db, current)
             sender = self._relay_session(
                 db,
                 container_ref=container_ref,
@@ -352,6 +399,22 @@ class SQLiteRelayMixin:
             if sender.state == "closed":
                 raise RelayConflictError("closed sessions cannot send relay messages")
 
+            if request_id is not None:
+                prior = self._request_row(
+                    db, container_ref=container_ref, actor_ref=actor_ref,
+                    sender_runtime=sender_runtime, sender_session_ref=sender_session_ref,
+                    operation_kind="send", parent_delivery_key="", request_id=request_id,
+                )
+                if prior is not None:
+                    if not self._request_matches(
+                        prior, recipient_selector=recipient, payload=payload, redacted=redacted,
+                        in_reply_to=in_reply_to, expires_in_seconds=expires_in_seconds,
+                    ):
+                        raise RelayConflictError("request_id is already in use with different parameters")
+                    previous = db.get(RelayMessageRecord, prior["message_id"])
+                    if previous is None:
+                        raise RelayConflictError("retained request result is unavailable")
+                    return self._relay_status_in_session(db, previous, current)
             if in_reply_to is not None:
                 parent = db.get(RelayMessageRecord, in_reply_to)
                 if parent is None or parent.container_ref != container_ref or parent.actor_ref != actor_ref:
@@ -432,6 +495,14 @@ class SQLiteRelayMixin:
                     )
                 )
             db.flush()
+            if request_id is not None:
+                self._store_request(
+                    db, container_ref=container_ref, actor_ref=actor_ref,
+                    sender_runtime=sender_runtime, sender_session_ref=sender_session_ref,
+                    operation_kind="send", parent_delivery_key="", request_id=request_id,
+                    message=message, recipient_selector=recipient,
+                    expires_in_seconds=expires_in_seconds,
+                )
             return self._relay_status_in_session(db, message, current)
 
     def relay_reply_atomic(
@@ -440,6 +511,7 @@ class SQLiteRelayMixin:
         delivery_id: str,
         receipt: str | None,
         reply_message_id: str,
+        request_id: str | None,
         payload: str,
         redacted: bool,
         container_ref: str,
@@ -455,6 +527,7 @@ class SQLiteRelayMixin:
         """
         current = _now(now)
         def run(db):
+            self._cleanup_relay_retention(db, current)
             row = db.execute(
                 select(RelayDeliveryRecord, RelayMessageRecord)
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
@@ -495,6 +568,22 @@ class SQLiteRelayMixin:
             recipient_session_ref = message.sender_session_ref
             recipient_selector = f"{recipient_runtime}:{recipient_session_ref}"
 
+            if request_id is not None:
+                prior = self._request_row(
+                    db, container_ref=container_ref, actor_ref=actor_ref,
+                    sender_runtime=sender_runtime, sender_session_ref=sender_session_ref,
+                    operation_kind="reply", parent_delivery_key=delivery_id, request_id=request_id,
+                )
+                if prior is not None:
+                    if not self._request_matches(
+                        prior, recipient_selector=recipient_selector, payload=payload, redacted=redacted,
+                        in_reply_to=message.id, expires_in_seconds=expires_in_seconds,
+                    ):
+                        raise RelayConflictError("request_id is already in use with different parameters")
+                    previous = db.get(RelayMessageRecord, prior["message_id"])
+                    if previous is None:
+                        raise RelayConflictError("retained request result is unavailable")
+                    return self._relay_status_in_session(db, previous, current)
             # idempotency: reply_message_id is deterministic so a second attempt returns the existing message
             existing = db.get(RelayMessageRecord, reply_message_id)
             if existing is not None:
@@ -544,10 +633,19 @@ class SQLiteRelayMixin:
             if delivery.state == "claimed":
                 delivery.state = "delivered"
                 delivery.delivered_at = current
+            if request_id is not None:
+                self._store_request(
+                    db, container_ref=container_ref, actor_ref=actor_ref,
+                    sender_runtime=sender_runtime, sender_session_ref=sender_session_ref,
+                    operation_kind="reply", parent_delivery_key=delivery_id, request_id=request_id,
+                    message=reply_msg, recipient_selector=recipient_selector,
+                    expires_in_seconds=expires_in_seconds,
+                )
 
             return self._relay_status_in_session(db, reply_msg, current)
 
-        return self._with_retry(run)
+        with self._begin_immediate() as db:
+            return run(db)
 
     def _relay_status_in_session(
         self, db, message: RelayMessageRecord, current: datetime

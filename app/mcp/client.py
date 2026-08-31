@@ -255,7 +255,10 @@ class PalliumMcpClient:
         expires_in_seconds: int | None = None,
         in_reply_to: str | None = None,
         message_id: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
+        if request_id is not None:
+            return {"error": "keyed Relay operations require coordinated API activation"}
         payload: dict[str, Any] = {
             "payload": message,
             "recipient": recipient,
@@ -267,6 +270,7 @@ class PalliumMcpClient:
             ("expires_in_seconds", expires_in_seconds),
             ("in_reply_to", in_reply_to),
             ("message_id", message_id),
+            ("request_id", request_id),
         ):
             if value is not None:
                 payload[key] = value
@@ -279,7 +283,10 @@ class PalliumMcpClient:
         message: str,
         receipt: str | None = None,
         expires_in_seconds: int | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
+        if request_id is not None:
+            return {"error": "keyed Relay operations require coordinated API activation"}
         payload: dict[str, Any] = {
             "delivery_id": delivery_id,
             "payload": message,
@@ -289,6 +296,8 @@ class PalliumMcpClient:
             payload["receipt"] = receipt
         if expires_in_seconds is not None:
             payload["expires_in_seconds"] = expires_in_seconds
+        if request_id is not None:
+            payload["request_id"] = request_id
         return await self._post_or_error("/relay/replies", payload)
 
     async def relay_status(self, message_id: str) -> dict[str, Any]:
