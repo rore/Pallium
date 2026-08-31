@@ -107,18 +107,18 @@ No C notification coordinator or Claude/OpenCode wake is in scope.
 - E01 — partial: exact-one-form API validation and six-part fixture send/reply are tested; full malformed/form matrix remains incomplete.
 - E02 — implemented/tested for final envelope chars/bytes, newline/surrogate rejection and aggregate separator accounting; G3 64-backlog/context-headroom qualification remains a gate.
 - E03 — partial: parts are quoted so markers cannot forge structure; cross-part redaction is codec-covered, but no dedicated B2 E2E secret matrix yet.
-- E04 — incomplete for crash/disk/SQLite-contention retry matrix; B1 keyed persistence remains closed.
+- E04 — partial: retryable SQLite busy and fresh-service restart recovery are tested; disk-full, concurrent same-key and alias-movement fault matrix remains incomplete.
 - E05 — partial: scope/token/digest checks and stale generation rejection are tested; full alias/close/reopen matrix remains incomplete.
-- E06 — partial: reply rejects unwitnessed and expired candidate claims; depth/sibling matrix remains incomplete.
+- E06 — partial: reply rejects unwitnessed and expired candidate claims and depth over four; sibling/retry matrix remains incomplete.
 - E07 — implemented/tested: six-part HTTP → candidate claim → real hook formatter, plus MCP/hook focused suite; contention race expansion remains incomplete.
 - E08 — implemented/tested in fixtures: publication fence, stale generation, expiry, uncertainty and admission witness; actual full-envelope runtime readback is G2.
 - E09 — qualification-only: no wake implementation is authorized.
 - E10 — partial: FIFO active/uncertain/budget barriers and backlog arrival are tested; broader starvation/concurrent-final-ACK matrix remains incomplete.
-- E11 — incomplete: durable restart/clock matrix remains outstanding.
-- E12 — partial: before-publication expiry and post-publication uncertainty are tested; late-evidence timing matrix remains incomplete.
-- E13 — incomplete: mixed-fan-out capability/capacity negotiation is not activated or modeled beyond the fixture service capability.
+- E11 — partial: fresh-service restart preserves unpublished reclaim and published uncertainty; clock-skew and full outstanding-window matrix remains incomplete.
+- E12 — partial: before/publication expiry, uncertainty, wrong evidence and matching late positive evidence are tested; safe negative evidence and full clock timing remain incomplete.
+- E13 — partial: fixture-only protocol capability, mixed-fan-out rejection and per-recipient 64-pending capacity are tested; independent recipient completion remains incomplete.
 - E14 — qualification-only: wake capability remains disabled.
-- E15 — partial: bounded parts and visible budget/invalid states are enforced; burst/rate/depth/cleanup matrix remains incomplete.
+- E15 — partial: bounded parts, depth, capacity, visible budget/invalid states and orphan claim cleanup are enforced; burst/rate matrix remains incomplete.
 - E16 — partial: default legacy behavior after explicit B2 migration is tested; installer upgrade/downgrade is out of scope.
 - E17 — partial: fixture envelope declares part count and terminal marker; agent-only usability run remains incomplete.
 - E18 — qualification-only: no live architect/developer or wake exchange is authorized.
