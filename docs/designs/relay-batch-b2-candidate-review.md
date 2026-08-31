@@ -259,3 +259,23 @@ turn remained queued while its progress reports reached the manager. Confirmed
 Relay status was pending until a notification-only app message created the next
 receipt opportunity. All substantive instructions stayed in Relay; MCP recovery
 was used only without hook injection. This is not evidence of automatic wake.
+
+## Executable closure criteria — df894c7
+
+Manager-owned tests/test_relay_b2_architect_acceptance.py now reproduces remaining
+contract failures through HTTP and real ASGI-backed MCP. Initial run: three fail,
+one ordinary six-part control passes; an eight-part control was then added.
+
+- A 16,375-character accepted hook envelope yields no MCP delivery at default max.
+  Acceptance must budget actual supported transport projection; reject impossible
+  work atomically, but support ordinary complete six/eight-part batches.
+- Identical negative-reconciliation retry returns 409 after first success.
+- Deadline after proven non-admission restores uncertain instead of expired because
+  old publication metadata still controls lifecycle. Preserve historic evidence,
+  but distinguish a closed/reconciled attempt from outstanding exposure.
+
+These tests are intentionally red until the fixes land. Do not weaken assertions
+or solve them by lowering the approved public bounds. Private fixture attestations
+are not production proof; expired lease alone never fences a late publisher.
+The full G2 proof requirement still gates activation. Continue existing approved
+implementation, then run these controls plus the combined regressions.
