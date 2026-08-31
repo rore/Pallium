@@ -14,7 +14,7 @@
 **Plan review:** The coordinator accepted the external review conditions through Relay on 2026-08-31; the user directly approved all architect instructions. Implement after documenting the conflict truth table and adding failing regressions, then return one consolidated commit/diff/test review. The local Codex parent-owns-stdio-pipe assumption is operational only, not cryptographic provenance. The prior G2/G3 review remains separate; no batch gate is opened.
 **Approvals:** Approved by user 2026-08-31: "yes"; Approved by user 2026-08-31: "i approve everything the architect tells you to do"
 **Exceptions:** —
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Scoped receive-identity plan — review only
@@ -194,3 +194,11 @@ Architect direction supersedes the per-turn binding candidate: do not add hook/s
 Reviewed 96fe79f and independently reran the focused context, MCP server, Relay tool and lifecycle suites: 183 passed, four pre-existing Pydantic warnings. The container 512 / actor 255 limits and invalid configured-scope rejection close the review findings. Identity and explicit-scope fix implementation reviews are approved; this does not close the batch/wake milestone.
 
 Current blocker is installed-runtime validation: the active Codex MCP receive schema still exposes only max_chars. Restart/reconnect Codex's MCP host before testing receive with explicit injected scope and runtime-owned identity in both existing tasks. Do not restart the Pallium HTTP service. After reload, verify schema, use a controlled recovery turn (not concurrent hook receipt), send a unique scoped test message, receive and receipt-ACK/reply, and inspect status. Preserve unrelated uv.lock; no merge or installed success is claimed yet. apply_patch failed with Windows error 1327; this exact Work Record was updated with the permitted deterministic PowerShell fallback.
+
+## Installed identity and scope validation PASS (2026-08-31)
+
+After the user restarted Codex, both existing tasks loaded the updated tools. The native queued setup turn delivered relay-msg-56aae82a442f446fa8d8af8d37d361f4 through the normal hook; developer preflight completed READY-RECOVERY without manual receive. A separately labelled app-activation recovery control (not native-wake acceptance) then had no hook envelopes. One installed MCP receive with explicit injected scope and runtime-owned identity returned both probes. Receipt ACK delivered relay-msg-1daeedb55a4b46e890d74c8a6ef5b6a5; atomic receipt reply delivered relay-msg-d3eed3b3effd4e058ae7d61e017f5edb. Independent status reads confirmed both delivered with attempts=1.
+
+The resulting reply relay-reply-d72957f045aa909e111d89ff448e0014735e8807e630bf26010b179992e62b8b carried LIVE-REPLY-OK-20260831 and reached the manager in a normal hook envelope after native notification queue item 01a057c1-e58c-7ba3-81f9-dc4265c13098. Status independently confirms delivered, attempts=1. Manager did not manually receive or ACK that hook delivery. This validates installed identity, explicit scope, MCP receive, receipt ACK/reply and hook return delivery. No service restart, raw HTTP claim, fabricated session identity or duplicate claim was used.
+
+The reload blocker is closed. Next is release/PR verification for these reviewed fixes and alignment of the scope incident; full batch admission, busy/fault qualification and automatic notification coordination remain unfinished. Neither this app-activation recovery control nor the manually queued notification proves automatic coordinator wake. Preserve unrelated uv.lock. apply_patch failed with Windows error 1327; only this Work Record was edited through the documented deterministic PowerShell fallback.
