@@ -17,6 +17,13 @@ from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
+EXPECTED_NOTICE = (
+    "Pallium Relay delivery pending. Process every attributed Relay message injected "
+    "by this turn's hook. If none are visible, reply exactly: Pallium Relay wake "
+    "failed: no delivery was injected."
+)
+
+
 def _delivery(delivery_id: str = "delivery-1", runtime: str = "codex") -> dict:
     return {
         "recipient": "codex:target-session",
@@ -42,7 +49,7 @@ def test_success_does_not_queue_and_hides_process() -> None:
     ) as popen:
         codex_wake._wake("delivery-1", "target-session")
     assert run.call_args.args[0][-5:] == ["pallium-relay", "resume", "target-session", "-", "--json"]
-    assert run.call_args.kwargs["input"] == "Pallium Relay delivery pending. Process the attributed Relay messages injected by the turn hook. If none are present, stop without taking action."
+    assert run.call_args.kwargs["input"] == EXPECTED_NOTICE
     assert run.call_args.kwargs["stdout"] is subprocess.DEVNULL
     assert run.call_args.kwargs["stderr"] is subprocess.PIPE
     assert "shell" not in run.call_args.kwargs
@@ -58,7 +65,9 @@ def test_only_exact_active_writer_queues_once() -> None:
         codex_wake._wake("delivery-1", "target-session")
     assert run.call_args.args[0][0] == executable
     assert popen.call_args.args[0][0] == executable
-    assert popen.call_args.args[0][-5:] == ["queue", "--thread", "target-session", "--message", "Pallium Relay delivery pending. Process the attributed Relay messages injected by the turn hook. If none are present, stop without taking action."]
+    assert popen.call_args.args[0][-5:] == [
+        "queue", "--thread", "target-session", "--message", EXPECTED_NOTICE
+    ]
     assert "shell" not in popen.call_args.kwargs
 
 

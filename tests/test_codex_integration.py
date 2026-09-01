@@ -565,6 +565,78 @@ def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     assert len(contexts) == 1
 
 
+def test_codex_relay_delivery_bypasses_identical_prompt_dedup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    events: list[str] = []
+    delivery = {"delivery_id": "delivery-1"}
+    monkeypatch.setattr(
+        hook,
+        "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "session-1", "prompt": "same wake signal"},
+    )
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(
+        hook,
+        "relay_request",
+        lambda *_args, **_kwargs: events.append("relay") or {"deliveries": [delivery]},
+    )
+    monkeypatch.setattr(hook, "format_relay", lambda _: ("relay block", [delivery]))
+    monkeypatch.setattr(
+        hook, "check_dedup", lambda *_: events.append("dedup") or True
+    )
+    monkeypatch.setattr(
+        hook, "emit_context", lambda *_: events.append("emit")
+    )
+    monkeypatch.setattr(
+        hook, "acknowledge_relay", lambda *_args, **_kwargs: events.append("ack")
+    )
+    monkeypatch.setattr(
+        hook, "pallium_request", lambda *_args, **_kwargs: pytest.fail("ingestion ran")
+    )
+
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    assert events == ["relay", "emit", "ack"]
+
+
+def test_codex_no_relay_still_dedups_before_ingestion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    events: list[str] = []
+    monkeypatch.setattr(
+        hook,
+        "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "session-1", "prompt": "same normal prompt"},
+    )
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(
+        hook,
+        "relay_request",
+        lambda *_args, **_kwargs: events.append("relay") or {"deliveries": []},
+    )
+    monkeypatch.setattr(hook, "format_relay", lambda _: ("", []))
+    monkeypatch.setattr(
+        hook, "check_dedup", lambda *_: events.append("dedup") or True
+    )
+    monkeypatch.setattr(
+        hook, "pallium_request", lambda *_args, **_kwargs: pytest.fail("ingestion ran")
+    )
+
+    hook.main()
+
+    assert events == ["relay", "dedup"]
+
+
 def test_codex_stop_missing_session_stays_unattributed(monkeypatch: pytest.MonkeyPatch) -> None:
     from integrations.codex.hooks import stop
 

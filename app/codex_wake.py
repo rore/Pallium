@@ -11,7 +11,11 @@ import time
 from pathlib import Path
 
 
-_NOTICE = "Pallium Relay delivery pending. Process the attributed Relay messages injected by the turn hook. If none are present, stop without taking action."
+_NOTICE = (
+    "Pallium Relay delivery pending. Process every attributed Relay message injected "
+    "by this turn's hook. If none are visible, reply exactly: Pallium Relay wake "
+    "failed: no delivery was injected."
+)
 _DEBOUNCE_SECONDS = 1.0
 _ACTIVE_WRITER = "already has an active writer"
 _ACTIVE_WRITER_CODE = "(code -32600)"

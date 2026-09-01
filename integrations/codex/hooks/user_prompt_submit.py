@@ -48,8 +48,6 @@ def main() -> None:
 
         if not isinstance(prompt, str) or not prompt or prompt.startswith("/"):
             return
-        if session_id and check_dedup(prompt, session_id):
-            return
         has_session = isinstance(session_id, str) and bool(session_id)
         container_ref = resolve_container_ref(cwd, session_id if has_session else None, True)
         actor_ref = derive_actor_ref()
@@ -96,6 +94,9 @@ def main() -> None:
                 emit_context(relay_output, "UserPromptSubmit")
                 acknowledge_relay(rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref)
                 sys.exit(0)
+
+        if has_session and check_dedup(prompt, session_id):
+            return
 
         separator = 2 if relay_output else 0
         memory_budget = min(2400, max(0, 4000 - len(relay_output) - separator))
