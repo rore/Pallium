@@ -655,7 +655,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Idempotently acknowledge a Relay delivery after you have the payload. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. Pass the receipt from pallium_relay_receive; use pallium_relay_reply when replying atomically."""
+        """Acknowledge a Relay delivery after receiving its payload. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. Pass the receipt from pallium_relay_receive; use pallium_relay_reply when replying atomically. If the result says already_delivered=true, this is a duplicate: do not act on it again."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
         if scope_error:
             return scope_error

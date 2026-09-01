@@ -96,10 +96,13 @@ def test_mcp_ack_idempotent(client: TestClient):
     _send(client)
 
     d = _turn(client)["deliveries"][0]
-    assert _mcp_ack(client, d["delivery_id"], d["receipt"]).status_code == 200
+    first = _mcp_ack(client, d["delivery_id"], d["receipt"])
+    assert first.status_code == 200
+    assert first.json()["already_delivered"] is False
     resp2 = _mcp_ack(client, d["delivery_id"], d["receipt"])
     assert resp2.status_code == 200
     assert resp2.json()["state"] == "delivered"
+    assert resp2.json()["already_delivered"] is True
 
 
 def test_mcp_ack_stale_receipt_returns_409(client: TestClient, relay_storage):

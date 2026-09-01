@@ -95,12 +95,15 @@ def test_exact_active_writer_queues_same_prompt_hidden() -> None:
         [], 1, stderr="already has an active writer (code -32600)"
     )
     queued = subprocess.CompletedProcess([], 0, stderr="")
+    prompt = codex_wake._wake_prompt([_claimed()], **SCOPE)
     with patch("app.codex_wake.subprocess.run", side_effect=[active, queued]) as run:
-        assert codex_wake._launch("target-session", "wake prompt") is True
+        assert codex_wake._launch("target-session", prompt) is True
     assert run.call_count == 2
     assert run.call_args_list[1].args[0][1:] == [
-        "queue", "--profile", "pallium-relay", "--thread", "target-session", "--message", "wake prompt"
+        "queue", "--profile", "pallium-relay", "--thread", "target-session", "--message", prompt
     ]
+    assert "already_delivered=true" in run.call_args_list[1].args[0][-1]
+    assert "do not retry, reply, or act" in run.call_args_list[1].args[0][-1]
     assert run.call_args_list[1].kwargs["stdin"] is subprocess.DEVNULL
     assert "shell" not in run.call_args_list[1].kwargs
 

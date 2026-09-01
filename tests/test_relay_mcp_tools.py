@@ -195,7 +195,9 @@ class TestAck:
         ack, _ = await server.call_tool("pallium_relay_ack", {
             "delivery_id": d["delivery_id"], "receipt": d["receipt"],
         })
-        assert json.loads(ack[0].text)["state"] == "delivered"
+        data = json.loads(ack[0].text)
+        assert data["state"] == "delivered"
+        assert data["already_delivered"] is False
 
     @pytest.mark.asyncio
     async def test_ack_with_wrong_receipt_fails(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
