@@ -594,6 +594,7 @@ def test_snapshot_worker_loop_unit(tmp_path: Path, monkeypatch) -> None:
     snapshot_dir.mkdir()
     db_path = db_dir / "pallium.db"
     _make_test_db(db_path, rows=5)
+    _make_test_db(db_path.with_name(f"{db_path.stem}-relay{db_path.suffix}"), rows=0)
 
     config_file = tmp_path / "pallium.local.toml"
     config_file.write_text(
@@ -668,10 +669,15 @@ def test_paired_prune_removes_generations_as_a_unit(tmp_path: Path):
 def test_paired_restore_rejects_partial_live_state(tmp_path: Path) -> None:
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
+    from storage.sqlite import SQLiteStorageProvider
+
     main = tmp_path / "main.db"
-    main.touch()
+    relay = tmp_path / "relay.db"
+    storage = SQLiteStorageProvider(f"sqlite:///{main}", f"sqlite:///{relay}")
+    storage.close()
+    relay.unlink()
     with pytest.raises(RuntimeError, match="partial live database pair"):
-        restore_snapshot(snapshot_dir, {"main": str(main), "relay": str(tmp_path / "relay.db")})
+        restore_snapshot(snapshot_dir, {"main": str(main), "relay": str(relay)})
 
 
 def test_legacy_single_snapshot_restores_then_migrates_relay(tmp_path: Path) -> None:

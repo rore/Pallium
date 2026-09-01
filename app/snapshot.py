@@ -67,6 +67,22 @@ def _snapshot_live_paths(live_db_path: str | Mapping[str, str]) -> dict[str, str
     return {"main": str(live_db_path)}
 
 
+def _relay_split_activated(main_path: Path) -> bool:
+    """Whether the main DB records a completed split into a Relay DB."""
+    try:
+        with sqlite3.connect(f"file:{main_path}?mode=ro", uri=True) as conn:
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='relay_migration_metadata'"
+            ).fetchone()
+            if table is None:
+                return False
+            return conn.execute(
+                "SELECT 1 FROM relay_migration_metadata WHERE key='relay_split_v1'"
+            ).fetchone() is not None
+    except sqlite3.Error as exc:
+        raise RuntimeError(f"cannot inspect existing main database: {main_path}") from exc
+
+
 def create_snapshot(live_db_path: str | Mapping[str, str], snapshot_dir: Path, *, pages_per_step: int = BACKUP_PAGES_PER_STEP, sleep_between: float = BACKUP_SLEEP_BETWEEN) -> Path | None:
     paths = _snapshot_live_paths(live_db_path)
     if len(paths) == 2:
@@ -109,6 +125,8 @@ def restore_snapshot(snapshot_dir: Path, live_db_path: str | Mapping[str, str], 
         if len(existing) == len(live):
             return False
         if existing:
+            if existing == {"main"} and not _relay_split_activated(live["main"]):
+                return False
             raise RuntimeError("partial live database pair; refusing snapshot restore")
         for marker in sorted(snapshot_dir.glob("pallium-*.manifest.json"), key=lambda p: p.name, reverse=True):
             try:

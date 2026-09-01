@@ -118,6 +118,7 @@ def test_snapshot_worker_survives_transient_failure(tmp_path: Path, monkeypatch)
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
     _make_test_db(db_path, rows=5)
+    _make_test_db(db_path.with_name(f"{db_path.stem}-relay{db_path.suffix}"), rows=0)
 
     config_file = tmp_path / "pallium.local.toml"
     config_file.write_text(

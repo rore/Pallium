@@ -160,6 +160,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     # Create MetricsStore from storage before building the service so we can
     # wire it into QueryStats at construction time.
     metrics_store: MetricsStore | None = None
+    early_storage: SQLiteStorageProvider | None = None
     try:
         early_storage = build_storage_provider(resolved_config)
         if isinstance(early_storage, SQLiteStorageProvider):
@@ -238,6 +239,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             if stop is not None:
                 stop.set()
             _remove_launch_token(token_path)
+            for storage_provider in (service._storage, early_storage):
+                if isinstance(storage_provider, SQLiteStorageProvider):
+                    storage_provider.close()
 
     app = FastAPI(title="Pallium", version="0.1.0", lifespan=app_lifespan)
     app.state.pallium_service = service
@@ -357,6 +361,12 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                     key=lambda p: p.name,
                     reverse=True,
                 ) if snapshot_dir.is_dir() else []
+                if snapshot_dir.is_dir() and not snapshots:
+                    snapshots = sorted(
+                        (path for path in snapshot_dir.glob("pallium-*.db") if not path.name.endswith(("-main.db", "-relay.db"))),
+                        key=lambda p: p.name,
+                        reverse=True,
+                    )
                 snapshot_info["snapshot_count"] = len(snapshots)
                 if snapshots:
                     mtime = snapshots[0].stat().st_mtime

@@ -436,6 +436,7 @@ class AppConfig:
         if relay_path == main_path:
             raise ValueError("relay_sqlite_url must differ from sqlite_url")
         return self.relay_sqlite_url
+
     def package_config(self, package_name: str) -> SemanticPackageConfig:
         if package_name not in self.semantic_packages:
             raise KeyError(f"Unknown semantic package: {package_name}")

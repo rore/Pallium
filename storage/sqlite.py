@@ -131,6 +131,12 @@ class SQLiteStorageProvider(
             "migration_ready": True,
         }
 
+    def close(self) -> None:
+        """Release both SQLite engine pools owned by this provider."""
+        self._engine.dispose()
+        if self._relay_engine is not self._engine:
+            self._relay_engine.dispose()
+
     def _migrate_legacy_relay(self) -> None:
         """Copy legacy Relay rows once while source writes are held out."""
         source_identity = self._sqlite_identity(self._engine)
