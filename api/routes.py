@@ -345,7 +345,7 @@ def create_router(
     audit_log_enabled: bool = False,
     relay_service: RelayService | None = None,
     claude_wake_registry: ClaudeWakeRegistry | None = None,
-    relay_send_callback: Callable[[dict[str, Any]], None] | None = None,
+    relay_send_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
 ) -> APIRouter:
     router = APIRouter()
     wake_registry = claude_wake_registry or ClaudeWakeRegistry()
@@ -405,14 +405,26 @@ def create_router(
     def relay_send(request: RelaySendRequest):
         result = _relay_call(lambda: _relay().send(**request.model_dump()))
         if relay_send_callback is not None:
-            relay_send_callback(result)
+            try:
+                relay_send_callback(result, {
+                    "container_ref": request.container_ref,
+                    "actor_ref": request.actor_ref,
+                })
+            except Exception:
+                logger.exception("Relay wake callback failed after persistence")
         return result
 
     @router.post("/relay/replies", response_model=RelayMessageResponse)
     def relay_reply(request: RelayReplyRequest):
         result = _relay_call(lambda: _relay().reply(**request.model_dump()))
         if relay_send_callback is not None:
-            relay_send_callback(result)
+            try:
+                relay_send_callback(result, {
+                    "container_ref": request.container_ref,
+                    "actor_ref": request.actor_ref,
+                })
+            except Exception:
+                logger.exception("Relay wake callback failed after persistence")
         return result
 
     @router.get("/relay/messages/{message_id}", response_model=RelayMessageResponse)

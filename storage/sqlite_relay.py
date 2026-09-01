@@ -113,6 +113,7 @@ class SQLiteRelayMixin:
         max_chars: int,
         max_messages: int,
         lease_seconds: int,
+        register_session: bool = True,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
@@ -120,6 +121,13 @@ class SQLiteRelayMixin:
             registered = self._relay_session(
                 db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
             )
+            if registered is None and not register_session:
+                return {
+                    "session": None,
+                    "deliveries": [],
+                    "has_more": False,
+                    "remaining_count": 0,
+                }
             if registered is None:
                 registered = RelaySessionRecord(
                     id=f"relay-session-{uuid.uuid4().hex}",
@@ -136,11 +144,19 @@ class SQLiteRelayMixin:
                 db.flush()
             else:
                 self._require_actor(registered, actor_ref)
-                registered.state = "active"
-                registered.closed_at = None
-                registered.last_seen_at = current
-                if title is not None:
-                    registered.title = title
+                if not register_session and registered.state != "active":
+                    return {
+                        "session": _session_view(registered, current, 24 * 60 * 60),
+                        "deliveries": [],
+                        "has_more": False,
+                        "remaining_count": 0,
+                    }
+                if register_session:
+                    registered.state = "active"
+                    registered.closed_at = None
+                    registered.last_seen_at = current
+                    if title is not None:
+                        registered.title = title
 
             db.execute(
                 update(RelayDeliveryRecord)
