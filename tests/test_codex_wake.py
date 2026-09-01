@@ -64,6 +64,21 @@ def test_ambiguous_failure_and_timeout_do_not_queue() -> None:
     popen.assert_not_called()
 
 
+def test_alias_and_exact_selectors_start_one_child() -> None:
+    with patch("app.codex_wake.threading.Thread") as thread:
+        codex_wake.schedule_codex_relay_wake(_delivery())
+        codex_wake.schedule_codex_relay_wake({**_delivery("delivery-2"), "recipient": "codex:@relaydev"})
+    assert thread.call_count == 2
+
+
+def test_broadcast_and_malformed_selectors_do_not_start_child() -> None:
+    with patch("app.codex_wake.threading.Thread") as thread:
+        codex_wake.schedule_codex_relay_wake({**_delivery(), "recipient": "codex"})
+        codex_wake.schedule_codex_relay_wake({**_delivery("delivery-2"), "recipient": "codex:"})
+        codex_wake.schedule_codex_relay_wake({**_delivery("delivery-3"), "recipient": "codex:@"})
+    thread.assert_not_called()
+
+
 def test_duplicate_and_non_codex_do_not_start_child() -> None:
     with patch("app.codex_wake.threading.Thread") as thread:
         codex_wake.schedule_codex_relay_wake(_delivery())

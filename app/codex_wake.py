@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import threading
 
@@ -30,6 +31,8 @@ def schedule_codex_relay_wake(result: object) -> None:
     delivery_id = delivery.get("delivery_id")
     session_ref = delivery.get("recipient_session_ref")
     recipient = result.get("recipient")
+    selector = recipient.removeprefix("codex:") if isinstance(recipient, str) else ""
+    valid_selector = selector == session_ref or bool(re.fullmatch(r"@[a-z0-9][a-z0-9_-]{0,31}", selector))
     if (
         delivery.get("recipient_runtime") != "codex"
         or not isinstance(delivery_id, str)
@@ -38,7 +41,7 @@ def schedule_codex_relay_wake(result: object) -> None:
         or not session_ref
         or session_ref != session_ref.strip()
         or not session_ref.isprintable()
-        or recipient != f"codex:{session_ref}"
+        or not valid_selector
     ):
         return
     with _scheduled_lock:
