@@ -7,14 +7,17 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 
-_NOTICE = "Pallium Relay message pending."
+_NOTICE = "Pallium Relay delivery pending. Process the attributed Relay messages injected by the turn hook. If none are present, stop without taking action."
+_DEBOUNCE_SECONDS = 1.0
 _ACTIVE_WRITER = "already has an active writer"
 _ACTIVE_WRITER_CODE = "(code -32600)"
 _TIMEOUT_SECONDS = 300
 _scheduled_delivery_ids: set[str] = set()
+_scheduled_session_generations: dict[str, int] = {}
 _scheduled_lock = threading.Lock()
 
 
@@ -50,11 +53,34 @@ def schedule_codex_relay_wake(result: object) -> None:
         if delivery_id in _scheduled_delivery_ids:
             return
         _scheduled_delivery_ids.add(delivery_id)
+        generation = _scheduled_session_generations.get(session_ref, 0) + 1
+        _scheduled_session_generations[session_ref] = generation
     try:
-        threading.Thread(target=_wake, args=(delivery_id, session_ref), daemon=True).start()
+        threading.Thread(
+            target=_wake_after_debounce,
+            args=(delivery_id, session_ref, generation),
+            daemon=True,
+        ).start()
     except RuntimeError:
         with _scheduled_lock:
             _scheduled_delivery_ids.discard(delivery_id)
+            if _scheduled_session_generations.get(session_ref) == generation:
+                _scheduled_session_generations.pop(session_ref, None)
+
+
+def _wake_after_debounce(delivery_id: str, session_ref: str, generation: int) -> None:
+    time.sleep(_DEBOUNCE_SECONDS)
+    with _scheduled_lock:
+        if _scheduled_session_generations.get(session_ref) != generation:
+            _scheduled_delivery_ids.discard(delivery_id)
+            return
+    try:
+        _wake(delivery_id, session_ref)
+    finally:
+        with _scheduled_lock:
+            _scheduled_delivery_ids.discard(delivery_id)
+            if _scheduled_session_generations.get(session_ref) == generation:
+                _scheduled_session_generations.pop(session_ref, None)
 
 
 def _wake(delivery_id: str, session_ref: str) -> None:

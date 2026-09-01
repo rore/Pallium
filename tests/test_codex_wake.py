@@ -32,6 +32,7 @@ def _delivery(delivery_id: str = "delivery-1", runtime: str = "codex") -> dict:
 
 def setup_function() -> None:
     codex_wake._scheduled_delivery_ids.clear()
+    codex_wake._scheduled_session_generations.clear()
 
 
 def test_success_does_not_queue_and_hides_process() -> None:
@@ -41,7 +42,7 @@ def test_success_does_not_queue_and_hides_process() -> None:
     ) as popen:
         codex_wake._wake("delivery-1", "target-session")
     assert run.call_args.args[0][-5:] == ["pallium-relay", "resume", "target-session", "-", "--json"]
-    assert run.call_args.kwargs["input"] == "Pallium Relay message pending."
+    assert run.call_args.kwargs["input"] == "Pallium Relay delivery pending. Process the attributed Relay messages injected by the turn hook. If none are present, stop without taking action."
     assert run.call_args.kwargs["stdout"] is subprocess.DEVNULL
     assert run.call_args.kwargs["stderr"] is subprocess.PIPE
     assert "shell" not in run.call_args.kwargs
@@ -57,7 +58,7 @@ def test_only_exact_active_writer_queues_once() -> None:
         codex_wake._wake("delivery-1", "target-session")
     assert run.call_args.args[0][0] == executable
     assert popen.call_args.args[0][0] == executable
-    assert popen.call_args.args[0][-5:] == ["queue", "--thread", "target-session", "--message", "Pallium Relay message pending."]
+    assert popen.call_args.args[0][-5:] == ["queue", "--thread", "target-session", "--message", "Pallium Relay delivery pending. Process the attributed Relay messages injected by the turn hook. If none are present, stop without taking action."]
     assert "shell" not in popen.call_args.kwargs
 
 
@@ -119,7 +120,56 @@ def test_duplicate_and_non_codex_do_not_start_child() -> None:
     thread.assert_called_once()
 
 
-def test_schedule_returns_before_child_exits() -> None:
+def test_burst_coalesces_to_one_wake(monkeypatch) -> None:
+    workers = []
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._wake") as wake:
+        thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
+        codex_wake.schedule_codex_relay_wake(_delivery())
+        codex_wake.schedule_codex_relay_wake(_delivery("delivery-2"))
+        codex_wake._wake_after_debounce(*workers[0])
+        codex_wake._wake_after_debounce(*workers[1])
+    wake.assert_called_once_with("delivery-2", "target-session")
+
+
+def test_stale_worker_cannot_clear_newer_generation(monkeypatch) -> None:
+    workers = []
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._wake") as wake:
+        thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
+        codex_wake.schedule_codex_relay_wake(_delivery())
+        codex_wake.schedule_codex_relay_wake(_delivery("delivery-2"))
+        codex_wake._wake_after_debounce(*workers[0])
+        assert "delivery-1" not in codex_wake._scheduled_delivery_ids
+        assert codex_wake._scheduled_session_generations["target-session"] == 2
+        codex_wake._wake_after_debounce(*workers[1])
+    wake.assert_called_once_with("delivery-2", "target-session")
+    assert not codex_wake._scheduled_session_generations
+
+
+def test_launch_failure_releases_owner_for_later_delivery(monkeypatch) -> None:
+    workers = []
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake.threading.Thread") as thread, patch(
+        "app.codex_wake._wake", side_effect=RuntimeError("launch failed")
+    ) as wake:
+        thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
+        codex_wake.schedule_codex_relay_wake(_delivery())
+        try:
+            codex_wake._wake_after_debounce(*workers.pop(0))
+        except RuntimeError:
+            pass
+        codex_wake.schedule_codex_relay_wake(_delivery("delivery-2"))
+        try:
+            codex_wake._wake_after_debounce(*workers.pop(0))
+        except RuntimeError:
+            pass
+    assert wake.call_count == 2
+    assert not codex_wake._scheduled_delivery_ids
+    assert not codex_wake._scheduled_session_generations
+
+def test_schedule_returns_before_child_exits(monkeypatch) -> None:
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     started = threading.Event()
     release = threading.Event()
 
