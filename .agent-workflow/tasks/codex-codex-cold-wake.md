@@ -25,7 +25,7 @@
 
 **Plan review:** Architect Relay review `relay-msg-9d44b4b623a24d0ba6c6a466d210212c` approved the bounded final architecture after requiring the shared app seam (not core), runtime-owned supervision, strict dual-marker active-writer classification, and immediate-return/hang E2E. This fulfills the fresh independent review; no further plan round is required.
 
-**Approvals:** The user explicitly authorized all architect-directed work in this task, including the final bounded high-risk route change; architect Relay review `relay-msg-9d44b4b623a24d0ba6c6a466d210212c` approves its exact implementation boundary.
+**Approvals:** Approved by user 2026-09-01: "i approve everything the architect tells you to do". Architect Relay review `relay-msg-9d44b4b623a24d0ba6c6a466d210212c` approves the exact bounded implementation boundary.
 
 **Exceptions:** —
 
