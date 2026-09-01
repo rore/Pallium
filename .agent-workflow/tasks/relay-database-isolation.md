@@ -76,6 +76,7 @@ Approved by user 2026-09-01: "so i'm leaving you with a night job: db performanc
 - Concurrent coverage includes eight-sender fan-in with unique deliveries, HTTP Relay writes while the main DB holds `BEGIN IMMEDIATE`, bounded competing legacy-writer rejection, exact populated migration including claimed state, idempotent reopen, and fail-closed missing-target-row detection.
 - Lifecycle coverage verifies both files use WAL, `auto_vacuum=INCREMENTAL`, and busy timeouts; paired snapshots publish a manifest last, restore only complete pairs, prune by generation, and reject partial post-split live state.
 - Workflow checker: clean. Binding redline report: `SCHEMA_CHANGE`, no boundary/API/security violations; persistence-review checkpoint remains for the PR.
+- PR #90 first CI run exposed environment-dependent snapshot-worker configuration on Linux/Python 3.12 and 3.13. Both worker tests now pass explicit temporary main/Relay URLs; the focused correction passes 2/2 locally.
 - The repository-root test-created split pair was repaired only after verifying all three legacy Relay tables contained zero rows. The actual installed service has not been migrated on this branch.
 
 ## Result review
