@@ -134,3 +134,67 @@ def test_bounded_multi_agent_relay_fan_in_has_no_lost_deliveries(tmp_path: Path)
         provider.relay_ack_by_receipt(delivery_id=delivery["delivery_id"], receipt=delivery["receipt"], **common)
     assert provider.relay_turn(runtime="codex", session_ref="target", title=None, max_chars=10000, max_messages=20, lease_seconds=60, **common)["deliveries"] == []
     _dispose(provider)
+
+def test_http_relay_remains_available_during_main_writer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+    from app.config import AppConfig
+    from app.main import create_app
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+    import sqlite3
+    import time
+
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda _: None)
+    app = create_app(AppConfig(storage_backend="sqlite", sqlite_url=f"sqlite:///{main}", relay_sqlite_url=f"sqlite:///{relay}", default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(enabled=False)))
+    with TestClient(app) as client:
+        scope = {"container_ref": "c", "actor_ref": "u"}
+        for session in ("sender", "target"):
+            assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope, "max_chars": 1000, "max_messages": 3, "lease_seconds": 60}).status_code == 200
+        blocker = sqlite3.connect(main, timeout=0)
+        try:
+            blocker.execute("BEGIN IMMEDIATE")
+            started = time.perf_counter()
+            response = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "codex:target", "payload": "under-lock", **scope})
+            elapsed = time.perf_counter() - started
+            assert response.status_code == 200, response.text
+            assert elapsed < 2.0
+        finally:
+            blocker.rollback()
+            blocker.close()
+
+
+def test_split_marker_detects_missing_target_row(tmp_path: Path) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    legacy = SQLiteStorageProvider(f"sqlite:///{main}")
+    legacy.relay_turn(runtime="codex", session_ref="target", container_ref="c", actor_ref="u", title=None, max_chars=1000, max_messages=1, lease_seconds=60)
+    legacy._engine.dispose()
+    split = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    split._engine.dispose(); split._relay_engine.dispose()
+    with __import__("sqlite3").connect(relay) as connection:
+        connection.execute("DELETE FROM relay_sessions")
+    with pytest.raises(RuntimeError, match="migration|marker"):
+        SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+
+
+def test_split_rejects_competing_legacy_writer_within_bound(tmp_path: Path) -> None:
+    import sqlite3
+    import time
+
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    legacy = SQLiteStorageProvider(f"sqlite:///{main}")
+    legacy.relay_turn(runtime="codex", session_ref="target", container_ref="c", actor_ref="u", title=None, max_chars=1000, max_messages=1, lease_seconds=60)
+    legacy._engine.dispose()
+    blocker = sqlite3.connect(main, timeout=0)
+    try:
+        blocker.execute("BEGIN IMMEDIATE")
+        started = time.perf_counter()
+        with pytest.raises(Exception, match="locked|busy"):
+            SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+        assert time.perf_counter() - started < 10.0
+    finally:
+        blocker.rollback()
+        blocker.close()
