@@ -35,3 +35,4 @@
 ## Implementation
 
 - 2026-09-01: Installed-service live test reproduced pending/no-claim while the target remained unloaded. Pre-edit redline: gray/watch for `app/codex_wake.py`, blue tests/record, no boundary violation or checkpoint; classified Elevated/Simple.
+- 2026-09-01: Added stdlib executable resolution shared by resume and queue: explicit valid `CODEX_CLI_PATH`, normal PATH, then newest valid Windows local-install candidate. Focused syntax and regression checks pass: 80 tests. `apply_patch` hit the documented Windows 1327 failure, so the exact two-file change used deterministic replacements.

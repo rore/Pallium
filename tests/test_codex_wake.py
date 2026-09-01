@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 from unittest.mock import patch
@@ -49,12 +50,38 @@ def test_success_does_not_queue_and_hides_process() -> None:
 
 def test_only_exact_active_writer_queues_once() -> None:
     completed = subprocess.CompletedProcess([], 1, stderr="already has an active writer (code -32600)")
-    with patch("app.codex_wake.subprocess.run", return_value=completed), patch(
-        "app.codex_wake.subprocess.Popen"
-    ) as popen:
+    executable = r"C:\installed\codex.exe"
+    with patch("app.codex_wake._codex_executable", return_value=executable), patch(
+        "app.codex_wake.subprocess.run", return_value=completed
+    ) as run, patch("app.codex_wake.subprocess.Popen") as popen:
         codex_wake._wake("delivery-1", "target-session")
+    assert run.call_args.args[0][0] == executable
+    assert popen.call_args.args[0][0] == executable
     assert popen.call_args.args[0][-5:] == ["queue", "--thread", "target-session", "--message", "Pallium Relay message pending."]
     assert "shell" not in popen.call_args.kwargs
+
+
+def test_windows_resolver_survives_service_path_without_codex(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(codex_wake.os, "name", "nt")
+    monkeypatch.setattr(codex_wake.shutil, "which", lambda _: None)
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    install_root = tmp_path / "OpenAI" / "Codex" / "bin"
+    old = install_root / "old" / "codex.exe"
+    current = install_root / "current" / "codex.exe"
+    old.parent.mkdir(parents=True)
+    current.parent.mkdir(parents=True)
+    old.write_text("old", encoding="utf-8")
+    current.write_text("current", encoding="utf-8")
+    os.utime(old, (100, 100))
+    os.utime(current, (200, 200))
+
+    assert codex_wake._codex_executable() == str(current)
+    monkeypatch.setenv("CODEX_CLI_PATH", str(old))
+    assert codex_wake._codex_executable() == str(old)
+    old.unlink()
+    current.unlink()
+    assert codex_wake._codex_executable() == "codex.exe"
 
 
 def test_ambiguous_failure_and_timeout_do_not_queue() -> None:

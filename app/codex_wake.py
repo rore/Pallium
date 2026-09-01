@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import threading
+from pathlib import Path
 
 
 _NOTICE = "Pallium Relay message pending."
@@ -56,11 +58,12 @@ def schedule_codex_relay_wake(result: object) -> None:
 
 
 def _wake(delivery_id: str, session_ref: str) -> None:
+    codex_executable = _codex_executable()
     try:
         try:
             completed = subprocess.run(
                 [
-                    "codex.exe" if os.name == "nt" else "codex",
+                    codex_executable,
                     "exec",
                     "--profile",
                     "pallium-relay",
@@ -79,7 +82,7 @@ def _wake(delivery_id: str, session_ref: str) -> None:
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return
         if _is_active_writer(completed):
-            _queue(session_ref)
+            _queue(session_ref, codex_executable)
     finally:
         with _scheduled_lock:
             _scheduled_delivery_ids.discard(delivery_id)
@@ -90,11 +93,11 @@ def _is_active_writer(completed: subprocess.CompletedProcess[str]) -> bool:
     return _ACTIVE_WRITER in stderr and _ACTIVE_WRITER_CODE in stderr
 
 
-def _queue(session_ref: str) -> None:
+def _queue(session_ref: str, codex_executable: str) -> None:
     try:
         subprocess.Popen(
             [
-                "codex.exe" if os.name == "nt" else "codex",
+                codex_executable,
                 "queue",
                 "--thread",
                 session_ref,
@@ -108,6 +111,26 @@ def _queue(session_ref: str) -> None:
         )
     except (OSError, ValueError):
         pass
+
+
+def _codex_executable() -> str:
+    command = "codex.exe" if os.name == "nt" else "codex"
+    configured = os.environ.get("CODEX_CLI_PATH")
+    if configured and Path(configured).is_file():
+        return configured
+    if found := shutil.which(command):
+        return found
+    if os.name == "nt" and (local_app_data := os.environ.get("LOCALAPPDATA")):
+        candidates: list[tuple[int, Path]] = []
+        for candidate in (Path(local_app_data) / "OpenAI" / "Codex" / "bin").glob("*/codex.exe"):
+            try:
+                if candidate.is_file():
+                    candidates.append((candidate.stat().st_mtime_ns, candidate))
+            except OSError:
+                continue
+        if candidates:
+            return str(max(candidates, key=lambda item: (item[0], str(item[1])))[1])
+    return command
 
 
 def _hidden_process_kwargs() -> dict[str, object]:
