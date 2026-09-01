@@ -42,6 +42,6 @@
 - 2026-09-01: Full affected MCP context, Relay tool, and server files: 93 passed.
 - 2026-09-01: Import-linter adapter reported no boundary violations; redline classified `app/mcp/context.py` and `app/mcp/server.py` as GRAY watch paths and tests as BLUE; `agent-workflow-check.py --slug codex-relay-recovery-slice` exited clean.
 
-## Implementation
+## Delivered changes
 
 - 2026-09-01: Added the paired Relay scope resolver and routed only MCP receive, ACK, and reply through it. It validates both supplied and configured pairs, preserves configured scope authority, and leaves runtime session identity with `resolve_context`. Added tool-level rejection coverage and one unconfigured receive-to-atomic-reply lifecycle journey.
