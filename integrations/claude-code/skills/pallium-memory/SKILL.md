@@ -25,3 +25,4 @@ Relay only explicit messages to another agent.
 - Discover/name with `pallium_relay_recipients`/`pallium_relay_name`. Send with `pallium_relay_send` to `codex`, `codex:<session_ref>`, or `codex:@alias` (likewise other runtimes). Broadcast requires user intent.
 - If the user assigns this session an alias held by an older one, use `replace_existing=true`; otherwise report the conflict.
 - Reply only with `pallium_relay_reply` and received `delivery_id`; Pallium derives endpoints. Inspect with `pallium_relay_status`.
+- If ACK returns `already_delivered=true` or a receipt conflict, treat the delivery as stale/duplicate: do not retry or act on it.

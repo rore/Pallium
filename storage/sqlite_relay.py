@@ -642,7 +642,12 @@ class SQLiteRelayMixin:
                 expected = _delivery_receipt(delivery.claim_token)
                 if expected is None or not hmac.compare_digest(expected, receipt):
                     raise RelayConflictError("receipt does not match delivered claim")
-                return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(delivery.delivered_at)}
+                return {
+                    "delivery_id": delivery.id,
+                    "state": "delivered",
+                    "delivered_at": _iso(delivery.delivered_at),
+                    "already_delivered": True,
+                }
             if delivery.state != "claimed":
                 raise RelayConflictError("delivery is not in claimed state")
             if _now(message.expires_at) <= current:
@@ -657,7 +662,12 @@ class SQLiteRelayMixin:
                     raise RelayConflictError("receipt does not match current claim")
                 delivery.state = "delivered"
                 delivery.delivered_at = current
-                result = {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(current)}
+                result = {
+                    "delivery_id": delivery.id,
+                    "state": "delivered",
+                    "delivered_at": _iso(current),
+                    "already_delivered": False,
+                }
         if expired:
             raise RelayConflictError("message has expired")
         return result
@@ -685,7 +695,12 @@ class SQLiteRelayMixin:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             if delivery.state == "delivered":
                 if delivery.claim_token == claim_token:
-                    return {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(delivery.delivered_at)}
+                    return {
+                        "delivery_id": delivery.id,
+                        "state": "delivered",
+                        "delivered_at": _iso(delivery.delivered_at),
+                        "already_delivered": True,
+                    }
                 raise RelayConflictError("claim token is stale")
             if delivery.state != "claimed" or delivery.claim_token != claim_token:
                 raise RelayConflictError("claim token is stale")
@@ -699,7 +714,12 @@ class SQLiteRelayMixin:
                     raise RelayConflictError("claim token is stale")
                 delivery.state = "delivered"
                 delivery.delivered_at = current
-                result = {"delivery_id": delivery.id, "state": "delivered", "delivered_at": _iso(current)}
+                result = {
+                    "delivery_id": delivery.id,
+                    "state": "delivered",
+                    "delivered_at": _iso(current),
+                    "already_delivered": False,
+                }
         if expired:
             raise RelayConflictError("message has expired")
         return result

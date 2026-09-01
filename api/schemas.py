@@ -874,6 +874,7 @@ class RelayAckResponse(BaseModel):
     delivery_id: str
     state: str
     delivered_at: datetime
+    already_delivered: bool = False
 
 
 class RelayMcpAckRequest(BaseModel):

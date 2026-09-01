@@ -247,7 +247,12 @@ def test_delivery_derived_reply_is_attributed_scoped_and_idempotent(client):
     assert _reply(client, delivery["delivery_id"]).status_code == 409
     claimed = _turn(client, "codex", "target")["deliveries"][0]
     assert _reply(client, claimed["delivery_id"]).status_code == 409
-    assert _ack(client, claimed).status_code == 200
+    first_ack = _ack(client, claimed)
+    assert first_ack.status_code == 200
+    assert first_ack.json()["already_delivered"] is False
+    retry_ack = _ack(client, claimed)
+    assert retry_ack.status_code == 200
+    assert retry_ack.json()["already_delivered"] is True
 
     first = _reply(client, claimed["delivery_id"], "תשובה → 你好")
     assert first.status_code == 200
