@@ -73,3 +73,5 @@ Initial plan review approved the bounded auto-review experiment, then live evide
 Clean-context review by `/root/relay_busy_result_review`: APPROVED after two review cycles corrected malformed-success handling, aggregate timeout enforcement, and non-Relay timeout scoping.
 
 Live follow-up evidence: message `relay-msg-1994c7ab98b24f9aa1b133497d98fa8e` woke the developer. ACK completed, proving the approval fix. Both permitted sends returned explicit 503 `relay_busy` while background thread processing remained active, so no reply was persisted. The bounded MCP retry addition was clean-context reviewed and approved.
+
+Final live verification: `relay-msg-d5a035bef94147c3a0746ebe8598dbd4` woke `codex:@relaydev` without a manual ping. The developer received the attributed wake batch, used atomic `pallium_relay_reply`, and delivered exact payload `hello rotem` as `relay-reply-92d2d0c36ea3cee41955ae17b47e7d726e2cac4efa0c874e469c4b4c0b628363`. The original delivery reached `delivered` in one claim attempt; the reply was queued back to the already-active architect task.
