@@ -81,8 +81,9 @@ def test_successful_resume_does_not_queue_and_hides_process() -> None:
     completed = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
     with patch("app.codex_wake.subprocess.run", return_value=completed) as run:
         assert codex_wake._launch("target-session", "wake prompt") is True
-    assert run.call_args.args[0][-5:] == [
-        "pallium-relay", "resume", "target-session", "-", "--json"
+    assert run.call_args.args[0] == [
+        codex_wake._codex_executable(), "exec", "--profile", "pallium-relay",
+        "--approve-for-me", "resume", "target-session", "-", "--json"
     ]
     assert run.call_args.kwargs["input"] == "wake prompt"
     assert run.call_args.kwargs["stdout"] is subprocess.DEVNULL
@@ -99,8 +100,9 @@ def test_exact_active_writer_queues_same_prompt_hidden() -> None:
     with patch("app.codex_wake.subprocess.run", side_effect=[active, queued]) as run:
         assert codex_wake._launch("target-session", prompt) is True
     assert run.call_count == 2
-    assert run.call_args_list[1].args[0][1:] == [
-        "queue", "--profile", "pallium-relay", "--thread", "target-session", "--message", prompt
+    assert run.call_args_list[1].args[0] == [
+        codex_wake._codex_executable(), "queue", "--profile", "pallium-relay",
+        "--approve-for-me", "--thread", "target-session", "--message", prompt
     ]
     assert "already_delivered=true" in run.call_args_list[1].args[0][-1]
     assert "do not retry, reply, or act" in run.call_args_list[1].args[0][-1]
