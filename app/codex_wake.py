@@ -10,7 +10,7 @@ import threading
 _NOTICE = "Pallium Relay message pending."
 _ACTIVE_WRITER = "already has an active writer"
 _ACTIVE_WRITER_CODE = "(code -32600)"
-_TIMEOUT_SECONDS = 15
+_TIMEOUT_SECONDS = 300
 _scheduled_delivery_ids: set[str] = set()
 _scheduled_lock = threading.Lock()
 
@@ -29,6 +29,7 @@ def schedule_codex_relay_wake(result: object) -> None:
     delivery = deliveries[0]
     delivery_id = delivery.get("delivery_id")
     session_ref = delivery.get("recipient_session_ref")
+    recipient = result.get("recipient")
     if (
         delivery.get("recipient_runtime") != "codex"
         or not isinstance(delivery_id, str)
@@ -37,6 +38,7 @@ def schedule_codex_relay_wake(result: object) -> None:
         or not session_ref
         or session_ref != session_ref.strip()
         or not session_ref.isprintable()
+        or recipient != f"codex:{session_ref}"
     ):
         return
     with _scheduled_lock:
@@ -44,34 +46,40 @@ def schedule_codex_relay_wake(result: object) -> None:
             return
         _scheduled_delivery_ids.add(delivery_id)
     try:
-        threading.Thread(target=_wake, args=(session_ref,), daemon=True).start()
+        threading.Thread(target=_wake, args=(delivery_id, session_ref), daemon=True).start()
     except RuntimeError:
-        pass
+        with _scheduled_lock:
+            _scheduled_delivery_ids.discard(delivery_id)
 
 
-def _wake(session_ref: str) -> None:
+def _wake(delivery_id: str, session_ref: str) -> None:
     try:
-        completed = subprocess.run(
-            [
-                "codex.exe" if os.name == "nt" else "codex",
-                "exec",
-                "--profile",
-                "pallium-relay",
-                "resume",
-                session_ref,
-                "-",
-                "--json",
-            ],
-            input=_NOTICE,
-            capture_output=True,
-            text=True,
-            timeout=_TIMEOUT_SECONDS,
-            **_hidden_process_kwargs(),
-        )
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return
-    if _is_active_writer(completed):
-        _queue(session_ref)
+        try:
+            completed = subprocess.run(
+                [
+                    "codex.exe" if os.name == "nt" else "codex",
+                    "exec",
+                    "--profile",
+                    "pallium-relay",
+                    "resume",
+                    session_ref,
+                    "-",
+                    "--json",
+                ],
+                input=_NOTICE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=_TIMEOUT_SECONDS,
+                **_hidden_process_kwargs(),
+            )
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return
+        if _is_active_writer(completed):
+            _queue(session_ref)
+    finally:
+        with _scheduled_lock:
+            _scheduled_delivery_ids.discard(delivery_id)
 
 
 def _is_active_writer(completed: subprocess.CompletedProcess[str]) -> bool:

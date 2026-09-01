@@ -409,7 +409,10 @@ def create_router(
 
     @router.post("/relay/replies", response_model=RelayMessageResponse)
     def relay_reply(request: RelayReplyRequest):
-        return _relay_call(lambda: _relay().reply(**request.model_dump()))
+        result = _relay_call(lambda: _relay().reply(**request.model_dump()))
+        if relay_send_callback is not None:
+            relay_send_callback(result)
+        return result
 
     @router.get("/relay/messages/{message_id}", response_model=RelayMessageResponse)
     def relay_message_status(

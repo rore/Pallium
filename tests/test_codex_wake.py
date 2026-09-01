@@ -14,6 +14,7 @@ from core.relay import RelayService
 
 def _delivery(delivery_id: str = "delivery-1", runtime: str = "codex") -> dict:
     return {
+        "recipient": "codex:target-session",
         "deliveries": [
             {
                 "delivery_id": delivery_id,
@@ -33,9 +34,11 @@ def test_success_does_not_queue_and_hides_process() -> None:
     with patch("app.codex_wake.subprocess.run", return_value=completed) as run, patch(
         "app.codex_wake.subprocess.Popen"
     ) as popen:
-        codex_wake._wake("target-session")
+        codex_wake._wake("delivery-1", "target-session")
     assert run.call_args.args[0][-5:] == ["pallium-relay", "resume", "target-session", "-", "--json"]
     assert run.call_args.kwargs["input"] == "Pallium Relay message pending."
+    assert run.call_args.kwargs["stdout"] is subprocess.DEVNULL
+    assert run.call_args.kwargs["stderr"] is subprocess.PIPE
     assert "shell" not in run.call_args.kwargs
     popen.assert_not_called()
 
@@ -45,7 +48,7 @@ def test_only_exact_active_writer_queues_once() -> None:
     with patch("app.codex_wake.subprocess.run", return_value=completed), patch(
         "app.codex_wake.subprocess.Popen"
     ) as popen:
-        codex_wake._wake("target-session")
+        codex_wake._wake("delivery-1", "target-session")
     assert popen.call_args.args[0][-5:] == ["queue", "--thread", "target-session", "--message", "Pallium Relay message pending."]
     assert "shell" not in popen.call_args.kwargs
 
@@ -55,9 +58,9 @@ def test_ambiguous_failure_and_timeout_do_not_queue() -> None:
     with patch("app.codex_wake.subprocess.run", return_value=ambiguous), patch(
         "app.codex_wake.subprocess.Popen"
     ) as popen:
-        codex_wake._wake("target-session")
+        codex_wake._wake("delivery-1", "target-session")
         with patch("app.codex_wake.subprocess.run", side_effect=subprocess.TimeoutExpired([], 15)):
-            codex_wake._wake("target-session")
+            codex_wake._wake("delivery-1", "target-session")
     popen.assert_not_called()
 
 
@@ -66,6 +69,7 @@ def test_duplicate_and_non_codex_do_not_start_child() -> None:
         codex_wake.schedule_codex_relay_wake(_delivery())
         codex_wake.schedule_codex_relay_wake(_delivery())
         codex_wake.schedule_codex_relay_wake(_delivery("delivery-2", "claude-code"))
+        codex_wake.schedule_codex_relay_wake({**_delivery("delivery-3"), "recipient": "codex"})
     thread.assert_called_once()
 
 
@@ -73,7 +77,7 @@ def test_schedule_returns_before_child_exits() -> None:
     started = threading.Event()
     release = threading.Event()
 
-    def slow_wake(_: str) -> None:
+    def slow_wake(_: str, __: str) -> None:
         started.set()
         release.wait(1)
 
@@ -144,3 +148,40 @@ def test_profile_is_idempotent_and_narrow(monkeypatch, tmp_path) -> None:
     assert profile.count('approval_mode = "approve"') == 2
     setup_codex._remove_relay_profile()
     assert not (tmp_path / ".codex" / "pallium-relay.config.toml").exists()
+
+def test_http_reply_uses_the_same_post_persistence_callback(client) -> None:
+    seen: list[dict] = []
+    app = FastAPI()
+    app.include_router(
+        create_router(
+            client.app.state.pallium_service,
+            relay_service=RelayService(client.app.state.pallium_service._storage),
+            relay_send_callback=seen.append,
+        )
+    )
+    route_client = TestClient(app)
+    scope = {"container_ref": "git:example.test/reply-wake", "actor_ref": "wake-user"}
+    for runtime, session in (("codex", "original"), ("claude-code", "responder")):
+        assert route_client.post(
+            "/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}
+        ).status_code == 200
+    parent = route_client.post(
+        "/relay/messages",
+        json={
+            "sender_runtime": "codex",
+            "sender_session_ref": "original",
+            "recipient": "claude-code:responder",
+            "payload": "question",
+            **scope,
+        },
+    ).json()
+    claim = route_client.post(
+        "/relay/turn", json={"runtime": "claude-code", "session_ref": "responder", **scope}
+    ).json()["deliveries"][0]
+    reply = route_client.post(
+        "/relay/replies",
+        json={"delivery_id": claim["delivery_id"], "receipt": claim["receipt"], "payload": "answer", **scope},
+    )
+    assert reply.status_code == 200
+    assert seen[-1]["in_reply_to"] == parent["message_id"]
+    assert seen[-1]["recipient"] == "codex:original"
