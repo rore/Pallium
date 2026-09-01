@@ -265,8 +265,20 @@ def test_slash_and_duplicate_turns_never_claim(monkeypatch, relative, imported):
 
     payload["prompt"] = "a duplicate model prompt"
     monkeypatch.setattr(hook, "check_dedup", lambda *_: True)
-    monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: pytest.fail("duplicate must not claim"))
-    hook.main()
+    if imported:
+        calls = []
+        monkeypatch.setattr(
+            hook, "relay_request",
+            lambda *_a, **_k: calls.append((_a, _k)) or {"deliveries": []},
+        )
+        hook.main()
+        assert len(calls) == 1
+    else:
+        monkeypatch.setattr(
+            hook, "relay_request",
+            lambda *_a, **_k: pytest.fail("Claude duplicate must not claim"),
+        )
+        hook.main()
 
 
 def test_codex_combined_output_is_relay_first_and_bounded(monkeypatch):
