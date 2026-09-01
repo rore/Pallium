@@ -29,9 +29,9 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- 2026-09-01: Planning and review complete; no code edited yet.
+- 2026-09-01: Added non-printable session-ref rejection and `ValueError` fallback after persisted send. Focused wake regression: 9 passed. Full MCP server suite: 51 passed with 4 existing Pydantic warnings. `git diff --check` passes. Verified the other five PR #82 inline findings reference discarded batch-branch symbols absent from current main.

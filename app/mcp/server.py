@@ -148,7 +148,7 @@ def _wake_exact_codex_delivery(recipient: str, result: object) -> None:
     if not isinstance(delivery, dict):
         return
     session_ref = delivery.get("recipient_session_ref")
-    if delivery.get("recipient_runtime") != "codex" or not isinstance(session_ref, str) or not session_ref or session_ref != session_ref.strip():
+    if delivery.get("recipient_runtime") != "codex" or not isinstance(session_ref, str) or not session_ref or session_ref != session_ref.strip() or not session_ref.isprintable():
         return
     command = ["codex.exe" if os.name == "nt" else "codex", "queue", "--thread", session_ref, "--message", _RELAY_WAKE_NOTICE]
     kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
@@ -158,7 +158,7 @@ def _wake_exact_codex_delivery(recipient: str, result: object) -> None:
         kwargs["start_new_session"] = True
     try:
         subprocess.Popen(command, **kwargs)
-    except OSError:
+    except (OSError, ValueError):
         pass
 
 def _relay_text(result: object) -> str:
