@@ -76,3 +76,54 @@ def resolve_context(
         agent_ref=resolved_agent,
         visibility=visibility if visibility is not None else os.environ.get("PALLIUM_VISIBILITY"),
     )
+
+_RELAY_CONTAINER_REF_MAX_CHARS = 512
+_RELAY_ACTOR_REF_MAX_CHARS = 255
+
+
+def _valid_relay_scope_value(value: object, *, max_chars: int) -> str | None:
+    if not isinstance(value, str) or value != value.strip():
+        return None
+    return value if 0 < len(value) <= max_chars and value.isprintable() else None
+
+
+def resolve_relay_context(
+    *, container_ref: str | None = None, actor_ref: str | None = None
+) -> tuple[PalliumContext | None, str | None]:
+    """Resolve a paired Relay scope without allowing model inputs to override config."""
+    supplied_container = _valid_relay_scope_value(
+        container_ref, max_chars=_RELAY_CONTAINER_REF_MAX_CHARS
+    )
+    supplied_actor = _valid_relay_scope_value(actor_ref, max_chars=_RELAY_ACTOR_REF_MAX_CHARS)
+    if (container_ref is None) != (actor_ref is None):
+        return None, "Error: Relay scope requires both container_ref and actor_ref."
+    if container_ref is not None and (supplied_container is None or supplied_actor is None):
+        return None, "Error: Relay scope requires paired non-blank container_ref and actor_ref."
+
+    configured_container = os.environ.get("PALLIUM_CONTAINER_REF")
+    configured_actor = os.environ.get("PALLIUM_ACTOR_REF")
+    if (configured_container is None) != (configured_actor is None):
+        return None, "Error: Configured Relay scope requires both container_ref and actor_ref."
+    if configured_container is not None:
+        configured_container = _valid_relay_scope_value(
+            configured_container, max_chars=_RELAY_CONTAINER_REF_MAX_CHARS
+        )
+        configured_actor = _valid_relay_scope_value(
+            configured_actor, max_chars=_RELAY_ACTOR_REF_MAX_CHARS
+        )
+        if configured_container is None or configured_actor is None:
+            return None, "Error: Configured Relay scope is invalid."
+        configured_container = _canonicalize_container_ref(configured_container)
+
+    if container_ref is None:
+        if configured_container is None:
+            return None, "Error: Relay scope requires both container_ref and actor_ref."
+        return resolve_context(container_ref=configured_container, actor_ref=configured_actor), None
+
+    requested_container = _canonicalize_container_ref(supplied_container)
+    if (
+        configured_container is not None
+        and (requested_container != configured_container or supplied_actor != configured_actor)
+    ):
+        return None, "Error: Relay scope conflicts with configured trusted scope."
+    return resolve_context(container_ref=requested_container, actor_ref=supplied_actor), None
