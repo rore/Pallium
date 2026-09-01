@@ -7,6 +7,8 @@ explicit overrides with env var defaults) is the server layer's responsibility.
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
 from typing import Any
 
@@ -17,6 +19,9 @@ from app.mcp.context import PalliumContext
 
 class PalliumMcpClient:
     """Thin HTTP client that proxies MCP tool calls to Pallium's REST API."""
+
+    _RELAY_BUSY_ATTEMPTS = 12
+    _RELAY_BUSY_BUDGET_SECONDS = 25.0
 
     def __init__(self, ctx: PalliumContext) -> None:
         self._ctx = ctx
@@ -261,6 +266,7 @@ class PalliumMcpClient:
             "recipient": recipient,
             "sender_runtime": sender_runtime,
             "sender_session_ref": sender_session_ref,
+            "message_id": message_id or f"relay-msg-{uuid.uuid4().hex}",
             **self._relay_scope_params(),
         }
         for key, value in (
@@ -270,7 +276,7 @@ class PalliumMcpClient:
         ):
             if value is not None:
                 payload[key] = value
-        return await self._post_or_error("/relay/messages", payload)
+        return await self._post_or_error("/relay/messages", payload, retry_relay_busy=True)
 
     async def relay_reply(
         self,
@@ -289,7 +295,7 @@ class PalliumMcpClient:
             payload["receipt"] = receipt
         if expires_in_seconds is not None:
             payload["expires_in_seconds"] = expires_in_seconds
-        return await self._post_or_error("/relay/replies", payload)
+        return await self._post_or_error("/relay/replies", payload, retry_relay_busy=True)
 
     async def relay_status(self, message_id: str) -> dict[str, Any]:
         params = self._relay_scope_params()
@@ -310,7 +316,7 @@ class PalliumMcpClient:
             "receipt": receipt,
             **self._relay_scope_params(),
         }
-        return await self._post_or_error("/relay/deliveries/mcp-ack", payload)
+        return await self._post_or_error("/relay/deliveries/mcp-ack", payload, retry_relay_busy=True)
 
     async def flag_memory(
         self,
@@ -374,12 +380,68 @@ class PalliumMcpClient:
     # tool response format consistent and let the calling agent see the
     # reason (e.g. 409 Conflict) rather than an opaque exception.
 
-    async def _post_or_error(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post_or_error(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        retry_relay_busy: bool = False,
+    ) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
-                response = await http.post(path, json=payload)
+                attempts = self._RELAY_BUSY_ATTEMPTS if retry_relay_busy else 1
+                deadline = (
+                    time.monotonic() + self._RELAY_BUSY_BUDGET_SECONDS
+                    if retry_relay_busy
+                    else None
+                )
+                response = None
+                for attempt in range(attempts):
+                    if response is not None and deadline is not None and time.monotonic() >= deadline:
+                        break
+                    request_timeout = (
+                        max(0.1, deadline - time.monotonic())
+                        if deadline is not None
+                        else None
+                    )
+                    if request_timeout is None:
+                        response = await http.post(path, json=payload)
+                    else:
+                        response = await http.post(path, json=payload, timeout=request_timeout)
+                    parse_error = None
+                    try:
+                        body = response.json()
+                    except Exception as exc:
+                        body = None
+                        parse_error = exc
+                    detail = body.get("detail") if isinstance(body, dict) else None
+                    is_retryable_busy = (
+                        response.status_code == 503
+                        and isinstance(detail, dict)
+                        and detail.get("code") == "relay_busy"
+                        and detail.get("retryable") is True
+                    )
+                    if is_retryable_busy and attempt + 1 < attempts:
+                        assert deadline is not None
+                        remaining = deadline - time.monotonic()
+                        if remaining > 0:
+                            try:
+                                delay = min(
+                                    1.0,
+                                    remaining,
+                                    max(0.0, float(response.headers.get("Retry-After", "1"))),
+                                )
+                            except (TypeError, ValueError):
+                                delay = min(1.0, remaining)
+                            await asyncio.sleep(delay)
+                            continue
+                    response.raise_for_status()
+                    if parse_error is not None:
+                        raise parse_error
+                    return body
+                assert response is not None
                 response.raise_for_status()
-                return response.json()
+                raise AssertionError("unreachable")
         except httpx.HTTPStatusError as exc:
             try:
                 body = exc.response.json()
@@ -392,7 +454,6 @@ class PalliumMcpClient:
             }
         except Exception as exc:
             return {"error": str(exc)}
-
     async def remember_memory(
         self,
         *,

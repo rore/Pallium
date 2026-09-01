@@ -563,7 +563,8 @@ class SQLiteRelayMixin:
 
             return self._relay_status_in_session(db, reply_msg, current)
 
-        return self._with_retry(run)
+        with self._begin_immediate() as db:
+            return run(db)
 
     def _relay_status_in_session(
         self, db, message: RelayMessageRecord, current: datetime

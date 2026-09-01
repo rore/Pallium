@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -583,6 +584,64 @@ def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, rela
     assert response.status_code == 503
     assert response.headers["retry-after"] == "1"
     assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
+
+def test_atomic_reply_busy_uses_retryable_contract(client, relay_storage, monkeypatch):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    sent = _send(client, "claude-code", "sender", "codex:target").json()
+    delivery = _turn(client, "codex", "target")["deliveries"][0]
+
+    def busy_transaction():
+        raise ImmediateTransactionBusyError("database is locked")
+
+    monkeypatch.setattr(relay_storage, "_begin_immediate", busy_transaction)
+    response = client.post("/relay/replies", json={
+        "delivery_id": delivery["delivery_id"],
+        "receipt": delivery["receipt"],
+        "payload": "reply",
+        **SCOPE,
+    })
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "1"
+    assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
+    assert sent["deliveries"][0]["state"] == "pending"
+
+
+def test_retrying_busy_send_with_same_id_creates_one_delivery(client, relay_storage, monkeypatch):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    original = relay_storage._begin_immediate
+    attempts = 0
+
+    @contextmanager
+    def busy_once():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ImmediateTransactionBusyError("database is locked")
+        with original() as db:
+            yield db
+
+    monkeypatch.setattr(relay_storage, "_begin_immediate", busy_once)
+    body = {
+        "message_id": "relay-msg-stable-retry",
+        "sender_runtime": "claude-code",
+        "sender_session_ref": "sender",
+        "recipient": "codex:target",
+        "payload": "once",
+        **SCOPE,
+    }
+    first = client.post("/relay/messages", json=body)
+    second = client.post("/relay/messages", json=body)
+    repeated = client.post("/relay/messages", json=body)
+
+    assert first.status_code == 503
+    assert second.status_code == 200
+    assert repeated.status_code == 200
+    assert second.json()["message_id"] == repeated.json()["message_id"]
+    assert len(second.json()["deliveries"]) == 1
+    assert second.json()["deliveries"][0]["delivery_id"] == repeated.json()["deliveries"][0]["delivery_id"]
 
 def test_turn_does_not_claim_a_legacy_payload_that_the_formatter_rejects(client, relay_storage):
     _turn(client, "claude-code", "sender")
