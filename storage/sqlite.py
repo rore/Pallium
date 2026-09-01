@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable, TypeVar
 
 from sqlalchemy import and_, create_engine, event, func, or_, select, text
@@ -32,6 +33,10 @@ from storage.sqlite_schema import (
     MemoryUsageAuditRecord,
     PackageProcessingStatusRecord,
     QueryAuditLogRecord,
+    RelayDeliveryRecord,
+    RelayMessageRecord,
+    RelayMigrationMetadataRecord,
+    RelaySessionRecord,
     RelationRecord,
     SQLiteSchemaMixin,
     SourceItemRecord,
@@ -75,12 +80,141 @@ class SQLiteStorageProvider(
     SQLiteCodecMixin,
     StorageProvider,
 ):
-    def __init__(self, database_url: str) -> None:
-        connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-        self._engine = create_engine(database_url, future=True, connect_args=connect_args)
-        self._register_sqlite_connect_hooks(self._engine)
+    _RELAY_MIGRATION_KEY = "relay_split_v1"
+    _RELAY_IMMEDIATE_ATTEMPTS = 3
+    _RELAY_IMMEDIATE_BUSY_TIMEOUT_MS = 100
+
+    def __init__(self, database_url: str, relay_database_url: str | None = None) -> None:
+        separate_relay = relay_database_url is not None and not self._same_sqlite_file(database_url, relay_database_url)
+        self._engine = self._create_engine(database_url)
         self._session_factory = sessionmaker(self._engine, expire_on_commit=False, class_=Session)
-        self._initialize_schema()
+        self._initialize_schema(include_relay=not separate_relay)
+        self._relay_engine = self._engine
+        self._relay_session_factory = self._session_factory
+        if separate_relay:
+            self._relay_engine = self._create_engine(relay_database_url)
+            self._relay_session_factory = sessionmaker(
+                self._relay_engine, expire_on_commit=False, class_=Session
+            )
+            self._initialize_relay_schema(self._relay_engine)
+            self._migrate_legacy_relay()
+
+    @classmethod
+    def _create_engine(cls, database_url: str):
+        connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
+        engine = create_engine(database_url, future=True, connect_args=connect_args)
+        cls._register_sqlite_connect_hooks(engine)
+        return engine
+
+    @staticmethod
+    def _same_sqlite_file(database_url: str, relay_database_url: str) -> bool:
+        if database_url == relay_database_url:
+            return True
+        if not (database_url.startswith("sqlite") and relay_database_url.startswith("sqlite")):
+            return False
+        source = database_url.removeprefix("sqlite:///")
+        target = relay_database_url.removeprefix("sqlite:///")
+        return (source == target == ":memory:") or (source != ":memory:" and target != ":memory:" and Path(source).resolve() == Path(target).resolve())
+
+    @staticmethod
+    def _sqlite_identity(engine) -> str:
+        database = engine.url.database
+        if not database or database == ":memory:":
+            return str(engine.url)
+        return str(Path(database).resolve())
+
+    def relay_database_status(self) -> dict[str, object]:
+        """Read-only Relay database routing state for operational callers."""
+        return {
+            "isolated": self._relay_engine is not self._engine,
+            "database_url": str(self._relay_engine.url),
+            "migration_ready": True,
+        }
+
+    def close(self) -> None:
+        """Release both SQLite engine pools owned by this provider."""
+        self._engine.dispose()
+        if self._relay_engine is not self._engine:
+            self._relay_engine.dispose()
+
+    def _migrate_legacy_relay(self) -> None:
+        """Copy legacy Relay rows once while source writes are held out."""
+        source_identity = self._sqlite_identity(self._engine)
+        target_identity = self._sqlite_identity(self._relay_engine)
+        with self._schema_initialization_lock(self._engine):
+            with self._schema_initialization_lock(self._relay_engine):
+                with self._begin_immediate_for(self._session_factory) as source:
+                    marker = source.get(RelayMigrationMetadataRecord, self._RELAY_MIGRATION_KEY)
+                    if marker is not None:
+                        if (marker.source_identity, marker.target_identity) != (source_identity, target_identity):
+                            raise RuntimeError("Relay split marker does not match the configured source and target databases")
+                        with self._relay_session_factory() as target:
+                            target_marker = target.get(RelayMigrationMetadataRecord, self._RELAY_MIGRATION_KEY)
+                            if target_marker is None or (target_marker.source_identity, target_marker.target_identity) != (source_identity, target_identity):
+                                raise RuntimeError("Relay split target marker is missing or does not match the configured databases")
+                            self._verify_relay_ids(source, target, require_exact=False)
+                        return
+                    with self._begin_relay_immediate() as target:
+                        target_marker = target.get(RelayMigrationMetadataRecord, self._RELAY_MIGRATION_KEY)
+                        if target_marker is not None and (
+                            target_marker.source_identity,
+                            target_marker.target_identity,
+                        ) != (source_identity, target_identity):
+                            raise RuntimeError("Relay database was initialized from a different source database")
+                        self._copy_relay_rows(source, target)
+                        self._verify_relay_ids(source, target, require_exact=True)
+                        if target_marker is None:
+                            target.add(RelayMigrationMetadataRecord(
+                                key=self._RELAY_MIGRATION_KEY,
+                                source_identity=source_identity,
+                                target_identity=target_identity,
+                                completed_at=utc_now(),
+                            ))
+                    source.add(RelayMigrationMetadataRecord(
+                        key=self._RELAY_MIGRATION_KEY,
+                        source_identity=source_identity,
+                        target_identity=target_identity,
+                        completed_at=utc_now(),
+                    ))
+
+    @staticmethod
+    def _relay_tables_present(session: Session) -> bool:
+        names = {
+            row[0] for row in session.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('relay_sessions', 'relay_messages', 'relay_deliveries')")
+            )
+        }
+        expected = {"relay_sessions", "relay_messages", "relay_deliveries"}
+        if names and names != expected:
+            raise RuntimeError("legacy Relay schema is incomplete; refusing split migration")
+        return bool(names)
+
+    def _copy_relay_rows(self, source: Session, target: Session) -> None:
+        if not self._relay_tables_present(source):
+            return
+        for model in (RelaySessionRecord, RelayMessageRecord, RelayDeliveryRecord):
+            rows = source.execute(select(model)).scalars().all()
+            if rows:
+                target.execute(
+                    model.__table__.insert().prefix_with("OR IGNORE"),
+                    [{column.name: getattr(row, column.name) for column in model.__table__.columns} for row in rows],
+                )
+
+    def _verify_relay_ids(self, source: Session, target: Session, *, require_exact: bool) -> None:
+        if not self._relay_tables_present(source):
+            return
+        for model in (RelaySessionRecord, RelayMessageRecord, RelayDeliveryRecord):
+            source_rows = {row.id: row for row in source.execute(select(model)).scalars()}
+            target_rows = {row.id: row for row in target.execute(select(model)).scalars()}
+            if not set(source_rows).issubset(target_rows) or (require_exact and set(source_rows) != set(target_rows)):
+                raise RuntimeError(f"Relay split migration verification failed for {model.__tablename__}")
+            for row_id, source_row in source_rows.items():
+                target_row = target_rows[row_id]
+                if any(
+                    getattr(source_row, column.name) != getattr(target_row, column.name)
+                    for column in model.__table__.columns
+                ):
+                    raise RuntimeError(f"Relay split migration found conflicting {model.__tablename__} row {row_id}")
 
     @staticmethod
     def _register_sqlite_connect_hooks(engine) -> None:
@@ -130,6 +264,17 @@ class SQLiteStorageProvider(
                 time.sleep(self._LOCKED_BACKOFF_BASE * (2 ** attempt))
         raise AssertionError("unreachable: loop must return or raise")
 
+    def _reclaim_engine_free_pages(self, engine) -> dict[str, int]:
+        if engine.url.get_backend_name() != "sqlite":
+            return {"freelist_before": 0, "freelist_after": 0, "reclaimed_pages": 0, "checkpoint_busy": 0}
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            before = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
+            conn.exec_driver_sql("PRAGMA incremental_vacuum")
+            after = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
+            row = conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            checkpoint_busy = int(row[0]) if row is not None else 0
+        return {"freelist_before": before, "freelist_after": after, "reclaimed_pages": max(0, before - after), "checkpoint_busy": checkpoint_busy}
+
     def reclaim_free_pages(self) -> dict[str, int]:
         """Return free pages to the OS via incremental auto-vacuum.
 
@@ -152,21 +297,12 @@ class SQLiteStorageProvider(
         ``reclaimed_pages=0`` there. Idempotent and safe to call every cleaner
         cycle (cheap when the freelist is empty).
         """
-        if self._engine.url.get_backend_name() != "sqlite":
-            return {"freelist_before": 0, "freelist_after": 0, "reclaimed_pages": 0, "checkpoint_busy": 0}
-        with self._engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-            before = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
-            conn.exec_driver_sql("PRAGMA incremental_vacuum")
-            after = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
-            # (busy, wal_pages, checkpointed_pages); busy==1 → truncation deferred.
-            row = conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-            checkpoint_busy = int(row[0]) if row is not None else 0
-        return {
-            "freelist_before": before,
-            "freelist_after": after,
-            "reclaimed_pages": max(0, before - after),
-            "checkpoint_busy": checkpoint_busy,
-        }
+        result = self._reclaim_engine_free_pages(self._engine)
+        if self._relay_engine is not self._engine:
+            relay = self._reclaim_engine_free_pages(self._relay_engine)
+            result["relay_reclaimed_pages"] = relay["reclaimed_pages"]
+            result["relay_checkpoint_busy"] = relay["checkpoint_busy"]
+        return result
 
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
         with self._session_factory() as session:

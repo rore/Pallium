@@ -587,27 +587,20 @@ def test_begin_immediate_under_wal(tmp_path: Path) -> None:
 # === Worker loop test ===
 
 
-def test_snapshot_worker_loop_unit(tmp_path: Path, monkeypatch) -> None:
+def test_snapshot_worker_loop_unit(tmp_path: Path) -> None:
     db_dir = tmp_path / "db"
     db_dir.mkdir()
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
     db_path = db_dir / "pallium.db"
     _make_test_db(db_path, rows=5)
-
-    config_file = tmp_path / "pallium.local.toml"
-    config_file.write_text(
-        f"""
-[snapshot]
-enabled = true
-snapshot_path = "{snapshot_dir.as_posix()}"
-interval_seconds = 60
-max_snapshots = 5
-""".strip(),
-        encoding="utf-8",
+    relay_path = db_path.with_name(f"{db_path.stem}-relay{db_path.suffix}")
+    _make_test_db(relay_path, rows=0)
+    config = AppConfig(
+        sqlite_url=f"sqlite:///{db_path.as_posix()}",
+        relay_sqlite_url=f"sqlite:///{relay_path.as_posix()}",
+        snapshot=SnapshotConfig(enabled=True, snapshot_path=str(snapshot_dir), interval_seconds=60, max_snapshots=5),
     )
-    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
-    monkeypatch.setenv("PALLIUM_SQLITE_URL", f"sqlite:///{db_path.as_posix()}")
 
     call_count = 0
 
@@ -622,6 +615,7 @@ max_snapshots = 5
 
     exit_code = run_snapshot(
         ["--interval-seconds", "1"],
+        config=config,
         sleep_fn=counting_sleep,
         should_stop=should_stop,
         install_signal_handlers=False,
@@ -629,3 +623,82 @@ max_snapshots = 5
     assert exit_code == 0
     snapshots = list(snapshot_dir.glob("pallium-*.db"))
     assert len(snapshots) >= 1
+
+
+def test_paired_snapshot_restore_requires_committed_valid_pair(tmp_path: Path):
+    snapshot_dir = tmp_path / "snapshots"; snapshot_dir.mkdir()
+    main, relay = tmp_path / "main.db", tmp_path / "pallium-relay.db"
+    _make_test_db(main, rows=2); _make_test_db(relay, rows=3)
+    marker = create_snapshot({"main": str(main), "relay": str(relay)}, snapshot_dir)
+    assert marker and marker.name.endswith(".manifest.json")
+    restored_main, restored_relay = tmp_path / "restore-main.db", tmp_path / "restore-relay.db"
+    assert restore_snapshot(snapshot_dir, {"main": str(restored_main), "relay": str(restored_relay)}) is True
+    assert stdlib_sqlite3.connect(str(restored_main)).execute("SELECT count(*) FROM items").fetchone()[0] == 2
+    assert stdlib_sqlite3.connect(str(restored_relay)).execute("SELECT count(*) FROM items").fetchone()[0] == 3
+
+
+def test_paired_snapshot_without_manifest_is_ignored(tmp_path: Path):
+    snapshot_dir = tmp_path / "snapshots"; snapshot_dir.mkdir()
+    main, relay = tmp_path / "main.db", tmp_path / "pallium-relay.db"
+    _make_test_db(main); _make_test_db(relay)
+    marker = create_snapshot({"main": str(main), "relay": str(relay)}, snapshot_dir)
+    marker.unlink()
+    assert restore_snapshot(snapshot_dir, {"main": str(tmp_path / "m.db"), "relay": str(tmp_path / "r.db")}) is False
+
+
+def test_paired_prune_removes_generations_as_a_unit(tmp_path: Path):
+    snapshot_dir = tmp_path / "snapshots"; snapshot_dir.mkdir()
+    main, relay = tmp_path / "main.db", tmp_path / "pallium-relay.db"
+    _make_test_db(main); _make_test_db(relay)
+    create_snapshot({"main": str(main), "relay": str(relay)}, snapshot_dir)
+    time.sleep(0.01)
+    create_snapshot({"main": str(main), "relay": str(relay)}, snapshot_dir)
+    prune_old_snapshots(snapshot_dir, keep=1)
+    assert len(list(snapshot_dir.glob("*.manifest.json"))) == 1
+    assert len(list(snapshot_dir.glob("*-main.db"))) == 1
+    assert len(list(snapshot_dir.glob("*-relay.db"))) == 1
+
+
+def test_paired_restore_rejects_partial_live_state(tmp_path: Path) -> None:
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    from storage.sqlite import SQLiteStorageProvider
+
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    storage = SQLiteStorageProvider(f"sqlite:///{main}", f"sqlite:///{relay}")
+    storage.close()
+    relay.unlink()
+    with pytest.raises(RuntimeError, match="partial live database pair"):
+        restore_snapshot(snapshot_dir, {"main": str(main), "relay": str(relay)})
+
+
+def test_legacy_single_snapshot_restores_then_migrates_relay(tmp_path: Path) -> None:
+    from storage.sqlite import SQLiteStorageProvider
+
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    legacy_path = tmp_path / "legacy.db"
+    legacy = SQLiteStorageProvider(f"sqlite:///{legacy_path}")
+    legacy.relay_turn(
+        runtime="codex", session_ref="legacy-session", container_ref="scope",
+        actor_ref="actor", title=None, max_chars=1000, max_messages=10, lease_seconds=60,
+    )
+    legacy._engine.dispose()
+    create_snapshot(str(legacy_path), snapshot_dir)
+    legacy_path.unlink()
+
+    relay_path = tmp_path / "relay.db"
+    assert restore_snapshot(
+        snapshot_dir, {"main": str(legacy_path), "relay": str(relay_path)}
+    ) is True
+    split = SQLiteStorageProvider(
+        f"sqlite:///{legacy_path}", relay_database_url=f"sqlite:///{relay_path}"
+    )
+    sessions = split.relay_list_sessions(
+        container_ref="scope", actor_ref="actor", runtime=None,
+        include_inactive=True, recent_seconds=1,
+    )
+    assert [session["session_ref"] for session in sessions] == ["legacy-session"]
+    split._engine.dispose()
+    split._relay_engine.dispose()

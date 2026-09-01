@@ -38,6 +38,10 @@ A received block includes its `delivery_id`. `pallium_relay_reply` accepts that 
 
 Relay is local single-user coordination. `actor_ref` is claimed scope, not authenticated cross-user authorization. The generic secret redactor runs before persistence.
 
+## Storage and operations
+
+Relay persistence may use the separate sibling SQLite file configured by Pallium. This is transparent to Relay callers: sessions, messages, delivery claims, replies, and acknowledgements use the Relay file, while memory and ingestion remain in the main file. Both files use WAL, incremental auto-vacuum, busy-timeout handling, and the same service lifecycle. A first-run upgrade from a legacy combined file requires the old service to be fully stopped; the migration is transactional and idempotent, and refuses a missing or mismatched target after its durable split marker. Back up and restore the two files as one validated snapshot pair. A rollback after new Relay writes requires an explicit data reconciliation; it is not an automatic switch-back.
+
 ## Not in R1
 
 R1 does not infer a shared `work_ref`, route to a future worker, spawn agents, assign work, wake sessions, create groups, or maintain continuous conversations. Those remain evidence-driven R2/R3 questions.

@@ -51,7 +51,7 @@ class BuildResult:
 def build_storage_provider(config: AppConfig) -> StorageProvider:
     if config.storage_backend != "sqlite":
         raise ValueError(f"Unsupported storage backend: {config.storage_backend}")
-    return SQLiteStorageProvider(database_url=config.sqlite_url)
+    return SQLiteStorageProvider(database_url=config.sqlite_url, relay_database_url=config.resolved_relay_sqlite_url)
 
 
 def build_llm_provider(config: AppConfig, *, provider_name: str, model: str) -> LLMProvider:

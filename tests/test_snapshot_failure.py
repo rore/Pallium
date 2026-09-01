@@ -118,20 +118,13 @@ def test_snapshot_worker_survives_transient_failure(tmp_path: Path, monkeypatch)
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
     _make_test_db(db_path, rows=5)
-
-    config_file = tmp_path / "pallium.local.toml"
-    config_file.write_text(
-        f"""
-[snapshot]
-enabled = true
-snapshot_path = "{snapshot_dir.as_posix()}"
-interval_seconds = 1
-max_snapshots = 5
-""".strip(),
-        encoding="utf-8",
+    relay_path = db_path.with_name(f"{db_path.stem}-relay{db_path.suffix}")
+    _make_test_db(relay_path, rows=0)
+    config = AppConfig(
+        sqlite_url=f"sqlite:///{db_path.as_posix()}",
+        relay_sqlite_url=f"sqlite:///{relay_path.as_posix()}",
+        snapshot=SnapshotConfig(enabled=True, snapshot_path=str(snapshot_dir), interval_seconds=1, max_snapshots=5),
     )
-    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
-    monkeypatch.setenv("PALLIUM_SQLITE_URL", f"sqlite:///{db_path.as_posix()}")
 
     import app.snapshot as snapshot_mod
 
@@ -159,6 +152,7 @@ max_snapshots = 5
 
     exit_code = run_snapshot(
         ["--interval-seconds", "1"],
+        config=config,
         sleep_fn=counting_sleep,
         should_stop=should_stop,
         install_signal_handlers=False,

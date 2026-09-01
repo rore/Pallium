@@ -329,7 +329,7 @@ def test_concurrent_claim_lease_recovery_stale_token_and_expiry(client, relay_st
     old = claimed[0]
 
     for _ in range(2):
-        with relay_storage._engine.begin() as connection:
+        with relay_storage._relay_engine.begin() as connection:
             connection.execute(
                 text("UPDATE relay_deliveries SET lease_expires_at=:past WHERE id=:id"),
                 {"past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": old["delivery_id"]},
@@ -344,7 +344,7 @@ def test_concurrent_claim_lease_recovery_stale_token_and_expiry(client, relay_st
     assert _ack(client, old).status_code == 200
 
     expiring = _send(client, "claude-code", "sender", "codex:target", message_id="expiring").json()
-    with relay_storage._engine.begin() as connection:
+    with relay_storage._relay_engine.begin() as connection:
         connection.execute(
             text("UPDATE relay_messages SET expires_at=:past WHERE id=:id"),
             {"past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": "expiring"},
@@ -358,7 +358,7 @@ def test_concurrent_claim_lease_recovery_stale_token_and_expiry(client, relay_st
 def test_dormant_hidden_default_exact_addressable_and_reactivated(client, relay_storage):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "dormant")
-    with relay_storage._engine.begin() as connection:
+    with relay_storage._relay_engine.begin() as connection:
         connection.execute(
             text("UPDATE relay_sessions SET last_seen_at=:old WHERE session_ref=:session_ref"),
             {"old": datetime.now(timezone.utc) - timedelta(days=2), "session_ref": "dormant"},
@@ -579,7 +579,7 @@ def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, rela
     def busy_transaction():
         raise ImmediateTransactionBusyError("database is locked")
 
-    monkeypatch.setattr(relay_storage, "_begin_immediate", busy_transaction)
+    monkeypatch.setattr(relay_storage, "_begin_relay_immediate", busy_transaction)
     response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "busy", **SCOPE})
     assert response.status_code == 503
     assert response.headers["retry-after"] == "1"
@@ -594,7 +594,7 @@ def test_atomic_reply_busy_uses_retryable_contract(client, relay_storage, monkey
     def busy_transaction():
         raise ImmediateTransactionBusyError("database is locked")
 
-    monkeypatch.setattr(relay_storage, "_begin_immediate", busy_transaction)
+    monkeypatch.setattr(relay_storage, "_begin_relay_immediate", busy_transaction)
     response = client.post("/relay/replies", json={
         "delivery_id": delivery["delivery_id"],
         "receipt": delivery["receipt"],
@@ -614,7 +614,7 @@ def test_atomic_reply_busy_uses_retryable_contract(client, relay_storage, monkey
 def test_retrying_busy_send_with_same_id_creates_one_delivery(client, relay_storage, monkeypatch):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "target")
-    original = relay_storage._begin_immediate
+    original = relay_storage._begin_relay_immediate
     attempts = 0
 
     @contextmanager
@@ -626,7 +626,7 @@ def test_retrying_busy_send_with_same_id_creates_one_delivery(client, relay_stor
         with original() as db:
             yield db
 
-    monkeypatch.setattr(relay_storage, "_begin_immediate", busy_once)
+    monkeypatch.setattr(relay_storage, "_begin_relay_immediate", busy_once)
     body = {
         "message_id": "relay-msg-stable-retry",
         "sender_runtime": "claude-code",
@@ -650,7 +650,7 @@ def test_turn_does_not_claim_a_legacy_payload_that_the_formatter_rejects(client,
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "legacy-target")
     sent = _send(client, "claude-code", "sender", "codex:legacy-target", "safe").json()
-    with relay_storage._session_factory.begin() as db:
+    with relay_storage._relay_session_factory.begin() as db:
         db.get(RelayMessageRecord, sent["message_id"]).payload = "unsafe\u2028legacy"
 
     turn = _turn(client, "codex", "legacy-target")
@@ -663,7 +663,7 @@ def test_turn_skips_legacy_unsafe_rows_and_drains_later_safe_delivery(client, re
     _turn(client, "codex", "mixed-legacy-target")
     unsafe = _send(client, "claude-code", "sender", "codex:mixed-legacy-target", "unsafe").json()
     safe = _send(client, "claude-code", "sender", "codex:mixed-legacy-target", "safe").json()
-    with relay_storage._session_factory.begin() as db:
+    with relay_storage._relay_session_factory.begin() as db:
         db.get(RelayMessageRecord, unsafe["message_id"]).payload = "unsafe\u2028legacy"
 
     turn = _turn(client, "codex", "mixed-legacy-target")

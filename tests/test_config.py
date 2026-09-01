@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.config import AppConfig
 from tests.config_helpers import DEFAULT_PROMPT_VARIANT, build_llm_test_config
 from app.config import EmbeddingProviderConfig
@@ -671,3 +673,21 @@ def test_provider_api_key_file_env_override(monkeypatch, tmp_path: Path) -> None
     provider = config.provider_config("hai_anthropic")
     assert provider.api_key_file == str(api_key_file)
     assert provider.api_key == "env-file-key"
+
+
+def test_relay_sqlite_url_derivation_and_validation(tmp_path: Path) -> None:
+    main = tmp_path / "main.sqlite"
+    assert AppConfig(sqlite_url=f"sqlite:///{main}").resolved_relay_sqlite_url == f"sqlite:///{tmp_path / 'main-relay.sqlite'}"
+
+    same = tmp_path / "nested" / ".." / "main.sqlite"
+    with pytest.raises(ValueError, match="must differ"):
+        AppConfig(
+            sqlite_url=f"sqlite:///{main}",
+            relay_sqlite_url=f"sqlite:///{same}",
+        ).resolved_relay_sqlite_url
+    with pytest.raises(ValueError, match="file-backed Relay"):
+        AppConfig(
+            sqlite_url=f"sqlite:///{main}",
+            relay_sqlite_url="sqlite:///:memory:",
+        ).resolved_relay_sqlite_url
+    assert AppConfig(sqlite_url="sqlite:///:memory:").resolved_relay_sqlite_url == "sqlite:///:memory:"

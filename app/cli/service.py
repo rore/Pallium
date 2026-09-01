@@ -46,6 +46,7 @@ def _pallium_home(override: str | None = None) -> Path:
 def _apply_home_env(home: Path) -> None:
     data_dir = home / "data"
     os.environ.setdefault("PALLIUM_SQLITE_URL", f"sqlite:///{data_dir / 'pallium.db'}")
+    os.environ.setdefault("PALLIUM_RELAY_SQLITE_URL", f"sqlite:///{data_dir / 'pallium-relay.db'}")
     os.environ.setdefault("PALLIUM_VECTOR_INDEX_PATH", str(data_dir / "vector_index"))
     config_file = home / "config" / "pallium.toml"
     if config_file.exists():
@@ -541,6 +542,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
         db_mb = storage.get("sqlite_mb")
         if db_mb is not None:
             print(f"  DB size: {db_mb} MB")
+        relay_mb = storage.get("relay_sqlite_mb")
+        if relay_mb is not None:
+            print(f"  Relay DB size: {relay_mb} MB")
         funnel = status_data.get("historical_lookup_funnel")
         if isinstance(funnel, dict):
             armed = "yes" if funnel.get("armed") else "no"

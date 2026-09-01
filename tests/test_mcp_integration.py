@@ -340,7 +340,7 @@ async def test_identity_free_mcp_forget_single_and_bulk_lifecycle(pallium_asgi_a
             PalliumContext(base_url="http://testserver", container_ref="mcp-forget")
         )
 
-        async def post(path, payload):
+        async def post(path, payload, **_kwargs):
             response = await http.post(path, json=payload)
             response.raise_for_status()
             return response.json()
@@ -579,7 +579,7 @@ async def test_explicit_creation_mcp_to_http_persists_complete_provenance(
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver", timeout=30.0
     ) as http:
-        async def post(path, payload):
+        async def post(path, payload, **_kwargs):
             response = await http.post(path, json=payload)
             if response.is_error:
                 return {"status_code": response.status_code, "detail": response.json()}
@@ -655,7 +655,7 @@ async def test_explicit_creation_mcp_to_http_rejects_bad_scope_without_write(
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver", timeout=30.0
     ) as http:
-        async def post(path, payload):
+        async def post(path, payload, **_kwargs):
             response = await http.post(path, json=payload)
             if response.is_error:
                 return {"status_code": response.status_code, "detail": response.json()}
@@ -690,7 +690,7 @@ async def test_relay_mcp_client_to_http_full_named_session_round_trip(
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver", timeout=30.0
     ) as http:
-        async def post(path, payload):
+        async def post(path, payload, **_kwargs):
             response = await http.post(path, json=payload)
             if response.is_error:
                 return {

@@ -115,7 +115,7 @@ def test_mcp_ack_stale_receipt_returns_409(client: TestClient, relay_storage):
 
     # Expire the lease — delivery re-enters reclaimable pool
     from storage.sqlite_schema import RelayDeliveryRecord
-    with relay_storage._begin_immediate() as db:
+    with relay_storage._begin_relay_immediate() as db:
         rec = db.get(RelayDeliveryRecord, d["delivery_id"])
         rec.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
 
@@ -183,7 +183,7 @@ def test_lease_expiry_causes_redelivery(client: TestClient, relay_storage):
 
     # Expire the lease without ACKing
     from storage.sqlite_schema import RelayDeliveryRecord
-    with relay_storage._begin_immediate() as db:
+    with relay_storage._begin_relay_immediate() as db:
         rec = db.get(RelayDeliveryRecord, d["delivery_id"])
         rec.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
 
@@ -378,7 +378,7 @@ def test_atomic_reply_failure_rolls_back_delivery_claim(client: TestClient, rela
     from sqlalchemy import select
     from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord
 
-    with relay_storage._session_factory() as db:
+    with relay_storage._relay_session_factory() as db:
         stored_delivery = db.get(RelayDeliveryRecord, delivery["delivery_id"])
         reply = db.execute(
             select(RelayMessageRecord).where(

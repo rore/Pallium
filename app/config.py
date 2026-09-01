@@ -218,6 +218,7 @@ def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
 class AppConfig:
     storage_backend: str = "sqlite"
     sqlite_url: str = "sqlite:///./pallium.db"
+    relay_sqlite_url: str | None = None
     default_use_case: str = "agent_conversation_memory"
     llm_providers: dict[str, LLMProviderConfig] = field(default_factory=dict)
     embedding_providers: dict[str, EmbeddingProviderConfig] = field(default_factory=dict)
@@ -297,6 +298,11 @@ class AppConfig:
                 env_values,
                 _read_nested(config_data, "storage", "sqlite_url") or "sqlite:///./pallium.db",
             ) or "sqlite:///./pallium.db",
+            relay_sqlite_url=_resolve_global_value(
+                "PALLIUM_RELAY_SQLITE_URL",
+                env_values,
+                _read_nested(config_data, "storage", "relay_sqlite_url"),
+            ),
             default_use_case=_resolve_global_value(
                 "PALLIUM_DEFAULT_USE_CASE",
                 env_values,
@@ -404,6 +410,32 @@ class AppConfig:
             llm_prompt_variant=_resolve_legacy_value("PALLIUM_LLM_PROMPT_VARIANT", env_values),
             llm_timeout_seconds=_resolve_float_value("PALLIUM_LLM_TIMEOUT_SECONDS", env_values),
         )
+
+    @property
+    def resolved_relay_sqlite_url(self) -> str:
+        def file_path(url: str, setting: str) -> Path | None:
+            if url == "sqlite:///:memory:":
+                return None
+            if not url.startswith("sqlite:///"):
+                raise ValueError(f"{setting} must be a file-backed SQLite URL")
+            return Path(url[len("sqlite:///"):]).resolve()
+
+        main_path = file_path(self.sqlite_url, "sqlite_url")
+        if main_path is None:
+            if self.relay_sqlite_url not in (None, "sqlite:///:memory:"):
+                raise ValueError("in-memory sqlite_url cannot use a separate Relay database")
+            return "sqlite:///:memory:"
+
+        if self.relay_sqlite_url is None:
+            path = Path(self.sqlite_url[len("sqlite:///"):])
+            return f"sqlite:///{path.with_name(path.stem + '-relay' + path.suffix)}"
+
+        relay_path = file_path(self.relay_sqlite_url, "relay_sqlite_url")
+        if relay_path is None:
+            raise ValueError("file-backed sqlite_url requires a file-backed Relay database")
+        if relay_path == main_path:
+            raise ValueError("relay_sqlite_url must differ from sqlite_url")
+        return self.relay_sqlite_url
 
     def package_config(self, package_name: str) -> SemanticPackageConfig:
         if package_name not in self.semantic_packages:

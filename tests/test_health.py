@@ -251,10 +251,11 @@ class TestStatusResponseShape:
         with TestClient(app) as client:
             body = client.get("/status").json()
         storage = body["storage"]
-        assert set(storage.keys()) == {"sqlite_mb", "vector_index_mb"}
-        # SQLite file exists after DB init — size is reported (may be 0.0 for an empty DB)
-        assert storage["sqlite_mb"] is not None
+        assert set(storage.keys()) == {"sqlite_mb", "relay_sqlite_mb", "relay_migration_ready", "vector_index_mb"}
+        # Both SQLite files exist after DB init; migration readiness is explicit.
         assert isinstance(storage["sqlite_mb"], float)
+        assert isinstance(storage["relay_sqlite_mb"], float)
+        assert storage["relay_migration_ready"] is True
 
 
 class TestStatusIngestionProviderSignal:

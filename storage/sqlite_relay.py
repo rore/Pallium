@@ -117,7 +117,7 @@ class SQLiteRelayMixin:
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
-        with self._begin_immediate() as db:
+        with self._begin_relay_immediate() as db:
             registered = self._relay_session(
                 db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
             )
@@ -244,7 +244,7 @@ class SQLiteRelayMixin:
         actor_ref: str,
     ) -> dict[str, Any]:
         current = _now()
-        with self._begin_immediate() as db:
+        with self._begin_relay_immediate() as db:
             row = self._relay_session(
                 db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
             )
@@ -286,7 +286,8 @@ class SQLiteRelayMixin:
             ).scalars().all()
             return [_session_view(row, current, recent_seconds) for row in rows]
 
-        return self._with_retry(run)
+        with self._relay_session_factory() as db:
+            return run(db)
 
     def relay_name_session(
         self,
@@ -300,7 +301,7 @@ class SQLiteRelayMixin:
     ) -> dict[str, Any]:
         current = _now()
         try:
-            with self._begin_immediate() as db:
+            with self._begin_relay_immediate() as db:
                 row = self._relay_session(
                     db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
                 )
@@ -355,7 +356,7 @@ class SQLiteRelayMixin:
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
-        with self._begin_immediate() as db:
+        with self._begin_relay_immediate() as db:
             sender = self._relay_session(
                 db,
                 container_ref=container_ref,
@@ -563,7 +564,7 @@ class SQLiteRelayMixin:
 
             return self._relay_status_in_session(db, reply_msg, current)
 
-        with self._begin_immediate() as db:
+        with self._begin_relay_immediate() as db:
             return run(db)
 
     def _relay_status_in_session(
@@ -605,7 +606,7 @@ class SQLiteRelayMixin:
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
-        with self._begin_immediate() as db:
+        with self._begin_relay_immediate() as db:
             message = db.get(RelayMessageRecord, message_id)
             if message is None or message.container_ref != container_ref or message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
@@ -628,7 +629,7 @@ class SQLiteRelayMixin:
         Idempotent: returns success if already delivered.
         """
         current = _now(now)
-        with self._begin_immediate() as db:
+        with self._begin_relay_immediate() as db:
             row = db.execute(
                 select(RelayDeliveryRecord, RelayMessageRecord)
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
@@ -683,7 +684,7 @@ class SQLiteRelayMixin:
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
-        with self._begin_immediate() as db:
+        with self._begin_relay_immediate() as db:
             row = db.execute(
                 select(RelayDeliveryRecord, RelayMessageRecord)
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)

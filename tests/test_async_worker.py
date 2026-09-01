@@ -1005,7 +1005,7 @@ def test_supervisor_spawns_snapshot_worker_when_enabled(capsys, tmp_path, monkey
     snapshot_dir.mkdir()
     config_file = tmp_path / "pallium.local.toml"
     config_file.write_text(
-        f'[snapshot]\nenabled = true\nsnapshot_path = "{snapshot_dir.as_posix()}"\ninterval_seconds = 60\n',
+        f'[storage]\nsqlite_url = "sqlite:///{(tmp_path / "pallium.db").as_posix()}"\n\n[snapshot]\nenabled = true\nsnapshot_path = "{snapshot_dir.as_posix()}"\ninterval_seconds = 60\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
