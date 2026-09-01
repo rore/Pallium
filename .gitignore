@@ -5,6 +5,9 @@ __pycache__/
 pallium.db
 pallium.db-wal
 pallium.db-shm
+pallium-relay.db
+pallium-relay.db-wal
+pallium-relay.db-shm
 tmp*.db
 scripts/retroactive_decision_eval.py
 pallium.egg-info/
