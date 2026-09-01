@@ -57,29 +57,35 @@ Approved by user 2026-09-01: "so i'm leaving you with a night job: db performanc
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Storage isolation core completed in `storage/sqlite.py`, `storage/sqlite_queue.py`, `storage/sqlite_relay.py`, and `storage/sqlite_schema.py`, with focused schema/import coverage in `tests/test_sqlite_relay_isolation.py`. `apply_patch` failed with the documented Windows 1327 issue; the approved deterministic named-file fallback was used.
-
-- Paired snapshot implementation and focused tests completed in the scoped files. `apply_patch` hit the documented Windows 1327 process limitation; a deterministic single-file replacement was used and reported.
-
-- Discovery proved isolation removes the observed writer-lock failure. Redline and two clean-context plan reviews completed; the corrected High-risk plan is approved and ready for implementation. apply_patch later failed with the documented Windows 1327 issue, so Work Record updates used a verified deterministic single-file replacement.
+- Confirmed the root cause with disposable-file probes: SQLite WAL permits one writer per file; a competing main-DB writer delayed or exhausted Relay, while the same Relay operation on a separate file completed in 5–8 ms.
+- Added an optional isolated Relay engine/session factory with a derived sibling file, one shared engine-hook lifecycle (WAL, incremental auto-vacuum, busy timeout), Relay-only schema initialization, bounded Relay transactions, and dual-engine reclaim/close behavior.
+- Added stopped-service, source/target-marker migration with exact legacy-row verification and fail-closed reopening on target mismatch or missing migrated rows. Legacy rows remain rollback evidence.
+- Added paired snapshot creation, manifest publication, restore, prune, supervisor compatibility, legacy single-snapshot upgrade handling, status/dashboard signals, docs, and exact default runtime-file ignores.
+- Routed Relay API, MCP, dashboard, and E2E probes through the isolated store without changing their public contracts. Existing indexes were retained because query-plan evidence used the claim index; no speculative index was added.
+- `apply_patch` failed with the documented Windows process-launch limitation, so edits used deterministic replacements limited to named files.
 
 ## Evidence
 
-- Storage core: optional isolated Relay engine/session factory, Relay-only schema plan and indexes, bounded Relay `BEGIN IMMEDIATE`, source/target marker-verified legacy import, and dual-engine reclaim are implemented. The main schema intentionally retains only migration metadata when isolated; legacy Relay tables are preserved.
-- Focused checks passed: `python -m py_compile storage/sqlite.py storage/sqlite_schema.py storage/sqlite_queue.py storage/sqlite_relay.py`; `python -m pytest tests/test_sqlite_auto_vacuum.py tests/test_sqlite_relay_isolation.py -q` (7 passed).`n- E2E isolation coverage added: both-file WAL/auto-vacuum/busy-timeout parity, main-writer/Relay-writer independence, existing Relay claim index query plan, exact populated legacy migration (including claimed delivery) and idempotent reopen, plus bounded eight-session fan-in with unique exactly-once deliveries; `python -m pytest tests/test_sqlite_relay_isolation.py -q` (6 passed).
-
-- `uv run python -m compileall -q app\\config.py app\\dependencies.py app\\cli\\service.py app\\main.py app\\dashboard.py` passed; `git diff --check` passed.
-- Minimal config self-check passed for sibling derivation and in-memory compatibility. App wiring now resolves env/TOML Relay URL, defaults service home to `pallium-relay.db`, passes `relay_database_url`, reports additive Relay size/readiness fields, and routes dashboard Relay queries through `_relay_session_factory`.
+- Focused operational suite: 192 passed, 1 skipped (`test_sqlite_relay_isolation`, Relay HTTP/MCP/hooks, snapshots, health).
+- Default CI lane with an empty machine-local config: 4,093 passed, 12 skipped, 2 expected failures in 122.74 s.
+- Concurrent coverage includes eight-sender fan-in with unique deliveries, HTTP Relay writes while the main DB holds `BEGIN IMMEDIATE`, bounded competing legacy-writer rejection, exact populated migration including claimed state, idempotent reopen, and fail-closed missing-target-row detection.
+- Lifecycle coverage verifies both files use WAL, `auto_vacuum=INCREMENTAL`, and busy timeouts; paired snapshots publish a manifest last, restore only complete pairs, prune by generation, and reject partial post-split live state.
+- Workflow checker: clean. Binding redline report: `SCHEMA_CHANGE`, no boundary/API/security violations; persistence-review checkpoint remains for the PR.
+- The repository-root test-created split pair was repaired only after verifying all three legacy Relay tables contained zero rows. The actual installed service has not been migrated on this branch.
 
 ## Result review
 
-- Pending.
+A bounded clean-context result review reported two P1 concerns. The snapshot concern was rejected after tracing the precondition: paired restore runs only when both live files are absent, so a crash after the first rename leaves exactly one file and the next startup fails closed; it cannot leave two mixed live generations. Existing partial-live coverage asserts this contract.
 
-## Plan review
+The old-binary concern is a real operational boundary but not a supported concurrent mode. Migration holds the source writer lock and is supported only after the previous process tree is stopped; starting an old binary afterward would bypass semantics that old code cannot know. Database triggers were considered but not adopted because permanently mutating rollback-evidence tables would create a broader rollback/data-recovery hazard. Operations docs now explicitly prohibit restarting an old binary after split and require stopping and reconciling if it writes. No remaining code blocker was found within the supported upgrade contract.
 
-Clean-context persistence/architecture review supported database isolation but blocked the first plan on four gaps: an old service could write after copy; the shared schema seam lacked role-specific plans; independent snapshots could mix generations; and in-memory/aliased/non-file URL behavior was undefined. The revised plan requires a quiesced old service and fail-closed split marker, explicit role schemas over one lifecycle primitive, manifest-published two-file snapshot generations, and strict URL/fallback validation. A fresh final re-review approved the corrected plan with no blocking findings. No production code had been edited at approval.
+## Remaining release steps
+
+- Push the local branch and open a PR after remote-write approval.
+- Satisfy the persistence-review checkpoint and resolve CI/review findings.
+- After merge, update the stable local checkout, run `scripts/restart-service.ps1`, verify `/health`, `/status`, and `/debug/queue/health`, confirm the migration marker/file pair, then run a live concurrent Relay/ingestion smoke test and reinstall integrations only if their installed files changed.
