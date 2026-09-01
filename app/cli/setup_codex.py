@@ -37,6 +37,9 @@ def _hooks_dir() -> Path:
 def _codex_config_path() -> Path:
     return Path.home() / ".codex" / "config.toml"
 
+def _codex_relay_profile_path() -> Path:
+    return Path.home() / ".codex" / "pallium-relay.config.toml"
+
 
 def _codex_hooks_path() -> Path:
     return Path.home() / ".codex" / "hooks.json"
@@ -253,6 +256,24 @@ def _remove_feature_flag(content: str) -> str:
     content = re.sub(r'\n?\[features\]\s*$', '', content)
     return content
 
+
+def _install_relay_profile() -> None:
+    """Install Pallium's dedicated profile over the existing MCP server."""
+    _write_toml(
+        _codex_relay_profile_path(),
+        "[mcp_servers.pallium]\n"
+        "required = true\n"
+        'enabled_tools = ["pallium_relay_send", "pallium_relay_reply"]\n'
+        'default_tools_approval_mode = "prompt"\n'
+        "\n[mcp_servers.pallium.tools.pallium_relay_send]\n"
+        'approval_mode = "approve"\n'
+        "\n[mcp_servers.pallium.tools.pallium_relay_reply]\n"
+        'approval_mode = "approve"\n',
+    )
+
+
+def _remove_relay_profile() -> None:
+    _codex_relay_profile_path().unlink(missing_ok=True)
 
 # -- Hooks JSON --
 
@@ -499,6 +520,7 @@ def install(port: int = 19836, guidance_strength: str = "base") -> int:
     config_content = _ensure_feature_flag(config_content)
     config_content = _ensure_mcp_server(config_content, port=port)
     _write_toml(config_path, config_content)
+    _install_relay_profile()
     print(f"  Configured feature flags and MCP server in {config_path}")
 
     # 2. Register hooks in hooks.json
@@ -544,6 +566,7 @@ def uninstall() -> int:
         config_content = _remove_feature_flag(config_content)
         _write_toml(config_path, config_content)
         print(f"  Removed MCP server and feature flags from {config_path}")
+    _remove_relay_profile()
 
     # Remove hooks from hooks.json
     hooks_path = _codex_hooks_path()

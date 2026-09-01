@@ -344,6 +344,7 @@ def create_router(
     audit_log_enabled: bool = False,
     relay_service: RelayService | None = None,
     claude_wake_registry: ClaudeWakeRegistry | None = None,
+    relay_send_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> APIRouter:
     router = APIRouter()
     wake_registry = claude_wake_registry or ClaudeWakeRegistry()
@@ -401,7 +402,10 @@ def create_router(
 
     @router.post("/relay/messages", response_model=RelayMessageResponse)
     def relay_send(request: RelaySendRequest):
-        return _relay_call(lambda: _relay().send(**request.model_dump()))
+        result = _relay_call(lambda: _relay().send(**request.model_dump()))
+        if relay_send_callback is not None:
+            relay_send_callback(result)
+        return result
 
     @router.post("/relay/replies", response_model=RelayMessageResponse)
     def relay_reply(request: RelayReplyRequest):

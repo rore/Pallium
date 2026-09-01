@@ -7,8 +7,6 @@ streamable-http (production, remote access) transports.
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 from typing import Literal
 
 from app.mcp.client import PalliumMcpClient
@@ -130,36 +128,6 @@ def _bounded_error(result: dict, budget: int) -> dict:
     compact = {"error": error[:low], **base}
     return compact if len(_json_text(compact)) <= budget else {}
 
-
-_RELAY_WAKE_NOTICE = "Pallium Relay message pending."
-
-
-def _wake_exact_codex_delivery(recipient: str, result: object) -> None:
-    """Best-effort native notification after a persisted exact Codex send."""
-    if not isinstance(recipient, str) or not recipient.startswith("codex:"):
-        return
-    selector = recipient.removeprefix("codex:")
-    if not selector or selector != selector.strip() or not isinstance(result, dict):
-        return
-    deliveries = result.get("deliveries")
-    if not isinstance(deliveries, list) or len(deliveries) != 1:
-        return
-    delivery = deliveries[0]
-    if not isinstance(delivery, dict):
-        return
-    session_ref = delivery.get("recipient_session_ref")
-    if delivery.get("recipient_runtime") != "codex" or not isinstance(session_ref, str) or not session_ref or session_ref != session_ref.strip() or not session_ref.isprintable():
-        return
-    command = ["codex.exe" if os.name == "nt" else "codex", "queue", "--thread", session_ref, "--message", _RELAY_WAKE_NOTICE]
-    kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-    if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-    else:
-        kwargs["start_new_session"] = True
-    try:
-        subprocess.Popen(command, **kwargs)
-    except (OSError, ValueError):
-        pass
 
 def _relay_text(result: object) -> str:
     """Serialize normal Relay responses compactly while keeping errors visible."""
@@ -613,7 +581,6 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             sender_session_ref=sender_session_ref,
             expires_in_seconds=expires_in_seconds,
         )
-        _wake_exact_codex_delivery(recipient, result)
         return _relay_text(result)
 
     @server.tool()

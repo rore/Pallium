@@ -7,6 +7,7 @@ from typing import Any
 
 from api.routes import create_router
 from core.claude_wake import ClaudeWakeRegistry
+from app.codex_wake import schedule_codex_relay_wake
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.relay import RelayService, RelayUnavailableError
@@ -536,4 +537,5 @@ def build_router(
         audit_log_enabled=audit_log_enabled,
         relay_service=relay_service,
         claude_wake_registry=claude_wake_registry or build_claude_wake_registry(),
+        relay_send_callback=schedule_codex_relay_wake,
     )
