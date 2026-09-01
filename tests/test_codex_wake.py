@@ -9,7 +9,11 @@ from fastapi.testclient import TestClient
 
 from api.routes import create_router
 from app import codex_wake
+from app.config import AppConfig
+from app.main import create_app
 from core.relay import RelayService
+from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
 def _delivery(delivery_id: str = "delivery-1", runtime: str = "codex") -> dict:
@@ -142,12 +146,44 @@ def test_http_route_persists_before_one_callback(client) -> None:
         },
     )
     assert sent.status_code == 200
+    assert len(seen) == 1
     assert seen[0]["message_id"] == sent.json()["message_id"]
     assert seen[0]["deliveries"][0]["delivery_id"] == sent.json()["deliveries"][0]["delivery_id"]
     assert route_client.get(
         f"/relay/messages/{sent.json()['message_id']}",
         params={"container_ref": "git:example.test/wake", "actor_ref": "wake-user"},
     ).json()["deliveries"][0]["delivery_id"] == seen[0]["deliveries"][0]["delivery_id"]
+
+
+def test_create_app_keeps_real_wake_wiring(test_db_url: str) -> None:
+    app = create_app(
+        AppConfig(
+            storage_backend="sqlite",
+            sqlite_url=test_db_url,
+            default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
+            vector_index=VectorIndexConfig(enabled=False),
+        )
+    )
+    route_client = TestClient(app)
+    scope = {"container_ref": "git:example.test/real-wake", "actor_ref": "wake-user"}
+    for runtime, session in (("codex", "target"), ("claude-code", "sender")):
+        assert route_client.post(
+            "/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}
+        ).status_code == 200
+    with patch("app.codex_wake.threading.Thread") as thread:
+        sent = route_client.post(
+            "/relay/messages",
+            json={
+                "sender_runtime": "claude-code",
+                "sender_session_ref": "sender",
+                "recipient": "codex:target",
+                "payload": "wake",
+                **scope,
+            },
+        )
+    assert sent.status_code == 200
+    thread.assert_called_once()
 
 
 def test_profile_is_idempotent_and_narrow(monkeypatch, tmp_path) -> None:
@@ -198,5 +234,6 @@ def test_http_reply_uses_the_same_post_persistence_callback(client) -> None:
         json={"delivery_id": claim["delivery_id"], "receipt": claim["receipt"], "payload": "answer", **scope},
     )
     assert reply.status_code == 200
-    assert seen[-1]["in_reply_to"] == parent["message_id"]
-    assert seen[-1]["recipient"] == "codex:original"
+    assert len(seen) == 2
+    assert seen[1]["in_reply_to"] == parent["message_id"]
+    assert seen[1]["recipient"] == "codex:original"

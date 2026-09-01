@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
