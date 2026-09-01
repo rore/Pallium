@@ -89,6 +89,14 @@ incident from a unit test or a successful retry alone.
 | `RF-006` | A natural turn had three eligible unread messages. Two older acknowledgements consumed the 2,400-character turn budget, so the newer actionable review verdict remained pending. `/relay/turn` returned only the selected subset with no `has_more` or remaining-count signal, and the receiving agent incorrectly told the user there was nothing else to act on. | **Fixed in PR #75.** `/relay/turn` now exposes `has_more: bool` and `remaining_count: int`; selection validates renderability, reserves an 80-character backlog-notice budget on full-size turns, and leaves omitted deliveries unacknowledged. Integrations render a compact attributed backlog notice. | `test_agent_relay_e2e` covers cap boundary, oversized-first, lease/expiry, mixed claimed/pending rows, and full-drain sequences ending with `has_more=false`. |
 | `RF-007` | `pallium_relay_reply` returned HTTP 500 during the live exchange. The installed service log identifies `sqlite3.OperationalError: database is locked` at `BEGIN IMMEDIATE` in `relay_send` while handling `/relay/replies`; two adjacent Relay writes failed the same way. | **Fixed in PR #75.** Bounded retry at the shared immediate-transaction boundary (≤0.45 s). Exhaustion returns sanitized `503 {code: relay_busy, retryable: true}` with `Retry-After: 1`; no SQLite traceback reaches the agent. Message-ID and reply idempotency preserved; rollback on every failed attempt. | `test_sqlite_write_retry.py` covers contention with in-deadline clearance (exactly one write), beyond-deadline exhaustion (503, no partial write), and retry idempotency. MCP send/reply regression in `test_mcp_client.py`. |
 
+RF-007 follow-up hardening is tracked by the `relay-database-isolation` Work
+Record. Measurement confirmed that WAL still permits only one writer per file,
+so ingestion could exhaust Relay's bounded retry budget. The approved fix moves
+Relay persistence to a sibling SQLite file while reusing the same WAL,
+auto-vacuum, busy-timeout, migration, maintenance, and paired-snapshot lifecycle.
+It is complete only after its persistence review, merge, service migration, and
+live multi-agent smoke check.
+
 Wake-on-send remains a separately tracked product gap outside this incident family; see
 `add-wake-first-relay-delivery`. Deterministic scope rejection across different
 containers and later delivery of an explicit but semantically stale message are
