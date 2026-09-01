@@ -218,6 +218,7 @@ def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
 class AppConfig:
     storage_backend: str = "sqlite"
     sqlite_url: str = "sqlite:///./pallium.db"
+    relay_sqlite_url: str | None = None
     default_use_case: str = "agent_conversation_memory"
     llm_providers: dict[str, LLMProviderConfig] = field(default_factory=dict)
     embedding_providers: dict[str, EmbeddingProviderConfig] = field(default_factory=dict)
@@ -297,6 +298,11 @@ class AppConfig:
                 env_values,
                 _read_nested(config_data, "storage", "sqlite_url") or "sqlite:///./pallium.db",
             ) or "sqlite:///./pallium.db",
+            relay_sqlite_url=_resolve_global_value(
+                "PALLIUM_RELAY_SQLITE_URL",
+                env_values,
+                _read_nested(config_data, "storage", "relay_sqlite_url"),
+            ),
             default_use_case=_resolve_global_value(
                 "PALLIUM_DEFAULT_USE_CASE",
                 env_values,
@@ -404,6 +410,25 @@ class AppConfig:
             llm_prompt_variant=_resolve_legacy_value("PALLIUM_LLM_PROMPT_VARIANT", env_values),
             llm_timeout_seconds=_resolve_float_value("PALLIUM_LLM_TIMEOUT_SECONDS", env_values),
         )
+
+    @property
+    def resolved_relay_sqlite_url(self) -> str:
+        main = self.sqlite_url
+        explicit = self.relay_sqlite_url
+        if explicit:
+            if explicit == main:
+                raise ValueError('relay_sqlite_url must differ from sqlite_url')
+            if explicit == 'sqlite:///:memory:':
+                return explicit
+            if not explicit.startswith('sqlite:///'):
+                raise ValueError(f'Unsupported Relay database URL: {explicit}')
+            return explicit
+        if main == 'sqlite:///:memory:':
+            return main
+        if not main.startswith('sqlite:///'):
+            raise ValueError(f'Unsupported SQLite database URL: {main}')
+        path = Path(main[len("sqlite:///"):])
+        return f"sqlite:///{path.with_name(path.stem + '-relay' + path.suffix)}"
 
     def package_config(self, package_name: str) -> SemanticPackageConfig:
         if package_name not in self.semantic_packages:

@@ -392,10 +392,19 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             except Exception:
                 return None
 
-        storage_info: dict = {"sqlite_mb": None, "vector_index_mb": None}
+        storage_info: dict = {"sqlite_mb": None, "relay_sqlite_mb": None, "relay_migration_ready": None, "vector_index_mb": None}
         try:
             sqlite_path = resolve_live_db_path(resolved_config.sqlite_url)
             storage_info["sqlite_mb"] = _file_size_mb(sqlite_path)
+            relay_path = resolve_live_db_path(resolved_config.resolved_relay_sqlite_url)
+            storage_info["relay_sqlite_mb"] = _file_size_mb(relay_path)
+            relay_status = getattr(storage, "relay_database_status", None)
+            if callable(relay_status):
+                result = relay_status()
+                storage_info["relay_migration_ready"] = (
+                    result.get("migration_ready", result.get("ready"))
+                    if isinstance(result, dict) else bool(result)
+                )
             vector_path = resolved_config.vector_index.index_path
             storage_info["vector_index_mb"] = _file_size_mb(vector_path) if vector_index_configured else None
         except Exception:

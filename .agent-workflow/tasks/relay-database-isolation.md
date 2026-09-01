@@ -68,9 +68,8 @@ Approved by user 2026-09-01: "so i'm leaving you with a night job: db performanc
 
 ## Evidence
 
-- Implemented paired snapshot generations in `app/snapshot.py`: main and relay backups are independently validated, both names are published before a manifest commit marker, restore requires a newest complete validated pair, and pruning removes pair members as a unit. String-path callers remain the explicit legacy compatibility path.
-- Added paired restore, incomplete-generation rejection, and unit-pruning tests in `tests/test_snapshot.py`. Existing focused suite passed 47 tests before the concurrent `app/main.py` worktree change introduced a syntax error; the new tests exposed and fixed duplicate stale definitions during implementation.
-- Supervisor and periodic worker now select the sibling relay DB when present and route restore/create/prune through the same snapshot functions.
+- `uv run python -m compileall -q app\\config.py app\\dependencies.py app\\cli\\service.py app\\main.py app\\dashboard.py` passed; `git diff --check` passed.
+- Minimal config self-check passed for sibling derivation and in-memory compatibility. App wiring now resolves env/TOML Relay URL, defaults service home to `pallium-relay.db`, passes `relay_database_url`, reports additive Relay size/readiness fields, and routes dashboard Relay queries through `_relay_session_factory`.
 
 ## Result review
 

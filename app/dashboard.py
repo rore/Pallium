@@ -198,7 +198,8 @@ def mount_dashboard(app: FastAPI) -> None:
             index = max(0, math.ceil(len(ordered) * fraction) - 1)
             return round(ordered[index], 3)
 
-        with storage._session_factory() as session:
+        relay_session_factory = getattr(storage, "_relay_session_factory", storage._session_factory)
+        with relay_session_factory() as session:
             messages_total = session.scalar(select(func.count()).select_from(RelayMessageRecord)) or 0
             messages_24h = session.scalar(
                 select(func.count()).select_from(RelayMessageRecord).where(
