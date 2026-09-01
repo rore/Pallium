@@ -320,3 +320,88 @@ class TestFullLifecycle:
         assert len(hook_claim["deliveries"]) == 1
         mcp_after_hook, _ = await create_server().call_tool("pallium_relay_receive", {})
         assert json.loads(mcp_after_hook[0].text)["deliveries"] == []
+
+@pytest.fixture()
+def asgi_get(relay_app):
+    async def _get(path, params):
+        transport = httpx.ASGITransport(app=relay_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", timeout=30.0) as http:
+            response = await http.get(path, params=params)
+            response.raise_for_status()
+            return response.json()
+    return _get
+
+
+_RELAY_SCOPE_TOOL_METHODS = {
+    "pallium_relay_receive": ("relay_receive", {}),
+    "pallium_relay_ack": ("relay_mcp_ack", {"delivery_id": "delivery", "receipt": "receipt"}),
+    "pallium_relay_reply": ("relay_reply", {"delivery_id": "delivery", "message": "reply"}),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", _RELAY_SCOPE_TOOL_METHODS)
+async def test_configured_relay_scope_accepts_matching_pair(monkeypatch, tool):
+    client_method, arguments = _RELAY_SCOPE_TOOL_METHODS[tool]
+    http_call = AsyncMock(return_value={})
+    with patch.object(PalliumMcpClient, client_method, new=http_call):
+        content, _ = await create_server().call_tool(tool, {**arguments, **_SCOPE})
+    assert "Relay scope" not in content[0].text
+    http_call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", _RELAY_SCOPE_TOOL_METHODS)
+@pytest.mark.parametrize(
+    "scope",
+    [
+        {"container_ref": _SCOPE["container_ref"]},
+        {"container_ref": _SCOPE["container_ref"], "actor_ref": "other-actor"},
+    ],
+)
+async def test_partial_or_conflicting_relay_scope_never_calls_http(monkeypatch, tool, scope):
+    client_method, arguments = _RELAY_SCOPE_TOOL_METHODS[tool]
+    http_call = AsyncMock(return_value={})
+    with patch.object(PalliumMcpClient, client_method, new=http_call):
+        content, _ = await create_server().call_tool(tool, {**arguments, **scope})
+    assert "Relay scope" in content[0].text
+    http_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_partial_configured_scope_cannot_be_bypassed(monkeypatch):
+    monkeypatch.delenv("PALLIUM_ACTOR_REF", raising=False)
+    http_call = AsyncMock(return_value={})
+    with patch.object(PalliumMcpClient, "relay_receive", new=http_call):
+        content, _ = await create_server().call_tool("pallium_relay_receive", _SCOPE)
+    assert "Configured Relay scope" in content[0].text
+    http_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_paired_scope_receive_to_reply_is_atomic(monkeypatch, asgi_post, asgi_get):
+    scope = {"container_ref": "git:example.test/unconfigured-relay", "actor_ref": "unconfigured-actor"}
+    monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
+    monkeypatch.delenv("PALLIUM_ACTOR_REF", raising=False)
+    bind_asgi_post(monkeypatch, asgi_post)
+    await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **scope})
+    await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "paired-sender", **scope})
+    sent = await asgi_post("/relay/messages", {
+        "sender_runtime": "codex",
+        "sender_session_ref": "paired-sender",
+        "recipient": f"{_RUNTIME}:{_SESSION}",
+        "payload": "paired scope",
+        **scope,
+    })
+
+    received, _ = await create_server().call_tool("pallium_relay_receive", scope)
+    delivery = json.loads(received[0].text)["deliveries"][0]
+    replied, _ = await create_server().call_tool("pallium_relay_reply", {
+        "delivery_id": delivery["delivery_id"],
+        "receipt": delivery["receipt"],
+        "message": "paired reply",
+        **scope,
+    })
+    assert json.loads(replied[0].text)["in_reply_to"] == sent["message_id"]
+    status = await asgi_get(f"/relay/messages/{sent['message_id']}", scope)
+    assert status["deliveries"][0]["state"] == "delivered"

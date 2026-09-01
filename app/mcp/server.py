@@ -12,7 +12,7 @@ import subprocess
 from typing import Literal
 
 from app.mcp.client import PalliumMcpClient
-from app.mcp.context import resolve_context
+from app.mcp.context import resolve_context, resolve_relay_context
 from retrieval.common import build_excerpt
 
 
@@ -625,8 +625,10 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery. Copy delivery_id from the attributed Relay block. When replying via pallium_relay_receive (MCP path), also pass the receipt — this atomically ACKs and replies in one step; no prior pallium_relay_ack needed. When replying after a hook-injected delivery (already delivered), receipt is not required. Pallium derives both endpoints from delivery_id."""
-        ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
+        """Reply once to a received Relay delivery. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
+        if scope_error:
+            return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_reply(
@@ -636,7 +638,6 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             expires_in_seconds=expires_in_seconds,
         )
         return _relay_text(result)
-
     @server.tool()
     async def pallium_relay_status(
         message_id: str,
@@ -653,9 +654,18 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     @server.tool()
     async def pallium_relay_receive(
         max_chars: int = 0,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
     ) -> str:
-        """Claim and return pending Relay deliveries for this session. Uses only integration-injected identity (PALLIUM_AGENT_REF as runtime, PALLIUM_THREAD_REF as session_ref) — no model-supplied identity accepted. Call pallium_relay_ack(delivery_id, receipt) after processing each delivery, or pallium_relay_reply to reply and ACK atomically. Unclaimed deliveries are redelivered after lease expiry."""
-        ctx = resolve_context()
+        """Claim pending Relay deliveries for this runtime session. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. Uses only integration-owned runtime/session identity. Call pallium_relay_ack(delivery_id, receipt), or pallium_relay_reply to reply and ACK atomically."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
+        if scope_error:
+            legacy_ctx = resolve_context()
+            if not legacy_ctx.agent_ref:
+                return "Error: PALLIUM_AGENT_REF is not set. Relay receive requires integration-injected runtime identity."
+            if not legacy_ctx.thread_ref:
+                return "Error: PALLIUM_THREAD_REF is not set. Relay receive requires integration-injected session identity."
+            return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         runtime = ctx.agent_ref
@@ -674,9 +684,13 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     async def pallium_relay_ack(
         delivery_id: str,
         receipt: str,
+        container_ref: str | None = None,
+        actor_ref: str | None = None,
     ) -> str:
-        """Idempotently acknowledge a Relay delivery after you have the payload. Pass the receipt returned by pallium_relay_receive — it proves you received this specific claim generation and prevents stale ACKs from a prior expired claim. If you are replying, use pallium_relay_reply instead — it ACKs atomically; no separate pallium_relay_ack needed."""
-        ctx = resolve_context()
+        """Idempotently acknowledge a Relay delivery after you have the payload. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. Pass the receipt from pallium_relay_receive; use pallium_relay_reply when replying atomically."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
+        if scope_error:
+            return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_mcp_ack(delivery_id=delivery_id, receipt=receipt)
