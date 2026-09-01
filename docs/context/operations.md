@@ -21,6 +21,48 @@ historical source, and grants no access. If the host supplies no task identity,
 Pallium leaves attribution absent rather than guessing or writing `unknown`. The
 marker uses the existing injection character budget.
 
+## Developing integrations without leaving stale local installs
+
+Claude Code and Codex setup commands write absolute checkout and Python paths into the
+host's MCP and hook configuration. The OpenCode global loader likewise points
+at a concrete plugin file. Treat a temporary worktree as a build/test location,
+not as the long-lived installation source.
+
+When moving an installation from a worktree back to the primary checkout:
+
+1. Preserve dirty work in a named stash or branch, restore the primary checkout
+   to clean, current `main`, and keep the old worktree until migration finishes.
+2. Run each supported uninstaller **from the old checkout's working directory**,
+   then run setup from the primary checkout. Hook removal is path-specific;
+   setup or uninstall from the new path alone can leave both old and new hooks.
+3. Confirm Claude's MCP plus hooks and Codex's MCP, hooks, and
+   `pallium-relay.config.toml` contain only primary-checkout paths. Confirm the
+   OpenCode config still registers its loader, the loader points to the primary
+   plugin, and its MCP URL uses the installed service port.
+4. Restart already-open agent hosts when their MCP or hook configuration must be
+   reloaded. New sessions use the new installation; existing MCP subprocesses
+   can keep the old executable until their host restarts.
+
+Changing integration or service code normally requires updating the stable
+checkout and restarting the installed service, not reinstalling its scheduled
+task. On Windows, always use `scripts/restart-service.ps1`. The installed
+launcher must use a dependency-complete Python and the supported
+`python -m app.run service run --port <port>` path: `service run` applies the
+managed `~/.pallium/config/.env` and service configuration. Do not use the
+`scripts/install-service.ps1` merely to repoint development code or run a
+service from a temporary worktree.
+
+After any migration, verify the actual installed state rather than trusting
+setup output:
+
+- primary checkout is clean `main` at `origin/main`
+- no host config or service launcher refers to the retired worktree
+- `claude mcp get pallium` reports connected
+- `codex --profile pallium-relay mcp list` resolves Pallium
+- the OpenCode plugin suite passes from the primary checkout
+- `/health`, `/status`, and `/debug/queue/health` respond; specifically check
+  `embedding_provider_ok` and `ingestion.status`
+
 ## Health signals
 
 Two endpoints report liveness. Read them together — a 200 alone does not mean
