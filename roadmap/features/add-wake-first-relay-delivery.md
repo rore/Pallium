@@ -43,14 +43,14 @@ prerequisite because both wake and fallback must be loss-safe.
    sessions exchange a bounded task → result → review → remediation/verdict
    sequence through Relay alone. Send and reply activate the exact recipient in
    both directions; neither the user nor either agent sends a separate ping,
-   invokes the queue manually, or uses an app messaging tool to advance the test.
+   invokes a wake command manually, or uses an app messaging tool to advance the test.
    Qualify the actual sessions used for work, not just disposable TUI substitutes.
 2. **Claude↔Codex next:** add Claude's qualified idle-only adapter and validate the
    cross-runtime journey. Claude qualification does not block milestone 1.
 3. **OpenCode later:** add its adapter after the first two milestones.
 
 Milestone 1 includes the smallest persist-first coordinator needed by Codex,
-dedupe, correlated admission, safe busy queuing, wake/fallback claim-race protection,
+dedupe, correlated admission, loss-safe active-writer fallback, wake/fallback claim-race protection,
 restart/ambiguous-outcome recovery, expiry, bounded bursts/replies, and visible
 fallback reasons. Exercise these through caller-surface regression tests plus a
 live no-ping round trip; update local Codex integrations before acceptance.
@@ -88,7 +88,7 @@ installed versions are Claude Code 2.1.250, Codex CLI 0.149.1, and OpenCode
 
 | Runtime | Current verdict | Proven mechanism | Remaining qualification |
 |---|---|---|---|
-| Codex | **Passive-only; partial Phase 0** | `codex queue --thread` proved exact-session admission while idle and at a safe busy boundary with correlated model-visible evidence. The separately launched App Server remains rejected. Native queue idempotency failed. | Production is gated by cases 5, 6, and 7 plus coordinator-owned idempotency/fallback and `fix-relay-receive-mcp-lifecycle`. |
+| Codex | **Unloaded-session wake only; desktop-held sessions passive** | Installed-service live evidence proves exact-session `codex exec resume` when no writer owns the stored task. On Codex 0.149.1 for Windows, the desktop app retains an active writer; unqualified `codex queue --thread` persists input but does not activate the owning stdio app server. | Keep active-writer deliveries pending. Desktop wake requires a supported externally addressable owning-app-server endpoint (or an upstream attach path), plus admission/idempotency evidence. |
 | OpenCode | Supported with a Pallium/OpenCode plugin coordinator | Server/plugin APIs expose stable sessions and async prompts. Agent Intercom demonstrates persist-first delivery, application metadata correlation, history verification before replay, safe busy deferral, and restart recovery. | A bare prompt_async 204 is transport acknowledgement only. Pallium needs the plugin-owned durable pending ledger and a Windows E2E proof. Deferred to after Claude Code wake is proven. |
 | Claude Code | **Passive-only; partial Phase 0 via native Windows idle wake** | On 2.1.250, the existing memory-only `SessionStart` registration enabled an isolated same-process transport to start a distinct turn in one exact verified-idle disposable session; a simultaneous non-target session was untouched. Channels remained unavailable with the documented hidden flag. | Production must be `idle_wake` only: direct busy ingress joined the active turn, duplicate message IDs were admitted twice, and closed pipes failed. Add coordinator dedupe, verified-idle dispatch, correlated `Stop` admission, restart/error fallback, and macOS/Linux UDS E2E. |
 
@@ -101,7 +101,7 @@ security handoff only, not evidence of target admission or coordinator readiness
 
 ### Admission handshakes to preserve
 
-**Codex:** `codex queue --thread` is the evidenced exact-session ingress candidate, but no production handshake is selected. It reached the exact existing session while idle and at a safe busy boundary with correlated model-visible admission. A future coordinator must own one stable delivery/wake attempt, dedupe, admission observation, and fallback. The managed App Server path remains rejected because it does not reach the exact already-running session addressed by Relay.
+**Codex:** `codex exec resume` is qualified only when the stored task has no active writer. For a desktop-held task, the installed Windows runtime returns the exact active-writer conflict documented upstream; plain `codex queue --thread` writes the message but cannot signal the desktop app server that owns the thread. Pallium therefore leaves the Relay delivery pending instead of queueing and risking hook ACK without model-visible processing. An explicitly configured WebSocket/Unix app-server endpoint may later qualify `codex queue --remote`, but Pallium must not infer or attach to the desktop app's private stdio transport.
 
 **OpenCode:** the plugin persists the Relay item before broker acknowledgement,
 checks recent session history for metadata.palliumRelayId, defers submission to a
@@ -124,10 +124,10 @@ Gate each runtime independently. Codex-first work may proceed without waiting fo
 Claude or OpenCode; enabling live wake still requires the relevant safety evidence.
 
 1. **Codex-first product gate:** The first outcome is unattended Codex↔Codex.
-   Phase 0 proves `codex queue --thread <T>` for idle and safe busy-boundary
-   admission in the tested sessions. Qualify the actual architect/developer pair,
-   close cases 5, 6, and 7, and implement coordinator-owned dedupe and fallback
-   before enabling wake. The proven subset is not a production-ready adapter.
+   Unloaded exact-session wake is proven through `codex exec resume`; desktop-held
+   sessions remain passive because their private stdio app server has no supported
+   external attach path. Keep those deliveries pending until a natural turn unless
+   Codex exposes an externally addressable owning endpoint.
 
 2. **Claude Code production gates:** Native Windows exact-session idle wake is
    proven on 2.1.250; Channels is unavailable in the qualified environment.
@@ -146,12 +146,11 @@ Choose bounded limits from Codex evidence; revisit only when adding another adap
 
 ### Implementation sequence — Codex first
 
-**Codex (partial Phase 0):** `codex queue --thread T` proved exact-session idle
-and safe busy-boundary admission in the existing TUI. The remaining safe evidence
-gates are closed/stale/permission handling, outstanding-trigger and already-admitted
-restart recovery, and ambiguous-response fallback. Native duplicate suppression
-failed, so any future coordinator must dedupe before invoking the queue. App Server
-path remains rejected.
+**Codex (partial production):** `codex exec resume T` wakes an unloaded stored task.
+For a desktop-held task, the active-writer conflict is expected and Pallium keeps
+the delivery pending for the next natural turn. Do not use unqualified `codex queue`
+as wake: it can persist input without activating the owning stdio app server. Resume
+desktop wake work only when Codex exposes a supported attach or remote endpoint.
 
 **Claude Code (after Codex dogfood):** Extend the coordinator only
 for verified-idle native delivery: persist/dedupe before write, exact delivery-ID
@@ -240,14 +239,13 @@ Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wak
 Phase 0 decision and installed-runtime evidence:
 [Relay wake Phase 0 decision record](../../docs/designs/017-relay-wake-phase0.md).
 
-Current result: exact-session ingress is proven for Codex through `codex queue
---thread` and for verified-idle Claude Code on native Windows through its registered
-named-pipe inbox. Claude Channels were unavailable in the qualified environment;
-busy native Claude ingress is unsafe, and neither transport provides sufficient
-deduplication. The next production slice is the smallest persist-first coordinator
-plus Codex queue adapter and a live Codex↔Codex no-ping acceptance run. Claude's
-idle-only adapter follows; OpenCode remains deferred until the automatic
-Claude↔Codex handoff works. None of these claims changes passive next-turn fallback.
+Current result: Codex exact-session wake is proven only for an unloaded stored task
+through `codex exec resume`. The qualified Windows desktop app retains active writers,
+plain `codex queue` does not activate its stdio-owned task, and the queue fallback was
+removed after a live run ACKed Relay without model output. Desktop-held tasks remain
+pending for the natural-turn fallback. The Codex-first milestone is blocked on a
+supported owning-app-server attach/remote endpoint; Claude idle-only work follows
+after that decision, and OpenCode remains deferred.
 
 ## Research References
 
@@ -259,6 +257,7 @@ Primary runtime sources:
 - [Claude Code native-Windows delivery issue history](https://github.com/anthropics/claude-code/issues/86603)
 - [Codex App Server protocol](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
 - [Codex queue integration tests](https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/suite/v2/thread_queue.rs)
+- [Codex Windows active-writer/no-attach limitation](https://github.com/openai/codex/issues/37450)
 - [Codex atomic idle-only admission request](https://github.com/openai/codex/issues/38289)
 - [OpenCode server API](https://opencode.ai/docs/server/)
 - [OpenCode plugin API](https://opencode.ai/docs/plugins/)

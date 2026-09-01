@@ -56,19 +56,17 @@ def test_success_does_not_queue_and_hides_process() -> None:
     popen.assert_not_called()
 
 
-def test_only_exact_active_writer_queues_once() -> None:
-    completed = subprocess.CompletedProcess([], 1, stderr="already has an active writer (code -32600)")
-    executable = r"C:\installed\codex.exe"
-    with patch("app.codex_wake._codex_executable", return_value=executable), patch(
-        "app.codex_wake.subprocess.run", return_value=completed
-    ) as run, patch("app.codex_wake.subprocess.Popen") as popen:
+def test_active_writer_leaves_delivery_for_natural_turn() -> None:
+    completed = subprocess.CompletedProcess(
+        [], 1, stderr="already has an active writer (code -32600)"
+    )
+    with patch("app.codex_wake.subprocess.run", return_value=completed) as run, patch(
+        "app.codex_wake.subprocess.Popen"
+    ) as popen:
         codex_wake._wake("delivery-1", "target-session")
-    assert run.call_args.args[0][0] == executable
-    assert popen.call_args.args[0][0] == executable
-    assert popen.call_args.args[0][-5:] == [
-        "queue", "--thread", "target-session", "--message", EXPECTED_NOTICE
-    ]
-    assert "shell" not in popen.call_args.kwargs
+
+    run.assert_called_once()
+    popen.assert_not_called()
 
 
 def test_windows_resolver_survives_service_path_without_codex(monkeypatch, tmp_path) -> None:

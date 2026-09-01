@@ -17,8 +17,6 @@ _NOTICE = (
     "failed: no delivery was injected."
 )
 _DEBOUNCE_SECONDS = 1.0
-_ACTIVE_WRITER = "already has an active writer"
-_ACTIVE_WRITER_CODE = "(code -32600)"
 _TIMEOUT_SECONDS = 300
 _scheduled_delivery_ids: set[str] = set()
 _scheduled_session_generations: dict[str, int] = {}
@@ -91,7 +89,7 @@ def _wake(delivery_id: str, session_ref: str) -> None:
     codex_executable = _codex_executable()
     try:
         try:
-            completed = subprocess.run(
+            subprocess.run(
                 [
                     codex_executable,
                     "exec",
@@ -111,36 +109,9 @@ def _wake(delivery_id: str, session_ref: str) -> None:
             )
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return
-        if _is_active_writer(completed):
-            _queue(session_ref, codex_executable)
     finally:
         with _scheduled_lock:
             _scheduled_delivery_ids.discard(delivery_id)
-
-
-def _is_active_writer(completed: subprocess.CompletedProcess[str]) -> bool:
-    stderr = completed.stderr or ""
-    return _ACTIVE_WRITER in stderr and _ACTIVE_WRITER_CODE in stderr
-
-
-def _queue(session_ref: str, codex_executable: str) -> None:
-    try:
-        subprocess.Popen(
-            [
-                codex_executable,
-                "queue",
-                "--thread",
-                session_ref,
-                "--message",
-                _NOTICE,
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            **_hidden_process_kwargs(),
-        )
-    except (OSError, ValueError):
-        pass
 
 
 def _codex_executable() -> str:
