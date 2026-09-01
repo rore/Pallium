@@ -37,6 +37,9 @@ def _hooks_dir() -> Path:
 def _codex_config_path() -> Path:
     return Path.home() / ".codex" / "config.toml"
 
+def _codex_relay_profile_path() -> Path:
+    return Path.home() / ".codex" / "pallium-relay.config.toml"
+
 
 def _codex_hooks_path() -> Path:
     return Path.home() / ".codex" / "hooks.json"
@@ -188,34 +191,24 @@ def _write_toml(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _ensure_feature_flag(content: str) -> str:
-    """Ensure [features] section has codex_hooks = true."""
-    if re.search(r'^codex_hooks\s*=', content, re.MULTILINE):
-        content = re.sub(
-            r"^codex_hooks\s*=\s*\w+",
-            "codex_hooks = true",
-            content,
-            flags=re.MULTILINE,
-        )
-        return content
+def _features_section(content: str) -> re.Match[str] | None:
+    return re.search(r"(?ms)^\[features\]\n.*?(?=^\[|\Z)", content)
 
-    # Need to add it
-    if re.search(r'^\[features\]', content, re.MULTILINE):
-        # Append under existing [features] section
-        content = re.sub(
-            r'^(\[features\])',
-            r'\1\ncodex_hooks = true',
-            content,
-            count=1,
-            flags=re.MULTILINE,
-        )
-    else:
-        # Add new section
+
+def _ensure_feature_flag(content: str) -> str:
+    """Migrate Pallium's legacy feature flag within Codex's features section."""
+    section = _features_section(content)
+    if section is None:
         if content and not content.endswith("\n"):
             content += "\n"
-        content += "\n[features]\ncodex_hooks = true\n"
-    return content
-
+        return content + "\n[features]\nhooks = true\n"
+    body = section.group()[len("[features]\n"):]
+    body = re.sub(r"^codex_hooks\s*=\s*\w+\s*\n?", "", body, flags=re.MULTILINE)
+    if re.search(r"^hooks\s*=", body, re.MULTILINE):
+        body = re.sub(r"^hooks\s*=\s*\w+", "hooks = true", body, flags=re.MULTILINE)
+    else:
+        body = "hooks = true\n" + body
+    return content[:section.start()] + "[features]\n" + body + content[section.end():]
 
 def _ensure_mcp_server(content: str, port: int = 19836) -> str:
     """Ensure [mcp_servers.pallium] section exists in config.toml with correct port."""
@@ -246,13 +239,32 @@ def _remove_mcp_server(content: str) -> str:
 
 
 def _remove_feature_flag(content: str) -> str:
-    """Remove codex_hooks line from [features] section."""
-    content = re.sub(r'\n?codex_hooks\s*=\s*\w+', '', content)
-    # Clean up empty [features] section
-    content = re.sub(r'\n?\[features\]\s*\n(?=\[|\Z)', '\n', content)
-    content = re.sub(r'\n?\[features\]\s*$', '', content)
-    return content
+    """Remove only Pallium's deprecated flag; modern hooks are shared state."""
+    section = _features_section(content)
+    if section is None:
+        return content
+    body = section.group()[len("[features]\n"):]
+    body = re.sub(r"^codex_hooks\s*=\s*\w+\s*\n?", "", body, flags=re.MULTILINE)
+    replacement = "[features]\n" + body if body.strip() else ""
+    return content[:section.start()] + replacement + content[section.end():]
 
+def _install_relay_profile() -> None:
+    """Install Pallium's dedicated profile over the existing MCP server."""
+    _write_toml(
+        _codex_relay_profile_path(),
+        "[mcp_servers.pallium]\n"
+        "required = true\n"
+        'enabled_tools = ["pallium_relay_send", "pallium_relay_reply"]\n'
+        'default_tools_approval_mode = "prompt"\n'
+        "\n[mcp_servers.pallium.tools.pallium_relay_send]\n"
+        'approval_mode = "approve"\n'
+        "\n[mcp_servers.pallium.tools.pallium_relay_reply]\n"
+        'approval_mode = "approve"\n',
+    )
+
+
+def _remove_relay_profile() -> None:
+    _codex_relay_profile_path().unlink(missing_ok=True)
 
 # -- Hooks JSON --
 
@@ -499,6 +511,7 @@ def install(port: int = 19836, guidance_strength: str = "base") -> int:
     config_content = _ensure_feature_flag(config_content)
     config_content = _ensure_mcp_server(config_content, port=port)
     _write_toml(config_path, config_content)
+    _install_relay_profile()
     print(f"  Configured feature flags and MCP server in {config_path}")
 
     # 2. Register hooks in hooks.json
@@ -544,6 +557,7 @@ def uninstall() -> int:
         config_content = _remove_feature_flag(config_content)
         _write_toml(config_path, config_content)
         print(f"  Removed MCP server and feature flags from {config_path}")
+    _remove_relay_profile()
 
     # Remove hooks from hooks.json
     hooks_path = _codex_hooks_path()

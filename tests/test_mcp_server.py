@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 pytest.importorskip("mcp", reason="mcp[cli] not installed")
 
+from app.mcp import server as mcp_server
 from app.mcp.server import _bounded_expansion, _compact_history, _json_text, _trim_update_details, create_server
 
 
@@ -806,50 +805,13 @@ async def test_relay_response_is_bounded(monkeypatch: pytest.MonkeyPatch) -> Non
     assert len(content[0].text) <= 2000
     assert json.loads(content[0].text)["error"] == "relay response exceeds the response budget"
 
-@pytest.mark.asyncio
-async def test_relay_send_wakes_one_exact_codex_delivery_without_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
-    result = {"message_id": "m-wake", "deliveries": [{"recipient_runtime": "codex", "recipient_session_ref": "target-session"}]}
-    with patch("app.mcp.client.PalliumMcpClient.relay_send", new=AsyncMock(return_value=result)), patch("app.mcp.server.subprocess.Popen") as popen:
-        content, _ = await create_server().call_tool("pallium_relay_send", {
-            "message": "private Relay payload", "recipient": "codex:@relaydev",
-            "sender_runtime": "codex", "sender_session_ref": "sender",
-        })
-    assert json.loads(content[0].text) == result
-    argv = popen.call_args.args[0]
-    assert argv == ["codex.exe" if os.name == "nt" else "codex", "queue", "--thread", "target-session", "--message", "Pallium Relay message pending."]
-    assert "private Relay payload" not in argv
-    assert "shell" not in popen.call_args.kwargs
-    if os.name == "nt":
-        assert popen.call_args.kwargs["creationflags"] == subprocess.CREATE_NO_WINDOW
+def test_main_reads_stdio_transport_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = MagicMock()
+    monkeypatch.setenv("PALLIUM_MCP_TRANSPORT", "stdio")
+    monkeypatch.setenv("FASTMCP_HOST", "127.0.0.1")
+    monkeypatch.setenv("FASTMCP_PORT", "19837")
+    monkeypatch.setattr(mcp_server, "create_server", lambda **_: runner)
 
+    mcp_server.main()
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("recipient", "result"), [
-    ("codex", {"message_id": "broadcast", "deliveries": [{"recipient_runtime": "codex", "recipient_session_ref": "only-target"}]}),
-    ("codex:target", {"message_id": "other", "deliveries": [{"recipient_runtime": "claude-code", "recipient_session_ref": "target"}]}),
-    ("codex:", {"message_id": "malformed", "deliveries": [{"recipient_runtime": "codex", "recipient_session_ref": "target"}]}),
-    ("codex:target", {"message_id": "missing", "deliveries": []}),
-    ("codex:target", {"message_id": "malformed-delivery", "deliveries": [None]}),
-    ("codex:target", {"message_id": "non-printable", "deliveries": [{"recipient_runtime": "codex", "recipient_session_ref": "target\0session"}]}),
-])
-async def test_relay_send_skips_non_exact_or_malformed_wake(monkeypatch: pytest.MonkeyPatch, recipient: str, result: dict) -> None:
-    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
-    with patch("app.mcp.client.PalliumMcpClient.relay_send", new=AsyncMock(return_value=result)), patch("app.mcp.server.subprocess.Popen") as popen:
-        content, _ = await create_server().call_tool("pallium_relay_send", {
-            "message": "payload", "recipient": recipient, "sender_runtime": "codex", "sender_session_ref": "sender",
-        })
-    assert json.loads(content[0].text) == result
-    popen.assert_not_called()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("error", [OSError("unavailable"), ValueError("embedded null")])
-async def test_relay_send_keeps_persisted_result_when_queue_launch_fails(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
-    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
-    result = {"message_id": "m-fallback", "deliveries": [{"recipient_runtime": "codex", "recipient_session_ref": "target"}]}
-    with patch("app.mcp.client.PalliumMcpClient.relay_send", new=AsyncMock(return_value=result)), patch("app.mcp.server.subprocess.Popen", side_effect=error):
-        content, _ = await create_server().call_tool("pallium_relay_send", {
-            "message": "payload", "recipient": "codex:target", "sender_runtime": "codex", "sender_session_ref": "sender",
-        })
-    assert json.loads(content[0].text) == result
+    runner.run.assert_called_once_with(transport="stdio")

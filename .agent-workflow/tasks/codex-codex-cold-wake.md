@@ -1,0 +1,42 @@
+<!-- agent-workflow:start -->
+**Outcome:** After an exact Codex Relay delivery is durably persisted, Pallium attempts a hidden, headless `codex exec --profile pallium-relay resume <session> - --json`; only an active-writer structured failure falls back to `codex queue`, while every other wake failure leaves the durable message for normal-turn delivery.
+
+**Target:** Shared application post-persistence Relay wake callback, its Codex runtime adapter, and installed `pallium-relay` profile.
+
+**Scope:** The shared `/relay/messages` and `/relay/replies` application seams and startup wiring, removal of the MCP-only wrapper, a minimal Codex runtime wake adapter, directly required profile/install support, and focused HTTP plus MCP caller-surface E2E. `core` remains unchanged. Preserve the target worktree's unrelated `uv.lock` change.
+
+**Constraints:** Persist before wake; exact Codex deliveries only; reuse delivery_id/idempotency; no shell command construction, visible window, broad approval bypass, scheduler/batching/wake-id/schema work, Claude/OpenCode work, or unrelated cleanup. Do not edit or commit `uv.lock`.
+
+**Completion criteria:** Exec success sends no queue notification; structured active-writer failure queues once; every other exec failure queues nothing; duplicates/non-Codex/persistence failure never wake; hook delivery can reply; fallback remains normal-turn-safe; a real unloaded `relaydev` wake replies through Relay without an app ping or visible window.
+
+**Risk:** High
+
+**Complexity:** Moderate
+
+**Reason:** The final redline classifies the shared `api/routes.py` callback seam as red-zone/High and requires API review. Process supervision remains outside `core`; both supported send surfaces cross this seam after persistence. No API contract, schema, or permission broadening is intended.
+
+**Discovery:** The requested worktree already exists on `codex/codex-cold-wake` and has only an unrelated dirty `uv.lock`. HTTP `/relay/messages` invokes durable `RelayService.send`, MCP `pallium_relay_send` uses that route, and `/relay/replies` invokes durable `RelayService.reply`; both persisted results enter the same wake seam. Existing MCP-only code already uses vector argv, suppressed stdio, `CREATE_NO_WINDOW`, exact selector, and one returned delivery. Startup `build_router` is the injection point for an application runtime callback. The bundled CLI accepts profile layering and `exec resume`; its strict parser will gate profile fields (`required`, `enabled_tools`, and prompt approval). Active-writer must require the live-proven stderr shape and `-32600`, not either alone. Refreshed prospective redline for final app paths is GRAY/Elevated with no checkpoint or boundary violation.
+
+**Material assumptions:** The bundled CLI supports profile parser validation and headless `exec resume`; live-test them before reliance. It emits a stable active-writer signature containing both the exact expected phrase/shape and `-32600`; otherwise stop rather than queue on ambiguity. Profile configuration can require the actual Pallium server, whitelist only Relay send/reply, and retain prompt approval; otherwise stop rather than broaden approval. The app callback can start a bounded daemon supervisor only after the persisted route result without delaying send, and delivery id suffices for in-process dedupe without new durable state.
+
+**Plan:** (1) Use `build_router` to inject a minimal application callback into the shared `/relay/messages` and `/relay/replies` routes; call it only after `RelayService.send` or `RelayService.reply` returns its persisted result, then remove the MCP-only wake call. (2) Add the smallest application Codex adapter: exact one-delivery Codex guard, delivery-id in-process dedupe, daemon supervision, hidden vector-argv `exec --profile pallium-relay resume <session> - --json`, bounded stdout/stderr drain, and queue exactly once only when both live-proven active-writer markers match; all other outcomes, including hang timeout, do nothing. (3) Extend the existing setup helper only enough to install/remove an idempotent `pallium-relay` profile reusing the actual Pallium MCP server with `required=true`, `enabled_tools` only `pallium_relay_send`/`pallium_relay_reply`, and prompt approval; live strict-parser gate it. (4) Add focused HTTP and MCP E2E for persistence-before-wake, immediate send return, exec/queue outcomes, duplicate/non-Codex/persistence guards, hook/reply/fallback, no window, and child hang/no queue. (5) Re-run redline for final paths, verify, then send one consolidated final review request. Stop on a failed parser or active-writer assumption.
+
+**Verification plan:** Live strict-parser/profile validation and active-writer signature probe precede implementation reliance. HTTP and MCP sends shall persist then return before the bounded child exits; the one shared child makes each permitted simulated exec/fallback decision, including hang/no queue -> focused caller-surface E2E. An unloaded exact `relaydev` delivery wakes and replies without an app ping or visible window -> real dogfood gate.
+
+**Plan review:** Architect Relay review `relay-msg-9d44b4b623a24d0ba6c6a466d210212c` approved the bounded final architecture after requiring the shared app seam (not core), runtime-owned supervision, strict dual-marker active-writer classification, and immediate-return/hang E2E. This fulfills the fresh independent review; no further plan round is required.
+
+**Approvals:** Approved by user 2026-09-01: "i approve everything the architect tells you to do". Architect Relay review `relay-msg-9d44b4b623a24d0ba6c6a466d210212c` approves the exact bounded implementation boundary.
+
+**Exceptions:** —
+
+**State:** Ready for review
+<!-- agent-workflow:end -->
+
+## Implementation
+
+- 2026-09-01: Work Record created before code. Branch `codex/codex-cold-wake`; preserve the pre-existing `uv.lock` modification. Redline classified the original app paths GRAY/Elevated with no boundary violation; caller trace and CLI help feature check completed.
+- 2026-09-01: Architect correction: wake scheduling must move from MCP into `RelayService.send` after durable persistence so HTTP and MCP share it. Returned to planning: refreshed redline and clean-context review are required before guarded edits. User asked that architect replies receive a manual session ping until the automatic wake is proven; the final no-ping dogfood gate remains manual-ping-free.
+- 2026-09-01: Final architect review replaces the core-service plan with shared app-route callback plus runtime adapter. Record updated and ready for guarded implementation; no code edit has started.
+- 2026-09-01: Implemented the shared post-persistence route callback, runtime-owned hidden exec supervisor, strict live-proven dual-marker queue fallback, MCP-only helper removal, and dedicated narrow profile. Focused suite: 72 passed; Relay lifecycle/hook suite: 69 passed. Final redline is RED only because `api/routes.py` requires API-review (`api-review`); Risk raised to High. No API/schema/security boundary violation. Corrections add reply-surface scheduling, 300-second bound, stdout discard/stderr-only capture, concurrent-only delivery-id dedupe, and exact session-or-alias routing. Final focused regression: 142 passed; redline/workflow remain advisory only for API review.
+- 2026-09-01: Live no-ping acceptance passed through the real MCP send surface after fixing three dogfood blockers: fresh MCP stdio startup, `codex_hooks` to `hooks` migration, and exact alias wake. An unloaded Codex target resumed automatically, delivery `relay-msg-a88094bef6744a30b47f8d5ddf94cb23` reached `delivered` in one attempt, it replied exactly `ACK-COLD-WAKE-PR85-20260901T1131Z`, and the reply independently cold-woke the unloaded sender and reached `delivered`. No app ping or visible window was used. The final focused MCP/startup suite passed 64 tests.
+- 2026-09-01: Separate diagnostic follow-up: a manual recovery receive returned four claimed deliveries with receipts, but reply and ACK returned 409 not-in-claimed-state. Preserve the recovery-run message/delivery ids and investigate receipt-state synchronization outside this bounded PR.

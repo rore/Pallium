@@ -16,7 +16,8 @@ def test_db_url(tmp_path: Path) -> str:
 
 
 @pytest.fixture()
-def client(test_db_url: str) -> TestClient:
+def client(test_db_url: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda _: None)
     from storage.vector_index import VectorIndexConfig
     app = create_app(
         AppConfig(
