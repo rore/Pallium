@@ -27,7 +27,7 @@
 
 **Approvals:** Approved by user 2026-09-01: "i approve everything the architect tells you to do". Architect Relay review `relay-msg-9d44b4b623a24d0ba6c6a466d210212c` approves the exact bounded implementation boundary.
 
-**Exceptions:** —
+**Exceptions:** Relay recovery diagnostic follow-up: manual receive returned four deliveries as claimed with receipts, but reply and ACK each returned 409 not-in-claimed-state. Preserve message/delivery ids from the 2026-09-01 recovery run; investigate receipt-state synchronization separately from this bounded PR fix.
 
 **State:** Ready for review
 <!-- agent-workflow:end -->
