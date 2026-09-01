@@ -1,8 +1,8 @@
 ---
 id: add-relay-retention-and-lifecycle-hardening
-title: Add Relay retention and lifecycle hardening
+title: Harden Relay session and message lifecycle
 status: queued
-priority: medium
+priority: high
 commitment: committed
 milestone: pallium-relay
 lane: stabilization-safety
@@ -10,49 +10,75 @@ lane: stabilization-safety
 
 ## Summary
 
-Bound the storage lifetime of expired and old terminal Relay records so R1 does
-not accumulate messages and deliveries indefinitely. Keep recent operational
-evidence long enough to diagnose delivery behavior, then remove it through the
-existing cleaner lifecycle.
+Make session addressing and message outcomes honest when a recipient is inactive,
+closed, unavailable, or never responds. Bound old terminal records through the
+existing cleaner after preserving enough evidence to diagnose delivery behavior.
 
 ## Why
 
-Relay expiry currently stops delivery and ages out of the dashboard's actionable
-window, but the expired message and delivery records remain in SQLite forever.
-That is acceptable for initial validation, not for a durable local service whose
-sessions and messages continuously accumulate.
+Relay currently retains discovered sessions and terminal messages indefinitely.
+An old named session can therefore remain addressable after its working directory
+or runtime is gone. A sender can intentionally address that exact session, but the
+result must not look like a healthy wake or a lost message.
+
+Delivery and response are also separate contracts. `delivered` means the message
+entered the recipient's context and was acknowledged; it does not promise that the
+agent replied or completed the request. Undelivered messages must remain durable
+for next-turn fallback until expiry, while acknowledged messages must never be
+resent merely because no reply followed.
 
 ## In Scope
 
-- define explicit retention windows for expired and terminal Relay messages,
+- define observable session states and transitions for recent, inactive, explicitly
+  closed, and obsolete discovery records; `last_seen_at` is evidence, not liveness
+- preserve deterministic exact-session and alias addressing while warning when the
+  resolved target is inactive, closed, or has no usable wake capability
+- define explicit retention windows for expired and old terminal messages,
   deliveries, and obsolete session-discovery records
+- keep `pending`, `claimed`, `delivered`, and `expired` distinct; recover
+  abandoned claims after their lease and retain next-turn fallback until expiry
+- treat replies as separate linked messages: delivery alone never implies a reply,
+  and absence of a reply never causes automatic redelivery
 - use the existing cleaner process rather than adding another worker
 - delete message and delivery state transactionally without leaving orphan rows
 - preserve pending or actively claimed deliveries until they become terminal
+- return and display enough target state, wake/fallback disposition, expiry, and
+  terminal outcome for a sender to distinguish waiting from failure
 - keep dashboard totals operationally honest after cleanup and expose the last
-  Relay cleanup result without retaining message payloads for metrics
-- cover expiry to cleanup, mixed delivery states, active claims, replies, alias
-  reuse, repeated cleanup, and scope isolation through public-surface E2E tests
+  cleanup result without retaining payloads for metrics
+- cover inactive and closed aliases, unavailable wake, a recipient that never
+  resumes, late resume before and after expiry, abandoned claims, ACK without
+  reply, linked and unlinked replies, alias transfer/reuse, repeated cleanup,
+  Unicode payloads, and scope isolation through public-surface E2E tests
 
 ## Out of Scope
 
 - a searchable Relay message archive
 - retaining payload history as semantic memory
 - user-configurable retention administration in the first slice
-- changing next-turn delivery, addressing, or acknowledgement semantics
+- inferring from message text that a response is required
+- supervising task completion or automatically chasing an acknowledged recipient
+- adding a scheduler or general job system
 
 ## Done When
 
-1. Expired and sufficiently old terminal Relay records are removed automatically
-   after a documented bounded window.
-2. Pending and actively claimed deliveries cannot be deleted prematurely.
-3. Cleanup leaves no orphan messages, deliveries, replies, aliases, or misleading
-   dashboard alerts.
-4. Full-lifecycle E2E coverage verifies send or expiry through cleanup using the
-   same HTTP, MCP, hook, and dashboard read surfaces callers use.
+1. Addressing an inactive or closed session produces a deterministic result and a
+   sender-visible warning without falsely reporting wake success.
+2. A recipient that does not ACK remains eligible for bounded wake attempts and
+   next-turn fallback until expiry; lease recovery cannot lose or duplicate it.
+3. An acknowledged delivery is never resent solely because the recipient did not
+   reply, and status does not describe delivery as understanding or completion.
+4. Expired and sufficiently old terminal records are removed automatically after
+   a documented bounded window; pending and active claims are never deleted early.
+5. Cleanup leaves no orphan messages, deliveries, reply links, aliases, or
+   misleading dashboard alerts.
+6. Full-lifecycle E2E coverage verifies create → address/wake/fallback → ACK or
+   expiry → cleanup through HTTP, MCP, hook, and dashboard read surfaces.
 
 ## Notes
 
-This is R1 operational hardening, not evidence for moving to R2. Choose concrete
-retention windows when implementation starts, based on the diagnostic window the
-dashboard actually needs.
+This is R1 operational hardening immediately after wake-first delivery, not
+evidence for moving to R2. Choose concrete inactivity and retention windows when
+implementation starts, based on observed wake recovery and dashboard diagnostic
+needs. A future explicit response-deadline contract can be considered separately
+if real usage needs it; ordinary Relay must not infer one.
