@@ -128,6 +128,7 @@ class SQLiteStorageProvider(
         return {
             "isolated": self._relay_engine is not self._engine,
             "database_url": str(self._relay_engine.url),
+            "migration_ready": True,
         }
 
     def _migrate_legacy_relay(self) -> None:

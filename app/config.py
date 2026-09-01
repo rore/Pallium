@@ -413,23 +413,29 @@ class AppConfig:
 
     @property
     def resolved_relay_sqlite_url(self) -> str:
-        main = self.sqlite_url
-        explicit = self.relay_sqlite_url
-        if explicit:
-            if explicit == main:
-                raise ValueError('relay_sqlite_url must differ from sqlite_url')
-            if explicit == 'sqlite:///:memory:':
-                return explicit
-            if not explicit.startswith('sqlite:///'):
-                raise ValueError(f'Unsupported Relay database URL: {explicit}')
-            return explicit
-        if main == 'sqlite:///:memory:':
-            return main
-        if not main.startswith('sqlite:///'):
-            raise ValueError(f'Unsupported SQLite database URL: {main}')
-        path = Path(main[len("sqlite:///"):])
-        return f"sqlite:///{path.with_name(path.stem + '-relay' + path.suffix)}"
+        def file_path(url: str, setting: str) -> Path | None:
+            if url == "sqlite:///:memory:":
+                return None
+            if not url.startswith("sqlite:///"):
+                raise ValueError(f"{setting} must be a file-backed SQLite URL")
+            return Path(url[len("sqlite:///"):]).resolve()
 
+        main_path = file_path(self.sqlite_url, "sqlite_url")
+        if main_path is None:
+            if self.relay_sqlite_url not in (None, "sqlite:///:memory:"):
+                raise ValueError("in-memory sqlite_url cannot use a separate Relay database")
+            return "sqlite:///:memory:"
+
+        if self.relay_sqlite_url is None:
+            path = Path(self.sqlite_url[len("sqlite:///"):])
+            return f"sqlite:///{path.with_name(path.stem + '-relay' + path.suffix)}"
+
+        relay_path = file_path(self.relay_sqlite_url, "relay_sqlite_url")
+        if relay_path is None:
+            raise ValueError("file-backed sqlite_url requires a file-backed Relay database")
+        if relay_path == main_path:
+            raise ValueError("relay_sqlite_url must differ from sqlite_url")
+        return self.relay_sqlite_url
     def package_config(self, package_name: str) -> SemanticPackageConfig:
         if package_name not in self.semantic_packages:
             raise KeyError(f"Unknown semantic package: {package_name}")

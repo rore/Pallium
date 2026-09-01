@@ -663,3 +663,43 @@ def test_paired_prune_removes_generations_as_a_unit(tmp_path: Path):
     assert len(list(snapshot_dir.glob("*.manifest.json"))) == 1
     assert len(list(snapshot_dir.glob("*-main.db"))) == 1
     assert len(list(snapshot_dir.glob("*-relay.db"))) == 1
+
+
+def test_paired_restore_rejects_partial_live_state(tmp_path: Path) -> None:
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    main = tmp_path / "main.db"
+    main.touch()
+    with pytest.raises(RuntimeError, match="partial live database pair"):
+        restore_snapshot(snapshot_dir, {"main": str(main), "relay": str(tmp_path / "relay.db")})
+
+
+def test_legacy_single_snapshot_restores_then_migrates_relay(tmp_path: Path) -> None:
+    from storage.sqlite import SQLiteStorageProvider
+
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    legacy_path = tmp_path / "legacy.db"
+    legacy = SQLiteStorageProvider(f"sqlite:///{legacy_path}")
+    legacy.relay_turn(
+        runtime="codex", session_ref="legacy-session", container_ref="scope",
+        actor_ref="actor", title=None, max_chars=1000, max_messages=10, lease_seconds=60,
+    )
+    legacy._engine.dispose()
+    create_snapshot(str(legacy_path), snapshot_dir)
+    legacy_path.unlink()
+
+    relay_path = tmp_path / "relay.db"
+    assert restore_snapshot(
+        snapshot_dir, {"main": str(legacy_path), "relay": str(relay_path)}
+    ) is True
+    split = SQLiteStorageProvider(
+        f"sqlite:///{legacy_path}", relay_database_url=f"sqlite:///{relay_path}"
+    )
+    sessions = split.relay_list_sessions(
+        container_ref="scope", actor_ref="actor", runtime=None,
+        include_inactive=True, recent_seconds=1,
+    )
+    assert [session["session_ref"] for session in sessions] == ["legacy-session"]
+    split._engine.dispose()
+    split._relay_engine.dispose()

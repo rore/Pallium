@@ -198,7 +198,7 @@ class TestDashboardRelaySummary:
                 },
             ).json()
             storage = app.state.pallium_service._storage
-            with storage._session_factory() as session:
+            with storage._relay_session_factory() as session:
                 session.execute(
                     text("UPDATE relay_messages SET expires_at=:past WHERE id=:id"),
                     {"past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": expiring["message_id"]},

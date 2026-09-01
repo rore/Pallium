@@ -353,7 +353,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             if snapshot_config.enabled and snapshot_config.snapshot_path:
                 snapshot_dir = Path(snapshot_config.snapshot_path)
                 snapshots = sorted(
-                    snapshot_dir.glob("pallium-*.db"),
+                    snapshot_dir.glob("pallium-*.manifest.json"),
                     key=lambda p: p.name,
                     reverse=True,
                 ) if snapshot_dir.is_dir() else []

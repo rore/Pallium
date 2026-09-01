@@ -15,7 +15,7 @@ from typing import IO
 from app.config import AppConfig
 from app.runtime_logging import emit_runtime_log
 from app.signal_context import graceful_stop
-from app.snapshot import resolve_live_db_path, paired_live_paths, restore_snapshot, create_snapshot, prune_old_snapshots
+from app.snapshot import resolve_live_db_paths, restore_snapshot, create_snapshot, prune_old_snapshots
 
 # On Windows + Python 3.13, onnxruntime has a non-deterministic heap corruption
 # bug during model initialization.  CREATE_NEW_PROCESS_GROUP isolates children.
@@ -408,7 +408,7 @@ def run_supervisor(
         snapshot_dir = Path(snapshot_config.snapshot_path)
         if snapshot_dir.is_dir():
             try:
-                live_db_path = paired_live_paths(resolve_live_db_path(config.sqlite_url))
+                live_db_path = resolve_live_db_paths(config)
                 restored = restore_snapshot(snapshot_dir, live_db_path)
                 if restored:
                     emit_runtime_log("supervisor", f"restored snapshot to {live_db_path}")
@@ -416,6 +416,7 @@ def run_supervisor(
                     emit_runtime_log("supervisor", "snapshot restore skipped (live DB exists or no snapshots)")
             except Exception as exc:
                 emit_runtime_log("supervisor", f"snapshot restore failed: {exc}", stderr=True)
+                return 1
 
     # Each managed slot: (command, label, process, restart_times)
     slots: list[_ManagedSlot] = []
@@ -615,7 +616,7 @@ def run_supervisor(
             if snapshot_config.enabled and snapshot_config.snapshot_path:
                 try:
                     snapshot_dir = Path(snapshot_config.snapshot_path)
-                    live_db_path = paired_live_paths(resolve_live_db_path(config.sqlite_url))
+                    live_db_path = resolve_live_db_paths(config)
                     path = create_snapshot(
                         live_db_path, snapshot_dir,
                         pages_per_step=-1, sleep_between=0,
