@@ -9,11 +9,11 @@
 
 **Completion criteria:** Exec success sends no queue notification; structured active-writer failure queues once; every other exec failure queues nothing; duplicates/non-Codex/persistence failure never wake; hook delivery can reply; fallback remains normal-turn-safe; a real unloaded `relaydev` wake replies through Relay without an app ping or visible window.
 
-**Risk:** Elevated
+**Risk:** High
 
 **Complexity:** Moderate
 
-**Reason:** The final review keeps process supervision out of `core`: both supported send surfaces cross the shared HTTP route, so injected application/runtime wiring can schedule only after the route receives the persisted service result. This is gray app-runtime work with no schema, API contract, or permission broadening.
+**Reason:** The final redline classifies the shared `api/routes.py` callback seam as red-zone/High and requires API review. Process supervision remains outside `core`; both supported send surfaces cross this seam after persistence. No API contract, schema, or permission broadening is intended.
 
 **Discovery:** The requested worktree already exists on `codex/codex-cold-wake` and has only an unrelated dirty `uv.lock`. HTTP `/relay/messages` invokes the durable `RelayService.send`, and MCP `pallium_relay_send` uses that same HTTP route; this is the shared supported sender seam. Replies do not wake. Existing MCP-only code already uses vector argv, suppressed stdio, `CREATE_NO_WINDOW`, exact selector, and one returned delivery. Startup `build_router` is the injection point for an application runtime callback. The bundled CLI accepts profile layering and `exec resume`; its strict parser will gate profile fields (`required`, `enabled_tools`, and prompt approval). Active-writer must require the live-proven stderr shape and `-32600`, not either alone. Refreshed prospective redline for final app paths is GRAY/Elevated with no checkpoint or boundary violation.
 
@@ -25,7 +25,7 @@
 
 **Plan review:** Architect Relay review `relay-msg-9d44b4b623a24d0ba6c6a466d210212c` approved the bounded final architecture after requiring the shared app seam (not core), runtime-owned supervision, strict dual-marker active-writer classification, and immediate-return/hang E2E. This fulfills the fresh independent review; no further plan round is required.
 
-**Approvals:** Not required at this risk level; the user has explicitly authorized the bounded architect direction.
+**Approvals:** The user explicitly authorized all architect-directed work in this task, including the final bounded high-risk route change; architect Relay review `relay-msg-9d44b4b623a24d0ba6c6a466d210212c` approves its exact implementation boundary.
 
 **Exceptions:** —
 
@@ -36,4 +36,4 @@
 
 - 2026-09-01: Work Record created before code. Branch `codex/codex-cold-wake`; preserve the pre-existing `uv.lock` modification. Redline classified the original app paths GRAY/Elevated with no boundary violation; caller trace and CLI help feature check completed.
 - 2026-09-01: Architect correction: wake scheduling must move from MCP into `RelayService.send` after durable persistence so HTTP and MCP share it. Returned to planning: refreshed redline and clean-context review are required before guarded edits. User asked that architect replies receive a manual session ping until the automatic wake is proven; the final no-ping dogfood gate remains manual-ping-free.\n- 2026-09-01: Final architect review replaces the core-service plan with shared app-route callback plus runtime adapter. Record updated and ready for guarded implementation; no code edit has started.
-- 2026-09-01: Implemented the shared post-persistence route callback, runtime-owned hidden exec supervisor, strict live-proven dual-marker queue fallback, MCP-only helper removal, and dedicated narrow profile. Focused suite: 72 passed; Relay lifecycle/hook suite: 69 passed. Final redline is RED only because `api/routes.py` requires API-review (`api-review`); no API/schema/security boundary violation. Real unloaded no-ping acceptance remains for the final review/acceptance stage.
+- 2026-09-01: Implemented the shared post-persistence route callback, runtime-owned hidden exec supervisor, strict live-proven dual-marker queue fallback, MCP-only helper removal, and dedicated narrow profile. Focused suite: 72 passed; Relay lifecycle/hook suite: 69 passed. Final redline is RED only because `api/routes.py` requires API-review (`api-review`); Risk raised to High. No API/schema/security boundary violation. Real unloaded no-ping acceptance remains for the final review/acceptance stage.
