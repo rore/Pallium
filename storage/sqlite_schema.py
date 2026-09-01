@@ -573,6 +573,24 @@ class RelayDeliveryRecord(Base):
     )
 
 
+class RelayMigrationMetadataRecord(Base):
+    """Durable identity marker for a Relay split migration."""
+
+    __tablename__ = "relay_migration_metadata"
+
+    key = Column(String, primary_key=True)
+    source_identity = Column(String, nullable=False)
+    target_identity = Column(String, nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=False)
+
+
+_RELAY_TABLE_NAMES = frozenset({
+    RelaySessionRecord.__tablename__,
+    RelayMessageRecord.__tablename__,
+    RelayDeliveryRecord.__tablename__,
+})
+
+
 class SQLiteSchemaMixin:
     _SOURCE_ITEM_MIGRATIONS = {
         "occurred_at": "ALTER TABLE source_items ADD COLUMN occurred_at DATETIME",
@@ -933,9 +951,15 @@ class SQLiteSchemaMixin:
         "trigger_origin": "ALTER TABLE query_audit_log ADD COLUMN trigger_origin VARCHAR",
     }
 
-    def _initialize_schema(self) -> None:
+    def _initialize_schema(self, *, include_relay: bool = True) -> None:
         with self._schema_initialization_lock():
-            Base.metadata.create_all(self._engine)
+            Base.metadata.create_all(
+                self._engine,
+                tables=[
+                    table for name, table in Base.metadata.tables.items()
+                    if include_relay or name not in _RELAY_TABLE_NAMES
+                ],
+            )
             self._ensure_thread_processing_lease_nullable_thread_ref()
             self._ensure_thread_processing_lease_columns()
             self._ensure_source_item_columns()
@@ -945,7 +969,7 @@ class SQLiteSchemaMixin:
             self._ensure_maintenance_state_columns()
             self._ensure_package_processing_columns()
             self._ensure_unique_indexes()
-            self._ensure_indexes()
+            self._ensure_indexes(include_relay=include_relay)
             self._ensure_query_audit_log_indexes()
             self._ensure_query_audit_log_columns()
             self._ensure_memory_flag_indexes()
@@ -961,13 +985,32 @@ class SQLiteSchemaMixin:
             self._backfill_thread_position()
             self._optimize_query_planner_stats()
 
+    def _initialize_relay_schema(self, engine) -> None:
+        """Create only the Relay schema on an isolated Relay database."""
+        with self._schema_initialization_lock(engine):
+            Base.metadata.create_all(
+                engine,
+                tables=[
+                    RelaySessionRecord.__table__,
+                    RelayMessageRecord.__table__,
+                    RelayDeliveryRecord.__table__,
+                    RelayMigrationMetadataRecord.__table__,
+                ],
+            )
+            with engine.begin() as connection:
+                for name, create_sql in self._INDEX_MIGRATIONS.items():
+                    if name.startswith("idx_relay_"):
+                        connection.execute(text(create_sql))
+            self._optimize_query_planner_stats(engine)
+
     @contextmanager
-    def _schema_initialization_lock(self):
-        if self._engine.url.drivername != "sqlite":
+    def _schema_initialization_lock(self, engine=None):
+        engine = engine or self._engine
+        if engine.url.drivername != "sqlite":
             yield
             return
 
-        lock_path = self._schema_lock_path()
+        lock_path = self._schema_lock_path(engine)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open("a+b") as lock_file:
             lock_file.seek(0, 2)
@@ -981,8 +1024,8 @@ class SQLiteSchemaMixin:
             finally:
                 self._release_schema_file_lock(lock_file)
 
-    def _schema_lock_path(self) -> Path:
-        database = self._engine.url.database
+    def _schema_lock_path(self, engine=None) -> Path:
+        database = (engine or self._engine).url.database
         if not database or database == ":memory:":
             return Path(".pallium-schema-init.lock")
         database_path = Path(database)
@@ -1142,10 +1185,11 @@ class SQLiteSchemaMixin:
                     )
                 connection.execute(text(create_sql))
 
-    def _ensure_indexes(self) -> None:
+    def _ensure_indexes(self, *, include_relay: bool = True) -> None:
         with self._engine.begin() as connection:
-            for _index_name, create_sql in self._INDEX_MIGRATIONS.items():
-                connection.execute(text(create_sql))
+            for index_name, create_sql in self._INDEX_MIGRATIONS.items():
+                if include_relay or not index_name.startswith("idx_relay_"):
+                    connection.execute(text(create_sql))
 
     def _ensure_query_audit_log_indexes(self) -> None:
         with self._engine.begin() as connection:
@@ -1247,7 +1291,7 @@ class SQLiteSchemaMixin:
                 "WHERE thread_ref IS NULL AND thread_position IS NULL"
             ))
 
-    def _optimize_query_planner_stats(self) -> None:
+    def _optimize_query_planner_stats(self, engine=None) -> None:
         """Refresh SQLite query-planner statistics at schema-init.
 
         The planner picks join order and index usage from the stats in
@@ -1263,9 +1307,10 @@ class SQLiteSchemaMixin:
         index); ``PRAGMA optimize`` then runs ANALYZE only where the stats
         are stale or missing. Both are no-ops on non-sqlite engines.
         """
-        if self._engine.url.drivername != "sqlite":
+        engine = engine or self._engine
+        if engine.url.drivername != "sqlite":
             return
-        with self._engine.begin() as connection:
+        with engine.begin() as connection:
             # Bound the sampling cost; SQLite's own recommended value.
             connection.execute(text("PRAGMA analysis_limit=400"))
             connection.execute(text("PRAGMA optimize"))

@@ -62,11 +62,16 @@ Approved by user 2026-09-01: "so i'm leaving you with a night job: db performanc
 
 ## Implementation
 
+- Storage isolation core completed in `storage/sqlite.py`, `storage/sqlite_queue.py`, `storage/sqlite_relay.py`, and `storage/sqlite_schema.py`, with focused schema/import coverage in `tests/test_sqlite_relay_isolation.py`. `apply_patch` failed with the documented Windows 1327 issue; the approved deterministic named-file fallback was used.
+
 - Paired snapshot implementation and focused tests completed in the scoped files. `apply_patch` hit the documented Windows 1327 process limitation; a deterministic single-file replacement was used and reported.
 
 - Discovery proved isolation removes the observed writer-lock failure. Redline and two clean-context plan reviews completed; the corrected High-risk plan is approved and ready for implementation. apply_patch later failed with the documented Windows 1327 issue, so Work Record updates used a verified deterministic single-file replacement.
 
 ## Evidence
+
+- Storage core: optional isolated Relay engine/session factory, Relay-only schema plan and indexes, bounded Relay `BEGIN IMMEDIATE`, source/target marker-verified legacy import, and dual-engine reclaim are implemented. The main schema intentionally retains only migration metadata when isolated; legacy Relay tables are preserved.
+- Focused checks passed: `python -m py_compile storage/sqlite.py storage/sqlite_schema.py storage/sqlite_queue.py storage/sqlite_relay.py`; `python -m pytest tests/test_sqlite_auto_vacuum.py tests/test_sqlite_relay_isolation.py -q` (7 passed).
 
 - `uv run python -m compileall -q app\\config.py app\\dependencies.py app\\cli\\service.py app\\main.py app\\dashboard.py` passed; `git diff --check` passed.
 - Minimal config self-check passed for sibling derivation and in-memory compatibility. App wiring now resolves env/TOML Relay URL, defaults service home to `pallium-relay.db`, passes `relay_database_url`, reports additive Relay size/readiness fields, and routes dashboard Relay queries through `_relay_session_factory`.

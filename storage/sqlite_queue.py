@@ -93,6 +93,27 @@ class SQLiteQueueMixin:
 
     @contextmanager
     def _begin_immediate(self):
+        with self._begin_immediate_for(self._session_factory) as session:
+            yield session
+
+    @contextmanager
+    def _begin_relay_immediate(self):
+        """Bounded write acquisition for short Relay transactions."""
+        with self._begin_immediate_for(
+            self._relay_session_factory,
+            attempts=self._RELAY_IMMEDIATE_ATTEMPTS,
+            busy_timeout_ms=self._RELAY_IMMEDIATE_BUSY_TIMEOUT_MS,
+        ) as session:
+            yield session
+
+    @contextmanager
+    def _begin_immediate_for(
+        self,
+        session_factory,
+        *,
+        attempts: int | None = None,
+        busy_timeout_ms: int | None = None,
+    ):
         """Start a transaction with BEGIN IMMEDIATE for exclusive claim operations.
 
         SQLite's default DEFERRED transactions don't acquire a write lock until
@@ -106,11 +127,13 @@ class SQLiteQueueMixin:
         """
         session = None
         conn = None
-        for attempt in range(self._IMMEDIATE_ATTEMPTS):
-            session = self._session_factory()
+        attempts = attempts or self._IMMEDIATE_ATTEMPTS
+        busy_timeout_ms = busy_timeout_ms or self._IMMEDIATE_BUSY_TIMEOUT_MS
+        for attempt in range(attempts):
+            session = session_factory()
             try:
                 conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
-                conn.execute(text(f"PRAGMA busy_timeout={self._IMMEDIATE_BUSY_TIMEOUT_MS}"))
+                conn.execute(text(f"PRAGMA busy_timeout={busy_timeout_ms}"))
                 conn.execute(text("BEGIN IMMEDIATE"))
                 break
             except Exception as exc:
@@ -124,7 +147,7 @@ class SQLiteQueueMixin:
                 conn = None
                 if not is_transient_error(exc):
                     raise
-                if attempt == self._IMMEDIATE_ATTEMPTS - 1:
+                if attempt == attempts - 1:
                     raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)") from exc
                 time.sleep(self._IMMEDIATE_BACKOFF_SECONDS * (attempt + 1))
         assert session is not None and conn is not None
