@@ -9,11 +9,11 @@
 
 **Completion criteria:** A loaded idle Desktop task is externally queued and runs the exact attributed Relay batch; an unloaded task still wakes through `exec resume`; busy loaded work queues for its next turn; each visible message is ACKed/replied with its receipt; launch failure, missing tool call, crash, expiry, and restart leave the delivery recoverable; unrelated/newer pending deliveries are not prematurely ACKed; duplicate callbacks do not duplicate a wake; no visible command window; all caller-surface E2E and focused regressions pass.
 
-**Risk:** Elevated
+**Risk:** High
 
 **Complexity:** Simple
 
-**Reason:** Redline classifies `app/codex_wake.py` as watch/gray and the change affects process launch plus Relay lease timing. The design reuses the existing claim/receipt contract and avoids API/storage-schema changes, keeping one coherent adapter slice.
+**Reason:** Redline classifies `api/routes.py` as red/High because the change wires an API post-persistence callback; the remaining adapter, service, and storage files are watch/gray. The design reuses the existing claim/receipt contract and avoids a public API or storage-schema change.
 
 **Discovery:** Live Codex 0.149.1 evidence after restart proved `codex queue --thread` wakes an already-loaded Desktop-owned task: queue item `01a05d3a-8304-71d1-95b1-224f3d0d1d12` produced a completed model turn in about nine seconds. The same run proved the current hook path is unsafe for queue dispatch: delivery `relay-delivery-af244228a60146b2b5f4a2c85db176ab` was claimed and ACKed, but hook `additionalContext` was not model-visible; the queued static prompt produced `Pallium Relay wake failed: no delivery was injected.` Official OpenAI App Server docs confirm `turn/start` begins generation and exposes completion, while the attached source research identifies the cross-process queue watcher added in current Codex.
 
@@ -25,7 +25,7 @@
 
 **Plan review:** Clean-context review `/root/queue_wake_plan_review` approved the claim-lease/direct-payload/strict-queue design after requiring trusted scope propagation, callback-failure isolation, no session reactivation during wake claim, explicit 60-second at-least-once lease behavior, and exact active-writer matching. All five requirements are incorporated above.
 
-**Approvals:** Not required at this risk level.
+**Approvals:** Approved by user 2026-09-01: "ok, so commit this fix and continue to work independently on the codex wake, unless you need something from me" — explicit authorization to complete this Codex wake slice independently.
 
 **Exceptions:** —
 
