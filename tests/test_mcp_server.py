@@ -831,6 +831,7 @@ async def test_relay_send_wakes_one_exact_codex_delivery_without_payload(monkeyp
     ("codex:", {"message_id": "malformed", "deliveries": [{"recipient_runtime": "codex", "recipient_session_ref": "target"}]}),
     ("codex:target", {"message_id": "missing", "deliveries": []}),
     ("codex:target", {"message_id": "malformed-delivery", "deliveries": [None]}),
+    ("codex:target", {"message_id": "non-printable", "deliveries": [{"recipient_runtime": "codex", "recipient_session_ref": "target\0session"}]}),
 ])
 async def test_relay_send_skips_non_exact_or_malformed_wake(monkeypatch: pytest.MonkeyPatch, recipient: str, result: dict) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
@@ -843,10 +844,11 @@ async def test_relay_send_skips_non_exact_or_malformed_wake(monkeypatch: pytest.
 
 
 @pytest.mark.asyncio
-async def test_relay_send_keeps_persisted_result_when_queue_launch_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("error", [OSError("unavailable"), ValueError("embedded null")])
+async def test_relay_send_keeps_persisted_result_when_queue_launch_fails(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
     result = {"message_id": "m-fallback", "deliveries": [{"recipient_runtime": "codex", "recipient_session_ref": "target"}]}
-    with patch("app.mcp.client.PalliumMcpClient.relay_send", new=AsyncMock(return_value=result)), patch("app.mcp.server.subprocess.Popen", side_effect=OSError("unavailable")):
+    with patch("app.mcp.client.PalliumMcpClient.relay_send", new=AsyncMock(return_value=result)), patch("app.mcp.server.subprocess.Popen", side_effect=error):
         content, _ = await create_server().call_tool("pallium_relay_send", {
             "message": "payload", "recipient": "codex:target", "sender_runtime": "codex", "sender_session_ref": "sender",
         })
