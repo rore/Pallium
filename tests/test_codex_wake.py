@@ -71,6 +71,7 @@ def test_active_writer_leaves_delivery_for_natural_turn() -> None:
 
 def test_windows_resolver_survives_service_path_without_codex(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(codex_wake.os, "name", "nt")
+    monkeypatch.setattr(codex_wake, "Path", type(tmp_path))
     monkeypatch.setattr(codex_wake.shutil, "which", lambda _: None)
     monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
