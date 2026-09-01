@@ -3,16 +3,16 @@
 An unattended Codex Relay wake can execute explicitly requested Relay send, reply, and ACK calls without stopping for unavailable human approval.
 
 **Target:**
-Pallium's Codex exact-session wake launcher.
+Pallium's Codex exact-session wake launcher and installed Codex MCP policy.
 
 **Scope:**
-`app/codex_wake.py`, `tests/test_codex_wake.py`, and this Work Record only.
+`app/codex_wake.py`, `app/cli/setup_codex.py`, `tests/test_codex_wake.py`, `tests/test_codex_integration.py`, and this Work Record only.
 
 **Constraints:**
-Keep the existing workspace-write sandbox and narrow `pallium-relay` MCP allowlist; do not bypass sandboxing or approvals globally.
+Keep the existing workspace-write sandbox and narrow Relay authorization; do not bypass sandboxing, enable unrelated tools, or broaden global approval behavior.
 
 **Completion criteria:**
-Both cold-resume and active-queue wake commands route approval requests through Codex automatic review, while retaining the dedicated Relay profile and hidden-process behavior.
+Cold-resumed and active-queue wake turns can execute explicitly requested Relay send/reply/ACK calls without human approval. The dedicated profile exposes only those three tools, and the base policy pre-approves the same three operations for already-loaded Desktop tasks.
 
 **Risk:**
 Elevated
@@ -21,27 +21,26 @@ Elevated
 Simple
 
 **Reason:**
-Redline classified `app/codex_wake.py` gray/watch and tests blue. The change affects unattended approval handling but remains limited to the Relay wake commands.
+Redline classified runtime/config paths gray/watch and tests blue. The change affects unattended MCP authorization but remains limited to the three Relay operations.
 
 **Discovery:**
-Codex CLI 0.149.1 exposes `--approve-for-me` on `codex exec` and `codex queue`. The installed `pallium-relay` profile narrows enabled MCP tools and marks them approved, but the live wake still reported that Relay send was blocked by the no-approval policy, showing the unattended invocation lacks an approval reviewer.
+Codex 0.149.1 uses per-tool `approval_mode = "approve"` as deterministic preauthorization. `codex queue` cannot change a loaded task's policy. Live trace proved the active-task path: ACK succeeded because base config pre-approved it; `pallium_relay_send` failed because base config omitted it and defaulted to prompt under `approval_policy=never`. The dedicated profile already contains all three tools. `--approve-for-me` was tested and rejected as broader and ineffective for this queued task.
 
 **Material assumptions:**
-- `--approve-for-me` on the outer `codex exec` invocation applies to `exec resume`; disprove with CLI rejection or live policy block, then stop and reassess.
-- `codex queue --approve-for-me` carries automatic review into the queued turn; disprove with the same live block, then stop and reassess.
+- Adding `pallium_relay_send` to the existing base `tools` map makes new/restarted loaded Codex tasks resolve it to `approve`; disprove with generated-config regression or live policy block, then stop.
+- Existing task bindings require a Codex restart to load the corrected base policy; disprove if the restarted task still shows the old binding, then inspect managed config precedence.
 
 **Plan:**
-Add `--approve-for-me` to the existing cold-resume and active-queue argv in `app/codex_wake.py`. Update the two regressions to assert each complete argv, and retain the profile-install regression proving only Relay send/reply/ACK are enabled. Reuse the existing `pallium-relay` profile, workspace-write sandbox, hidden-process helper, and wake prompt; add no new policy layer or bypass flag. Stop if Codex rejects the flag, exposes another MCP tool through the profile, changes sandbox boundaries, or a live Relay reply remains blocked.
+Remove `--approve-for-me` from both wake commands and restore their exact argv tests. Add `pallium_relay_send = { approval_mode = "approve" }` beside reply and ACK in the base Codex MCP config generator. Extend the setup regression to assert exactly all three approved Relay tools while keeping the server default at prompt. Reinstall Codex, restart the app once, and repeat the active-task Relay request. Add no probe tool, bypass flag, or new policy layer.
 
 **Verification plan:**
-- When a cold wake launches, the command shall include the Relay profile and automatic approval review -> exact subprocess argv test.
-- When an active-session wake queues, the command shall include the Relay profile and automatic approval review -> exact subprocess argv test.
-- When either wake command runs, its profile shall expose only Relay send/reply/ACK and shall not bypass the workspace-write sandbox -> profile regression plus absence of the bypass flag in exact argv tests.
-- When the architect sends an explicitly authorized Relay request to an idle developer, the cold-resumed developer shall ACK/reply without manual approval and finalize delivery -> live Pallium round trip and status evidence.
-- When the target has an active writer, the queued turn shall ACK/reply without manual approval and finalize delivery -> controlled active-turn live round trip if the target can be held active; otherwise the exact active-writer subprocess regression remains the bounded evidence and the Work Record reports the live limitation.
+- When setup generates base Codex MCP config, exactly Relay send/reply/ACK shall be pre-approved and default tools shall prompt -> generated-config regression.
+- When cold wake launches, it shall use the dedicated Relay profile without auto-review or bypass flags -> exact subprocess argv regression.
+- When active wake queues, it shall preserve the same bounded command and rely on the loaded task's base policy -> exact subprocess argv regression.
+- After reinstall and Codex restart, an active developer shall ACK and send `hello rotem` without manual approval -> live Relay round trip and finalized delivery evidence.
 
 **Plan review:**
-Clean-context review by `/root/relay_approval_plan_review`: APPROVED after full-argv, bounded-profile, and both-path verification revisions.
+Clean-context re-review by /root/relay_approval_plan_review: APPROVED after live-evidence-driven scope change.
 
 **Approvals:**
 Not required at this risk level.
@@ -54,17 +53,17 @@ Not required at this risk level.
 
 ## Implementation
 
-Discovery and elevated-risk classification complete. No code edits have begun. Initial clean-context findings tightened full-argv, allowlist/sandbox, and both-path verification.
+Initial `--approve-for-me` approach passed 47 focused tests but failed live and is being removed. Live trace isolated the real mismatch to the base Codex MCP policy used by queued Desktop turns.
+Revised implementation removes the flag and adds only pallium_relay_send to the existing base approval map. Focused wake/setup regressions pass 47/47; live restarted-task verification remains.
 
 ## Evidence
 
-Pending.
+Message `relay-msg-58c8e2e0b47543229879446724afaf77` woke `codex:@relaydev`; its delivery finalized in one attempt. Rollout event 10053 shows ACK succeeded. Event 10059 shows `pallium_relay_send` blocked by `approval_policy is never`. Generated config inspection shows base policy approves only reply/ACK, while the dedicated profile approves send/reply/ACK.
 
 ## Plan review
 
-Initial review: CHANGES REQUIRED. The reviewer requested full argv assertions, bounded profile/sandbox proof, and separate cold/active evidence. Revised review: APPROVED; all findings are reflected in the plan and stop conditions.
+Initial plan review approved the bounded auto-review experiment, then live evidence disproved it. Revised base-policy plan was re-reviewed by /root/relay_approval_plan_review and APPROVED.
 
 ## Result review
 
 Pending.
-

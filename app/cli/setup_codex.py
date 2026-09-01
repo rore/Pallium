@@ -223,7 +223,8 @@ def _ensure_mcp_server(content: str, port: int = 19836) -> str:
         'startup_timeout_sec = 10\n'
         'tool_timeout_sec = 30\n'
         'default_tools_approval_mode = "prompt"\n'
-        'tools = { pallium_relay_reply = { approval_mode = "approve" }, '
+        'tools = { pallium_relay_send = { approval_mode = "approve" }, '
+        'pallium_relay_reply = { approval_mode = "approve" }, '
         'pallium_relay_ack = { approval_mode = "approve" } }\n'
     )
 
