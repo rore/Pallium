@@ -3,7 +3,7 @@
 
 **Target:** Pallium Relay Codex integration.
 
-**Scope:** Add the smallest Codex-only post-persist notification in `app/mcp/server.py`, its focused MCP regression and its focused MCP regression.
+**Scope:** Add the smallest Codex-only post-persist notification in `app/mcp/server.py`, its focused MCP regression and one live two-session smoke.
 
 **Constraints:** Persist first. Queue notification carries no Relay payload or capability. Wake failure must not fail or consume the durable message. Exact Codex sessions only; no runtime broadcast, retry coordinator, batching activation, schema/API/service/dashboard change, Claude/OpenCode work, managed App Server, or `uv.lock` edit.
 
@@ -37,4 +37,5 @@
 
 ## Implementation
 
-- 2026-09-01: Implemented the reviewed MCP-only exact-Codex vertical slice in `app/mcp/server.py`: only `codex:<session>` or `codex:@alias` selectors that resolve to exactly one Codex delivery launch detached native `codex.exe queue` on Windows (or `codex` elsewhere), with a constant payload-free notification and suppressed stdio. Broadcast, non-Codex, malformed, and launch-failure paths leave the persisted response and ordinary-turn fallback unchanged. Focused MCP regression: 7 passed, 4 existing Pydantic warnings; `git diff --check` passes. This explicitly authorized experimental dogfood slice intentionally does not reopen or satisfy the prior production-batch G2/G3/admission objections. No live Relay send, queue trigger, installation, service action, migration, or config edit occurred.
+- 2026-09-01: Implemented the reviewed MCP-only exact-Codex vertical slice in `app/mcp/server.py`: only `codex:<session>` or `codex:@alias` selectors that resolve to exactly one Codex delivery launch detached native `codex.exe queue` on Windows (or `codex` elsewhere), with a constant payload-free notification and suppressed stdio. Broadcast, non-Codex, malformed, and launch-failure paths leave the persisted response and ordinary-turn fallback unchanged. Focused MCP regression: 7 passed, 4 existing Pydantic warnings; `git diff --check` passes. Live proof: an MCP send of `MINIMAL-WAKE-SMOKE-20260901-1001` to idle `codex:@relaydev` persisted as `relay-msg-59308b316c0044ad9619ec1d93f670bb`; the native queue notification started that exact task without an app ping, its normal Relay hook delivered the payload, and it returned `WAKE-OK`. This experimental dogfood slice does not claim the prior production-batch G2/G3 guarantees.
+- 2026-09-01 review fix: the first live wake exposed a visible Windows console from DETACHED_PROCESS. Replaced it with CREATE_NO_WINDOW and added a Windows flag regression. A second idle-target send, elay-msg-9590dc369da142e7b99112003f97d8b9, woke elaydev without an app ping and returned NO-WINDOW-OK without opening a command window.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -819,6 +820,8 @@ async def test_relay_send_wakes_one_exact_codex_delivery_without_payload(monkeyp
     assert argv == ["codex.exe" if os.name == "nt" else "codex", "queue", "--thread", "target-session", "--message", "Pallium Relay message pending."]
     assert "private Relay payload" not in argv
     assert "shell" not in popen.call_args.kwargs
+    if os.name == "nt":
+        assert popen.call_args.kwargs["creationflags"] == subprocess.CREATE_NO_WINDOW
 
 
 @pytest.mark.asyncio

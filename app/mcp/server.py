@@ -153,7 +153,7 @@ def _wake_exact_codex_delivery(recipient: str, result: object) -> None:
     command = ["codex.exe" if os.name == "nt" else "codex", "queue", "--thread", session_ref, "--message", _RELAY_WAKE_NOTICE]
     kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     if os.name == "nt":
-        kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     else:
         kwargs["start_new_session"] = True
     try:
