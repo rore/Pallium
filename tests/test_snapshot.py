@@ -629,3 +629,37 @@ max_snapshots = 5
     assert exit_code == 0
     snapshots = list(snapshot_dir.glob("pallium-*.db"))
     assert len(snapshots) >= 1
+
+
+def test_paired_snapshot_restore_requires_committed_valid_pair(tmp_path: Path):
+    snapshot_dir = tmp_path / "snapshots"; snapshot_dir.mkdir()
+    main, relay = tmp_path / "main.db", tmp_path / "pallium-relay.db"
+    _make_test_db(main, rows=2); _make_test_db(relay, rows=3)
+    marker = create_snapshot({"main": str(main), "relay": str(relay)}, snapshot_dir)
+    assert marker and marker.name.endswith(".manifest.json")
+    restored_main, restored_relay = tmp_path / "restore-main.db", tmp_path / "restore-relay.db"
+    assert restore_snapshot(snapshot_dir, {"main": str(restored_main), "relay": str(restored_relay)}) is True
+    assert stdlib_sqlite3.connect(str(restored_main)).execute("SELECT count(*) FROM items").fetchone()[0] == 2
+    assert stdlib_sqlite3.connect(str(restored_relay)).execute("SELECT count(*) FROM items").fetchone()[0] == 3
+
+
+def test_paired_snapshot_without_manifest_is_ignored(tmp_path: Path):
+    snapshot_dir = tmp_path / "snapshots"; snapshot_dir.mkdir()
+    main, relay = tmp_path / "main.db", tmp_path / "pallium-relay.db"
+    _make_test_db(main); _make_test_db(relay)
+    marker = create_snapshot({"main": str(main), "relay": str(relay)}, snapshot_dir)
+    marker.unlink()
+    assert restore_snapshot(snapshot_dir, {"main": str(tmp_path / "m.db"), "relay": str(tmp_path / "r.db")}) is False
+
+
+def test_paired_prune_removes_generations_as_a_unit(tmp_path: Path):
+    snapshot_dir = tmp_path / "snapshots"; snapshot_dir.mkdir()
+    main, relay = tmp_path / "main.db", tmp_path / "pallium-relay.db"
+    _make_test_db(main); _make_test_db(relay)
+    create_snapshot({"main": str(main), "relay": str(relay)}, snapshot_dir)
+    time.sleep(0.01)
+    create_snapshot({"main": str(main), "relay": str(relay)}, snapshot_dir)
+    prune_old_snapshots(snapshot_dir, keep=1)
+    assert len(list(snapshot_dir.glob("*.manifest.json"))) == 1
+    assert len(list(snapshot_dir.glob("*-main.db"))) == 1
+    assert len(list(snapshot_dir.glob("*-relay.db"))) == 1

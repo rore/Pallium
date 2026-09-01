@@ -62,11 +62,15 @@ Approved by user 2026-09-01: "so i'm leaving you with a night job: db performanc
 
 ## Implementation
 
+- Paired snapshot implementation and focused tests completed in the scoped files. `apply_patch` hit the documented Windows 1327 process limitation; a deterministic single-file replacement was used and reported.
+
 - Discovery proved isolation removes the observed writer-lock failure. Redline and two clean-context plan reviews completed; the corrected High-risk plan is approved and ready for implementation. apply_patch later failed with the documented Windows 1327 issue, so Work Record updates used a verified deterministic single-file replacement.
 
 ## Evidence
 
-- Pending.
+- Implemented paired snapshot generations in `app/snapshot.py`: main and relay backups are independently validated, both names are published before a manifest commit marker, restore requires a newest complete validated pair, and pruning removes pair members as a unit. String-path callers remain the explicit legacy compatibility path.
+- Added paired restore, incomplete-generation rejection, and unit-pruning tests in `tests/test_snapshot.py`. Existing focused suite passed 47 tests before the concurrent `app/main.py` worktree change introduced a syntax error; the new tests exposed and fixed duplicate stale definitions during implementation.
+- Supervisor and periodic worker now select the sibling relay DB when present and route restore/create/prune through the same snapshot functions.
 
 ## Result review
 
