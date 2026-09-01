@@ -29,10 +29,13 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-01: Established live root cause and selected the existing claim-lease/receipt contract to avoid a new public API or persistence schema.
 - 2026-09-01: Clean-context plan review incorporated scope, callback isolation, closed-session, lease-duration, and strict active-writer requirements before code edits.
+- 2026-09-01: Implemented claim-before-wake batching, direct attributed payload rendering, hidden unloaded `exec resume` plus exact active-writer `queue`, callback isolation, closed-session protection, and narrow ACK/reply approval for Desktop-owned turns.
+- 2026-09-01: Verified 135 focused wake, Codex integration, Relay HTTP E2E, hook, and MCP lifecycle tests; Python compilation, diff check, and agent-workflow gate passed.
+- 2026-09-01: Live Windows acceptance `relay-msg-bb7995ddbe3e447d8c322fd692ad3e48` woke exact loaded `codex:@relaydev` without a ping, rendered the full attributed payload, completed atomic reply `HELLO LIVE-WAKE-20260901-C`, and marked the original delivery delivered after one attempt. Restart recovery also batched an older leased message with the new message and processed both.
