@@ -7,6 +7,7 @@ streamable-http (production, remote access) transports.
 from __future__ import annotations
 
 import json
+import os
 from typing import Literal
 
 from app.mcp.client import PalliumMcpClient

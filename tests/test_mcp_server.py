@@ -9,6 +9,7 @@ import pytest
 
 pytest.importorskip("mcp", reason="mcp[cli] not installed")
 
+from app.mcp import server as mcp_server
 from app.mcp.server import _bounded_expansion, _compact_history, _json_text, _trim_update_details, create_server
 
 
@@ -803,3 +804,14 @@ async def test_relay_response_is_bounded(monkeypatch: pytest.MonkeyPatch) -> Non
         content, _ = await server.call_tool("pallium_relay_status", {"message_id": "m-1"})
     assert len(content[0].text) <= 2000
     assert json.loads(content[0].text)["error"] == "relay response exceeds the response budget"
+
+def test_main_reads_stdio_transport_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = MagicMock()
+    monkeypatch.setenv("PALLIUM_MCP_TRANSPORT", "stdio")
+    monkeypatch.setenv("FASTMCP_HOST", "127.0.0.1")
+    monkeypatch.setenv("FASTMCP_PORT", "19837")
+    monkeypatch.setattr(mcp_server, "create_server", lambda **_: runner)
+
+    mcp_server.main()
+
+    runner.run.assert_called_once_with(transport="stdio")
