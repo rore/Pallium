@@ -37,3 +37,4 @@
 - 2026-09-01: Reproduced the delayed-queue/stale-receipt path on merged main; all deliveries were already safely delivered, so the fix is limited to preventing duplicate action and confusing retries.
 - 2026-09-01: Added the atomic backward-compatible `already_delivered` ACK discriminator, stale-copy wake guard, MCP description, and three skill-source instructions.
 - 2026-09-01: Verified 133 focused HTTP/MCP/wake/integration tests, three-skill guidance parity, compilation, diff check, and a clean agent-workflow gate.
+- 2026-09-01: Full Linux CI exposed the measured skill-size ceiling; compressed the Relay guidance without raising the 2112-character budget.
