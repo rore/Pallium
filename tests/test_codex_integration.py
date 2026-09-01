@@ -80,6 +80,19 @@ def test_codex_mcp_config_adds_repo_local_and_uv_venv_paths(
     assert str(pallium_site / "pywin32_system32").replace("\\", "/") in content
 
 
+def test_codex_feature_flag_migrates_legacy_and_preserves_peers() -> None:
+    initial = "[features]\ncodex_hooks = false\nother_feature = true\n"
+
+    migrated = setup_codex._ensure_feature_flag(initial)
+
+    assert "codex_hooks" not in migrated
+    assert migrated.count("hooks = true") == 1
+    assert "other_feature = true" in migrated
+    assert setup_codex._ensure_feature_flag(migrated) == migrated
+    removed = setup_codex._remove_feature_flag(migrated)
+    assert "hooks" not in removed
+    assert "other_feature = true" in removed
+
 def test_codex_hooks_use_absolute_commands_without_literal_quotes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -192,33 +192,15 @@ def _write_toml(path: Path, content: str) -> None:
 
 
 def _ensure_feature_flag(content: str) -> str:
-    """Ensure [features] section has codex_hooks = true."""
-    if re.search(r'^codex_hooks\s*=', content, re.MULTILINE):
-        content = re.sub(
-            r"^codex_hooks\s*=\s*\w+",
-            "codex_hooks = true",
-            content,
-            flags=re.MULTILINE,
-        )
-        return content
-
-    # Need to add it
-    if re.search(r'^\[features\]', content, re.MULTILINE):
-        # Append under existing [features] section
-        content = re.sub(
-            r'^(\[features\])',
-            r'\1\ncodex_hooks = true',
-            content,
-            count=1,
-            flags=re.MULTILINE,
-        )
-    else:
-        # Add new section
-        if content and not content.endswith("\n"):
-            content += "\n"
-        content += "\n[features]\ncodex_hooks = true\n"
-    return content
-
+    """Install Codex's current hooks feature without touching peer flags."""
+    content = re.sub(r"^codex_hooks\s*=\s*\w+\s*\n?", "", content, flags=re.MULTILINE)
+    if re.search(r"^hooks\s*=", content, re.MULTILINE):
+        return re.sub(r"^hooks\s*=\s*\w+", "hooks = true", content, flags=re.MULTILINE)
+    if re.search(r"^\[features\]", content, re.MULTILINE):
+        return re.sub(r"^(\[features\])", r"\1\nhooks = true", content, count=1, flags=re.MULTILINE)
+    if content and not content.endswith("\n"):
+        content += "\n"
+    return content + "\n[features]\nhooks = true\n"
 
 def _ensure_mcp_server(content: str, port: int = 19836) -> str:
     """Ensure [mcp_servers.pallium] section exists in config.toml with correct port."""
@@ -249,13 +231,10 @@ def _remove_mcp_server(content: str) -> str:
 
 
 def _remove_feature_flag(content: str) -> str:
-    """Remove codex_hooks line from [features] section."""
-    content = re.sub(r'\n?codex_hooks\s*=\s*\w+', '', content)
-    # Clean up empty [features] section
-    content = re.sub(r'\n?\[features\]\s*\n(?=\[|\Z)', '\n', content)
-    content = re.sub(r'\n?\[features\]\s*$', '', content)
-    return content
-
+    """Remove only Pallium's current and legacy hooks flags."""
+    content = re.sub(r"\n?(?:hooks|codex_hooks)\s*=\s*\w+", "", content)
+    content = re.sub(r"\n?\[features\]\s*\n(?=\[|\Z)", "\n", content)
+    return re.sub(r"\n?\[features\]\s*$", "", content)
 
 def _install_relay_profile() -> None:
     """Install Pallium's dedicated profile over the existing MCP server."""
