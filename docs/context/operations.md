@@ -21,6 +21,12 @@ historical source, and grants no access. If the host supplies no task identity,
 Pallium leaves attribution absent rather than guessing or writing `unknown`. The
 marker uses the existing injection character budget.
 
+## SQLite database operations
+
+Both SQLite files use the same lifecycle: WAL, uto_vacuum=INCREMENTAL, and a bounded connection busy timeout. Relay writes use only the Relay file, so a long ingestion transaction in the main file does not hold the Relay writer lock. Each file must still be backed up, checked, and restored as a pair; never mix files from different snapshot generations.
+
+The first split upgrade is supported only while the previous service process tree is fully stopped. Use the platform service wrapper (on Windows, scripts/restart-service.ps1; on Unix, stop the service before starting the new version), then verify /health, /status, and /debug/queue/health. The migration copies legacy Relay sessions, messages, and deliveries transactionally and records a source/target marker. Re-running is safe before completion; after the marker, a missing or mismatched Relay file fails closed. Legacy Relay rows remain in the main file as rollback evidence, but rollback after new Relay writes is not automatic.
+
 ## Developing integrations without leaving stale local installs
 
 Claude Code and Codex setup commands write absolute checkout and Python paths into the
