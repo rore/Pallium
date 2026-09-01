@@ -605,7 +605,10 @@ def test_atomic_reply_busy_uses_retryable_contract(client, relay_storage, monkey
     assert response.status_code == 503
     assert response.headers["retry-after"] == "1"
     assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
-    assert sent["deliveries"][0]["state"] == "pending"
+    monkeypatch.undo()
+    status = client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE)
+    assert status.status_code == 200, status.text
+    assert status.json()["deliveries"][0]["state"] == "claimed"
 
 
 def test_retrying_busy_send_with_same_id_creates_one_delivery(client, relay_storage, monkeypatch):
