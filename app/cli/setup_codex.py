@@ -222,6 +222,9 @@ def _ensure_mcp_server(content: str, port: int = 19836) -> str:
         f'env = {_mcp_env_toml(port)}\n'
         'startup_timeout_sec = 10\n'
         'tool_timeout_sec = 30\n'
+        'default_tools_approval_mode = "prompt"\n'
+        'tools = { pallium_relay_reply = { approval_mode = "approve" }, '
+        'pallium_relay_ack = { approval_mode = "approve" } }\n'
     )
 
     if content and not content.endswith("\n"):
@@ -254,11 +257,13 @@ def _install_relay_profile() -> None:
         _codex_relay_profile_path(),
         "[mcp_servers.pallium]\n"
         "required = true\n"
-        'enabled_tools = ["pallium_relay_send", "pallium_relay_reply"]\n'
+        'enabled_tools = ["pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack"]\n'
         'default_tools_approval_mode = "prompt"\n'
         "\n[mcp_servers.pallium.tools.pallium_relay_send]\n"
         'approval_mode = "approve"\n'
         "\n[mcp_servers.pallium.tools.pallium_relay_reply]\n"
+        'approval_mode = "approve"\n'
+        "\n[mcp_servers.pallium.tools.pallium_relay_ack]\n"
         'approval_mode = "approve"\n',
     )
 

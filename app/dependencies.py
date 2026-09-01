@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from functools import partial
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -537,5 +538,9 @@ def build_router(
         audit_log_enabled=audit_log_enabled,
         relay_service=relay_service,
         claude_wake_registry=claude_wake_registry or build_claude_wake_registry(),
-        relay_send_callback=schedule_codex_relay_wake,
+        relay_send_callback=(
+            partial(schedule_codex_relay_wake, relay_service=relay_service)
+            if relay_service is not None
+            else None
+        ),
     )

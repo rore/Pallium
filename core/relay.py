@@ -127,6 +127,7 @@ class RelayService:
         actor_ref: str,
         title: str | None = None,
         max_chars: int = 0,
+        register_session: bool = True,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
@@ -141,6 +142,7 @@ class RelayService:
             max_chars=max_chars,
             max_messages=0,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
+            register_session=register_session,
             now=now,
         )
 
