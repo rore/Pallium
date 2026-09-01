@@ -60,7 +60,7 @@ def asgi_post(relay_app):
 
 
 def bind_asgi_post(monkeypatch: pytest.MonkeyPatch, asgi_post) -> None:
-    async def _post(_client, path, payload):
+    async def _post(_client, path, payload, **_kwargs):
         try:
             return await asgi_post(path, payload)
         except httpx.HTTPStatusError as exc:
@@ -287,7 +287,7 @@ class TestFullLifecycle:
         from storage.sqlite_schema import RelayDeliveryRecord
 
         storage = relay_app.state.pallium_service._storage
-        with storage._begin_immediate() as db:
+        with storage._begin_relay_immediate() as db:
             record = db.get(RelayDeliveryRecord, first_delivery["delivery_id"])
             record.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
 
