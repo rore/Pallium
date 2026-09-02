@@ -483,7 +483,9 @@ def create_router(
                 "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle",
             }):
                 raise ValueError
-            payload.setdefault("idle", True)
+            payload.setdefault("idle", False)
+            if not isinstance(payload["idle"], bool):
+                raise ValueError
             wake_registry.register(**payload)
         except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="invalid registration")

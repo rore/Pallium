@@ -306,7 +306,7 @@ def register_claude_wake(
     container_ref: object,
     actor_ref: object,
     *,
-    idle: bool = True
+    idle: bool = False
 ) -> bool:
     """Best-effort credential handoff with no diagnostic output."""
     socket_path = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")

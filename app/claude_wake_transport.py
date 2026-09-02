@@ -119,31 +119,37 @@ def _windows_transport(socket_path: str, token: str) -> bool:
 
 
 def _windows_write(handle, data, pywintypes, win32event, win32file, winerror) -> bool:
-    """Write one frame with a bounded overlapped-I/O wait."""
+    """Write one frame with bounded overlapped I/O and safe cancellation."""
     overlapped = pywintypes.OVERLAPPED()
     overlapped.hEvent = win32event.CreateEvent(None, True, False, None)
+    completed = False
     try:
         error_code, _ = win32file.WriteFile(handle, data, overlapped)
         if error_code == 0:
+            completed = True
             return True
         if error_code != winerror.ERROR_IO_PENDING:
+            completed = True
             return False
         if win32event.WaitForSingleObject(overlapped.hEvent, 2000) != win32event.WAIT_OBJECT_0:
-            cancel = getattr(win32file, "CancelIoEx", None)
-            if cancel is None:
-                cancel = win32file.CancelIo
-                cancel(handle)
-            else:
-                cancel(handle, overlapped)
-            win32event.WaitForSingleObject(overlapped.hEvent, 2000)
-            get_result = getattr(win32file, "GetOverlappedResult", None)
-            if get_result is not None:
+            try:
+                cancel = getattr(win32file, "CancelIoEx", None)
+                if cancel is None:
+                    win32file.CancelIo(handle)
+                else:
+                    cancel(handle, overlapped)
+            except Exception:
+                pass
+            if win32event.WaitForSingleObject(overlapped.hEvent, 2000) == win32event.WAIT_OBJECT_0:
+                completed = True
                 try:
-                    get_result(handle, overlapped, False)
+                    win32file.GetOverlappedResult(handle, overlapped, False)
                 except Exception:
                     pass
             return False
+        completed = True
         win32file.GetOverlappedResult(handle, overlapped, True)
         return True
     finally:
-        win32file.CloseHandle(overlapped.hEvent)
+        if completed:
+            win32file.CloseHandle(overlapped.hEvent)

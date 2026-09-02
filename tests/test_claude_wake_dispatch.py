@@ -111,7 +111,7 @@ class TestTransport:
 
         assert _windows_write("pipe", b"frame", pywintypes, win32event, win32file, winerror) is False
         assert len(cancelled) == 1
-        assert closed == ["event"]
+        assert closed == []
     @pytest.mark.skipif(os.name != "nt", reason="Windows test")
     def test_windows_transport_import_failure_returns_false(self) -> None:
         """Windows: win32file import failure returns False."""
@@ -320,7 +320,7 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
             runtime=req["runtime"], session_ref=req["session_ref"],
             container_ref=req["container_ref"], actor_ref=req["actor_ref"])))
     client = TestClient(app, client=("127.0.0.1", 50000))
-    payload = {**PAYLOAD, "session_ref": "session-test", "socket_path": "/tmp/test.sock"}
+    payload = {**PAYLOAD, "session_ref": "session-test", "socket_path": "/tmp/test.sock", "idle": True}
     assert client.post("/internal/claude-wake/register", json=payload).status_code == 204
     scope = {"container_ref": payload["container_ref"], "actor_ref": payload["actor_ref"]}
     assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": payload["session_ref"], **scope}).status_code == 200

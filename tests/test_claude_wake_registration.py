@@ -41,6 +41,7 @@ PAYLOAD = {
     "actor_ref": "local",
     "socket_path": r"\\.\pipe\claude",
     "token": "test-token",
+    "idle": True,
 }
 
 
@@ -481,9 +482,24 @@ def test_claude_hook_lifecycle_surfaces_registration_turn_and_stop(monkeypatch) 
     assert calls[1][2] == "/relay/turn"
 def test_explicit_idle_state_is_one_shot_and_scope_bound() -> None:
     registry = ClaudeWakeRegistry()
-    registry.register(**PAYLOAD, idle=False)
+    registry.register(**{**PAYLOAD, "idle": False})
     transport = lambda *_: True
     assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
-    registry.register(**PAYLOAD, idle=True)
+    registry.register(**{**PAYLOAD, "idle": True})
     assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
     assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
+
+@pytest.mark.parametrize("idle, expected", [(None, 204), ("false", 400), (1, 400)])
+def test_registration_idle_boundary_is_fail_closed(idle, expected) -> None:
+    registry = ClaudeWakeRegistry()
+    payload = {key: value for key, value in PAYLOAD.items() if key != "idle"}
+    if idle is not None:
+        payload["idle"] = idle
+    response = _client(registry).post("/internal/claude-wake/register", json=payload)
+    assert response.status_code == expected
+    if idle is None:
+        assert not registry.probe(
+            runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
+            container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+            transport=lambda *_: True,
+        )

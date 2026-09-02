@@ -62,8 +62,10 @@ class ClaudeWakeRegistry:
         actor_ref: str,
         socket_path: str,
         token: str,
-        idle: bool = True
+        idle: bool = False
     ) -> None:
+        if not isinstance(idle, bool):
+            raise ValueError("invalid registration")
         if (
             runtime != RUNTIME
             or not _valid(runtime, MAX_RUNTIME_CHARS)
