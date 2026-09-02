@@ -140,12 +140,11 @@ def _windows_write(handle, data, pywintypes, win32event, win32file, winerror) ->
                     cancel(handle, overlapped)
             except Exception:
                 pass
-            if win32event.WaitForSingleObject(overlapped.hEvent, 2000) == win32event.WAIT_OBJECT_0:
+            try:
+                win32file.GetOverlappedResult(handle, overlapped, True)
                 completed = True
-                try:
-                    win32file.GetOverlappedResult(handle, overlapped, False)
-                except Exception:
-                    pass
+            except Exception:
+                pass
             return False
         completed = True
         win32file.GetOverlappedResult(handle, overlapped, True)
