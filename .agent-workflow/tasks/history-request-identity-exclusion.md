@@ -9,11 +9,11 @@
 
 **Completion criteria:** When `request_source_item_id` is supplied, every candidate with the same canonical `(source_type, source_id)` shall be excluded before visible top-K selection and the next distinct eligible result shall fill the slot; a different source identity shall not be excluded by this new filter, and existing normalized-content deduplication shall remain unchanged; missing/invalid/out-of-scope request links shall retain current fail-closed behavior; the same 12-case local audit shall report zero request-identity slots and quantify direct/background/irrelevant top-three results.
 
-**Risk:** Elevated
+**Risk:** High
 
 **Complexity:** Moderate
 
-**Reason:** Pre-edit redline marks `core/service.py` red and `core/query.py` gray/watch with architecture review required, but detects no API, schema, security, persistence, runtime-config, or boundary change. The change is narrow but spans validated service context and pre-limit ranking.
+**Reason:** The workflow checker classifies the red-zone `core/service.py` change as High and requires architecture review, although redline detects no API, schema, security, persistence, runtime-config, or boundary change. The change is narrow but spans validated service context and pre-limit ranking.
 
 **Discovery:** A production-shaped, zero-model-call audit reran 12 historical requests across five sessions against an isolated paired SQLite/vector snapshot. All 12 searches succeeded, current result pages had zero internal duplicate slots and complete session metadata, but all 12 ranked a second row for the active request at #1. Each duplicate matched the linked request on source type, source ID, event and ingest times, actor, role, container, thread, and normalized content; only the internal row ID differed. `request_source_item_id` is validated and loaded in `PalliumService.query` but is not passed to `QueryExecutor`; source-only selection limits after `_collapse_source_duplicates`. The schema defines `(source_type, source_id)` as canonical unique identity, while the local corpus contains legacy duplicates from before that index could be enforced.
 
@@ -25,7 +25,7 @@
 
 **Plan review:** Approved by clean-context reviewer `/root/self_identity_plan_review` on 2026-09-02. The reviewer confirmed the service already owns the sole validated request-link read, query results carry the canonical fields, pre-collapse filtering preserves refill, and no API/schema/boundary change is needed. Conditions: source hits only, `None` unchanged, and current fail-closed validation preserved.
 
-**Approvals:** Not required at this risk level.
+**Approvals:** Approved by user 2026-09-02: "ok, so you can continu"
 
 **Exceptions:** —
 
@@ -42,7 +42,7 @@
 
 ## Plan review
 
-- Pending.
+- APPROVED by `/root/self_identity_plan_review` (clean context, 2026-09-02). Placement and assumptions were validated; review conditions are recorded in the marker.
 
 ## Result review
 
