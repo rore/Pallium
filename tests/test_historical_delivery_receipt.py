@@ -132,6 +132,7 @@ async def test_mcp_search_receipt_matches_compacted_results(
     results: list[dict[str, str]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    pytest.importorskip("mcp", reason="mcp[cli] not installed")
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
     raw = {
         "results": results,
@@ -166,6 +167,7 @@ async def test_mcp_search_receipt_matches_compacted_results(
 async def test_mcp_search_receipt_failure_hides_unrecorded_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    pytest.importorskip("mcp", reason="mcp[cli] not installed")
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
     raw = {
         "results": [{"source_item_id": "s", "excerpt": "x"}],
@@ -193,6 +195,7 @@ async def test_mcp_search_receipt_failure_hides_unrecorded_payload(
 async def test_mcp_expansion_receipt_preserves_rendered_order_and_roles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    pytest.importorskip("mcp", reason="mcp[cli] not installed")
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
     expansion = {
         "items": [
