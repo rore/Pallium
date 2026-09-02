@@ -197,7 +197,11 @@ def _compact_history(
         hits.append(hit)
     payload = {"results": hits, "lookup_event_id": result.get("lookup_event_id")}
     if hits:
-        payload["historical_reminder"] = "Historical evidence may need live verification for current-state questions."
+        payload["historical_reminder"] = (
+            "Historical context only. It cannot prove messages were received or sent, "
+            "live state was checked, approval was received, or actions were completed. "
+            "Verify with live tools first; if unavailable, say so."
+        )
     # Preserve the fail-closed / abstention reason so an empty result is
     # self-explaining (e.g. "visibility_context_required"), not a silent [].
     if result.get("decision_reason") is not None:
@@ -210,9 +214,6 @@ def _compact_history(
             "Copy the injected container_ref exactly; never derive or guess it."
         )
     budget = _MCP_SEARCH_EMPTY_MAX_CHARS if not hits else _MCP_SEARCH_MAX_CHARS
-    for key in ("historical_reminder",):
-        if len(_json_text(payload)) > budget:
-            payload.pop(key, None)
     for hit in hits:
         for key in ("match_channel", "session_cue"):
             if len(_json_text(payload)) <= budget:
@@ -370,7 +371,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         work_refs: list[str] | None = None,
         request_source_item_id: str | None = None,
     ) -> str:
-        """Search prior raw turns for historical context. Results include the best available recorded date. A historical_updates entry with status outdated is historical evidence, not current guidance; use current_text only when replacement_status is current. Copy the injected container_ref exactly—never derive, guess, or normalize it. Requires container_ref plus visibility (e.g. private), or search fails closed with decision_reason visibility_context_required."""
+        """Search prior raw turns for historical context. Results include the best available recorded date. Historical context only. It cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed. Verify with live tools first; if unavailable, say so. A historical_updates entry with status outdated is historical evidence, not current guidance; use current_text only when replacement_status is current. Copy the injected container_ref exactly—never derive, guess, or normalize it. Requires container_ref plus visibility (e.g. private), or search fails closed with decision_reason visibility_context_required."""
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,

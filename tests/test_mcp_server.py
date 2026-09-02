@@ -190,6 +190,9 @@ class TestToolDescriptions:
             "pallium_expand_source",
         }
         assert expected <= tool_names
+        history_tool = next(t for t in tools if t.name == "pallium_search_history")
+        assert "cannot prove messages were received or sent" in history_tool.description
+        assert "actions were completed" in history_tool.description
 
 
 @pytest.mark.asyncio
@@ -311,7 +314,25 @@ async def test_historical_search_keeps_request_link_validation_visible(
 @pytest.mark.asyncio
 async def test_historical_tools_project_bounded_payloads(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
-    raw = {"results": [{"result_kind": "source_hit", "source_item_id": "s1", "excerpt": "prefix match middle suffix", "role": None, "occurred_at": None, "score": 99}], "lookup_event_id": "lookup-1"}
+    raw = {
+        "results": [
+            {
+                "result_kind": "source_hit",
+                "source_item_id": f"s{i}",
+                "excerpt": ("\\\"界😀" * 2000) + " match",
+                "historical_updates": [{
+                    "status": "outdated",
+                    "replacement_status": "current",
+                    "current_text": "replacement" * 500,
+                }],
+                "role": None,
+                "occurred_at": None,
+                "score": 99,
+            }
+            for i in range(3)
+        ],
+        "lookup_event_id": "lookup-1",
+    }
     expansion = {"items": [{"source_item_id": "s1", "is_anchor": True, "content": "anchor content"}], "supported_memories": None, "parent_lookup_id": "lookup-1"}
     with patch("app.mcp.client.PalliumMcpClient.search_history", new=AsyncMock(return_value=raw)), patch("app.mcp.client.PalliumMcpClient.get_source_context", new=AsyncMock(return_value=expansion)):
         server = create_server()
@@ -319,6 +340,8 @@ async def test_historical_tools_project_bounded_payloads(monkeypatch: pytest.Mon
         expanded, _ = await server.call_tool("pallium_expand_source", {"source_item_id": "s1", "parent_lookup_id": "lookup-1"})
     search_text, expand_text = search[0].text, expanded[0].text
     assert len(search_text) <= 2000
+    assert "cannot prove messages were received or sent" in search_text
+    assert "Verify with live tools first" in search_text
     assert "score" not in search_text and "role" not in search_text and "occurred_at" not in search_text
     assert len(expand_text) <= 4000
     assert "s1" in expand_text and "lookup-1" in expand_text
@@ -401,6 +424,7 @@ def test_compact_history_defaults_to_three_hits_and_bounds_escaped_json() -> Non
     assert len(_json_text(result)) <= 2000
     assert result["lookup_event_id"] == "lookup-1"
     assert "empty_result_hint" not in result
+    assert "actions were completed" in result["historical_reminder"]
 
 
 def test_compact_history_preserves_decision_reason_on_empty_fail_closed() -> None:
