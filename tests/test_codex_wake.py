@@ -47,6 +47,7 @@ def _schedule(result: dict) -> None:
 def setup_function() -> None:
     codex_wake._scheduled_delivery_ids.clear()
     codex_wake._scheduled_session_generations.clear()
+    codex_wake._scheduled_session_delivery_ids.clear()
 
 
 def test_successful_resume_does_not_queue_and_hides_process() -> None:

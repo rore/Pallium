@@ -19,6 +19,7 @@ _TIMEOUT_SECONDS = 300
 _QUEUE_TIMEOUT_SECONDS = 30
 _scheduled_delivery_ids: set[str] = set()
 _scheduled_session_generations: dict[str, int] = {}
+_scheduled_session_delivery_ids: dict[str, str] = {}
 _scheduled_lock = threading.Lock()
 
 
@@ -67,6 +68,7 @@ def schedule_codex_relay_wake(
         _scheduled_delivery_ids.add(delivery_id)
         generation = _scheduled_session_generations.get(session_ref, 0) + 1
         _scheduled_session_generations[session_ref] = generation
+        _scheduled_session_delivery_ids[session_ref] = delivery_id
     try:
         threading.Thread(
             target=_wake_after_debounce,
@@ -82,6 +84,9 @@ def schedule_codex_relay_wake(
             _scheduled_delivery_ids.discard(delivery_id)
             if _scheduled_session_generations.get(session_ref) == generation:
                 _scheduled_session_generations.pop(session_ref, None)
+        delivery_id = _scheduled_session_delivery_ids.pop(session_ref, None)
+        if delivery_id is not None:
+            _scheduled_delivery_ids.discard(delivery_id)
 
 
 def _wake_after_debounce(
@@ -101,6 +106,9 @@ def _wake_after_debounce(
         pass
     with _scheduled_lock:
         _scheduled_session_generations.pop(session_ref, None)
+        delivery_id = _scheduled_session_delivery_ids.pop(session_ref, None)
+        if delivery_id is not None:
+            _scheduled_delivery_ids.discard(delivery_id)
         _scheduled_delivery_ids.discard(delivery_id)
 
 
@@ -111,6 +119,9 @@ def _wake(session_ref: str) -> bool:
 def mark_codex_relay_wake_admitted(session_ref: str) -> None:
     with _scheduled_lock:
         _scheduled_session_generations.pop(session_ref, None)
+        delivery_id = _scheduled_session_delivery_ids.pop(session_ref, None)
+        if delivery_id is not None:
+            _scheduled_delivery_ids.discard(delivery_id)
 
 
 def _launch(session_ref: str, prompt: str) -> bool:

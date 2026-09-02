@@ -378,7 +378,10 @@ def create_router(
     def relay_turn(request: RelayTurnRequest):
         result = _relay_call(lambda: _relay().turn(**request.model_dump()))
         if relay_turn_callback is not None:
-            relay_turn_callback(request.model_dump())
+            try:
+                relay_turn_callback(request.model_dump())
+            except Exception:
+                logger.exception("Relay turn callback failed after admission")
         return result
 
     @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
