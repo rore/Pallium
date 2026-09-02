@@ -25,11 +25,11 @@
 
 **Plan review:** APPROVED by fresh clean-context reviewer `/root/architecture_plan_final_review` on 2026-09-02 after two blocked drafts. The reviewer found no remaining architecture or API-plan blocker and confirmed append-only receipt integrity, replay privacy/time semantics, normalization-only deduplication, exact event-order replay, and the fixed eight-call cap. This review does not replace required High-risk human approval or later PR/code-owner checks.
 
-**Approvals:** Pending required High-risk human approval after final clean-context confirmation.
+**Approvals:** Approved by user 2026-09-02: "yes and please continue till done"
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Plan review
@@ -40,6 +40,7 @@
 
 ## Implementation
 
+- 2026-09-02: Human approval recorded verbatim. Planned edit surfaces before the first product-code change: `storage/{base,sqlite}.py`, `core/{service,query}.py`, `api/{schemas,routes}.py`, `app/mcp/{client,server}.py`, `evals/real_corpus_pull_eval.py`, focused historical/MCP/evaluator tests, and directly related docs/roadmap state.
 - 2026-09-02: Established isolated task context on `codex/fix-real-corpus-memory-access-and-evaluation`; no product code was edited before discovery and risk classification.
 - 2026-09-02: Redline classified the intended shared-service and HTTP-contract diff High/Red with architecture-review and api-review checkpoints and no import-boundary violation. Read-only flow discovery confirmed pre-render exposure recording, missing expansion anchors, lookup-only replay, time leakage, and ID-only duplicate handling. The plan uses append-only deterministic delivery receipts and normalization-only equivalence to avoid schema work, event mutation, and unsafe fuzzy matching.
 
