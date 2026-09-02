@@ -96,7 +96,7 @@ installed versions are Claude Code 2.1.250, Codex CLI 0.149.1, and OpenCode
 refresh an exact-session credential through a loopback-only, memory-only
 registration endpoint with fixed 900-second expiry. The endpoint has no public
 probe, status, or clear operation; the service has no named-pipe transport in this
-slice, and restart falls back because credentials are not persisted. This is a
+slice, and restart currently falls back because credentials are not persisted. A plan-only Windows DPAPI persistence extension now targets automatic recovery of unexpired same-user idle capabilities; it is not implemented or qualified. This is a
 security handoff only, not evidence of target admission or coordinator readiness.
 
 ### Admission handshakes to preserve
@@ -146,7 +146,7 @@ enabling live wake still requires the relevant safety evidence.
    `SessionStart` → busy deferral → `Stop` idle grant → native wake → hook claim/ACK
    journey. Treat the first observed failure as the next implementation slice;
    do not broaden the adapter before this witness exists.
-2. **Claude crash/restart recovery:** deterministic caller-surface coverage now proves that a crash after claim leaves the delivery lease-eligible and injected/ACKed once on the next valid hook. A service restart intentionally does not promise automatic cold wake; complete the live Windows path before treating this as production qualification.
+2. **Claude crash/restart recovery:** deterministic caller-surface coverage now proves that a crash after claim leaves the delivery lease-eligible and injected/ACKed once on the next valid hook. Automatic restart wake is not yet implemented: a plan-only Windows DPAPI capability-persistence extension now supersedes the prior natural-turn-only restart stance. It must reload only unexpired, same-user encrypted exact-session idle capabilities, derive demand from pending Relay deliveries, and prove one no-manual-prompt restart recovery before this counts toward production qualification.
 
 3. **Codex remaining lifecycle gates:** qualify busy/interrupted/restart admission,
    sender-side reply admission, correlation telemetry, and sustained no-ping
