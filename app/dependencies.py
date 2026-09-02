@@ -545,7 +545,7 @@ def build_router(
             return
         runtime = deliveries[0].get("recipient_runtime")
         if runtime == "codex" and relay_service is not None:
-            schedule_codex_relay_wake(result, scope, relay_service=relay_service)
+            schedule_codex_relay_wake(result, scope)
         elif runtime == "claude-code":
             schedule_claude_relay_wake(result, scope, registry=registry)
 
