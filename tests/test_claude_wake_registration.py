@@ -481,3 +481,11 @@ def test_claude_hook_lifecycle_surfaces_registration_turn_and_stop(monkeypatch) 
     stop.main()
     assert [entry[0] for entry in calls] == ["start", "prompt", "stop"]
     assert calls[1][2] == "/relay/turn"
+def test_explicit_idle_state_is_one_shot_and_scope_bound() -> None:
+    registry = ClaudeWakeRegistry()
+    registry.register(**PAYLOAD, idle=False)
+    transport = lambda *_: True
+    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
+    registry.register(**PAYLOAD, idle=True)
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
+    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)

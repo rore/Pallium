@@ -158,7 +158,7 @@ def main() -> None:
         container_ref = derive_container_ref(cwd)
         pin_container(session_id, container_ref, source=source)
         actor_ref = derive_actor_ref()
-        register_claude_wake(session_id, container_ref, actor_ref)
+        register_claude_wake(session_id, container_ref, actor_ref, idle=False)
 
         query_text = _derive_orientation_query(cwd)
         blocks = _fetch_orientation(query_text, container_ref, actor_ref)
