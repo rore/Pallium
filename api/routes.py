@@ -346,6 +346,7 @@ def create_router(
     relay_service: RelayService | None = None,
     claude_wake_registry: ClaudeWakeRegistry | None = None,
     relay_send_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
+    relay_turn_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> APIRouter:
     router = APIRouter()
     wake_registry = claude_wake_registry or ClaudeWakeRegistry()

@@ -8,7 +8,7 @@ from typing import Any
 
 from api.routes import create_router
 from core.claude_wake import ClaudeWakeRegistry
-from app.codex_wake import schedule_codex_relay_wake
+from app.codex_wake import mark_codex_relay_wake_admitted, schedule_codex_relay_wake
 from app.claude_wake import schedule_claude_relay_wake
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.observability import IntegrationDebugLogger, QueryStats
@@ -549,6 +549,12 @@ def build_router(
         elif runtime == "claude-code":
             schedule_claude_relay_wake(result, scope, registry=registry)
 
+    def _relay_turn_admission(request: object) -> None:
+        if isinstance(request, dict) and request.get("runtime") == "codex":
+            session_ref = request.get("session_ref")
+            if isinstance(session_ref, str) and session_ref:
+                mark_codex_relay_wake_admitted(session_ref)
+
     return create_router(
         service,
         audit_log_enabled=audit_log_enabled,
@@ -559,4 +565,5 @@ def build_router(
             if relay_service is not None
             else None
         ),
+        relay_turn_callback=_relay_turn_admission,
     )

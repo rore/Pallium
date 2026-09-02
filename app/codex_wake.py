@@ -62,7 +62,7 @@ def schedule_codex_relay_wake(
     ):
         return
     with _scheduled_lock:
-        if delivery_id in _scheduled_delivery_ids:
+        if delivery_id in _scheduled_delivery_ids or session_ref in _scheduled_session_generations:
             return
         _scheduled_delivery_ids.add(delivery_id)
         generation = _scheduled_session_generations.get(session_ref, 0) + 1
@@ -95,20 +95,22 @@ def _wake_after_debounce(
             _scheduled_delivery_ids.discard(delivery_id)
             return
     try:
-        _wake(session_ref)
+        if _wake(session_ref):
+            return
     except Exception:
-        # Persisted delivery remains pending/leased for natural-turn recovery.
-        return
-    finally:
-        with _scheduled_lock:
-            _scheduled_delivery_ids.discard(delivery_id)
-            if _scheduled_session_generations.get(session_ref) == generation:
-                _scheduled_session_generations.pop(session_ref, None)
+        pass
+    with _scheduled_lock:
+        _scheduled_session_generations.pop(session_ref, None)
+        _scheduled_delivery_ids.discard(delivery_id)
 
 
-def _wake(session_ref: str) -> None:
+def _wake(session_ref: str) -> bool:
     # UserPromptSubmit claims persisted Relay only after this turn is admitted.
-    _launch(session_ref, _wake_prompt())
+    return _launch(session_ref, _wake_prompt())
+
+def mark_codex_relay_wake_admitted(session_ref: str) -> None:
+    with _scheduled_lock:
+        _scheduled_session_generations.pop(session_ref, None)
 
 
 def _launch(session_ref: str, prompt: str) -> bool:

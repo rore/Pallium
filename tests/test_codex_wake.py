@@ -131,7 +131,7 @@ def test_alias_and_exact_selectors_start_one_child() -> None:
     with patch("app.codex_wake.threading.Thread") as thread:
         _schedule(_delivery())
         _schedule({**_delivery("delivery-2"), "recipient": "codex:@relaydev"})
-    assert thread.call_count == 2
+    assert thread.call_count == 1
 
 
 def test_broadcast_and_malformed_selectors_do_not_start_child() -> None:
@@ -151,31 +151,21 @@ def test_duplicate_and_non_codex_do_not_start_child() -> None:
     thread.assert_called_once()
 
 
-def test_burst_coalesces_to_one_wake(monkeypatch) -> None:
+def test_busy_wakes_coalesce_until_admission_then_rearm(monkeypatch) -> None:
     workers = []
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._wake") as wake:
+    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._wake", return_value=True) as wake:
         thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
         _schedule(_delivery())
         _schedule(_delivery("delivery-2"))
+        assert len(workers) == 1
         codex_wake._wake_after_debounce(*workers[0])
-        codex_wake._wake_after_debounce(*workers[1])
+        _schedule(_delivery("delivery-3"))
+        assert len(workers) == 1
+        codex_wake.mark_codex_relay_wake_admitted("target-session")
+        _schedule(_delivery("delivery-4"))
     wake.assert_called_once_with("target-session")
-
-
-def test_stale_worker_cannot_clear_newer_generation(monkeypatch) -> None:
-    workers = []
-    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._wake") as wake:
-        thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
-        _schedule(_delivery())
-        _schedule(_delivery("delivery-2"))
-        codex_wake._wake_after_debounce(*workers[0])
-        assert "delivery-1" not in codex_wake._scheduled_delivery_ids
-        assert codex_wake._scheduled_session_generations["target-session"] == 2
-        codex_wake._wake_after_debounce(*workers[1])
-    wake.assert_called_once_with("target-session")
-    assert not codex_wake._scheduled_session_generations
+    assert len(workers) == 2
 
 
 def test_launch_failure_releases_owner_for_later_delivery(monkeypatch) -> None:
