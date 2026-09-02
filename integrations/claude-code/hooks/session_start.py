@@ -35,6 +35,9 @@ from common import (
     read_hook_input,
     redact_sensitive,
     register_claude_wake,
+    relay_request,
+    format_relay,
+    acknowledge_relay,
 )
 
 # Fallback when no structural signal is available. Kept for graceful
@@ -159,6 +162,16 @@ def main() -> None:
         pin_container(session_id, container_ref, source=source)
         actor_ref = derive_actor_ref()
         register_claude_wake(session_id, container_ref, actor_ref, idle=False)
+
+        relay_response = relay_request("POST", "/relay/turn", {
+            "runtime": "claude-code", "session_ref": session_id,
+            "container_ref": container_ref, "actor_ref": actor_ref,
+        }, timeout=0.75)
+        relay_output, rendered = format_relay((relay_response or {}).get("deliveries") or [])
+        if rendered:
+            print(relay_output)
+            acknowledge_relay(rendered, container_ref=container_ref, actor_ref=actor_ref)
+            sys.exit(0)
 
         query_text = _derive_orientation_query(cwd)
         blocks = _fetch_orientation(query_text, container_ref, actor_ref)
