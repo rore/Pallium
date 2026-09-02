@@ -65,6 +65,19 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 **State:** Ready to implement
 <!-- agent-workflow:end -->
 
+### Dogfood secret-boundary extension (plan-only)
+
+**Scope amendment:** Extend this High-risk work to the shared Relay secret boundary only: redaction/__init__.py, core/relay.py, app/mcp/server.py, tests/test_redaction_tier_a_and_b.py, and tests/test_relay_mcp_tools.py. No native wake protocol, registration, hook, persistence schema, or integration-local redactor is in scope.
+
+**Discovery amendment:** Dogfood reproduced a false positive: the benign line `session_id: socket/pipe+token+scope` is wholly scrubbed by the YAML/env rule because its prose guard treats one 12+-character technical word as credential evidence. The existing shared helper already owns Tier B entropy and known false-positive shapes. Core Relay stores the sanitized payload before setting redacted=true, but app/mcp/server.py collapses an oversized normal Relay result to delivery counts/states and omits that safe payload.
+
+**Completion-criteria amendment:** The shared YAML/env prose guard must preserve the exact multiword dogfood line and comparable technical prose unless it contains a genuinely secret-like token under the existing entropy and known-false-positive-shape policy. True single-word and multiword credential assignments remain redacted. A redacted Relay send or reply MCP result must return the stored sanitized payload when it fits the 2,000-character budget; otherwise it must return a bounded sanitized preview plus an explicit truncation marker. No original payload or secret span may appear.
+
+**Plan amendment:** Before any runtime edit, invoke agent-workflow for the guarded redaction extension and obtain fresh claude-code:@claude_arch review of this exact contract. Reuse the shared redaction leaf for the smallest prose guard change; do not add Relay or integration-specific rules. Then adjust only the oversized normal Relay serializer to retain the already-sanitized payload or measured safe preview, and add focused tests.
+
+**Verification amendment:** Unit boundaries cover the exact dogfood repro, true single-word and multiword credentials, Unicode, known false-positive shapes, and idempotence. Real MCP pallium_relay_send and atomic pallium_relay_reply E2E cover the repro, true secret, Unicode, exact-fit and over-budget sanitized results, explicit truncation, and idempotent retry. Every result is measured under 2,000 characters and checked for absence of original payload and secret spans.
+
+**Risk amendment:** This is a High-risk secret-boundary extension. Redaction is a guarded path, but current redline policy maps the dedicated security checkpoint only to core/visibility.py; architect review remains mandatory before implementation.
 ## Implementation
 
 - 2026-09-02: Mission persisted before code. No runtime edits started. User corrected delegation: `codex:@relaydev` is the primary implementation developer; `claude-code:@claude_arch` owns Claude-side validation and may use its own Claude developer. A stale `@paldev` address-book entry was mistakenly treated as an available agent; its pending assignment was superseded and must not be used.
