@@ -1,0 +1,52 @@
+<!-- agent-workflow:start -->
+**Outcome:** Historical search no longer spends a visible result slot on a duplicate database row representing the active user request.
+
+**Target:** Pallium.
+
+**Scope:** Internal source-only query exclusion using the already validated request source identity, focused HTTP/query E2E tests, the private 12-case audit rerun, and aligned roadmap evidence.
+
+**Constraints:** No public API, schema, authorization, ranking-score, ingestion, visibility, or integration change; the new identity filter must not suppress a different stable source identity, while existing normalized-content deduplication remains unchanged; preserve top-K refill, response budgets, and zero additional storage reads beyond the existing request-link lookup; no paid/model calls; do not restart the live service while unrelated wake work is active.
+
+**Completion criteria:** When `request_source_item_id` is supplied, every candidate with the same canonical `(source_type, source_id)` shall be excluded before visible top-K selection and the next distinct eligible result shall fill the slot; a different source identity shall not be excluded by this new filter, and existing normalized-content deduplication shall remain unchanged; missing/invalid/out-of-scope request links shall retain current fail-closed behavior; the same 12-case local audit shall report zero request-identity slots and quantify direct/background/irrelevant top-three results.
+
+**Risk:** High
+
+**Complexity:** Moderate
+
+**Reason:** The workflow checker classifies the red-zone `core/service.py` change as High and requires architecture review, although redline detects no API, schema, security, persistence, runtime-config, or boundary change. The change is narrow but spans validated service context and pre-limit ranking.
+
+**Discovery:** A production-shaped, zero-model-call audit reran 12 historical requests across five sessions against an isolated paired SQLite/vector snapshot. All 12 searches succeeded, current result pages had zero internal duplicate slots and complete session metadata, but all 12 ranked a second row for the active request at #1. Each duplicate matched the linked request on source type, source ID, event and ingest times, actor, role, container, thread, and normalized content; only the internal row ID differed. `request_source_item_id` is validated and loaded in `PalliumService.query` but is not passed to `QueryExecutor`; source-only selection limits after `_collapse_source_duplicates`. The schema defines `(source_type, source_id)` as canonical unique identity, while the local corpus contains legacy duplicates from before that index could be enforced.
+
+**Material assumptions:** `(source_type, source_id)` identifies one logical source across duplicate rows, as expressed by `uq_source_items_source_type_source_id` and `find_source_item`; invalidate if review finds a supported case where the same pair represents different logical turns, then return to planning. Filtering before collapse/limit can reuse fields already present on `QueryResultItem`; invalidate if any provider omits either field for source hits, then add a conservative exact-ID fallback rather than a storage scan.
+
+**Plan:** Reuse the linked `SourceItem` already loaded by `PalliumService.query` and pass its canonical `(source_type, source_id)` through a new optional internal `QueryExecutor.query` argument only for source-only search. Filter matching source hits immediately after retrieval and before normalized-content collapse and top-K slicing, so overfetch naturally fills the freed slot and trace/result summaries continue to reflect visible output. Keep `request_source_item_id=None` and non-source-only behavior bit-for-bit unchanged. Add focused executor coverage for same identity/different row ID, identical text/different identity, empty/max/over-max refill, Unicode IDs, and absent exclusion; extend public HTTP lifecycle coverage to prove valid linked request duplicates are absent while invalid scope still fails closed. Rerun focused/performance/full tests proportionately, then rerun and manually label the same private 12-case audit with no model calls. Stop and re-plan on API/schema changes, an added storage read, provider contract gaps, or any different-identity suppression.
+
+**Verification plan:** When retrieval returns the linked request plus a legacy row with the same source identity, neither shall be visible and the next distinct candidate shall fill the requested limit -> QueryExecutor unit/integration test and HTTP source-only E2E. When a Unicode source identity differs from the request identity, it shall not be removed by the new filter; existing normalized-content deduplication remains authoritative -> focused boundary test. When no request link is supplied, existing normalized duplicate behavior and ranks shall remain unchanged -> regression test. When request linkage is missing, forgotten, wrong-role, or cross-scope, the HTTP endpoint shall retain its existing 422 fail-closed contract -> existing plus focused lifecycle E2E. When the local 12-case replay runs, all calls shall succeed with zero request-identity slots and the private manual sheet shall report injection-precision categories without model calls -> isolated snapshot audit and aggregate-only evidence.
+
+**Plan review:** Approved by clean-context reviewer `/root/self_identity_plan_review` on 2026-09-02. The reviewer confirmed the service already owns the sole validated request-link read, query results carry the canonical fields, pre-collapse filtering preserves refill, and no API/schema/boundary change is needed. Conditions: source hits only, `None` unchanged, and current fail-closed validation preserved.
+
+**Approvals:** Approved by user 2026-09-02: "ok, so you can continu"
+
+**Exceptions:** —
+
+**State:** Ready for review
+<!-- agent-workflow:end -->
+
+## Implementation
+
+- 2026-09-02: Created isolated branch `codex/fix-history-request-identity-exclusion` from merged main. Completed read-only production-shaped audit and pre-edit redline classification; no repository code was edited before this Work Record.
+- 2026-09-02: Passed the already validated canonical request identity into source-only selection and filtered matching source hits before existing duplicate collapse and visible limiting. Added focused executor boundaries and an HTTP route-to-service-to-query regression. The delegated worker hit the documented Windows process-launch failure on apply_patch and used the approved deterministic replacement fallback; primary review corrected and verified the final diff.
+
+## Evidence
+
+- Private audit artifacts remain under the local temporary audit directory and must not be committed. Pre-fix aggregate: 12 cases, five sessions, zero query failures, 12/12 top-one request-identity duplicates, zero post-collapse duplicate slots, and zero unknown-session slots.
+- Focused and adjacent retrieval validation: 99 passed; full suite: 4,138 passed, 12 skipped, two expected failures, zero failures. Exact post-fix 12-case replay: zero query failures, zero request-identity slots, zero full-content duplicate slots, and zero unknown-session slots, with no paid/model calls.
+- Primary qualitative review of 36 post-fix result slots: 10 directly useful, 12 useful background, 10 irrelevant or potentially misleading, four redundant; seven of 12 cases contained at least one direct result. This is injection-precision evidence only. Three workflow-heavy cases exposed a separate wrong-stage/currentness problem.
+
+## Plan review
+
+- APPROVED by `/root/self_identity_plan_review` (clean context, 2026-09-02). Placement and assumptions were validated; review conditions are recorded in the marker.
+
+## Result review
+
+- APPROVED by independent reviewer /root/identity_exclusion_result_review (2026-09-02). It verified validated identity provenance, source-hit-only pre-limit filtering, no added storage read or API/schema change, unchanged fail-closed behavior, truthful bounded refill, test coverage, and roadmap alignment. No blocking findings.

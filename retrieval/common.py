@@ -2,12 +2,31 @@
 
 from __future__ import annotations
 
+import hashlib
+import unicodedata
 from datetime import timezone
 
 from core.models import EvidenceReference, SourceItem
 from storage.base import IndexSearchHit
 
 MAX_EXCERPT_LENGTH = 160
+_SOURCE_DUPLICATE_MIN_LENGTH = 24
+_SOURCE_DUPLICATE_MIN_TOKENS = 4
+
+
+def build_source_content_fingerprint(text: str) -> str | None:
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    normalized = "".join(
+        " " if unicodedata.category(char).startswith("P") else char
+        for char in normalized
+    )
+    normalized = " ".join(normalized.split())
+    if (
+        len(normalized) < _SOURCE_DUPLICATE_MIN_LENGTH
+        or len(normalized.split()) < _SOURCE_DUPLICATE_MIN_TOKENS
+    ):
+        return None
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def build_excerpt(text: str, *, max_length: int = MAX_EXCERPT_LENGTH, query: str | None = None) -> str:

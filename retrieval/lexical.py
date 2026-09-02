@@ -11,7 +11,12 @@ from core.models import (
 from core.text import TOKEN_PATTERN, strip_combining_marks
 from core.visibility import QueryVisibilityTrace, VisibilityExclusion, is_visible, visibility_label
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
-from retrieval.common import build_evidence, build_excerpt, build_trace_hit
+from retrieval.common import (
+    build_evidence,
+    build_excerpt,
+    build_source_content_fingerprint,
+    build_trace_hit,
+)
 from storage.base import StorageProvider
 
 logger = logging.getLogger(__name__)
@@ -173,6 +178,9 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         source_type=source_item.source_type,
                         source_id=source_item.source_id,
                         excerpt=build_excerpt(source_item.content, query=text),
+                        source_content_fingerprint=build_source_content_fingerprint(
+                            source_item.content
+                        ),
                         occurred_at=source_item.occurred_at,
                         actor_ref=source_item.actor_ref,
                         agent_ref=source_item.agent_ref,

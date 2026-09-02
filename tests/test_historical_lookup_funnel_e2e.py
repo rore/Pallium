@@ -14,13 +14,15 @@ exclusion from the persisted exposed set.
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.main import create_app
-from core.models import new_id, utc_now
+from core.models import QueryResultItem, new_id, utc_now
 from evals.historical_lookup_measurement import (
     compute_reuse_rollup,
     load_events_from_storage,
 )
+from retrieval.base import RetrievalQueryResult
 from sqlalchemy import text
 from tests.config_helpers import build_llm_test_config
 from tests.stub_providers import TieredMemorySemanticProvider
@@ -79,7 +81,8 @@ def _ingest(client: TestClient, *, source_id: str, content: str, role: str,
 def _search_history(client: TestClient, *, container_ref: str = CONTAINER,
                     thread_ref: str = THREAD, visibility: str = "private",
                     actor_ref: str | None = None,
-                    request_source_item_id: str | None = None) -> dict:
+                    request_source_item_id: str | None = None,
+                    defer_delivery: bool = False) -> dict:
     resp = client.post("/query", json={
         "text": "reservation ordering duplicate holds",
         "container_ref": container_ref,
@@ -90,6 +93,7 @@ def _search_history(client: TestClient, *, container_ref: str = CONTAINER,
         "limit": 5,
         "source_only": True,
         "trigger_origin": "agent_pull",
+        "defer_delivery": defer_delivery,
     })
     assert resp.status_code == 200, resp.text
     return resp.json()
@@ -570,6 +574,39 @@ def test_expansion_write_failure_does_not_fail_the_request(monkeypatch, test_db_
         assert resp.status_code == 200, resp.text  # expansion still returns
 
 
+def test_deferred_attempt_write_failure_fails_closed(
+    monkeypatch, test_db_url: str
+) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        anchor_id = _ingest(
+            client,
+            source_id="u1",
+            content=_USER,
+            role="user",
+            artifact_kind="message",
+        )
+        storage = client.app.state.pallium_service._storage
+
+        def _boom(_row):
+            raise RuntimeError("telemetry down")
+
+        monkeypatch.setattr(storage, "write_historical_lookup_event_row", _boom)
+
+        assert _search_history(client)["results"]
+        with pytest.raises(RuntimeError, match="telemetry down"):
+            _search_history(client, defer_delivery=True)
+
+        direct = client.get(
+            f"/source/{anchor_id}/context",
+            params={"container_ref": CONTAINER},
+        )
+        assert direct.status_code == 200
+        with pytest.raises(RuntimeError, match="telemetry down"):
+            client.get(
+                f"/source/{anchor_id}/context",
+                params={"container_ref": CONTAINER, "defer_delivery": True},
+            )
+
 def test_concurrent_expansions_get_distinct_active_sessions(monkeypatch, test_db_url: str) -> None:
     """Two sessions expanding the same anchor concurrently each get an event
     attributed to their own active session — no cross-call/global contamination.
@@ -679,3 +716,191 @@ def test_mixed_case_container_write_and_read_resolve_to_same_scope(monkeypatch, 
             )).mappings().all()
         containers = {r["container_ref"] for r in rows}
         assert containers == {low}  # never the capital-P form
+
+def test_deferred_lookup_delivery_http_contract(
+    monkeypatch, test_db_url: str
+) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(
+            client,
+            source_id="deferred-1",
+            content=_USER,
+            role="user",
+            artifact_kind="message",
+        )
+        result = _search_history(client, defer_delivery=True)
+
+        attempt_id = result["delivery_attempt_id"]
+        assert attempt_id
+        assert result["lookup_event_id"] is None
+        assert len(_events(client, "lookup_attempt")) == 1
+        assert not _events(client, "lookup")
+
+        items = [
+            {"source_item_id": item["source_item_id"], "role": "search_match"}
+            for item in result["results"]
+        ]
+        assert client.post(
+            "/historical-access/missing/delivery", json={"items": []}
+        ).status_code == 404
+
+        invalid_items = items + [items[0]] if items else [
+            {"source_item_id": "outside", "role": "search_match"}
+        ]
+        invalid = client.post(
+            f"/historical-access/{attempt_id}/delivery",
+            json={"items": invalid_items},
+        )
+        assert invalid.status_code == 422
+
+        finalized = client.post(
+            f"/historical-access/{attempt_id}/delivery",
+            json={"items": items},
+        )
+        assert finalized.status_code == 200, finalized.text
+        final_id = finalized.json()["lookup_event_id"]
+        assert final_id != attempt_id
+
+        retry = client.post(
+            f"/historical-access/{attempt_id}/delivery",
+            json={"items": items},
+        )
+        assert retry.status_code == 200
+        assert retry.json()["lookup_event_id"] == final_id
+
+        conflict = client.post(
+            f"/historical-access/{attempt_id}/delivery",
+            json={"items": []},
+        )
+        assert conflict.status_code == 409
+        assert len(_events(client, "lookup")) == 1
+
+        normal = _search_history(client)
+        assert normal["lookup_event_id"]
+        assert normal["delivery_attempt_id"] is None
+
+
+def test_deferred_expansion_requires_final_same_scope_lookup(
+    monkeypatch, test_db_url: str
+) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        anchor_id = _ingest(
+            client,
+            source_id="expand-1",
+            content=_USER,
+            role="user",
+            artifact_kind="message",
+        )
+        lookup = _search_history(client, defer_delivery=True)
+        lookup_attempt_id = lookup["delivery_attempt_id"]
+        lookup_items = [
+            {"source_item_id": item["source_item_id"], "role": "search_match"}
+            for item in lookup["results"]
+        ]
+        finalized = client.post(
+            f"/historical-access/{lookup_attempt_id}/delivery",
+            json={"items": lookup_items},
+        )
+        assert finalized.status_code == 200, finalized.text
+        lookup_id = finalized.json()["lookup_event_id"]
+
+        def expansion_attempt(parent: str, session: str = THREAD) -> tuple[str, list[dict]]:
+            response = client.get(
+                f"/source/{anchor_id}/context",
+                params={
+                    "container_ref": CONTAINER,
+                    "parent_lookup_id": parent,
+                    "defer_delivery": True,
+                    "active_session_ref": session,
+                },
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            items = [
+                {
+                    "source_item_id": item["source_item_id"],
+                    "role": "anchor" if item["is_anchor"] else "neighbor",
+                }
+                for item in body["items"]
+            ]
+            return body["delivery_attempt_id"], items
+
+        attempt_id, expansion_items = expansion_attempt(lookup_id)
+        delivered = client.post(
+            f"/historical-access/{attempt_id}/delivery",
+            json={"items": expansion_items},
+        )
+        assert delivered.status_code == 200, delivered.text
+
+        nonfinal = _search_history(client, defer_delivery=True)
+        attempt_id, items = expansion_attempt(nonfinal["delivery_attempt_id"])
+        invalid = client.post(
+            f"/historical-access/{attempt_id}/delivery", json={"items": items}
+        )
+        assert invalid.status_code == 422
+
+        attempt_id, items = expansion_attempt(lookup_id, "other-session")
+        invalid_scope = client.post(
+            f"/historical-access/{attempt_id}/delivery", json={"items": items}
+        )
+        assert invalid_scope.status_code == 422
+
+def test_request_identity_exclusion_refills_http_results(
+    monkeypatch, test_db_url: str,
+) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        request_id = _ingest(
+            client,
+            source_id="request",
+            content=_USER,
+            role="user",
+            artifact_kind="message",
+            actor_ref="actor:test",
+        )
+        candidate_id = _ingest(
+            client,
+            source_id="candidate",
+            content=_WORK,
+            role="assistant",
+            artifact_kind="assistant_output",
+        )
+        retrieval = client.app.state.pallium_service._query_executor._retrieval
+
+        def retrieve_legacy_twins(**_kwargs) -> RetrievalQueryResult:
+            return RetrievalQueryResult(
+                results=[
+                    QueryResultItem(
+                        result_kind="source_hit",
+                        score=3,
+                        evidence=[],
+                        source_item_id="legacy-1",
+                        source_type="chat_message",
+                        source_id="request",
+                    ),
+                    QueryResultItem(
+                        result_kind="source_hit",
+                        score=2,
+                        evidence=[],
+                        source_item_id="legacy-2",
+                        source_type="chat_message",
+                        source_id="request",
+                    ),
+                    QueryResultItem(
+                        result_kind="source_hit",
+                        score=1,
+                        evidence=[],
+                        source_item_id=candidate_id,
+                        source_type="assistant_artifact",
+                        source_id="candidate",
+                    ),
+                ]
+            )
+
+        monkeypatch.setattr(retrieval, "query", retrieve_legacy_twins)
+        result = _search_history(
+            client,
+            actor_ref="actor:test",
+            request_source_item_id=request_id,
+        )
+        assert [row["source_item_id"] for row in result["results"]] == [candidate_id]
+        assert result["results"][0]["raw_rank"] == 1

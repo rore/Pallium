@@ -10,13 +10,16 @@ push-down that provides the anti-starvation guarantee.
 from __future__ import annotations
 
 from dataclasses import replace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import EmbeddingProviderConfig
 from app.main import create_app
-from core.models import IndexEntry, MemoryObject
+from core.models import IndexEntry, MemoryObject, QueryResultItem
+from core.query import QueryExecutor
+from retrieval.base import RetrievalQueryResult
 from providers.embedding.base import EmbeddingProvider
 from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
 from storage.vector_index import VectorIndexConfig
@@ -104,6 +107,25 @@ def test_source_only_returns_only_source_hits_not_starved(monkeypatch, test_db_u
         assert [r["raw_rank"] for r in results] == list(range(1, len(results) + 1))
 
 
+def test_source_only_max_page_keeps_bounded_refill_headroom(
+    monkeypatch, test_db_url: str
+) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="seed", content=_PLAIN)
+        retrieval = client.app.state.pallium_service._query_executor._retrieval
+        original_query = retrieval.query
+        requested_limits: list[int] = []
+
+        def recording_query(*args, **kwargs):
+            requested_limits.append(kwargs["limit"])
+            return original_query(*args, **kwargs)
+
+        monkeypatch.setattr(retrieval, "query", recording_query)
+
+        _query(client, source_only=True, limit=50)
+
+    assert requested_limits == [200]
+
 def test_source_only_does_not_change_default_query(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         for i in range(3):
@@ -157,7 +179,7 @@ def test_source_only_visibility_fail_closed(monkeypatch, test_db_url: str) -> No
 def test_source_only_excludes_forgotten_turn(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         keep = _ingest(client, source_id="keep", content=_PLAIN)
-        drop = _ingest(client, source_id="drop", content=_PLAIN)
+        drop = _ingest(client, source_id="drop", content=_PLAIN + " Follow-up differs.")
 
         before = {r["source_item_id"] for r in _query(client, source_only=True)["results"]}
         assert {keep, drop} <= before
@@ -387,3 +409,107 @@ def test_vector_source_only_http_expands_then_forgets_unicode_source(
     after = client.post("/query", json=query_payload)
     assert after.status_code == 200, after.text
     assert after.json()["results"] == []
+
+
+def test_source_only_exclusion_filters_identity_before_limit_and_refills() -> None:
+    retrieval = MagicMock()
+    retrieval.query.return_value = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind="source_hit",
+                score=3,
+                evidence=[],
+                source_item_id="row-1",
+                source_type="chat",
+                source_id="same",
+                source_content_fingerprint="a",
+            ),
+            QueryResultItem(
+                result_kind="source_hit",
+                score=2,
+                evidence=[],
+                source_item_id="row-2",
+                source_type="chat",
+                source_id="same",
+                source_content_fingerprint="b",
+            ),
+            QueryResultItem(
+                result_kind="source_hit",
+                score=1,
+                evidence=[],
+                source_item_id="row-3",
+                source_type="chat",
+                source_id="different",
+                source_content_fingerprint="c",
+            ),
+            QueryResultItem(
+                result_kind="source_hit",
+                score=0,
+                evidence=[],
+                source_item_id="row-4",
+                source_type="chat",
+                source_id="同じ-日本語",
+                source_content_fingerprint="d",
+            ),
+        ]
+    )
+    plugin = MagicMock(requires_visibility_context=False)
+    executor = QueryExecutor(MagicMock(), retrieval, {"test": plugin}, "test")
+
+    result = executor.query(
+        "x", 1, source_only=True, exclude_source_identity=("chat", "same")
+    )
+    assert [item.source_item_id for item in result.results] == ["row-3"]
+
+    unchanged = executor.query("x", 2, source_only=True)
+    assert [item.source_item_id for item in unchanged.results] == ["row-1", "row-2"]
+
+    unicode_result = executor.query(
+        "x",
+        3,
+        source_only=True,
+        exclude_source_identity=("chat", "同じ-日本語"),
+    )
+    assert "row-4" not in [item.source_item_id for item in unicode_result.results]
+    assert "row-3" in [item.source_item_id for item in unicode_result.results]
+
+    retrieval.query.return_value = RetrievalQueryResult(
+        results=[
+            QueryResultItem(
+                result_kind="source_hit",
+                score=200 - index,
+                evidence=[],
+                source_item_id=f"legacy-{index}",
+                source_type="chat",
+                source_id="same",
+                source_content_fingerprint=f"legacy-{index}",
+            )
+            for index in range(150)
+        ]
+        + [
+            QueryResultItem(
+                result_kind="source_hit",
+                score=50 - index,
+                evidence=[],
+                source_item_id=f"eligible-{index}",
+                source_type="chat",
+                source_id=f"eligible-{index}",
+                source_content_fingerprint=f"eligible-{index}",
+            )
+            for index in range(50)
+        ]
+    )
+    max_page = executor.query(
+        "x", 50, source_only=True, exclude_source_identity=("chat", "same")
+    )
+    assert [item.source_item_id for item in max_page.results] == [
+        f"eligible-{index}" for index in range(50)
+    ]
+
+    retrieval.query.return_value = RetrievalQueryResult(results=[])
+    assert (
+        executor.query(
+            "x", 50, source_only=True, exclude_source_identity=("chat", "same")
+        ).results
+        == []
+    )

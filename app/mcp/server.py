@@ -152,7 +152,11 @@ def _relay_text(result: object) -> str:
 
 
 def _compact_history(
-    result: dict, query: str, limit: int = 3, container_ref: str | None = None
+    result: dict,
+    query: str,
+    limit: int = 3,
+    container_ref: str | None = None,
+    thread_ref: str | None = None,
 ) -> dict:
     if "error" in result:
         return _bounded_error(result, _MCP_SEARCH_MAX_CHARS)
@@ -160,12 +164,40 @@ def _compact_history(
     for item in result.get("results", [])[:max(0, limit)]:
         if item.get("source_item_id") is None:
             continue
-        hit = {"source_item_id": item["source_item_id"], "excerpt": build_excerpt(item.get("excerpt") or "", max_length=240, query=query), **_history_fields(item)}
+        updates = item.get("historical_updates") or []
+        guidance = None
+        if any(update.get("replacement_status") == "current" for update in updates):
+            guidance = (
+                "A current replacement is available; prefer it for current guidance."
+            )
+        elif any(update.get("status") == "outdated" for update in updates):
+            guidance = (
+                "This is historical evidence and may need live verification "
+                "for current-state questions."
+            )
+        hit = {"source_item_id": item["source_item_id"]}
+        if guidance:
+            hit["replacement_guidance"] = guidance
+        hit.update(_history_fields(item))
+        hit["excerpt"] = build_excerpt(item.get("excerpt") or "", max_length=240, query=query)
+        source = item.get("retrieval_source")
+        if source is not None:
+            hit["match_channel"] = {
+                "lexical": "text match",
+                "vector": "meaning match",
+                "both": "text and meaning match",
+            }.get(source, "match")
+        source_thread = item.get("thread_ref")
+        hit["session_cue"] = (
+            "same session" if source_thread == thread_ref else "different session"
+        ) if source_thread and thread_ref else "session unknown"
         for key in ("role", "occurred_at"):
             if item.get(key) is not None:
                 hit[key] = item[key]
         hits.append(hit)
     payload = {"results": hits, "lookup_event_id": result.get("lookup_event_id")}
+    if hits:
+        payload["historical_reminder"] = "Historical evidence may need live verification for current-state questions."
     # Preserve the fail-closed / abstention reason so an empty result is
     # self-explaining (e.g. "visibility_context_required"), not a silent [].
     if result.get("decision_reason") is not None:
@@ -178,6 +210,14 @@ def _compact_history(
             "Copy the injected container_ref exactly; never derive or guess it."
         )
     budget = _MCP_SEARCH_EMPTY_MAX_CHARS if not hits else _MCP_SEARCH_MAX_CHARS
+    for key in ("historical_reminder",):
+        if len(_json_text(payload)) > budget:
+            payload.pop(key, None)
+    for hit in hits:
+        for key in ("match_channel", "session_cue"):
+            if len(_json_text(payload)) <= budget:
+                break
+            hit.pop(key, None)
     while len(_json_text(payload)) > budget and hits:
         longest = max(hits, key=lambda hit: len(hit.get("excerpt", "")))
         excerpt = longest.get("excerpt", "")
@@ -205,6 +245,7 @@ def _bounded_expansion(result: dict, max_chars: int = _MCP_EXPANSION_MAX_CHARS) 
         projected.append({
             "source_item_id": item.get("source_item_id"),
             "is_anchor": bool(item.get("is_anchor")),
+            "presentation_role": "anchor" if item.get("is_anchor") else "neighbor",
             **{k: item[k] for k in ("role", "occurred_at") if item.get(k) is not None},
             **_history_fields(item),
             "content": item.get("content") or "",
@@ -347,8 +388,24 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             artifact_kind=artifact_kind,
             work_refs=work_refs,
             request_source_item_id=request_source_item_id,
+            defer_delivery=True,
         )
-        return _json_text(_compact_history(result, query, limit, ctx.container_ref))
+        compact = _compact_history(result, query, limit, ctx.container_ref, ctx.thread_ref)
+        if "error" not in compact and result.get("delivery_attempt_id"):
+            receipt = await client.finalize_historical_delivery(
+                result["delivery_attempt_id"],
+                items=[
+                    {
+                        "source_item_id": item["source_item_id"],
+                        "role": "search_match",
+                    }
+                    for item in compact.get("results", [])
+                ],
+            )
+            if receipt.get("error"):
+                return _json_text(receipt)
+            compact["lookup_event_id"] = receipt.get("lookup_event_id")
+        return _json_text(compact)
 
     @server.tool()
     async def pallium_query_debug(
@@ -461,8 +518,24 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             max_chars=max_chars,
             include_supported_memories=include_supported_memories,
             parent_lookup_id=parent_lookup_id,
+            defer_delivery=True,
         )
-        return _json_text(_bounded_expansion(result, max_chars))
+        bounded = _bounded_expansion(result, max_chars)
+        attempt_id = result.get("delivery_attempt_id")
+        if "error" not in bounded and attempt_id:
+            receipt = await client.finalize_historical_delivery(
+                attempt_id,
+                items=[
+                    {
+                        "source_item_id": item["source_item_id"],
+                        "role": "anchor" if item.get("is_anchor") else "neighbor",
+                    }
+                    for item in bounded.get("items", [])
+                ],
+            )
+            if receipt.get("error"):
+                return _json_text(receipt)
+        return _json_text(bounded)
     @server.tool()
     async def pallium_flag_memory(
         memory_object_id: str,

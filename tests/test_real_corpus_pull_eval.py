@@ -15,6 +15,8 @@ from evals.real_corpus_pull_eval import (
     _build_parser,
     load_corpus,
     render_review_sheet,
+    ANSWER_SYSTEM_PROMPT,
+    _load_lineage,
     run_pilot,
 )
 from providers.llm.base import LLMJsonResponse
@@ -297,9 +299,19 @@ def test_cli_requires_explicit_db_and_outputs() -> None:
     with pytest.raises(SystemExit):
         parser.parse_args([])
     args = parser.parse_args(["--db", "x.db", "--container-ref", "c:test", "--visibility", "private", "--aggregate-output", "a.json", "--review-output", "r.json"])
-    assert args.sample_size == 20 and args.seed == 0
-    assert args.max_model_calls == 100 and args.max_estimated_input_tokens == 50000
-    assert args.case_id is None and args.no_model_judge is False
+    assert args.sample_size == 4 and args.seed == 0
+    assert args.max_model_calls == 8
+    assert args.max_estimated_input_tokens == 10000
+    assert args.case_id is None and args.no_model_judge is True
+    judged = parser.parse_args([
+        "--db", "x.db",
+        "--container-ref", "c:test",
+        "--visibility", "private",
+        "--aggregate-output", "a.json",
+        "--review-output", "r.json",
+        "--model-judge",
+    ])
+    assert judged.no_model_judge is False
     assert "never publish" in parser.format_help()
 
 def test_exact_case_selection_preserves_order_and_rejects_bad_ids(tmp_path: Path) -> None:
@@ -491,7 +503,7 @@ def test_cli_insufficient_linked_cases_skips_provider_setup(
 
     aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
     assert aggregate["decision_gate"]["status"] == "blocked_insufficient_linked_cases"
-    assert aggregate["sampling"]["requested_cases"] == 20
+    assert aggregate["sampling"]["requested_cases"] == 4
     assert aggregate["results"]["model_calls"] == 0
     assert aggregate["results"]["estimated_input_tokens_total"] == 0
 
@@ -770,3 +782,140 @@ def test_both_arms_respect_hard_call_cap() -> None:
     aggregate, _ = run_pilot(snapshot, provider=provider, history_arm="both")
     assert aggregate["results"]["model_calls"] == 100
     assert aggregate["sampling"]["paired_cases"] == 20
+
+
+def _finalized_events(db: Path) -> None:
+    with sqlite3.connect(db) as conn:
+        conn.execute("ALTER TABLE historical_lookup_reuse_event ADD COLUMN parent_lookup_id TEXT")
+        conn.execute("UPDATE historical_lookup_reuse_event SET exposed_json = ? WHERE id = 'e1'", (json.dumps([
+            {"source_item_id": "s1", "role": "search_match"},
+        ]),))
+        conn.execute("INSERT INTO historical_lookup_reuse_event VALUES (?, ?, 'expansion', ?, 'c:test', NULL, 'private', 'actor-test', ?, NULL, NULL, ?)", (
+            "x1", "2026-01-01T00:02:00", "thread-0", json.dumps([
+                {"source_item_id": "s1", "role": "anchor"}, {"source_item_id": "s2", "role": "neighbor"}
+            ]), "e1"))
+        conn.execute("INSERT INTO historical_lookup_reuse_event VALUES (?, ?, 'expansion_attempt', ?, 'c:test', NULL, 'private', 'actor-test', ?, NULL, NULL, ?)", (
+            "attempt", "2026-01-01T00:03:00", "thread-0", json.dumps([{"source_item_id": "s3", "role": "neighbor"}]), "e1"))
+        conn.execute("INSERT INTO historical_lookup_reuse_event VALUES (?, ?, 'expansion', ?, 'c:other', NULL, 'private', 'actor-test', ?, NULL, NULL, ?)", (
+            "wrong", "2026-01-01T00:01:30", "thread-0", json.dumps([{"source_item_id": "s3", "role": "neighbor"}]), "e1"))
+
+
+def test_finalized_replay_keeps_occurrences_roles_and_ignores_attempts(tmp_path: Path) -> None:
+    db = tmp_path / "finalized.db"
+    _db(db, [("e1", "query", json.dumps([{"source_item_id": "s1"}]))], [("s1", "anchor text", None), ("s2", "neighbor text", None), ("s3", "attempt text", None)])
+    _finalized_events(db)
+    snapshot = load_corpus(db, container_ref="c:test", visibility="private", replay_mode="current_replay")
+    case = snapshot.cases[0]
+    assert case.source_ids == ("s1", "s1", "s2")
+    assert case.delivery_roles == ("search_match", "anchor", "neighbor")
+    assert "attempt text" not in case.guarded_history
+    payload = json.loads(case.guarded_history)
+    assert [item["source_item_id"] for item in payload["results"]] == ["s1", "s1", "s2"]
+    assert case.delivery_roles == ("search_match", "anchor", "neighbor")
+
+
+def test_as_of_lookup_includes_later_expansion_but_excludes_future_and_missing_sources(tmp_path: Path) -> None:
+    db = tmp_path / "asof.db"
+    _db(db, [("e1", "query", json.dumps([{"source_item_id": "s1"}]))], [("s1", "old", None), ("s2", "future", None)])
+    _finalized_events(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE source_items SET created_at = '2026-01-01T00:01:00+00:00' WHERE id = 's1'")
+        conn.execute("UPDATE source_items SET created_at = '2026-01-02T00:00:00+00:00' WHERE id = 's2'")
+    case = load_corpus(db, container_ref="c:test", visibility="private", replay_mode="as_of_lookup").cases[0]
+    assert case.source_ids == ("s1", "s1")
+    assert case.replay_mode == "as_of_lookup"
+
+
+def test_current_replay_omissions_are_mode_specific_and_capability_context_is_shared() -> None:
+    snapshot = CorpusSnapshot(cases=tuple(PullCase(f"e{i}", f"t{i}", "task", ("s",), ("ctx",), guarded_history="ctx", has_supported_replacement=True) for i in range(4)), counts={"valid_cases": 4}, attrition={}, lineage={"sampled_cases_with_supported_replacements": 4})
+    provider = ScriptedProvider()
+    aggregate, review = run_pilot(snapshot, provider=provider, history_arm="guarded", model_judge=False, max_model_calls=8, max_estimated_input_tokens=10000)
+    assert provider.calls == aggregate["results"]["model_calls"] == 8
+    assert aggregate["results"]["judge_calls"] == 0
+    assert all(case["replay_mode"] == "current_replay" for case in review["cases"])
+    assert provider.requests[0][0] == ANSWER_SYSTEM_PROMPT
+    assert "inspect and edit repository files and run commands and tests" in provider.requests[0][0]
+    both_provider = ScriptedProvider()
+    both, _ = run_pilot(snapshot, provider=both_provider, history_arm="both", model_judge=False, max_model_calls=8, max_estimated_input_tokens=10000)
+    assert both_provider.calls == 8
+    assert both["sampling"]["paired_cases"] < 4
+
+
+def test_invalid_replay_mode_is_rejected(tmp_path: Path) -> None:
+    db = tmp_path / "mode.db"
+    _db(db, [("e1", "query", json.dumps([{"source_item_id": "s1"}]))], [("s1", "source", None)])
+    with pytest.raises(ValueError, match="replay_mode"):
+        load_corpus(db, container_ref="c:test", visibility="private", replay_mode="later")
+
+
+def test_current_replay_loads_and_reports_forgetting_visibility_and_redaction(tmp_path: Path) -> None:
+    db = tmp_path / "omissions.db"
+    _db(db, [("e1", "query", json.dumps([{"source_item_id": x} for x in ("ok", "forgot", "hidden", "empty", "missing")]))], [
+        ("ok", "kept", None), ("forgot", "gone", "2026-01-02"), ("hidden", "private", None), ("empty", "", None),
+    ])
+    with sqlite3.connect(db) as conn:
+        conn.execute("ALTER TABLE historical_lookup_reuse_event ADD COLUMN parent_lookup_id TEXT")
+        conn.execute("UPDATE historical_lookup_reuse_event SET exposed_json = ? WHERE id = 'e1'", (json.dumps([
+            {"source_item_id": x, "role": "search_match"} for x in ("ok", "forgot", "hidden", "empty", "missing")
+        ]),))
+        conn.execute("UPDATE source_items SET visibility = 'container', container_ref = 'c:other', actor_ref = 'other-actor' WHERE id = 'hidden'")
+    snapshot = load_corpus(db, container_ref="c:test", visibility="private", replay_mode="current_replay")
+    assert snapshot.cases[0].source_ids == ("ok",)
+    assert snapshot.attrition["current_replay_omitted_forgotten"] == 1
+    assert snapshot.attrition["current_replay_omitted_hidden"] == 1
+    assert snapshot.attrition["current_replay_omitted_missing"] == 1
+    assert snapshot.attrition["current_replay_omitted_redacted"] == 1
+
+
+def test_as_of_replay_keeps_delivered_visible_source_from_another_container(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "public-source.db"
+    _db(
+        db,
+        [("e1", "query", json.dumps([{"source_item_id": "s1"}]))],
+        [("s1", "shared evidence", None)],
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE source_items SET container_ref = 'c:other', visibility = 'public', "
+            "actor_ref = NULL WHERE id = 's1'"
+        )
+
+    snapshot = load_corpus(
+        db,
+        container_ref="c:test",
+        visibility="private",
+        replay_mode="as_of_lookup",
+    )
+
+    assert snapshot.cases[0].source_ids == ("s1",)
+
+
+def test_as_of_lineage_is_conservative_for_future_missing_cycle_and_conflict(tmp_path: Path) -> None:
+    db = tmp_path / "lineage-cases.db"
+    _db(db, [("e1", "query", json.dumps([{"source_item_id": "s1"}]))], [("s1", "source", None)])
+    _add_lineage(db)
+    with sqlite3.connect(db) as conn:
+        conn.row_factory = sqlite3.Row
+        updates, counts = _load_lineage(conn, container_ref="c:test", visibility="private", query_actor_ref=None, cutoff="2026-01-01T00:00:00+00:00")
+        assert updates["s1"][0]["replacement_status"] == "unavailable"
+        conn.execute("UPDATE memory_objects SET created_at = '2026-01-01T00:00:00' WHERE id = 'new'")
+        updates, _ = _load_lineage(conn, container_ref="c:test", visibility="private", query_actor_ref=None, cutoff="2026-01-01T00:00:00+00:00")
+        assert updates["s1"][0]["replacement_status"] == "current"
+        conn.execute("INSERT INTO memory_objects VALUES ('new3', 'decision', '{\"statement\":\"final\"}', 'active', 'private', 'c:test', NULL, '2026-01-03', '2026-01-03', NULL, NULL, 0)")
+        conn.execute("UPDATE memory_objects SET lifecycle = 'superseded', superseded_by_id = 'new3', created_at = '2026-01-02' WHERE id = 'new'")
+        updates, _ = _load_lineage(conn, container_ref='c:test', visibility='private', query_actor_ref=None)
+        assert updates['s1'][0]['current_memory_object_id'] == 'new3'
+        conn.execute("UPDATE memory_objects SET created_at = NULL WHERE id = 'new'")
+        updates, _ = _load_lineage(conn, container_ref="c:test", visibility="private", query_actor_ref=None, cutoff="2026-01-03T00:00:00+00:00")
+        assert updates["s1"][0]["replacement_status"] == "unavailable"
+        conn.execute("UPDATE memory_objects SET lifecycle = 'superseded', created_at = '2026-01-02', superseded_by_id = 'old' WHERE id = 'new'")
+        conn.execute("UPDATE memory_objects SET superseded_by_id = 'new' WHERE id = 'old'")
+        updates, _ = _load_lineage(conn, container_ref="c:test", visibility="private", query_actor_ref=None)
+        assert updates["s1"][0]["replacement_status"] == "cycle"
+        conn.execute("UPDATE memory_objects SET superseded_by_id = 'new' WHERE id = 'old'")
+        conn.execute("INSERT INTO memory_objects VALUES ('new2', 'decision', '{\"statement\":\"other\"}', 'active', 'private', 'c:test', NULL, '2026-01-03', '2026-01-03', NULL, NULL, 0)")
+        conn.execute("INSERT INTO relations VALUES ('memory_object', 'new2', 'supersedes', 'memory_object', 'old')")
+        updates, _ = _load_lineage(conn, container_ref="c:test", visibility="private", query_actor_ref=None)
+        assert updates["s1"][0]["replacement_status"] == "conflict"
