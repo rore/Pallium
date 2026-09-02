@@ -94,10 +94,10 @@ installed versions are Claude Code 2.1.250, Codex CLI 0.149.1, and OpenCode
 
 **Claude registration foundation (2026-08-28):** `SessionStart` and `Stop` now
 refresh an exact-session credential through a loopback-only, memory-only
-registration endpoint with fixed 900-second expiry. The endpoint has no public
+registration endpoint with a current fixed 900-second expiry that is not the production lifetime contract. The endpoint has no public
 probe, status, or clear operation; native Windows named-pipe transport already
 exists, and restart currently falls back because credentials are not persisted. A plan-only Windows DPAPI persistence extension now targets automatic recovery of unexpired same-user idle capabilities; it is not implemented or qualified. This is a
-security handoff only, not evidence of target admission or coordinator readiness.
+security handoff only, not evidence of target admission or coordinator readiness. Capability secrets refresh only through SessionStart, UserPromptSubmit (busy), and Stop (idle); Relay aliases are secret-free names only.
 
 ### Admission handshakes to preserve
 
@@ -146,7 +146,7 @@ enabling live wake still requires the relevant safety evidence.
    `SessionStart` → busy deferral → `Stop` idle grant → native wake → hook claim/ACK
    journey. Treat the first observed failure as the next implementation slice;
    do not broaden the adapter before this witness exists.
-2. **Claude crash/restart recovery:** deterministic caller-surface coverage now proves that a crash after claim leaves the delivery lease-eligible and injected/ACKed once on the next valid hook. Automatic restart wake is not yet implemented: a plan-only Windows DPAPI capability-persistence extension now supersedes the prior natural-turn-only restart stance. It must first wait for API/hook readiness, then use a persisted generation compare-and-set to consume idle before native transport, fail closed on busy/CAS persistence errors, derive demand from pending Relay deliveries, and prove one no-manual-prompt restart recovery before this counts toward production qualification.
+2. **Claude crash/restart recovery:** deterministic caller-surface coverage now proves that a crash after claim leaves the delivery lease-eligible and injected/ACKed once on the next valid hook. Automatic restart wake is not yet implemented: a plan-only Windows DPAPI capability-persistence extension now supersedes the prior natural-turn-only restart stance. It must wait until FastAPI lifespan/port readiness and prove the awakened real hook POST succeeds, bind loopback capability registration to an active exact Relay session, use a persisted generation compare-and-set to consume idle before native transport, fail closed on busy/CAS persistence errors, replace the fixed 900-second limit with a bounded liveness-based live-session window plus stale-transport/session-close invalidation, derive demand from pending Relay deliveries, and prove one no-manual-prompt restart recovery before this counts toward production qualification.
 
 3. **Codex remaining lifecycle gates:** qualify busy/interrupted/restart admission,
    sender-side reply admission, correlation telemetry, and sustained no-ping
