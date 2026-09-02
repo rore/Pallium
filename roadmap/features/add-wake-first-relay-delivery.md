@@ -118,10 +118,10 @@ selects durable fallback. Runtime names are never global capability claims, and 
 exited arbitrary process is not wakeable merely because its conversation can be
 resumed by launching another process.
 
-### Remaining production gates (priority updated 2026-08-31)
+### Remaining production gates (priority updated 2026-09-02)
 
-Gate each runtime independently. Codex-first work may proceed without waiting for
-Claude or OpenCode; enabling live wake still requires the relevant safety evidence.
+Gate each runtime independently. Claude Windows live qualification is next;
+enabling live wake still requires the relevant safety evidence.
 
 1. **Codex-first product gate:** Windows exact-session wake is now proven for
    unloaded tasks through `codex exec resume` and loaded Desktop-owned tasks
@@ -140,6 +140,27 @@ Claude or OpenCode; enabling live wake still requires the relevant safety eviden
 3. **MCP receive lifecycle foundation — code complete, runtime qualification pending:**
    `fix-relay-receive-mcp-lifecycle` is merged. The MCP path remains fail-closed and unqualified on Codex Desktop until a runtime-owned session handoff reaches the MCP child; hook-delivery wake does not depend on this recovery path.
 
+### Next execution order
+
+1. **Claude live Windows qualification:** dogfood the complete exact-session
+   `SessionStart` → busy deferral → `Stop` idle grant → native wake → hook claim/ACK
+   journey. Treat the first observed failure as the next implementation slice;
+   do not broaden the adapter before this witness exists.
+2. **Claude crash/restart recovery:** prove that a crash after claim but before
+   context emission cannot strand unattended work. The delivery must survive lease
+   expiry, re-arm at most one exact-session wake, and be injected and ACKed once.
+   Natural-turn redelivery alone is safe fallback, not unattended qualification.
+3. **Codex remaining lifecycle gates:** qualify busy/interrupted/restart admission,
+   sender-side reply admission, correlation telemetry, and sustained no-ping
+   implementation/review/remediation dogfood.
+4. **Codex MCP recovery:** keep receive fail-closed unless Codex Desktop supplies a
+   runtime-owned session identity to the MCP child; this is not a blocker for the
+   qualified hook-delivery path.
+5. **Additional platforms:** qualify Claude UDS and Codex wake on macOS/Linux only
+   after their Windows lifecycle gates pass.
+6. **Optional correlated turn-end notification:** retain the default-off proposal
+   in `roadmap/ideas/idea-agent-relay.md`; it improves supervision but is not a
+   prerequisite for Claude wake correctness.
 
 **Core scope:** Derive the smallest coordinator from the Codex delivery trace.
 Do not wait for a second adapter or build speculative multi-runtime machinery.
