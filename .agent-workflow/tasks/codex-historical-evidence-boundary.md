@@ -48,7 +48,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -62,7 +62,7 @@ The reviewer required the live-state boundary to survive worst-case trimming, na
 
 ## Evidence
 
-Pending.
+Implemented the explicit historical live-state boundary, removed the reminder deletion path so it survives the 2,000-character trim, updated the tool description, and added direct/caller-level assertions. Independent syntax plus history-presentation, MCP server, delivery-receipt, and MCP-integration verification: 80 passed. Real import-boundary and agent-workflow gates are clean. Focused four-case external replay is blocked pending fresh explicit approval for private-data egress.
 
 ## Result review
 

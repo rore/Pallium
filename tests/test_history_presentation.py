@@ -101,6 +101,7 @@ def test_replacement_guidance_survives_budget_and_missing_optionals() -> None:
     )
 
     hit = result["results"][0]
+    assert "cannot confirm current messages" in result["historical_reminder"]
     assert "replacement_guidance" in hit
     assert list(hit).index("historical_updates") < list(hit).index("excerpt")
     assert len(_json_text(result)) <= _MCP_SEARCH_MAX_CHARS
@@ -113,6 +114,7 @@ def test_search_unicode_and_limit_boundaries() -> None:
     )
 
     assert "漢" in result["results"][0]["excerpt"]
+    assert "cannot confirm current messages" in result["historical_reminder"]
     assert len(_json_text(result)) <= _MCP_SEARCH_MAX_CHARS
     assert _compact_history(
         {"results": [{"source_item_id": "s", "excerpt": "x"}]},
@@ -120,6 +122,24 @@ def test_search_unicode_and_limit_boundaries() -> None:
         limit=0,
     )["results"] == []
 
+
+def test_search_stale_only_warning_survives_budget() -> None:
+    result = _compact_history(
+        {
+            "results": [{
+                "source_item_id": "stale",
+                "excerpt": "\\\"界😀" * 2000,
+                "historical_updates": [{
+                    "status": "outdated",
+                    "replacement_status": "unavailable",
+                }],
+            }],
+        },
+        "界",
+    )
+
+    assert "verify live state" in result["historical_reminder"]
+    assert len(_json_text(result)) <= _MCP_SEARCH_MAX_CHARS
 
 def test_expansion_labels_and_bounds() -> None:
     result = _bounded_expansion(
