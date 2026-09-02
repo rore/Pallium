@@ -229,7 +229,7 @@ def test_session_start_subprocess_registers_through_loopback_without_secret_outp
     assert secret not in result.stdout
     assert secret not in result.stderr
     assert len(received) == 1
-    not assert registry.probe(
+    assert not registry.probe(
         runtime="claude-code",
         session_ref="subprocess-session",
         container_ref=received[0]["container_ref"],
