@@ -48,6 +48,17 @@ The corrected four-case current replay completed on 2026-09-02: all four pairs r
 
 A zero-model-call audit then replayed the same 12 historical searches across five requester sessions against an isolated database/vector snapshot. It found that all 12 searches ranked a legacy duplicate row for the active request first: the internal row ID differed, but (source_type, source_id) was identical. After excluding that validated request identity before visible top-K selection, the exact replay completed with zero failures, zero request-identity slots, zero full-content duplicate slots, and zero unknown-session slots. A primary-agent qualitative review labelled the 36 post-fix slots as 10 directly useful, 12 useful background, 10 irrelevant or potentially misleading, and four redundant; seven of 12 cases had at least one direct result. Three workflow-heavy cases found the right topic but the wrong chronological stage. These are injection-precision observations, not downstream-task-effect evidence.
 
+The follow-up signal assessment used the same cases and no model calls. Newest-first
+ranking reduced direct top-one results from five cases to four; oldest-first reduced
+them to two; same-session preference changed nothing. Five of the six timestamped
+wrong-stage results were created after the historical request, so most of that
+failure is current-data leakage into an old-request replay, not evidence for a
+production recency rule. Limiting the delivered preview to the first two results
+retained all seven cases with direct evidence, reduced irrelevant/redundant slots
+from 14 to six, and reduced the compact response by 26.7%. The third result remains
+an offline measurement candidate; two results is the budgeted setting for the next
+experiment, not yet a global product default.
+
 ## Ordered work
 
 1. **Truthful delivery telemetry.** Make one layer own final response selection and
@@ -77,14 +88,14 @@ A zero-model-call audit then replayed the same 12 historical searches across fiv
 7. **Active-request identity exclusion.** When a lookup is linked to the current
    request, exclude every legacy row with the same canonical source identity before
    visible top-K selection and refill from the existing bounded candidate window.
-8. **Wrong-stage and weak-result assessment.** Use the fixed 12-case audit to
-   characterize when search finds the right topic but an obsolete workflow stage,
-   and when filling another slot adds noise. Prefer a simple general signal or
-   abstention rule only if the labelled cases support one; do not build a reranker
-   from this small corpus.
-9. **Budget-capped rerun.** Run the 8-12-case downstream experiment with no
-   automatic judge and fixed call/token caps only after the deterministic retrieval
-   issues above are addressed or explicitly bounded.
+8. **Wrong-stage and weak-result assessment.** Complete: simple recency and
+   same-session rules do not improve this corpus, while most wrong-stage results
+   did not exist at the original request time. Do not change production ranking or
+   add a learned reranker from this sample.
+9. **Budget-capped rerun.** Run the 8-12-case downstream experiment in
+   as_of_lookup mode, with no automatic judge, two delivered search previews, and
+   fixed call/token caps. Record the third candidate offline so its possible value
+   remains measurable without paying to inject it.
 
 ## Out of scope
 
@@ -134,6 +145,9 @@ A zero-model-call audit then replayed the same 12 historical searches across fiv
 10. A lookup linked to the active request never returns another row with the same
     canonical source identity within the bounded candidate window; focused HTTP E2E
     and the fixed 12-case replay both prove refill and zero self-identity slots.
+11. Before the paid expansion, deterministic evidence rejects unsupported global
+    recency/session reranking and fixes the experimental delivery budget. The paid
+    run cannot mix post-request sources into an as_of_lookup case.
 
 ## Sequencing
 
@@ -142,6 +156,6 @@ A zero-model-call audit then replayed the same 12 historical searches across fiv
 2. Add time modes before interpreting replacement behavior.
 3. Add diversity and compact presentation changes under deterministic tests.
 4. Run the capped four-case replay.
-5. Expand to 8-12 cases only if the replay is informative; otherwise fix the
-   observed failure rather than buying more samples.
+5. Run the 8-12-case as_of_lookup experiment with two delivered previews and the
+   third candidate retained only for offline precision measurement.
 6. Return to `idea-pull-real-corpus-validation` only after this item is done.
