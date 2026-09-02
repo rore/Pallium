@@ -40,8 +40,8 @@ env = { PALLIUM_MCP_TRANSPORT = "stdio" }
     assert 'pallium_relay_reply = { approval_mode = "approve" }' in content
     assert 'pallium_relay_ack = { approval_mode = "approve" }' in content
     assert 'pallium_relay_send = { approval_mode = "approve" }' in content
-    assert content.count('approval_mode = "approve"') == 3
-    assert 'pallium_relay_receive = { approval_mode = "approve" }' not in content
+    assert content.count('approval_mode = "approve"') == 4
+    assert 'pallium_relay_receive = { approval_mode = "approve" }' in content
     assert (
         'command = "C:/Users/me/AppData/Roaming/uv/python/'
         'cpython-3.13.14-windows-x86_64-none/python.exe"'
