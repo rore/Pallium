@@ -71,7 +71,8 @@ def test_exact_active_writer_queues_generic_trigger_hidden() -> None:
         [], 1, stderr="already has an active writer (code -32600)"
     )
     queued = subprocess.CompletedProcess([], 0, stderr="")
-    prompt = codex_wake._wake_prompt() + " →"
+    generic_prompt = codex_wake._wake_prompt()
+    prompt = generic_prompt + " →"
     with patch("app.codex_wake.subprocess.run", side_effect=[active, queued]) as run:
         assert codex_wake._launch("target-session", prompt) is True
     assert run.call_count == 2
@@ -83,7 +84,8 @@ def test_exact_active_writer_queues_generic_trigger_hidden() -> None:
         "--thread", "target-session", "--message", prompt
     ]
     assert "→" in prompt
-    assert codex_wake._wake_prompt() in run.call_args_list[0].kwargs["input"]
+    assert run.call_args_list[0].kwargs["input"].startswith(generic_prompt)
+    assert codex_wake._wake_prompt() == generic_prompt
     assert "delivery_id" not in prompt
     assert "receipt" not in prompt
     assert run.call_args_list[1].kwargs["stdin"] is subprocess.DEVNULL
