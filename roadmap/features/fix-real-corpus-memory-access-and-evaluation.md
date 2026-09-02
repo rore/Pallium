@@ -107,11 +107,12 @@ past records from masquerading as live state.
    previews, retained the third offline, disabled the automatic judge, and stayed
    within fixed call/token caps. The clean directional estimate was three helped,
    two harmed, and one neutral across six independent uncontaminated cases.
-10. **Historical-evidence boundary.** Make the compact history contract state that
-    recalled workflow text is past evidence, not confirmation of current messages,
-    tool state, or completed actions. Require live verification before the agent
-    claims receipt or execution. Validate first on the two observed harmful cases
-    plus useful controls before buying another broad run.
+10. **Historical-evidence boundary.** Complete in PR #96: the compact history
+    contract states that recalled workflow text cannot confirm current messages,
+    live checks, approvals, or completed actions, and requires live verification.
+    A capped four-pair replay retained both useful controls and prevented both
+    observed false live-state claims (eight answer calls; 2,489 estimated input
+    tokens in the final run).
 
 ## Out of scope
 
@@ -178,6 +179,6 @@ past records from masquerading as live state.
 4. Run the capped four-case replay.
 5. Complete the eight-case as_of_lookup experiment with two delivered previews and
    the third candidate retained only for offline precision measurement.
-6. Add and test the historical-evidence boundary on the harmful cases and useful
-   controls.
+6. Complete: add and test the historical-evidence boundary on the harmful cases
+   and useful controls.
 7. Return to `idea-pull-real-corpus-validation` only after this item is done.
