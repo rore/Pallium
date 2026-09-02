@@ -343,3 +343,18 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
         schedule_claude_relay_wake(result, scope, registry=registry)
     transport.assert_called_once()
     assert not registry.probe(runtime="claude-code", session_ref="session-test", container_ref="wrong", actor_ref=scope["actor_ref"], transport=transport)
+def test_windows_write_closes_event_after_cancelled_completion() -> None:
+    class Overlapped:
+        hEvent = None
+    pywintypes = SimpleNamespace(OVERLAPPED=Overlapped)
+    waits = iter([258])
+    win32event = SimpleNamespace(WAIT_OBJECT_0=0, CreateEvent=lambda *_: "event", WaitForSingleObject=lambda *_: next(waits))
+    closed = []
+    win32file = SimpleNamespace(
+        WriteFile=lambda *_: (997, 0),
+        CancelIoEx=lambda *_: None,
+        GetOverlappedResult=lambda *_: (_ for _ in ()).throw(OSError("ERROR_OPERATION_ABORTED")),
+        CloseHandle=lambda handle: closed.append(handle),
+    )
+    assert _windows_write("pipe", b"frame", pywintypes, win32event, win32file, SimpleNamespace(ERROR_IO_PENDING=997)) is False
+    assert closed == ["event"]

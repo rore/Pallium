@@ -144,7 +144,7 @@ def _windows_write(handle, data, pywintypes, win32event, win32file, winerror) ->
                 win32file.GetOverlappedResult(handle, overlapped, True)
                 completed = True
             except Exception:
-                pass
+                completed = True
             return False
         completed = True
         win32file.GetOverlappedResult(handle, overlapped, True)
