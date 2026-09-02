@@ -1,13 +1,13 @@
 <!-- agent-workflow:start -->
-**Outcome:** Codex Relay recovery works with a runtime-owned session identity, Relay tool limits and reply semantics are explicit, missing scope is actionable, and the wake roadmap matches the live queue fallback.
+**Outcome:** The Claude S0 wake slice remains recorded and reviewable, while Codex Relay recovery is hardened with runtime-owned identity, explicit tool semantics, and a qualified loss-safe busy-writer lifecycle.
 
-**Target:** Pallium Relay MCP and Codex integration boundary.
+**Target:** Pallium Relay wake adapters, the Codex MCP/integration boundary, and their caller-surface delivery contract.
 
-**Scope:** Codex MCP setup/runtime identity handoff, Relay MCP tool guidance and scope errors, focused caller-surface tests, canonical Relay docs, and the wake roadmap result. Preserve all unrelated files.
+**Scope:** Preserve the original Claude S0 adapter/dispatcher outcome on this branch; add Codex MCP setup/runtime identity handoff, Relay MCP tool guidance and scope errors, focused caller-surface tests, canonical Relay docs, and the wake roadmap result. The active-writer claim-before-queued-execution lifecycle fix and its E2E proof are part of this slice. Preserve all unrelated files.
 
-**Constraints:** Never accept model-supplied runtime/session identity or parse prompt-injected scope. Preserve exact-session isolation, server-side 1,500-character validation, idempotent single-reply semantics, persist-first delivery, and unrelated dirty files. No PR.
+**Constraints:** Never accept model-supplied runtime/session identity or parse prompt-injected scope. Preserve the S0 dispatch boundary, exact-session isolation, server-side 1,500-character validation, idempotent single-reply semantics, persist-first delivery, claim-lease safety across queued execution, and unrelated dirty files. No PR.
 
-**Completion criteria:** (1) When Codex provides a runtime-owned session identifier, MCP receive claims only that session without PALLIUM_THREAD_REF. (2) When identity or paired scope is absent, MCP receive gives actionable setup guidance without an HTTP 422. (3) Send/reply guidance states the 1,500-character cap and that continuations use relay_send, not repeated replies. (4) The roadmap accurately describes the queue fallback. (5) Caller-surface unit, contract, and E2E tests cover success, absent identity/scope, exact max/over-max, duplicate reply, and session isolation.
+**Completion criteria:** (1) The original Claude S0 adapter/dispatcher result remains reviewable with its existing verification evidence. (2) When Codex provides a runtime-owned session identifier, MCP receive claims only that session without PALLIUM_THREAD_REF. (3) When identity or paired scope is absent, MCP receive gives actionable setup guidance without an HTTP 422. (4) Send/reply guidance states the 1,500-character cap and that continuations use relay_send, not repeated replies. (5) The active-writer queue path does not carry an expired claim receipt: delayed queued execution has no loss or duplicate action, proven through caller-surface E2E. (6) A newly started Codex session proves runtime-owned identity, exact-session receive, and successful ACK. (7) The roadmap records the reproduced claim-lease-expiry failure and keeps the fallback unqualified until these gates pass.
 
 **Risk:** Elevated
 
@@ -15,16 +15,16 @@
 
 **Reason:** Clean-context pre-edit redline classification (2026-09-02): app/mcp context and server are gray/watch, tests and roadmap are blue, with no red zone or boundary violation. Elevated/Moderate covers runtime MCP behavior, trusted identity, docs, and E2E validation.
 
-**Discovery:** Official Codex MCP documentation verifies STDIO env_vars allow and forward selected names from the local Codex environment. The live task has CODEX_THREAD_ID/CODEX_SESSION_ID, while the installed Pallium MCP entry lacks env_vars. Emitting that allowlist restores the existing fail-closed resolver without accepting model identity.
+**Discovery:** The original S0 investigation established the Claude native transport/dispatcher boundary. Official Codex MCP documentation verifies STDIO env_vars allow and forward selected names from the local Codex environment. The live task has CODEX_THREAD_ID/CODEX_SESSION_ID, while the installed Pallium MCP entry lacked env_vars. Emitting that allowlist restores the existing fail-closed resolver without accepting model identity. Subsequent live dogfood reproduced a 409 claim-lease-expired reply after the active-writer queue delayed execution beyond its claim lease; the queue lifecycle is therefore not qualified.
 
 **Material assumptions:**
 - Claude Code exposes a per-session messaging endpoint at the registered `socket_path` (Unix domain socket on POSIX, named pipe on Windows) that accepts an auth line `{"type":"auth","token":...}\n` followed by a peer-message JSON frame. Disproof: the live dogfood send does not wake the idle session / the socket refuses the frame shape. Action: stop and re-derive the frame from the reverse-engineered wire contract before proceeding; do not broaden scope.
 - A Windows named pipe can be written from Python via stdlib (open on `\\.\pipe\...`) without adding a dependency. Disproof: stdlib open fails on the pipe path. Action: check whether `pywin32` is already installed before adding anything; if not, record the gap and keep POSIX-only working rather than adding a dep silently.
 - Treating a clean write as success (skipping the `peer_message_status` receipt) is acceptable for the skeleton, since the message is already durably persisted. Disproof: writes succeed but sessions never wake (held/denied receipts). Action: add receipt parsing in a follow-up slice (S1), not here.
 
-**Plan:** (1) Add CODEX_THREAD_ID and CODEX_SESSION_ID to the generated Pallium MCP env_vars allowlist. (2) Preserve resolver precedence and fail-closed behavior. (3) Document these as observed compatibility inputs, not a stable public contract. (4) Cover emission/idempotence, either-variable fallback, neither-variable refusal, and existing exact-session isolation. (5) Update the installed config, then restart Codex/start a new session for dogfood. No model identity argument.
+**Plan:** (1) Retain the original S0 implementation/evidence as the branch foundation. (2) Add CODEX_THREAD_ID and CODEX_SESSION_ID to the generated Pallium MCP env_vars allowlist while preserving resolver precedence and fail-closed behavior. (3) Document compatibility status, tool semantics, and accurate fallback status. (4) Fix the shared active-writer claim lifecycle so a queued turn obtains a valid receipt at execution, not at scheduling; prove delayed execution has no loss or duplicate action through caller-surface E2E. (5) Restart Codex/start a new session and dogfood own-session receive plus ACK. No model identity argument.
 
-**Verification plan:** Generated Codex config contains the exact env_vars allowlist and is idempotent -> setup integration test. Either runtime variable resolves the Codex session and neither fails closed -> context and MCP tool tests. Concurrent exact-session delivery remains isolated -> existing Relay MCP E2E. Installed config shows env_vars after setup -> read-only config inspection; restart Codex and start a new session before live dogfood. Run workflow checker.
+**Verification plan:** Preserve the recorded S0 unit/relay/Codex checks. Generated Codex config contains the exact env_vars allowlist and is idempotent -> setup integration test. Either runtime variable resolves the Codex session and neither fails closed -> context and MCP tool tests. Concurrent exact-session delivery remains isolated -> existing Relay MCP E2E. A busy target delayed beyond lease timing -> caller-surface E2E confirms fresh receipt/no loss/no duplicate. Installed config shows env_vars after setup -> read-only config inspection; restart Codex and start a new session before own-session receive/ACK dogfood. Run workflow checker.
 
 **Plan review:** Clean-context Luna review condition satisfied by official Codex MCP documentation (2026-09-02): STDIO env_vars forwards named local variables. CODEX_THREAD_ID/CODEX_SESSION_ID remain compatibility inputs; no model identity path is added.
 
@@ -32,7 +32,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -56,3 +56,5 @@
 - 2026-09-02: Launcher gate resolved by official Codex MCP documentation: STDIO `env_vars` forwards selected local environment variables. Architecture verified the live task exposes both CODEX_THREAD_ID and CODEX_SESSION_ID and the installed Pallium entry omits the allowlist. Implement the two-name allowlist, preserve the resolver’s runtime-owned precedence/fail-closed behavior, document compatibility status, test fallback/refusal/isolation, then update config and restart Codex for a new dogfood session.
 
 - 2026-09-02: Implemented the supported Codex STDIO env_vars allowlist for CODEX_THREAD_ID and CODEX_SESSION_ID; documented them as observed compatibility inputs. Added config emission/idempotence, session-id fallback, and neither-variable fail-closed tests; existing lifecycle/E2E isolation coverage ran. Verification: `.venv\Scripts\python.exe -m pytest tests/test_codex_integration.py tests/test_mcp_context.py tests/test_relay_mcp_tools.py tests/test_relay_mcp_lifecycle.py tests/test_agent_relay_e2e.py` — 128 passed, 4 existing Pydantic forward-reference warnings. Ran normal setup; installed `C:\Users\I347041\.codex\config.toml` now shows `env_vars = ["CODEX_THREAD_ID", "CODEX_SESSION_ID"]`. Codex must restart and a new session must open before live dogfood; the running MCP child cannot reload its launch environment.
+
+- 2026-09-02: Architect review found the recovery-only marker block had erased the original Claude S0 Outcome/Target/Scope. Restored a cumulative branch record and added the reproduced active-writer queued-turn 409 claim-lease-expiry as an explicit lifecycle defect. No code change in this update. State is Blocked until the lifecycle fix has delayed busy-target E2E evidence and a newly started Codex session proves runtime-owned identity, exact-session receive, and ACK.

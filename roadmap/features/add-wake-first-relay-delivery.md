@@ -244,13 +244,18 @@ Phase 0 decision and installed-runtime evidence:
 [Relay wake Phase 0 decision record](../../docs/designs/017-relay-wake-phase0.md).
 
 Current result: Codex exact-session wake uses hidden `codex exec resume` for an
-unloaded stored task. The qualified Windows desktop app retains active writers, so the
+unloaded stored task. The Windows desktop app retains active writers, so the live
 adapter falls back to hidden `codex queue --thread` for that exact session; both launch
-paths are best-effort and retain the durable natural-turn fallback on failure. The
-active-writer queue fallback remains in the live adapter and explicitly encodes Relay
-prompts as UTF-8. Remaining qualification covers busy/interrupted/restart admission,
-sender-side reply admission, telemetry, macOS/Linux, and sustained dogfood; Claude
-idle-only work follows the Codex-first milestone, and OpenCode remains deferred.
+paths are best-effort and retain durable natural-turn fallback on launch failure. The
+active-writer fallback explicitly encodes Relay prompts as UTF-8, but it is **not
+qualified**: live dogfood reproduced a 409 `claim lease has expired` when a delivery
+was claimed before queueing and the queued turn executed after the lease. The lifecycle
+fix must acquire a valid claim at queued execution and prove, through delayed busy-target
+E2E, no stale receipt, loss, or duplicate action; it also needs fresh-session
+runtime-owned-identity receive/ACK dogfood. Codex wake remains blocked on those
+busy/interrupted/restart admission gates, sender-side reply admission, telemetry,
+macOS/Linux, and sustained dogfood; Claude idle-only work follows the Codex-first
+milestone, and OpenCode remains deferred.
 
 ## Research References
 
