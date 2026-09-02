@@ -467,12 +467,32 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
     monkeypatch.setattr(hook, "relay_request", relay_request)
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
+
+    def pallium_request(method: str, path: str, payload: dict | None = None, *, quiet: bool = False) -> dict | None:
+        response = client.request(method, path, json=payload)
+        if response.status_code != 200:
+            return None
+        return response.json()
+
+    monkeypatch.setattr(hook, "pallium_request", pallium_request)
+    monkeypatch.setattr(hook._common, "pallium_request", pallium_request)
+    monkeypatch.setattr(
+        hook._common.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: pytest.fail("caller-surface test escaped to live HTTP"),
+    )
     monkeypatch.setattr(hook, "emit_context", lambda text, _: contexts.append(text))
 
     # The production resolver's no-pin and wrong-pin paths fail closed.
     run_hook(codex_wake._wake_prompt() + " missing scope")
     hook._common.pin_container("target-session", "git:example.test/other")
     run_hook(codex_wake._wake_prompt() + " wrong scope")
+    with client.app.state.pallium_service._storage._engine.begin() as connection:
+        wrong_scope_items = connection.execute(
+            text("SELECT id, content FROM source_items WHERE content LIKE :needle"),
+            {"needle": "%wrong scope"},
+        ).mappings().all()
+    assert wrong_scope_items, "wrong-scope ingestion must stay in the isolated client DB"
     assert all("delayed busy delivery" not in context for context in contexts)
     assert all(not turn["deliveries"] for turn in turns)
     assert client.get(
