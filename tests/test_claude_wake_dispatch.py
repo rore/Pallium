@@ -111,7 +111,7 @@ class TestTransport:
 
         assert _windows_write("pipe", b"frame", pywintypes, win32event, win32file, winerror) is False
         assert len(cancelled) == 1
-        assert closed == []
+        assert closed == ["event"]
     @pytest.mark.skipif(os.name != "nt", reason="Windows test")
     def test_windows_transport_import_failure_returns_false(self) -> None:
         """Windows: win32file import failure returns False."""
