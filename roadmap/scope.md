@@ -86,9 +86,8 @@ access counts/types.
   guard is shipped. A four-case exact-link pilot found encouraging value but also
   showed that exposure telemetry, expansion replay, temporal replacement handling,
   and result diversity are not yet faithful enough for a product verdict. The
-  immediate sequence is now: complete
-  `fix-real-corpus-memory-access-and-evaluation`, rerun the same budget-capped pilot,
-  expand to 8-12 diverse cases only if it is informative, then return to the 20-case
+  access-and-evaluation fix and its capped expansion are complete. The next step is
+  to let broader post-fix cases accumulate, then run the 20-case
   `idea-pull-real-corpus-validation` gate before Phase 2 earns investment.
 - **Continuous — Derived-memory evaluation (RAW/DERIVED/HYBRID + coverage/fidelity)**:
   not a sequential phase. Decompose why a DERIVED result loses into four seams

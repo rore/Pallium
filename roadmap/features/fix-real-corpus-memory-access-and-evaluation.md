@@ -1,7 +1,7 @@
 ---
 id: fix-real-corpus-memory-access-and-evaluation
 title: Make historical access and real-corpus evaluation faithful
-status: in_progress
+status: done
 priority: high
 commitment: committed
 ---
@@ -15,8 +15,8 @@ context budget on distinct, answer-bearing evidence rather than repeated discuss
 and evaluation must distinguish what was true at the original lookup time from what
 is current now.
 
-This is the next vNext item. The larger
-`idea-pull-real-corpus-validation` product gate waits for it.
+Completed 2026-09-02. The larger
+`idea-pull-real-corpus-validation` product gate is now the next item.
 
 ## Evidence
 
@@ -113,6 +113,14 @@ past records from masquerading as live state.
     A capped four-pair replay retained both useful controls and prevented both
     observed false live-state claims (eight answer calls; 2,489 estimated input
     tokens in the final run).
+11. **Fresh post-boundary expansion.** Complete: eight previously unevaluated cases
+    ran with two excerpts each, 16 answer calls, no automatic judge, zero failures,
+    and 5,076 estimated input tokens. Two old replay bundles contained the active
+    request itself and were excluded. Primary-agent review of the six clean cases
+    found four helped, none harmed, and two neutral. History added 2,478 estimated
+    input tokens (about 310 per case); measured total latency was 43.6 seconds with
+    history versus 11.4 seconds without it. Only five requester sessions exist, so
+    the 20-case gate must wait for broader post-fix activity.
 
 ## Out of scope
 
@@ -181,4 +189,5 @@ past records from masquerading as live state.
    the third candidate retained only for offline precision measurement.
 6. Complete: add and test the historical-evidence boundary on the harmful cases
    and useful controls.
-7. Return to `idea-pull-real-corpus-validation` only after this item is done.
+7. Complete: return to `idea-pull-real-corpus-validation` as the next gate, but
+   wait for broader post-fix activity before spending on its 20-case run.

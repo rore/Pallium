@@ -7,7 +7,6 @@
 - add-copilot-relay-integration
 
 # P1 · Reuse Measurement
-- fix-real-corpus-memory-access-and-evaluation
 - idea-pull-real-corpus-validation
 - idea-visibility-violation-metric-completeness
 - fix-roadmap-and-evidence-status-drift
