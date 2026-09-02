@@ -14,6 +14,14 @@ commitment: committed
 > pull improve the work enough to justify its token, latency, and contamination cost?** Runs only after
 > measurement integrity (KPI taxonomy + attribution + continuous-eval population) and a calibrated reuse
 > judge (κ≥0.70) are in place. See the merged tickets for their full DoD detail.
+>
+> **Blocked 2026-09-02 by `fix-real-corpus-memory-access-and-evaluation`.** The first
+> exact-link pilot showed encouraging value but proved that lookup telemetry is
+> recorded before final response trimming, expansion replay omits the selected
+> anchor, historical and present-day replacement semantics are mixed, and duplicate
+> results can consume the visible window. Fix those measurement and access defects,
+> rerun the same four-case no-judge pilot, and expand to 8-12 cases only if that
+> corrected run is informative. Do not spend on the 20-case gate first.
 
 ## Summary
 

@@ -7,8 +7,8 @@
 - add-copilot-relay-integration
 
 # P1 · Reuse Measurement
+- fix-real-corpus-memory-access-and-evaluation
 - idea-pull-real-corpus-validation
-- idea-raw-duplicate-ingestion-and-result-diversity
 - idea-visibility-violation-metric-completeness
 - fix-roadmap-and-evidence-status-drift
 
@@ -144,6 +144,7 @@
 - build-structured-retrieval-foundation
 
 # Superseded
+- idea-raw-duplicate-ingestion-and-result-diversity
 - add-interest-memory-kind
 - idea-measure-pull-filtering-accuracy-and-cost
 - idea-reconcile-unprompted-pull-direction-signal

@@ -83,9 +83,12 @@ access counts/types.
   real corpus via the consolidated real-corpus decision experiment. If filtered pull
   is not net-positive, the core thesis is weak. The directional 12-case run was
   positive but exposed a concrete superseded-guidance risk. The outdated-history
-  guard is shipped. The immediate sequence is now: collect exact user-request-to-
-  lookup links during normal use, run a four-case no-judge pilot only when four
-  diverse answerable links exist, then expand toward the 20-case
+  guard is shipped. A four-case exact-link pilot found encouraging value but also
+  showed that exposure telemetry, expansion replay, temporal replacement handling,
+  and result diversity are not yet faithful enough for a product verdict. The
+  immediate sequence is now: complete
+  `fix-real-corpus-memory-access-and-evaluation`, rerun the same budget-capped pilot,
+  expand to 8-12 diverse cases only if it is informative, then return to the 20-case
   `idea-pull-real-corpus-validation` gate before Phase 2 earns investment.
 - **Continuous — Derived-memory evaluation (RAW/DERIVED/HYBRID + coverage/fidelity)**:
   not a sequential phase. Decompose why a DERIVED result loses into four seams
