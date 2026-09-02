@@ -40,7 +40,7 @@ def schedule_codex_relay_wake(
         return
     delivery = deliveries[0]
     # Only wake for work still awaiting a turn; replies/already-delivered records do not trigger Codex.
-    if delivery.get("state", "pending") != "pending":
+    if delivery.get("state") != "pending":
         return
     delivery_id = delivery.get("delivery_id")
     session_ref = delivery.get("recipient_session_ref")

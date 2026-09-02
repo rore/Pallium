@@ -134,6 +134,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
                 }
@@ -181,6 +182,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
                 }
@@ -200,6 +202,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": " bad session ",  # Not stripped in delivery
                 }
@@ -222,6 +225,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
                 }
@@ -244,6 +248,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
                 }
@@ -288,6 +293,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
                 },
@@ -324,7 +330,8 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     assert client.post("/internal/claude-wake/register", json=payload).status_code == 204
     scope = {"container_ref": payload["container_ref"], "actor_ref": payload["actor_ref"]}
     assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": payload["session_ref"], **scope}).status_code == 200
-    result = {"recipient": "claude-code:session-test", "deliveries": [{"delivery_id": "d1", "recipient_runtime": "claude-code", "recipient_session_ref": "session-test"}]}
+    result = {"recipient": "claude-code:session-test", "deliveries": [{"delivery_id": "d1",
+                    "state": "pending", "recipient_runtime": "claude-code", "recipient_session_ref": "session-test"}]}
     transport = MagicMock(return_value=True)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("app.claude_wake.claude_wake_transport", transport)

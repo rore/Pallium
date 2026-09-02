@@ -35,6 +35,7 @@ def _delivery(delivery_id: str = "delivery-1", runtime: str = "codex") -> dict:
             {
                 "delivery_id": delivery_id,
                 "recipient_runtime": runtime,
+                "state": "pending",
                 "recipient_session_ref": "target-session",
             }
         ]
