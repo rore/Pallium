@@ -714,6 +714,10 @@ async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> No
     tools = {tool.name: tool for tool in await server.list_tools()}
     assert "replace_existing=true" in tools["pallium_relay_name"].description
     assert "codex:@review" in tools["pallium_relay_send"].description
+    assert "1,500" in tools["pallium_relay_send"].description
+    assert "1,500" in tools["pallium_relay_reply"].description
+    assert "multipart continuations" in tools["pallium_relay_reply"].description
+    assert "one idempotent reply" in tools["pallium_relay_reply"].description
 
 
 @pytest.mark.asyncio

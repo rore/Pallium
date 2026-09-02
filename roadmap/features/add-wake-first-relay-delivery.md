@@ -243,13 +243,14 @@ Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wak
 Phase 0 decision and installed-runtime evidence:
 [Relay wake Phase 0 decision record](../../docs/designs/017-relay-wake-phase0.md).
 
-Current result: Codex exact-session wake is proven only for an unloaded stored task
-through `codex exec resume`. The qualified Windows desktop app retains active writers,
-plain `codex queue` does not activate its stdio-owned task, and the queue fallback was
-removed after a live run ACKed Relay without model output. Desktop-held tasks remain
-pending for the natural-turn fallback. The Codex-first milestone is blocked on a
-supported owning-app-server attach/remote endpoint; Claude idle-only work follows
-after that decision, and OpenCode remains deferred.
+Current result: Codex exact-session wake uses hidden `codex exec resume` for an
+unloaded stored task. The qualified Windows desktop app retains active writers, so the
+adapter falls back to hidden `codex queue --thread` for that exact session; both launch
+paths are best-effort and retain the durable natural-turn fallback on failure. The
+active-writer queue fallback remains in the live adapter and explicitly encodes Relay
+prompts as UTF-8. Remaining qualification covers busy/interrupted/restart admission,
+sender-side reply admission, telemetry, macOS/Linux, and sustained dogfood; Claude
+idle-only work follows the Codex-first milestone, and OpenCode remains deferred.
 
 ## Research References
 
