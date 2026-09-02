@@ -690,6 +690,15 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def finalize_historical_lookup_delivery(self, attempt_id: str, payload: dict[str, Any]) -> str:
+        """Append a finalized delivery for an immutable attempt, idempotently."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_historical_lookup_event_row(self, event_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    @abstractmethod
     def write_historical_lookup_label_row(self, row: dict[str, Any]) -> None:
         """Append one per-rater rung label for a reuse event (append-only)."""
         raise NotImplementedError

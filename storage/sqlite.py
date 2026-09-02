@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
 from sqlalchemy import and_, create_engine, event, func, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.exc import IntegrityError
 
 from core.errors import SupersessionConflictError, is_transient_error
 from core.contracts import ProcessResult
@@ -1485,6 +1487,84 @@ class SQLiteStorageProvider(
         """
         record = HistoricalLookupReuseEventRecord(**row)
         self._with_retry(lambda session: session.add(record))
+
+    def get_historical_lookup_event_row(self, event_id: str) -> dict[str, Any] | None:
+        with self._session_factory() as session:
+            record = session.get(HistoricalLookupReuseEventRecord, event_id)
+            if record is None:
+                return None
+            return {
+                "id": record.id,
+                "event_type": record.event_type,
+                "session_id": record.session_id,
+                "container_ref": record.container_ref,
+                "actor_ref": record.actor_ref,
+                "visibility": record.visibility,
+                "trigger_origin": record.trigger_origin,
+                "source_session_ref": record.source_session_ref,
+                "query_text": record.query_text,
+                "request_source_item_id": record.request_source_item_id,
+                "parent_lookup_id": record.parent_lookup_id,
+                "exposed_json": record.exposed_json,
+            }
+
+    def finalize_historical_lookup_delivery(self, attempt_id: str, payload: dict[str, Any]) -> str:
+        final_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "pallium:historical-delivery:" + attempt_id))
+
+        def commit(session: Session) -> str:
+            attempt = session.get(HistoricalLookupReuseEventRecord, attempt_id)
+            if attempt is None:
+                raise KeyError(attempt_id)
+            event_type = {
+                "lookup_attempt": "lookup",
+                "expansion_attempt": "expansion",
+            }.get(attempt.event_type)
+            if event_type is None:
+                raise ValueError("delivery attempt is not finalizable")
+            parent = attempt.parent_lookup_id
+            if event_type == "expansion":
+                parent_row = session.get(HistoricalLookupReuseEventRecord, parent) if parent else None
+                if parent_row is None or parent_row.event_type != "lookup":
+                    raise ValueError("expansion attempt has no finalized parent lookup")
+                scope = ("container_ref", "session_id", "actor_ref", "visibility")
+                if any(getattr(parent_row, key) != getattr(attempt, key) for key in scope):
+                    raise ValueError("parent lookup is out of scope")
+            exposed_json = payload["exposed_json"]
+            existing = session.get(HistoricalLookupReuseEventRecord, final_id)
+            if existing is not None:
+                same = (
+                    existing.event_type == event_type
+                    and existing.parent_lookup_id == parent
+                    and existing.container_ref == attempt.container_ref
+                    and existing.session_id == attempt.session_id
+                    and existing.actor_ref == attempt.actor_ref
+                    and existing.visibility == attempt.visibility
+                    and existing.exposed_json == exposed_json
+                )
+                if not same:
+                    raise RuntimeError("conflicting delivery retry")
+                return final_id
+            session.add(HistoricalLookupReuseEventRecord(
+                id=final_id,
+                created_at=attempt.created_at,
+                event_type=event_type,
+                session_id=attempt.session_id,
+                container_ref=attempt.container_ref,
+                actor_ref=attempt.actor_ref,
+                trigger_origin=attempt.trigger_origin,
+                parent_lookup_id=parent,
+                exposed_json=exposed_json,
+                visibility=attempt.visibility,
+                source_session_ref=attempt.source_session_ref,
+                query_text=attempt.query_text,
+                request_source_item_id=attempt.request_source_item_id,
+            ))
+            return final_id
+
+        try:
+            return self._with_retry(commit)
+        except IntegrityError:
+            return self._with_retry(commit)
 
     def write_historical_lookup_label_row(self, row: dict[str, Any]) -> None:
         """Append one per-rater rung label (append-only).
