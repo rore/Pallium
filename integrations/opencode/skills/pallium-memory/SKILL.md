@@ -19,7 +19,7 @@ Routine retrieval is automatic. Use tools for deliberate memory or explicit rela
 
 ## Relay
 
-Relay only explicit messages to another agent.
+Relay deliveries are current-turn work: complete actionable payloads now; reply only after completion or a genuine blocker, never with a status-only acknowledgement.
 
 - Injected `agent_ref`/`thread_ref` identify this runtime/session; never infer self from recipients.
 - Discover/name: `pallium_relay_recipients`/`pallium_relay_name`. Send `pallium_relay_send` to `codex`, `codex:<session_ref>`, or `codex:@alias` (others). Broadcast needs user intent.

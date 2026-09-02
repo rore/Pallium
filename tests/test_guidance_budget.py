@@ -10,8 +10,8 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     assert len(module.get_claude_md_block("base")) <= 3736
     assert len(module.get_claude_md_block("strong")) <= 3962
     assert len(Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")) <= 3620
-    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2218
-    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2218
+    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2337
+    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2337
     tree = ast.parse(Path("app/mcp/server.py").read_text(encoding="utf-8"))
     names = {node.name for node in ast.walk(tree)
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))

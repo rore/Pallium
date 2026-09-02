@@ -49,6 +49,8 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
     assert "delivery_id: relay-delivery-1" in rendered
     assert "pallium_relay_reply" in rendered
     assert "make its Pallium Relay origin clear" in rendered
+    assert "Reply only to substantive deliveries" in rendered
+    assert "never reply to terminal ACK-only deliveries" in rendered
     assert rendered_deliveries == [DELIVERY]
     assert "line one\nline two\tvalue" in common.format_relay(
         [{**DELIVERY, "payload": "line one\nline two\tvalue"}], budget_chars=2000
