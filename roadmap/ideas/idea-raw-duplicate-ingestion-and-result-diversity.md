@@ -1,10 +1,16 @@
 ---
 id: idea-raw-duplicate-ingestion-and-result-diversity
 title: Duplicate raw turns consume top-K capacity
-status: queued
+status: superseded
 priority: medium
 commitment: uncommitted
 ---
+
+> **Superseded 2026-09-02 -> `fix-real-corpus-memory-access-and-evaluation`.**
+> The real-corpus audit supplied the material duplicate-slot evidence this idea
+> required. Its provenance-preserving result-diversity scope and edge cases now ship
+> as ordered work inside the committed measurement-integrity item rather than as a
+> separate speculative optimization.
 
 > **Sequencing note 2026-08-18.** Split this: **measure duplicate prevalence FIRST** (cheap — count
 > identical-content, distinct-id results in real top-K). Only build ingest idempotency / result collapsing

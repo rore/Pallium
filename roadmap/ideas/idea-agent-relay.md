@@ -229,6 +229,27 @@ R1.5 does not restart exited processes, spawn agents, infer recipients, or super
 work. Resuming an agent that is no longer running is a separate orchestration
 hypothesis.
 
+#### Optional correlated turn-end notification — proposed follow-up
+
+Dogfood exposed a narrower cross-runtime coordination gap: after an actionable
+Relay delivery starts a recipient turn, the sender may need to review that turn
+before deciding whether more work is required. Add an optional
+`notify_on_turn_end` flag to Relay send/reply. It defaults to false.
+
+When enabled, the recipient integration correlates the admitted delivery with the
+runtime turn. Its existing Stop/idle hook emits one idempotent, system-generated
+notification to the original sender containing the original delivery ID, exact
+recipient session, runtime turn ID, and a bounded final-response summary. Generated
+notifications cannot request another turn-end notification.
+
+This reports only that the recipient turn ended. Pallium does not infer task
+completion, automatically continue the recipient, or supervise work; the sender
+reviews its own acceptance criteria and decides whether to send a follow-up.
+Qualification requires deterministic caller-surface coverage for the default-off
+path, successful correlation, duplicate Stop/idle events, failed admission,
+bounded output, exact scope/session isolation, and notification-loop prevention
+across each supported runtime.
+
 ### R1.6 — Dependency-workflow validation and positioning — queued after R1.5
 
 Turn the strongest observed Relay uses into durable E2E journeys: an unexpected
