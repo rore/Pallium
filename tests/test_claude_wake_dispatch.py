@@ -358,3 +358,47 @@ def test_windows_write_closes_event_after_cancelled_completion() -> None:
     )
     assert _windows_write("pipe", b"frame", pywintypes, win32event, win32file, SimpleNamespace(ERROR_IO_PENDING=997)) is False
     assert closed == ["event"]
+
+def test_persisted_claude_d1_d2_d3_actual_hooks(client, monkeypatch, tmp_path) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.dependencies import build_router
+    from tests.test_claude_code_integration import _load_claude_hook
+    registry = ClaudeWakeRegistry()
+    app = FastAPI()
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=client.app.state.pallium_service._storage, claude_wake_registry=registry))
+    http = TestClient(app, client=("127.0.0.1", 50000))
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    start = _load_claude_hook("session_start", monkeypatch)
+    prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
+    stop = _load_claude_hook("stop", monkeypatch)
+    for hook in (start, prompt, stop):
+        monkeypatch.setattr(hook, "derive_container_ref", lambda *_: scope["container_ref"], raising=False)
+        monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: scope["container_ref"], raising=False)
+        monkeypatch.setattr(hook, "derive_actor_ref", lambda: scope["actor_ref"], raising=False)
+    def relay(method, path, body, timeout=0.75):
+        response = http.request(method, path, json=body)
+        return response.json() if response.content else None
+    def register(session, container, actor, **kw):
+        return http.post("/internal/claude-wake/register", json={**PAYLOAD, "session_ref": session, "container_ref": container, "actor_ref": actor, "idle": kw.get("idle", False)}).status_code == 204
+    monkeypatch.setattr(start, "relay_request", relay, raising=False); monkeypatch.setattr(prompt, "relay_request", relay, raising=False); monkeypatch.setattr(stop, "relay_request", relay, raising=False)
+    monkeypatch.setattr(prompt, "acknowledge_relay", lambda deliveries, **kw: [relay("POST", "/relay/deliveries/ack", {"delivery_id": d["delivery_id"], "claim_token": d["claim_token"], **scope}) for d in deliveries], raising=False)
+    monkeypatch.setattr(start, "register_claude_wake", register); monkeypatch.setattr(prompt, "register_claude_wake", register); monkeypatch.setattr(stop, "register_claude_wake", register)
+    monkeypatch.setattr(start, "read_hook_input", lambda: {"session_id":"session-test", "cwd":str(tmp_path)})
+    monkeypatch.setattr(start, "_fetch_orientation", lambda *_: [])
+    with pytest.raises(SystemExit): start.main()
+    http.post("/relay/turn", json={"runtime":"codex", "session_ref":"sender", **scope})
+    sent1 = http.post("/relay/messages", json={"sender_runtime":"codex", "sender_session_ref":"sender", "recipient":"claude-code:session-test", "payload":"D1", **scope}).json()
+    assert sent1["deliveries"][0]["state"] == "pending"
+    monkeypatch.setattr(prompt, "read_hook_input", lambda: {"session_id":"session-test", "cwd":str(tmp_path), "prompt":"normal prompt"})
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
+    with pytest.raises(SystemExit): prompt.main()
+    assert http.get(f"/relay/messages/{sent1['message_id']}", params=scope).json()["deliveries"][0]["state"] == "delivered"
+    sent2 = http.post("/relay/messages", json={"sender_runtime":"codex", "sender_session_ref":"sender", "recipient":"claude-code:session-test", "payload":"D2", **scope}).json()
+    assert sent2["deliveries"][0]["state"] == "pending"
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {"session_id":"session-test", "cwd":str(tmp_path), "transcript_path":""})
+    monkeypatch.setattr(stop, "read_turn", lambda *_: None)
+    stop.main()
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", MagicMock(return_value=True))
+    sent3 = http.post("/relay/messages", json={"sender_runtime":"codex", "sender_session_ref":"sender", "recipient":"claude-code:session-test", "payload":"D3", **scope}).json()
+    assert sent3["deliveries"][0]["state"] == "pending"
