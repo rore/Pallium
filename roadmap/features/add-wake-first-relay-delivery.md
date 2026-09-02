@@ -139,9 +139,9 @@ Claude or OpenCode; enabling live wake still requires the relevant safety eviden
    macOS/Linux UDS E2E. Never send native ingress while busy and never retry an
    ambiguous write without coordinator proof that no admission occurred.
 
-3. **MCP receive lifecycle foundation — complete:**
-   `fix-relay-receive-mcp-lifecycle` is merged. Wake can reuse receipt-based
-   recovery without raw HTTP or model-visible claim tokens.
+3. **MCP receive lifecycle foundation — code complete, runtime qualification pending:**
+   `fix-relay-receive-mcp-lifecycle` is merged. The MCP path remains fail-closed and unqualified on Codex Desktop until a runtime-owned session handoff reaches the MCP child; hook-delivery wake does not depend on this recovery path.
+
 
 **Core scope:** Derive the smallest coordinator from the Codex delivery trace.
 Do not wait for a second adapter or build speculative multi-runtime machinery.
@@ -149,12 +149,7 @@ Choose bounded limits from Codex evidence; revisit only when adding another adap
 
 ### Implementation sequence — Codex first
 
-**Codex (Windows candidate):** `codex exec resume T` handles unloaded stored
- tasks; the exact active-writer conflict falls back to `codex queue --thread T`,
-whose owning Desktop watcher starts the loaded task. Pallium supplies the claimed
-batch directly, not through hook-only context, and narrows unattended approval to
-receipt-based Relay ACK/reply. Keep the adapter runtime/version-qualified until
-the remaining OS and lifecycle gates pass.
+**Codex (Windows candidate):** `codex exec resume T` handles unloaded stored tasks; the exact active-writer conflict falls back to `codex queue --thread T`, whose owning Desktop watcher starts the loaded task. Pallium supplies a generic trigger; the admitted UserPromptSubmit hook claims and injects the attributed batch under the target scope. MCP receive remains a separate fail-closed recovery path. Keep the adapter runtime/version-qualified until the remaining OS and lifecycle gates pass.
 
 **Claude Code (after Codex dogfood):** Extend the coordinator only
 for verified-idle native delivery: persist/dedupe before write, exact delivery-ID
@@ -243,21 +238,7 @@ Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wak
 Phase 0 decision and installed-runtime evidence:
 [Relay wake Phase 0 decision record](../../docs/designs/017-relay-wake-phase0.md).
 
-Current result: Codex exact-session wake uses hidden `codex exec resume` for an
-unloaded stored task. The Windows desktop app retains active writers, so the live
-adapter falls back to hidden `codex queue --thread` for that exact session; both launch
-paths are best-effort and retain durable natural-turn fallback on launch failure. The
-active-writer fallback explicitly encodes Relay prompts as UTF-8, but it is **not
-qualified**: live dogfood reproduced a 409 `claim lease has expired` when a delivery
-was claimed before queueing and the queued turn executed after the lease. The
-live adapter now queues a generic trigger and lets the installed UserPromptSubmit
-hook claim at admitted-turn execution; delayed busy-target caller-surface E2E proves no
-stale receipt, loss, or duplicate action. It remains **not qualified** pending
-fresh-session runtime-owned-identity receive/ACK dogfood. Codex wake remains blocked on
-those
-busy/interrupted/restart admission gates, sender-side reply admission, telemetry,
-macOS/Linux, and sustained dogfood; Claude idle-only work follows the Codex-first
-milestone, and OpenCode remains deferred.
+Current result: Codex exact-session wake uses hidden `codex exec resume` for an unloaded stored task. The Windows desktop app retains active writers, so the live adapter falls back to hidden `codex queue --thread` for that exact session; both launch paths are best-effort and retain durable natural-turn fallback on launch failure. The active-writer fallback explicitly encodes Relay prompts as UTF-8, and the pre-fix claim-before-queue behavior reproduced a 409 `claim lease has expired` when a delivery was claimed before queueing and the queued turn executed after the lease. The live adapter now queues a generic trigger and lets the installed UserPromptSubmit hook claim at admitted-turn execution; delayed busy-target caller-surface E2E proves no stale receipt, loss, or duplicate action. Hook-delivery wake is proven for the tested Windows paths. Codex MCP receive remains fail-closed and unqualified on Desktop because no runtime-owned identity handoff reaches its child. Codex wake remains blocked on busy/interrupted/restart admission gates, sender-side reply admission, telemetry, macOS/Linux, and sustained dogfood; Claude idle-only work follows the Codex-first milestone, and OpenCode remains deferred.
 
 ## Research References
 
