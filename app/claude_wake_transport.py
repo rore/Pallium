@@ -135,6 +135,7 @@ def _windows_write(handle, data, pywintypes, win32event, win32file, winerror) ->
                 cancel(handle)
             else:
                 cancel(handle, overlapped)
+            win32event.WaitForSingleObject(overlapped.hEvent, 2000)
             get_result = getattr(win32file, "GetOverlappedResult", None)
             if get_result is not None:
                 try:

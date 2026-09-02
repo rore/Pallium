@@ -163,7 +163,8 @@ def test_session_start_and_stop_refresh_before_early_return(monkeypatch: pytest.
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_args: "git:example/repo")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
     monkeypatch.setattr(stop, "register_claude_wake", lambda *args: stop_calls.append(args))
-    stop.main()
+    with pytest.raises(SystemExit):
+        stop.main()
     assert stop_calls == [("session-1", "git:example/repo", "local")]
 
 
@@ -410,7 +411,8 @@ def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest
         monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(assistant_text="", tool_calls=[]))
     elif case == "oversized":
         monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(assistant_text="x" * 20_001, tool_calls=[]))
-    stop.main()
+    with pytest.raises(SystemExit):
+        stop.main()
     assert calls == [("session-1", "git:example/repo", "local")]
 
 
@@ -454,3 +456,28 @@ def test_hook_timeout_or_http_failure_is_silent(failure: Exception, monkeypatch:
     captured = capsys.readouterr()
     assert "transport-secret" not in captured.out + captured.err
     assert not caplog.records
+def test_claude_hook_lifecycle_surfaces_registration_turn_and_stop(monkeypatch) -> None:
+    calls = []
+    start = _load_claude_hook("session_start", monkeypatch)
+    prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
+    stop = _load_claude_hook("stop", monkeypatch)
+    payload = {"session_id": "session-test", "cwd": ".", "prompt": "a sufficiently long prompt for relay"}
+    monkeypatch.setattr(start, "read_hook_input", lambda: {"session_id": "session-test", "cwd": ".", "source": "startup"})
+    monkeypatch.setattr(start, "register_claude_wake", lambda *args: calls.append(("start", args)) or True)
+    monkeypatch.setattr(start, "_fetch_orientation", lambda *_: [])
+    with pytest.raises(SystemExit):
+        start.main()
+    monkeypatch.setattr(prompt, "read_hook_input", lambda: payload)
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(prompt, "relay_request", lambda method, path, body, timeout: calls.append(("prompt", method, path)) or {"deliveries": []})
+    monkeypatch.setattr(prompt, "pallium_request", lambda *args, **kwargs: None)
+    with pytest.raises(SystemExit):
+        prompt.main()
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {"session_id": "session-test", "cwd": "."})
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(stop, "register_claude_wake", lambda *args: calls.append(("stop", args)) or True)
+    monkeypatch.setattr(stop, "read_turn", lambda *_: None)
+    stop.main()
+    assert [entry[0] for entry in calls] == ["start", "prompt", "stop"]
+    assert calls[1][2] == "/relay/turn"
