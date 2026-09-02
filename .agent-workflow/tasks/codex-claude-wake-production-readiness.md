@@ -54,7 +54,7 @@ Current `main` already persists before wake, validates pending delivery and scop
 - Repository acceptance → focused suites, full required CI, `agent-workflow`/redline, `git diff --check`, supported service restart, `/health`, `/status`, `/debug/queue/health`, installed integration checks, and resolved PR review threads.
 
 **Plan review:**
-Pending clean-context Claude architect/delegated reviewer assessment; implementation is blocked until recorded below.
+2026-09-02 clean-context pre-edit review at `## Plan review`: returned to planning; implementation remains blocked on the recorded one-shot/recovery contract decision and Claude protocol validation.
 
 **Approvals:**
 Approved by user 2026-09-02: "ok. so that's the current mission. persist this plan so we don't loose it. use the claude dev for most of the developemtn work. remember budget considerations. use the claude architect when you need to validate and run verifications in claude code. the architect can also use a claude dev it has"
@@ -77,7 +77,17 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 
 ## Plan review
 
-Pending.
+2026-09-02 — `codex:@relaydev` clean-context pre-edit review (Work Record, redline policy, primary wake surfaces, hooks, and focused tests).
+
+**Verdict: not clean; State remains Blocked.** Risk remains **High / Moderate**. The intended runtime work is a redline watch surface (`app/`, `core/`) plus red `api/routes.py`, and it changes a concurrent, security-sensitive session-admission contract. The recorded user approval remains valid, but does not resolve the following material plan contradictions.
+
+1. **One-shot async failure is undefined (blocking).** `ClaudeWakeRegistry.probe()` consumes `idle` while holding its lock *before* it invokes the transport. The current send callback is synchronous in `api/routes.py`; moving it off-path without defining a durable/atomic completion transition means a queue rejection, process crash, or transport failure leaves a pending delivery with `idle=False` and no scheduled retry. The plan must choose and test the recovery owner and the exact re-arm condition before implementation; a background probe alone cannot preserve the one-shot invariant.
+2. **Service-restart recovery cannot be automatic with the present registry (blocking).** Socket path, token, and idle grant are memory-only (`ClaudeWakeRegistry` is rebuilt in `app/main.py`). Persist-first Relay keeps the delivery, and a future hook registration/natural turn can recover it, but no component can natively re-wake a still-idle Claude session after Pallium restarts. Completion criterion 4 says it shall eventually rearm, while Material assumptions says to leave unattended recovery unqualified. Resolve this by explicitly narrowing the criterion to natural-turn recovery, or authorize a persisted/re-registerable wake capability and reclassify its storage/security scope.
+3. **Exact-session identity needs an adversarial registration decision (blocking).** The native socket/token authenticates the write endpoint, but `/internal/claude-wake/register` accepts any loopback caller and overwrites the `(runtime, session_ref)` registration. Scope is checked only when probing; it does not authenticate registration ownership. Define the local-process trust boundary or add a minimal registration-binding proof, then test replacement and cross-scope attempts. Do not claim the current tuple alone proves exact session identity.
+4. **`peer_message_status` is not an admission signal (resolved conditionally).** The recorded Claude 2.1.250 evidence says this status is emitted out-of-band to `origin.from`; the one-way sender has no authenticated return inbox. Therefore a bounded write result may be logged only as trigger outcome, while hook/Relay state remains the sole admission proof. Claude architect must reproduce this on the installed production version, including no-`session_id` exact-target routing, before the plan permits implementation; do not add a speculative listener unless that evidence contradicts the record.
+5. **Existing E2E evidence is insufficient for the new claim (blocking until the above design is chosen).** `tests/test_claude_wake_dispatch.py` covers D1→D3 and natural hook delivery, but not non-blocking public send, a deterministic async handoff/re-arm, service restart without a fresh registration, or a crashed claimed hook followed by lease expiry and exactly-once eventual ACK. The verification plan must map each selected recovery behavior to an observable Relay-state E2E; no wall-clock sleep.
+
+**Resolved plan constraints:** retain the existing structured logging mechanism rather than inventing a receipt channel; log only correlation identifiers, bounded category, and latency—never socket/token/payload. Preserve the existing socket/token transport shape unless Claude-side evidence disproves it. No runtime code is authorized by this review.
 
 ## Result review
 
