@@ -17,11 +17,12 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.main import create_app
-from core.models import new_id, utc_now
+from core.models import QueryResultItem, new_id, utc_now
 from evals.historical_lookup_measurement import (
     compute_reuse_rollup,
     load_events_from_storage,
 )
+from retrieval.base import RetrievalQueryResult
 from sqlalchemy import text
 from tests.config_helpers import build_llm_test_config
 from tests.stub_providers import TieredMemorySemanticProvider
@@ -843,3 +844,63 @@ def test_deferred_expansion_requires_final_same_scope_lookup(
             f"/historical-access/{attempt_id}/delivery", json={"items": items}
         )
         assert invalid_scope.status_code == 422
+
+def test_request_identity_exclusion_refills_http_results(
+    monkeypatch, test_db_url: str,
+) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        request_id = _ingest(
+            client,
+            source_id="request",
+            content=_USER,
+            role="user",
+            artifact_kind="message",
+            actor_ref="actor:test",
+        )
+        candidate_id = _ingest(
+            client,
+            source_id="candidate",
+            content=_WORK,
+            role="assistant",
+            artifact_kind="assistant_output",
+        )
+        retrieval = client.app.state.pallium_service._query_executor._retrieval
+
+        def retrieve_legacy_twins(**_kwargs) -> RetrievalQueryResult:
+            return RetrievalQueryResult(
+                results=[
+                    QueryResultItem(
+                        result_kind="source_hit",
+                        score=3,
+                        evidence=[],
+                        source_item_id="legacy-1",
+                        source_type="chat_message",
+                        source_id="request",
+                    ),
+                    QueryResultItem(
+                        result_kind="source_hit",
+                        score=2,
+                        evidence=[],
+                        source_item_id="legacy-2",
+                        source_type="chat_message",
+                        source_id="request",
+                    ),
+                    QueryResultItem(
+                        result_kind="source_hit",
+                        score=1,
+                        evidence=[],
+                        source_item_id=candidate_id,
+                        source_type="assistant_artifact",
+                        source_id="candidate",
+                    ),
+                ]
+            )
+
+        monkeypatch.setattr(retrieval, "query", retrieve_legacy_twins)
+        result = _search_history(
+            client,
+            actor_ref="actor:test",
+            request_source_item_id=request_id,
+        )
+        assert [row["source_item_id"] for row in result["results"]] == [candidate_id]
+        assert result["results"][0]["raw_rank"] == 1

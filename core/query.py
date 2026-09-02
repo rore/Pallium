@@ -110,6 +110,7 @@ class QueryExecutor:
         include_trace: bool = False,
         trigger_origin: str | None = None,
         source_only: bool = False,
+        exclude_source_identity: tuple[str, str] | None = None,
     ) -> QueryResult:
         filter_resolution = resolve_query_filters(
             source_type=source_type,
@@ -181,7 +182,14 @@ class QueryExecutor:
                 query_actor_ref=actor_ref if plugin.requires_visibility_context else None,
                 target_kind="source_item",
             )
-            distinct = _collapse_source_duplicates(retrieval_result.results)
+            results = retrieval_result.results
+            if exclude_source_identity is not None:
+                results = [
+                    item for item in results
+                    if item.result_kind != "source_hit"
+                    or (item.source_type, item.source_id) != exclude_source_identity
+                ]
+            distinct = _collapse_source_duplicates(results)
             ranked = [
                 replace(item, raw_rank=rank)
                 for rank, item in enumerate(distinct[:limit], start=1)
