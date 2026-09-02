@@ -117,6 +117,13 @@ def test_codex_thread_ref_comes_from_runtime_environment(monkeypatch: pytest.Mon
     assert resolve_context().thread_ref == "codex-session-123"
 
 
+def test_codex_thread_ref_falls_back_to_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.setenv("CODEX_SESSION_ID", "codex-session-456")
+    assert resolve_context().thread_ref == "codex-session-456"
+
 def test_explicit_thread_ref_overrides_runtime_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
     monkeypatch.setenv("PALLIUM_THREAD_REF", "pallium-session")

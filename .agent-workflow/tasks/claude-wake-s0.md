@@ -15,24 +15,24 @@
 
 **Reason:** Clean-context pre-edit redline classification (2026-09-02): app/mcp context and server are gray/watch, tests and roadmap are blue, with no red zone or boundary violation. Elevated/Moderate covers runtime MCP behavior, trusted identity, docs, and E2E validation.
 
-**Discovery:** Runtime identity fallback is already restricted to CODEX_THREAD_ID/CODEX_SESSION_ID and fails closed; setup_codex emits static MCP env without a session identity, while injected prompt scope is not trusted tool identity. Send/reply backend cap and single-reply enforcement already exist; missing work is tool/docs clarity, actionable receive errors, launcher identity propagation, caller-surface coverage, and correcting the stale roadmap queue-fallback statement.
+**Discovery:** Official Codex MCP documentation verifies STDIO env_vars allow and forward selected names from the local Codex environment. The live task has CODEX_THREAD_ID/CODEX_SESSION_ID, while the installed Pallium MCP entry lacks env_vars. Emitting that allowlist restores the existing fail-closed resolver without accepting model identity.
 
 **Material assumptions:**
 - Claude Code exposes a per-session messaging endpoint at the registered `socket_path` (Unix domain socket on POSIX, named pipe on Windows) that accepts an auth line `{"type":"auth","token":...}\n` followed by a peer-message JSON frame. Disproof: the live dogfood send does not wake the idle session / the socket refuses the frame shape. Action: stop and re-derive the frame from the reverse-engineered wire contract before proceeding; do not broaden scope.
 - A Windows named pipe can be written from Python via stdlib (open on `\\.\pipe\...`) without adding a dependency. Disproof: stdlib open fails on the pipe path. Action: check whether `pywin32` is already installed before adding anything; if not, record the gap and keep POSIX-only working rather than adding a dep silently.
 - Treating a clean write as success (skipping the `peer_message_status` receipt) is acceptable for the skeleton, since the message is already durably persisted. Disproof: writes succeed but sessions never wake (held/denied receipts). Action: add receipt parsing in a follow-up slice (S1), not here.
 
-**Plan:** (1) Reproduce the MCP child identity environment and preserve only runtime-owned Codex session identity at the setup/launcher boundary; do not add a receive session argument. (2) Make receive missing-scope/identity failures actionable before HTTP. (3) State existing 1,500-character and one-reply/relay_send continuation contracts in MCP and canonical docs. (4) Align roadmap wording to the live exec-resume plus active-writer queue fallback. (5) Add focused unit, caller-surface, and Relay E2E coverage. Stop if the Codex launcher offers no supported runtime-owned identity handoff.
+**Plan:** (1) Add CODEX_THREAD_ID and CODEX_SESSION_ID to the generated Pallium MCP env_vars allowlist. (2) Preserve resolver precedence and fail-closed behavior. (3) Document these as observed compatibility inputs, not a stable public contract. (4) Cover emission/idempotence, either-variable fallback, neither-variable refusal, and existing exact-session isolation. (5) Update the installed config, then restart Codex/start a new session for dogfood. No model identity argument.
 
-**Verification plan:** Codex runtime identity reaches MCP receive without PALLIUM_THREAD_REF while no identity still fails closed -> MCP tool and setup integration tests. Missing paired scope returns MCP guidance without HTTP -> MCP tool error test. Exact/over-max send and reply, duplicate reply, scope conflict, and exact-session isolation -> Relay MCP lifecycle and agent Relay E2E. Queue fallback wording -> roadmap review. Run the workflow checker.
+**Verification plan:** Generated Codex config contains the exact env_vars allowlist and is idempotent -> setup integration test. Either runtime variable resolves the Codex session and neither fails closed -> context and MCP tool tests. Concurrent exact-session delivery remains isolated -> existing Relay MCP E2E. Installed config shows env_vars after setup -> read-only config inspection; restart Codex and start a new session before live dogfood. Run workflow checker.
 
-**Plan review:** Clean-context Luna review (2026-09-02): approved conditional on verifying MCP inherits CODEX_THREAD_ID/CODEX_SESSION_ID; if it does not, stop without model-supplied identity or PALLIUM_THREAD_REF. Correct the contradictory queue-fallback roadmap wording.
+**Plan review:** Clean-context Luna review condition satisfied by official Codex MCP documentation (2026-09-02): STDIO env_vars forwards named local variables. CODEX_THREAD_ID/CODEX_SESSION_ID remain compatibility inputs; no model identity path is added.
 
 **Approvals:** Not required at this risk level (Elevated). User approved the implementation plan via ExitPlanMode 2026-09-02.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -52,3 +52,7 @@
 - 2026-09-02: Clean-context review approved the recovery plan with a hard launcher gate: only runtime-owned Codex identity may cross into MCP. The remaining MCP tool/docs/roadmap work may proceed; stop the identity portion if Codex does not pass CODEX_THREAD_ID/CODEX_SESSION_ID to its child.
 
 - 2026-09-02: Completed the non-launcher recovery work: receive now returns paired-scope guidance before identity/HTTP; MCP send/reply descriptions and canonical Relay docs state the 1,500-character cap, one-reply rule, and relay_send continuation path; the roadmap now records the live active-writer queue fallback. Added tool-metadata and caller-surface runtime-identity/missing-scope regressions. Verification: `.venv\Scripts\python.exe -m pytest tests/test_mcp_server.py tests/test_mcp_context.py tests/test_relay_mcp_tools.py tests/test_relay_mcp_lifecycle.py tests/test_agent_relay_e2e.py tests/test_codex_integration.py tests/test_codex_wake.py` — 189 passed, 4 existing Pydantic forward-reference warnings. Blocked only on verifying whether Codex passes CODEX_THREAD_ID/CODEX_SESSION_ID into its configured MCP child; no unsafe alternate identity path will be added.
+
+- 2026-09-02: Launcher gate resolved by official Codex MCP documentation: STDIO `env_vars` forwards selected local environment variables. Architecture verified the live task exposes both CODEX_THREAD_ID and CODEX_SESSION_ID and the installed Pallium entry omits the allowlist. Implement the two-name allowlist, preserve the resolver’s runtime-owned precedence/fail-closed behavior, document compatibility status, test fallback/refusal/isolation, then update config and restart Codex for a new dogfood session.
+
+- 2026-09-02: Implemented the supported Codex STDIO env_vars allowlist for CODEX_THREAD_ID and CODEX_SESSION_ID; documented them as observed compatibility inputs. Added config emission/idempotence, session-id fallback, and neither-variable fail-closed tests; existing lifecycle/E2E isolation coverage ran. Verification: `.venv\Scripts\python.exe -m pytest tests/test_codex_integration.py tests/test_mcp_context.py tests/test_relay_mcp_tools.py tests/test_relay_mcp_lifecycle.py tests/test_agent_relay_e2e.py` — 128 passed, 4 existing Pydantic forward-reference warnings. Ran normal setup; installed `C:\Users\I347041\.codex\config.toml` now shows `env_vars = ["CODEX_THREAD_ID", "CODEX_SESSION_ID"]`. Codex must restart and a new session must open before live dogfood; the running MCP child cannot reload its launch environment.

@@ -117,6 +117,15 @@ class TestIdentityGuard:
         assert "PALLIUM_THREAD_REF" not in content[0].text
         receive.assert_not_awaited()
     @pytest.mark.asyncio
+    async def test_codex_receive_fails_without_runtime_identity(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+        monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+        monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+        monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+        server = create_server()
+        content, _ = await server.call_tool("pallium_relay_receive", {})
+        assert "PALLIUM_THREAD_REF" in content[0].text
+    @pytest.mark.asyncio
     async def test_receive_fails_when_not_configured(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv("PALLIUM_BASE_URL", raising=False)
         server = create_server()

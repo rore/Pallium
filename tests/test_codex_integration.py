@@ -49,6 +49,8 @@ env = { PALLIUM_MCP_TRANSPORT = "stdio" }
     assert 'args = ["-m", "app.run", "mcp"]' in content
     assert 'PALLIUM_BASE_URL = "http://localhost:19836"' in content
     assert 'PALLIUM_AGENT_REF = "codex"' in content
+    assert 'env_vars = ["CODEX_THREAD_ID", "CODEX_SESSION_ID"]' in content
+    assert setup_codex._ensure_mcp_server(content) == content
     assert f'PYTHONPATH = "{tmp_path.as_posix()}"' in content
 
 
