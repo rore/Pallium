@@ -134,6 +134,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
                 }
@@ -181,6 +182,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
                 }
@@ -200,6 +202,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": " bad session ",  # Not stripped in delivery
                 }
@@ -222,6 +225,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
                 }
@@ -244,6 +248,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
                 }
@@ -288,6 +293,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
                 },
@@ -320,11 +326,12 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
             runtime=req["runtime"], session_ref=req["session_ref"],
             container_ref=req["container_ref"], actor_ref=req["actor_ref"])))
     client = TestClient(app, client=("127.0.0.1", 50000))
-    payload = {**PAYLOAD, "session_ref": "session-test", "socket_path": "/tmp/test.sock"}
+    payload = {**PAYLOAD, "session_ref": "session-test", "socket_path": "/tmp/test.sock", "idle": True}
     assert client.post("/internal/claude-wake/register", json=payload).status_code == 204
     scope = {"container_ref": payload["container_ref"], "actor_ref": payload["actor_ref"]}
     assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": payload["session_ref"], **scope}).status_code == 200
-    result = {"recipient": "claude-code:session-test", "deliveries": [{"delivery_id": "d1", "recipient_runtime": "claude-code", "recipient_session_ref": "session-test"}]}
+    result = {"recipient": "claude-code:session-test", "deliveries": [{"delivery_id": "d1",
+                    "state": "pending", "recipient_runtime": "claude-code", "recipient_session_ref": "session-test"}]}
     transport = MagicMock(return_value=True)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("app.claude_wake.claude_wake_transport", transport)
@@ -336,3 +343,159 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
         schedule_claude_relay_wake(result, scope, registry=registry)
     transport.assert_called_once()
     assert not registry.probe(runtime="claude-code", session_ref="session-test", container_ref="wrong", actor_ref=scope["actor_ref"], transport=transport)
+def test_windows_write_closes_event_after_cancelled_completion() -> None:
+    class Overlapped:
+        hEvent = None
+    pywintypes = SimpleNamespace(OVERLAPPED=Overlapped)
+    waits = iter([258])
+    win32event = SimpleNamespace(WAIT_OBJECT_0=0, CreateEvent=lambda *_: "event", WaitForSingleObject=lambda *_: next(waits))
+    closed = []
+    win32file = SimpleNamespace(
+        WriteFile=lambda *_: (997, 0),
+        CancelIoEx=lambda *_: None,
+        GetOverlappedResult=lambda *_: (_ for _ in ()).throw(OSError("ERROR_OPERATION_ABORTED")),
+        CloseHandle=lambda handle: closed.append(handle),
+    )
+    assert _windows_write("pipe", b"frame", pywintypes, win32event, win32file, SimpleNamespace(ERROR_IO_PENDING=997)) is False
+    assert closed == ["event"]
+
+def test_persisted_claude_d1_d2_d3_actual_hooks(
+    client, monkeypatch, tmp_path, capsys,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.dependencies import build_router
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    registry = ClaudeWakeRegistry()
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+        claude_wake_registry=registry,
+    ))
+    http = TestClient(app, client=("127.0.0.1", 50000))
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    start = _load_claude_hook("session_start", monkeypatch)
+    prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
+    stop = _load_claude_hook("stop", monkeypatch)
+
+    for hook in (start, prompt, stop):
+        monkeypatch.setattr(
+            hook, "derive_container_ref",
+            lambda *_: scope["container_ref"], raising=False,
+        )
+        monkeypatch.setattr(
+            hook, "resolve_container_ref",
+            lambda *_: scope["container_ref"], raising=False,
+        )
+        monkeypatch.setattr(
+            hook, "derive_actor_ref", lambda: scope["actor_ref"], raising=False,
+        )
+
+    def relay(method, path, body, timeout=0.75):
+        response = http.request(method, path, json=body)
+        return response.json() if response.content else None
+
+    def register(session, container, actor, **kwargs):
+        response = http.post("/internal/claude-wake/register", json={
+            **PAYLOAD,
+            "session_ref": session,
+            "container_ref": container,
+            "actor_ref": actor,
+            "idle": kwargs.get("idle", False),
+        })
+        return response.status_code == 204
+
+    def acknowledge(deliveries, **_kwargs):
+        for delivery in deliveries:
+            response = http.post("/relay/deliveries/ack", json={
+                "delivery_id": delivery["delivery_id"],
+                "claim_token": delivery["claim_token"],
+                **scope,
+            })
+            assert response.status_code == 200
+
+    for hook in (start, prompt):
+        monkeypatch.setattr(hook, "relay_request", relay)
+    monkeypatch.setattr(prompt, "acknowledge_relay", acknowledge)
+    for hook in (start, prompt, stop):
+        monkeypatch.setattr(hook, "register_claude_wake", register)
+
+    monkeypatch.setattr(
+        start, "read_hook_input",
+        lambda: {"session_id": "session-test", "cwd": str(tmp_path)},
+    )
+    monkeypatch.setattr(start, "_fetch_orientation", lambda *_: [])
+    with pytest.raises(SystemExit):
+        start.main()
+    sessions = http.get("/relay/sessions", params=scope).json()
+    assert any(row["session_ref"] == "session-test" for row in sessions)
+    assert http.post(
+        "/relay/turn",
+        json={"runtime": "codex", "session_ref": "sender", **scope},
+    ).status_code == 200
+
+    def send(payload, *, message_id=None):
+        body = {
+            "sender_runtime": "codex",
+            "sender_session_ref": "sender",
+            "recipient": "claude-code:session-test",
+            "payload": payload,
+            **scope,
+        }
+        if message_id is not None:
+            body["message_id"] = message_id
+        response = http.post("/relay/messages", json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def state(message):
+        response = http.get(f"/relay/messages/{message['message_id']}", params=scope)
+        assert response.status_code == 200
+        return response.json()["deliveries"][0]["state"]
+
+    sent1 = send("D1")
+    assert state(sent1) == "pending"
+    prompt_payload = {
+        "session_id": "session-test",
+        "cwd": str(tmp_path),
+        "prompt": "normal prompt",
+    }
+    monkeypatch.setattr(prompt, "read_hook_input", lambda: prompt_payload)
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
+    with pytest.raises(SystemExit):
+        prompt.main()
+    assert state(sent1) == "delivered"
+    assert "D1" in capsys.readouterr().out
+
+    sent2 = send("D2")
+    assert state(sent2) == "pending"
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {
+        "session_id": "session-test",
+        "cwd": str(tmp_path),
+        "transcript_path": "",
+    })
+    monkeypatch.setattr(stop, "read_turn", lambda *_: None)
+    stop.main()
+
+    transport = MagicMock(return_value=True)
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
+    sent3 = send("D3", message_id="stable-d3")
+    assert state(sent3) == "pending"
+    transport.assert_called_once()
+    assert send("D3", message_id="stable-d3")["message_id"] == sent3["message_id"]
+    transport.assert_called_once()
+
+    monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: "git:other/repo")
+    with pytest.raises(SystemExit):
+        prompt.main()
+    assert state(sent2) == state(sent3) == "pending"
+
+    monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
+    with pytest.raises(SystemExit):
+        prompt.main()
+    output = capsys.readouterr().out
+    assert "D2" in output and "D3" in output
+    assert state(sent2) == state(sent3) == "delivered"

@@ -21,6 +21,7 @@ from common import (
     read_hook_input,
     relay_request,
     resolve_container_ref,
+    register_claude_wake,
 )
 
 _IDE_TAG_RE = re.compile(
@@ -39,15 +40,17 @@ def main() -> None:
         session_id = payload.get("session_id")
         cwd = payload.get("cwd", ".")
         prompt = payload.get("prompt", "")
+        has_session = isinstance(session_id, str) and bool(session_id)
+        container_ref = resolve_container_ref(cwd, session_id if has_session else None, True)
+        actor_ref = derive_actor_ref()
+        if has_session:
+            register_claude_wake(session_id, container_ref, actor_ref, idle=False)
+        pending_closes = get_pending_relay_closes(session_id if has_session else None)
 
         if not isinstance(prompt, str) or not prompt or prompt.startswith("/"):
             return
         if session_id and check_dedup(prompt, session_id):
             return
-        has_session = isinstance(session_id, str) and bool(session_id)
-        container_ref = resolve_container_ref(cwd, session_id if has_session else None, True)
-        actor_ref = derive_actor_ref()
-        pending_closes = get_pending_relay_closes(session_id if has_session else None)
         if pending_closes:
             remaining = []
             for previous_container in pending_closes:

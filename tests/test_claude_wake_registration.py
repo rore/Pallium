@@ -41,6 +41,7 @@ PAYLOAD = {
     "actor_ref": "local",
     "socket_path": r"\\.\pipe\claude",
     "token": "test-token",
+    "idle": True,
 }
 
 
@@ -145,26 +146,27 @@ def test_replace_expiry_and_callback_reentry_are_generation_safe() -> None:
 
 def test_session_start_and_stop_refresh_before_early_return(monkeypatch: pytest.MonkeyPatch) -> None:
     start = _load_claude_hook("session_start", monkeypatch)
-    start_calls: list[tuple[object, object, object]] = []
+    start_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(start, "read_hook_input", lambda: {"cwd": ".", "session_id": "session-1"})
     monkeypatch.setattr(start, "derive_container_ref", lambda _cwd: "git:example/repo")
     monkeypatch.setattr(start, "derive_actor_ref", lambda: "local")
     monkeypatch.setattr(start, "pin_container", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(start, "register_claude_wake", lambda *args: start_calls.append(args))
+    monkeypatch.setattr(start, "register_claude_wake", lambda *args, **kwargs: start_calls.append((args, kwargs)))
+    monkeypatch.setattr(start, "relay_request", lambda *_args, **_kwargs: {"deliveries": []})
     monkeypatch.setattr(start, "_fetch_orientation", lambda *_args: [])
     with pytest.raises(SystemExit) as exit_info:
         start.main()
     assert exit_info.value.code == 0
-    assert start_calls == [("session-1", "git:example/repo", "local")]
+    assert start_calls == [(('session-1', 'git:example/repo', 'local'), {'idle': False})]
 
     stop = _load_claude_hook("stop", monkeypatch)
-    stop_calls: list[tuple[object, object, object]] = []
+    stop_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(stop, "read_hook_input", lambda: {"cwd": ".", "session_id": "session-1", "transcript_path": ""})
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_args: "git:example/repo")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
-    monkeypatch.setattr(stop, "register_claude_wake", lambda *args: stop_calls.append(args))
+    monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: stop_calls.append((args, kwargs)))
     stop.main()
-    assert stop_calls == [("session-1", "git:example/repo", "local")]
+    assert stop_calls == [(('session-1', 'git:example/repo', 'local'), {'idle': True})]
 
 
 def test_hook_registration_suppresses_credential_on_transport_failure(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -229,7 +231,7 @@ def test_session_start_subprocess_registers_through_loopback_without_secret_outp
     assert secret not in result.stdout
     assert secret not in result.stderr
     assert len(received) == 1
-    assert registry.probe(
+    assert not registry.probe(
         runtime="claude-code",
         session_ref="subprocess-session",
         container_ref=received[0]["container_ref"],
@@ -398,12 +400,12 @@ def test_hook_disables_proxies_and_redirects(monkeypatch: pytest.MonkeyPatch) ->
 @pytest.mark.parametrize("case", ["missing", "none", "empty", "oversized"])
 def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest.MonkeyPatch) -> None:
     stop = _load_claude_hook("stop", monkeypatch)
-    calls: list[tuple[object, object, object]] = []
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     payload = {"cwd": ".", "session_id": "session-1", "transcript_path": "" if case == "missing" else "turn.jsonl"}
     monkeypatch.setattr(stop, "read_hook_input", lambda: payload)
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_args: "git:example/repo")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
-    monkeypatch.setattr(stop, "register_claude_wake", lambda *args: calls.append(args))
+    monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: calls.append((args, kwargs)))
     if case == "none":
         monkeypatch.setattr(stop, "read_turn", lambda _path: None)
     elif case == "empty":
@@ -411,7 +413,7 @@ def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest
     elif case == "oversized":
         monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(assistant_text="x" * 20_001, tool_calls=[]))
     stop.main()
-    assert calls == [("session-1", "git:example/repo", "local")]
+    assert calls == [(('session-1', 'git:example/repo', 'local'), {'idle': True})]
 
 
 def test_usage_audit_failure_is_generic_and_later_rows_continue(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -454,3 +456,103 @@ def test_hook_timeout_or_http_failure_is_silent(failure: Exception, monkeypatch:
     captured = capsys.readouterr()
     assert "transport-secret" not in captured.out + captured.err
     assert not caplog.records
+def test_claude_hook_lifecycle_surfaces_registration_turn_and_stop(monkeypatch) -> None:
+    calls = []
+    start = _load_claude_hook("session_start", monkeypatch)
+    prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
+    stop = _load_claude_hook("stop", monkeypatch)
+    payload = {"session_id": "session-test", "cwd": ".", "prompt": "a sufficiently long prompt for relay"}
+    monkeypatch.setattr(start, "read_hook_input", lambda: {"session_id": "session-test", "cwd": ".", "source": "startup"})
+    monkeypatch.setattr(start, "register_claude_wake", lambda *args, **kwargs: calls.append(("start", args)) or True)
+    monkeypatch.setattr(start, "_fetch_orientation", lambda *_: [])
+    with pytest.raises(SystemExit):
+        start.main()
+    monkeypatch.setattr(prompt, "read_hook_input", lambda: payload)
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(prompt, "relay_request", lambda method, path, body, timeout: calls.append(("prompt", method, path)) or {"deliveries": []})
+    monkeypatch.setattr(prompt, "pallium_request", lambda *args, **kwargs: None)
+    with pytest.raises(SystemExit):
+        prompt.main()
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {"session_id": "session-test", "cwd": "."})
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: calls.append(("stop", args)) or True)
+    monkeypatch.setattr(stop, "read_turn", lambda *_: None)
+    stop.main()
+    assert [entry[0] for entry in calls] == ["start", "prompt", "stop"]
+    assert calls[1][2] == "/relay/turn"
+def test_explicit_idle_state_is_one_shot_and_scope_bound() -> None:
+    registry = ClaudeWakeRegistry()
+    registry.register(**{**PAYLOAD, "idle": False})
+
+    def transport(*_: object) -> bool:
+        return True
+
+    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
+    registry.register(**{**PAYLOAD, "idle": True})
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
+    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
+
+@pytest.mark.parametrize("idle, expected", [(None, 204), ("false", 400), (1, 400)])
+def test_registration_idle_boundary_is_fail_closed(idle, expected) -> None:
+    registry = ClaudeWakeRegistry()
+    payload = {key: value for key, value in PAYLOAD.items() if key != "idle"}
+    if idle is not None:
+        payload["idle"] = idle
+    response = _client(registry).post("/internal/claude-wake/register", json=payload)
+    assert response.status_code == expected
+    if idle is None:
+        assert not registry.probe(
+            runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
+            container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+            transport=lambda *_: True,
+        )
+
+
+def test_session_start_delivers_and_acks_relay_before_orientation(
+    monkeypatch: pytest.MonkeyPatch, capsys,
+) -> None:
+    start = _load_claude_hook("session_start", monkeypatch)
+    delivery = {
+        "delivery_id": "delivery-start",
+        "claim_token": "claim-start",
+        "message_id": "message-start",
+        "sender_runtime": "codex",
+        "sender_session_ref": "sender",
+        "recipient": "claude-code:session-1",
+        "payload": "startup work",
+        "redacted": False,
+        "in_reply_to": None,
+        "created_at": "2026-09-02T10:00:00+00:00",
+        "expires_at": "2026-09-03T10:00:00+00:00",
+    }
+    acknowledgements = []
+    monkeypatch.setattr(
+        start, "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "session-1", "source": "startup"},
+    )
+    monkeypatch.setattr(start, "derive_container_ref", lambda _cwd: "git:example/repo")
+    monkeypatch.setattr(start, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(start, "pin_container", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(start, "register_claude_wake", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        start, "relay_request",
+        lambda *_args, **_kwargs: {"deliveries": [delivery]},
+    )
+    monkeypatch.setattr(
+        start, "acknowledge_relay",
+        lambda deliveries, **scope: acknowledgements.append((deliveries, scope)),
+    )
+    monkeypatch.setattr(
+        start, "_fetch_orientation",
+        lambda *_args: pytest.fail("Relay delivery must skip orientation memory"),
+    )
+
+    with pytest.raises(SystemExit):
+        start.main()
+
+    assert "startup work" in capsys.readouterr().out
+    assert acknowledgements == [([delivery], {
+        "container_ref": "git:example/repo",
+        "actor_ref": "local",
+    })]

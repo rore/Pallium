@@ -34,6 +34,8 @@ def schedule_claude_relay_wake(
     ):
         return
     delivery = deliveries[0]
+    if delivery.get("state") != "pending":
+        return
     delivery_id = delivery.get("delivery_id")
     session_ref = delivery.get("recipient_session_ref")
     recipient = result.get("recipient")

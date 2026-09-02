@@ -19,6 +19,7 @@ _TIMEOUT_SECONDS = 300
 _QUEUE_TIMEOUT_SECONDS = 30
 _scheduled_delivery_ids: set[str] = set()
 _scheduled_session_generations: dict[str, int] = {}
+_generation_counter = 0
 _scheduled_session_delivery_ids: dict[str, str] = {}
 _scheduled_lock = threading.Lock()
 
@@ -38,6 +39,9 @@ def schedule_codex_relay_wake(
     ):
         return
     delivery = deliveries[0]
+    # Only wake for work still awaiting a turn; replies/already-delivered records do not trigger Codex.
+    if delivery.get("state") != "pending":
+        return
     delivery_id = delivery.get("delivery_id")
     session_ref = delivery.get("recipient_session_ref")
     recipient = result.get("recipient")
@@ -66,7 +70,9 @@ def schedule_codex_relay_wake(
         if delivery_id in _scheduled_delivery_ids or session_ref in _scheduled_session_generations:
             return
         _scheduled_delivery_ids.add(delivery_id)
-        generation = _scheduled_session_generations.get(session_ref, 0) + 1
+        global _generation_counter
+        _generation_counter += 1
+        generation = _generation_counter
         _scheduled_session_generations[session_ref] = generation
         _scheduled_session_delivery_ids[session_ref] = delivery_id
     try:

@@ -62,7 +62,10 @@ class ClaudeWakeRegistry:
         actor_ref: str,
         socket_path: str,
         token: str,
+        idle: bool = False
     ) -> None:
+        if not isinstance(idle, bool):
+            raise ValueError("invalid registration")
         if (
             runtime != RUNTIME
             or not _valid(runtime, MAX_RUNTIME_CHARS)
@@ -93,7 +96,7 @@ class ClaudeWakeRegistry:
                 token=token,
                 generation=self._generation,
                 expires_at=now + TTL_SECONDS,
-                idle=True,
+                idle=idle,
             )
 
     def mark_busy(
@@ -131,6 +134,7 @@ class ClaudeWakeRegistry:
                 or not registration.idle
             ):
                 return False
+            self._registrations[(runtime, session_ref)] = replace(registration, idle=False)
         try:
             return bool(transport(registration.socket_path, registration.token))
         except Exception:

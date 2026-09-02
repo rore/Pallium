@@ -478,9 +478,14 @@ def create_router(
                     raise ValueError
                 chunks.append(chunk)
             payload = json.loads(b"".join(chunks))
-            if not isinstance(payload, dict) or set(payload) != {
+            if not isinstance(payload, dict) or set(payload) not in ({
                 "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token",
-            }:
+            }, {
+                "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle",
+            }):
+                raise ValueError
+            payload.setdefault("idle", False)
+            if not isinstance(payload["idle"], bool):
                 raise ValueError
             wake_registry.register(**payload)
         except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):

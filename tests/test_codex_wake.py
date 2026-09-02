@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from api.routes import create_router
+from app.dependencies import build_router
 from app import codex_wake
 from app.config import AppConfig
 from app.main import create_app
@@ -34,6 +35,7 @@ def _delivery(delivery_id: str = "delivery-1", runtime: str = "codex") -> dict:
             {
                 "delivery_id": delivery_id,
                 "recipient_runtime": runtime,
+                "state": "pending",
                 "recipient_session_ref": "target-session",
             }
         ]
@@ -69,7 +71,8 @@ def test_exact_active_writer_queues_generic_trigger_hidden() -> None:
         [], 1, stderr="already has an active writer (code -32600)"
     )
     queued = subprocess.CompletedProcess([], 0, stderr="")
-    prompt = codex_wake._wake_prompt() + " →"
+    generic_prompt = codex_wake._wake_prompt()
+    prompt = generic_prompt + " →"
     with patch("app.codex_wake.subprocess.run", side_effect=[active, queued]) as run:
         assert codex_wake._launch("target-session", prompt) is True
     assert run.call_count == 2
@@ -81,7 +84,8 @@ def test_exact_active_writer_queues_generic_trigger_hidden() -> None:
         "--thread", "target-session", "--message", prompt
     ]
     assert "→" in prompt
-    assert codex_wake._wake_prompt() in run.call_args_list[0].kwargs["input"]
+    assert run.call_args_list[0].kwargs["input"].startswith(generic_prompt)
+    assert codex_wake._wake_prompt() == generic_prompt
     assert "delivery_id" not in prompt
     assert "receipt" not in prompt
     assert run.call_args_list[1].kwargs["stdin"] is subprocess.DEVNULL
@@ -548,10 +552,9 @@ def test_build_router_turn_rearms_actual_codex_wake_state(client, monkeypatch) -
         _schedule(_delivery())
         assert codex_wake._scheduled_session_generations
         app = FastAPI()
-        app.include_router(create_router(
+        app.include_router(build_router(
             client.app.state.pallium_service,
-            relay_service=RelayService(client.app.state.pallium_service._storage),
-            relay_turn_callback=lambda request: codex_wake.mark_codex_relay_wake_admitted(request["session_ref"]),
+            relay_storage=client.app.state.pallium_service._storage,
         ))
         route = TestClient(app)
         assert route.post("/relay/turn", json={"runtime": "bad", "session_ref": "target-session", **SCOPE}).status_code == 422
@@ -571,3 +574,62 @@ def test_failed_old_generation_cannot_clear_replacement(monkeypatch) -> None:
     assert codex_wake._scheduled_session_generations['target-session'] == 2
     assert codex_wake._scheduled_session_delivery_ids['target-session'] == 'delivery-new'
     assert codex_wake._scheduled_delivery_ids == {'delivery-new'}
+
+
+def test_old_scheduled_worker_cannot_clear_new_schedule(monkeypatch) -> None:
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        codex_wake, "_wake",
+        lambda _session: pytest.fail("stale worker must not launch"),
+    )
+    with patch("app.codex_wake.threading.Thread") as thread:
+        _schedule(_delivery("delivery-old"))
+        old_args = thread.call_args.kwargs["args"]
+        codex_wake.mark_codex_relay_wake_admitted("target-session")
+        _schedule(_delivery("delivery-new"))
+        new_generation = codex_wake._scheduled_session_generations["target-session"]
+
+    assert old_args[2] != new_generation
+    codex_wake._wake_after_debounce(*old_args)
+    assert codex_wake._scheduled_session_generations["target-session"] == new_generation
+    assert codex_wake._scheduled_session_delivery_ids["target-session"] == "delivery-new"
+    assert codex_wake._scheduled_delivery_ids == {"delivery-new"}
+
+
+def test_idempotent_send_schedules_one_codex_wake(client, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.dependencies.schedule_codex_relay_wake",
+        codex_wake.schedule_codex_relay_wake,
+    )
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+    ))
+    route = TestClient(app)
+    assert route.post(
+        "/relay/turn",
+        json={"runtime": "codex", "session_ref": "sender", **SCOPE},
+    ).status_code == 200
+    assert route.post(
+        "/relay/turn",
+        json={"runtime": "codex", "session_ref": "target-session", **SCOPE},
+    ).status_code == 200
+    body = {
+        "sender_runtime": "codex",
+        "sender_session_ref": "sender",
+        "recipient": "codex:target-session",
+        "payload": "one persisted request",
+        "message_id": "stable-wake-message",
+        **SCOPE,
+    }
+    with patch("app.codex_wake.threading.Thread") as thread:
+        first = route.post("/relay/messages", json=body)
+        second = route.post("/relay/messages", json=body)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["message_id"] == second.json()["message_id"]
+    assert thread.call_count == 1
+    assert codex_wake._scheduled_delivery_ids == {
+        first.json()["deliveries"][0]["delivery_id"]
+    }
