@@ -48,7 +48,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -56,6 +56,8 @@ Not required at this risk level.
 - Discovery complete: the existing reminder is too weak and is the first field dropped under response pressure; no retrieval or ranking change is needed.
 - Elevated plan review complete: protected the single existing reminder instead of adding a mechanism; expanded caller-level coverage to normal/over-budget/stale/replaced/empty/error cases and tool-description discovery.
 - First focused replay failed one stop condition: one of two harmful cases still claimed hook receipt and work folding. Returned to planning for stronger imperative wording; no integration, retrieval, or ranking scope added.
+- Strengthened the same reminder after repeat plan review; second replay removed both false receipt/action claims and retained both useful controls.
+- Skill feedback issue filed: https://github.com/rore/agent-workflow/issues/15
 
 ## Plan review
 
@@ -65,7 +67,7 @@ Repeat review after the failed replay approved the unchanged packaging-only scop
 
 ## Evidence
 
-Implemented the explicit historical live-state boundary, removed the reminder deletion path so it survives the 2,000-character trim, updated the tool description, and added direct/caller-level assertions. Independent syntax plus history-presentation, MCP server, delivery-receipt, and MCP-integration verification: 80 passed. Real import-boundary and agent-workflow gates are clean. Focused four-case replay completed within eight logical calls and 2,419 estimated input tokens: one harmful case was fixed, one still falsely claimed hook receipt/folding, and both useful controls remained useful. The material assumption failed, so implementation returned to planning.
+Implemented the explicit historical live-state boundary, removed the reminder deletion path so it survives the 2,000-character trim, updated the tool description, and added direct/caller-level assertions. Independent syntax plus history-presentation, MCP server, delivery-receipt, and MCP-integration verification: 80 passed. Real import-boundary and agent-workflow gates are clean. Focused four-case replay completed within eight logical calls and 2,419 estimated input tokens: one harmful case was fixed, one still falsely claimed hook receipt/folding, and both useful controls remained useful. The material assumption failed, so implementation returned to planning. After the reviewed wording correction, the repeated four-case replay completed with zero failures and 2,489 estimated input tokens: both harmful cases refused unverifiable receipt/action claims and both useful controls remained useful. Verified implementation revision: `0c709022957810a6e166294095765b9f4e84c881`.
 
 ## Result review
 
