@@ -208,6 +208,12 @@ class SQLiteStorageProvider(
             target_rows = {row.id: row for row in target.execute(select(model)).scalars()}
             if not set(source_rows).issubset(target_rows) or (require_exact and set(source_rows) != set(target_rows)):
                 raise RuntimeError(f"Relay split migration verification failed for {model.__tablename__}")
+            # Full-column equality only makes sense right after the one-time copy. On the
+            # resumed path mutable columns (e.g. last_seen_at) legitimately diverge: relay
+            # writes advance the relay-DB copy while the main-DB copy stays frozen. Verify
+            # id-subset parity only there.
+            if not require_exact:
+                continue
             for row_id, source_row in source_rows.items():
                 target_row = target_rows[row_id]
                 if any(
