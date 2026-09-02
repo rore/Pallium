@@ -19,6 +19,19 @@ _workers: set[tuple[int, str]] = set()
 _workers_lock = threading.Lock()
 
 
+def _log_outcome(delivery_id: str, session_ref: str, category: str, started: float) -> None:
+    try:
+        logger.info(
+            "claude_relay_wake outcome delivery_id=%s session_ref=%s category=%s latency_ms=%d",
+            delivery_id,
+            session_ref,
+            category,
+            int((time.monotonic() - started) * 1000),
+        )
+    except Exception:
+        pass
+
+
 def schedule_claude_relay_wake(
     result: object,
     scope: object,
@@ -71,34 +84,38 @@ def schedule_claude_relay_wake(
 
     def run() -> None:
         started = time.monotonic()
+        attempted = False
         try:
-            try:
-                triggered = registry.probe(
-                    runtime="claude-code",
-                    session_ref=session_ref,
-                    container_ref=container_ref,
-                    actor_ref=actor_ref,
-                    transport=claude_wake_transport,
-                )
-                category = "trigger_written" if triggered else "not_triggered"
-            except Exception:
-                category = "worker_error"
-            logger.info(
-                "claude_relay_wake outcome delivery_id=%s session_ref=%s category=%s latency_ms=%d",
-                delivery_id,
-                session_ref,
-                category,
-                int((time.monotonic() - started) * 1000),
+            def transport(socket_path: str, token: str) -> bool:
+                nonlocal attempted
+                attempted = True
+                return claude_wake_transport(socket_path, token)
+
+            triggered = registry.probe(
+                runtime="claude-code",
+                session_ref=session_ref,
+                container_ref=container_ref,
+                actor_ref=actor_ref,
+                transport=transport,
             )
+            category = "trigger_written" if triggered else (
+                "transport_failed" if attempted else "not_eligible"
+            )
+        except Exception:
+            category = "worker_error"
         finally:
+            _log_outcome(delivery_id, session_ref, category, started)
             with _workers_lock:
                 _workers.discard(key)
+
     # ponytail: module-local coalescing; add persistence only if cold wake is required.
     worker = threading.Thread(target=run, name="pallium-claude-wake", daemon=True)
+    started = time.monotonic()
     try:
         worker.start()
     except Exception:
         with _workers_lock:
             _workers.discard(key)
-        raise
+        _log_outcome(delivery_id, session_ref, "worker_start_failed", started)
+        return None
     return worker

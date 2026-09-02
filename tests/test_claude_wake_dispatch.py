@@ -450,6 +450,115 @@ def test_failed_old_generation_cannot_rearm_replacement(monkeypatch: pytest.Monk
         container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
         transport=lambda *_: pytest.fail("replacement must remain busy"),
     )
+
+def test_relay_messages_response_does_not_wait_for_claude_transport(
+    client, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.dependencies import build_router
+
+    registry = ClaudeWakeRegistry()
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+        claude_wake_registry=registry,
+    ))
+    http = TestClient(app, client=("127.0.0.1", 50000))
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    for runtime, session_ref in (("claude-code", "target"), ("codex", "sender")):
+        assert http.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": session_ref, **scope,
+        }).status_code == 200
+    assert http.post("/internal/claude-wake/register", json={
+        **PAYLOAD, "session_ref": "target", "idle": True,
+    }).status_code == 204
+    started = threading.Event()
+    release = threading.Event()
+    worker_threads: list[threading.Thread] = []
+
+    def transport(*_: object) -> bool:
+        worker_threads.append(threading.current_thread())
+        started.set()
+        assert release.wait(timeout=1)
+        return True
+
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
+    response = http.post("/relay/messages", json={
+        "sender_runtime": "codex",
+        "sender_session_ref": "sender",
+        "recipient": "claude-code:target",
+        "payload": "caller-surface payload",
+        **scope,
+    })
+    assert response.status_code == 200
+    assert started.wait(timeout=1)
+    assert worker_threads[0].is_alive()
+    release.set()
+    worker_threads[0].join(timeout=1)
+    assert not worker_threads[0].is_alive()
+
+
+def test_wake_outcome_categories_are_distinct_and_secret_free(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    import app.claude_wake as wake
+
+    caplog.set_level(logging.INFO, logger="app.claude_wake")
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    secret = "token-secret"
+    socket_path = "socket-secret"
+    result = _wake_result(PAYLOAD["session_ref"], "delivery-category")
+    result["deliveries"][0]["payload"] = "payload-secret"
+
+    failed_registry = ClaudeWakeRegistry()
+    failed_registry.register(**{**PAYLOAD, "token": secret, "socket_path": socket_path, "idle": True})
+    monkeypatch.setattr(wake, "claude_wake_transport", lambda *_: False)
+    _join(schedule_claude_relay_wake(result, scope, registry=failed_registry))
+
+    ineligible_registry = ClaudeWakeRegistry()
+    ineligible_registry.register(**{**PAYLOAD, "idle": False})
+    _join(schedule_claude_relay_wake(result, scope, registry=ineligible_registry))
+
+    error_registry = MagicMock(spec=ClaudeWakeRegistry)
+    error_registry.probe.side_effect = RuntimeError("worker failure")
+    _join(schedule_claude_relay_wake(result, scope, registry=error_registry))
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "category=transport_failed" in logged
+    assert "category=not_eligible" in logged
+    assert "category=worker_error" in logged
+    assert secret not in logged and socket_path not in logged and "payload-secret" not in logged
+
+
+def test_worker_start_failure_logs_and_later_send_retries(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    import app.claude_wake as wake
+
+    class FailingThread:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def start(self) -> None:
+            raise RuntimeError("cannot start")
+
+    registry = ClaudeWakeRegistry()
+    registry.register(**{**PAYLOAD, "idle": True})
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    thread_class = threading.Thread
+    caplog.set_level(logging.INFO, logger="app.claude_wake")
+    monkeypatch.setattr(wake.threading, "Thread", FailingThread)
+    assert schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "failed-start"), scope, registry=registry) is None
+    monkeypatch.setattr(wake.threading, "Thread", thread_class)
+    monkeypatch.setattr(wake, "claude_wake_transport", lambda *_: True)
+    _join(schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "retry"), scope, registry=registry))
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "category=worker_start_failed" in logged
+    assert "category=trigger_written" in logged
+
 def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

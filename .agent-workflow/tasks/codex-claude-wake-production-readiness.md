@@ -75,6 +75,8 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 
 - 2026-09-02: Phase 1 implementation completed from `fc95271a`: `core/claude_wake.py` now restores idle only after a definitive failed transport for the same generation; `app/claude_wake.py` coalesces in-flight per-session workers and logs credential-free outcomes. Native frame/auth/socket protocol was not changed.
 
+- 2026-09-02: Phase 1 remediation in progress after review: add an actual `/relay/messages` caller-surface regression, split bounded wake outcome categories by whether transport was attempted, and make thread-start failure log/retry-safe. Structured State remains `Ready to implement` because the workflow permits no `In progress` value; this prose records the overall mission as in progress.
+
 ## Evidence
 
 - Mission memory: `d7537934-fd56-4830-8834-7bab372124d8` (supersedes the incorrect developer assignment).
@@ -82,6 +84,8 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 - Phase 1 focused verification: `uv run python -m py_compile core/claude_wake.py app/claude_wake.py tests/test_claude_wake_dispatch.py` passed.
 - Phase 1 focused verification: `uv run pytest tests/test_claude_wake_dispatch.py tests/test_claude_wake_registration.py -q` passed (65 passed, 2 skipped; two pre-existing Pydantic forward-reference warnings).
 - Workflow verification: `uv run python scripts/agent-workflow-check.py --repo-root . --slug codex-claude-wake-production-readiness` passed. `uv run ruff check ...` could not run because Ruff is not installed in the managed environment.
+
+- Phase 1 review remediation: real `POST /relay/messages` returns while an Event-blocked transport remains active; tests cover `trigger_written`, `transport_failed`, `not_eligible`, `worker_error`, and `worker_start_failed` with token/socket/payload absence assertions. `uv run pytest tests/test_claude_wake_dispatch.py tests/test_claude_wake_registration.py -q` passed (68 passed, 2 skipped; three pre-existing Pydantic forward-reference warnings).
 
 ## Plan review
 
