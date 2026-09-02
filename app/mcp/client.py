@@ -60,6 +60,7 @@ class PalliumMcpClient:
         artifact_kind: str | None = None,
         work_refs: list[str] | None = None,
         request_source_item_id: str | None = None,
+        defer_delivery: bool = False,
     ) -> dict[str, Any]:
         """Source-only history search: raw prior turns ranked on their own.
 
@@ -72,6 +73,7 @@ class PalliumMcpClient:
             "limit": limit,
             "source_only": True,
             "trigger_origin": "agent_pull",
+            "defer_delivery": defer_delivery,
         }
         payload.update(self._scope_params())
         if source_type is not None:
@@ -161,6 +163,7 @@ class PalliumMcpClient:
         max_chars: int | None = None,
         include_supported_memories: bool = False,
         parent_lookup_id: str | None = None,
+        defer_delivery: bool = False,
     ) -> dict[str, Any]:
         """Fetch a bounded neighborhood of raw turns around a source item.
 
@@ -190,6 +193,8 @@ class PalliumMcpClient:
             params["include_supported_memories"] = True
         if parent_lookup_id is not None:
             params["parent_lookup_id"] = parent_lookup_id
+        if defer_delivery:
+            params["defer_delivery"] = True
         try:
             async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
                 response = await http.get(f"/source/{source_item_id}/context", params=params)
@@ -203,6 +208,15 @@ class PalliumMcpClient:
             return {"error": str(exc), "detail": body}
         except Exception as exc:
             return {"error": str(exc)}
+
+    async def finalize_historical_delivery(
+        self,
+        attempt_id: str,
+        *,
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"items": items}
+        return await self._post(f"/historical-access/{attempt_id}/delivery", payload)
 
     async def get_status(self) -> dict[str, Any]:
         try:

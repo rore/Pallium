@@ -94,6 +94,7 @@ class ProcessingStatusResponse(BaseModel):
 
 class QueryRequest(BaseModel):
     text: str = Field(min_length=1)
+    defer_delivery: bool = False
     limit: int = Field(default=5, ge=1, le=50)
     source_type: str | None = None
     role: str | None = None
@@ -205,6 +206,7 @@ class QueryResponse(BaseModel):
     #     endpoint that does not persist a row).
     # Additive and non-breaking.
     lookup_event_id: str | None = None
+    delivery_attempt_id: str | None = None
 
 
 class MemoryEvidenceItemResponse(BaseModel):
@@ -268,6 +270,16 @@ class SourceContextResponse(BaseModel):
     # event chain). Not persisted here — persistence belongs to the deferred
     # exposed-source-ids audit; expansions are not lookups.
     parent_lookup_id: str | None = None
+    delivery_attempt_id: str | None = None
+
+
+class HistoricalDeliveryItem(BaseModel):
+    source_item_id: str = Field(min_length=1)
+    role: Literal["search_match", "anchor", "neighbor"]
+
+
+class HistoricalDeliveryRequest(BaseModel):
+    items: list[HistoricalDeliveryItem] = Field(default_factory=list)
 
 
 class QueryTraceFiltersResponse(BaseModel):

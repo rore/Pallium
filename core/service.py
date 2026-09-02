@@ -858,6 +858,7 @@ class PalliumService:
         include_trace: bool = False,
         trigger_origin: str | None = None,
         source_only: bool = False,
+        defer_delivery: bool = False,
     ) -> QueryResult:
         container_ref = canonicalize_container_ref(container_ref)
         if request_source_item_id is not None:
@@ -965,7 +966,7 @@ class PalliumService:
                 self._storage.write_historical_lookup_event_row({
                     "id": lookup_event_id,
                     "created_at": utc_now(),
-                    "event_type": "lookup",
+                    "event_type": "lookup_attempt" if defer_delivery else "lookup",
                     "session_id": thread_ref,
                     "container_ref": container_ref,
                     "actor_ref": actor_ref,
@@ -984,6 +985,8 @@ class PalliumService:
                 })
             except Exception:
                 self._logger.warning("historical lookup event write failed", exc_info=True)
+                if defer_delivery:
+                    raise
                 # Do not surface an id whose event was never persisted — a
                 # caller passing it back as parent_lookup_id (or the PR-b judge
                 # joining labels) would reference a non-existent event.
@@ -1781,6 +1784,54 @@ class PalliumService:
             payload = _redact_ingest_value(payload)
         return payload, items, match_text
 
+    def finalize_historical_delivery(self, attempt_id: str, *, items: list[dict]) -> str:
+        if not isinstance(items, list):
+            raise ValueError("items must be a list")
+        seen = set()
+        normalized = []
+        anchors = 0
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("source_item_id"), str) or not item["source_item_id"]:
+                raise ValueError("each delivery item needs source_item_id")
+            role = item.get("role")
+            if role not in {"search_match", "anchor", "neighbor"}:
+                raise ValueError("role must be search_match, anchor, or neighbor")
+            source_id = item["source_item_id"]
+            if source_id in seen:
+                raise ValueError("delivery source ids must be unique")
+            seen.add(source_id)
+            anchors += role == "anchor"
+            normalized.append({"source_item_id": source_id, "role": role})
+        attempt = self._storage.get_historical_lookup_event_row(attempt_id)
+        if attempt is None:
+            raise KeyError(attempt_id)
+        event_type = {"lookup_attempt": "lookup", "expansion_attempt": "expansion"}.get(attempt["event_type"])
+        if event_type is None:
+            raise ValueError("delivery attempt is not finalizable")
+        attempt_items = json.loads(attempt.get("exposed_json") or "[]")
+        eligible = {
+            entry.get("source_item_id")
+            for entry in attempt_items
+            if isinstance(entry, dict)
+        }
+        if any(item["source_item_id"] not in eligible for item in normalized):
+            raise ValueError("delivery item is not an eligible candidate")
+        if event_type == "lookup" and any(item["role"] != "search_match" for item in normalized):
+            raise ValueError("lookup delivery roles must be search_match")
+        if event_type == "expansion":
+            actual_anchor = next(
+                (entry.get("source_item_id") for entry in attempt_items
+                 if isinstance(entry, dict) and entry.get("role") == "anchor"),
+                None,
+            )
+            delivered_anchors = [item for item in normalized if item["role"] == "anchor"]
+            if len(delivered_anchors) != 1 or delivered_anchors[0]["source_item_id"] != actual_anchor:
+                raise ValueError("delivery must retain the expansion anchor")
+        return self._storage.finalize_historical_lookup_delivery(
+            attempt_id,
+            {"exposed_json": json.dumps(normalized, separators=(",", ":"))},
+        )
+
     def get_source_context(
         self,
         source_item_id: str,
@@ -1794,7 +1845,8 @@ class PalliumService:
         include_supported_memories: bool = False,
         parent_lookup_id: str | None = None,
         active_session_ref: str | None = None,
-    ) -> tuple[SourceItem, list[SourceItem], list | None, str | None]:
+        defer_delivery: bool = False,
+    ) -> tuple[SourceItem, list[SourceItem], list | None, str | None, str | None]:
         """Bounded neighborhood of raw turns around an anchor source item.
 
         Mirrors ``get_memory_expand`` for visibility/redaction/forgotten/note
@@ -1933,12 +1985,15 @@ class PalliumService:
         # exposed set is the post-gate neighbor ids only (no leak). Mints its
         # own id; persisted unconditionally. Best-effort — a telemetry write
         # failure must never fail the expansion.
-        exposed = [{"source_item_id": n.id, "raw_rank": None, "score": None} for n in neighbors]
+        exposed = [{"source_item_id": anchor_out.id, "role": "anchor", "raw_rank": None, "score": None}]
+        exposed.extend({"source_item_id": n.id, "role": "neighbor", "raw_rank": None, "score": None} for n in neighbors)
+        delivery_attempt_id = None
         try:
+            delivery_attempt_id = new_id()
             self._storage.write_historical_lookup_event_row({
-                "id": new_id(),
+                "id": delivery_attempt_id,
                 "created_at": utc_now(),
-                "event_type": "expansion",
+                "event_type": "expansion_attempt" if defer_delivery else "expansion",
                 # Active (requesting) identity ONLY. NEVER the anchor's or the
                 # parent lookup's — attributing an expansion to the retrieved
                 # source's session is the mis-attribution this fixes. NULL when
@@ -1958,5 +2013,13 @@ class PalliumService:
             })
         except Exception:
             self._logger.warning("historical expansion event write failed", exc_info=True)
+            if defer_delivery:
+                raise
 
-        return anchor_out, neighbors, supported, parent_lookup_id
+        return (
+            anchor_out,
+            neighbors,
+            supported,
+            parent_lookup_id,
+            delivery_attempt_id if defer_delivery else None,
+        )

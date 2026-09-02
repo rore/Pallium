@@ -29,6 +29,7 @@ from api.schemas import (
     ForgetSourceRequest,
     ForgetSourceResponse,
     HistoricalGuidanceUpdateResponse,
+    HistoricalDeliveryRequest,
     SourceContextItemResponse,
     SourceContextResponse,
     SupportedMemoryResponse,
@@ -610,6 +611,7 @@ def create_router(
                 runtime_context=_deserialize_runtime_context(request.runtime_context),
                 trigger_origin=_trigger_origin,
                 source_only=request.source_only,
+                defer_delivery=request.defer_delivery,
             )
         except LookupRequestLinkError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
@@ -640,16 +642,23 @@ def create_router(
         # unconditionally in service.query), which WINS over any audit row id.
         # The proactive path is unchanged: source_only defaults False, so the
         # audit row id (or None) is returned exactly as before.
+        delivery_attempt_id: str | None = None
         if request.source_only:
             minted = getattr(result, "lookup_event_id", None)
-            if minted is not None:
+            if request.defer_delivery:
+                delivery_attempt_id = minted
+                lookup_event_id = None
+            elif minted is not None:
                 lookup_event_id = minted
         return QueryResponse(
             results=[_serialize_result(item) for item in result.results],
             should_inject=result.should_inject,
             decision_reason=result.decision_reason,
-            injectable_blocks=[_serialize_injectable_block(block) for block in result.injectable_blocks],
+            injectable_blocks=[
+                _serialize_injectable_block(block) for block in result.injectable_blocks
+            ],
             lookup_event_id=lookup_event_id,
+            delivery_attempt_id=delivery_attempt_id,
         )
 
     @router.post("/query/debug", response_model=QueryDebugResponse)
@@ -867,9 +876,10 @@ def create_router(
         include_supported_memories: bool = False,
         parent_lookup_id: str | None = None,
         active_session_ref: str | None = None,
+        defer_delivery: bool = False,
     ) -> SourceContextResponse:
         try:
-            anchor, neighbors, supported, echoed_lookup_id = service.get_source_context(
+            anchor, neighbors, supported, echoed_lookup_id, delivery_attempt_id = service.get_source_context(
                 source_item_id,
                 container_ref=container_ref,
                 query_actor_ref=query_actor_ref,
@@ -880,6 +890,7 @@ def create_router(
                 include_supported_memories=include_supported_memories,
                 parent_lookup_id=parent_lookup_id,
                 active_session_ref=active_session_ref,
+                defer_delivery=defer_delivery,
             )
         except KeyError:
             raise HTTPException(status_code=404, detail="source item not found") from None
@@ -929,7 +940,22 @@ def create_router(
             items=items,
             supported_memories=supported_out,
             parent_lookup_id=echoed_lookup_id,
+            delivery_attempt_id=delivery_attempt_id,
         )
+
+    @router.post("/historical-access/{attempt_id}/delivery")
+    def finalize_historical_delivery(attempt_id: str, request: HistoricalDeliveryRequest) -> dict:
+        try:
+            event_id = service.finalize_historical_delivery(
+                attempt_id, items=[item.model_dump() for item in request.items]
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="delivery attempt not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"lookup_event_id": event_id}
 
     @router.post("/memory/{memory_object_id}/flag", response_model=FlagMemoryResponse)
     def flag_memory(memory_object_id: str, request: FlagMemoryRequest) -> FlagMemoryResponse:

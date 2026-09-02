@@ -1,7 +1,7 @@
 ---
 id: fix-real-corpus-memory-access-and-evaluation
 title: Make historical access and real-corpus evaluation faithful
-status: queued
+status: in_progress
 priority: high
 commitment: committed
 ---
@@ -44,6 +44,8 @@ model spend:
 
 The private task text and generated answers remain local and must not be committed.
 
+The corrected four-case current replay completed on 2026-09-02: all four pairs ran within the fixed eight-call and 10,000-estimated-input-token caps. Manual review found genuine improvement in three cases, one harmful irrelevant-history case, and no adoption of obsolete guidance; the replacement case followed the current instruction. This passes the narrow expansion gate but does not support a broad product claim. The next 8-12-case run must focus on irrelevant-history harm and best-evidence placement, not merely increase sample size.
+
 ## Ordered work
 
 1. **Truthful delivery telemetry.** Make one layer own final response selection and
@@ -58,9 +60,11 @@ The private task text and generated answers remain local and must not be committ
    modes. The former excludes later memories and replacements; the latter includes
    current replacements and is labelled as a present-day safety replay.
 4. **Distinct result selection.** Complete the work formerly tracked by
-   `idea-raw-duplicate-ingestion-and-result-diversity`: collapse exact and strong
-   near-duplicates before the visible top-K while preserving source provenance and
-   without deleting raw history.
+   `idea-raw-duplicate-ingestion-and-result-diversity`: collapse exact and
+   normalization-equivalent duplicates before the visible top-K while preserving
+   source provenance and without deleting raw history. "Normalization-equivalent"
+   means equal after Unicode, case, whitespace, and punctuation normalization; it
+   does not authorize fuzzy semantic matching.
 5. **Compact relevance and freshness cues.** Do not present the internal fusion
    score as confidence. Prefer small interpretable fields such as match channel,
    distinctive matched terms, record time, same/different source session, and a
@@ -96,7 +100,7 @@ The private task text and generated answers remain local and must not be committ
    `current_replay` includes it. A direct A -> B -> C replacement chain, equal-time
    boundary, missing timestamp, and conflicting replacement all terminate safely
    and are covered end to end.
-5. Exact and strong near-duplicate source items cannot occupy multiple visible
+5. Exact and normalization-equivalent source items cannot occupy multiple visible
    positions. Freed positions contain the next distinct eligible results, while
    provenance retains all contributing source IDs. Similar wording with a different
    decision is not collapsed.

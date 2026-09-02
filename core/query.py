@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import unicodedata
 from collections import Counter
 from dataclasses import replace
 from typing import Any
@@ -30,6 +31,44 @@ def _build_query_result_summary(results: list[Any]) -> dict[str, Any]:
         },
     }
 
+
+def _collapse_source_duplicates(
+    results: list[QueryResultItem],
+) -> list[QueryResultItem]:
+    """Collapse normalized-equivalent raw source results, retaining provenance."""
+    retained: list[QueryResultItem] = []
+    positions: dict[tuple[object, ...], int] = {}
+    for item in results:
+        fingerprint = (
+            item.source_content_fingerprint
+            if item.result_kind == "source_hit"
+            else None
+        )
+        key = (
+            item.source_type,
+            item.role,
+            item.actor_ref,
+            item.container_ref,
+            item.thread_ref,
+            fingerprint,
+        ) if fingerprint else None
+        if key is None:
+            retained.append(item)
+            continue
+        position = positions.get(key)
+        if position is None:
+            positions[key] = len(retained)
+            retained.append(item)
+            continue
+        kept = retained[position]
+        evidence = list(kept.evidence)
+        seen = set(evidence)
+        for reference in item.evidence:
+            if reference not in seen:
+                evidence.append(reference)
+                seen.add(reference)
+        retained[position] = replace(kept, evidence=evidence)
+    return retained
 
 class QueryExecutor:
     def __init__(
@@ -128,7 +167,9 @@ class QueryExecutor:
         # injectable_blocks stays empty). The P0 forgotten-source gate applies
         # via effective_filters -> matches_filters in the providers.
         if source_only:
-            retrieval_limit = min(max(limit * 4, 12), 50)
+            # Overfetch within a fixed local-work bound so duplicates at the
+            # public maximum do not automatically leave visible slots empty.
+            retrieval_limit = min(max(limit * 4, 12), 200)
             retrieval_result = self._retrieval.query(
                 text=text,
                 limit=retrieval_limit,
@@ -140,9 +181,10 @@ class QueryExecutor:
                 query_actor_ref=actor_ref if plugin.requires_visibility_context else None,
                 target_kind="source_item",
             )
+            distinct = _collapse_source_duplicates(retrieval_result.results)
             ranked = [
                 replace(item, raw_rank=rank)
-                for rank, item in enumerate(retrieval_result.results[:limit], start=1)
+                for rank, item in enumerate(distinct[:limit], start=1)
             ]
             trace = retrieval_result.trace
             if trace is not None:

@@ -104,6 +104,25 @@ def test_source_only_returns_only_source_hits_not_starved(monkeypatch, test_db_u
         assert [r["raw_rank"] for r in results] == list(range(1, len(results) + 1))
 
 
+def test_source_only_max_page_keeps_bounded_refill_headroom(
+    monkeypatch, test_db_url: str
+) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        _ingest(client, source_id="seed", content=_PLAIN)
+        retrieval = client.app.state.pallium_service._query_executor._retrieval
+        original_query = retrieval.query
+        requested_limits: list[int] = []
+
+        def recording_query(*args, **kwargs):
+            requested_limits.append(kwargs["limit"])
+            return original_query(*args, **kwargs)
+
+        monkeypatch.setattr(retrieval, "query", recording_query)
+
+        _query(client, source_only=True, limit=50)
+
+    assert requested_limits == [200]
+
 def test_source_only_does_not_change_default_query(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         for i in range(3):
@@ -157,7 +176,7 @@ def test_source_only_visibility_fail_closed(monkeypatch, test_db_url: str) -> No
 def test_source_only_excludes_forgotten_turn(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         keep = _ingest(client, source_id="keep", content=_PLAIN)
-        drop = _ingest(client, source_id="drop", content=_PLAIN)
+        drop = _ingest(client, source_id="drop", content=_PLAIN + " Follow-up differs.")
 
         before = {r["source_item_id"] for r in _query(client, source_only=True)["results"]}
         assert {keep, drop} <= before

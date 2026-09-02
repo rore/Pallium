@@ -468,7 +468,13 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
             params: dict[str, object] = {"container_ref": client._ctx.container_ref}
             if client._ctx.thread_ref:
                 params["active_session_ref"] = client._ctx.thread_ref
-            for key in ("before", "after", "max_chars", "parent_lookup_id"):
+            for key in (
+                "before",
+                "after",
+                "max_chars",
+                "parent_lookup_id",
+                "defer_delivery",
+            ):
                 if kwargs.get(key) is not None:
                     params[key] = kwargs[key]
             response = await http.get(f"/source/{source_item_id}/context", params=params)
@@ -547,7 +553,11 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
                 "FROM historical_lookup_reuse_event ORDER BY created_at"
             )).mappings().all()
         lookup = next(row for row in rows if row["id"] == search["lookup_event_id"])
-        assert anchor_id in {item["source_item_id"] for item in json.loads(lookup["exposed_json"])}
+        assert json.loads(lookup["exposed_json"]) == [
+            {"source_item_id": item["source_item_id"], "role": "search_match"}
+            for item in search["results"]
+        ]
+        assert any(row["event_type"] == "lookup_attempt" for row in rows)
         assert lookup["session_id"] == active_thread
         expansion = next(
             row for row in rows
@@ -556,6 +566,14 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
         )
         assert expansion["session_id"] == active_thread
         assert expansion["source_session_ref"] == source_thread
+        assert json.loads(expansion["exposed_json"]) == [
+            {
+                "source_item_id": item["source_item_id"],
+                "role": "anchor" if item["is_anchor"] else "neighbor",
+            }
+            for item in expanded["items"]
+        ]
+        assert any(row["event_type"] == "expansion_attempt" for row in rows)
         after = [
             dataclasses.asdict(memory)
             for memory in sorted(storage.list_memory_objects(), key=lambda memory: memory.id)
