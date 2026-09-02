@@ -54,9 +54,12 @@ def _source_duplicate_keys(
         source = sources.get(source_id)
         if source is None:
             continue
-        normalized = " ".join(
-            unicodedata.normalize("NFKC", source.content).casefold().split()
+        normalized = unicodedata.normalize("NFKC", source.content).casefold()
+        normalized = "".join(
+            " " if unicodedata.category(char).startswith("P") else char
+            for char in normalized
         )
+        normalized = " ".join(normalized.split())
         if (
             len(normalized) < _SOURCE_DUPLICATE_MIN_LENGTH
             or len(normalized.split()) < _SOURCE_DUPLICATE_MIN_TOKENS
@@ -197,7 +200,9 @@ class QueryExecutor:
         # injectable_blocks stays empty). The P0 forgotten-source gate applies
         # via effective_filters -> matches_filters in the providers.
         if source_only:
-            retrieval_limit = min(max(limit * 4, 12), 50)
+            # Overfetch within a fixed local-work bound so duplicates at the
+            # public maximum do not automatically leave visible slots empty.
+            retrieval_limit = min(max(limit * 4, 12), 200)
             retrieval_result = self._retrieval.query(
                 text=text,
                 limit=retrieval_limit,

@@ -132,6 +132,24 @@ def test_punctuation_boundaries_do_not_merge_identifiers() -> None:
     ]
 
 
+def test_sentence_punctuation_normalizes_without_joining_identifier_parts() -> None:
+    punctuation_variants = [
+        _item("a", "Decision, use the stable queue for retries today."),
+        _item("b", "Decision use the stable queue for retries today"),
+    ]
+    identifiers = [
+        _item("version", "Decision uses API v1.2 for all stable clients today."),
+        _item("compact", "Decision uses API v12 for all stable clients today."),
+    ]
+    items = punctuation_variants + identifiers
+
+    out = _collapse_source_duplicates(
+        items,
+        _Storage({item.source_item_id: item.excerpt for item in items}),
+    )
+
+    assert [item.source_item_id for item in out] == ["a", "version", "compact"]
+
 def test_nfkc_case_and_whitespace_normalize() -> None:
     items = [
         _item("a", "ＡＬＰＨＡ  beta gamma delta today"),
