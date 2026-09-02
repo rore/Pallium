@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
+import threading
+import time
 from typing import TYPE_CHECKING
 
 from app.claude_wake_transport import claude_wake_transport
@@ -11,31 +14,30 @@ if TYPE_CHECKING:
     from core.claude_wake import ClaudeWakeRegistry
 
 
+logger = logging.getLogger(__name__)
+_workers: set[tuple[int, str]] = set()
+_workers_lock = threading.Lock()
+
+
 def schedule_claude_relay_wake(
     result: object,
     scope: object,
     *,
     registry: ClaudeWakeRegistry,
-) -> None:
-    """Probe a registered Claude Code session and wake it with the new message.
-
-    Mirrors codex_wake.py guard/selector shape but inline (no thread).
-    Credentials never leave the registry; transport only receives (socket_path, token).
-
-    ponytail: inline probe, bounded by transport timeout; thread it only if socket stalls send.
-    """
+) -> threading.Thread | None:
+    """Schedule one bounded wake for a pending Claude delivery."""
     if not isinstance(result, dict) or not isinstance(scope, dict):
-        return
+        return None
     deliveries = result.get("deliveries")
     if (
         not isinstance(deliveries, list)
         or len(deliveries) != 1
         or not isinstance(deliveries[0], dict)
     ):
-        return
+        return None
     delivery = deliveries[0]
     if delivery.get("state") != "pending":
-        return
+        return None
     delivery_id = delivery.get("delivery_id")
     session_ref = delivery.get("recipient_session_ref")
     recipient = result.get("recipient")
@@ -59,11 +61,44 @@ def schedule_claude_relay_wake(
         or not actor_ref
         or not valid_selector
     ):
-        return
-    registry.probe(
-        runtime="claude-code",
-        session_ref=session_ref,
-        container_ref=container_ref,
-        actor_ref=actor_ref,
-        transport=claude_wake_transport,
-    )
+        return None
+
+    key = (id(registry), session_ref)
+    with _workers_lock:
+        if key in _workers:
+            return None
+        _workers.add(key)
+
+    def run() -> None:
+        started = time.monotonic()
+        try:
+            try:
+                triggered = registry.probe(
+                    runtime="claude-code",
+                    session_ref=session_ref,
+                    container_ref=container_ref,
+                    actor_ref=actor_ref,
+                    transport=claude_wake_transport,
+                )
+                category = "trigger_written" if triggered else "not_triggered"
+            except Exception:
+                category = "worker_error"
+            logger.info(
+                "claude_relay_wake outcome delivery_id=%s session_ref=%s category=%s latency_ms=%d",
+                delivery_id,
+                session_ref,
+                category,
+                int((time.monotonic() - started) * 1000),
+            )
+        finally:
+            with _workers_lock:
+                _workers.discard(key)
+    # ponytail: module-local coalescing; add persistence only if cold wake is required.
+    worker = threading.Thread(target=run, name="pallium-claude-wake", daemon=True)
+    try:
+        worker.start()
+    except Exception:
+        with _workers_lock:
+            _workers.discard(key)
+        raise
+    return worker

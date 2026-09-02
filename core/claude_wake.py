@@ -45,7 +45,7 @@ def _valid(value: object, maximum: int) -> bool:
 
 
 class ClaudeWakeRegistry:
-    """One app-owned credential registry; credentials never leave this module except to an injected transport."""
+    """One app-owned credential registry; credentials only reach an injected transport."""
 
     def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
@@ -62,7 +62,7 @@ class ClaudeWakeRegistry:
         actor_ref: str,
         socket_path: str,
         token: str,
-        idle: bool = False
+        idle: bool = False,
     ) -> None:
         if not isinstance(idle, bool):
             raise ValueError("invalid registration")
@@ -111,7 +111,10 @@ class ClaudeWakeRegistry:
                 or registration.actor_ref != actor_ref
             ):
                 return False
-            self._registrations[(runtime, session_ref)] = replace(registration, idle=False)
+            self._generation += 1
+            self._registrations[(runtime, session_ref)] = replace(
+                registration, generation=self._generation, idle=False
+            )
             return True
 
     def probe(
@@ -134,11 +137,18 @@ class ClaudeWakeRegistry:
                 or not registration.idle
             ):
                 return False
-            self._registrations[(runtime, session_ref)] = replace(registration, idle=False)
+            consumed = replace(registration, idle=False)
+            self._registrations[(runtime, session_ref)] = consumed
         try:
-            return bool(transport(registration.socket_path, registration.token))
+            triggered = bool(transport(consumed.socket_path, consumed.token))
         except Exception:
-            return False
+            triggered = False
+        if not triggered:
+            with self._lock:
+                current = self._active_locked(runtime, session_ref)
+                if current is not None and current.generation == consumed.generation:
+                    self._registrations[(runtime, session_ref)] = replace(current, idle=True)
+        return triggered
 
     def _active_locked(self, runtime: str, session_ref: str) -> _Registration | None:
         registration = self._registrations.get((runtime, session_ref))

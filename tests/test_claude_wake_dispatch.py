@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import threading
@@ -27,6 +28,24 @@ PAYLOAD = {
     "token": "test-token",
 }
 
+
+
+def _join(worker: threading.Thread | None) -> None:
+    assert worker is not None
+    worker.join(timeout=1)
+    assert not worker.is_alive()
+
+
+def _wake_result(session_ref: str, delivery_id: str = "delivery-1") -> dict:
+    return {
+        "recipient": f"claude-code:{session_ref}",
+        "deliveries": [{
+            "delivery_id": delivery_id,
+            "state": "pending",
+            "recipient_runtime": "claude-code",
+            "recipient_session_ref": session_ref,
+        }],
+    }
 
 class TestTransport:
     """Transport tests: write auth + frame, handle errors."""
@@ -145,7 +164,7 @@ class TestDispatch:
             "actor_ref": "local",
         }
 
-        schedule_claude_relay_wake(result, scope, registry=registry)
+        _join(schedule_claude_relay_wake(result, scope, registry=registry))
 
         registry.probe.assert_called_once()
         call_kwargs = registry.probe.call_args[1]
@@ -236,7 +255,7 @@ class TestDispatch:
             "actor_ref": "local",
         }
 
-        schedule_claude_relay_wake(result, scope, registry=registry)
+        _join(schedule_claude_relay_wake(result, scope, registry=registry))
 
         registry.probe.assert_called_once()
 
@@ -313,6 +332,124 @@ class TestDispatch:
 
         registry.probe.assert_not_called()
 
+def test_wake_worker_returns_without_waiting_and_logs_credential_free_outcome(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    import app.claude_wake as wake
+
+    registry = ClaudeWakeRegistry()
+    secret = "token-secret"
+    session_ref = "session-א"
+    scope = {"container_ref": "git:é/repo", "actor_ref": "local"}
+    registry.register(**{**PAYLOAD, **scope, "session_ref": session_ref, "token": secret, "idle": True})
+    started = threading.Event()
+    release = threading.Event()
+
+    def transport(*_: object) -> bool:
+        started.set()
+        assert release.wait(timeout=1)
+        return True
+
+    monkeypatch.setattr(wake, "claude_wake_transport", transport)
+    caplog.set_level(logging.INFO, logger="app.claude_wake")
+    worker = schedule_claude_relay_wake(
+        _wake_result(session_ref, "delivery-α"), scope, registry=registry
+    )
+    assert started.wait(timeout=1)
+    assert worker is not None and worker.is_alive()
+    release.set()
+    _join(worker)
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "delivery-α" in logged and session_ref in logged
+    assert "category=trigger_written" in logged and "latency_ms=" in logged
+    assert secret not in logged and "message-content" not in logged
+
+
+def test_wake_worker_coalesces_concurrent_sends(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.claude_wake as wake
+
+    registry = ClaudeWakeRegistry()
+    registry.register(**{**PAYLOAD, "idle": True})
+    started = threading.Event()
+    release = threading.Event()
+    barrier = threading.Barrier(3)
+    workers: list[threading.Thread | None] = []
+    calls: list[bool] = []
+
+    def transport(*_: object) -> bool:
+        calls.append(True)
+        started.set()
+        assert release.wait(timeout=1)
+        return True
+
+    monkeypatch.setattr(wake, "claude_wake_transport", transport)
+
+    def submit() -> None:
+        barrier.wait()
+        workers.append(schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"]), {
+            "container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"],
+        }, registry=registry))
+
+    senders = [threading.Thread(target=submit) for _ in range(2)]
+    for sender in senders:
+        sender.start()
+    barrier.wait()
+    for sender in senders:
+        sender.join(timeout=1)
+        assert not sender.is_alive()
+    assert started.wait(timeout=1)
+    assert len([worker for worker in workers if worker is not None]) == 1
+    release.set()
+    _join(next(worker for worker in workers if worker is not None))
+    assert calls == [True]
+
+
+def test_transport_failure_rearms_only_the_same_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.claude_wake as wake
+
+    registry = ClaudeWakeRegistry()
+    registry.register(**{**PAYLOAD, "idle": True})
+    calls = 0
+
+    def transport(*_: object) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("transport failed")
+        return True
+
+    monkeypatch.setattr(wake, "claude_wake_transport", transport)
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    _join(schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "first"), scope, registry=registry))
+    _join(schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "second"), scope, registry=registry))
+    assert calls == 2
+
+
+def test_failed_old_generation_cannot_rearm_replacement(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.claude_wake as wake
+
+    registry = ClaudeWakeRegistry()
+    registry.register(**{**PAYLOAD, "idle": True})
+    started = threading.Event()
+    release = threading.Event()
+
+    def transport(*_: object) -> bool:
+        started.set()
+        assert release.wait(timeout=1)
+        return False
+
+    monkeypatch.setattr(wake, "claude_wake_transport", transport)
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    worker = schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"]), scope, registry=registry)
+    assert started.wait(timeout=1)
+    registry.register(**{**PAYLOAD, "token": "replacement", "idle": False})
+    release.set()
+    _join(worker)
+    assert not registry.probe(
+        runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        transport=lambda *_: pytest.fail("replacement must remain busy"),
+    )
 def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -335,12 +472,12 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     transport = MagicMock(return_value=True)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("app.claude_wake.claude_wake_transport", transport)
-        schedule_claude_relay_wake(result, scope, registry=registry)
+        _join(schedule_claude_relay_wake(result, scope, registry=registry))
     transport.assert_not_called()
     assert client.post("/internal/claude-wake/register", json=payload).status_code == 204
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("app.claude_wake.claude_wake_transport", transport)
-        schedule_claude_relay_wake(result, scope, registry=registry)
+        _join(schedule_claude_relay_wake(result, scope, registry=registry))
     transport.assert_called_once()
     assert not registry.probe(runtime="claude-code", session_ref="session-test", container_ref="wrong", actor_ref=scope["actor_ref"], transport=transport)
 def test_windows_write_closes_event_after_cancelled_completion() -> None:

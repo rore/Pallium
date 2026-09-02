@@ -73,10 +73,15 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 
 - 2026-09-02: Phase 1 implementation in progress from `fc95271a`. Intended files: `core/claude_wake.py` (generation-safe consume/restore), `app/claude_wake.py` (module-local coalesced worker and credential-free outcome log), `tests/test_claude_wake_dispatch.py` (deterministic caller/concurrency/retry/ABA/log tests), and this Work Record. Native frame/auth/socket protocol surfaces are excluded pending Claude architect acceptance.
 
+- 2026-09-02: Phase 1 implementation completed from `fc95271a`: `core/claude_wake.py` now restores idle only after a definitive failed transport for the same generation; `app/claude_wake.py` coalesces in-flight per-session workers and logs credential-free outcomes. Native frame/auth/socket protocol was not changed.
+
 ## Evidence
 
 - Mission memory: `d7537934-fd56-4830-8834-7bab372124d8` (supersedes the incorrect developer assignment).
 - Roadmap priority: `roadmap/features/add-wake-first-relay-delivery.md`, Claude live Windows qualification first.
+- Phase 1 focused verification: `uv run python -m py_compile core/claude_wake.py app/claude_wake.py tests/test_claude_wake_dispatch.py` passed.
+- Phase 1 focused verification: `uv run pytest tests/test_claude_wake_dispatch.py tests/test_claude_wake_registration.py -q` passed (65 passed, 2 skipped; two pre-existing Pydantic forward-reference warnings).
+- Workflow verification: `uv run python scripts/agent-workflow-check.py --repo-root . --slug codex-claude-wake-production-readiness` passed. `uv run ruff check ...` could not run because Ruff is not installed in the managed environment.
 
 ## Plan review
 
@@ -102,6 +107,8 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 - Assumption 4 (restart/crash): CONFIRMED honestly UNKNOWN → correctly scoped to persisted next-hook recovery, not automatic cold wake. Hooks (`session_start`/`user_prompt_submit` register idle=False; `stop` registers idle=True; `acknowledge_relay` ACKs) show only natural-turn recovery; no lease-expiry observer exists. No general coordinator — agreed.
 
 **No blocking findings.** Two validator notes for relaydev (non-blocking): (a) keep the idle-consume synchronous inside the worker (not the caller) so the lock still serializes it — if the consume ever moves off-lock the one-shot guarantee breaks; (b) the structured outcome log must not log `socket_path` or `token` (both `repr=False` in `_Registration`, keep it that way). Protocol/session_id/frame-grammar changes and live Windows qualification remain a hard `claude_arch` gate before merge.
+
+
 ## Result review
 
 Pending.
