@@ -17,6 +17,7 @@ import time
 from collections import Counter
 from contextlib import closing
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,12 +34,15 @@ from core.models import HISTORICAL_GUIDANCE_MEMORY_TYPES  # noqa: E402
 from core.visibility import is_visible  # noqa: E402
 
 MAX_SAMPLE_SIZE = 20
+DEFAULT_CLI_SAMPLE_SIZE = 4
 MAX_VISIBLE_SOURCES = 3
 MAX_SOURCE_CHARS = 480
 MAX_QUERY_CHARS = 1000
 MAX_ANSWER_CHARS = 2000
 MAX_TOTAL_ESTIMATED_INPUT_TOKENS = 50000
 MAX_MODEL_CALLS = 100
+DEFAULT_CLI_MAX_ESTIMATED_INPUT_TOKENS = 10000
+DEFAULT_CLI_MAX_MODEL_CALLS = 8
 _ALLOWED_CATEGORIES = {"applicable", "unrelated", "replaced_decision", "unlabeled"}
 ANSWER_SCHEMA = '{"answer":"string"}'
 JUDGE_SCHEMA = '{"winner":"A|B|tie","history_relevance":"useful|harmful|irrelevant","rationale":"string"}'
@@ -56,6 +60,8 @@ class PullCase:
     guarded_history: str | None = None
     category: str = "unlabeled"
     has_supported_replacement: bool = False
+    replay_mode: str = "current_replay"
+    delivery_roles: tuple[str | None, ...] = ()
 
     @property
     def case_id(self) -> str:
@@ -110,6 +116,18 @@ def _sample_cases(cases: list[PullCase], *, sample_size: int, seed: int) -> list
     return selected
 
 
+def _event_entries(events: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    entries = []
+    for event in events:
+        try:
+            payload = json.loads(event["exposed_json"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, list):
+            entries.extend(payload)
+    return entries
+
+
 def _memory_text(row: sqlite3.Row) -> str:
     try:
         payload = json.loads(row['payload_json'] or '{}')
@@ -124,6 +142,15 @@ def _memory_text(row: sqlite3.Row) -> str:
     return str(subject or '').strip()
 
 
+def _parse_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
 
 def _load_lineage(
     conn: sqlite3.Connection,
@@ -131,6 +158,7 @@ def _load_lineage(
     container_ref: str,
     visibility: str,
     query_actor_ref: str | None,
+    cutoff: str | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int]]:
     """Read supported supersession chains using the production relation shape."""
     memory_columns = _table_columns(conn, 'memory_objects')
@@ -145,14 +173,16 @@ def _load_lineage(
     records = conn.execute(
         f"SELECT {', '.join('m.' + column for column in selected)} FROM memory_objects m"
     ).fetchall()
-    by_id = {str(row['id']): row for row in records}
+    cutoff_time = _parse_timestamp(cutoff) if cutoff is not None else None
+    parsed_times = {str(row['id']): _parse_timestamp(row['created_at']) for row in records}
+    by_id = {str(row['id']): row for row in records if cutoff is None or (parsed_times[str(row['id'])] is not None and cutoff_time is not None and parsed_times[str(row['id'])] <= cutoff_time)}
     if not by_id:
         return {}, empty
     successors: dict[str, set[str]] = {memory_id: set() for memory_id in by_id}
     if 'superseded_by_id' in memory_columns:
         for row in records:
             successor = row['superseded_by_id']
-            if successor:
+            if successor and str(row['id']) in successors:
                 successors[str(row['id'])].add(str(successor))
     for row in conn.execute(
         "SELECT from_id, to_id FROM relations "
@@ -219,7 +249,7 @@ def _load_lineage(
                     query_visibility=visibility, query_actor_ref=query_actor_ref,
                 )
             )
-            if visible:
+            if visible and (cutoff is None or (_parse_timestamp(current['created_at']) is not None and cutoff_time is not None and _parse_timestamp(current['created_at']) <= cutoff_time)):
                 replacement_status = 'current'
                 current_id = next_id
                 current_text = redact_sensitive(_memory_text(current))[:240] or None
@@ -266,11 +296,14 @@ def _guarded_history(
     query: str,
     source_rows: dict[str, sqlite3.Row],
     updates_by_source: dict[str, list[dict[str, Any]]],
+    roles: tuple[str | None, ...] | None = None,
 ) -> str:
     items = []
-    for source_id, text in zip(source_ids, source_texts):
+    for index, (source_id, text) in enumerate(zip(source_ids, source_texts)):
         row = source_rows.get(source_id)
         item: dict[str, Any] = {'source_item_id': source_id, 'excerpt': text}
+        if roles and index < len(roles) and roles[index]:
+            item['delivery_role'] = roles[index]
         if row is not None:
             for column in ('occurred_at', 'created_at'):
                 if column in row.keys() and row[column]:
@@ -286,13 +319,25 @@ def _guarded_history(
     ))
 
 
-def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_size: int = MAX_SAMPLE_SIZE, seed: int = 0, category_labels: dict[str, str] | None = None, case_ids: tuple[str, ...] | None = None) -> CorpusSnapshot:
+def load_corpus(
+    db_path: Path,
+    *,
+    container_ref: str,
+    visibility: str,
+    sample_size: int = MAX_SAMPLE_SIZE,
+    seed: int = 0,
+    category_labels: dict[str, str] | None = None,
+    case_ids: tuple[str, ...] | None = None,
+    replay_mode: str = "current_replay",
+) -> CorpusSnapshot:
     """Load and deterministically sample valid historical-pull episodes."""
     _valid_sample_size(sample_size)
     if not container_ref or not visibility:
         raise ValueError("container_ref and visibility are required")
     if visibility not in {"private", "container", "public"}:
         raise ValueError("visibility must be private, container, or public")
+    if replay_mode not in {"as_of_lookup", "current_replay"}:
+        raise ValueError("replay_mode must be as_of_lookup or current_replay")
     if not db_path.exists():
         raise FileNotFoundError(str(db_path))
 
@@ -313,6 +358,10 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
         "forgotten_request_links": 0,
         "empty_request_links": 0,
         "temporally_unsafe_request_links": 0,
+        "current_replay_omitted_forgotten": 0,
+        "current_replay_omitted_hidden": 0,
+        "current_replay_omitted_redacted": 0,
+        "current_replay_omitted_missing": 0,
     }
     candidates = 0
     query_bearing_nonempty = 0
@@ -337,6 +386,18 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
             "ORDER BY created_at, id",
             (container_ref,),
         ).fetchall()
+        finalized: dict[str, sqlite3.Row] = {}
+        if "parent_lookup_id" in event_columns:
+            finalized = {
+                str(event["id"]): event
+                for event in conn.execute(
+                    "SELECT id, created_at, event_type, parent_lookup_id, exposed_json, "
+                    "session_id, container_ref, visibility, actor_ref "
+                    "FROM historical_lookup_reuse_event "
+                    "WHERE event_type IN ('lookup', 'expansion') AND container_ref = ?",
+                    (container_ref,),
+                ).fetchall()
+            }
         source_columns = _table_columns(conn, "source_items")
         if not {"id", "content", "forgotten_at", "container_ref", "thread_ref", "visibility", "actor_ref", "role", "created_at"}.issubset(source_columns):
             raise ValueError("database source_items table is missing required columns")
@@ -400,7 +461,25 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
                     query_actor_ref=actor_ref,
                 )
             updates_by_source = updates_by_actor[actor_ref]
-            raw_exposed = row["exposed_json"]
+            linked_expansions = sorted(
+                (
+                    event
+                    for event in finalized.values()
+                    if event["event_type"] == "expansion"
+                    and event["parent_lookup_id"] == row["id"]
+                    and event["session_id"] == row["session_id"]
+                    and event["container_ref"] == row["container_ref"]
+                    and event["visibility"] == row["visibility"]
+                    and event["actor_ref"] == row["actor_ref"]
+                ),
+                key=lambda event: (str(event["created_at"] or ""), str(event["id"])),
+            )
+            event_bundle = [row, *linked_expansions]
+            raw_exposed = (
+                json.dumps(_event_entries(event_bundle))
+                if str(row["id"]) in finalized
+                else row["exposed_json"]
+            )
             query_rows += 1
             candidates += 1
             try:
@@ -412,7 +491,7 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
                 continue
             query_bearing_nonempty += 1
 
-            ordered_ids: list[str] = []
+            occurrences: list[tuple[str, str | None]] = []
             malformed = False
             for entry in exposed:
                 if not isinstance(entry, dict):
@@ -422,48 +501,72 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
                 if not isinstance(source_id, str) or not source_id:
                     malformed = True
                     continue
-                if source_id not in ordered_ids:
-                    ordered_ids.append(source_id)
+                role = entry.get("role") if isinstance(entry.get("role"), str) else None
+                occurrences.append((source_id, role))
             if malformed:
                 attrition["malformed_exposed_json"] += 1
-            if not ordered_ids:
+            if not occurrences:
                 attrition["no_valid_exposed_ids"] += 1
                 attrition["zero_surviving_sources"] += 1
                 continue
-
-            if len(ordered_ids) > MAX_VISIBLE_SOURCES:
-                attrition["sources_beyond_visible_limit"] += len(ordered_ids) - MAX_VISIBLE_SOURCES
-                ordered_ids = ordered_ids[:MAX_VISIBLE_SOURCES]
-
-            placeholders = ",".join("?" for _ in ordered_ids)
+            finalized_delivery = any(role for _, role in occurrences)
+            if not finalized_delivery:
+                occurrences = list(dict.fromkeys(occurrences))
+            if not finalized_delivery and len({source_id for source_id, _ in occurrences}) > MAX_VISIBLE_SOURCES:
+                attrition["sources_beyond_visible_limit"] += len(occurrences) - MAX_VISIBLE_SOURCES
+                occurrences = occurrences[:MAX_VISIBLE_SOURCES]
+            unique_ids = list(dict.fromkeys(source_id for source_id, _ in occurrences))
+            placeholders = ",".join("?" for _ in unique_ids)
             source_rows = conn.execute(
-                f"SELECT * FROM source_items WHERE id IN ({placeholders}) AND container_ref = ?",
-                (*ordered_ids, container_ref),
+                f"SELECT * FROM source_items WHERE id IN ({placeholders})",
+                tuple(unique_ids),
             ).fetchall()
             by_id = {str(source["id"]): source for source in source_rows}
             surviving_ids: list[str] = []
             surviving_texts: list[str] = []
+            surviving_roles: list[str | None] = []
             missing = forgotten = empty = 0
-            for source_id in ordered_ids:
+            eligible: dict[str, tuple[str, str | None]] = {}
+            for source_id, role in occurrences:
+                if source_id in eligible:
+                    continue
                 source = by_id.get(source_id)
                 if source is None:
+                    missing += 1
+                    if replay_mode == "current_replay":
+                        attrition["current_replay_omitted_missing"] += 1
+                    continue
+                source_time = _parse_timestamp(source["created_at"])
+                lookup_time = _parse_timestamp(row["created_at"])
+                if replay_mode == "as_of_lookup" and (source_time is None or lookup_time is None or source_time > lookup_time):
                     missing += 1
                     continue
                 if source["forgotten_at"] is not None:
                     forgotten += 1
+                    if replay_mode == "current_replay":
+                        attrition["current_replay_omitted_forgotten"] += 1
                     continue
                 if not is_visible(source["visibility"], source["container_ref"], container_ref, source["actor_ref"], query_visibility=visibility, query_actor_ref=row["actor_ref"]):
                     missing += 1
+                    if replay_mode == "current_replay":
+                        attrition["current_replay_omitted_hidden"] += 1
                     continue
                 text = redact_sensitive(str(source["content"] or ""))
                 if not text.strip():
                     empty += 1
+                    if replay_mode == "current_replay":
+                        attrition["current_replay_omitted_redacted"] += 1
                     continue
                 if len(text) > MAX_SOURCE_CHARS:
                     attrition["source_chars_truncated"] += len(text) - MAX_SOURCE_CHARS
                     text = text[:MAX_SOURCE_CHARS]
-                surviving_ids.append(source_id)
-                surviving_texts.append(text)
+                eligible[source_id] = (text, role)
+            for source_id, role in occurrences:
+                if source_id in eligible:
+                    text, first_role = eligible[source_id]
+                    surviving_ids.append(source_id)
+                    surviving_texts.append(text)
+                    surviving_roles.append(role or first_role)
             attrition["missing_sources"] += missing
             attrition["forgotten_sources"] += forgotten
             attrition["empty_source_text"] += empty
@@ -476,6 +579,8 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
             )
             if category not in _ALLOWED_CATEGORIES:
                 raise ValueError(f"invalid category for event {row['id']!r}: {category!r}")
+            if replay_mode == "as_of_lookup":
+                updates_by_source, _ = _load_lineage(conn, container_ref=container_ref, visibility=visibility, query_actor_ref=row["actor_ref"], cutoff=str(row["created_at"]))
             has_supported_replacement = any(
                 update.get("replacement_status") == "current"
                 for source_id in surviving_ids
@@ -500,9 +605,12 @@ def load_corpus(db_path: Path, *, container_ref: str, visibility: str, sample_si
                     query=query,
                     source_rows=by_id,
                     updates_by_source=updates_by_source,
+                    roles=tuple(surviving_roles),
                 ),
                 category=category,
                 has_supported_replacement=has_supported_replacement,
+                replay_mode=replay_mode,
+                delivery_roles=tuple(surviving_roles),
             ))
 
     if case_ids is None:
@@ -552,9 +660,11 @@ def _estimate_input_tokens(system_prompt: str, user_prompt: str) -> int:
 
 
 ANSWER_SYSTEM_PROMPT = (
-    "You are a helpful software assistant. Answer the user task using only the "
-    "task and optional context supplied in the user prompt. If context is "
-    "irrelevant, ignore it. Return JSON."
+    "You are a helpful software assistant. You can inspect and edit repository "
+    "files and run commands and tests as a normal coding agent. In this offline "
+    "evaluation, propose the next action and do not refuse solely because tools "
+    "are not executed here. Answer using only the task and optional context; "
+    "historical memory is the only arm difference. Return JSON."
 )
 JUDGE_SYSTEM_PROMPT = (
     "You are a blind evaluator. A and B are answers to the same task. Choose the "
@@ -738,6 +848,7 @@ def run_pilot(
             "case_id": case.case_id, "lookup_event_id": _hash_id(case.event_id),
             "query": case.query, "source_ids": list(case.source_ids),
             "source_texts": list(case.source_texts), "category": case.category,
+            "replay_mode": case.replay_mode, "delivery_roles": list(case.delivery_roles),
         }
         raw_history = case.raw_history or "\n\n".join(case.source_texts)
         guarded_history = case.guarded_history or raw_history
@@ -856,6 +967,11 @@ def run_pilot(
         "corpus": {**snapshot.counts, "attrition": snapshot.attrition, "lineage": lineage},
         "decision_gate": {"status": decision_status, "broad_product_recommendation": "none", "note": "directional pilot only; no broad product recommendation"},
         "results": {
+            "metrics": {
+                "candidate-recovery": {"measured": False},
+                "injection-precision": {"measured": False},
+                "downstream-task-effect": {"measured": True},
+            },
             "failures": failures, "budget_failures": budget_failures, "budget_stopped_cases": budget_stopped_cases,
             "model_calls": model_calls, "judge_calls": judge_calls, "model_judge": model_judge,
             "max_model_calls": max_model_calls,
@@ -986,13 +1102,33 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--review-sheet-output", type=Path, default=None, help="PRIVATE: optional blinded Markdown worksheet for one human reviewer")
     parser.add_argument("--acknowledge-private-review-output", action="store_true", help="Acknowledge that the review output contains raw private text and must never be published")
     parser.add_argument("--history-arm", choices=("raw", "guarded", "both"), default="raw", help="Compare raw, production-shaped guarded history, or both")
+    parser.add_argument("--replay-mode", choices=("as_of_lookup", "current_replay"), default="current_replay", help="Replay exact finalized delivery as-of lookup time or through current gates")
     parser.add_argument("--categories-json", type=Path, default=None, help="Optional JSON mapping event id or case id to applicable/unrelated/replaced_decision")
-    parser.add_argument("--sample-size", type=int, default=MAX_SAMPLE_SIZE)
+    parser.add_argument("--sample-size", type=int, default=DEFAULT_CLI_SAMPLE_SIZE)
     parser.add_argument("--case-id", action="append", default=None, help="Exact hashed case id to include; repeat for multiple cases")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--max-model-calls", type=int, default=MAX_MODEL_CALLS)
-    parser.add_argument("--max-estimated-input-tokens", type=int, default=MAX_TOTAL_ESTIMATED_INPUT_TOKENS)
-    parser.add_argument("--no-model-judge", action="store_true", help="Generate blinded answers without spending calls on an automatic judge")
+    parser.add_argument(
+        "--max-model-calls", type=int, default=DEFAULT_CLI_MAX_MODEL_CALLS
+    )
+    parser.add_argument(
+        "--max-estimated-input-tokens",
+        type=int,
+        default=DEFAULT_CLI_MAX_ESTIMATED_INPUT_TOKENS,
+    )
+    judge = parser.add_mutually_exclusive_group()
+    judge.add_argument(
+        "--model-judge",
+        action="store_false",
+        dest="no_model_judge",
+        help="Spend additional calls on the optional automatic judge",
+    )
+    judge.add_argument(
+        "--no-model-judge",
+        action="store_true",
+        dest="no_model_judge",
+        help="Generate blinded answers without spending calls on an automatic judge",
+    )
+    parser.set_defaults(no_model_judge=True)
     parser.add_argument("--cache-dir", type=Path, default=None)
     parser.add_argument("--no-eval-cache", action="store_true")
     return parser
@@ -1028,6 +1164,7 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             category_labels=category_labels,
             case_ids=tuple(args.case_id) if args.case_id else None,
+            replay_mode=args.replay_mode,
         )
         minimum_cases = len(args.case_id) if args.case_id else args.sample_size
         if len(snapshot.cases) < minimum_cases or (
