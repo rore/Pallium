@@ -59,6 +59,17 @@ from 14 to six, and reduced the compact response by 26.7%. The third result rema
 an offline measurement candidate; two results is the budgeted setting for the next
 experiment, not yet a global product default.
 
+The budget-capped expansion then completed eight paired cases across five requester
+sessions with 16 answer calls, zero failures, no automatic judge, and 4,603
+estimated input tokens. A primary-agent non-blind review preferred the history arm
+in five cases, the no-history arm in two, and tied one. One apparent history win
+contained the active request itself and one useful case exactly duplicated another;
+after excluding both, the directional independent estimate was three helped, two
+harmed, and one neutral. Both harmful cases treated old workflow text as proof of
+current inbox state or completed actions. This is not a broad ROI result: it shows
+that history can restore missing context, but agent-facing packaging must prevent
+past records from masquerading as live state.
+
 ## Ordered work
 
 1. **Truthful delivery telemetry.** Make one layer own final response selection and
@@ -92,10 +103,15 @@ experiment, not yet a global product default.
    same-session rules do not improve this corpus, while most wrong-stage results
    did not exist at the original request time. Do not change production ranking or
    add a learned reranker from this sample.
-9. **Budget-capped rerun.** Run the 8-12-case downstream experiment in
-   as_of_lookup mode, with no automatic judge, two delivered search previews, and
-   fixed call/token caps. Record the third candidate offline so its possible value
-   remains measurable without paying to inject it.
+9. **Budget-capped rerun.** Complete: eight as-of-lookup pairs used two delivered
+   previews, retained the third offline, disabled the automatic judge, and stayed
+   within fixed call/token caps. The clean directional estimate was three helped,
+   two harmed, and one neutral across six independent uncontaminated cases.
+10. **Historical-evidence boundary.** Make the compact history contract state that
+    recalled workflow text is past evidence, not confirmation of current messages,
+    tool state, or completed actions. Require live verification before the agent
+    claims receipt or execution. Validate first on the two observed harmful cases
+    plus useful controls before buying another broad run.
 
 ## Out of scope
 
@@ -148,6 +164,10 @@ experiment, not yet a global product default.
 11. Before the paid expansion, deterministic evidence rejects unsupported global
     recency/session reranking and fixes the experimental delivery budget. The paid
     run cannot mix post-request sources into an as_of_lookup case.
+12. The eight-case expansion reports its contaminated and duplicate cases rather
+    than counting them as independent evidence. A focused follow-up must retain the
+    useful controls while preventing both observed false live-state claims before
+    the 20-case product gate can open.
 
 ## Sequencing
 
@@ -156,6 +176,8 @@ experiment, not yet a global product default.
 2. Add time modes before interpreting replacement behavior.
 3. Add diversity and compact presentation changes under deterministic tests.
 4. Run the capped four-case replay.
-5. Run the 8-12-case as_of_lookup experiment with two delivered previews and the
-   third candidate retained only for offline precision measurement.
-6. Return to `idea-pull-real-corpus-validation` only after this item is done.
+5. Complete the eight-case as_of_lookup experiment with two delivered previews and
+   the third candidate retained only for offline precision measurement.
+6. Add and test the historical-evidence boundary on the harmful cases and useful
+   controls.
+7. Return to `idea-pull-real-corpus-validation` only after this item is done.
