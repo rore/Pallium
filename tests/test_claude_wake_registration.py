@@ -150,22 +150,21 @@ def test_session_start_and_stop_refresh_before_early_return(monkeypatch: pytest.
     monkeypatch.setattr(start, "derive_container_ref", lambda _cwd: "git:example/repo")
     monkeypatch.setattr(start, "derive_actor_ref", lambda: "local")
     monkeypatch.setattr(start, "pin_container", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(start, "register_claude_wake", lambda *args: start_calls.append(args))
+    monkeypatch.setattr(start, "register_claude_wake", lambda *args, **kwargs: start_calls.append(args))
     monkeypatch.setattr(start, "_fetch_orientation", lambda *_args: [])
     with pytest.raises(SystemExit) as exit_info:
         start.main()
     assert exit_info.value.code == 0
-    assert start_calls == [("session-1", "git:example/repo", "local")]
+    assert start_calls == [("session-1", "git:example/repo", "local", False)]
 
     stop = _load_claude_hook("stop", monkeypatch)
     stop_calls: list[tuple[object, object, object]] = []
     monkeypatch.setattr(stop, "read_hook_input", lambda: {"cwd": ".", "session_id": "session-1", "transcript_path": ""})
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_args: "git:example/repo")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
-    monkeypatch.setattr(stop, "register_claude_wake", lambda *args: stop_calls.append(args))
-    with pytest.raises(SystemExit):
-        stop.main()
-    assert stop_calls == [("session-1", "git:example/repo", "local")]
+    monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: stop_calls.append(args))
+    stop.main()
+    assert stop_calls == [("session-1", "git:example/repo", "local", True)]
 
 
 def test_hook_registration_suppresses_credential_on_transport_failure(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -404,16 +403,15 @@ def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest
     monkeypatch.setattr(stop, "read_hook_input", lambda: payload)
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_args: "git:example/repo")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
-    monkeypatch.setattr(stop, "register_claude_wake", lambda *args: calls.append(args))
+    monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: calls.append(args))
     if case == "none":
         monkeypatch.setattr(stop, "read_turn", lambda _path: None)
     elif case == "empty":
         monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(assistant_text="", tool_calls=[]))
     elif case == "oversized":
         monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(assistant_text="x" * 20_001, tool_calls=[]))
-    with pytest.raises(SystemExit):
-        stop.main()
-    assert calls == [("session-1", "git:example/repo", "local")]
+    stop.main()
+    assert calls == [("session-1", "git:example/repo", "local", True)]
 
 
 def test_usage_audit_failure_is_generic_and_later_rows_continue(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -463,7 +461,7 @@ def test_claude_hook_lifecycle_surfaces_registration_turn_and_stop(monkeypatch) 
     stop = _load_claude_hook("stop", monkeypatch)
     payload = {"session_id": "session-test", "cwd": ".", "prompt": "a sufficiently long prompt for relay"}
     monkeypatch.setattr(start, "read_hook_input", lambda: {"session_id": "session-test", "cwd": ".", "source": "startup"})
-    monkeypatch.setattr(start, "register_claude_wake", lambda *args: calls.append(("start", args)) or True)
+    monkeypatch.setattr(start, "register_claude_wake", lambda *args, **kwargs: calls.append(("start", args)) or True)
     monkeypatch.setattr(start, "_fetch_orientation", lambda *_: [])
     with pytest.raises(SystemExit):
         start.main()
@@ -476,7 +474,7 @@ def test_claude_hook_lifecycle_surfaces_registration_turn_and_stop(monkeypatch) 
         prompt.main()
     monkeypatch.setattr(stop, "read_hook_input", lambda: {"session_id": "session-test", "cwd": "."})
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: "git:example/repo")
-    monkeypatch.setattr(stop, "register_claude_wake", lambda *args: calls.append(("stop", args)) or True)
+    monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: calls.append(("stop", args)) or True)
     monkeypatch.setattr(stop, "read_turn", lambda *_: None)
     stop.main()
     assert [entry[0] for entry in calls] == ["start", "prompt", "stop"]
