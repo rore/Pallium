@@ -128,6 +128,16 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 
 **No blocking findings.** Two validator notes for relaydev (non-blocking): (a) keep the idle-consume synchronous inside the worker (not the caller) so the lock still serializes it — if the consume ever moves off-lock the one-shot guarantee breaks; (b) the structured outcome log must not log `socket_path` or `token` (both `repr=False` in `_Registration`, keep it that way). Protocol/session_id/frame-grammar changes and live Windows qualification remain a hard `claude_arch` gate before merge.
 
+2026-09-02 — `claude-code:@claude_arch` independent review of the `c4a11b64` Dogfood secret-boundary extension (plan-only contract, WR-only, no runtime code read as authorization).
+
+**Verdict: CLEAN — relaydev may implement the bounded redaction fix.** Verified all three code claims the contract rests on against current source:
+- Claim 1 (shared leaf owns Tier B entropy + known-FP shapes): CONFIRMED in `redaction/__init__.py` — entropy heuristic and shape guards live there. Reusing that leaf for the smallest prose-guard change is correct; no Relay/integration-specific rule needed.
+- Claim 2 (core Relay stores the sanitized payload before setting `redacted=true`): CONFIRMED in `core/relay.py` — `send`/`reply` compute `stored_payload = redact_sensitive(raw_payload)`, persist `payload=stored_payload`, then set `redacted = stored_payload != raw_payload`. The safe payload already exists to return.
+- Claim 3 (oversized normal Relay result drops the safe payload): CONFIRMED in `app/mcp/server.py::_relay_text` — for an oversized deliveries dict it summarizes to `message_id/recipient/redacted/in_reply_to/created_at/expires_at + delivery_count + delivery_states` and omits `payload`. This is the exact regression the fix targets.
+
+**Scope, criteria, risk all well-formed.** Five files, no protocol/hook/schema. Risk correctly held High. Redline caveat accurate — security-review maps only to `core/visibility.py`, so architect review (this) is the real gate.
+
+**Two implementation constraints (binding, not blocking):** (a) return only the already-sanitized `stored_payload`, never the raw payload — if ≤2000 chars return it, else a bounded preview + explicit truncation marker; (b) the fix must not weaken Tier A/B on the store path — the prose-guard relaxation preserves multiword technical lines only when they carry no genuine secret span. Tests must assert both the preserved-payload path and that a real secret still redacts.
 
 ## Result review
 
