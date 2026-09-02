@@ -147,6 +147,21 @@ def _relay_text(result: object) -> str:
             if key in result
         }
         summary.update(delivery_count=len(result["deliveries"]), delivery_states=states)
+        payload = result.get("payload")
+        if result.get("redacted") is True and isinstance(payload, str):
+            summary["payload"] = payload
+            if len(_json_text(summary)) > _MCP_RELAY_MAX_CHARS:
+                summary["payload_truncated"] = True
+                marker = "…[truncated]"
+                low, high = 0, len(payload)
+                while low < high:
+                    mid = (low + high + 1) // 2
+                    summary["payload"] = payload[:mid] + marker
+                    if len(_json_text(summary)) <= _MCP_RELAY_MAX_CHARS:
+                        low = mid
+                    else:
+                        high = mid - 1
+                summary["payload"] = payload[:low] + marker
         return _json_text(summary)
     return _json_text({"error": "relay response exceeds the response budget"})
 

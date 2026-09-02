@@ -436,3 +436,65 @@ async def test_unconfigured_paired_scope_receive_to_reply_is_atomic(monkeypatch,
     assert json.loads(replied[0].text)["in_reply_to"] == sent["message_id"]
     status = await asgi_get(f"/relay/messages/{sent['message_id']}", scope)
     assert status["deliveries"][0]["state"] == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_redacted_send_and_reply_summaries_are_safe_and_bounded(
+    monkeypatch: pytest.MonkeyPatch, asgi_post,
+):
+    bind_asgi_post(monkeypatch, asgi_post)
+    sender = "summary-sender"
+    for runtime, session in ((_RUNTIME, _SESSION), ("codex", sender)):
+        await asgi_post("/relay/turn", {"runtime": runtime, "session_ref": session, **_SCOPE})
+
+    server = create_server()
+
+    async def send(message: str, recipient: str = f"{_RUNTIME}:{_SESSION}"):
+        content, _ = await server.call_tool("pallium_relay_send", {
+            "message": message,
+            "recipient": recipient,
+            "sender_runtime": "codex",
+            "sender_session_ref": sender,
+        })
+        return content[0].text, json.loads(content[0].text)
+
+    repro = "session_id: wake uses socket/pipe+token+scope after restart"
+    _, repro_result = await send(repro)
+    assert repro_result["redacted"] is False
+    assert repro_result["payload"] == repro
+
+    unicode_payload = "日本語 🦾 résumé"
+    _, unicode_result = await send(unicode_payload)
+    assert unicode_result["payload"] == unicode_payload
+
+    secret = "ghp_" + ("A" * 36)
+    secret_text, secret_result = await send(f"credential: {secret} for Relay")
+    assert secret_result["redacted"] is True
+    assert secret not in secret_text
+    assert secret_result["payload"] != f"credential: {secret} for Relay"
+
+    received, _ = await server.call_tool("pallium_relay_receive", {})
+    deliveries = json.loads(received[0].text)["deliveries"]
+    reply_delivery = next(item for item in deliveries if item["payload"] == repro)
+    reply_args = {
+        "delivery_id": reply_delivery["delivery_id"],
+        "receipt": reply_delivery["receipt"],
+        "message": f"Authorization: Bearer {secret}",
+    }
+    first_reply, _ = await server.call_tool("pallium_relay_reply", reply_args)
+    second_reply, _ = await server.call_tool("pallium_relay_reply", reply_args)
+    assert secret not in first_reply[0].text
+    assert secret not in second_reply[0].text
+
+    long_session = "w" * 255
+    await asgi_post("/relay/turn", {
+        "runtime": _RUNTIME, "session_ref": long_session, **_SCOPE,
+    })
+    oversized = "Bearer " + ("A" * 20) + " " + ("z" * 1472)
+    oversized_text, oversized_result = await send(oversized, f"{_RUNTIME}:{long_session}")
+    assert len(oversized_text) <= 2000
+    assert oversized_result["redacted"] is True
+    assert oversized_result["payload_truncated"] is True
+    assert "[truncated]" in oversized_result["payload"]
+    assert oversized not in oversized_text
+    assert "A" * 20 not in oversized_text
