@@ -1,0 +1,41 @@
+<!-- agent-workflow:start -->
+**Outcome:** A Relay message sent to a live, idle Claude Code session causes that session to start a new turn and see the message, with no manual ping. Wake is best-effort on top of the already-durable delivery.
+
+**Target:** Pallium application layer — the Relay post-persistence wake path for the `claude-code` runtime. No `core/` or `api/` changes.
+
+**Scope:** Two new `app/` modules (a socket/pipe wake transport, a Claude relay-wake scheduler that calls the existing `ClaudeWakeRegistry.probe`) and one edit to `app/dependencies.py` switching `relay_send_callback` from Codex-only to a runtime dispatcher. Focused unit tests for the transport and scheduler. The registration side (hooks, `/internal/claude-wake/register`, `ClaudeWakeRegistry`, session-id resolution) is already built and stays untouched.
+
+**Constraints:** No `core/` or `api/` edits. Persist-before-wake preserved (the callback fires after `RelayService.send`/`reply` returns). Credentials never leave `core/claude_wake.py` except to the injected transport — the transport only receives `(socket_path, token)`, never stores or logs them. Exact `claude-code:` deliveries only; reuse the existing guard/selector shape. No subprocess spawn, no visible window. Wake failure never blocks the send response and never loses the durable message. Codex path unchanged. No new dependency unless a Windows pipe primitive is unavailable in stdlib. No internal/product names in any committed file.
+
+**Completion criteria:** (1) A `claude-code:` relay send routes to `schedule_claude_relay_wake`; a `codex:` send still routes to `schedule_codex_relay_wake`; malformed/non-matching deliveries route to neither. (2) The transport writes the auth line then one peer-message frame to the registered socket/pipe within a short timeout, returns bool, and swallows all errors. (3) A registered idle second Claude session is woken by a live relay send and the message reaches `delivered`, no manual ping, no visible window. (4) Unit tests pass; existing Codex/relay tests unchanged.
+
+**Risk:** Elevated
+
+**Complexity:** Moderate
+
+**Reason:** Redline pre-edit verdict (clean-context, 2026-09-02): all three paths GRAY (`app/**` watch), no boundary violation, no red zone, no checkpoint triggered. Gray → Elevated (conservative default); no contract/security/persistence/financial surface, so not High. Moderate: two new components plus a wiring seam, with real uncertainty on the cross-platform (Unix socket vs Windows named pipe) transport branch.
+
+**Discovery:** The consume side is the only gap. `core/claude_wake.py::ClaudeWakeRegistry` already stores `(socket_path, token)` per `(runtime, session_ref)` with a 900s TTL and exposes `probe(runtime, session_ref, container_ref, actor_ref, *, transport)` — it looks up the active registration, checks container/actor scope match, and calls an injected `transport(socket_path, token) -> bool`, wrapped in try/except; credentials never leave the module. Nothing in `app/` supplies a transport, and `probe` is called nowhere. `app/dependencies.py:541-545` hardwires `relay_send_callback = partial(schedule_codex_relay_wake, ...)` ignoring runtime, so a `claude-code:` recipient persists and never wakes. `claude_wake_registry` is already built at `dependencies.py:540` and handed to `create_router`; pass that same instance to the new scheduler. `api/routes.py:404-428` already invokes the callback after persistence for both `/relay/messages` and `/relay/replies`, inside try/except. The guard/selector shape to mirror is `app/codex_wake.py:35-68` (deliveries-list-of-1, runtime match, session_ref validity, scope present, selector == session or `@alias`). Unlike Codex, S0 needs no subprocess, no debounce thread, no generation counter, no queue fallback.
+
+**Material assumptions:**
+- Claude Code exposes a per-session messaging endpoint at the registered `socket_path` (Unix domain socket on POSIX, named pipe on Windows) that accepts an auth line `{"type":"auth","token":...}\n` followed by a peer-message JSON frame. Disproof: the live dogfood send does not wake the idle session / the socket refuses the frame shape. Action: stop and re-derive the frame from the reverse-engineered wire contract before proceeding; do not broaden scope.
+- A Windows named pipe can be written from Python via stdlib (open on `\\.\pipe\...`) without adding a dependency. Disproof: stdlib open fails on the pipe path. Action: check whether `pywin32` is already installed before adding anything; if not, record the gap and keep POSIX-only working rather than adding a dep silently.
+- Treating a clean write as success (skipping the `peer_message_status` receipt) is acceptable for the skeleton, since the message is already durably persisted. Disproof: writes succeed but sessions never wake (held/denied receipts). Action: add receipt parsing in a follow-up slice (S1), not here.
+
+**Plan:** (1) `app/claude_wake_transport.py` — `claude_wake_transport(socket_path, token) -> bool`: connect (POSIX `socket.AF_UNIX`; Windows named-pipe write), send auth line, send one peer frame `{msgV,msg_id(uuid),type:"user",message:{role:"user",content:<notice>},priority:"next",from:"pallium-relay",session_id:<session>}`, short (~2s) connect+write timeout, swallow all `(OSError, ValueError, socket.timeout)` and return False; never raise. Clean write = True (`ponytail:` ceiling — skips receipt parse; add in S1). (2) `app/claude_wake.py` — `schedule_claude_relay_wake(result, scope, *, registry)`: mirror `codex_wake.py:35-68` guards but for `recipient_runtime == "claude-code"` and `claude-code:` selector; on pass, call `registry.probe(runtime="claude-code", session_ref=..., container_ref=..., actor_ref=..., transport=claude_wake_transport)` inline (`ponytail:` ceiling — inline, bounded by transport timeout; thread it if a slow socket ever stalls a send). (3) `app/dependencies.py:541-545` — replace the Codex-only partial with a dispatcher closure keyed on `result["deliveries"][0]["recipient_runtime"]`: `codex` → existing partial, `claude-code` → `schedule_claude_relay_wake(registry=claude_wake_registry)`, else no-op; keep behind the `relay_service is not None` guard. Stop condition: if the live frame shape is rejected, stop at plan and re-derive.
+
+**Verification plan:** (Criterion 1, dispatch) unit test with a fake registry/callback: assert `claude-code:` delivery calls the Claude scheduler and not Codex, `codex:` calls Codex and not Claude, malformed calls neither. (Criterion 2, transport) unit test: a mock listener accepts a connection; assert the auth line then a well-formed peer frame are written, and that all socket errors yield False without raising. Follow the style of `tests/test_claude_wake_registration.py`. (Codex regression) existing Codex wake tests unchanged and green. (Criterion 3, live dogfood — the real gate) service running; open a second Claude Code session so it registers via SessionStart; leave it idle; `pallium_relay_send` to its `claude-code:<session>` selector from this session; confirm the idle session starts a new turn showing the notice, the relay message reaches `delivered`, and no visible window/subprocess appeared. Run tests from the pallium venv (onnxruntime) per local ops.
+
+**Plan review:** Clean-context redline subagent (2026-09-02) classified all three paths GRAY with no boundary violation, no forbidden import (`app→core` and `app→app` both permitted), and no triggered checkpoint. This doubles as the single Elevated architecture review: the change introduces no new cross-layer dependency and touches no contract/security/persistence surface. No further plan round required.
+
+**Approvals:** Not required at this risk level (Elevated). User approved the implementation plan via ExitPlanMode 2026-09-02.
+
+**Exceptions:** —
+
+**State:** Ready to implement
+<!-- Ready to implement | Blocked | Ready for review -->
+<!-- agent-workflow:end -->
+
+## Implementation
+
+- 2026-09-02: Work Record created before code, on branch `slice/claude-wake-s0` (branched from `main`). Classification Elevated/Moderate from clean-context redline verdict (all gray, no boundary violation). This is the consume side of the already-built `ClaudeWakeRegistry` credential capture; only the transport + runtime dispatch are new.
