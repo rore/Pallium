@@ -152,6 +152,7 @@ def test_session_start_and_stop_refresh_before_early_return(monkeypatch: pytest.
     monkeypatch.setattr(start, "derive_actor_ref", lambda: "local")
     monkeypatch.setattr(start, "pin_container", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(start, "register_claude_wake", lambda *args, **kwargs: start_calls.append((args, kwargs)))
+    monkeypatch.setattr(start, "relay_request", lambda *_args, **_kwargs: {"deliveries": []})
     monkeypatch.setattr(start, "_fetch_orientation", lambda *_args: [])
     with pytest.raises(SystemExit) as exit_info:
         start.main()
@@ -503,3 +504,52 @@ def test_registration_idle_boundary_is_fail_closed(idle, expected) -> None:
             container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
             transport=lambda *_: True,
         )
+
+
+def test_session_start_delivers_and_acks_relay_before_orientation(
+    monkeypatch: pytest.MonkeyPatch, capsys,
+) -> None:
+    start = _load_claude_hook("session_start", monkeypatch)
+    delivery = {
+        "delivery_id": "delivery-start",
+        "claim_token": "claim-start",
+        "message_id": "message-start",
+        "sender_runtime": "codex",
+        "sender_session_ref": "sender",
+        "recipient": "claude-code:session-1",
+        "payload": "startup work",
+        "redacted": False,
+        "in_reply_to": None,
+        "created_at": "2026-09-02T10:00:00+00:00",
+        "expires_at": "2026-09-03T10:00:00+00:00",
+    }
+    acknowledgements = []
+    monkeypatch.setattr(
+        start, "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "session-1", "source": "startup"},
+    )
+    monkeypatch.setattr(start, "derive_container_ref", lambda _cwd: "git:example/repo")
+    monkeypatch.setattr(start, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(start, "pin_container", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(start, "register_claude_wake", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        start, "relay_request",
+        lambda *_args, **_kwargs: {"deliveries": [delivery]},
+    )
+    monkeypatch.setattr(
+        start, "acknowledge_relay",
+        lambda deliveries, **scope: acknowledgements.append((deliveries, scope)),
+    )
+    monkeypatch.setattr(
+        start, "_fetch_orientation",
+        lambda *_args: pytest.fail("Relay delivery must skip orientation memory"),
+    )
+
+    with pytest.raises(SystemExit):
+        start.main()
+
+    assert "startup work" in capsys.readouterr().out
+    assert acknowledgements == [([delivery], {
+        "container_ref": "git:example/repo",
+        "actor_ref": "local",
+    })]

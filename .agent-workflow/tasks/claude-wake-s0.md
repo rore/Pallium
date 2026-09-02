@@ -32,7 +32,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -88,3 +88,6 @@
 - 2026-09-02 review rejection: follow-up gaps found in idle registration defaults/validation, Claude pending-only dispatch, overlapped cancellation completion proof, generation counter growth, and caller-surface E2E assertions. Corrective scope is minimal and remains Blocked pending fresh verification.
 
 - 2026-09-02: final verification after transport and explicit-state fixes: 158 focused tests passed, 2 skipped; compileall, diff check, and workflow gate clean. Exact Claude D1-D2-D3 persisted caller journey and Codex ABA/idempotent retry remain open.
+- 2026-09-02: Post-merge architect acceptance rejected the developer's premature PR #92 merge and audited the complete wake diff. Corrective work now requires explicit pending state, fail-closed validated idle registration, atomic one-shot Claude admission, busy marking before every UserPromptSubmit early return, process-monotonic Codex generations, completion-safe Windows overlapped cancellation, real build_router admission coverage, exact generated-prompt assertions, and deterministic idempotent retry/ABA checks.
+- 2026-09-02: The required persisted Claude caller journey exposed and fixed a fresh-session addressability defect: SessionStart registered native wake credentials but not the Relay session. SessionStart now uses the existing /relay/turn surface, remains non-idle, renders/ACKs startup Relay before orientation memory, and makes the exact session addressable. Deterministic D1→D2→D3 E2E drives actual SessionStart/UserPromptSubmit/Stop hooks through an in-process build_router/TestClient and asserts busy pending state, Stop-only one-shot transport, idempotent duplicate suppression, wrong-scope isolation, model-visible D2/D3, and public delivered status.
+- 2026-09-02: Final architect verification: focused wake/hook/Relay/integration suite 162 passed, 2 skipped, 1 existing Pydantic warning in 36.80s; compileall, git diff --check, and agent-workflow gate clean. Tests use deterministic state transitions and no wall-clock lease sleep. Live dogfood delivery relay-msg-8bc489b19adf4ddcac4e5874441ac149 was claimed without injection/ACK on one turn and later redelivered/delivered after lease recovery; no loss occurred, while uninterrupted automatic recovery after a crashed hook remains explicitly unqualified under the existing interrupted/restart roadmap gate.
