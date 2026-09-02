@@ -19,8 +19,6 @@
 
 **Verification:** New regression test passes. Existing split-migration tests (`test_populated_legacy_relay_rows_migrate_exactly_once`, `test_split_marker_detects_missing_target_row`, `test_split_rejects_competing_legacy_writer_within_bound`) stay green. Full `tests/test_sqlite_relay_isolation.py` green. Then restart the installed service and confirm it binds (this drift is what was aborting startup on the live box).
 
-**Approvals:** Not required at this risk level (Routine).
-
 **State:** Ready for review
 <!-- Ready to implement | Blocked | Ready for review -->
 <!-- agent-workflow:end -->
