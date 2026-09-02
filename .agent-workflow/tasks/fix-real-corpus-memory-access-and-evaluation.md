@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Plan review
@@ -44,10 +44,17 @@
 - 2026-09-02: Established isolated task context on `codex/fix-real-corpus-memory-access-and-evaluation`; no product code was edited before discovery and risk classification.
 - 2026-09-02: Redline classified the intended shared-service and HTTP-contract diff High/Red with architecture-review and api-review checkpoints and no import-boundary violation. Read-only flow discovery confirmed pre-render exposure recording, missing expansion anchors, lookup-only replay, time leakage, and ID-only duplicate handling. The plan uses append-only deterministic delivery receipts and normalization-only equivalence to avoid schema work, event mutation, and unsafe fuzzy matching.
 
+- 2026-09-02: Implemented immutable delivery attempts plus deterministic append-only final receipts; exact finalized search/expansion replay in current and as-of modes; post-visibility normalized duplicate collapse with merged provenance and no added storage reads; and compact history cues that put current replacement guidance before stale evidence. Direct HTTP remains immediate by default; no schema migration, event mutation, fuzzy matching, new dependency, or cross-layer import was introduced. `apply_patch` failed with the machine-local process error 1327, so the repository-approved deterministic fallback was used.
+
 ## Evidence
 
 - Roadmap source: `roadmap/features/fix-real-corpus-memory-access-and-evaluation.md`.
 
+- Verification at code revision `edb6cd98`: full suite 4,136 passed, 12 skipped, 2 expected failures; focused evaluator suite 37 passed; retrieval/performance suite 130 passed; compileall, import linter, mojibake scan, and `git diff --check` passed. The source-only performance gate confirms duplicate collapse adds no storage reads.
+- Fresh architecture review found no P0-P1 blocker after punctuation normalization, max-page refill, and cost-safe CLI defaults were corrected. Fresh API review found no actionable contract issue; it confirmed expansion events intentionally retain the finalized root lookup as their parent.
+- Authorized private `current_replay` rerun: four paired cases across three requester sessions, eight answer calls, zero failures, 2,706 estimated input tokens under the 10,000 cap, 1,480 incremental history tokens, no model judge. Manual review found genuine improvement in 3/4 cases, one harmful irrelevant-history case, and zero adoption of obsolete guidance; the one replacement case followed current guidance. Private prompts, history, and answers remain outside the repository.
+
 ## Result review
 
-- Pending.
+- The implementation meets the Work Record completion criteria and preserves both retrieval/evaluation invariants. The narrow product gate passes (3/4 improved, zero obsolete-guidance adoption), but the harmful 1/4 case prevents a broad product claim. The next 8-12-case experiment should explicitly measure best-evidence top-three rate, irrelevant-history harm, duplicate-slot rate, task/session diversity, context tokens, and latency; it requires separate private-data/model-call authorization.
+- Scope review found no unintended schema, dependency, authorization, or service/integration changes. Installed service and integrations were deliberately not restarted because unrelated wake-branch work remains active in the shared checkout.

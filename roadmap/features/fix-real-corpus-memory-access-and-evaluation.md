@@ -1,7 +1,7 @@
 ---
 id: fix-real-corpus-memory-access-and-evaluation
 title: Make historical access and real-corpus evaluation faithful
-status: queued
+status: in_progress
 priority: high
 commitment: committed
 ---
@@ -43,6 +43,8 @@ model spend:
   chronological neighbours are too easy to overlook.
 
 The private task text and generated answers remain local and must not be committed.
+
+The corrected four-case current replay completed on 2026-09-02: all four pairs ran within the fixed eight-call and 10,000-estimated-input-token caps. Manual review found genuine improvement in three cases, one harmful irrelevant-history case, and no adoption of obsolete guidance; the replacement case followed the current instruction. This passes the narrow expansion gate but does not support a broad product claim. The next 8-12-case run must focus on irrelevant-history harm and best-evidence placement, not merely increase sample size.
 
 ## Ordered work
 
