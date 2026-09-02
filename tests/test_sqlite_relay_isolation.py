@@ -198,3 +198,23 @@ def test_split_rejects_competing_legacy_writer_within_bound(tmp_path: Path) -> N
     finally:
         blocker.rollback()
         blocker.close()
+
+
+def test_split_resume_tolerates_heartbeat_drift(tmp_path: Path) -> None:
+    # last_seen_at advances only in the relay DB after the split, so it diverges
+    # from the frozen main-DB copy. The resumed-startup verify must not treat that
+    # expected drift as corruption.
+    import sqlite3
+
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    legacy = SQLiteStorageProvider(f"sqlite:///{main}")
+    legacy.relay_turn(runtime="codex", session_ref="target", container_ref="c", actor_ref="u", title=None, max_chars=1000, max_messages=1, lease_seconds=60)
+    legacy._engine.dispose()
+    split = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    split._engine.dispose(); split._relay_engine.dispose()
+    with sqlite3.connect(relay) as connection:
+        connection.execute("UPDATE relay_sessions SET last_seen_at='2099-01-01 00:00:00.000000'")
+    # Must not raise despite the drifted column.
+    reopened = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    _dispose(reopened)
