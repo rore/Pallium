@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import threading
 import time
 from typing import Callable
@@ -29,6 +29,7 @@ class _Registration:
     token: str = field(repr=False)
     generation: int
     expires_at: float
+    idle: bool
 
 
 Transport = Callable[[str, str], bool]
@@ -92,7 +93,23 @@ class ClaudeWakeRegistry:
                 token=token,
                 generation=self._generation,
                 expires_at=now + TTL_SECONDS,
+                idle=True,
             )
+
+    def mark_busy(
+        self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str
+    ) -> bool:
+        """Record a coordinator-observed turn start; wake is fail-closed until Stop."""
+        with self._lock:
+            registration = self._active_locked(runtime, session_ref)
+            if (
+                registration is None
+                or registration.container_ref != container_ref
+                or registration.actor_ref != actor_ref
+            ):
+                return False
+            self._registrations[(runtime, session_ref)] = replace(registration, idle=False)
+            return True
 
     def probe(
         self,
@@ -111,6 +128,7 @@ class ClaudeWakeRegistry:
                 registration is None
                 or registration.container_ref != container_ref
                 or registration.actor_ref != actor_ref
+                or not registration.idle
             ):
                 return False
         try:

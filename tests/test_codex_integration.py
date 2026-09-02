@@ -40,8 +40,8 @@ env = { PALLIUM_MCP_TRANSPORT = "stdio" }
     assert 'pallium_relay_reply = { approval_mode = "approve" }' in content
     assert 'pallium_relay_ack = { approval_mode = "approve" }' in content
     assert 'pallium_relay_send = { approval_mode = "approve" }' in content
-    assert content.count('approval_mode = "approve"') == 3
-    assert 'pallium_relay_receive = { approval_mode = "approve" }' not in content
+    assert content.count('approval_mode = "approve"') == 4
+    assert 'pallium_relay_receive = { approval_mode = "approve" }' in content
     assert (
         'command = "C:/Users/me/AppData/Roaming/uv/python/'
         'cpython-3.13.14-windows-x86_64-none/python.exe"'
@@ -49,6 +49,8 @@ env = { PALLIUM_MCP_TRANSPORT = "stdio" }
     assert 'args = ["-m", "app.run", "mcp"]' in content
     assert 'PALLIUM_BASE_URL = "http://localhost:19836"' in content
     assert 'PALLIUM_AGENT_REF = "codex"' in content
+    assert 'env_vars = ["CODEX_THREAD_ID", "CODEX_SESSION_ID"]' in content
+    assert setup_codex._ensure_mcp_server(content) == content
     assert f'PYTHONPATH = "{tmp_path.as_posix()}"' in content
 
 

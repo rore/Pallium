@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import os
 import subprocess
 import threading
-from unittest.mock import Mock, patch
+from unittest.mock import patch
+
+import pytest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from api.routes import create_router
 from app import codex_wake
@@ -36,45 +40,14 @@ def _delivery(delivery_id: str = "delivery-1", runtime: str = "codex") -> dict:
     }
 
 
-def _claimed(delivery_id: str = "delivery-1", payload: str = "wake") -> dict:
-    return {
-        "delivery_id": delivery_id,
-        "receipt": f"receipt-{delivery_id}",
-        "message_id": f"message-{delivery_id}",
-        "sender_runtime": "claude-code",
-        "sender_session_ref": "sender-session",
-        "recipient_runtime": "codex",
-        "recipient_session_ref": "target-session",
-        "recipient": "codex:target-session",
-        "payload": payload,
-        "redacted": False,
-        "in_reply_to": None,
-        "created_at": "2026-09-01T00:00:00Z",
-        "expires_at": "2026-09-02T00:00:00Z",
-        "state": "claimed",
-    }
-
-
-def _service(*deliveries: dict, has_more: bool = False) -> Mock:
-    service = Mock(spec=RelayService)
-    service.turn.return_value = {
-        "session": {},
-        "deliveries": list(deliveries),
-        "has_more": has_more,
-        "remaining_count": 1 if has_more else 0,
-    }
-    return service
-
-
-def _schedule(result: dict, service: Mock | None = None) -> None:
-    codex_wake.schedule_codex_relay_wake(
-        result, SCOPE, relay_service=service or _service(_claimed())
-    )
+def _schedule(result: dict) -> None:
+    codex_wake.schedule_codex_relay_wake(result, SCOPE)
 
 
 def setup_function() -> None:
     codex_wake._scheduled_delivery_ids.clear()
     codex_wake._scheduled_session_generations.clear()
+    codex_wake._scheduled_session_delivery_ids.clear()
 
 
 def test_successful_resume_does_not_queue_and_hides_process() -> None:
@@ -91,24 +64,28 @@ def test_successful_resume_does_not_queue_and_hides_process() -> None:
     assert "shell" not in run.call_args.kwargs
 
 
-def test_exact_active_writer_queues_same_prompt_hidden() -> None:
+def test_exact_active_writer_queues_generic_trigger_hidden() -> None:
     active = subprocess.CompletedProcess(
         [], 1, stderr="already has an active writer (code -32600)"
     )
     queued = subprocess.CompletedProcess([], 0, stderr="")
-    prompt = codex_wake._wake_prompt([_claimed()], **SCOPE)
+    prompt = codex_wake._wake_prompt() + " →"
     with patch("app.codex_wake.subprocess.run", side_effect=[active, queued]) as run:
         assert codex_wake._launch("target-session", prompt) is True
     assert run.call_count == 2
+    assert run.call_args_list[0].kwargs["input"] == prompt
+    assert run.call_args_list[0].kwargs["encoding"] == "utf-8"
+    assert run.call_args_list[1].kwargs["encoding"] == "utf-8"
     assert run.call_args_list[1].args[0] == [
         codex_wake._codex_executable(), "queue", "--profile", "pallium-relay",
         "--thread", "target-session", "--message", prompt
     ]
-    assert "already_delivered=true" in run.call_args_list[1].args[0][-1]
-    assert "do not retry, reply, or act" in run.call_args_list[1].args[0][-1]
+    assert "→" in prompt
+    assert codex_wake._wake_prompt() in run.call_args_list[0].kwargs["input"]
+    assert "delivery_id" not in prompt
+    assert "receipt" not in prompt
     assert run.call_args_list[1].kwargs["stdin"] is subprocess.DEVNULL
     assert "shell" not in run.call_args_list[1].kwargs
-
 
 def test_ambiguous_failure_and_timeout_do_not_queue() -> None:
     ambiguous = subprocess.CompletedProcess([], 1, stderr="already has an active writer")
@@ -123,43 +100,10 @@ def test_ambiguous_failure_and_timeout_do_not_queue() -> None:
     run.assert_called_once()
 
 
-def test_wake_claims_without_registration_and_renders_scope_receipts_unicode() -> None:
-    service = _service(_claimed(payload="שלום relay"))
+def test_wake_defers_claim_until_turn_execution() -> None:
     with patch("app.codex_wake._launch", return_value=True) as launch:
-        codex_wake._wake("target-session", service, **SCOPE)
-    service.turn.assert_called_once_with(
-        runtime="codex",
-        session_ref="target-session",
-        max_chars=codex_wake._MAX_BATCH_CHARS,
-        register_session=False,
-        **SCOPE,
-    )
-    prompt = launch.call_args.args[1]
-    assert "שלום relay" in prompt
-    assert "receipt-delivery-1" in prompt
-    assert SCOPE["container_ref"] in prompt
-    assert SCOPE["actor_ref"] in prompt
-
-
-def test_wake_launches_every_bounded_batch() -> None:
-    service = _service()
-    service.turn.side_effect = [
-        {"deliveries": [_claimed("d-1")], "has_more": True},
-        {"deliveries": [_claimed("d-2")], "has_more": False},
-    ]
-    with patch("app.codex_wake._launch", return_value=True) as launch:
-        codex_wake._wake("target-session", service, **SCOPE)
-    assert launch.call_count == 2
-    assert "d-1" in launch.call_args_list[0].args[1]
-    assert "d-2" in launch.call_args_list[1].args[1]
-
-
-def test_wake_without_claimed_deliveries_does_not_launch() -> None:
-    service = _service()
-    with patch("app.codex_wake._launch") as launch:
-        codex_wake._wake("target-session", service, **SCOPE)
-    launch.assert_not_called()
-
+        codex_wake._wake("target-session")
+    launch.assert_called_once_with("target-session", codex_wake._wake_prompt())
 
 def test_windows_resolver_survives_service_path_without_codex(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(codex_wake.os, "name", "nt")
@@ -189,7 +133,7 @@ def test_alias_and_exact_selectors_start_one_child() -> None:
     with patch("app.codex_wake.threading.Thread") as thread:
         _schedule(_delivery())
         _schedule({**_delivery("delivery-2"), "recipient": "codex:@relaydev"})
-    assert thread.call_count == 2
+    assert thread.call_count == 1
 
 
 def test_broadcast_and_malformed_selectors_do_not_start_child() -> None:
@@ -209,31 +153,21 @@ def test_duplicate_and_non_codex_do_not_start_child() -> None:
     thread.assert_called_once()
 
 
-def test_burst_coalesces_to_one_wake(monkeypatch) -> None:
+def test_busy_wakes_coalesce_until_admission_then_rearm(monkeypatch) -> None:
     workers = []
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._wake") as wake:
+    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._wake", return_value=True) as wake:
         thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
         _schedule(_delivery())
         _schedule(_delivery("delivery-2"))
+        assert len(workers) == 1
         codex_wake._wake_after_debounce(*workers[0])
-        codex_wake._wake_after_debounce(*workers[1])
-    wake.assert_called_once_with("target-session", workers[1][3], *workers[1][4:])
-
-
-def test_stale_worker_cannot_clear_newer_generation(monkeypatch) -> None:
-    workers = []
-    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._wake") as wake:
-        thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
-        _schedule(_delivery())
-        _schedule(_delivery("delivery-2"))
-        codex_wake._wake_after_debounce(*workers[0])
-        assert "delivery-1" not in codex_wake._scheduled_delivery_ids
-        assert codex_wake._scheduled_session_generations["target-session"] == 2
-        codex_wake._wake_after_debounce(*workers[1])
-    wake.assert_called_once_with("target-session", workers[1][3], *workers[1][4:])
-    assert not codex_wake._scheduled_session_generations
+        _schedule(_delivery("delivery-3"))
+        assert len(workers) == 1
+        codex_wake.mark_codex_relay_wake_admitted("target-session")
+        _schedule(_delivery("delivery-4"))
+    wake.assert_called_once_with("target-session")
+    assert len(workers) == 2
 
 
 def test_launch_failure_releases_owner_for_later_delivery(monkeypatch) -> None:
@@ -262,7 +196,7 @@ def test_schedule_returns_before_child_exits(monkeypatch) -> None:
     started = threading.Event()
     release = threading.Event()
 
-    def slow_wake(_: str, __: RelayService, ___: str, ____: str) -> None:
+    def slow_wake(_: str) -> None:
         started.set()
         release.wait(1)
 
@@ -418,9 +352,9 @@ def test_profile_is_idempotent_and_narrow(monkeypatch, tmp_path) -> None:
     setup_codex._install_relay_profile()
     profile = (tmp_path / ".codex" / "pallium-relay.config.toml").read_text(encoding="utf-8")
     assert "required = true" in profile
-    assert 'enabled_tools = ["pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack"]' in profile
+    assert 'enabled_tools = ["pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive"]' in profile
     assert 'default_tools_approval_mode = "prompt"' in profile
-    assert profile.count('approval_mode = "approve"') == 3
+    assert profile.count('approval_mode = "approve"') == 4
     setup_codex._remove_relay_profile()
     assert not (tmp_path / ".codex" / "pallium-relay.config.toml").exists()
 
@@ -461,3 +395,179 @@ def test_http_reply_uses_the_same_post_persistence_callback(client) -> None:
     assert len(seen) == 2
     assert seen[1][0]["in_reply_to"] == parent["message_id"]
     assert seen[1][0]["recipient"] == "codex:original"
+
+def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_action(
+    client, monkeypatch, tmp_path
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    scope = {
+        "container_ref": "git:example.test/wake",
+        "actor_ref": hook.derive_actor_ref(),
+    }
+    state_dir = tmp_path / "hook-state"
+    monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
+    for runtime, session in (("claude-code", "sender"), ("codex", "target-session")):
+        assert client.post(
+            "/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}
+        ).status_code == 200
+    sent = client.post(
+        "/relay/messages",
+        json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": "codex:target-session",
+            "payload": "delayed busy delivery",
+            **scope,
+        },
+    ).json()
+    active = subprocess.CompletedProcess(
+        [], 1, stderr="already has an active writer (code -32600)"
+    )
+    queued = subprocess.CompletedProcess([], 0, stderr="")
+    with patch("app.codex_wake.subprocess.run", side_effect=[active, queued]):
+        codex_wake._wake("target-session")
+
+    before_execution = client.get(
+        f"/relay/messages/{sent['message_id']}", params=scope
+    ).json()["deliveries"][0]
+    # No lease exists while queued, so any queue delay cannot stale a receipt.
+    assert before_execution["state"] == "pending"
+    assert before_execution["lease_expires_at"] is None
+    # Simulate queue execution after the normal 60-second claim lease window.
+    with client.app.state.pallium_service._storage._relay_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE relay_messages SET created_at=:past WHERE id=:id"),
+            {
+                "past": datetime.now(timezone.utc) - timedelta(seconds=61),
+                "id": sent["message_id"],
+            },
+        )
+    contexts: list[str] = []
+    turns: list[dict] = []
+
+    def relay_request(method: str, path: str, payload: dict, *, timeout: float) -> dict | None:
+        response = client.request(method, path, json=payload)
+        if response.status_code != 200:
+            return None
+        body = response.json()
+        if path == "/relay/turn":
+            turns.append(body)
+        return body
+
+    def run_hook(prompt: str) -> None:
+        monkeypatch.setattr(
+            hook, "read_hook_input",
+            lambda: {"cwd": str(tmp_path), "session_id": "target-session", "prompt": prompt},
+        )
+        with pytest.raises(SystemExit) as exited:
+            hook.main()
+        assert exited.value.code == 0
+
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(hook, "relay_request", relay_request)
+    monkeypatch.setattr(hook._common, "relay_request", relay_request)
+
+    def pallium_request(method: str, path: str, payload: dict | None = None, *, quiet: bool = False) -> dict | None:
+        response = client.request(method, path, json=payload)
+        if response.status_code != 200:
+            return None
+        return response.json()
+
+    monkeypatch.setattr(hook, "pallium_request", pallium_request)
+    monkeypatch.setattr(hook._common, "pallium_request", pallium_request)
+    monkeypatch.setattr(
+        hook._common.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: pytest.fail("caller-surface test escaped to live HTTP"),
+    )
+    monkeypatch.setattr(hook, "emit_context", lambda text, _: contexts.append(text))
+
+    # The production resolver's no-pin and wrong-pin paths fail closed.
+    run_hook(codex_wake._wake_prompt() + " missing scope")
+    hook._common.pin_container("target-session", "git:example.test/other")
+    run_hook(codex_wake._wake_prompt() + " wrong scope")
+    with client.app.state.pallium_service._storage._engine.begin() as connection:
+        wrong_scope_items = connection.execute(
+            text("SELECT id, content FROM source_items WHERE content LIKE :needle"),
+            {"needle": "%wrong scope"},
+        ).mappings().all()
+    assert wrong_scope_items, "wrong-scope ingestion must stay in the isolated client DB"
+    assert all("delayed busy delivery" not in context for context in contexts)
+    assert all(not turn["deliveries"] for turn in turns)
+    assert client.get(
+        f"/relay/messages/{sent['message_id']}", params=scope
+    ).json()["deliveries"][0]["state"] == "pending"
+
+    hook._common.pin_container("target-session", scope["container_ref"])
+    run_hook(codex_wake._wake_prompt())
+
+    assert len(turns) == 3
+    delivery = turns[-1]["deliveries"][0]
+    assert delivery["receipt"]
+    assert sent["deliveries"][0]["delivery_id"] == delivery["delivery_id"]
+    assert "delayed busy delivery" in contexts[-1]
+    reply_body = {"delivery_id": delivery["delivery_id"], "payload": "handled once", **scope}
+    first = client.post("/relay/replies", json=reply_body)
+    duplicate = client.post("/relay/replies", json=reply_body)
+    assert first.status_code == duplicate.status_code == 200
+    assert first.json()["message_id"] == duplicate.json()["message_id"]
+    assert client.get(
+        f"/relay/messages/{sent['message_id']}", params=scope
+    ).json()["deliveries"][0]["state"] == "delivered"
+
+
+def test_relay_turn_callback_rearms_only_after_success(client) -> None:
+    callbacks = []
+    app = FastAPI()
+    app.include_router(create_router(
+        client.app.state.pallium_service,
+        relay_service=RelayService(client.app.state.pallium_service._storage),
+        relay_turn_callback=lambda request: callbacks.append(request),
+    ))
+    route_client = TestClient(app)
+    assert route_client.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **SCOPE}).status_code == 200
+    assert len(callbacks) == 1
+    assert route_client.post("/relay/turn", json={"runtime": "bad", "session_ref": "target", **SCOPE}).status_code == 422
+    assert len(callbacks) == 1
+
+def test_relay_turn_callback_failure_keeps_successful_response(client) -> None:
+    app = FastAPI()
+    app.include_router(create_router(
+        client.app.state.pallium_service,
+        relay_service=RelayService(client.app.state.pallium_service._storage),
+        relay_turn_callback=lambda _: (_ for _ in ()).throw(RuntimeError("callback")),
+    ))
+    response = TestClient(app).post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **SCOPE})
+    assert response.status_code == 200
+
+def test_build_router_turn_rearms_actual_codex_wake_state(client, monkeypatch) -> None:
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake.threading.Thread") as thread:
+        _schedule(_delivery())
+        assert codex_wake._scheduled_session_generations
+        app = FastAPI()
+        app.include_router(create_router(
+            client.app.state.pallium_service,
+            relay_service=RelayService(client.app.state.pallium_service._storage),
+            relay_turn_callback=lambda request: codex_wake.mark_codex_relay_wake_admitted(request["session_ref"]),
+        ))
+        route = TestClient(app)
+        assert route.post("/relay/turn", json={"runtime": "bad", "session_ref": "target-session", **SCOPE}).status_code == 422
+        assert codex_wake._scheduled_session_generations
+        assert route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target-session", **SCOPE}).status_code == 200
+        assert not codex_wake._scheduled_session_generations
+        assert not codex_wake._scheduled_delivery_ids
+        _schedule(_delivery("delivery-2"))
+    assert thread.call_count == 2
+def test_failed_old_generation_cannot_clear_replacement(monkeypatch) -> None:
+    codex_wake._scheduled_session_generations['target-session'] = 2
+    codex_wake._scheduled_session_delivery_ids['target-session'] = 'delivery-new'
+    codex_wake._scheduled_delivery_ids.add('delivery-new')
+    monkeypatch.setattr(codex_wake.time, 'sleep', lambda _: None)
+    monkeypatch.setattr(codex_wake, '_wake', lambda _: False)
+    codex_wake._wake_after_debounce('delivery-old', 'target-session', 1)
+    assert codex_wake._scheduled_session_generations['target-session'] == 2
+    assert codex_wake._scheduled_session_delivery_ids['target-session'] == 'delivery-new'
+    assert codex_wake._scheduled_delivery_ids == {'delivery-new'}

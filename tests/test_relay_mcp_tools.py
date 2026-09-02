@@ -97,6 +97,35 @@ class TestIdentityGuard:
         assert "PALLIUM_THREAD_REF" in content[0].text
 
     @pytest.mark.asyncio
+    async def test_receive_uses_codex_runtime_identity(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+        monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+        monkeypatch.setenv("CODEX_THREAD_ID", "codex-runtime-session")
+        with patch.object(PalliumMcpClient, "relay_receive", new_callable=AsyncMock, return_value={"deliveries": []}) as receive:
+            content, _ = await create_server().call_tool("pallium_relay_receive", {})
+        assert "PALLIUM_THREAD_REF" not in content[0].text
+        receive.assert_awaited_once_with(runtime="codex", session_ref="codex-runtime-session", max_chars=0)
+
+    @pytest.mark.asyncio
+    async def test_receive_missing_scope_is_actionable_before_identity(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
+        monkeypatch.delenv("PALLIUM_ACTOR_REF", raising=False)
+        monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+        with patch.object(PalliumMcpClient, "relay_receive", new_callable=AsyncMock) as receive:
+            content, _ = await create_server().call_tool("pallium_relay_receive", {})
+        assert "both container_ref and actor_ref" in content[0].text
+        assert "PALLIUM_THREAD_REF" not in content[0].text
+        receive.assert_not_awaited()
+    @pytest.mark.asyncio
+    async def test_codex_receive_fails_without_runtime_identity(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+        monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+        monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+        monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+        server = create_server()
+        content, _ = await server.call_tool("pallium_relay_receive", {})
+        assert "PALLIUM_THREAD_REF" in content[0].text
+    @pytest.mark.asyncio
     async def test_receive_fails_when_not_configured(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv("PALLIUM_BASE_URL", raising=False)
         server = create_server()

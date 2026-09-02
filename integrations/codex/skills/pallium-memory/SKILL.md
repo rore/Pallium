@@ -19,9 +19,10 @@ Routine retrieval is automatic. Use tools for deliberate memory or explicit rela
 
 ## Relay
 
-Relay only explicit messages to another agent.
+Relay deliveries are current-turn work: complete actionable payloads now; reply only after completion or a genuine blocker, never with a status-only acknowledgement.
 
-- Injected `agent_ref`/`thread_ref` identify this runtime/session. Never infer self from recipients.
-- Discover/name with `pallium_relay_recipients`/`pallium_relay_name`. Send with `pallium_relay_send` to `codex`, `codex:<session_ref>`, or `codex:@alias` (likewise other runtimes). Broadcast requires user intent.
-- If the user assigns this session an alias held by an older one, use `replace_existing=true`; otherwise report the conflict.
-- Reply: `pallium_relay_reply(delivery_id)`; inspect: `pallium_relay_status`. On `already_delivered=true` or conflict, stop.
+- Injected `agent_ref`/`thread_ref` identify this runtime/session; never infer self from recipients.
+- Discover/name: `pallium_relay_recipients`/`pallium_relay_name`. Send `pallium_relay_send` to `codex`, `codex:<session_ref>`, or `codex:@alias` (others). Broadcast needs user intent.
+- To replace an older alias, use `replace_existing=true`; otherwise report conflict.
+- Do not reply to terminal ACK-only deliveries.
+- Reply: `pallium_relay_reply(delivery_id)`; inspect: `pallium_relay_status`. On `already_delivered=true` or conflict, only that delivery copy is stale: do not retry/reply/use its payload, but continue the surrounding user task and independently established work.

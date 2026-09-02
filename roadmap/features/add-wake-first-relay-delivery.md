@@ -88,7 +88,7 @@ installed versions are Claude Code 2.1.250, Codex CLI 0.149.1, and OpenCode
 
 | Runtime | Current verdict | Proven mechanism | Remaining qualification |
 |---|---|---|---|
-| Codex | **Windows loaded and unloaded exact-session wake proven** | `codex exec resume` wakes an unloaded stored task. For a loaded Desktop-owned task, the post-August-2026 cross-process `codex queue --thread` watcher starts a real turn; Pallium claims a bounded batch first and places the attributed payload plus receipt directly in that turn. | Windows live send → wake → atomic reply is proven. Qualify macOS/Linux, busy/interrupted/restart variants, correlation telemetry, and broader unattended dogfood before calling the runtime adapter complete. |
+| Codex | **Windows loaded and unloaded exact-session wake proven** | `codex exec resume` wakes an unloaded stored task. For a loaded Desktop-owned task, the post-August-2026 cross-process `codex queue --thread` watcher starts a real turn; Pallium queues a generic trigger; its installed UserPromptSubmit hook claims and injects the attributed delivery only after the target turn is admitted. | Windows live send → wake → atomic reply is proven. Qualify macOS/Linux, busy/interrupted/restart variants, correlation telemetry, and broader unattended dogfood before calling the runtime adapter complete. |
 | OpenCode | Supported with a Pallium/OpenCode plugin coordinator | Server/plugin APIs expose stable sessions and async prompts. Agent Intercom demonstrates persist-first delivery, application metadata correlation, history verification before replay, safe busy deferral, and restart recovery. | A bare prompt_async 204 is transport acknowledgement only. Pallium needs the plugin-owned durable pending ledger and a Windows E2E proof. Deferred to after Claude Code wake is proven. |
 | Claude Code | **Passive-only; partial Phase 0 via native Windows idle wake** | On 2.1.250, the existing memory-only `SessionStart` registration enabled an isolated same-process transport to start a distinct turn in one exact verified-idle disposable session; a simultaneous non-target session was untouched. Channels remained unavailable with the documented hidden flag. | Production must be `idle_wake` only: direct busy ingress joined the active turn, duplicate message IDs were admitted twice, and closed pipes failed. Add coordinator dedupe, verified-idle dispatch, correlated `Stop` admission, restart/error fallback, and macOS/Linux UDS E2E. |
 
@@ -101,7 +101,7 @@ security handoff only, not evidence of target admission or coordinator readiness
 
 ### Admission handshakes to preserve
 
-**Codex:** Try hidden `codex exec resume` for an unloaded stored task. Only the exact active-writer conflict falls back to hidden `codex queue --thread` for the loaded Desktop owner. Before either launch, Pallium claims a bounded backlog with the existing 60-second lease and renders the attributed messages, receipts, and trusted scope directly in the model-visible prompt. The owning task atomically replies or ACKs through narrowly approved Relay tools. Launch/tool failure never ACKs; the lease expires into ordinary next-turn redelivery. No private App Server attachment is required.
+**Codex:** Try hidden `codex exec resume` for an unloaded stored task. Only the exact active-writer conflict falls back to hidden `codex queue --thread` for the loaded Desktop owner. Pallium launches only a generic trigger. After the target turn is admitted, its installed UserPromptSubmit hook claims and injects the bounded backlog under the target's pinned scope, then acknowledges hook delivery. Launch failure leaves the delivery pending for ordinary next-turn recovery. No private App Server attachment is required.
 
 **OpenCode:** the plugin persists the Relay item before broker acknowledgement,
 checks recent session history for metadata.palliumRelayId, defers submission to a
@@ -139,9 +139,9 @@ Claude or OpenCode; enabling live wake still requires the relevant safety eviden
    macOS/Linux UDS E2E. Never send native ingress while busy and never retry an
    ambiguous write without coordinator proof that no admission occurred.
 
-3. **MCP receive lifecycle foundation — complete:**
-   `fix-relay-receive-mcp-lifecycle` is merged. Wake can reuse receipt-based
-   recovery without raw HTTP or model-visible claim tokens.
+3. **MCP receive lifecycle foundation — code complete, runtime qualification pending:**
+   `fix-relay-receive-mcp-lifecycle` is merged. The MCP path remains fail-closed and unqualified on Codex Desktop until a runtime-owned session handoff reaches the MCP child; hook-delivery wake does not depend on this recovery path.
+
 
 **Core scope:** Derive the smallest coordinator from the Codex delivery trace.
 Do not wait for a second adapter or build speculative multi-runtime machinery.
@@ -149,12 +149,7 @@ Choose bounded limits from Codex evidence; revisit only when adding another adap
 
 ### Implementation sequence — Codex first
 
-**Codex (Windows candidate):** `codex exec resume T` handles unloaded stored
- tasks; the exact active-writer conflict falls back to `codex queue --thread T`,
-whose owning Desktop watcher starts the loaded task. Pallium supplies the claimed
-batch directly, not through hook-only context, and narrows unattended approval to
-receipt-based Relay ACK/reply. Keep the adapter runtime/version-qualified until
-the remaining OS and lifecycle gates pass.
+**Codex (Windows candidate):** `codex exec resume T` handles unloaded stored tasks; the exact active-writer conflict falls back to `codex queue --thread T`, whose owning Desktop watcher starts the loaded task. Pallium supplies a generic trigger; the admitted UserPromptSubmit hook claims and injects the attributed batch under the target scope. MCP receive remains a separate fail-closed recovery path. Keep the adapter runtime/version-qualified until the remaining OS and lifecycle gates pass.
 
 **Claude Code (after Codex dogfood):** Extend the coordinator only
 for verified-idle native delivery: persist/dedupe before write, exact delivery-ID
@@ -243,13 +238,7 @@ Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wak
 Phase 0 decision and installed-runtime evidence:
 [Relay wake Phase 0 decision record](../../docs/designs/017-relay-wake-phase0.md).
 
-Current result: Codex exact-session wake is proven only for an unloaded stored task
-through `codex exec resume`. The qualified Windows desktop app retains active writers,
-plain `codex queue` does not activate its stdio-owned task, and the queue fallback was
-removed after a live run ACKed Relay without model output. Desktop-held tasks remain
-pending for the natural-turn fallback. The Codex-first milestone is blocked on a
-supported owning-app-server attach/remote endpoint; Claude idle-only work follows
-after that decision, and OpenCode remains deferred.
+Current result: Codex exact-session wake uses hidden `codex exec resume` for an unloaded stored task. The Windows desktop app retains active writers, so the live adapter falls back to hidden `codex queue --thread` for that exact session; both launch paths are best-effort and retain durable natural-turn fallback on launch failure. The active-writer fallback explicitly encodes Relay prompts as UTF-8, and the pre-fix claim-before-queue behavior reproduced a 409 `claim lease has expired` when a delivery was claimed before queueing and the queued turn executed after the lease. The live adapter now queues a generic trigger and lets the installed UserPromptSubmit hook claim at admitted-turn execution; delayed busy-target caller-surface E2E proves no stale receipt, loss, or duplicate action. Hook-delivery wake is proven for the tested Windows paths. Codex MCP receive remains fail-closed and unqualified on Desktop because no runtime-owned identity handoff reaches its child. Codex wake remains unqualified only for interrupted/restart admission, sender-side reply admission, telemetry, macOS/Linux, and sustained dogfood; Claude idle-only work follows the Codex-first milestone, and OpenCode remains deferred.
 
 ## Research References
 

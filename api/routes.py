@@ -347,6 +347,7 @@ def create_router(
     relay_service: RelayService | None = None,
     claude_wake_registry: ClaudeWakeRegistry | None = None,
     relay_send_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
+    relay_turn_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> APIRouter:
     router = APIRouter()
     wake_registry = claude_wake_registry or ClaudeWakeRegistry()
@@ -376,7 +377,13 @@ def create_router(
 
     @router.post("/relay/turn", response_model=RelayTurnResponse)
     def relay_turn(request: RelayTurnRequest):
-        return _relay_call(lambda: _relay().turn(**request.model_dump()))
+        result = _relay_call(lambda: _relay().turn(**request.model_dump()))
+        if relay_turn_callback is not None:
+            try:
+                relay_turn_callback(request.model_dump())
+            except Exception:
+                logger.exception("Relay turn callback failed after admission")
+        return result
 
     @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
     def relay_close_session(request: RelaySessionMutationRequest):

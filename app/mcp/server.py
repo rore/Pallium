@@ -644,7 +644,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Send new bounded text to runtime, exact-session, or alias selector: codex, codex:<session_ref>, or codex:@review (and equivalent supported runtimes). Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for a received message."""
+        """Send new text of at most 1,500 characters to runtime, exact-session, or alias selector: codex, codex:<session_ref>, or codex:@review (and equivalent supported runtimes). Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery; send multipart continuations with this tool."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
@@ -666,7 +666,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt."""
+        """Reply once to a received Relay delivery with at most 1,500 characters. A delivery permits one idempotent reply; send multipart continuations with pallium_relay_send, not repeated replies. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
         if scope_error:
             return scope_error
@@ -701,12 +701,10 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         """Claim pending Relay deliveries for this runtime session. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. Uses only integration-owned runtime/session identity. Call pallium_relay_ack(delivery_id, receipt), or pallium_relay_reply to reply and ACK atomically."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
         if scope_error:
-            legacy_ctx = resolve_context()
-            if not legacy_ctx.agent_ref:
-                return "Error: PALLIUM_AGENT_REF is not set. Relay receive requires integration-injected runtime identity."
-            if not legacy_ctx.thread_ref:
-                return "Error: PALLIUM_THREAD_REF is not set. Relay receive requires integration-injected session identity."
-            return scope_error
+            return (
+                f"{scope_error} Relay receive needs its trusted paired scope from the integration; "
+                "copy both injected container_ref and actor_ref, never a session identity."
+            )
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         runtime = ctx.agent_ref
