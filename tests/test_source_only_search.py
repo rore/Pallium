@@ -157,7 +157,7 @@ def test_source_only_visibility_fail_closed(monkeypatch, test_db_url: str) -> No
 def test_source_only_excludes_forgotten_turn(monkeypatch, test_db_url: str) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         keep = _ingest(client, source_id="keep", content=_PLAIN)
-        drop = _ingest(client, source_id="drop", content=_PLAIN)
+        drop = _ingest(client, source_id="drop", content=_PLAIN + " Follow-up differs.")
 
         before = {r["source_item_id"] for r in _query(client, source_only=True)["results"]}
         assert {keep, drop} <= before

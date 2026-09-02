@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import unicodedata
 from collections import Counter
 from dataclasses import replace
 from typing import Any
@@ -30,6 +31,74 @@ def _build_query_result_summary(results: list[Any]) -> dict[str, Any]:
         },
     }
 
+
+_SOURCE_DUPLICATE_MIN_LENGTH = 24
+_SOURCE_DUPLICATE_MIN_TOKENS = 4
+
+
+def _source_duplicate_keys(
+    results: list[QueryResultItem], storage: StorageProvider
+) -> dict[str, tuple[object, ...] | None]:
+    """Return exact, scope-bound keys for hydrated raw source results."""
+    source_ids = [
+        item.source_item_id
+        for item in results
+        if item.result_kind == "source_hit" and item.source_item_id is not None
+    ]
+    sources = storage.get_source_items(source_ids) if source_ids else {}
+    keys: dict[str, tuple[object, ...] | None] = {}
+    for item in results:
+        source_id = item.source_item_id
+        if item.result_kind != "source_hit" or source_id is None:
+            continue
+        source = sources.get(source_id)
+        if source is None:
+            continue
+        normalized = " ".join(
+            unicodedata.normalize("NFKC", source.content).casefold().split()
+        )
+        if (
+            len(normalized) < _SOURCE_DUPLICATE_MIN_LENGTH
+            or len(normalized.split()) < _SOURCE_DUPLICATE_MIN_TOKENS
+        ):
+            continue
+        keys[source_id] = (
+            item.source_type,
+            item.role,
+            item.actor_ref,
+            item.container_ref,
+            item.thread_ref,
+            normalized,
+        )
+    return keys
+
+
+def _collapse_source_duplicates(
+    results: list[QueryResultItem], storage: StorageProvider
+) -> list[QueryResultItem]:
+    """Collapse only normalized-equivalent raw source results, retaining provenance."""
+    keys = _source_duplicate_keys(results, storage)
+    retained: list[QueryResultItem] = []
+    positions: dict[tuple[object, ...], int] = {}
+    for item in results:
+        key = keys.get(item.source_item_id) if item.source_item_id is not None else None
+        if key is None or not key[-1]:
+            retained.append(item)
+            continue
+        position = positions.get(key)
+        if position is None:
+            positions[key] = len(retained)
+            retained.append(item)
+            continue
+        kept = retained[position]
+        evidence = list(kept.evidence)
+        seen = set(evidence)
+        for reference in item.evidence:
+            if reference not in seen:
+                evidence.append(reference)
+                seen.add(reference)
+        retained[position] = replace(kept, evidence=evidence)
+    return retained
 
 class QueryExecutor:
     def __init__(
@@ -140,9 +209,10 @@ class QueryExecutor:
                 query_actor_ref=actor_ref if plugin.requires_visibility_context else None,
                 target_kind="source_item",
             )
+            distinct = _collapse_source_duplicates(retrieval_result.results, self._storage)
             ranked = [
                 replace(item, raw_rank=rank)
-                for rank, item in enumerate(retrieval_result.results[:limit], start=1)
+                for rank, item in enumerate(distinct[:limit], start=1)
             ]
             trace = retrieval_result.trace
             if trace is not None:
