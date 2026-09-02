@@ -37,3 +37,12 @@ def test_all_guidance_surfaces_preserve_search_to_expansion_telemetry_link() -> 
     )
     assert all(linkage in rendered for rendered in surfaces)
     assert all("never derive, guess, or normalize" in rendered for rendered in surfaces)
+
+def test_relay_stale_delivery_guidance_stops_only_that_delivery() -> None:
+    skills = (
+        Path("integrations/claude-code/skills/pallium-memory/SKILL.md"),
+        Path("integrations/codex/skills/pallium-memory/SKILL.md"),
+        Path("integrations/opencode/skills/pallium-memory/SKILL.md"),
+    )
+    rule = "do not retry/reply/use its payload; stop that delivery only, not the task"
+    assert all(rule in skill.read_text(encoding="utf-8") for skill in skills)

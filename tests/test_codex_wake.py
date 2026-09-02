@@ -405,13 +405,20 @@ def test_http_reply_uses_the_same_post_persistence_callback(client) -> None:
     assert seen[1][0]["recipient"] == "codex:original"
 
 def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_action(
-    client, monkeypatch
+    client, monkeypatch, tmp_path
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
 
+    scope = {
+        "container_ref": "git:example.test/wake",
+        "actor_ref": hook.derive_actor_ref(),
+    }
+    state_dir = tmp_path / "hook-state"
+    monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
     for runtime, session in (("claude-code", "sender"), ("codex", "target-session")):
         assert client.post(
-            "/relay/turn", json={"runtime": runtime, "session_ref": session, **SCOPE}
+            "/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}
         ).status_code == 200
     sent = client.post(
         "/relay/messages",
@@ -420,7 +427,7 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
             "sender_session_ref": "sender",
             "recipient": "codex:target-session",
             "payload": "delayed busy delivery",
-            **SCOPE,
+            **scope,
         },
     ).json()
     active = subprocess.CompletedProcess(
@@ -431,16 +438,11 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
         codex_wake._wake("target-session")
 
     before_execution = client.get(
-        f"/relay/messages/{sent['message_id']}", params=SCOPE
+        f"/relay/messages/{sent['message_id']}", params=scope
     ).json()["deliveries"][0]
     # No lease exists while queued, so any queue delay cannot stale a receipt.
     assert before_execution["state"] == "pending"
     assert before_execution["lease_expires_at"] is None
-    wrong_scope = {"container_ref": "git:example.test/other", "actor_ref": SCOPE["actor_ref"]}
-    assert client.post(
-        "/relay/turn",
-        json={"runtime": "codex", "session_ref": "target-session", **wrong_scope},
-    ).json()["deliveries"] == []
     # Simulate queue execution after the normal 60-second claim lease window.
     with client.app.state.pallium_service._storage._relay_engine.begin() as connection:
         connection.execute(
@@ -462,30 +464,43 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
             turns.append(body)
         return body
 
-    monkeypatch.setattr(
-        hook, "read_hook_input",
-        lambda: {"cwd": ".", "session_id": "target-session", "prompt": codex_wake._wake_prompt()},
-    )
-    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: SCOPE["container_ref"])
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda: SCOPE["actor_ref"])
+    def run_hook(prompt: str) -> None:
+        monkeypatch.setattr(
+            hook, "read_hook_input",
+            lambda: {"cwd": str(tmp_path), "session_id": "target-session", "prompt": prompt},
+        )
+        with pytest.raises(SystemExit) as exited:
+            hook.main()
+        assert exited.value.code == 0
+
     monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
     monkeypatch.setattr(hook, "relay_request", relay_request)
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
     monkeypatch.setattr(hook, "emit_context", lambda text, _: contexts.append(text))
-    with pytest.raises(SystemExit) as exited:
-        hook.main()
 
-    assert exited.value.code == 0
-    assert len(turns) == 1
-    delivery = turns[0]["deliveries"][0]
+    # The production resolver's no-pin and wrong-pin paths fail closed.
+    run_hook(codex_wake._wake_prompt() + " missing scope")
+    hook._common.pin_container("target-session", "git:example.test/other")
+    run_hook(codex_wake._wake_prompt() + " wrong scope")
+    assert all("delayed busy delivery" not in context for context in contexts)
+    assert all(not turn["deliveries"] for turn in turns)
+    assert client.get(
+        f"/relay/messages/{sent['message_id']}", params=scope
+    ).json()["deliveries"][0]["state"] == "pending"
+
+    hook._common.pin_container("target-session", scope["container_ref"])
+    run_hook(codex_wake._wake_prompt())
+
+    assert len(turns) == 3
+    delivery = turns[-1]["deliveries"][0]
     assert delivery["receipt"]
     assert sent["deliveries"][0]["delivery_id"] == delivery["delivery_id"]
-    assert "delayed busy delivery" in contexts[0]
-    reply_body = {"delivery_id": delivery["delivery_id"], "payload": "handled once", **SCOPE}
+    assert "delayed busy delivery" in contexts[-1]
+    reply_body = {"delivery_id": delivery["delivery_id"], "payload": "handled once", **scope}
     first = client.post("/relay/replies", json=reply_body)
     duplicate = client.post("/relay/replies", json=reply_body)
     assert first.status_code == duplicate.status_code == 200
     assert first.json()["message_id"] == duplicate.json()["message_id"]
     assert client.get(
-        f"/relay/messages/{sent['message_id']}", params=SCOPE
+        f"/relay/messages/{sent['message_id']}", params=scope
     ).json()["deliveries"][0]["state"] == "delivered"
