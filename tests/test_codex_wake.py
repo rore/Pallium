@@ -96,10 +96,13 @@ def test_exact_active_writer_queues_same_prompt_hidden() -> None:
         [], 1, stderr="already has an active writer (code -32600)"
     )
     queued = subprocess.CompletedProcess([], 0, stderr="")
-    prompt = codex_wake._wake_prompt([_claimed()], **SCOPE)
+    prompt = codex_wake._wake_prompt([_claimed(payload="→")], **SCOPE)
     with patch("app.codex_wake.subprocess.run", side_effect=[active, queued]) as run:
         assert codex_wake._launch("target-session", prompt) is True
     assert run.call_count == 2
+    assert run.call_args_list[0].kwargs["input"] == prompt
+    assert run.call_args_list[0].kwargs["encoding"] == "utf-8"
+    assert run.call_args_list[1].kwargs["encoding"] == "utf-8"
     assert run.call_args_list[1].args[0] == [
         codex_wake._codex_executable(), "queue", "--profile", "pallium-relay",
         "--thread", "target-session", "--message", prompt

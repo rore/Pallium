@@ -160,6 +160,7 @@ def _launch(session_ref: str, prompt: str) -> bool:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
             timeout=_TIMEOUT_SECONDS,
             **_hidden_process_kwargs(),
         )
@@ -185,6 +186,7 @@ def _launch(session_ref: str, prompt: str) -> bool:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
             timeout=_QUEUE_TIMEOUT_SECONDS,
             **_hidden_process_kwargs(),
         )
