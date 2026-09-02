@@ -520,3 +520,23 @@ def test_relay_turn_callback_failure_keeps_successful_response(client) -> None:
     ))
     response = TestClient(app).post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **SCOPE})
     assert response.status_code == 200
+
+def test_build_router_turn_rearms_actual_codex_wake_state(client, monkeypatch) -> None:
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake.threading.Thread") as thread:
+        _schedule(_delivery())
+        assert codex_wake._scheduled_session_generations
+        app = FastAPI()
+        app.include_router(create_router(
+            client.app.state.pallium_service,
+            relay_service=RelayService(client.app.state.pallium_service._storage),
+            relay_turn_callback=lambda request: codex_wake.mark_codex_relay_wake_admitted(request["session_ref"]),
+        ))
+        route = TestClient(app)
+        assert route.post("/relay/turn", json={"runtime": "bad", "session_ref": "target-session", **SCOPE}).status_code == 422
+        assert codex_wake._scheduled_session_generations
+        assert route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target-session", **SCOPE}).status_code == 200
+        assert not codex_wake._scheduled_session_generations
+        assert not codex_wake._scheduled_delivery_ids
+        _schedule(_delivery("delivery-2"))
+    assert thread.call_count == 2
