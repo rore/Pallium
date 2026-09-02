@@ -10,8 +10,8 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     assert len(module.get_claude_md_block("base")) <= 3736
     assert len(module.get_claude_md_block("strong")) <= 3962
     assert len(Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")) <= 3620
-    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2112
-    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2127
+    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2170
+    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2170
     tree = ast.parse(Path("app/mcp/server.py").read_text(encoding="utf-8"))
     names = {node.name for node in ast.walk(tree)
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -44,5 +44,6 @@ def test_relay_stale_delivery_guidance_stops_only_that_delivery() -> None:
         Path("integrations/codex/skills/pallium-memory/SKILL.md"),
         Path("integrations/opencode/skills/pallium-memory/SKILL.md"),
     )
-    rule = "do not retry/reply/use its payload; stop that delivery only, not the task"
+    rule = ("only that delivery copy is stale: do not retry/reply/use its payload, but "
+            "continue the surrounding user task and independently established work")
     assert all(rule in skill.read_text(encoding="utf-8") for skill in skills)

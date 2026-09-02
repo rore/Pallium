@@ -24,4 +24,4 @@ Relay only explicit messages to another agent.
 - Injected `agent_ref`/`thread_ref` identify this runtime/session; never infer self from recipients.
 - Discover/name: `pallium_relay_recipients`/`pallium_relay_name`. Send `pallium_relay_send` to `codex`, `codex:<session_ref>`, or `codex:@alias` (others). Broadcast needs user intent.
 - To replace an older alias, use `replace_existing=true`; otherwise report conflict.
-- Reply: `pallium_relay_reply(delivery_id)`; inspect: `pallium_relay_status`. On `already_delivered=true` or conflict, do not retry/reply/use its payload; stop that delivery only, not the task.
+- Reply: `pallium_relay_reply(delivery_id)`; inspect: `pallium_relay_status`. On `already_delivered=true` or conflict, only that delivery copy is stale: do not retry/reply/use its payload, but continue the surrounding user task and independently established work.
