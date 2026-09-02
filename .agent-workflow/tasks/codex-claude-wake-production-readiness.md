@@ -26,7 +26,7 @@ High
 Moderate
 
 **Reason:**
-The change touches a security-sensitive exact-session transport, concurrent admission state, and loss/recovery semantics across service, hooks, and runtime boundaries. Multiple independently verifiable outcomes require live Claude Code evidence.
+The change touches a security-sensitive exact-session transport, concurrent admission state, and loss/recovery semantics across service, hooks, and runtime boundaries. Redline classification of the intended Scope paths: `api/routes.py` is a red zone → **api-review** checkpoint (agent-redline-policy.yaml); `core/claude_wake.py`, `app/claude_wake*.py` are `watch` (`core/**`, `app/**`); hooks and tests are blue. The single red path plus the security-sensitive transport and multiple outcomes requiring live Claude Code evidence hold this at High. High is correct: not lower (a red-zone api-review path is in scope), not inflated (no persistence-DDL, no `core/visibility.py`, so no persistence/security checkpoint beyond api-review).
 
 **Discovery:**
 Current `main` already persists before wake, validates pending delivery and scope, atomically consumes a one-shot idle grant, claims only at admitted hook execution, and covers deterministic D1→D2→D3 lifecycle behavior. Installed Claude Code 2.1.250 evidence shows `peer_message_status` is an out-of-band control frame sent to the incoming frame's `origin.from`; the current one-way Pallium sender has no return inbox, so a clean write is trigger evidence only and hook/Relay delivery remains the admission proof. Claude's own authenticated `type:user` debug recipe omits `session_id`, matching successful live dogfood; exact targeting is the registered socket/pipe plus token and scope-bound registry entry. Remaining verified gaps: the probe runs inline with a two-second bound, wake outcomes lack structured logs, local transport result naming overstates success, and automatic unattended recovery after crash-between-claim-and-emission is unqualified. Codex UTF-8, MCP scope guidance, multipart guidance, Windows cancellation, and the prior hook lifecycle defects are already fixed and must not be reimplemented.
@@ -54,7 +54,7 @@ Current `main` already persists before wake, validates pending delivery and scop
 - Repository acceptance → focused suites, full required CI, `agent-workflow`/redline, `git diff --check`, supported service restart, `/health`, `/status`, `/debug/queue/health`, installed integration checks, and resolved PR review threads.
 
 **Plan review:**
-2026-09-02 clean-context re-review at `## Plan review`: clean for bounded non-protocol implementation; Claude native protocol acceptance remains a hard `claude_arch` gate before wire-contract changes or production qualification.
+2026-09-02 clean-context re-review + independent `claude_arch` validation at `## Plan review`: clean for bounded non-protocol implementation; both reviewers concur. Claude native protocol acceptance (peer_message_status, session_id, frame grammar) and live Windows qualification remain a hard `claude_arch` gate before wire-contract changes or merge.
 
 **Approvals:**
 Approved by user 2026-09-02: "ok. so that's the current mission. persist this plan so we don't loose it. use the claude dev for most of the developemtn work. remember budget considerations. use the claude architect when you need to validate and run verifications in claude code. the architect can also use a claude dev it has"
@@ -70,6 +70,8 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 - 2026-09-02: Mission persisted before code. No runtime edits started. User corrected delegation: `codex:@relaydev` is the primary implementation developer; `claude-code:@claude_arch` owns Claude-side validation and may use its own Claude developer. A stale `@paldev` address-book entry was mistakenly treated as an available agent; its pending assignment was superseded and must not be used.
 - 2026-09-02: Installed Claude 2.1.250 protocol evidence corrected the initial design before code: `peer_message_status` is sent out-of-band to `origin.from`, not returned on the write connection, and the built-in authenticated user-frame recipe omits `session_id`. The plan now treats native write as trigger evidence and hook/Relay state as admission evidence; no speculative listener or identity field is authorized.
 - 2026-09-02: Clean-context review blockers resolved in planning: async failure uses generation-safe idle restoration; restart/hook-crash qualification promises persisted next-hook recovery rather than unsupported automatic cold wake; loopback registration is explicitly within Pallium's trusted-local boundary, with remote and cross-scope fail-closed tests required.
+
+- 2026-09-02: Phase 1 implementation in progress from `fc95271a`. Intended files: `core/claude_wake.py` (generation-safe consume/restore), `app/claude_wake.py` (module-local coalesced worker and credential-free outcome log), `tests/test_claude_wake_dispatch.py` (deterministic caller/concurrency/retry/ABA/log tests), and this Work Record. Native frame/auth/socket protocol surfaces are excluded pending Claude architect acceptance.
 
 ## Evidence
 
@@ -89,6 +91,17 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 5. **Observable coverage: resolved in plan.** The caller-surface, generation-safe retry, restart fallback, claimed-hook lease, and exactly-once next-hook ACK scenarios have explicit deterministic E2E requirements; the existing D1→D3 test is only their baseline.
 
 **Implementation boundary:** Phase 1 may change only the registry/worker dispatch, non-secret outcome logging, and deterministic tests without changing the native wire protocol. Claude architect acceptance remains required before protocol-surface work, live qualification, or merge.
+
+2026-09-02 — `claude-code:@claude_arch` independent validation of the above review (read-only, against current code, no delegation — clean-context reviewer was lost to a spend cap so this is a direct source audit).
+
+**Verdict: I concur — Ready to implement is justified for bounded non-protocol Phase 1; native protocol acceptance is correctly gated to me.** Validated each reconciled point against source:
+- Redline: `api/routes.py` in Scope is red → **api-review** (agent-redline-policy.yaml L55-57); `core/**`, `app/**` watch; hooks/tests blue. Risk **High** correct — a red api path is in scope; no persistence-DDL or `core/visibility.py`, so no checkpoint beyond api-review. (Reason field updated to record this.)
+- Assumption 1 (status): CONFIRMED reframe. `app/claude_wake_transport.py` L55/L108 sets `"from":"pallium-relay"` — not a shaped Pallium inbox — and the write connection is never read (L57/L106 send-only). Out-of-band status is unreadable here; native write is trigger-only, hook/Relay `delivered` is admission. No speculative listener authorized. Correct.
+- Assumption 2 (session_id): CONFIRMED. Frame omits `session_id`; installed debug recipe omits it; exact target is socket/pipe+token+scope registry key. Widen the signature only on live receiver rejection. Correct.
+- Assumption 3 (one-shot/ABA): CONFIRMED SUPPORTED by existing code. `ClaudeWakeRegistry.probe` consumes `idle=False` atomically under `self._lock` before the transport call (`core/claude_wake.py` L128-137); `generation` (L30, L97) backs generation-safe restore. Moving the transport call to a module-local worker preserves this as long as the lock-guarded consume stays at worker execution. Deterministic duplicate/concurrent/ABA tests required — agreed.
+- Assumption 4 (restart/crash): CONFIRMED honestly UNKNOWN → correctly scoped to persisted next-hook recovery, not automatic cold wake. Hooks (`session_start`/`user_prompt_submit` register idle=False; `stop` registers idle=True; `acknowledge_relay` ACKs) show only natural-turn recovery; no lease-expiry observer exists. No general coordinator — agreed.
+
+**No blocking findings.** Two validator notes for relaydev (non-blocking): (a) keep the idle-consume synchronous inside the worker (not the caller) so the lock still serializes it — if the consume ever moves off-lock the one-shot guarantee breaks; (b) the structured outcome log must not log `socket_path` or `token` (both `repr=False` in `_Registration`, keep it that way). Protocol/session_id/frame-grammar changes and live Windows qualification remain a hard `claude_arch` gate before merge.
 ## Result review
 
 Pending.
