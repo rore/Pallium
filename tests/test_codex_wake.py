@@ -351,7 +351,7 @@ def test_profile_is_idempotent_and_narrow(monkeypatch, tmp_path) -> None:
     setup_codex._install_relay_profile()
     profile = (tmp_path / ".codex" / "pallium-relay.config.toml").read_text(encoding="utf-8")
     assert "required = true" in profile
-    assert 'enabled_tools = ["pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack"]' in profile
+    assert 'enabled_tools = ["pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive"]' in profile
     assert 'default_tools_approval_mode = "prompt"' in profile
     assert profile.count('approval_mode = "approve"') == 3
     setup_codex._remove_relay_profile()
