@@ -31,15 +31,16 @@ Agent-redline classified `app/mcp/server.py` GRAY + WATCH because this changes a
 - The observed defect is in search-result packaging, not source expansion. If discovery or replay shows an expansion-caused false claim, expand scope and repeat risk/plan review.
 
 **Plan:**
-Reuse the existing `historical_reminder` field: make its wording explicit, keep it through budget trimming, and update the `pallium_search_history` tool description. Add the smallest direct budget test and caller-level MCP test that assert the warning survives oversized Unicode results while the response remains bounded. Run focused tests, then an eight-call/no-judge private replay of the two harmful cases plus two useful controls. Stop and return to planning if the payload cannot remain bounded or either harmful claim persists.
+Reuse the existing `historical_reminder` field with explicit required semantics: past evidence cannot confirm current messages, tool state, approvals, or completed actions, and live state must be verified. Protect that field while existing optional cues, excerpts, update details, and finally hits shrink to meet the budget; do not add a second mechanism. Update the `pallium_search_history` tool description. Add direct and caller-level MCP assertions for normal, replacement-available, stale-only, oversized escaped/Unicode, empty/fail-closed, and error paths, plus a tool-description assertion. Run focused tests, then an eight-call/no-judge private replay of the two harmful cases plus two useful controls. Stop and return to planning if the payload cannot remain bounded or either harmful claim persists.
 
 **Verification plan:**
-- Non-empty normal and oversized history responses retain the explicit live-state/action boundary within 2,000 characters → direct `_compact_history` tests plus `server.call_tool("pallium_search_history")` caller-level E2E with Unicode/over-budget input.
+- Non-empty normal, replacement-available, stale-only, and oversized escaped/Unicode history responses retain the explicit live-state/action boundary within 2,000 characters → direct `_compact_history` tests plus `server.call_tool("pallium_search_history")` caller-level E2E; existing empty/fail-closed and error-path tests remain green.
+- Agents can discover the same constraint before calling the tool → `list_tools()` description assertion.
 - Public signature, result count, ranking, and telemetry remain unchanged → existing MCP server, history presentation, delivery receipt, and MCP integration suites.
 - The boundary changes downstream behavior without destroying useful history → private four-case paired replay, no automatic judge, maximum eight answer calls and 5,000 estimated input tokens, followed by primary-agent review.
 
 **Plan review:**
-Pending clean-context Elevated-risk review.
+Clean-context review by `/root/history_boundary_plan_review`; findings and resolutions recorded below.
 
 **Approvals:**
 Not required at this risk level.
@@ -47,12 +48,17 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Discovery complete: the existing reminder is too weak and is the first field dropped under response pressure; no retrieval or ranking change is needed.
+- Elevated plan review complete: protected the single existing reminder instead of adding a mechanism; expanded caller-level coverage to normal/over-budget/stale/replaced/empty/error cases and tool-description discovery.
+
+## Plan review
+
+The reviewer required the live-state boundary to survive worst-case trimming, name the prohibited inferences explicitly, cover normal and oversized MCP responses plus stale/replacement variants, and verify the tool description. The plan now keeps the existing reminder protected while lower-priority response content shrinks; existing empty and error contracts remain unchanged. No scope expansion was needed.
 
 ## Evidence
 
