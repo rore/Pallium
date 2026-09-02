@@ -94,7 +94,7 @@ class ClaudeWakeRegistry:
                 token=token,
                 generation=self._generation,
                 expires_at=now + TTL_SECONDS,
-                idle=True,
+                idle=idle,
             )
 
     def mark_busy(
