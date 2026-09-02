@@ -8,6 +8,7 @@ import os
 import socket
 import threading
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 from types import SimpleNamespace
@@ -745,3 +746,124 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     output = capsys.readouterr().out
     assert "D2" in output and "D3" in output
     assert state(sent2) == state(sent3) == "delivered"
+
+def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import storage.sqlite_relay as sqlite_relay
+    from app.dependencies import build_router
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    clock = [datetime(2026, 9, 2, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+
+    def router(registry: ClaudeWakeRegistry) -> TestClient:
+        app = FastAPI()
+        app.include_router(build_router(
+            client.app.state.pallium_service,
+            relay_storage=client.app.state.pallium_service._storage,
+            claude_wake_registry=registry,
+        ))
+        return TestClient(app, client=("127.0.0.1", 50000))
+
+    original_registry = ClaudeWakeRegistry()
+    before_restart = router(original_registry)
+    assert before_restart.post("/internal/claude-wake/register", json={
+        **PAYLOAD, "session_ref": "target", "idle": True,
+    }).status_code == 204
+    assert before_restart.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "target", **scope,
+    }).status_code == 200
+
+    restarted_registry = ClaudeWakeRegistry()
+    http = router(restarted_registry)
+    assert original_registry is not restarted_registry
+    assert http.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "sender", **scope,
+    }).status_code == 200
+    transport = MagicMock(return_value=True)
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
+
+    def send(payload: str, message_id: str) -> dict:
+        response = http.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "claude-code:target", "payload": payload,
+            "message_id": message_id, **scope,
+        })
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def delivery(message: dict) -> dict:
+        response = http.get(f"/relay/messages/{message['message_id']}", params=scope)
+        assert response.status_code == 200
+        return response.json()["deliveries"][0]
+
+    restart_message = send("after restart", "restart-recovery")
+    assert delivery(restart_message)["state"] == "pending"
+    transport.assert_not_called()
+
+    prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
+    monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda: scope["actor_ref"])
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(prompt, "pallium_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(prompt, "read_hook_input", lambda: {
+        "session_id": "target", "cwd": str(tmp_path), "prompt": "recover relay",
+    })
+
+    def relay(method, path, body, timeout=0.75):
+        response = http.request(method, path, json=body)
+        return response.json() if response.content else None
+
+    def register(session, container, actor, **kwargs):
+        response = http.post("/internal/claude-wake/register", json={
+            **PAYLOAD, "session_ref": session, "container_ref": container,
+            "actor_ref": actor, "idle": kwargs.get("idle", False),
+        })
+        return response.status_code == 204
+
+    def acknowledge(deliveries, **_kwargs):
+        for item in deliveries:
+            response = http.post("/relay/deliveries/ack", json={
+                "delivery_id": item["delivery_id"], "claim_token": item["claim_token"], **scope,
+            })
+            assert response.status_code == 200
+
+    monkeypatch.setattr(prompt, "relay_request", relay)
+    monkeypatch.setattr(prompt, "register_claude_wake", register)
+    monkeypatch.setattr(prompt, "acknowledge_relay", acknowledge)
+
+    with pytest.raises(SystemExit):
+        prompt.main()
+    assert "after restart" in capsys.readouterr().out
+    assert delivery(restart_message)["state"] == "delivered"
+    with pytest.raises(SystemExit):
+        prompt.main()
+    assert "after restart" not in capsys.readouterr().out
+
+    claimed_message = send("after claim", "claim-recovery")
+    assert send("after claim", "claim-recovery")["message_id"] == claimed_message["message_id"]
+    claimed = http.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "target", **scope,
+    }).json()["deliveries"]
+    assert len(claimed) == 1 and claimed[0]["delivery_id"] == delivery(claimed_message)["delivery_id"]
+    assert delivery(claimed_message)["state"] == "claimed"
+
+    clock[0] += timedelta(seconds=61)
+    with pytest.raises(SystemExit):
+        prompt.main()
+    assert "after claim" in capsys.readouterr().out
+    recovered = delivery(claimed_message)
+    assert recovered["state"] == "delivered" and recovered["attempts"] == 2
+    with pytest.raises(SystemExit):
+        prompt.main()
+    assert "after claim" not in capsys.readouterr().out

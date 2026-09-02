@@ -77,6 +77,8 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 
 - 2026-09-02: Phase 1 remediation in progress after review: add an actual `/relay/messages` caller-surface regression, split bounded wake outcome categories by whether transport was attempted, and make thread-start failure log/retry-safe. Structured State remains `Ready to implement` because the workflow permits no `In progress` value; this prose records the overall mission as in progress.
 
+- 2026-09-02: Phase 2 recovery qualification completed: one caller-surface E2E uses a fresh in-memory registry over the persisted Relay store to prove no automatic cold wake/claim after restart, then the next valid `UserPromptSubmit` injects and ACKs once. It also leaves a duplicate message-id as one delivery, simulates crash-after-claim, advances the controlled lease clock, and proves the next hook redelivers/ACKs once with a harmless retry. Existing focused tests already prove remote registration rejection and cross-scope probe/claim failure.
+
 ## Evidence
 
 - Mission memory: `d7537934-fd56-4830-8834-7bab372124d8` (supersedes the incorrect developer assignment).
@@ -86,6 +88,7 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 - Workflow verification: `uv run python scripts/agent-workflow-check.py --repo-root . --slug codex-claude-wake-production-readiness` passed. `uv run ruff check ...` could not run because Ruff is not installed in the managed environment.
 
 - Phase 1 review remediation: real `POST /relay/messages` returns while an Event-blocked transport remains active; tests cover `trigger_written`, `transport_failed`, `not_eligible`, `worker_error`, and `worker_start_failed` with token/socket/payload absence assertions. `uv run pytest tests/test_claude_wake_dispatch.py tests/test_claude_wake_registration.py -q` passed (68 passed, 2 skipped; three pre-existing Pydantic forward-reference warnings).
+- Phase 2 focused verification: `uv run python -m py_compile tests/test_claude_wake_dispatch.py` and `uv run pytest tests/test_claude_wake_dispatch.py tests/test_claude_wake_registration.py tests/test_relay_wake_contract.py -q` passed (72 passed, 2 skipped; three pre-existing Pydantic forward-reference warnings).
 
 ## Plan review
 

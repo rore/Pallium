@@ -90,7 +90,7 @@ installed versions are Claude Code 2.1.250, Codex CLI 0.149.1, and OpenCode
 |---|---|---|---|
 | Codex | **Windows loaded and unloaded exact-session wake proven** | `codex exec resume` wakes an unloaded stored task. For a loaded Desktop-owned task, the post-August-2026 cross-process `codex queue --thread` watcher starts a real turn; Pallium queues a generic trigger; its installed UserPromptSubmit hook claims and injects the attributed delivery only after the target turn is admitted. | Windows live send → wake → atomic reply is proven. Qualify macOS/Linux, busy/interrupted/restart variants, correlation telemetry, and broader unattended dogfood before calling the runtime adapter complete. |
 | OpenCode | Supported with a Pallium/OpenCode plugin coordinator | Server/plugin APIs expose stable sessions and async prompts. Agent Intercom demonstrates persist-first delivery, application metadata correlation, history verification before replay, safe busy deferral, and restart recovery. | A bare prompt_async 204 is transport acknowledgement only. Pallium needs the plugin-owned durable pending ledger and a Windows E2E proof. Deferred to after Claude Code wake is proven. |
-| Claude Code | **Windows exact-session verified-idle wake implemented; live qualification pending** | `SessionStart` registers the Relay session as non-idle, each `UserPromptSubmit` marks it busy before early returns, and `Stop` grants one scope-bound idle wake. Sends remain persisted while busy; the next idle send emits one native wake, and the admitted hook claims and ACKs the pending batch. | Deterministic caller-surface E2E covers busy deferral, one-shot wake, idempotent duplicate suppression, wrong-scope isolation, and D1→D2→D3 delivery. Qualify the complete native path live on Windows, then add stale/restart/error and macOS/Linux UDS evidence before calling the adapter complete. |
+| Claude Code | **Windows exact-session verified-idle wake implemented; live qualification pending** | `SessionStart` registers the Relay session as non-idle, each `UserPromptSubmit` marks it busy before early returns, and `Stop` grants one scope-bound idle wake. Sends remain persisted while busy; the next idle send emits one native wake, and the admitted hook claims and ACKs the pending batch. | Deterministic caller-surface E2E covers busy deferral, one-shot wake, idempotent duplicate suppression, remote loopback rejection, wrong-scope isolation, D1→D2→D3 delivery, and persisted restart/post-claim recovery through the next valid `UserPromptSubmit`. Qualify the complete native path live on Windows and macOS/Linux UDS before calling the adapter complete. |
 
 **Claude registration foundation (2026-08-28):** `SessionStart` and `Stop` now
 refresh an exact-session credential through a loopback-only, memory-only
@@ -133,9 +133,9 @@ enabling live wake still requires the relevant safety evidence.
    implementation-review-remediation dogfood journey.
 
 2. **Claude Code production gates:** Persist-first dedupe, scope-bound verified-idle
-   dispatch, `Stop` re-arm, busy fallback, and hook-time claim/ACK now have
+   dispatch, `Stop` re-arm, busy fallback, hook-time claim/ACK, and persisted restart/post-claim recovery now have
    deterministic caller-surface coverage. Production remains blocked on a complete
-   live Windows journey plus stale/restart/error and macOS/Linux UDS qualification.
+   live Windows journey and macOS/Linux UDS qualification.
 
 3. **MCP receive lifecycle foundation — code complete, runtime qualification pending:**
    `fix-relay-receive-mcp-lifecycle` is merged. The MCP path remains fail-closed and unqualified on Codex Desktop until a runtime-owned session handoff reaches the MCP child; hook-delivery wake does not depend on this recovery path.
@@ -146,10 +146,8 @@ enabling live wake still requires the relevant safety evidence.
    `SessionStart` → busy deferral → `Stop` idle grant → native wake → hook claim/ACK
    journey. Treat the first observed failure as the next implementation slice;
    do not broaden the adapter before this witness exists.
-2. **Claude crash/restart recovery:** prove that a crash after claim but before
-   context emission cannot strand unattended work. The delivery must survive lease
-   expiry, re-arm at most one exact-session wake, and be injected and ACKed once.
-   Natural-turn redelivery alone is safe fallback, not unattended qualification.
+2. **Claude crash/restart recovery:** deterministic caller-surface coverage now proves that a crash after claim leaves the delivery lease-eligible and injected/ACKed once on the next valid hook. A service restart intentionally does not promise automatic cold wake; complete the live Windows path before treating this as production qualification.
+
 3. **Codex remaining lifecycle gates:** qualify busy/interrupted/restart admission,
    sender-side reply admission, correlation telemetry, and sustained no-ping
    implementation/review/remediation dogfood.
