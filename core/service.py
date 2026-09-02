@@ -861,6 +861,7 @@ class PalliumService:
         defer_delivery: bool = False,
     ) -> QueryResult:
         container_ref = canonicalize_container_ref(container_ref)
+        exclude_source_identity: tuple[str, str] | None = None
         if request_source_item_id is not None:
             linked_source = None
             if (
@@ -886,6 +887,7 @@ class PalliumService:
                 raise LookupRequestLinkError(
                     "request_source_item_id must reference a live user request in the same scope"
                 )
+            exclude_source_identity = (linked_source.source_type, linked_source.source_id)
         runtime_context = resolve_runtime_context(
             self._storage,
             thread_ref,
@@ -906,6 +908,7 @@ class PalliumService:
             include_trace=include_trace,
             trigger_origin=trigger_origin,
             source_only=source_only,
+            exclude_source_identity=exclude_source_identity,
         )
         # PR 0 step 8: retrieval barrier (defense in depth).
         # Even if a secret slips past the write barrier + LLM-response

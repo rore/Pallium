@@ -46,6 +46,8 @@ The private task text and generated answers remain local and must not be committ
 
 The corrected four-case current replay completed on 2026-09-02: all four pairs ran within the fixed eight-call and 10,000-estimated-input-token caps. Manual review found genuine improvement in three cases, one harmful irrelevant-history case, and no adoption of obsolete guidance; the replacement case followed the current instruction. This passes the narrow expansion gate but does not support a broad product claim. The next 8-12-case run must focus on irrelevant-history harm and best-evidence placement, not merely increase sample size.
 
+A zero-model-call audit then replayed the same 12 historical searches across five requester sessions against an isolated database/vector snapshot. It found that all 12 searches ranked a legacy duplicate row for the active request first: the internal row ID differed, but (source_type, source_id) was identical. After excluding that validated request identity before visible top-K selection, the exact replay completed with zero failures, zero request-identity slots, zero full-content duplicate slots, and zero unknown-session slots. A primary-agent qualitative review labelled the 36 post-fix slots as 10 directly useful, 12 useful background, 10 irrelevant or potentially misleading, and four redundant; seven of 12 cases had at least one direct result. Three workflow-heavy cases found the right topic but the wrong chronological stage. These are injection-precision observations, not downstream-task-effect evidence.
+
 ## Ordered work
 
 1. **Truthful delivery telemetry.** Make one layer own final response selection and
@@ -72,9 +74,17 @@ The corrected four-case current replay completed on 2026-09-02: all four pairs r
 6. **Prominent replacement and expansion semantics.** Put current replacement
    guidance before an outdated excerpt. Clearly distinguish the search-matched
    anchor from chronological neighbours, which may be unrelated.
-7. **Budget-capped rerun.** Replay the same four private cases with no automatic
-   judge, at most eight answer calls, and at most 10,000 estimated input tokens.
-   Expand only if the corrected pilot is informative.
+7. **Active-request identity exclusion.** When a lookup is linked to the current
+   request, exclude every legacy row with the same canonical source identity before
+   visible top-K selection and refill from the existing bounded candidate window.
+8. **Wrong-stage and weak-result assessment.** Use the fixed 12-case audit to
+   characterize when search finds the right topic but an obsolete workflow stage,
+   and when filling another slot adds noise. Prefer a simple general signal or
+   abstention rule only if the labelled cases support one; do not build a reranker
+   from this small corpus.
+9. **Budget-capped rerun.** Run the 8-12-case downstream experiment with no
+   automatic judge and fixed call/token caps only after the deterministic retrieval
+   issues above are addressed or explicitly bounded.
 
 ## Out of scope
 
@@ -121,6 +131,9 @@ The corrected four-case current replay completed on 2026-09-02: all four pairs r
    rate, expansion usefulness/noise, correct-use rate, task effect, added tokens,
    latency, task-shape diversity, and requester-session diversity. The 20-case
    product gate remains blocked until that smaller run is informative.
+10. A lookup linked to the active request never returns another row with the same
+    canonical source identity within the bounded candidate window; focused HTTP E2E
+    and the fixed 12-case replay both prove refill and zero self-identity slots.
 
 ## Sequencing
 

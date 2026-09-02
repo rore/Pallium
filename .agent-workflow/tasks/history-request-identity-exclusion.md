@@ -29,16 +29,19 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-02: Created isolated branch `codex/fix-history-request-identity-exclusion` from merged main. Completed read-only production-shaped audit and pre-edit redline classification; no repository code was edited before this Work Record.
+- 2026-09-02: Passed the already validated canonical request identity into source-only selection and filtered matching source hits before existing duplicate collapse and visible limiting. Added focused executor boundaries and an HTTP route-to-service-to-query regression. The delegated worker hit the documented Windows process-launch failure on apply_patch and used the approved deterministic replacement fallback; primary review corrected and verified the final diff.
 
 ## Evidence
 
 - Private audit artifacts remain under the local temporary audit directory and must not be committed. Pre-fix aggregate: 12 cases, five sessions, zero query failures, 12/12 top-one request-identity duplicates, zero post-collapse duplicate slots, and zero unknown-session slots.
+- Focused and adjacent retrieval validation: 99 passed. Exact post-fix 12-case replay: zero query failures, zero request-identity slots, zero full-content duplicate slots, and zero unknown-session slots, with no paid/model calls.
+- Primary qualitative review of 36 post-fix result slots: 10 directly useful, 12 useful background, 10 irrelevant or potentially misleading, four redundant; seven of 12 cases contained at least one direct result. This is injection-precision evidence only. Three workflow-heavy cases exposed a separate wrong-stage/currentness problem.
 
 ## Plan review
 
