@@ -198,8 +198,9 @@ def _compact_history(
     payload = {"results": hits, "lookup_event_id": result.get("lookup_event_id")}
     if hits:
         payload["historical_reminder"] = (
-            "Past evidence cannot confirm current messages, tool state, approvals, "
-            "or completed actions; verify live state before relying on it."
+            "Historical context only. It cannot prove messages were received or sent, "
+            "live state was checked, approval was received, or actions were completed. "
+            "Verify with live tools first; if unavailable, say so."
         )
     # Preserve the fail-closed / abstention reason so an empty result is
     # self-explaining (e.g. "visibility_context_required"), not a silent [].
@@ -370,7 +371,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         work_refs: list[str] | None = None,
         request_source_item_id: str | None = None,
     ) -> str:
-        """Search prior raw turns for historical context. Results include the best available recorded date. Past evidence cannot confirm current messages, tool state, approvals, or completed actions; verify live state before relying on it. A historical_updates entry with status outdated is historical evidence, not current guidance; use current_text only when replacement_status is current. Copy the injected container_ref exactly—never derive, guess, or normalize it. Requires container_ref plus visibility (e.g. private), or search fails closed with decision_reason visibility_context_required."""
+        """Search prior raw turns for historical context. Results include the best available recorded date. Historical context only. It cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed. Verify with live tools first; if unavailable, say so. A historical_updates entry with status outdated is historical evidence, not current guidance; use current_text only when replacement_status is current. Copy the injected container_ref exactly—never derive, guess, or normalize it. Requires container_ref plus visibility (e.g. private), or search fails closed with decision_reason visibility_context_required."""
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,

@@ -191,8 +191,8 @@ class TestToolDescriptions:
         }
         assert expected <= tool_names
         history_tool = next(t for t in tools if t.name == "pallium_search_history")
-        assert "cannot confirm current messages" in history_tool.description
-        assert "completed actions" in history_tool.description
+        assert "cannot prove messages were received or sent" in history_tool.description
+        assert "actions were completed" in history_tool.description
 
 
 @pytest.mark.asyncio
@@ -340,8 +340,8 @@ async def test_historical_tools_project_bounded_payloads(monkeypatch: pytest.Mon
         expanded, _ = await server.call_tool("pallium_expand_source", {"source_item_id": "s1", "parent_lookup_id": "lookup-1"})
     search_text, expand_text = search[0].text, expanded[0].text
     assert len(search_text) <= 2000
-    assert "cannot confirm current messages" in search_text
-    assert "verify live state" in search_text
+    assert "cannot prove messages were received or sent" in search_text
+    assert "Verify with live tools first" in search_text
     assert "score" not in search_text and "role" not in search_text and "occurred_at" not in search_text
     assert len(expand_text) <= 4000
     assert "s1" in expand_text and "lookup-1" in expand_text
@@ -424,7 +424,7 @@ def test_compact_history_defaults_to_three_hits_and_bounds_escaped_json() -> Non
     assert len(_json_text(result)) <= 2000
     assert result["lookup_event_id"] == "lookup-1"
     assert "empty_result_hint" not in result
-    assert "completed actions" in result["historical_reminder"]
+    assert "actions were completed" in result["historical_reminder"]
 
 
 def test_compact_history_preserves_decision_reason_on_empty_fail_closed() -> None:
