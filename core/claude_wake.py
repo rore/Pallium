@@ -132,6 +132,7 @@ class ClaudeWakeRegistry:
                 or not registration.idle
             ):
                 return False
+            self._registrations[(runtime, session_ref)] = replace(registration, idle=False)
         try:
             return bool(transport(registration.socket_path, registration.token))
         except Exception:
