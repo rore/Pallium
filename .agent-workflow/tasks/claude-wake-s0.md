@@ -9,11 +9,11 @@
 
 **Completion criteria:** (1) The original Claude S0 adapter/dispatcher result remains reviewable with its existing verification evidence. (2) When Codex provides a runtime-owned session identifier, MCP receive claims only that session without PALLIUM_THREAD_REF. (3) When identity or paired scope is absent, MCP receive gives actionable setup guidance without an HTTP 422. (4) Send/reply guidance states the 1,500-character cap and that continuations use relay_send, not repeated replies. (5) The active-writer queue path does not carry an expired claim receipt: delayed queued execution has no loss or duplicate action, proven through caller-surface E2E. (6) Stale-delivery guidance stops only that delivery while surrounding work continues. (7) Codex Desktop MCP recovery is documented as fail-closed and unqualified when no runtime-owned identity reaches the MCP child; this is a follow-up gate, not a hook-wake completion gate. (8) Busy-session wakes remain coalesced through admitted hook execution, then allow the next delivery to schedule a new wake. (9) The roadmap records the reproduced claim-lease-expiry failure; the tested hook busy fallback is qualified, while Desktop MCP recovery and untested variants remain unqualified.
 
-**Risk:** Elevated
+**Risk:** High
 
 **Complexity:** Moderate
 
-**Reason:** Clean-context pre-edit redline classification (2026-09-02): app/mcp context and server are gray/watch, tests and roadmap are blue, with no red zone or boundary violation. Elevated/Moderate covers runtime MCP behavior, trusted identity, docs, and E2E validation.
+**Reason:** The final PR diff includes the Relay turn callback in red-zone `api/routes.py`, plus gray/watch runtime wake and MCP paths. High/Moderate covers the API admission callback, trusted identity, runtime dispatch, and caller-surface E2E validation; no boundary violation is present.
 
 **Discovery:** The original S0 investigation established the Claude native transport/dispatcher boundary. Official Codex MCP documentation verifies STDIO env_vars allow and forward selected names from the local Codex environment. The live shell exposes CODEX_THREAD_ID/CODEX_SESSION_ID, while the installed Pallium MCP entry lacked env_vars. Emitting that allowlist preserves the existing fail-closed resolver without accepting model identity, but fresh Desktop task evidence shows the MCP child still receives neither value; hook-delivery wake is therefore separate from MCP recovery. Subsequent live dogfood reproduced a 409 claim-lease-expired reply after the active-writer queue delayed execution beyond its claim lease; the queue lifecycle is therefore not qualified.
 
@@ -28,7 +28,7 @@
 
 **Plan review:** Clean-context Luna review condition satisfied by official Codex MCP documentation (2026-09-02): STDIO env_vars forwards named local variables. CODEX_THREAD_ID/CODEX_SESSION_ID remain compatibility inputs; no model identity path is added.
 
-**Approvals:** Not required at this risk level (Elevated). User approved the implementation plan via ExitPlanMode 2026-09-02.
+**Approvals:** Approved by user 2026-09-02: "approved" — explicit approval to publish and merge PR #92, following the instruction "so get it through a pr to merge, then let's talk about how to continue". Architect review approved the API admission callback and completed slice at `73e128f7`.
 
 **Exceptions:** —
 
