@@ -40,7 +40,7 @@ Reuse the existing `historical_reminder` field with an imperative boundary: neve
 - The boundary changes downstream behavior without destroying useful history → private four-case paired replay, no automatic judge, maximum eight answer calls and 5,000 estimated input tokens, followed by primary-agent review.
 
 **Plan review:**
-Repeat clean-context review pending after the first focused replay exposed one remaining false receipt/action claim.
+Approved by clean-context reviewer `/root/history_boundary_replan_review`; exact imperative wording and replay assertions recorded below.
 
 **Approvals:**
 Not required at this risk level.
@@ -48,7 +48,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -60,6 +60,8 @@ Not required at this risk level.
 ## Plan review
 
 The reviewer required the live-state boundary to survive worst-case trimming, name the prohibited inferences explicitly, cover normal and oversized MCP responses plus stale/replacement variants, and verify the tool description. The plan now keeps the existing reminder protected while lower-priority response content shrinks; existing empty and error contracts remain unchanged. No scope expansion was needed.
+
+Repeat review after the failed replay approved the unchanged packaging-only scope. It requires exact imperative wording that history cannot prove receipt/send, live checks, approval, or completed actions; the agent must verify with live tools first and state when verification is unavailable. The repeated replay must reject both receipt and folding/action claims while retaining useful controls.
 
 ## Evidence
 
