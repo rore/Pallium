@@ -494,3 +494,18 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     assert client.get(
         f"/relay/messages/{sent['message_id']}", params=scope
     ).json()["deliveries"][0]["state"] == "delivered"
+
+
+def test_relay_turn_callback_rearms_only_after_success(client) -> None:
+    callbacks = []
+    app = FastAPI()
+    app.include_router(create_router(
+        client.app.state.pallium_service,
+        relay_service=RelayService(client.app.state.pallium_service._storage),
+        relay_turn_callback=lambda request: callbacks.append(request),
+    ))
+    route_client = TestClient(app)
+    assert route_client.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **SCOPE}).status_code == 200
+    assert len(callbacks) == 1
+    assert route_client.post("/relay/turn", json={"runtime": "bad", "session_ref": "target", **SCOPE}).status_code == 422
+    assert len(callbacks) == 1
