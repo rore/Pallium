@@ -9,6 +9,7 @@ from typing import Any
 from api.routes import create_router
 from core.claude_wake import ClaudeWakeRegistry
 from app.codex_wake import schedule_codex_relay_wake
+from app.claude_wake import schedule_claude_relay_wake
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.relay import RelayService, RelayUnavailableError
@@ -533,13 +534,28 @@ def build_router(
             relay_service = RelayService(relay_storage)
         except RelayUnavailableError:
             pass
+    registry = claude_wake_registry or build_claude_wake_registry()
+
+    def _relay_wake_dispatch(result: object, scope: object) -> None:
+        """Route relay wake to the appropriate runtime handler."""
+        if not isinstance(result, dict):
+            return
+        deliveries = result.get("deliveries")
+        if not isinstance(deliveries, list) or not deliveries or not isinstance(deliveries[0], dict):
+            return
+        runtime = deliveries[0].get("recipient_runtime")
+        if runtime == "codex" and relay_service is not None:
+            schedule_codex_relay_wake(result, scope, relay_service=relay_service)
+        elif runtime == "claude-code":
+            schedule_claude_relay_wake(result, scope, registry=registry)
+
     return create_router(
         service,
         audit_log_enabled=audit_log_enabled,
         relay_service=relay_service,
-        claude_wake_registry=claude_wake_registry or build_claude_wake_registry(),
+        claude_wake_registry=registry,
         relay_send_callback=(
-            partial(schedule_codex_relay_wake, relay_service=relay_service)
+            _relay_wake_dispatch
             if relay_service is not None
             else None
         ),

@@ -32,10 +32,12 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- Ready to implement | Blocked | Ready for review -->
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-02: Work Record created before code, on branch `slice/claude-wake-s0` (branched from `main`). Classification Elevated/Moderate from clean-context redline verdict (all gray, no boundary violation). This is the consume side of the already-built `ClaudeWakeRegistry` credential capture; only the transport + runtime dispatch are new.
+- 2026-09-02: Implemented S0 slice. Files created: `app/claude_wake_transport.py` (POSIX AF_UNIX + Windows named-pipe transport), `app/claude_wake.py` (scheduler mirroring codex_wake guard/selector shape), `tests/test_claude_wake_dispatch.py` (transport + dispatch unit tests). Files edited: `app/dependencies.py` (added import, converted relay_send_callback to dispatcher routing on recipient_runtime). Tests: 51 passed (43 existing registration + 8 new dispatch), 2 skipped (POSIX socket tests on Windows), 0 failed. Codex wake regression tests: 20 passed. Relay tests: 94 passed. All criteria met: claude-code deliveries route to probe, codex deliveries unchanged, malformed deliveries routed to neither.
+- 2026-09-02: Reviewer diff-read + independent test run (real CPython per local ASR procedure): dispatch/registration 51 passed / 2 skipped, codex regression 20 passed, relay wake contract+fixtures+hooks 23 passed. Code in-scope: guards mirror codex_wake exactly, transport receives only (socket_path, token) — credentials never leave the registry, win32file imported inside the Windows branch, all errors swallowed, dispatcher shares the single registry instance with create_router. **Known limitation carried to the live gate:** the peer frame omits `session_id` because the fixed `Transport = Callable[[str, str], bool]` core signature does not carry the session. The Claude inbox socket is per-session (token+path uniquely identify the target), so session_id in the frame is expected to be redundant with socket identity, not a routing key — but whether the receiver validates it is untestable without a live session. This is Material Assumption #1: if the live dogfood shows denied/no-wake, S1 threads session into the transport (one-line core change to `probe`), not a fix here. Unit-level criteria (1),(2),(4) met; criterion (3) live dogfood remains the open gate before merge.
