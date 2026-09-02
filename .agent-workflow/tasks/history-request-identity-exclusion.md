@@ -40,7 +40,7 @@
 ## Evidence
 
 - Private audit artifacts remain under the local temporary audit directory and must not be committed. Pre-fix aggregate: 12 cases, five sessions, zero query failures, 12/12 top-one request-identity duplicates, zero post-collapse duplicate slots, and zero unknown-session slots.
-- Focused and adjacent retrieval validation: 99 passed. Exact post-fix 12-case replay: zero query failures, zero request-identity slots, zero full-content duplicate slots, and zero unknown-session slots, with no paid/model calls.
+- Focused and adjacent retrieval validation: 99 passed; full suite: 4,138 passed, 12 skipped, two expected failures, zero failures. Exact post-fix 12-case replay: zero query failures, zero request-identity slots, zero full-content duplicate slots, and zero unknown-session slots, with no paid/model calls.
 - Primary qualitative review of 36 post-fix result slots: 10 directly useful, 12 useful background, 10 irrelevant or potentially misleading, four redundant; seven of 12 cases contained at least one direct result. This is injection-precision evidence only. Three workflow-heavy cases exposed a separate wrong-stage/currentness problem.
 
 ## Plan review
@@ -49,4 +49,4 @@
 
 ## Result review
 
-- Pending.
+- APPROVED by independent reviewer /root/identity_exclusion_result_review (2026-09-02). It verified validated identity provenance, source-hit-only pre-limit filtering, no added storage read or API/schema change, unchanged fail-closed behavior, truthful bounded refill, test coverage, and roadmap alignment. No blocking findings.
