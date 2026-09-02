@@ -62,7 +62,7 @@ class ClaudeWakeRegistry:
         actor_ref: str,
         socket_path: str,
         token: str,
-    ) -> None:
+        idle: bool = True`r`n    ) -> None:
         if (
             runtime != RUNTIME
             or not _valid(runtime, MAX_RUNTIME_CHARS)
