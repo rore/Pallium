@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from api.routes import create_router
+from app.dependencies import build_router
 from app import codex_wake
 from app.config import AppConfig
 from app.main import create_app
@@ -548,10 +549,9 @@ def test_build_router_turn_rearms_actual_codex_wake_state(client, monkeypatch) -
         _schedule(_delivery())
         assert codex_wake._scheduled_session_generations
         app = FastAPI()
-        app.include_router(create_router(
+        app.include_router(build_router(
             client.app.state.pallium_service,
-            relay_service=RelayService(client.app.state.pallium_service._storage),
-            relay_turn_callback=lambda request: codex_wake.mark_codex_relay_wake_admitted(request["session_ref"]),
+            relay_storage=client.app.state.pallium_service._storage,
         ))
         route = TestClient(app)
         assert route.post("/relay/turn", json={"runtime": "bad", "session_ref": "target-session", **SCOPE}).status_code == 422
