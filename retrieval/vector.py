@@ -19,7 +19,11 @@ from core.visibility import (
 )
 from providers.embedding.base import EmbeddingProvider
 from retrieval.base import RetrievalProvider, RetrievalQueryResult
-from retrieval.common import build_evidence, build_excerpt
+from retrieval.common import (
+    build_evidence,
+    build_excerpt,
+    build_source_content_fingerprint,
+)
 from storage.base import StorageProvider
 from storage.vector_index import VectorIndex
 
@@ -244,6 +248,9 @@ class VectorRetrievalProvider(RetrievalProvider):
                             source_type=source_item.source_type,
                             source_id=source_item.source_id,
                             excerpt=build_excerpt(source_item.content, query=text),
+                            source_content_fingerprint=build_source_content_fingerprint(
+                                source_item.content
+                            ),
                             occurred_at=source_item.occurred_at,
                             actor_ref=source_item.actor_ref,
                             agent_ref=source_item.agent_ref,

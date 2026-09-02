@@ -32,60 +32,27 @@ def _build_query_result_summary(results: list[Any]) -> dict[str, Any]:
     }
 
 
-_SOURCE_DUPLICATE_MIN_LENGTH = 24
-_SOURCE_DUPLICATE_MIN_TOKENS = 4
-
-
-def _source_duplicate_keys(
-    results: list[QueryResultItem], storage: StorageProvider
-) -> dict[str, tuple[object, ...] | None]:
-    """Return exact, scope-bound keys for hydrated raw source results."""
-    source_ids = [
-        item.source_item_id
-        for item in results
-        if item.result_kind == "source_hit" and item.source_item_id is not None
-    ]
-    sources = storage.get_source_items(source_ids) if source_ids else {}
-    keys: dict[str, tuple[object, ...] | None] = {}
+def _collapse_source_duplicates(
+    results: list[QueryResultItem],
+) -> list[QueryResultItem]:
+    """Collapse normalized-equivalent raw source results, retaining provenance."""
+    retained: list[QueryResultItem] = []
+    positions: dict[tuple[object, ...], int] = {}
     for item in results:
-        source_id = item.source_item_id
-        if item.result_kind != "source_hit" or source_id is None:
-            continue
-        source = sources.get(source_id)
-        if source is None:
-            continue
-        normalized = unicodedata.normalize("NFKC", source.content).casefold()
-        normalized = "".join(
-            " " if unicodedata.category(char).startswith("P") else char
-            for char in normalized
+        fingerprint = (
+            item.source_content_fingerprint
+            if item.result_kind == "source_hit"
+            else None
         )
-        normalized = " ".join(normalized.split())
-        if (
-            len(normalized) < _SOURCE_DUPLICATE_MIN_LENGTH
-            or len(normalized.split()) < _SOURCE_DUPLICATE_MIN_TOKENS
-        ):
-            continue
-        keys[source_id] = (
+        key = (
             item.source_type,
             item.role,
             item.actor_ref,
             item.container_ref,
             item.thread_ref,
-            normalized,
-        )
-    return keys
-
-
-def _collapse_source_duplicates(
-    results: list[QueryResultItem], storage: StorageProvider
-) -> list[QueryResultItem]:
-    """Collapse only normalized-equivalent raw source results, retaining provenance."""
-    keys = _source_duplicate_keys(results, storage)
-    retained: list[QueryResultItem] = []
-    positions: dict[tuple[object, ...], int] = {}
-    for item in results:
-        key = keys.get(item.source_item_id) if item.source_item_id is not None else None
-        if key is None or not key[-1]:
+            fingerprint,
+        ) if fingerprint else None
+        if key is None:
             retained.append(item)
             continue
         position = positions.get(key)
@@ -214,7 +181,7 @@ class QueryExecutor:
                 query_actor_ref=actor_ref if plugin.requires_visibility_context else None,
                 target_kind="source_item",
             )
-            distinct = _collapse_source_duplicates(retrieval_result.results, self._storage)
+            distinct = _collapse_source_duplicates(retrieval_result.results)
             ranked = [
                 replace(item, raw_rank=rank)
                 for rank, item in enumerate(distinct[:limit], start=1)

@@ -1,28 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pytest
 
 from core.models import EvidenceReference, QueryResultItem
 from core.query import _collapse_source_duplicates
-
-
-@dataclass
-class _Source:
-    content: str
-
-
-class _Storage:
-    def __init__(self, contents: dict[str, str]) -> None:
-        self.contents = contents
-
-    def get_source_items(self, source_item_ids: list[str]) -> dict[str, _Source]:
-        return {
-            source_id: _Source(self.contents[source_id])
-            for source_id in source_item_ids
-            if source_id in self.contents
-        }
+from retrieval.common import build_source_content_fingerprint
 
 
 def _item(source_id: str, content: str, **kwargs: str | None) -> QueryResultItem:
@@ -49,6 +31,7 @@ def _item(source_id: str, content: str, **kwargs: str | None) -> QueryResultItem
         container_ref=container_ref,
         thread_ref=thread_ref,
         excerpt=content,
+        source_content_fingerprint=build_source_content_fingerprint(content),
         score=1,
         evidence=[evidence],
     )
@@ -57,9 +40,7 @@ def _item(source_id: str, content: str, **kwargs: str | None) -> QueryResultItem
 def test_normalized_equivalence_keeps_first_and_merges_provenance() -> None:
     first = _item("a", "Use  the café today safely!", score=1)
     second = _item("b", "USE  the café today safely!", score=2)
-    out = _collapse_source_duplicates(
-        [first, second], _Storage({"a": first.excerpt, "b": second.excerpt})
-    )
+    out = _collapse_source_duplicates([first, second])
     assert [item.source_item_id for item in out] == ["a"]
     assert [e.source_item_id for e in out[0].evidence] == ["a", "b"]
     assert out[0].score == 1
@@ -69,18 +50,16 @@ def test_duplicate_fills_freed_slot_and_order_is_stable() -> None:
     items = [_item(str(i), "same text repeated for this test") for i in range(4)] + [
         _item("distinct", "other answer")
     ]
-    out = _collapse_source_duplicates(
-        items, _Storage({item.source_item_id: item.excerpt for item in items})
-    )
+    out = _collapse_source_duplicates(items)
     assert [item.source_item_id for item in out] == ["0", "distinct"]
 
 
 @pytest.mark.parametrize("count", [0, 1, 3, 6])
+
+
 def test_empty_one_max_and_over_max_are_bounded(count: int) -> None:
     items = [_item(str(i), f"content {i}") for i in range(count)]
-    out = _collapse_source_duplicates(
-        items, _Storage({item.source_item_id: item.excerpt for item in items})
-    )
+    out = _collapse_source_duplicates(items)
     assert [item.source_item_id for item in out] == [str(i) for i in range(count)]
 
 
@@ -93,11 +72,14 @@ def test_non_exact_unicode_cross_script_and_different_context_remain_distinct() 
         _item("role", "same text", role="assistant"),
         _item("kind", "same text", source_type="tool"),
     ]
-    out = _collapse_source_duplicates(
-        items, _Storage({item.source_item_id: item.excerpt for item in items})
-    )
+    out = _collapse_source_duplicates(items)
     assert [item.source_item_id for item in out] == [
-        "latin", "cyrillic", "actor", "thread", "role", "kind"
+        "latin",
+        "cyrillic",
+        "actor",
+        "thread",
+        "role",
+        "kind",
     ]
 
 
@@ -107,10 +89,7 @@ def test_memory_and_different_decision_are_unchanged() -> None:
         result_kind="memory_hit", memory_object_id="m", score=9, evidence=[]
     )
     different = _item("different", "use arrival time")
-    out = _collapse_source_duplicates(
-        [source, memory, different],
-        _Storage({"source": source.excerpt, "different": different.excerpt}),
-    )
+    out = _collapse_source_duplicates([source, memory, different])
     assert out == [source, memory, different]
 
 
@@ -124,11 +103,15 @@ def test_punctuation_boundaries_do_not_merge_identifiers() -> None:
         _item("hyphen", "a-b"),
         _item("space", "a b"),
     ]
-    out = _collapse_source_duplicates(
-        items, _Storage({item.source_item_id: item.excerpt for item in items})
-    )
+    out = _collapse_source_duplicates(items)
     assert [item.source_item_id for item in out] == [
-        "version", "compact", "plus", "hash", "letter", "hyphen", "space"
+        "version",
+        "compact",
+        "plus",
+        "hash",
+        "letter",
+        "hyphen",
+        "space",
     ]
 
 
@@ -143,10 +126,7 @@ def test_sentence_punctuation_normalizes_without_joining_identifier_parts() -> N
     ]
     items = punctuation_variants + identifiers
 
-    out = _collapse_source_duplicates(
-        items,
-        _Storage({item.source_item_id: item.excerpt for item in items}),
-    )
+    out = _collapse_source_duplicates(items)
 
     assert [item.source_item_id for item in out] == ["a", "version", "compact"]
 
@@ -155,14 +135,10 @@ def test_nfkc_case_and_whitespace_normalize() -> None:
         _item("a", "ＡＬＰＨＡ  beta gamma delta today"),
         _item("b", " alpha beta gamma delta today "),
     ]
-    out = _collapse_source_duplicates(
-        items, _Storage({item.source_item_id: item.excerpt for item in items})
-    )
+    out = _collapse_source_duplicates(items)
     assert [item.source_item_id for item in out] == ["a"]
 
 def test_short_common_repeats_remain_distinct() -> None:
     items = [_item("a", "yes"), _item("b", "YES")]
-    out = _collapse_source_duplicates(
-        items, _Storage({item.source_item_id: item.excerpt for item in items})
-    )
+    out = _collapse_source_duplicates(items)
     assert [item.source_item_id for item in out] == ["a", "b"]

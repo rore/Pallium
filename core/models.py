@@ -272,6 +272,7 @@ class QueryResultItem:
     artifact_kind: str | None = None
     visibility: str = "private"
     retrieval_source: str | None = None
+    source_content_fingerprint: str | None = None
     lexical_score: float | None = None
     vector_score: int | None = None
     # Source-only search (vNext P1): 1-based rank of this raw hit within the
