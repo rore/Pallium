@@ -81,6 +81,7 @@ def test_exact_active_writer_queues_generic_trigger_hidden() -> None:
         "--thread", "target-session", "--message", prompt
     ]
     assert "→" in prompt
+    assert codex_wake._wake_prompt() in run.call_args_list[0].kwargs["input"]
     assert "delivery_id" not in prompt
     assert "receipt" not in prompt
     assert run.call_args_list[1].kwargs["stdin"] is subprocess.DEVNULL
@@ -353,7 +354,7 @@ def test_profile_is_idempotent_and_narrow(monkeypatch, tmp_path) -> None:
     assert "required = true" in profile
     assert 'enabled_tools = ["pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive"]' in profile
     assert 'default_tools_approval_mode = "prompt"' in profile
-    assert profile.count('approval_mode = "approve"') == 3
+    assert profile.count('approval_mode = "approve"') == 4
     setup_codex._remove_relay_profile()
     assert not (tmp_path / ".codex" / "pallium-relay.config.toml").exists()
 
@@ -560,3 +561,13 @@ def test_build_router_turn_rearms_actual_codex_wake_state(client, monkeypatch) -
         assert not codex_wake._scheduled_delivery_ids
         _schedule(_delivery("delivery-2"))
     assert thread.call_count == 2
+def test_failed_old_generation_cannot_clear_replacement(monkeypatch) -> None:
+    codex_wake._scheduled_session_generations['target-session'] = 2
+    codex_wake._scheduled_session_delivery_ids['target-session'] = 'delivery-new'
+    codex_wake._scheduled_delivery_ids.add('delivery-new')
+    monkeypatch.setattr(codex_wake.time, 'sleep', lambda _: None)
+    monkeypatch.setattr(codex_wake, '_wake', lambda _: False)
+    codex_wake._wake_after_debounce('delivery-old', 'target-session', 1)
+    assert codex_wake._scheduled_session_generations['target-session'] == 2
+    assert codex_wake._scheduled_session_delivery_ids['target-session'] == 'delivery-new'
+    assert codex_wake._scheduled_delivery_ids == {'delivery-new'}

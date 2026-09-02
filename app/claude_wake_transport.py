@@ -70,7 +70,10 @@ def _posix_transport(socket_path: str, token: str) -> bool:
 def _windows_transport(socket_path: str, token: str) -> bool:
     """Open named pipe, write auth line + peer frame."""
     try:
+        import pywintypes
+        import win32event
         import win32file
+        import winerror
     except ImportError:
         return False
 
@@ -83,13 +86,14 @@ def _windows_transport(socket_path: str, token: str) -> bool:
             0,
             None,
             win32file.OPEN_EXISTING,
-            0,
+            win32file.FILE_FLAG_OVERLAPPED,
             None,
         )
 
         # Write auth line
         auth_frame = json.dumps({"type": "auth", "token": token}) + "\n"
-        win32file.WriteFile(handle, auth_frame.encode("utf-8"))
+        if not _windows_write(handle, auth_frame.encode("utf-8"), pywintypes, win32event, win32file, winerror):
+            return False
 
         # Write peer message frame
         peer_frame = json.dumps({
@@ -103,10 +107,8 @@ def _windows_transport(socket_path: str, token: str) -> bool:
             "priority": "next",
             "from": "pallium-relay",
         }) + "\n"
-        win32file.WriteFile(handle, peer_frame.encode("utf-8"))
-
-        return True
-    except (OSError, ValueError):
+        return _windows_write(handle, peer_frame.encode("utf-8"), pywintypes, win32event, win32file, winerror)
+    except Exception:
         return False
     finally:
         if handle is not None:
@@ -114,3 +116,33 @@ def _windows_transport(socket_path: str, token: str) -> bool:
                 win32file.CloseHandle(handle)
             except (OSError, NameError):
                 pass
+
+
+def _windows_write(handle, data, pywintypes, win32event, win32file, winerror) -> bool:
+    """Write one frame with a bounded overlapped-I/O wait."""
+    overlapped = pywintypes.OVERLAPPED()
+    overlapped.hEvent = win32event.CreateEvent(None, True, False, None)
+    try:
+        error_code, _ = win32file.WriteFile(handle, data, overlapped)
+        if error_code == 0:
+            return True
+        if error_code != winerror.ERROR_IO_PENDING:
+            return False
+        if win32event.WaitForSingleObject(overlapped.hEvent, 2000) != win32event.WAIT_OBJECT_0:
+            cancel = getattr(win32file, "CancelIoEx", None)
+            if cancel is None:
+                cancel = win32file.CancelIo
+                cancel(handle)
+            else:
+                cancel(handle, overlapped)
+            get_result = getattr(win32file, "GetOverlappedResult", None)
+            if get_result is not None:
+                try:
+                    get_result(handle, overlapped, False)
+                except Exception:
+                    pass
+            return False
+        win32file.GetOverlappedResult(handle, overlapped, True)
+        return True
+    finally:
+        win32file.CloseHandle(overlapped.hEvent)

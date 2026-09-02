@@ -550,10 +550,20 @@ def build_router(
             schedule_claude_relay_wake(result, scope, registry=registry)
 
     def _relay_turn_admission(request: object) -> None:
-        if isinstance(request, dict) and request.get("runtime") == "codex":
-            session_ref = request.get("session_ref")
-            if isinstance(session_ref, str) and session_ref:
-                mark_codex_relay_wake_admitted(session_ref)
+        if not isinstance(request, dict):
+            return
+        session_ref = request.get("session_ref")
+        if not isinstance(session_ref, str) or not session_ref:
+            return
+        if request.get("runtime") == "codex":
+            mark_codex_relay_wake_admitted(session_ref)
+        elif request.get("runtime") == "claude-code":
+            registry.mark_busy(
+                runtime="claude-code",
+                session_ref=session_ref,
+                container_ref=request.get("container_ref", ""),
+                actor_ref=request.get("actor_ref", ""),
+            )
 
     return create_router(
         service,

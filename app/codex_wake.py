@@ -84,7 +84,8 @@ def schedule_codex_relay_wake(
             _scheduled_delivery_ids.discard(delivery_id)
             if _scheduled_session_generations.get(session_ref) == generation:
                 _scheduled_session_generations.pop(session_ref, None)
-                _scheduled_delivery_ids.discard(_scheduled_session_delivery_ids.pop(session_ref, delivery_id))
+                _scheduled_session_delivery_ids.pop(session_ref, None)
+                _scheduled_delivery_ids.discard(delivery_id)
 
 
 def _wake_after_debounce(
@@ -103,10 +104,10 @@ def _wake_after_debounce(
     except Exception:
         pass
     with _scheduled_lock:
+        if _scheduled_session_generations.get(session_ref) != generation:
+            return
         _scheduled_session_generations.pop(session_ref, None)
-        delivery_id = _scheduled_session_delivery_ids.pop(session_ref, None)
-        if delivery_id is not None:
-            _scheduled_delivery_ids.discard(delivery_id)
+        _scheduled_session_delivery_ids.pop(session_ref, None)
         _scheduled_delivery_ids.discard(delivery_id)
 
 

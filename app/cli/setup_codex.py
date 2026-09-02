@@ -266,6 +266,8 @@ def _install_relay_profile() -> None:
         "\n[mcp_servers.pallium.tools.pallium_relay_reply]\n"
         'approval_mode = "approve"\n'
         "\n[mcp_servers.pallium.tools.pallium_relay_ack]\n"
+        'approval_mode = "approve"\n'
+        "\n[mcp_servers.pallium.tools.pallium_relay_receive]\n"
         'approval_mode = "approve"\n',
     )
 

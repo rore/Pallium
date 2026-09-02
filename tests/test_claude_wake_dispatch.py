@@ -9,11 +9,12 @@ import threading
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import pytest
 
 from app.claude_wake import schedule_claude_relay_wake
-from app.claude_wake_transport import claude_wake_transport
+from app.claude_wake_transport import _windows_write, claude_wake_transport
 from core.claude_wake import ClaudeWakeRegistry
 
 
@@ -87,6 +88,30 @@ class TestTransport:
         result = claude_wake_transport("/nonexistent/socket.sock", "token")
         assert result is False
 
+    def test_windows_write_cancels_after_bounded_timeout(self) -> None:
+        """Pending named-pipe writes must not block forever."""
+        cancelled = []
+        closed = []
+
+        class Overlapped:
+            hEvent = None
+
+        pywintypes = SimpleNamespace(OVERLAPPED=Overlapped)
+        win32event = SimpleNamespace(
+            WAIT_OBJECT_0=0,
+            CreateEvent=lambda *_args: "event",
+            WaitForSingleObject=lambda *_args: 258,
+        )
+        win32file = SimpleNamespace(
+            WriteFile=lambda *_args: (997, 0),
+            CancelIoEx=lambda handle, overlapped: cancelled.append((handle, overlapped)),
+            CloseHandle=lambda handle: closed.append(handle),
+        )
+        winerror = SimpleNamespace(ERROR_IO_PENDING=997)
+
+        assert _windows_write("pipe", b"frame", pywintypes, win32event, win32file, winerror) is False
+        assert len(cancelled) == 1
+        assert closed == ["event"]
     @pytest.mark.skipif(os.name != "nt", reason="Windows test")
     def test_windows_transport_import_failure_returns_false(self) -> None:
         """Windows: win32file import failure returns False."""
@@ -281,3 +306,33 @@ class TestDispatch:
         schedule_claude_relay_wake(result, scope, registry=registry)
 
         registry.probe.assert_not_called()
+
+def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api.routes import create_router
+    from core.relay import RelayService
+
+    registry = ClaudeWakeRegistry()
+    app = FastAPI()
+    app.include_router(create_router(client.app.state.pallium_service, relay_service=RelayService(client.app.state.pallium_service._storage), claude_wake_registry=registry,
+        relay_turn_callback=lambda req: registry.mark_busy(
+            runtime=req["runtime"], session_ref=req["session_ref"],
+            container_ref=req["container_ref"], actor_ref=req["actor_ref"])))
+    client = TestClient(app, client=("127.0.0.1", 50000))
+    payload = {**PAYLOAD, "session_ref": "session-test", "socket_path": "/tmp/test.sock"}
+    assert client.post("/internal/claude-wake/register", json=payload).status_code == 204
+    scope = {"container_ref": payload["container_ref"], "actor_ref": payload["actor_ref"]}
+    assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": payload["session_ref"], **scope}).status_code == 200
+    result = {"recipient": "claude-code:session-test", "deliveries": [{"delivery_id": "d1", "recipient_runtime": "claude-code", "recipient_session_ref": "session-test"}]}
+    transport = MagicMock(return_value=True)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.claude_wake.claude_wake_transport", transport)
+        schedule_claude_relay_wake(result, scope, registry=registry)
+    transport.assert_not_called()
+    assert client.post("/internal/claude-wake/register", json=payload).status_code == 204
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.claude_wake.claude_wake_transport", transport)
+        schedule_claude_relay_wake(result, scope, registry=registry)
+    transport.assert_called_once()
+    assert not registry.probe(runtime="claude-code", session_ref="session-test", container_ref="wrong", actor_ref=scope["actor_ref"], transport=transport)
