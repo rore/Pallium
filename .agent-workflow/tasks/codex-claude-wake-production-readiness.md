@@ -9,7 +9,7 @@ Pallium Claude Code Relay wake adapter.
 Claude wake scheduling, native Windows/POSIX transport protocol, exact-session registry handoff, hook-time Relay delivery/recovery, credential-free outcome logging, focused caller-surface/E2E tests, integration documentation, and the canonical wake roadmap. Primary paths: `app/claude_wake.py`, `app/claude_wake_transport.py`, `core/claude_wake.py`, `integrations/claude-code/hooks/*`, `api/routes.py`, and related tests.
 
 **Constraints:**
-Preserve persist-first delivery, fail-closed scope/session identity, one-shot verified-idle admission, bounded I/O, durable natural-turn fallback, and secret/message-content redaction. Use no wall-clock lease sleeps. Keep cold resume, busy-turn queueing, macOS/Linux qualification, Channels, turn-end notifications, and OpenCode out of this milestone. Use Relay for agent coordination; delegate implementation primarily to the Claude developer and independent validation to the Claude architect. Minimize expensive-model work. Preserve unrelated `uv.lock` and `.agent-workflow/.hooks.log` changes.
+Preserve persist-first delivery, fail-closed scope/session identity, one-shot verified-idle admission, bounded I/O, durable natural-turn fallback, and secret/message-content redaction. Use no wall-clock lease sleeps. Keep cold resume, busy-turn queueing, macOS/Linux qualification, Channels, turn-end notifications, and OpenCode out of this milestone. Use Relay for agent coordination; delegate implementation primarily to `codex:@relaydev` and Claude protocol/runtime validation to `claude-code:@claude_arch`, which may use its own Claude developer internally. A stale recipient registration is not proof an agent exists. Minimize expensive-model work. Preserve unrelated `uv.lock` and `.agent-workflow/.hooks.log` changes.
 
 **Completion criteria:**
 1. When Claude accepts, holds, denies, truncates, malforms, disconnects, or times out a native peer message, Pallium shall return the correct bounded outcome using the exact session identity, with deterministic Windows and POSIX caller-surface coverage.
@@ -38,10 +38,10 @@ Current `main` already persists before wake, validates pending delivery and scop
 - Automatic crash-after-claim recovery can reuse existing lease eligibility and wake scheduling. Disproof: no supported event observes lease expiry without polling or broad persistence work; action: retain natural-turn recovery, mark unattended recovery unqualified, and return that expansion to planning.
 
 **Plan:**
-1. Claude architect delegates a clean-context redline and plan review against this Work Record and relevant sources; resolve findings before code.
-2. Claude developer captures/validates the current native status-frame contract and implements the smallest protocol-correct transport change, including exact session identity only if verified. Stop on contradictory live evidence.
-3. Claude developer moves only the bounded probe off the public send path and adds one existing-style structured outcome log, preserving registry atomicity and adding deterministic concurrency/error regressions.
-4. Trace stale registration, service restart, transport failure, and crash-after-claim paths end to end. Reuse existing lease/wake machinery for the smallest recovery fix; do not add a general coordinator unless the assumption fails and the Work Record is replanned.
+1. Claude architect performs or delegates a clean-context redline and plan review against this Work Record and relevant sources; resolve findings before code.
+2. Claude architect validates the current native status-frame and session-identity contract from Claude Code evidence. `codex:@relaydev` implements the smallest protocol-correct transport change from that evidence. Stop on contradiction.
+3. `codex:@relaydev` moves only the bounded probe off the public send path and adds one existing-style structured outcome log, preserving registry atomicity and adding deterministic concurrency/error regressions.
+4. `codex:@relaydev` traces stale registration, service restart, transport failure, and crash-after-claim paths end to end. Reuse existing lease/wake machinery for the smallest recovery fix; do not add a general coordinator unless the assumption fails and the Work Record is replanned.
 5. Run deterministic caller-surface and lifecycle tests, then update stable integrations, restart only with `scripts/restart-service.ps1`, verify all three health surfaces, and perform the fresh-session Windows no-ping matrix.
 6. Claude architect independently validates in Claude Code. Codex architect reviews the complete diff, resolves all PR threads, and merges only after green gates.
 
@@ -67,11 +67,11 @@ Approved by user 2026-09-02: "ok. so that's the current mission. persist this pl
 
 ## Implementation
 
-- 2026-09-02: Mission persisted before code. No runtime edits started. Waiting for clean-context risk/plan review; then implementation is delegated primarily to the Claude developer through Relay.
+- 2026-09-02: Mission persisted before code. No runtime edits started. User corrected delegation: `codex:@relaydev` is the primary implementation developer; `claude-code:@claude_arch` owns Claude-side validation and may use its own Claude developer. A stale `@paldev` address-book entry was mistakenly treated as an available agent; its pending assignment was superseded and must not be used.
 
 ## Evidence
 
-- Mission memory: `19f07003-979f-4e39-a9ed-50dac8f0fa80`.
+- Mission memory: `d7537934-fd56-4830-8834-7bab372124d8` (supersedes the incorrect developer assignment).
 - Roadmap priority: `roadmap/features/add-wake-first-relay-delivery.md`, Claude live Windows qualification first.
 
 ## Plan review
