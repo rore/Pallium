@@ -31,7 +31,7 @@ Agent-redline classified `app/mcp/server.py` GRAY + WATCH because this changes a
 - The observed defect is in search-result packaging, not source expansion. If discovery or replay shows an expansion-caused false claim, expand scope and repeat risk/plan review.
 
 **Plan:**
-Reuse the existing `historical_reminder` field with explicit required semantics: past evidence cannot confirm current messages, tool state, approvals, or completed actions, and live state must be verified. Protect that field while existing optional cues, excerpts, update details, and finally hits shrink to meet the budget; do not add a second mechanism. Update the `pallium_search_history` tool description. Add direct and caller-level MCP assertions for normal, replacement-available, stale-only, oversized escaped/Unicode, empty/fail-closed, and error paths, plus a tool-description assertion. Run focused tests, then an eight-call/no-judge private replay of the two harmful cases plus two useful controls. Stop and return to planning if the payload cannot remain bounded or either harmful claim persists.
+Reuse the existing `historical_reminder` field with an imperative boundary: never claim messages were received or sent, live state was checked, approval was received, or actions were completed from history; verify with live tools first and say so when verification is unavailable. Protect that field while existing optional cues, excerpts, update details, and finally hits shrink to meet the budget; do not add a second mechanism. Update the `pallium_search_history` tool description. Add direct and caller-level MCP assertions for normal, replacement-available, stale-only, oversized escaped/Unicode, empty/fail-closed, and error paths, plus a tool-description assertion. Run focused tests, then an eight-call/no-judge private replay of the two harmful cases plus two useful controls. Stop and return to planning if the payload cannot remain bounded or either harmful claim persists.
 
 **Verification plan:**
 - Non-empty normal, replacement-available, stale-only, and oversized escaped/Unicode history responses retain the explicit live-state/action boundary within 2,000 characters → direct `_compact_history` tests plus `server.call_tool("pallium_search_history")` caller-level E2E; existing empty/fail-closed and error-path tests remain green.
@@ -40,7 +40,7 @@ Reuse the existing `historical_reminder` field with explicit required semantics:
 - The boundary changes downstream behavior without destroying useful history → private four-case paired replay, no automatic judge, maximum eight answer calls and 5,000 estimated input tokens, followed by primary-agent review.
 
 **Plan review:**
-Clean-context review by `/root/history_boundary_plan_review`; findings and resolutions recorded below.
+Repeat clean-context review pending after the first focused replay exposed one remaining false receipt/action claim.
 
 **Approvals:**
 Not required at this risk level.
@@ -48,13 +48,14 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Discovery complete: the existing reminder is too weak and is the first field dropped under response pressure; no retrieval or ranking change is needed.
 - Elevated plan review complete: protected the single existing reminder instead of adding a mechanism; expanded caller-level coverage to normal/over-budget/stale/replaced/empty/error cases and tool-description discovery.
+- First focused replay failed one stop condition: one of two harmful cases still claimed hook receipt and work folding. Returned to planning for stronger imperative wording; no integration, retrieval, or ranking scope added.
 
 ## Plan review
 
@@ -62,7 +63,7 @@ The reviewer required the live-state boundary to survive worst-case trimming, na
 
 ## Evidence
 
-Implemented the explicit historical live-state boundary, removed the reminder deletion path so it survives the 2,000-character trim, updated the tool description, and added direct/caller-level assertions. Independent syntax plus history-presentation, MCP server, delivery-receipt, and MCP-integration verification: 80 passed. Real import-boundary and agent-workflow gates are clean. Focused four-case external replay is blocked pending fresh explicit approval for private-data egress.
+Implemented the explicit historical live-state boundary, removed the reminder deletion path so it survives the 2,000-character trim, updated the tool description, and added direct/caller-level assertions. Independent syntax plus history-presentation, MCP server, delivery-receipt, and MCP-integration verification: 80 passed. Real import-boundary and agent-workflow gates are clean. Focused four-case replay completed within eight logical calls and 2,419 estimated input tokens: one harmful case was fixed, one still falsely claimed hook receipt/folding, and both useful controls remained useful. The material assumption failed, so implementation returned to planning.
 
 ## Result review
 
