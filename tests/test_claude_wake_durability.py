@@ -230,3 +230,67 @@ def test_recovery_retries_rollback_inflight_once_without_relay_mutation(tmp_path
     wall[0] = 1.0
     claude_wake.recover_claude_relay_wakes(restarted, relay)
     assert len(scheduled) == 1 and len(calls) == 2
+
+def test_expired_claim_recovery_retries_without_mutating_relay(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timedelta, timezone
+    import threading
+
+    from app import claude_wake
+    from core.relay import RelayService
+    import storage.sqlite_relay as sqlite_relay
+
+    clock = [datetime(2030, 9, 2, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    relay = RelayService(client.app.state.pallium_service._storage)
+    relay.turn(runtime="codex", session_ref="sender", **scope)
+    relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
+    sent = relay.send(
+        sender_runtime="codex", sender_session_ref="sender",
+        recipient="claude-code:" + PAYLOAD["session_ref"], payload="recover claimed", **scope,
+    )
+    claimed = relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)["deliveries"][0]
+    assert claimed["state"] == "claimed"
+    before = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+
+    wall = [100.0]
+    registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    assert registry.probe(
+        runtime="claude-code", session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        delivery_id=claimed["delivery_id"], transport=lambda *_: "accepted",
+    )
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
+
+    clock[0] += timedelta(seconds=61)
+    assert relay.pending_candidate(
+        runtime="claude-code", session_ref=PAYLOAD["session_ref"],
+        delivery_id=claimed["delivery_id"], **scope,
+    ) == {"delivery_id": claimed["delivery_id"], "state": "pending"}
+    retried = threading.Event()
+    transport_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        claude_wake,
+        "claude_wake_transport",
+        lambda socket_path, token: transport_calls.append((socket_path, token)) or retried.set() or True,
+    )
+    claude_wake.recover_claude_relay_wakes(restarted, relay)
+    assert not retried.is_set()
+    wall[0] = 1.0
+    claude_wake.recover_claude_relay_wakes(restarted, relay)
+    assert retried.wait(timeout=1)
+    assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+
+    after = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+    assert after["state"] == "claimed" and after["delivered_at"] is None
+    assert tuple(after[key] for key in ("claim_token", "receipt", "claimed_at", "lease_expires_at", "attempts")) == tuple(
+        before[key] for key in ("claim_token", "receipt", "claimed_at", "lease_expires_at", "attempts")
+    )
