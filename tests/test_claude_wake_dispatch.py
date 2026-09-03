@@ -1033,3 +1033,64 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
         reconciler = app.state._claude_wake_reconciler
         assert reconciler is not None
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
+
+def test_persisted_idle_wakes_once_after_real_app_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    from app.config import AppConfig
+    from app.main import create_app
+    from core.relay import RelayService
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    transport_called = threading.Event()
+    transport_calls: list[tuple[str, str]] = []
+    monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(tmp_path / "wake"))
+    monkeypatch.setattr(
+        "app.claude_wake.claude_wake_transport",
+        lambda socket_path, token: transport_calls.append((socket_path, token)) or transport_called.set() or "accepted",
+    )
+    config = AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    )
+    original_start = main.start_claude_wake_reconciler
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", lambda *_: None)
+    with TestClient(create_app(config), client=("127.0.0.1", 50000)) as http_a:
+        common = _load_claude_hook("common", monkeypatch)
+        monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", tmp_path / "wake")
+        monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", tmp_path / "wake" / "intents")
+        registration = {**PAYLOAD, "session_ref": "restart-target", "idle": True, "intent_id": "app-a"}
+        assert common._write_wake_intent(registration)
+        assert http_a.post("/internal/claude-wake/register", json=registration).status_code == 204
+        relay = RelayService(http_a.app.state.pallium_service._storage)
+        relay.turn(runtime="codex", session_ref="sender", **scope)
+        relay.turn(runtime="claude-code", session_ref="restart-target", **scope)
+        sent = relay.send(
+            sender_runtime="codex", sender_session_ref="sender",
+            recipient="claude-code:restart-target", payload="persisted wake", **scope,
+        )
+        delivery = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+        assert delivery["state"] == "pending" and delivery["claim_token"] is None and delivery["attempts"] == 0
+
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", original_start)
+    app_b = create_app(config)
+    with TestClient(app_b, client=("127.0.0.1", 50000)) as http_b:
+        assert transport_called.wait(timeout=1)
+        assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+        response = http_b.get(f"/relay/messages/{sent['message_id']}", params=scope)
+        assert response.status_code == 200
+        delivery = response.json()["deliveries"][0]
+        assert delivery["state"] == "pending"
+        assert delivery["claim_token"] is None and delivery["receipt"] is None and delivery["attempts"] == 0
+        reconciler = app_b.state._claude_wake_reconciler
+        assert reconciler is not None
+    assert reconciler._thread is not None and not reconciler._thread.is_alive()

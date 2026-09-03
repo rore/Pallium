@@ -89,3 +89,4 @@ Approved by user 2026-09-03: "you have blanket approval for all tasks you get fr
 2026-09-03 — S1B slice 4 adds a real SQLite expired-lease recovery E2E: read-only effective pending rechecks a stale claim, rollback rearms one native retry, and preserves the Relay claim/token/receipt/attempt row until normal turn reclaim.
 2026-09-03 — S1B slice 5 qualifies SessionEnd setup, exact online close, and outage close-intent recovery: a stale close removes only its old capability while preserving a newer same-session registration intent.
 2026-09-03 — S1B slice 6 aligns typed native outcomes with deterministic POSIX/Windows fake transport and non-admitting capacity coverage; only proven missing endpoints are terminal/reclaimed.
+2026-09-03 — S1B slice 7 proves a persisted idle Claude capability and pending Relay delivery automatically wake exactly once through a real app restart, while Relay remains pending and unclaimed.
