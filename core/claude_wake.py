@@ -299,22 +299,22 @@ class ClaudeWakeRegistry:
             registration = self._registrations.get((runtime, session_ref))
             if registration is not None and (registration.container_ref != container_ref or registration.actor_ref != actor_ref):
                 return False
-            return self._remove_locked(session_ref)
+            return self._remove_locked(session_ref, expected_intent_id=intent_id)
     def remove(self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str) -> bool:
         with self._lock:
             registration = self._registrations.get((runtime, session_ref))
             if registration is None or registration.container_ref != container_ref or registration.actor_ref != actor_ref:
                 return False
-            return self._remove_locked(session_ref)
+            return self._remove_locked(session_ref, expected_intent_id=intent_id)
 
-    def _remove_locked(self, session_ref: str) -> bool:
+    def _remove_locked(self, session_ref: str, *, expected_intent_id: str | None = None) -> bool:
         key = (RUNTIME, session_ref)
         updated = dict(self._registrations)
         updated.pop(key, None)
         if self._state_dir is not None and not self._write_canonical_locked(updated):
             return False
         self._registrations = updated
-        self._delete_intent_locked(session_ref, expected_intent_id=None)
+        self._delete_intent_locked(session_ref, expected_intent_id=expected_intent_id)
         self.signal_reconcile()
         return True
 
