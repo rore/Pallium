@@ -981,6 +981,12 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
     ))
 
     with TestClient(app, client=("127.0.0.1", 50000)) as http:
+        assert http.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "sender", **scope,
+        }).status_code == 200
+        assert http.post("/relay/turn", json={
+            "runtime": "claude-code", "session_ref": "lost-http", **scope,
+        }).status_code == 200
         common = _load_claude_hook("common", monkeypatch)
         monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", PAYLOAD["socket_path"])
         monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", PAYLOAD["token"])
@@ -991,12 +997,6 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
         )
         assert not common.register_claude_wake("lost-http", scope["container_ref"], scope["actor_ref"], idle=True)
 
-        assert http.post("/relay/turn", json={
-            "runtime": "codex", "session_ref": "sender", **scope,
-        }).status_code == 200
-        assert http.post("/relay/turn", json={
-            "runtime": "claude-code", "session_ref": "lost-http", **scope,
-        }).status_code == 200
         sent = http.post("/relay/messages", json={
             "sender_runtime": "codex", "sender_session_ref": "sender",
             "recipient": "claude-code:lost-http", "payload": "recover me", **scope,
