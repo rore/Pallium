@@ -515,6 +515,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         audit_log_enabled=resolved_config.observability.query_audit_log,
         relay_storage=build_result.storage,
         claude_wake_registry=claude_wake_registry,
+        start_claude_reconciler=True,
     ))
     if mcp_available and mcp_app is not None:
         app.mount("", mcp_app)

@@ -61,7 +61,7 @@ Approved by user 2026-09-03: "you have blanket approval for all tasks you get fr
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -69,6 +69,7 @@ Approved by user 2026-09-03: "you have blanket approval for all tasks you get fr
 2026-09-03 — S1B implementation started from accepted plan b1991dc5. Planned shared-path files: core/claude_wake.py, app/claude_wake.py, app/dependencies.py, api/routes.py, core/relay.py, Relay storage, Claude hook registration/SessionEnd files, and focused caller-surface tests. Scope excludes Claude execution, integration service changes, PR, and merge.
 2026-09-03 — First shared-path slice replaces production memory-only capability state with trusted-local canonical persistence, write-ahead hook intents, exact intent matching, fail-closed busy fencing, non-admitting POSIX-only capacity reclamation, and startup read-only Relay recovery. Existing Stop caller-surface assertions now explicitly cover its required post-admission rearm.
 2026-09-03 — Added closed-intent SessionEnd path, exact-scope read-only candidate E2E, and an app-local capped Event reconciler for persisted registries. Tests now isolate trusted-local state through PALLIUM_CLAUDE_WAKE_DIR; production still defaults to the canonical user-profile path.
+2026-09-03 — S1B local implementation is ready for architect code review: focused Claude/Relay suites pass (127 passed, 2 skipped); the full suite has only the pre-existing `tests/test_config.py::test_prompt_variants_legacy_fallback_unaffected` failure. No installed Claude integration, service restart, or runtime witness was performed; the new SessionEnd helper remains uninstalled by scope.
 
 2026-09-03 — Implemented S1A: non-recursive Claude Stop probes scoped `/relay/turn` once with `max_chars=2400`, renders exactly the returned claimed set without a formatter cap, ACKs individually, re-renders only 2xx-confirmed items to stderr, and exits 2 only for that nonempty subset. Recursive Stop re-registers idle without a probe. `acknowledge_relay` now returns only confirmed deliveries while existing callers may ignore the return. Architect re-review fixed empty/request/render/all-ACK-failure rearm after route admission, non-UTF-8 stderr buffer emission, and exact storage/hook template budgeting. Focused caller-surface regressions and exact storage/Claude boundary regression pass. Module-form affected suite, relay E2E, and isolation counts are recorded by final verification. Workflow and diff checks clean. `ruff` is unavailable in the environment. Architect re-review and installed S1A witness are PASS. Overall work is blocked on S1B restart durability planning and its eventual implementation/witness.
 ## S1B amended plan (plan only; no runtime edits)

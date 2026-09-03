@@ -530,6 +530,7 @@ def build_router(
     audit_log_enabled: bool = False,
     relay_storage=None,
     claude_wake_registry: ClaudeWakeRegistry | None = None,
+    start_claude_reconciler: bool = False,
 ):
     relay_service = None
     if relay_storage is not None:
@@ -541,7 +542,8 @@ def build_router(
     reconciler = None
     if relay_service is not None and registry.persistent:
         recover_claude_relay_wakes(registry, relay_service)
-        reconciler = start_claude_wake_reconciler(registry, relay_service)
+        if start_claude_reconciler:
+            reconciler = start_claude_wake_reconciler(registry, relay_service)
 
     def _relay_wake_dispatch(result: object, scope: object) -> None:
         """Route relay wake to the appropriate runtime handler."""
