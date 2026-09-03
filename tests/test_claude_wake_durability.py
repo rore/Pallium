@@ -416,6 +416,90 @@ def test_expired_claim_recovery_retries_without_mutating_relay(
         before[key] for key in ("claim_token", "receipt", "claimed_at", "lease_expires_at", "attempts")
     )
 
+@pytest.mark.parametrize("terminal_state", ("claimed", "delivered", "expired"))
+def test_recovery_clears_terminal_inflight_and_reschedules_exact_scope(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal_state: str,
+) -> None:
+    from datetime import datetime, timedelta, timezone
+    import threading
+
+    from app import claude_wake
+    import core.relay as relay_module
+    from core.relay import RelayService
+    import storage.sqlite_relay as sqlite_relay
+
+    clock = [datetime(2030, 9, 2, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = clock[0] if value is None else value
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    monkeypatch.setattr(relay_module, "datetime", SimpleNamespace(now=lambda _tz: clock[0]))
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    relay = RelayService(client.app.state.pallium_service._storage)
+    relay.turn(runtime="codex", session_ref="sender", **scope)
+    relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
+    sent = relay.send(
+        sender_runtime="codex", sender_session_ref="sender",
+        recipient="claude-code:" + PAYLOAD["session_ref"], payload="non-pending recovery",
+        expires_in_seconds=60, **scope,
+    )
+
+    if terminal_state != "expired":
+        claimed = relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)["deliveries"][0]
+        if terminal_state == "delivered":
+            relay.acknowledge(delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"], **scope)
+    else:
+        clock[0] += timedelta(seconds=61)
+
+    def status(message_id: str) -> dict:
+        response = client.get(f"/relay/messages/{message_id}", params=scope)
+        assert response.status_code == 200
+        return response.json()["deliveries"][0]
+
+    before = status(sent["message_id"])
+    assert before["state"] == terminal_state
+
+    wall = [100.0]
+    registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    assert registry.probe(
+        runtime="claude-code", session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        delivery_id=before["delivery_id"], transport=lambda *_: "accepted",
+    )
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
+
+    transport_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        claude_wake,
+        "claude_wake_transport",
+        lambda socket_path, token: transport_calls.append((socket_path, token)) or "accepted",
+    )
+    claude_wake.recover_claude_relay_wakes(restarted, relay)
+    assert transport_calls == []
+    candidates = restarted.recovery_candidates()
+    assert len(candidates) == 1 and candidates[0]["state"] == "idle"
+    assert candidates[0]["delivery_id"] is None
+    assert status(sent["message_id"]) == before
+
+    fresh = relay.send(
+        sender_runtime="codex", sender_session_ref="sender",
+        recipient="claude-code:" + PAYLOAD["session_ref"], payload="fresh recovery", **scope,
+    )
+    woke = threading.Event()
+    monkeypatch.setattr(
+        claude_wake,
+        "claude_wake_transport",
+        lambda socket_path, token: transport_calls.append((socket_path, token)) or woke.set() or "accepted",
+    )
+    claude_wake.recover_claude_relay_wakes(restarted, relay)
+    assert woke.wait(timeout=1)
+    assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+    assert status(fresh["message_id"])["state"] == "pending"
+
+
 def test_online_close_removes_only_exact_durable_capability_and_intent(tmp_path: Path) -> None:
     from tests.test_claude_wake_registration import _client
 
