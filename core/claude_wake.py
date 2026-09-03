@@ -180,6 +180,7 @@ class ClaudeWakeRegistry:
                 idle=False,
                 state="wake_inflight",
                 delivery_id=delivery_id,
+                attempted_at=self._wall_clock(),
             )
             key = (runtime, session_ref)
             if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, key: consumed}):
