@@ -656,6 +656,7 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
         return response.status_code == 204
 
     def acknowledge(deliveries, **_kwargs):
+        acknowledged = []
         for delivery in deliveries:
             response = http.post("/relay/deliveries/ack", json={
                 "delivery_id": delivery["delivery_id"],
@@ -663,10 +664,13 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
                 **scope,
             })
             assert response.status_code == 200
+            acknowledged.append(delivery)
+        return acknowledged
 
-    for hook in (start, prompt):
+    for hook in (start, prompt, stop):
         monkeypatch.setattr(hook, "relay_request", relay)
-    monkeypatch.setattr(prompt, "acknowledge_relay", acknowledge)
+    for hook in (prompt, stop):
+        monkeypatch.setattr(hook, "acknowledge_relay", acknowledge)
     for hook in (start, prompt, stop):
         monkeypatch.setattr(hook, "register_claude_wake", register)
 
@@ -725,7 +729,34 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
         "transcript_path": "",
     })
     monkeypatch.setattr(stop, "read_turn", lambda *_: None)
-    stop.main()
+    with pytest.raises(SystemExit) as stopped:
+        stop.main()
+    assert stopped.value.code == 2
+    assert state(sent2) == "delivered"
+    assert "D2" in capsys.readouterr().err
+    ingested = []
+
+    def pallium(method, path, body):
+        ingested.append((method, path, body))
+        response = http.request(method, path, json=body)
+        return response.json() if response.content else None
+
+    monkeypatch.setattr(stop, "pallium_request", pallium)
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {
+        "session_id": "session-test", "cwd": str(tmp_path), "stop_hook_active": True,
+        "transcript_path": "continuation.jsonl",
+    })
+    monkeypatch.setattr(stop, "read_turn", lambda *_: SimpleNamespace(
+        assistant_text="handled D2 ✓", tool_calls=[],
+    ))
+    monkeypatch.setattr(stop, "build_work_trace_metadata", lambda *_: None)
+    with pytest.raises(SystemExit) as continuation:
+        stop.main()
+    assert continuation.value.code == 0
+    assert any(
+        method == "POST" and path == "/items" and body[0]["content"] == "handled D2 ✓"
+        for method, path, body in ingested
+    )
 
     transport = MagicMock(return_value=True)
     monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
@@ -738,13 +769,14 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: "git:other/repo")
     with pytest.raises(SystemExit):
         prompt.main()
-    assert state(sent2) == state(sent3) == "pending"
+    assert state(sent2) == "delivered"
+    assert state(sent3) == "pending"
 
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
     with pytest.raises(SystemExit):
         prompt.main()
     output = capsys.readouterr().out
-    assert "D2" in output and "D3" in output
+    assert "D2" not in output and "D3" in output
     assert state(sent2) == state(sent3) == "delivered"
 
 def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
@@ -757,7 +789,7 @@ def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
     from app.dependencies import build_router
     from tests.test_claude_code_integration import _load_claude_hook
 
-    clock = [datetime(2026, 9, 2, tzinfo=timezone.utc)]
+    clock = [datetime(2030, 9, 2, tzinfo=timezone.utc)]
 
     def controlled_now(value=None):
         current = value or clock[0]
@@ -867,3 +899,54 @@ def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
     with pytest.raises(SystemExit):
         prompt.main()
     assert "after claim" not in capsys.readouterr().out
+
+
+def test_empty_stop_rearms_claude_wake_after_turn_admission(client, monkeypatch, tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.dependencies import build_router
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    registry = ClaudeWakeRegistry()
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+        claude_wake_registry=registry,
+    ))
+    http = TestClient(app, client=("127.0.0.1", 50000))
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    stop = _load_claude_hook("stop", monkeypatch)
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda: scope["actor_ref"])
+
+    def register(session, container, actor, **kwargs):
+        response = http.post("/internal/claude-wake/register", json={
+            **PAYLOAD, "session_ref": session, "container_ref": container,
+            "actor_ref": actor, "idle": kwargs.get("idle", False),
+        })
+        return response.status_code == 204
+
+    def relay(method, path, body, *, timeout):
+        response = http.request(method, path, json=body)
+        return response.json() if response.content else None
+
+    monkeypatch.setattr(stop, "register_claude_wake", register)
+    monkeypatch.setattr(stop, "relay_request", relay)
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {
+        "session_id": "empty-stop", "cwd": str(tmp_path), "transcript_path": "",
+    })
+    stop.main()
+
+    assert http.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "sender", **scope,
+    }).status_code == 200
+    triggered = threading.Event()
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", lambda *_: triggered.set() or True)
+    sent = http.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "sender",
+        "recipient": "claude-code:empty-stop", "payload": "wake after empty stop", **scope,
+    })
+    assert sent.status_code == 200
+    assert triggered.wait(timeout=1)

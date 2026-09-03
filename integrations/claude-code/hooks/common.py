@@ -411,13 +411,15 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0) -> tuple[str, li
     return "\n\n".join(chunks), rendered
 
 
-def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: str) -> None:
+def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: str) -> list[dict]:
+    """Acknowledge deliveries and return only those confirmed by Pallium."""
+    acknowledged: list[dict] = []
     for delivery in deliveries:
         delivery_id = delivery.get("delivery_id")
         claim_token = delivery.get("claim_token")
         if not isinstance(delivery_id, str) or not isinstance(claim_token, str):
             continue
-        relay_request(
+        if relay_request(
             "POST",
             "/relay/deliveries/ack",
             {
@@ -427,8 +429,9 @@ def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: 
                 "actor_ref": actor_ref,
             },
             timeout=0.5,
-        )
-
+        ) is not None:
+            acknowledged.append(delivery)
+    return acknowledged
 
 def _safe_scope_value(value: str) -> str | None:
     """Preserve Unicode identity exactly and reject control-character breaks."""

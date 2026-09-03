@@ -82,7 +82,11 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
         "relay_request",
         lambda method, path, payload, *, timeout: calls.append((method, path, payload, timeout)),
     )
-    common.acknowledge_relay([DELIVERY], container_ref="container", actor_ref="actor")
+    acknowledged = common.acknowledge_relay([DELIVERY], container_ref="container", actor_ref="actor")
+    if name == "claude_common":
+        assert acknowledged == []
+    else:
+        assert acknowledged is None
     assert calls[0][1] == "/relay/deliveries/ack"
     assert calls[0][3] == 0.5
 
@@ -385,3 +389,155 @@ def test_unsafe_only_relay_backlog_does_not_skip_memory(monkeypatch, name, relat
     assert emitted
     assert emitted[0][0].startswith("[Pallium scope — ")
     assert "[Pallium Relay message" not in emitted[0][0]
+
+
+def test_claude_stop_claims_only_nonrecursive_turns_and_emits_acknowledged_subset(monkeypatch, capsys):
+    hook = _load("claude_stop_relay", "integrations/claude-code/hooks/stop.py")
+    deliveries = [{**DELIVERY, "payload": "first ✓"}, {**DELIVERY, "delivery_id": "relay-delivery-2", "payload": "second"}]
+    calls = []
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "target"})
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        hook, "relay_request",
+        lambda method, path, payload, *, timeout: calls.append((method, path, payload, timeout)) or {"deliveries": deliveries},
+    )
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda claimed, **_scope: claimed[:1])
+    original_format = hook.format_relay
+    formatted = []
+    monkeypatch.setattr(
+        hook, "format_relay", lambda rendered: formatted.append(rendered) or original_format(rendered),
+    )
+
+    with pytest.raises(SystemExit) as stopped:
+        hook.main()
+
+    assert stopped.value.code == 2
+    assert calls == [("POST", "/relay/turn", {
+        "runtime": "claude-code", "session_ref": "target", "container_ref": "git:example/repo",
+        "actor_ref": "actor", "max_chars": 2400,
+    }, 0.75)]
+    output = capsys.readouterr().err
+    assert "first ✓" in output and "second" not in output
+    assert formatted == [deliveries, deliveries[:1]]
+
+
+def test_claude_stop_does_not_claim_during_recursive_continuation(monkeypatch):
+    hook = _load("claude_stop_recursive", "integrations/claude-code/hooks/stop.py")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": "target", "stop_hook_active": True,
+    })
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: pytest.fail("recursive Stop must not claim"))
+
+    hook.main()
+
+
+def test_acknowledge_relay_returns_only_successful_acknowledgments(monkeypatch):
+    common = _load("claude_ack_success", "integrations/claude-code/hooks/common.py")
+    responses = iter([{"state": "delivered"}, None])
+    monkeypatch.setattr(common, "relay_request", lambda *_args, **_kwargs: next(responses))
+    second = {**DELIVERY, "delivery_id": "relay-delivery-2"}
+
+    assert common.acknowledge_relay([DELIVERY, second], container_ref="container", actor_ref="actor") == [DELIVERY]
+
+def test_claude_stop_continues_normally_when_all_acknowledgments_fail(monkeypatch, capsys):
+    hook = _load("claude_stop_ack_failure", "integrations/claude-code/hooks/stop.py")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "target"})
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: {"deliveries": [DELIVERY]})
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda *_args, **_kwargs: [])
+
+    hook.main()
+    assert "Review the migration" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("broken_format", [False, True])
+def test_claude_stop_rearms_after_noncontinuing_probe(monkeypatch, broken_format):
+    hook = _load("claude_stop_rearm_" + str(broken_format), "integrations/claude-code/hooks/stop.py")
+    registrations = []
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "target"})
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **kwargs: registrations.append(kwargs["idle"]))
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: {"deliveries": []})
+    if broken_format:
+        monkeypatch.setattr(hook, "format_relay", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError()))
+
+    hook.main()
+    assert registrations == [True, True]
+
+
+def test_claude_stop_emits_unicode_to_utf8_stderr_buffer(monkeypatch):
+    from io import BytesIO
+
+    hook = _load("claude_stop_utf8_stderr", "integrations/claude-code/hooks/stop.py")
+
+    class Cp1252Error:
+        encoding = "cp1252"
+
+        def __init__(self):
+            self.buffer = BytesIO()
+
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "target"})
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: {"deliveries": [{**DELIVERY, "payload": "review → ✓"}]})
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda deliveries, **_kwargs: deliveries)
+    output = Cp1252Error()
+    monkeypatch.setattr(hook.sys, "stderr", output)
+
+    with pytest.raises(SystemExit) as stopped:
+        hook.main()
+    assert stopped.value.code == 2
+    assert "review → ✓" in output.buffer.getvalue().decode("utf-8")
+
+
+def test_storage_budget_matches_claude_rendered_boundary(client):
+    common = _load("claude_boundary_format", "integrations/claude-code/hooks/common.py")
+    scope = {"container_ref": "git:example/repo", "actor_ref": "actor"}
+    sender = "s" * 255
+    target = "t" * 255
+    payload = "x" * 1500
+
+    for runtime, session in (("codex", sender), ("claude-code", target)):
+        assert client.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": session, **scope,
+        }).status_code == 200
+
+    def send(message_id: str, body: str):
+        response = client.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": sender,
+            "recipient": f"claude-code:{target}", "message_id": message_id,
+            "payload": body, **scope,
+        })
+        assert response.status_code == 200
+        return response.json()["message_id"]
+
+    baseline_id = send("a" * 128, payload)
+    baseline = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": target, "max_chars": 10_000, **scope,
+    }).json()["deliveries"]
+    baseline_text, _ = common.format_relay(baseline)
+    boundary = len(baseline_text)
+    assert client.post("/relay/deliveries/ack", json={
+        "delivery_id": baseline[0]["delivery_id"], "claim_token": baseline[0]["claim_token"], **scope,
+    }).status_code == 200
+
+    near_id = send("b" * 128, payload)
+    fits_id = send("fits", "fits")
+    turn = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": target, "max_chars": boundary - 1, **scope,
+    }).json()
+    rendered, _ = common.format_relay(turn["deliveries"])
+
+    assert baseline_id != near_id
+    assert [delivery["message_id"] for delivery in turn["deliveries"]] == [fits_id]
+    assert len(rendered) <= boundary - 1
+    assert turn["has_more"] is True and turn["remaining_count"] == 1
