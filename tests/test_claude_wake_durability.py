@@ -76,7 +76,7 @@ def test_capacity_keeps_live_endpoint_without_admitting_transport(tmp_path: Path
     live.write_text("not-probed", encoding="utf-8")
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     assert _register(registry, tmp_path, {**PAYLOAD, "session_ref": "live", "socket_path": str(live)}, "live")
-    assert _register(registry, tmp_path, {**PAYLOAD, "session_ref": "other"}, "other")
+    assert _register(registry, tmp_path, {**PAYLOAD, "session_ref": "other", "socket_path": str(live)}, "other")
     monkeypatch.setattr(registry, "probe", lambda *_args, **_kwargs: pytest.fail("capacity check must not admit a turn"))
     assert not _register(registry, tmp_path, {**PAYLOAD, "session_ref": "overflow"}, "overflow")
 
