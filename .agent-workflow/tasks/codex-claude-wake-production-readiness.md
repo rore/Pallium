@@ -94,3 +94,4 @@ Approved by user 2026-09-03: "you have blanket approval for all tasks you get fr
 2026-09-03 — S1B slice 9 proves canonical-write failures reject idle registration while retaining write-ahead recovery, and fence an idle-to-inflight attempt before native transport or Relay mutation.
 2026-09-03 — S1B slice 10 proves post-transport retryable and terminal canonical-write failures retain durable inflight state, rearm after restart/grace, and permit a later accepted retry without Relay mutation.
 2026-09-03 — S1B slice 11 makes failed wake-intent atomic publication remove credential-bearing temp state before any loopback request, leaving no restart-visible intent.
+2026-09-03 — S1B slice 12 validates encoded credential-body size before intent publication, retaining write-ahead-before-HTTP for normal Unicode registrations.

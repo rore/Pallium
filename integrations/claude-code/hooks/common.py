@@ -364,10 +364,10 @@ def register_claude_wake(
         "idle": idle,
         "intent_id": uuid.uuid4().hex,
     }
-    if not _write_wake_intent(body_data):
-        return False
     body = json.dumps(body_data).encode("utf-8")
     if len(body) > _CREDENTIAL_BODY_MAX_BYTES:
+        return False
+    if not _write_wake_intent(body_data):
         return False
     request = urllib.request.Request(
         f"{PALLIUM_BASE_URL}{CLAUDE_WAKE_REGISTER_PATH}",

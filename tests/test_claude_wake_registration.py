@@ -368,17 +368,37 @@ def test_registry_capacity_prunes_expired_and_preserves_existing_updates() -> No
     )
 
 
-def test_hook_enforces_encoded_body_limit_before_open(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     common = _load_claude_hook("common", monkeypatch)
-    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
+    wake_dir = tmp_path / "wake"
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "é" * MAX_TOKEN_CHARS)
+    opener_calls: list[bool] = []
     monkeypatch.setattr(
         common.urllib.request,
         "build_opener",
-        lambda *_args: pytest.fail("oversized encoded body must not open"),
+        lambda *_args: opener_calls.append(True) or pytest.fail("oversized encoded body must not open"),
     )
     assert not common.register_claude_wake("session", "git:example/repo", "local")
+    assert opener_calls == [] and not common._wake_intent_path("session").exists()
+    assert list((wake_dir / "intents").glob("*.tmp")) == []
+    restarted = ClaudeWakeRegistry(state_dir=wake_dir)
+    restarted.recover_intents()
+    assert restarted.recovery_candidates() == []
 
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket-✓")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token-✓")
+
+    def open_request(request, **_kwargs):
+        body = json.loads(request.data.decode("utf-8"))
+        assert common._wake_intent_path("session-✓").exists()
+        assert body["session_ref"] == "session-✓" and body["container_ref"] == "git:é/repo"
+        return nullcontext()
+
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=open_request))
+    assert common.register_claude_wake("session-✓", "git:é/repo", "actor-α")
 
 def test_hook_disables_proxies_and_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
     common = _load_claude_hook("common", monkeypatch)
