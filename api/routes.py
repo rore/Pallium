@@ -494,6 +494,20 @@ def create_router(
             raise HTTPException(status_code=400, detail="invalid registration")
         return Response(status_code=204)
 
+    @router.post("/internal/claude-wake/close", status_code=204)
+    async def close_claude_wake(http_request: Request) -> Response:
+        client = http_request.client
+        if client is None or client.host not in {"127.0.0.1", "::1"}:
+            raise HTTPException(status_code=403, detail="forbidden")
+        try:
+            payload = await http_request.json()
+            if not isinstance(payload, dict) or set(payload) != {"runtime", "session_ref", "container_ref", "actor_ref", "intent_id"}:
+                raise ValueError
+            if not wake_registry.close(**payload):
+                raise ValueError
+        except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="invalid registration")
+        return Response(status_code=204)
     def _ingest_one(request: ItemCreateRequest) -> ItemCreateResponse:
         result = service.ingest_item(
             source_type=request.source_type,

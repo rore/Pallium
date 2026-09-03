@@ -236,6 +236,23 @@ class ClaudeWakeRegistry:
                 except (KeyError, ValueError):
                     continue
 
+    def close(
+        self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str, intent_id: str | None = None
+    ) -> bool:
+        """Consume an exact closed intent without opening or admitting its endpoint."""
+        with self._lock:
+            if self._state_dir is not None:
+                intent = self._read_intent_locked(session_ref)
+                if not isinstance(intent, dict) or intent.get("intent_id") != intent_id or intent.get("closed") is not True:
+                    return False
+                if any(intent.get(key) != value for key, value in {
+                    "runtime": runtime, "session_ref": session_ref, "container_ref": container_ref, "actor_ref": actor_ref,
+                }.items()):
+                    return False
+            registration = self._registrations.get((runtime, session_ref))
+            if registration is not None and (registration.container_ref != container_ref or registration.actor_ref != actor_ref):
+                return False
+            return self._remove_locked(session_ref)
     def remove(self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str) -> bool:
         with self._lock:
             registration = self._registrations.get((runtime, session_ref))

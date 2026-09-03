@@ -153,3 +153,36 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
             {"container_ref": candidate["container_ref"], "actor_ref": candidate["actor_ref"]},
             registry=registry,
         )
+class ClaudeWakeReconciler:
+    """One app-local Condition/Event loop; no Relay claim or ACK path exists here."""
+
+    def __init__(self, registry: ClaudeWakeRegistry, relay_service: Any, *, interval_seconds: float = 1.0) -> None:
+        self._registry = registry
+        self._relay_service = relay_service
+        self._interval_seconds = interval_seconds
+        self._event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run, name="pallium-claude-wake-reconcile", daemon=True)
+        self._thread.start()
+        self.signal()
+
+    def signal(self) -> None:
+        self._event.set()
+
+    def _run(self) -> None:
+        while True:
+            self._event.wait(timeout=self._interval_seconds)
+            self._event.clear()
+            recover_claude_relay_wakes(self._registry, self._relay_service)
+
+
+def start_claude_wake_reconciler(registry: ClaudeWakeRegistry, relay_service: Any) -> ClaudeWakeReconciler | None:
+    if not registry.persistent:
+        return None
+    reconciler = ClaudeWakeReconciler(registry, relay_service)
+    reconciler.start()
+    return reconciler

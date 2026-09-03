@@ -27,7 +27,7 @@ SUBPROCESS_TIMEOUT = 3
 STATE_DIR = Path.home() / ".pallium" / "hooks" / "state"
 DEDUP_EXPIRY_SECONDS = 300
 CLAUDE_WAKE_REGISTER_PATH = "/internal/claude-wake/register"
-CLAUDE_WAKE_DIR = Path.home() / ".pallium" / "claude-wake"
+CLAUDE_WAKE_DIR = Path(os.environ.get("PALLIUM_CLAUDE_WAKE_DIR", str(Path.home() / ".pallium" / "claude-wake")))
 CLAUDE_WAKE_INTENTS_DIR = CLAUDE_WAKE_DIR / "intents"
 _CREDENTIAL_HTTP_TIMEOUT = 1
 _CREDENTIAL_BODY_MAX_BYTES = 16_384
@@ -374,6 +374,26 @@ def register_claude_wake(
             urllib.request.ProxyHandler({}),
             _RejectCredentialRedirects(),
         )
+        with opener.open(request, timeout=_CREDENTIAL_HTTP_TIMEOUT):
+            return True
+    except Exception:
+        return False
+
+def close_claude_wake(session_ref: object, container_ref: object, actor_ref: object) -> bool:
+    """Write a closed intent before best-effort loopback removal."""
+    if not all(_credential_value(value, maximum) for value, maximum in zip(("claude-code", session_ref, container_ref, actor_ref), _CREDENTIAL_LIMITS[:4], strict=True)):
+        return False
+    payload: dict[str, object] = {
+        "runtime": "claude-code", "session_ref": session_ref, "container_ref": container_ref,
+        "actor_ref": actor_ref, "intent_id": uuid.uuid4().hex, "closed": True,
+    }
+    if not _write_wake_intent(payload):
+        return False
+    request = urllib.request.Request(
+        f"{PALLIUM_BASE_URL}/internal/claude-wake/close", data=json.dumps({key: payload[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")}).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"},
+    )
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectCredentialRedirects())
         with opener.open(request, timeout=_CREDENTIAL_HTTP_TIMEOUT):
             return True
     except Exception:

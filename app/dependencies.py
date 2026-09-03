@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from functools import partial
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any
 from api.routes import create_router
 from core.claude_wake import ClaudeWakeRegistry
 from app.codex_wake import mark_codex_relay_wake_admitted, schedule_codex_relay_wake
-from app.claude_wake import recover_claude_relay_wakes, schedule_claude_relay_wake
+from app.claude_wake import recover_claude_relay_wakes, schedule_claude_relay_wake, start_claude_wake_reconciler
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.relay import RelayService, RelayUnavailableError
@@ -518,7 +519,7 @@ def _load_or_create_vector_index(
 
 
 def build_claude_wake_registry() -> ClaudeWakeRegistry:
-    registry = ClaudeWakeRegistry(state_dir=Path.home() / ".pallium" / "claude-wake")
+    registry = ClaudeWakeRegistry(state_dir=Path(os.environ.get("PALLIUM_CLAUDE_WAKE_DIR", str(Path.home() / ".pallium" / "claude-wake"))) )
     registry.recover_intents()
     return registry
 
@@ -537,8 +538,10 @@ def build_router(
         except RelayUnavailableError:
             pass
     registry = claude_wake_registry or build_claude_wake_registry()
+    reconciler = None
     if relay_service is not None and registry.persistent:
         recover_claude_relay_wakes(registry, relay_service)
+        reconciler = start_claude_wake_reconciler(registry, relay_service)
 
     def _relay_wake_dispatch(result: object, scope: object) -> None:
         """Route relay wake to the appropriate runtime handler."""
@@ -551,6 +554,8 @@ def build_router(
         if runtime == "codex" and relay_service is not None:
             schedule_codex_relay_wake(result, scope)
         elif runtime == "claude-code":
+            if reconciler is not None:
+                reconciler.signal()
             schedule_claude_relay_wake(result, scope, registry=registry)
 
     def _relay_turn_admission(request: object) -> None:
