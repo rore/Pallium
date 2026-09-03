@@ -10,6 +10,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 from fastapi import FastAPI, HTTPException, Request
@@ -447,6 +448,50 @@ def test_registry_capacity_prunes_expired_and_preserves_existing_updates() -> No
         actor_ref=PAYLOAD["actor_ref"],
         transport=lambda *_: True,
     )
+
+
+def test_hook_helpers_use_persistent_loopback_register_and_close_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys,
+) -> None:
+    common = _load_claude_hook("common", monkeypatch)
+    wake_dir = tmp_path / "wake"
+    registry = ClaudeWakeRegistry(state_dir=wake_dir)
+    http = _client(registry)
+    session_ref = "session-✓"
+    scope = {"container_ref": "git:répo/π", "actor_ref": "actor-α"}
+    socket_path = r"\\.\pipe\claude-✓"
+    token = "transport-secret-✓"
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", socket_path)
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", token)
+    responses = []
+
+    def open_request(request, **_kwargs):
+        path = urlsplit(request.full_url).path
+        body = json.loads(request.data.decode("utf-8"))
+        intent = json.loads(common._wake_intent_path(session_ref).read_text(encoding="utf-8"))
+        assert intent == (body if path.endswith("/register") else {**body, "closed": True})
+        response = http.request(request.get_method(), path, content=request.data)
+        responses.append(response)
+        assert response.status_code == 204
+        return nullcontext(response)
+
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=open_request))
+    assert common.register_claude_wake(session_ref, idle=True, **scope)
+    assert not common._wake_intent_path(session_ref).exists()
+    reloaded = ClaudeWakeRegistry(state_dir=wake_dir)
+    candidate = next(iter(reloaded.recovery_candidates()))
+    assert {key: candidate[key] for key in ("session_ref", "container_ref", "actor_ref", "state")} == {
+        "session_ref": session_ref, **scope, "state": "idle",
+    }
+
+    assert common.close_claude_wake(session_ref, **scope)
+    assert not common._wake_intent_path(session_ref).exists()
+    assert ClaudeWakeRegistry(state_dir=wake_dir).recovery_candidates() == []
+    captured = capsys.readouterr()
+    assert token not in captured.out + captured.err
+    assert all(response.content == b"" and token not in response.text for response in responses)
 
 
 def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
