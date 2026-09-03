@@ -179,6 +179,62 @@ def test_inflight_write_failure_never_transports_or_claims_relay(
     assert after["state"] == "pending" and after["claim_token"] is None and after["receipt"] is None and after["attempts"] == 0
 
 
+@pytest.mark.parametrize("outcome", ["retryable", "terminal"])
+def test_post_transport_write_failure_rearms_durable_inflight_for_later_retry(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+) -> None:
+    from core.relay import RelayService
+
+    wall = [100.0]
+    registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    relay = RelayService(client.app.state.pallium_service._storage)
+    relay.turn(runtime="codex", session_ref="sender", **scope)
+    relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
+    sent = relay.send(sender_runtime="codex", sender_session_ref="sender", recipient="claude-code:" + PAYLOAD["session_ref"], payload="pending", **scope)
+    delivery_id = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]["delivery_id"]
+    writes = 0
+    initial_calls: list[tuple[str, str]] = []
+    original_write = registry._write_canonical_locked
+
+    def write_through_inflight_then_fail(records):
+        nonlocal writes
+        writes += 1
+        return original_write(records) if writes == 1 else False
+
+    monkeypatch.setattr(registry, "_write_canonical_locked", write_through_inflight_then_fail)
+    assert not registry.probe(
+        runtime="claude-code", session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        delivery_id=delivery_id, transport=lambda path, token: initial_calls.append((path, token)) or outcome,
+    )
+    assert writes == 2 and initial_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+    assert [(item["state"], item["delivery_id"]) for item in registry.recovery_candidates()] == [("wake_inflight", delivery_id)]
+
+    def assert_relay_pending() -> None:
+        status = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+        assert status["state"] == "pending" and status["claim_token"] is None and status["receipt"] is None and status["attempts"] == 0
+
+    assert_relay_pending()
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
+    assert [(item["state"], item["delivery_id"]) for item in restarted.recovery_candidates()] == [("wake_inflight", delivery_id)]
+    wall[0] = 101.0
+    assert restarted.rearm_inflight(
+        runtime="claude-code", session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        delivery_id=delivery_id, grace_seconds=1,
+    )
+    later_calls: list[tuple[str, str]] = []
+    assert restarted.probe(
+        runtime="claude-code", session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        delivery_id=delivery_id, transport=lambda path, token: later_calls.append((path, token)) or "accepted",
+    )
+    assert later_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+    assert_relay_pending()
+
+
 @pytest.mark.parametrize("item", [
     {"runtime": "claude-code", "session_ref": "s", "container_ref": "c", "actor_ref": "a", "socket_path": "p", "token": "t", "generation": "bad", "idle": True, "state": "idle", "delivery_id": None, "attempted_at": None, "expires_at": 1},
     {"runtime": "claude-code", "session_ref": "s", "container_ref": "c", "actor_ref": "a", "socket_path": "p", "token": "t", "generation": 1, "idle": True, "state": "wake_inflight", "delivery_id": None, "attempted_at": None, "expires_at": 1},

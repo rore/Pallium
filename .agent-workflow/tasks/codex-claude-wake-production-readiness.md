@@ -92,3 +92,4 @@ Approved by user 2026-09-03: "you have blanket approval for all tasks you get fr
 2026-09-03 — S1B slice 7 proves a persisted idle Claude capability and pending Relay delivery automatically wake exactly once through a real app restart, while Relay remains pending and unclaimed.
 2026-09-03 — S1B slice 8 extends restart recovery through the actual Claude Stop hook: exact pending claim, attributed exit-2 output, one ACK/delivery, and duplicate-stop idle rearm without re-emission.
 2026-09-03 — S1B slice 9 proves canonical-write failures reject idle registration while retaining write-ahead recovery, and fence an idle-to-inflight attempt before native transport or Relay mutation.
+2026-09-03 — S1B slice 10 proves post-transport retryable and terminal canonical-write failures retain durable inflight state, rearm after restart/grace, and permit a later accepted retry without Relay mutation.
