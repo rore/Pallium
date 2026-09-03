@@ -5,8 +5,32 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
 import uuid
 
+
+# ponytail: unresolved Windows I/O remains process-local until signal or exit; add completion callbacks only if leak telemetry warrants it.
+_pending_windows_writes: list[tuple[object, object]] = []
+_pending_windows_writes_lock = threading.Lock()
+
+
+def _reap_pending_windows_writes(win32event, win32file) -> None:
+    """Release completed timeout writes; unresolved I/O remains until signal or process exit."""
+    with _pending_windows_writes_lock:
+        pending = list(_pending_windows_writes)
+        _pending_windows_writes.clear()
+    retained = []
+    for overlapped, event in pending:
+        try:
+            if win32event.WaitForSingleObject(event, 0) != win32event.WAIT_OBJECT_0:
+                retained.append((overlapped, event))
+                continue
+            win32file.CloseHandle(event)
+        except Exception:
+            retained.append((overlapped, event))
+    if retained:
+        with _pending_windows_writes_lock:
+            _pending_windows_writes.extend(retained)
 
 def claude_wake_transport(socket_path: str, token: str) -> str:
     """Write auth and peer message to a registered Claude Code session endpoint.
@@ -82,6 +106,7 @@ def _windows_transport(socket_path: str, token: str) -> str:
 
 def _windows_write(handle, data, pywintypes, win32event, win32file, winerror) -> bool:
     """Write one frame with bounded overlapped I/O and safe cancellation."""
+    _reap_pending_windows_writes(win32event, win32file)
     overlapped = pywintypes.OVERLAPPED()
     overlapped.hEvent = win32event.CreateEvent(None, True, False, None)
     completed = False
@@ -107,6 +132,9 @@ def _windows_write(handle, data, pywintypes, win32event, win32file, winerror) ->
                 completed = True
             except Exception as exc:
                 completed = getattr(exc, "winerror", None) == getattr(winerror, "ERROR_OPERATION_ABORTED", 995)
+            if not completed:
+                with _pending_windows_writes_lock:
+                    _pending_windows_writes.append((overlapped, overlapped.hEvent))
             return False
         completed = True
         win32file.GetOverlappedResult(handle, overlapped, True)

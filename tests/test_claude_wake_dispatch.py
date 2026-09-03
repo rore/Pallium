@@ -107,7 +107,11 @@ class TestTransport:
         monkeypatch.setattr(transport.socket, "socket", lambda *_: BrokenSocket())
         assert transport._posix_transport("ignored", "token") == "retryable"
 
-    def test_windows_write_cancels_after_bounded_timeout(self) -> None:
+    def test_windows_write_cancels_after_bounded_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import app.claude_wake_transport as transport
+
+        pending: list[tuple[object, object]] = []
+        monkeypatch.setattr(transport, "_pending_windows_writes", pending)
         cancelled = []
         closed = []
 
@@ -119,7 +123,7 @@ class TestTransport:
         win32file = SimpleNamespace(WriteFile=lambda *_: (997, 0), CancelIoEx=lambda handle, overlapped: cancelled.append((handle, overlapped)), GetOverlappedResult=lambda *_: 0, CloseHandle=lambda handle: closed.append(handle))
         winerror = SimpleNamespace(ERROR_IO_PENDING=997)
         assert _windows_write("pipe", b"frame", pywintypes, win32event, win32file, winerror) is False
-        assert len(cancelled) == 1 and closed == ["event"]
+        assert len(cancelled) == 1 and closed == ["event"] and pending == []
 
     def test_windows_transport_clean_write_is_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import sys
@@ -610,7 +614,11 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     assert not registry.probe(runtime="claude-code", session_ref="session-test", container_ref="wrong", actor_ref=scope["actor_ref"], transport=transport)
 
 
-def test_windows_write_closes_event_after_cancelled_completion() -> None:
+def test_windows_write_closes_event_after_cancelled_completion(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.claude_wake_transport as transport
+
+    pending: list[tuple[object, object]] = []
+    monkeypatch.setattr(transport, "_pending_windows_writes", pending)
     class Overlapped:
         hEvent = None
 
@@ -631,11 +639,15 @@ def test_windows_write_closes_event_after_cancelled_completion() -> None:
         GetOverlappedResult=result, CloseHandle=lambda handle: closed.append(handle),
     )
     assert _windows_write("pipe", b"frame", pywintypes, win32event, win32file, SimpleNamespace(ERROR_IO_PENDING=997)) is False
-    assert waits == [False] and closed == ["event"]
+    assert waits == [False] and closed == ["event"] and pending == []
 
 
 @pytest.mark.parametrize("use_cancel_io_ex", (True, False))
-def test_windows_write_timeout_never_blocks_when_cancellation_stays_pending(use_cancel_io_ex: bool) -> None:
+def test_windows_write_timeout_never_blocks_when_cancellation_stays_pending(use_cancel_io_ex: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.claude_wake_transport as transport
+
+    pending: list[tuple[object, object]] = []
+    monkeypatch.setattr(transport, "_pending_windows_writes", pending)
     class Overlapped:
         hEvent = None
 
@@ -672,6 +684,75 @@ def test_windows_write_timeout_never_blocks_when_cancellation_stays_pending(use_
     ) is False
     assert cancellations == ["ex" if use_cancel_io_ex else "io"]
     assert waits == [False] and closed == []
+    assert len(pending) == 1 and pending[0][1] == "event"
+
+def test_windows_write_reaps_signaled_timeout_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.claude_wake_transport as transport
+
+    class Overlapped:
+        hEvent = None
+
+    class Incomplete(OSError):
+        winerror = 996
+
+    pending: list[tuple[object, object]] = []
+    monkeypatch.setattr(transport, "_pending_windows_writes", pending)
+    events = iter(["pending", "next"])
+    closed = []
+
+    def wait(event: str, timeout: int) -> int:
+        return 0 if event == "pending" and timeout == 0 else 258
+
+    def incomplete(_handle, _overlapped, wait_for_completion: bool) -> None:
+        assert not wait_for_completion
+        raise Incomplete()
+
+    win32event = SimpleNamespace(WAIT_OBJECT_0=0, CreateEvent=lambda *_: next(events), WaitForSingleObject=wait)
+    win32file = SimpleNamespace(WriteFile=lambda *_: (997, 0), CancelIoEx=lambda *_: None, GetOverlappedResult=incomplete, CloseHandle=lambda event: closed.append(event))
+    assert not _windows_write("pipe", b"frame", SimpleNamespace(OVERLAPPED=Overlapped), win32event, win32file, SimpleNamespace(ERROR_IO_PENDING=997))
+    win32file.WriteFile = lambda *_: (0, 0)
+    assert _windows_write("pipe", b"frame", SimpleNamespace(OVERLAPPED=Overlapped), win32event, win32file, SimpleNamespace(ERROR_IO_PENDING=997))
+    assert pending == [] and closed == ["pending", "next"]
+
+
+def test_windows_write_retains_pending_overlapped_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.claude_wake_transport as transport
+
+    class Overlapped:
+        hEvent = None
+
+    class Incomplete(OSError):
+        winerror = 996
+
+    pending: list[tuple[object, object]] = []
+    monkeypatch.setattr(transport, "_pending_windows_writes", pending)
+    barrier = threading.Barrier(3)
+    events: list[object] = []
+    event_lock = threading.Lock()
+
+    def create_event(*_args: object) -> object:
+        event = object()
+        with event_lock:
+            events.append(event)
+        return event
+
+    def write() -> None:
+        barrier.wait()
+        assert not _windows_write(
+            "pipe", b"frame", SimpleNamespace(OVERLAPPED=Overlapped),
+            SimpleNamespace(WAIT_OBJECT_0=0, CreateEvent=create_event, WaitForSingleObject=lambda *_: 258),
+            SimpleNamespace(WriteFile=lambda *_: (997, 0), CancelIoEx=lambda *_: None, GetOverlappedResult=lambda *_: (_ for _ in ()).throw(Incomplete()), CloseHandle=lambda *_: None),
+            SimpleNamespace(ERROR_IO_PENDING=997),
+        )
+
+    workers = [threading.Thread(target=write) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    barrier.wait()
+    for worker in workers:
+        worker.join(timeout=1)
+        assert not worker.is_alive()
+    assert {event for _overlapped, event in pending} == set(events)
 
 def test_persisted_claude_d1_d2_d3_actual_hooks(
     client, monkeypatch, tmp_path, capsys,
