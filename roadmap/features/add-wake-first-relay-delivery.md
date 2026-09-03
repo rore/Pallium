@@ -90,15 +90,9 @@ installed versions are Claude Code 2.1.250, Codex CLI 0.149.1, and OpenCode
 |---|---|---|---|
 | Codex | **Windows loaded and unloaded exact-session wake proven** | `codex exec resume` wakes an unloaded stored task. For a loaded Desktop-owned task, the post-August-2026 cross-process `codex queue --thread` watcher starts a real turn; Pallium queues a generic trigger; its installed UserPromptSubmit hook claims and injects the attributed delivery only after the target turn is admitted. | Windows live send → wake → atomic reply is proven. Qualify macOS/Linux, busy/interrupted/restart variants, correlation telemetry, and broader unattended dogfood before calling the runtime adapter complete. |
 | OpenCode | Supported with a Pallium/OpenCode plugin coordinator | Server/plugin APIs expose stable sessions and async prompts. Agent Intercom demonstrates persist-first delivery, application metadata correlation, history verification before replay, safe busy deferral, and restart recovery. | A bare prompt_async 204 is transport acknowledgement only. Pallium needs the plugin-owned durable pending ledger and a Windows E2E proof. Deferred to after Claude Code wake is proven. |
-| Claude Code | **Windows exact-session verified-idle wake implemented; live qualification pending** | `SessionStart` registers the Relay session as non-idle, each `UserPromptSubmit` marks it busy before early returns, and `Stop` grants one scope-bound idle wake. Sends remain persisted while busy; the next idle send emits one native wake, and the admitted hook claims and ACKs the pending batch. | Deterministic caller-surface E2E covers busy deferral, one-shot wake, idempotent duplicate suppression, wrong-scope isolation, and D1→D2→D3 delivery. Qualify the complete native path live on Windows, then add stale/restart/error and macOS/Linux UDS evidence before calling the adapter complete. |
+| Claude Code | **Windows S1A+S1B qualified** | Installed Windows witness proved native peer Relay → exact restart-surviving capability → Stop claim/injection/ACK → Claude reply without another human prompt. | Installed UDS qualification on Linux/macOS remains S4. |
 
-**Claude registration foundation (2026-08-28):** `SessionStart` and `Stop` now
-refresh an exact-session credential through a loopback-only, memory-only
-registration endpoint with fixed 900-second expiry. The endpoint has no public
-probe, status, or clear operation; the service has no named-pipe transport in this
-slice, and restart falls back because credentials are not persisted. This is a
-security handoff only, not evidence of target admission or coordinator readiness.
-
+**Claude registration foundation:** Windows S1A+S1B are live-witness qualified: trusted-local exact-session persistence, write-ahead intents, fail-closed rehydration, and event-driven idle-pending reconciliation survived the installed restart witness. No DPAPI, silent time expiry, or lifetime redesign was added. Installed UDS qualification on Linux/macOS remains S4.
 ### Admission handshakes to preserve
 
 **Codex:** Try hidden `codex exec resume` for an unloaded stored task. Only the exact active-writer conflict falls back to hidden `codex queue --thread` for the loaded Desktop owner. Pallium launches only a generic trigger. After the target turn is admitted, its installed UserPromptSubmit hook claims and injects the bounded backlog under the target's pinned scope, then acknowledges hook delivery. Launch failure leaves the delivery pending for ordinary next-turn recovery. No private App Server attachment is required.
@@ -110,7 +104,7 @@ session messages/events contain that exact ID. On restart it replays only items
 not proven admitted. A server plugin can cover normal OpenCode sessions without
 requiring every session to be launched by a Pallium wrapper.
 
-**Claude Code:** `SessionStart` registers both the Relay session and its native inbox as non-idle. `UserPromptSubmit` marks the exact scope busy before any slash, duplicate, empty, or IDE-only early return, then claims and ACKs persisted Relay through the normal hook surface. `Stop` is the only idle grant. A send consumes that grant atomically before native transport, so repeated message IDs and concurrent sends cannot issue a second wake; ambiguous transport failure leaves the delivery pending for the next natural turn. The adapter advertises only `idle_wake`. Channels remain a future opt-in alternative.
+**Claude Code:** Native peer frames start text turns but Claude 2.1.250 classifies them as internal `isMeta` events, so S0/S0.5 are misqualified for UserPromptSubmit admission. Claude reproduced S1A Stop continuation: every Stop registers idle; a non-recursive Stop makes one exact-scope `/relay/turn` with authoritative storage `max_chars=2400`, route admission marks busy, and renders the returned claimed set without a competing formatter cap before ACKing individually, and only the successful ACK subset is reformatted to stderr before exit 2 requests one continuation. Partial failure leaves unACKed claims lease-recoverable; all failure exits 0 and every non-continuing path re-registers idle after route admission. Storage budgets the exact emitted control template. `has_more` and `remaining_count` remain pending and are qualified under S1B rearm/continuation; the S1A witness historically proved one bounded batch. The `stop_hook_active` continuation Stop re-registers idle, ingests, and exits 0 without re-probing. No MCP/pin change belongs in S1A; durable state/reconciliation is S1B.
 
 Each live session advertises only capabilities its integration actually proves:
 passive, idle_wake, and busy_queue. Missing, expired, disabled, or lost capability
@@ -120,7 +114,7 @@ resumed by launching another process.
 
 ### Remaining production gates (priority updated 2026-09-02)
 
-Gate each runtime independently. Claude Windows live qualification is next;
+Gate each runtime independently. Claude Windows live qualification is complete;
 enabling live wake still requires the relevant safety evidence.
 
 1. **Codex-first product gate:** Windows exact-session wake is now proven for
@@ -132,30 +126,21 @@ enabling live wake still requires the relevant safety evidence.
    turn, telemetry, macOS/Linux qualification, and a sustained
    implementation-review-remediation dogfood journey.
 
-2. **Claude Code production gates:** Persist-first dedupe, scope-bound verified-idle
-   dispatch, `Stop` re-arm, busy fallback, and hook-time claim/ACK now have
-   deterministic caller-surface coverage. Production remains blocked on a complete
-   live Windows journey plus stale/restart/error and macOS/Linux UDS qualification.
-
+2. **Claude Code production gates:** Windows S1A+S1B live journey and deterministic caller-surface coverage are proven. Installed UDS qualification on Linux/macOS remains S4.
 3. **MCP receive lifecycle foundation — code complete, runtime qualification pending:**
    `fix-relay-receive-mcp-lifecycle` is merged. The MCP path remains fail-closed and unqualified on Codex Desktop until a runtime-owned session handoff reaches the MCP child; hook-delivery wake does not depend on this recovery path.
 
 ### Next execution order
 
-1. **Claude live Windows qualification:** dogfood the complete exact-session
-   `SessionStart` → busy deferral → `Stop` idle grant → native wake → hook claim/ACK
-   journey. Treat the first observed failure as the next implementation slice;
-   do not broaden the adapter before this witness exists.
-2. **Claude crash/restart recovery:** prove that a crash after claim but before
-   context emission cannot strand unattended work. The delivery must survive lease
-   expiry, re-arm at most one exact-session wake, and be injected and ACKed once.
-   Natural-turn redelivery alone is safe fallback, not unattended qualification.
+1. **Claude S1B restart durability:** COMPLETE on Windows. Exact-capability persistence, write-ahead intent handling, read-only recovery, capped reconciliation, and the no-manual-re-registration restart witness are qualified. Linux/macOS installed UDS qualification remains S4.
+2. **Claude S1A Stop admission:** COMPLETE — Architect re-review and installed no-human witness are PASS: every non-continuing Stop re-registers idle after route admission; UTF-8 stderr buffer fallback emits before exit 2; storage budgets the exact emitted template. The non-recursive authoritative-storage `/relay/turn` uses `max_chars=2400`, then returned-set candidate-render/individual-ACK/success-subset-reformat/exit-2 continuation. Module-form real-hook HTTP coverage passes for empty rearm, max/over-budget-skip-then-fitting-render/`has_more`/`remaining_count`/Unicode, scope/failure, recursion, partial/all ACK, duplicate, continuation ingest/rearm, and lease recovery.
 3. **Codex remaining lifecycle gates:** qualify busy/interrupted/restart admission,
    sender-side reply admission, correlation telemetry, and sustained no-ping
    implementation/review/remediation dogfood.
 4. **Codex MCP recovery:** keep receive fail-closed unless Codex Desktop supplies a
    runtime-owned session identity to the MCP child; this is not a blocker for the
    qualified hook-delivery path.
+   S3 dogfood regression: a parent `CODEX_THREAD_ID` does not prove the MCP child inherited it; absent child identity must fail closed rather than borrow parent process context.
 5. **Additional platforms:** qualify Claude UDS and Codex wake on macOS/Linux only
    after their Windows lifecycle gates pass.
 6. **Optional correlated turn-end notification:** retain the default-off proposal
@@ -170,9 +155,7 @@ Choose bounded limits from Codex evidence; revisit only when adding another adap
 
 **Codex (Windows candidate):** `codex exec resume T` handles unloaded stored tasks; the exact active-writer conflict falls back to `codex queue --thread T`, whose owning Desktop watcher starts the loaded task. Pallium supplies a generic trigger; the admitted UserPromptSubmit hook claims and injects the attributed batch under the target scope. MCP receive remains a separate fail-closed recovery path. Keep the adapter runtime/version-qualified until the remaining OS and lifecycle gates pass.
 
-**Claude Code:** The coordinator now implements verified-idle native delivery with
-persist-first dedupe, `Stop`-only re-arm, busy deferral, and hook-time claim/ACK.
-Complete live Windows qualification, then cover stale/restart/error behavior.
+**Claude Code:** S0/S0.5 are misqualified because Claude 2.1.250 peer frames bypass `UserPromptSubmit` as internal `isMeta` events. Claude reproduced S1A Stop continuation; Codex architect review is clean, exact-scope bounded Stop `/relay/turn`, candidate render, successful-subset ACK/reformat, and one exit-2 continuation—not MCP—provide peer-wake admission. Do not treat generic native notice as delivery.
 Keep Channels deferred and macOS/Linux passive until UDS E2E passes.
 
 **OpenCode:** Deferred until after Claude Code AND Codex are both proven.
@@ -285,3 +268,14 @@ Feasibility evidence, not dependencies or adoption evidence:
 The runtime APIs are evolving. Recheck the primary documentation, installed
 versions, preview flags, and open-issue status rather than copying version-specific
 adapter behavior from this roadmap item.
+
+### Historical accepted Claude S1B restart-durability plan (Windows-qualified)
+
+The critical outage window is Claude reaching Stop while Pallium is down: loopback registration fails and a restart would otherwise preserve stale busy. Canonical capability remains `~/.pallium/claude-wake/capabilities.json` (Windows `%USERPROFILE%\.pallium\claude-wake\capabilities.json`) with exact scope/socket/token/generation plus `busy`, `idle`, or `wake_inflight(delivery_id, utc_attempt_time)`. The existing registry lock serializes normal register, state changes, and same-session intent take/apply/removal. Add only `~/.pallium/claude-wake/intents/<sha256(session_ref)>.json`: before HTTP registration, the hook atomically writes the exact state with a random `intent_id` and sends that id in the request. Under lock, the request id must equal the currently stored intent before any canonical mutation; mismatch rejects/no-ops. Success writes canonical then consumes only that exact intent. Ambiguous responses retain/retry the same intent, never create/rewrite a later one; crashes and delayed old requests are deterministically idempotent.
+
+Persistence is state-specific: failed idle registration does not publish idle and failed idle→inflight does not transport; ordinary idle/inflight writes precede publication/effect. Failed busy persistence immediately marks memory busy and must make stale durable idle unloadable before continuing. If that cannot be quarantined/deleted, persist one `store-unusable` marker checked before startup loads capabilities; no rehydration occurs until trusted registration/intent repair. If neither quarantine nor marker persists, startup refuses rehydration while stale file exists. POSIX directory/file `0700`/`0600`; Windows inherits user-profile ACL; no DPAPI/custom DACL. Bad data is ignored, but a valid capability is not discarded solely for permission-setting failure. No TTL/age cleanup: online SessionEnd removes its record; offline SessionEnd writes a closed/removal intent. At the 256 cap only, non-admitting endpoint-absence checks may reclaim provably missing endpoints. Never `registry.probe`, auth, write, or open; POSIX socket nodes and busy/timeout Windows pipes are uncertainty, retained, and new registration rejects. Only SessionEnd or a truly missing endpoint is terminal; all uncertain transport is retryable.
+
+Use a minimum read-only exact-scope storage/service pending-candidate query before recovery dispatch; it never claims/ACKs. Claimed/delivered/expired clears inflight retry; pending waits bounded grace then can retry. One event-driven reconciler is signaled by readiness/new-send/registration/intent consumption; its capped Condition/Event wait periodically scans write-ahead intents. Signals coalesce and retries continue indefinitely while exact pending+eligible work remains, with capped backoff and no busy loop or finite retry count. Crash windows prefer an extra empty admission, never lost Relay work.
+
+Required fast E2E includes delayed old intent mismatch, every write-ahead intent crash/response-loss boundary, busy failure→restart with stale file, offline SessionEnd, crash-without-SessionEnd capacity pressure, live endpoint at cap with zero native writes/admissions, post-start intent discovery, corrupt intent/capability, Unicode path, duplicate/concurrency, typed transport, indefinite capped retry, and non-claiming query. Windows no-manual-re-registration restart wake/Stop claim/inject/reply is qualified.
+**Review status:** Windows S1B implementation and installed restart witness are accepted. Linux/macOS installed UDS qualification remains S4.

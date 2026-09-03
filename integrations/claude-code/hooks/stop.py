@@ -22,17 +22,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (
+    acknowledge_relay,
     build_work_trace_metadata,
     derive_actor_ref,
+    format_relay,
     pallium_request,
     read_hook_input,
     read_turn,
     register_claude_wake,
+    relay_request,
     resolve_container_ref,
 )
 from usage_audit_matcher import classify_memory_reference
 
 CONTENT_LENGTH_GATE = 20_000
+
+
+def _emit_relay(text: str) -> None:
+    if (sys.stderr.encoding or "").lower().replace("-", "") == "utf8":
+        print(text, file=sys.stderr)
+    else:
+        sys.stderr.buffer.write((text + "\n").encode("utf-8"))
 
 
 def _populate_usage_audit_rows(session_id: str, assistant_text: str) -> None:
@@ -135,6 +145,32 @@ def main() -> None:
         actor_ref = derive_actor_ref()
         register_claude_wake(session_id, container_ref, actor_ref, idle=True)
 
+        if payload.get("stop_hook_active") is not True and isinstance(session_id, str) and session_id:
+            try:
+                turn = relay_request(
+                    "POST",
+                    "/relay/turn",
+                    {
+                        "runtime": "claude-code",
+                        "session_ref": session_id,
+                        "container_ref": container_ref,
+                        "actor_ref": actor_ref,
+                        "max_chars": 2400,
+                    },
+                    timeout=0.75,
+                ) or {}
+                deliveries = turn.get("deliveries") if isinstance(turn, dict) else []
+                _, claimed = format_relay(deliveries or [])
+                acknowledged = acknowledge_relay(
+                    claimed, container_ref=container_ref, actor_ref=actor_ref,
+                )
+                rendered, _ = format_relay(acknowledged)
+                if rendered:
+                    _emit_relay(rendered)
+                    raise SystemExit(2)
+            except Exception:
+                pass
+            register_claude_wake(session_id, container_ref, actor_ref, idle=True)
         if not transcript_path:
             return
 

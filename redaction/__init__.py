@@ -279,14 +279,15 @@ def _env_var_secret_replacer(separator: str):
                     return full
         if any(sym in rhs for sym in ("(", ")", "[", "]", "==", "!=", "->", "=>", "<=", ">=")):
             return full
-        # English-prose guard: if the RHS is a multi-word sentence
-        # with NO fragment of ≥12 non-whitespace chars, it is not a
-        # secret value. Real credential values always contain some
-        # token-shape substring.
+        # English-prose guard: preserve multi-word prose unless it contains a
+        # probable or compact assignment secret under the shared known-FP policy.
         rhs_body = rhs.strip().rstrip(",;").strip().strip("\"'")
         if rhs_body and " " in rhs_body:
             words = rhs_body.split()
-            if len(words) >= 3 and not any(len(w) >= 12 for w in words):
+            if len(words) >= 3 and not (
+                _contains_probable_secret_token(rhs_body, _ASSIGNMENT_PROBABLE_SECRET_MIN_LEN)
+                or _contains_assignment_compact_token(words)
+            ):
                 return full
         return f"{name}{separator} [REDACTED]" if separator == ":" else f"{name}{separator}[REDACTED]"
     return _replacer
@@ -314,6 +315,7 @@ def redact_command(cmd: str) -> str:
 import math
 
 _TIER_B_MIN_TOKEN_LEN: Final[int] = 20
+_ASSIGNMENT_PROBABLE_SECRET_MIN_LEN: Final[int] = 12
 _TIER_B_ENTROPY_THRESHOLD: Final[float] = 4.0
 _TIER_B_CUE_WINDOW: Final[int] = 30
 # Hard cap on scan size. Long content still gets tier-A coverage; tier
@@ -325,9 +327,11 @@ _TIER_B_MAX_INPUT_LEN: Final[int] = 1_000_000
 # Deliberately EXCLUDES ``=``, ``:``, ``?``, ``&``, whitespace, quotes,
 # and shell separators — those are the natural boundaries between an
 # assignment name/key and its value.  Including ``=`` would swallow
-# ``NAME=value`` as one 20+ char token and false-positive on plain
+# ``NAME=value`` as one candidate and false-positive on plain
 # environment-variable prose that mentions ``password`` in the name.
-_TIER_B_TOKEN_RE: Final = re.compile(r"[A-Za-z0-9+/_\-.]{20,}")
+# The Tier B predicate still enforces its 20-character default; assignments
+# pass their established 12-character floor explicitly.
+_TIER_B_TOKEN_RE: Final = re.compile(r"[A-Za-z0-9+/_\-.]{12,}")
 
 # Full-token shape guards — checked BEFORE entropy computation. These
 # are the anti-false-positive patterns discussed in the PR-0
@@ -450,6 +454,35 @@ def _tier_b_is_fp_shape(token: str) -> bool:
     return False
 
 
+def _is_probable_secret_token(
+    token: str, minimum_length: int = _TIER_B_MIN_TOKEN_LEN
+) -> bool:
+    return (
+        len(token) >= minimum_length
+        and not _tier_b_is_fp_shape(token)
+        and _shannon_entropy(token) >= _TIER_B_ENTROPY_THRESHOLD
+    )
+
+
+def _contains_probable_secret_token(
+    text: str, minimum_length: int = _TIER_B_MIN_TOKEN_LEN
+) -> bool:
+    return any(
+        _is_probable_secret_token(match.group(0), minimum_length)
+        for match in _TIER_B_TOKEN_RE.finditer(text)
+    )
+
+
+def _contains_assignment_compact_token(words: list[str]) -> bool:
+    return any(
+        word.isascii()
+        and word.isalnum()
+        and len(word) >= _ASSIGNMENT_PROBABLE_SECRET_MIN_LEN
+        and not _tier_b_is_fp_shape(word)
+        for word in words
+    )
+
+
 def redact_probable_secrets(text: str) -> str:
     """Tier B redaction — high-entropy tokens near secret-cue words.
 
@@ -473,11 +506,7 @@ def redact_probable_secrets(text: str) -> str:
 
     for match in _TIER_B_TOKEN_RE.finditer(text):
         token = match.group(0)
-        if len(token) < _TIER_B_MIN_TOKEN_LEN:
-            continue
-        if _tier_b_is_fp_shape(token):
-            continue
-        if _shannon_entropy(token) < _TIER_B_ENTROPY_THRESHOLD:
+        if not _is_probable_secret_token(token):
             continue
         start, end = match.span()
         window_start = max(0, start - _TIER_B_CUE_WINDOW)

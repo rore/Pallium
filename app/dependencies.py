@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from functools import partial
 from dataclasses import dataclass
 from pathlib import Path
@@ -518,7 +519,8 @@ def _load_or_create_vector_index(
 
 
 def build_claude_wake_registry() -> ClaudeWakeRegistry:
-    return ClaudeWakeRegistry()
+    registry = ClaudeWakeRegistry(state_dir=Path(os.environ.get("PALLIUM_CLAUDE_WAKE_DIR", str(Path.home() / ".pallium" / "claude-wake"))) )
+    return registry
 
 
 def build_router(
@@ -544,11 +546,11 @@ def build_router(
         if not isinstance(deliveries, list) or not deliveries or not isinstance(deliveries[0], dict):
             return
         runtime = deliveries[0].get("recipient_runtime")
-        if runtime == "codex" and relay_service is not None:
-            schedule_codex_relay_wake(result, scope)
-        elif runtime == "claude-code":
+        if runtime == "claude-code":
+            registry.signal_reconcile()
             schedule_claude_relay_wake(result, scope, registry=registry)
-
+        elif runtime == "codex" and relay_service is not None:
+            schedule_codex_relay_wake(result, scope)
     def _relay_turn_admission(request: object) -> None:
         if not isinstance(request, dict):
             return

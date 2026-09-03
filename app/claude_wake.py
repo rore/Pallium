@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import re
-from typing import TYPE_CHECKING
+import threading
+import time
+from typing import TYPE_CHECKING, Any
 
 from app.claude_wake_transport import claude_wake_transport
 
@@ -11,31 +14,43 @@ if TYPE_CHECKING:
     from core.claude_wake import ClaudeWakeRegistry
 
 
+logger = logging.getLogger(__name__)
+_workers: set[tuple[int, str]] = set()
+_workers_lock = threading.Lock()
+
+
+def _log_outcome(delivery_id: str, session_ref: str, category: str, started: float) -> None:
+    try:
+        logger.info(
+            "claude_relay_wake outcome delivery_id=%s session_ref=%s category=%s latency_ms=%d",
+            delivery_id,
+            session_ref,
+            category,
+            int((time.monotonic() - started) * 1000),
+        )
+    except Exception:
+        pass
+
+
 def schedule_claude_relay_wake(
     result: object,
     scope: object,
     *,
     registry: ClaudeWakeRegistry,
-) -> None:
-    """Probe a registered Claude Code session and wake it with the new message.
-
-    Mirrors codex_wake.py guard/selector shape but inline (no thread).
-    Credentials never leave the registry; transport only receives (socket_path, token).
-
-    ponytail: inline probe, bounded by transport timeout; thread it only if socket stalls send.
-    """
+) -> threading.Thread | None:
+    """Schedule one bounded wake for a pending Claude delivery."""
     if not isinstance(result, dict) or not isinstance(scope, dict):
-        return
+        return None
     deliveries = result.get("deliveries")
     if (
         not isinstance(deliveries, list)
         or len(deliveries) != 1
         or not isinstance(deliveries[0], dict)
     ):
-        return
+        return None
     delivery = deliveries[0]
     if delivery.get("state") != "pending":
-        return
+        return None
     delivery_id = delivery.get("delivery_id")
     session_ref = delivery.get("recipient_session_ref")
     recipient = result.get("recipient")
@@ -59,11 +74,134 @@ def schedule_claude_relay_wake(
         or not actor_ref
         or not valid_selector
     ):
-        return
-    registry.probe(
-        runtime="claude-code",
-        session_ref=session_ref,
-        container_ref=container_ref,
-        actor_ref=actor_ref,
-        transport=claude_wake_transport,
-    )
+        return None
+
+    key = (id(registry), session_ref)
+    with _workers_lock:
+        if key in _workers:
+            return None
+        _workers.add(key)
+
+    def run() -> None:
+        started = time.monotonic()
+        attempted = False
+        try:
+            def transport(socket_path: str, token: str) -> str:
+                nonlocal attempted
+                attempted = True
+                return claude_wake_transport(socket_path, token)
+
+            triggered = registry.probe(
+                runtime="claude-code",
+                session_ref=session_ref,
+                container_ref=container_ref,
+                actor_ref=actor_ref,
+                transport=transport,
+                delivery_id=delivery_id,
+            )
+            category = "trigger_written" if triggered else (
+                "transport_failed" if attempted else "not_eligible"
+            )
+        except Exception:
+            category = "worker_error"
+        finally:
+            _log_outcome(delivery_id, session_ref, category, started)
+            with _workers_lock:
+                _workers.discard(key)
+
+    # ponytail: module-local coalescing; add persistence only if cold wake is required.
+    worker = threading.Thread(target=run, name="pallium-claude-wake", daemon=True)
+    started = time.monotonic()
+    try:
+        worker.start()
+    except Exception:
+        with _workers_lock:
+            _workers.discard(key)
+        _log_outcome(delivery_id, session_ref, "worker_start_failed", started)
+        return None
+    return worker
+
+
+def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any) -> None:
+    """Read persisted exact-scope candidates and schedule only Relay-pending work."""
+    registry.recover_intents()
+    for candidate in registry.recovery_candidates():
+        try:
+            status = relay_service.pending_candidate(
+                runtime="claude-code",
+                session_ref=candidate["session_ref"],
+                container_ref=candidate["container_ref"],
+                actor_ref=candidate["actor_ref"],
+                delivery_id=candidate["delivery_id"] if candidate["state"] == "wake_inflight" else None,
+            )
+        except Exception:
+            continue
+        if candidate["state"] == "wake_inflight":
+            delivery_id = candidate["delivery_id"]
+            if not isinstance(delivery_id, str):
+                continue
+            if not isinstance(status, dict) or status.get("state") != "pending":
+                registry.clear_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], actor_ref=candidate["actor_ref"], delivery_id=delivery_id)
+                continue
+            with _workers_lock:
+                if (id(registry), candidate["session_ref"]) in _workers:
+                    continue
+            if not registry.rearm_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], actor_ref=candidate["actor_ref"], delivery_id=delivery_id, grace_seconds=1.0):
+                continue
+        if not isinstance(status, dict) or status.get("state") != "pending":
+            continue
+        delivery_id = status.get("delivery_id")
+        if not isinstance(delivery_id, str) or not delivery_id:
+            continue
+        schedule_claude_relay_wake(
+            {
+                "recipient": "claude-code:" + str(candidate["session_ref"]),
+                "deliveries": [{
+                    "delivery_id": delivery_id,
+                    "state": "pending",
+                    "recipient_runtime": "claude-code",
+                    "recipient_session_ref": candidate["session_ref"],
+                }],
+            },
+            {"container_ref": candidate["container_ref"], "actor_ref": candidate["actor_ref"]},
+            registry=registry,
+        )
+class ClaudeWakeReconciler:
+    """One app-local Event loop; no Relay claim or ACK path exists here."""
+
+    def __init__(self, registry: ClaudeWakeRegistry, relay_service: Any, *, interval_seconds: float = 1.0) -> None:
+        self._registry = registry
+        self._relay_service = relay_service
+        self._interval_seconds = interval_seconds
+        self._event = threading.Event()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._run, name="pallium-claude-wake-reconcile", daemon=True)
+            self._thread.start()
+        self.signal()
+
+    def signal(self) -> None:
+        self._event.set()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self._interval_seconds + 1)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._event.wait(timeout=self._interval_seconds)
+            self._event.clear()
+            if not self._stop.is_set():
+                recover_claude_relay_wakes(self._registry, self._relay_service)
+
+def start_claude_wake_reconciler(registry: ClaudeWakeRegistry, relay_service: Any) -> ClaudeWakeReconciler | None:
+    if not registry.persistent:
+        return None
+    reconciler = ClaudeWakeReconciler(registry, relay_service)
+    reconciler.start()
+    return reconciler

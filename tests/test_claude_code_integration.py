@@ -263,3 +263,44 @@ def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monk
     with pytest.raises(SystemExit):
         stop.main()
     assert calls[0][0]["thread_ref"] is None
+
+
+@pytest.mark.parametrize("failure", ("missing", "invalid_cwd", "close"))
+def test_session_end_is_fail_safe(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, failure: str) -> None:
+    session_end = _load_claude_hook("session_end", monkeypatch)
+    monkeypatch.setattr(session_end, "read_hook_input", lambda: {} if failure == "missing" else {"session_id": "session", "cwd": "bad"})
+    monkeypatch.setattr(session_end, "derive_actor_ref", lambda: "actor")
+    if failure == "invalid_cwd":
+        monkeypatch.setattr(session_end, "resolve_container_ref", lambda *_args: (_ for _ in ()).throw(OSError("invalid cwd")))
+    else:
+        monkeypatch.setattr(session_end, "resolve_container_ref", lambda *_args: "git:example/repo")
+    monkeypatch.setattr(session_end, "close_claude_wake", lambda *_args: (_ for _ in ()).throw(OSError("close failed")))
+
+    session_end.main()
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+
+def test_claude_setup_registers_session_end_once_and_uninstall_removes_it(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    settings = tmp_path / "settings.json"
+    monkeypatch.setattr(setup_claude_code, "_pallium_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(setup_claude_code, "_claude_settings_path", lambda: settings)
+    monkeypatch.setattr(setup_claude_code, "_register_mcp", lambda *_: None)
+    monkeypatch.setattr(setup_claude_code, "_unregister_mcp", lambda: None)
+    monkeypatch.setattr(setup_claude_code, "_append_claude_md_block", lambda *_: None)
+    monkeypatch.setattr(setup_claude_code, "_remove_claude_md_block", lambda: None)
+    monkeypatch.setattr(setup_claude_code, "_install_skill", lambda: None)
+    monkeypatch.setattr(setup_claude_code, "_remove_skill", lambda: None)
+    monkeypatch.setattr(setup_claude_code, "_ensure_state_dir", lambda: None)
+    monkeypatch.setattr(setup_claude_code, "_verify_service", lambda *_: True)
+    assert setup_claude_code.install() == setup_claude_code.install() == 0
+    registered = json.loads(settings.read_text(encoding="utf-8"))
+    session_end = [
+        hook["command"]
+        for entry in registered["hooks"]["SessionEnd"]
+        for hook in entry["hooks"]
+        if hook["command"].endswith("session_end.py")
+    ]
+    assert len(session_end) == 1
+    monkeypatch.setattr(setup_claude_code.Path, "home", lambda: tmp_path)
+    assert setup_claude_code.uninstall() == 0
+    assert "SessionEnd" not in json.loads(settings.read_text(encoding="utf-8")).get("hooks", {})

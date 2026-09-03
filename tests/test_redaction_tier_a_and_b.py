@@ -461,3 +461,32 @@ class TestFalsePositiveFixesFromLiveDryRun:
         # short).
         secret = "abcdefghijkl12345"  # 17 chars, no whitespace
         assert secret not in redact_sensitive(f"password: leaked {secret}")
+
+
+class TestYamlProseSecretBoundary:
+    def test_session_id_technical_prose_with_long_word_survives(self):
+        value = "session_id: wake uses socket/pipe+token+scope after restart"
+        assert redact_sensitive(value) == value
+
+    def test_multiword_assignment_with_probable_secret_still_redacts(self):
+        secret = _real_shape("", "", 40)
+        value = f"session_id: rotate this credential {secret} now"
+        redacted = redact_sensitive(value)
+        assert secret not in redacted
+        assert redact_sensitive(redacted) == redacted
+
+    def test_three_word_assignment_with_17_char_secret_still_redacts(self):
+        secret = _real_shape("", "", 17)
+        value = f"password: rotate this {secret}"
+        assert secret not in redact_sensitive(value)
+
+    def test_low_entropy_compact_token_at_assignment_minimum_still_redacts(self):
+        below_minimum = "aaaaabbbbbb"
+        at_minimum = "aaaaabbbbbcc"
+        assert redact_sensitive(f"password: rotate this {below_minimum}") == f"password: rotate this {below_minimum}"
+        assert redact_sensitive(f"password: rotate this {at_minimum}") == "password: [REDACTED]"
+
+    def test_multiword_assignment_with_git_sha_remains_prose(self):
+        sha = "a" * 40
+        value = f"session_id: rotate this revision {sha} now"
+        assert redact_sensitive(value) == value

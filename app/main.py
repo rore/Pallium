@@ -18,9 +18,11 @@ from sqlalchemy import func, select
 from app.asyncio_windows_accept import apply_patch as _apply_accept_patch
 from app.config import AppConfig
 from app.dashboard import mount_dashboard
+from app.claude_wake import start_claude_wake_reconciler
 from app.dependencies import build_claude_wake_registry, build_router, build_service, build_storage_provider
 from app.snapshot import resolve_live_db_path
 from core.observability import QueryStats
+from core.relay import RelayService, RelayUnavailableError
 from core.service import PalliumService
 from semantic.agent_conversation_memory_routing import RoutingOverrides
 from storage.metrics import MetricsStore
@@ -226,6 +228,19 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             rebuild_coordinator.start()
             app_instance.state._rebuild_coordinator = rebuild_coordinator
 
+        claude_wake_reconciler = None
+        try:
+            claude_wake_registry.recover_intents()
+            claude_wake_reconciler = start_claude_wake_reconciler(
+                claude_wake_registry, RelayService(build_result.storage),
+            )
+            claude_wake_registry.set_reconcile_signal(
+                None if claude_wake_reconciler is None else claude_wake_reconciler.signal,
+            )
+            app_instance.state._claude_wake_reconciler = claude_wake_reconciler
+        except RelayUnavailableError:
+            app_instance.state._claude_wake_reconciler = None
+
         app_instance.state._lifespan_complete = True
         try:
             if mcp_available and session_manager is not None:
@@ -234,6 +249,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             else:
                 yield
         finally:
+            claude_wake_registry.set_reconcile_signal(None)
+            if claude_wake_reconciler is not None:
+                claude_wake_reconciler.stop()
             if rebuild_coordinator is not None:
                 rebuild_coordinator.stop()
             if stop is not None:

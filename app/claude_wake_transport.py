@@ -5,10 +5,34 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
 import uuid
 
 
-def claude_wake_transport(socket_path: str, token: str) -> bool:
+# ponytail: unresolved Windows I/O remains process-local until signal or exit; add completion callbacks only if leak telemetry warrants it.
+_pending_windows_writes: list[tuple[object, object]] = []
+_pending_windows_writes_lock = threading.Lock()
+
+
+def _reap_pending_windows_writes(win32event, win32file) -> None:
+    """Release completed timeout writes; unresolved I/O remains until signal or process exit."""
+    with _pending_windows_writes_lock:
+        pending = list(_pending_windows_writes)
+        _pending_windows_writes.clear()
+    retained = []
+    for overlapped, event in pending:
+        try:
+            if win32event.WaitForSingleObject(event, 0) != win32event.WAIT_OBJECT_0:
+                retained.append((overlapped, event))
+                continue
+            win32file.CloseHandle(event)
+        except Exception:
+            retained.append((overlapped, event))
+    if retained:
+        with _pending_windows_writes_lock:
+            _pending_windows_writes.extend(retained)
+
+def claude_wake_transport(socket_path: str, token: str) -> str:
     """Write auth and peer message to a registered Claude Code session endpoint.
 
     Args:
@@ -16,7 +40,7 @@ def claude_wake_transport(socket_path: str, token: str) -> bool:
         token: Authentication token (never stored or logged).
 
     Returns:
-        True on clean write, False on any error (swallows all exceptions).
+        ``"accepted"`` on clean write, ``"terminal"`` only for a proven missing endpoint, and ``"retryable"`` for all uncertainty.
 
     Platform-specific:
         POSIX: AF_UNIX socket with ~2s timeout.
@@ -30,35 +54,21 @@ def claude_wake_transport(socket_path: str, token: str) -> bool:
         return _posix_transport(socket_path, token)
 
 
-def _posix_transport(socket_path: str, token: str) -> bool:
-    """Connect to Unix domain socket, write auth line + peer frame."""
+def _posix_transport(socket_path: str, token: str) -> str:
+    """Connect, authenticate, and classify a local Unix socket wake."""
     sock = None
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(2.0)
         sock.connect(socket_path)
-
-        # Write auth line
-        auth_frame = json.dumps({"type": "auth", "token": token}) + "\n"
-        sock.sendall(auth_frame.encode("utf-8"))
-
-        # Write peer message frame
-        peer_frame = json.dumps({
-            "msgV": 1,
-            "msg_id": uuid.uuid4().hex,
-            "type": "user",
-            "message": {
-                "role": "user",
-                "content": "Pallium Relay wake notice: new messages available.",
-            },
-            "priority": "next",
-            "from": "pallium-relay",
-        }) + "\n"
-        sock.sendall(peer_frame.encode("utf-8"))
-
-        return True
+        sock.sendall((json.dumps({"type": "auth", "token": token}) + "\n").encode("utf-8"))
+        frame = {"msgV": 1, "msg_id": uuid.uuid4().hex, "type": "user", "message": {"role": "user", "content": "Pallium Relay wake notice: new messages available."}, "priority": "next", "from": "pallium-relay"}
+        sock.sendall((json.dumps(frame) + "\n").encode("utf-8"))
+        return "accepted"
+    except FileNotFoundError:
+        return "terminal"
     except (OSError, ValueError, socket.timeout):
-        return False
+        return "retryable"
     finally:
         if sock is not None:
             try:
@@ -66,50 +76,27 @@ def _posix_transport(socket_path: str, token: str) -> bool:
             except OSError:
                 pass
 
-
-def _windows_transport(socket_path: str, token: str) -> bool:
-    """Open named pipe, write auth line + peer frame."""
+def _windows_transport(socket_path: str, token: str) -> str:
+    """Open a named pipe and classify only proven endpoint absence as terminal."""
     try:
         import pywintypes
         import win32event
         import win32file
         import winerror
     except ImportError:
-        return False
-
+        return "retryable"
     handle = None
     try:
-        # Open the named pipe
-        handle = win32file.CreateFile(
-            socket_path,
-            win32file.GENERIC_WRITE,
-            0,
-            None,
-            win32file.OPEN_EXISTING,
-            win32file.FILE_FLAG_OVERLAPPED,
-            None,
-        )
-
-        # Write auth line
-        auth_frame = json.dumps({"type": "auth", "token": token}) + "\n"
-        if not _windows_write(handle, auth_frame.encode("utf-8"), pywintypes, win32event, win32file, winerror):
-            return False
-
-        # Write peer message frame
-        peer_frame = json.dumps({
-            "msgV": 1,
-            "msg_id": uuid.uuid4().hex,
-            "type": "user",
-            "message": {
-                "role": "user",
-                "content": "Pallium Relay wake notice: new messages available.",
-            },
-            "priority": "next",
-            "from": "pallium-relay",
-        }) + "\n"
-        return _windows_write(handle, peer_frame.encode("utf-8"), pywintypes, win32event, win32file, winerror)
+        handle = win32file.CreateFile(socket_path, win32file.GENERIC_WRITE, 0, None, win32file.OPEN_EXISTING, win32file.FILE_FLAG_OVERLAPPED, None)
+        auth = (json.dumps({"type": "auth", "token": token}) + "\n").encode("utf-8")
+        if not _windows_write(handle, auth, pywintypes, win32event, win32file, winerror):
+            return "retryable"
+        frame = {"msgV": 1, "msg_id": uuid.uuid4().hex, "type": "user", "message": {"role": "user", "content": "Pallium Relay wake notice: new messages available."}, "priority": "next", "from": "pallium-relay"}
+        return "accepted" if _windows_write(handle, (json.dumps(frame) + "\n").encode("utf-8"), pywintypes, win32event, win32file, winerror) else "retryable"
+    except pywintypes.error as exc:
+        return "terminal" if exc.winerror == winerror.ERROR_FILE_NOT_FOUND else "retryable"
     except Exception:
-        return False
+        return "retryable"
     finally:
         if handle is not None:
             try:
@@ -117,9 +104,9 @@ def _windows_transport(socket_path: str, token: str) -> bool:
             except (OSError, NameError):
                 pass
 
-
 def _windows_write(handle, data, pywintypes, win32event, win32file, winerror) -> bool:
     """Write one frame with bounded overlapped I/O and safe cancellation."""
+    _reap_pending_windows_writes(win32event, win32file)
     overlapped = pywintypes.OVERLAPPED()
     overlapped.hEvent = win32event.CreateEvent(None, True, False, None)
     completed = False
@@ -141,10 +128,13 @@ def _windows_write(handle, data, pywintypes, win32event, win32file, winerror) ->
             except Exception:
                 pass
             try:
-                win32file.GetOverlappedResult(handle, overlapped, True)
+                win32file.GetOverlappedResult(handle, overlapped, False)
                 completed = True
-            except Exception:
-                completed = True
+            except Exception as exc:
+                completed = getattr(exc, "winerror", None) == getattr(winerror, "ERROR_OPERATION_ABORTED", 995)
+            if not completed:
+                with _pending_windows_writes_lock:
+                    _pending_windows_writes.append((overlapped, overlapped.hEvent))
             return False
         completed = True
         win32file.GetOverlappedResult(handle, overlapped, True)

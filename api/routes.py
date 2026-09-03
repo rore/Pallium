@@ -468,7 +468,7 @@ def create_router(
                 if not 0 <= int(content_length) <= _CLAUDE_WAKE_BODY_MAX_BYTES:
                     raise ValueError
             except ValueError:
-                raise HTTPException(status_code=400, detail="invalid registration")
+                raise HTTPException(status_code=400, detail="invalid registration") from None
         try:
             chunks: list[bytes] = []
             size = 0
@@ -482,16 +482,47 @@ def create_router(
                 "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token",
             }, {
                 "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle",
+            }, {
+                "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle", "intent_id",
             }):
                 raise ValueError
             payload.setdefault("idle", False)
             if not isinstance(payload["idle"], bool):
                 raise ValueError
-            wake_registry.register(**payload)
+            if not wake_registry.register(**payload):
+                raise HTTPException(status_code=409, detail="registration rejected")
         except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="invalid registration")
         return Response(status_code=204)
 
+    @router.post("/internal/claude-wake/close", status_code=204)
+    async def close_claude_wake(http_request: Request) -> Response:
+        client = http_request.client
+        if client is None or client.host not in {"127.0.0.1", "::1"}:
+            raise HTTPException(status_code=403, detail="forbidden")
+        content_length = http_request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if not 0 <= int(content_length) <= _CLAUDE_WAKE_BODY_MAX_BYTES:
+                    raise ValueError
+            except ValueError:
+                raise HTTPException(status_code=400, detail="invalid registration") from None
+        try:
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in http_request.stream():
+                size += len(chunk)
+                if size > _CLAUDE_WAKE_BODY_MAX_BYTES:
+                    raise ValueError
+                chunks.append(chunk)
+            payload = json.loads(b"".join(chunks))
+            if not isinstance(payload, dict) or set(payload) != {"runtime", "session_ref", "container_ref", "actor_ref", "intent_id"}:
+                raise ValueError
+            if not wake_registry.close(**payload):
+                raise ValueError
+        except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="invalid registration")
+        return Response(status_code=204)
     def _ingest_one(request: ItemCreateRequest) -> ItemCreateResponse:
         result = service.ingest_item(
             source_type=request.source_type,

@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+import uuid
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -26,6 +27,8 @@ SUBPROCESS_TIMEOUT = 3
 STATE_DIR = Path.home() / ".pallium" / "hooks" / "state"
 DEDUP_EXPIRY_SECONDS = 300
 CLAUDE_WAKE_REGISTER_PATH = "/internal/claude-wake/register"
+CLAUDE_WAKE_DIR = Path(os.environ.get("PALLIUM_CLAUDE_WAKE_DIR", str(Path.home() / ".pallium" / "claude-wake")))
+CLAUDE_WAKE_INTENTS_DIR = CLAUDE_WAKE_DIR / "intents"
 _CREDENTIAL_HTTP_TIMEOUT = 1
 _CREDENTIAL_BODY_MAX_BYTES = 16_384
 _CREDENTIAL_LIMITS = (32, 512, 512, 255, 4096, 8192)
@@ -301,6 +304,43 @@ class _RejectCredentialRedirects(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _wake_intent_path(session_ref: str) -> Path:
+    return CLAUDE_WAKE_INTENTS_DIR / (hashlib.sha256(session_ref.encode("utf-8")).hexdigest() + ".json")
+
+
+def _write_wake_intent(payload: dict[str, object]) -> bool:
+    """Durably publish the exact registration before its loopback request."""
+    session_ref = payload.get("session_ref")
+    if not isinstance(session_ref, str):
+        return False
+    temporary: Path | None = None
+    try:
+        CLAUDE_WAKE_INTENTS_DIR.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            try:
+                os.chmod(CLAUDE_WAKE_DIR, 0o700)
+                os.chmod(CLAUDE_WAKE_INTENTS_DIR, 0o700)
+            except OSError:
+                pass
+        target = _wake_intent_path(session_ref)
+        temporary = target.with_name(target.name + ".tmp")
+        temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+        if os.name != "nt":
+            try:
+                os.chmod(temporary, 0o600)
+            except OSError:
+                pass
+        os.replace(temporary, target)
+        return True
+    except (OSError, TypeError, ValueError):
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return False
+
+
 def register_claude_wake(
     session_ref: object,
     container_ref: object,
@@ -308,13 +348,13 @@ def register_claude_wake(
     *,
     idle: bool = False
 ) -> bool:
-    """Best-effort credential handoff with no diagnostic output."""
+    """Write ahead the credential handoff; ambiguous HTTP leaves that intent intact."""
     socket_path = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
     token = os.environ.get("CLAUDE_CODE_MESSAGING_TOKEN")
     values = ("claude-code", session_ref, container_ref, actor_ref, socket_path, token)
     if not all(_credential_value(value, maximum) for value, maximum in zip(values, _CREDENTIAL_LIMITS, strict=True)):
         return False
-    body = json.dumps({
+    body_data: dict[str, object] = {
         "runtime": "claude-code",
         "session_ref": session_ref,
         "container_ref": container_ref,
@@ -322,8 +362,12 @@ def register_claude_wake(
         "socket_path": socket_path,
         "token": token,
         "idle": idle,
-    }).encode("utf-8")
+        "intent_id": uuid.uuid4().hex,
+    }
+    body = json.dumps(body_data).encode("utf-8")
     if len(body) > _CREDENTIAL_BODY_MAX_BYTES:
+        return False
+    if not _write_wake_intent(body_data):
         return False
     request = urllib.request.Request(
         f"{PALLIUM_BASE_URL}{CLAUDE_WAKE_REGISTER_PATH}",
@@ -336,6 +380,26 @@ def register_claude_wake(
             urllib.request.ProxyHandler({}),
             _RejectCredentialRedirects(),
         )
+        with opener.open(request, timeout=_CREDENTIAL_HTTP_TIMEOUT):
+            return True
+    except Exception:
+        return False
+
+def close_claude_wake(session_ref: object, container_ref: object, actor_ref: object) -> bool:
+    """Write a closed intent before best-effort loopback removal."""
+    if not all(_credential_value(value, maximum) for value, maximum in zip(("claude-code", session_ref, container_ref, actor_ref), _CREDENTIAL_LIMITS[:4], strict=True)):
+        return False
+    payload: dict[str, object] = {
+        "runtime": "claude-code", "session_ref": session_ref, "container_ref": container_ref,
+        "actor_ref": actor_ref, "intent_id": uuid.uuid4().hex, "closed": True,
+    }
+    if not _write_wake_intent(payload):
+        return False
+    request = urllib.request.Request(
+        f"{PALLIUM_BASE_URL}/internal/claude-wake/close", data=json.dumps({key: payload[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")}).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"},
+    )
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectCredentialRedirects())
         with opener.open(request, timeout=_CREDENTIAL_HTTP_TIMEOUT):
             return True
     except Exception:
@@ -411,13 +475,15 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0) -> tuple[str, li
     return "\n\n".join(chunks), rendered
 
 
-def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: str) -> None:
+def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: str) -> list[dict]:
+    """Acknowledge deliveries and return only those confirmed by Pallium."""
+    acknowledged: list[dict] = []
     for delivery in deliveries:
         delivery_id = delivery.get("delivery_id")
         claim_token = delivery.get("claim_token")
         if not isinstance(delivery_id, str) or not isinstance(claim_token, str):
             continue
-        relay_request(
+        if relay_request(
             "POST",
             "/relay/deliveries/ack",
             {
@@ -427,8 +493,9 @@ def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: 
                 "actor_ref": actor_ref,
             },
             timeout=0.5,
-        )
-
+        ) is not None:
+            acknowledged.append(delivery)
+    return acknowledged
 
 def _safe_scope_value(value: str) -> str | None:
     """Preserve Unicode identity exactly and reject control-character breaks."""
