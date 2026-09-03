@@ -96,3 +96,4 @@ Approved by user 2026-09-03: "you have blanket approval for all tasks you get fr
 2026-09-03 — S1B slice 11 makes failed wake-intent atomic publication remove credential-bearing temp state before any loopback request, leaving no restart-visible intent.
 2026-09-03 — S1B slice 12 validates encoded credential-body size before intent publication, retaining write-ahead-before-HTTP for normal Unicode registrations.
 2026-09-03 — S1B slice 13 qualifies persisted inflight cleanup against active claimed, delivered, and expired Relay states through real SQLite/public status: recovery sends no native wake, clears only durable inflight state, preserves Relay state, and a fresh exact-scope delivery schedules one wake.
+2026-09-03 — S1B slice 14 proves the real Event-driven reconciler has no finite retry cutoff: three retryable native wake outcomes followed by accepted produce four attempts while the real pending Relay delivery remains unclaimed, then stop joins.

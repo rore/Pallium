@@ -416,6 +416,47 @@ def test_expired_claim_recovery_retries_without_mutating_relay(
         before[key] for key in ("claim_token", "receipt", "claimed_at", "lease_expires_at", "attempts")
     )
 
+def test_reconciler_retries_pending_wake_until_native_transport_accepts(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    from app import claude_wake
+    from app.claude_wake import ClaudeWakeReconciler
+    from core.relay import RelayService
+
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    relay = RelayService(client.app.state.pallium_service._storage)
+    relay.turn(runtime="codex", session_ref="sender", **scope)
+    relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    sent = relay.send(
+        sender_runtime="codex", sender_session_ref="sender",
+        recipient="claude-code:" + PAYLOAD["session_ref"], payload="retry until accepted", **scope,
+    )
+
+    observed: list[tuple[str, object, object, int]] = []
+    accepted = threading.Event()
+
+    def transport(_socket_path: str, _token: str) -> str:
+        delivery = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+        observed.append((delivery["state"], delivery["claim_token"], delivery["receipt"], delivery["attempts"]))
+        if len(observed) == 4:
+            accepted.set()
+            return "accepted"
+        return "retryable"
+
+    monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
+    reconciler = ClaudeWakeReconciler(registry, relay, interval_seconds=0.01)
+    reconciler.start()
+    try:
+        assert accepted.wait(timeout=1)
+    finally:
+        reconciler.stop()
+    assert observed == [("pending", None, None, 0)] * 4
+    assert reconciler._thread is not None and not reconciler._thread.is_alive()
+
 @pytest.mark.parametrize("terminal_state", ("claimed", "delivered", "expired"))
 def test_recovery_clears_terminal_inflight_and_reschedules_exact_scope(
     client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal_state: str,
