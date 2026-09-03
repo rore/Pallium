@@ -5,12 +5,15 @@ from common import close_claude_wake, derive_actor_ref, read_hook_input, resolve
 
 
 def main() -> None:
-    payload = read_hook_input()
-    session_id = payload.get("session_id")
-    if not isinstance(session_id, str) or not session_id:
+    try:
+        payload = read_hook_input()
+        session_id = payload.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            return
+        container_ref = resolve_container_ref(payload.get("cwd", "."), session_id)
+        close_claude_wake(session_id, container_ref, derive_actor_ref())
+    except Exception:
         return
-    container_ref = resolve_container_ref(payload.get("cwd", "."), session_id)
-    close_claude_wake(session_id, container_ref, derive_actor_ref())
 
 
 if __name__ == "__main__":

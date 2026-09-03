@@ -336,9 +336,17 @@ def test_app_instances_have_separate_memory_only_registries(tmp_path: Path) -> N
     second = create_app(config("second.db"))
     assert first.state.claude_wake_registry is not second.state.claude_wake_registry
 
-def _registration_endpoint(registry: ClaudeWakeRegistry):
+def _claude_wake_endpoint(registry: ClaudeWakeRegistry, path: str):
     router = create_router(object(), claude_wake_registry=registry)
-    return next(route.endpoint for route in router.routes if route.path == "/internal/claude-wake/register")
+    return next(route.endpoint for route in router.routes if route.path == path)
+
+
+def _registration_endpoint(registry: ClaudeWakeRegistry):
+    return _claude_wake_endpoint(registry, "/internal/claude-wake/register")
+
+
+def _close_endpoint(registry: ClaudeWakeRegistry):
+    return _claude_wake_endpoint(registry, "/internal/claude-wake/close")
 
 
 def test_streaming_registration_rejects_missing_length_overflow_negative_length_and_client_none() -> None:
@@ -365,6 +373,33 @@ def test_streaming_registration_rejects_missing_length_overflow_negative_length_
         asyncio.run(invoke([b"{}"], client=None))
     assert absent_client.value.status_code == 403
 
+
+def test_streaming_close_rejects_declared_or_streamed_oversize_and_accepts_valid(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = ClaudeWakeRegistry()
+    monkeypatch.setattr(registry, "close", lambda **_kwargs: True)
+    endpoint = _close_endpoint(registry)
+    payload = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref")}
+    payload["intent_id"] = "close"
+
+    async def invoke(chunks: list[bytes], *, content_length: str | None = None):
+        remaining = list(chunks)
+
+        async def receive():
+            body = remaining.pop(0)
+            return {"type": "http.request", "body": body, "more_body": bool(remaining)}
+
+        headers = [] if content_length is None else [(b"content-length", content_length.encode())]
+        request = Request({"type": "http", "method": "POST", "path": "/internal/claude-wake/close", "headers": headers, "client": ("127.0.0.1", 1)}, receive)
+        return await endpoint(request)
+
+    assert asyncio.run(invoke([json.dumps(payload).encode("utf-8")])).status_code == 204
+    for content_length in ("-1", "16385"):
+        with pytest.raises(HTTPException) as rejected:
+            asyncio.run(invoke([b"{}"], content_length=content_length))
+        assert rejected.value.status_code == 400
+    with pytest.raises(HTTPException) as streamed:
+        asyncio.run(invoke([b"x" * 16_000, b"x" * 1_000]))
+    assert streamed.value.status_code == 400
 
 @pytest.mark.parametrize("body", [b"{", b"[]", b'{"runtime":"claude-code"}', b'{"extra":true}'])
 def test_registration_malformed_wrong_shape_missing_or_extra_is_secret_free(body: bytes) -> None:

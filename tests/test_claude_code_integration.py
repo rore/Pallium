@@ -265,6 +265,21 @@ def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monk
     assert calls[0][0]["thread_ref"] is None
 
 
+@pytest.mark.parametrize("failure", ("missing", "invalid_cwd", "close"))
+def test_session_end_is_fail_safe(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, failure: str) -> None:
+    session_end = _load_claude_hook("session_end", monkeypatch)
+    monkeypatch.setattr(session_end, "read_hook_input", lambda: {} if failure == "missing" else {"session_id": "session", "cwd": "bad"})
+    monkeypatch.setattr(session_end, "derive_actor_ref", lambda: "actor")
+    if failure == "invalid_cwd":
+        monkeypatch.setattr(session_end, "resolve_container_ref", lambda *_args: (_ for _ in ()).throw(OSError("invalid cwd")))
+    else:
+        monkeypatch.setattr(session_end, "resolve_container_ref", lambda *_args: "git:example/repo")
+    monkeypatch.setattr(session_end, "close_claude_wake", lambda *_args: (_ for _ in ()).throw(OSError("close failed")))
+
+    session_end.main()
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+
 def test_claude_setup_registers_session_end_once_and_uninstall_removes_it(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     settings = tmp_path / "settings.json"
     monkeypatch.setattr(setup_claude_code, "_pallium_repo_root", lambda: tmp_path)

@@ -500,8 +500,22 @@ def create_router(
         client = http_request.client
         if client is None or client.host not in {"127.0.0.1", "::1"}:
             raise HTTPException(status_code=403, detail="forbidden")
+        content_length = http_request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if not 0 <= int(content_length) <= _CLAUDE_WAKE_BODY_MAX_BYTES:
+                    raise ValueError
+            except ValueError:
+                raise HTTPException(status_code=400, detail="invalid registration")
         try:
-            payload = await http_request.json()
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in http_request.stream():
+                size += len(chunk)
+                if size > _CLAUDE_WAKE_BODY_MAX_BYTES:
+                    raise ValueError
+                chunks.append(chunk)
+            payload = json.loads(b"".join(chunks))
             if not isinstance(payload, dict) or set(payload) != {"runtime", "session_ref", "container_ref", "actor_ref", "intent_id"}:
                 raise ValueError
             if not wake_registry.close(**payload):

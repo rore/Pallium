@@ -43,6 +43,8 @@ S1A — COMPLETE: Architect Codex re-review accepted; installed no-human Windows
 
 S1B — COMPLETE on Windows: persistence, intent handling, fail-closed rehydration, read-only recovery, reconciliation, and the installed exact-session restart witness are qualified.
 
+Post-qualification route/hook remediation — add the register-equivalent bounded streamed body handling to the close route, then make SessionEnd's full workflow fail-safe; touch only `api/routes.py`, `integrations/claude-code/hooks/session_end.py`, and their focused public-route/real-hook tests. Stop if the existing register pattern cannot be reused unchanged.
+
 S2 — Evidence-driven peer/lifecycle hardening. S3 — Codex MCP recovery remains fail-closed. S4 — cross-platform live qualification.
 
 **Verification plan:**
@@ -51,9 +53,12 @@ S2 — Evidence-driven peer/lifecycle hardening. S3 — Codex MCP recovery remai
 - Failure/duplicate → scope mismatch, request/render failure, partial/all ACK failure and exit-2 boundary, recursion, duplicate, `has_more`/`remaining_count` pending, and lease recovery.
 - Installed behavior → no-human Windows pure text peer witness.
 - Repository → focused/full tests, workflow/redline/diff; no production claim before witness.
+- Close route boundary → missing, negative, declared-over-limit, and streamed-over-limit bodies reject before close; a valid close remains 204 → public route tests.
+- SessionEnd failure safety → invalid cwd and close failure leave the real hook silent and exit 0 → real-hook regression tests.
 
 **Plan review:**
 2026-09-03 — Prior S1 durability and MCP S1A proposals are superseded. Architect review found route-admission rearm, UTF-8 stderr, and storage-template gaps; all are corrected. Codex architect re-review is CLEAN: real boundary regression proves storage selection and Claude rendering stay within the same budget while preserving skipped-overbudget/later-fit `has_more`/`remaining_count`.
+2026-09-03 — Clean-context review: ACCEPTED. Close reuses the register byte-admission pattern locally; no abstraction is warranted. Preserve loopback-first 403, allow absent Content-Length subject to the streamed cap, and make the full SessionEnd path exception-safe (Exception only), with public-route and real-hook regressions.
 
 **Approvals:**
 Approved by user 2026-09-03: "you have blanket approval for all tasks you get from the architect". Codex architect re-review CLEAN 2026-09-03; installed S1A runtime witness PASS. Architect accepted S1B plan b1991dc5 as CLEAN 2026-09-03 and authorized implementation; at that time no Claude use, integration install/restart, PR, or merge was authorized. Later user authorization covered Claude setup, the required wrapper restart, and the live Windows witness.
@@ -69,9 +74,14 @@ Approved by user 2026-09-03: "you have blanket approval for all tasks you get fr
 - Tested HEAD `58c5cd83`: affected suite `199 passed, 2 skipped, 4 existing warnings in 10.89s`; blocking workflow gates and `git diff --check` clean.
 - Claude setup installed exactly one SessionStart, UserPromptSubmit, Stop, and SessionEnd hook at the current checkout; the required wrapper restart and `/health`, `/status`, and `/debug/queue/health` checks passed.
 - The first witness was invalid because the exact capability did not exist before the upgrade registration. After one manual registration, the exact idle capability survived a second restart; RETRY message `relay-reply-c69c...` automatically woke the exact Claude session, Stop claimed/injected/ACKed it, and Claude PASS replied with no manual action.
+- Post-qualification remediation: close now rejects negative, declared-over-limit, and streamed-over-limit request bodies before JSON parsing while allowing a valid no-length close; SessionEnd remains silent and exits 0 for missing session, invalid cwd, or close failure. Focused route/hook suites: `69 passed, 2 existing warnings in 5.41s`.
 - Limitation: no automatic restart guarantee is claimed if canonical, quarantine, and marker filesystem writes all fail.
 
 ## Implementation
+
+2026-09-03 — Post-qualification CodeRabbit remediation is planned for the close-route byte cap and fail-safe SessionEnd workflow; implementation waits on the required clean-context review for the guarded API surface.
+2026-09-03 — Clean-context review accepted the local register-equivalent cap and Exception-only SessionEnd envelope; implementation may proceed with the scoped public-route and real-hook regressions.
+2026-09-03 — Implemented the bounded close route and fail-safe SessionEnd workflow with public-route and real-hook regressions; focused route/hook suites passed (69 passed, 2 existing warnings).
 
 2026-09-03 — S1B implementation started from accepted plan b1991dc5. Planned shared-path files: core/claude_wake.py, app/claude_wake.py, app/dependencies.py, api/routes.py, core/relay.py, Relay storage, Claude hook registration/SessionEnd files, and focused caller-surface tests. Scope excludes Claude execution, integration service changes, PR, and merge.
 2026-09-03 — First shared-path slice replaces production memory-only capability state with trusted-local canonical persistence, write-ahead hook intents, exact intent matching, fail-closed busy fencing, non-admitting POSIX-only capacity reclamation, and startup read-only Relay recovery. Existing Stop caller-surface assertions now explicitly cover its required post-admission rearm.
