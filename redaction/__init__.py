@@ -280,12 +280,13 @@ def _env_var_secret_replacer(separator: str):
         if any(sym in rhs for sym in ("(", ")", "[", "]", "==", "!=", "->", "=>", "<=", ">=")):
             return full
         # English-prose guard: preserve multi-word prose unless it contains a
-        # probable secret under the shared Tier B entropy/known-FP policy.
+        # probable or compact assignment secret under the shared known-FP policy.
         rhs_body = rhs.strip().rstrip(",;").strip().strip("\"'")
         if rhs_body and " " in rhs_body:
             words = rhs_body.split()
-            if len(words) >= 3 and not _contains_probable_secret_token(
-                rhs_body, _ASSIGNMENT_PROBABLE_SECRET_MIN_LEN
+            if len(words) >= 3 and not (
+                _contains_probable_secret_token(rhs_body, _ASSIGNMENT_PROBABLE_SECRET_MIN_LEN)
+                or _contains_assignment_compact_token(words)
             ):
                 return full
         return f"{name}{separator} [REDACTED]" if separator == ":" else f"{name}{separator}[REDACTED]"
@@ -469,6 +470,16 @@ def _contains_probable_secret_token(
     return any(
         _is_probable_secret_token(match.group(0), minimum_length)
         for match in _TIER_B_TOKEN_RE.finditer(text)
+    )
+
+
+def _contains_assignment_compact_token(words: list[str]) -> bool:
+    return any(
+        word.isascii()
+        and word.isalnum()
+        and len(word) >= _ASSIGNMENT_PROBABLE_SECRET_MIN_LEN
+        and not _tier_b_is_fp_shape(word)
+        for word in words
     )
 
 

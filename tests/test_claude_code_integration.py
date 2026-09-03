@@ -301,5 +301,6 @@ def test_claude_setup_registers_session_end_once_and_uninstall_removes_it(monkey
         if hook["command"].endswith("session_end.py")
     ]
     assert len(session_end) == 1
+    monkeypatch.setattr(setup_claude_code.Path, "home", lambda: tmp_path)
     assert setup_claude_code.uninstall() == 0
     assert "SessionEnd" not in json.loads(settings.read_text(encoding="utf-8")).get("hooks", {})

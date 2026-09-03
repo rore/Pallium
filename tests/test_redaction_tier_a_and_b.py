@@ -479,3 +479,14 @@ class TestYamlProseSecretBoundary:
         secret = _real_shape("", "", 17)
         value = f"password: rotate this {secret}"
         assert secret not in redact_sensitive(value)
+
+    def test_low_entropy_compact_token_at_assignment_minimum_still_redacts(self):
+        below_minimum = "aaaaabbbbbb"
+        at_minimum = "aaaaabbbbbcc"
+        assert redact_sensitive(f"password: rotate this {below_minimum}") == f"password: rotate this {below_minimum}"
+        assert redact_sensitive(f"password: rotate this {at_minimum}") == "password: [REDACTED]"
+
+    def test_multiword_assignment_with_git_sha_remains_prose(self):
+        sha = "a" * 40
+        value = f"session_id: rotate this revision {sha} now"
+        assert redact_sensitive(value) == value
