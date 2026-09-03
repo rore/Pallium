@@ -294,3 +294,62 @@ def test_expired_claim_recovery_retries_without_mutating_relay(
     assert tuple(after[key] for key in ("claim_token", "receipt", "claimed_at", "lease_expires_at", "attempts")) == tuple(
         before[key] for key in ("claim_token", "receipt", "claimed_at", "lease_expires_at", "attempts")
     )
+
+def test_online_close_removes_only_exact_durable_capability_and_intent(tmp_path: Path) -> None:
+    from tests.test_claude_wake_registration import _client
+
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    other = {**PAYLOAD, "session_ref": "other"}
+    assert _register(registry, tmp_path, PAYLOAD, "open")
+    assert _register(registry, tmp_path, other, "other-open")
+    closed = {
+        "runtime": "claude-code", "session_ref": PAYLOAD["session_ref"],
+        "container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"],
+        "intent_id": "closed", "closed": True,
+    }
+    path = _intent_path(tmp_path, PAYLOAD["session_ref"])
+    path.write_text(json.dumps(closed), encoding="utf-8")
+    http = _client(registry)
+    close_request = {key: closed[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")}
+    mismatch = http.post("/internal/claude-wake/close", json={**close_request, "intent_id": "stale"})
+    assert mismatch.status_code == 400
+    assert path.exists()
+    assert {candidate["session_ref"] for candidate in registry.recovery_candidates()} == {PAYLOAD["session_ref"], "other"}
+
+    assert http.post("/internal/claude-wake/close", json=close_request).status_code == 204
+    assert not path.exists()
+    assert [candidate["session_ref"] for candidate in registry.recovery_candidates()] == ["other"]
+
+
+def test_session_end_outage_preserves_newer_registration_intent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    state_dir = tmp_path / "wake"
+    monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(state_dir))
+    registry = ClaudeWakeRegistry(state_dir=state_dir)
+    assert _register(registry, state_dir, PAYLOAD, "open")
+    session_end = _load_claude_hook("session_end", monkeypatch)
+    common = sys.modules["common"]
+    monkeypatch.setattr(session_end, "read_hook_input", lambda: {"session_id": PAYLOAD["session_ref"], "cwd": str(tmp_path)})
+    monkeypatch.setattr(session_end, "resolve_container_ref", lambda *_: PAYLOAD["container_ref"])
+    monkeypatch.setattr(session_end, "derive_actor_ref", lambda: PAYLOAD["actor_ref"])
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())))
+    session_end.main()
+    closed_path = _intent_path(state_dir, PAYLOAD["session_ref"])
+    closed = json.loads(closed_path.read_text(encoding="utf-8"))
+    assert closed["closed"] is True
+
+    restarted = ClaudeWakeRegistry(state_dir=state_dir)
+    newer = {**PAYLOAD, "token": "new-token"}
+    original_delete = restarted._delete_intent_locked
+
+    def replace_closed_intent(session_ref: str, expected_intent_id: str | None) -> bool:
+        _write_intent(state_dir, newer, "newer")
+        return original_delete(session_ref, expected_intent_id)
+
+    monkeypatch.setattr(restarted, "_delete_intent_locked", replace_closed_intent)
+    restarted.recover_intents()
+    assert restarted.recovery_candidates() == []
+    assert json.loads(closed_path.read_text(encoding="utf-8"))["intent_id"] == "newer"
