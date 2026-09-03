@@ -125,10 +125,11 @@ class ClaudeWakeRegistry:
             )
             if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, key: registration}):
                 return False
+            if self._state_dir is not None and not self._clear_unusable_locked():
+                return False
             self._registrations[key] = registration
             if self._state_dir is not None:
                 self._delete_intent_locked(session_ref, expected_intent_id=intent_id)
-                self._clear_unusable_locked()
                 self.signal_reconcile()
             return True
 
@@ -442,14 +443,16 @@ class ClaudeWakeRegistry:
             pass
         return self._atomic_write(self._unusable, {"unusable": True})
 
-    def _clear_unusable_locked(self) -> None:
+    def _clear_unusable_locked(self) -> bool:
         if self._unusable is None:
-            return
+            return True
         try:
             self._unusable.unlink(missing_ok=True)
-            self._rehydration_refused = False
         except OSError:
-            pass
+            self._rehydration_refused = True
+            return False
+        self._rehydration_refused = False
+        return True
 
     def _atomic_write(self, path: Path, payload: dict) -> bool:
         try:

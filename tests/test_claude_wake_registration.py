@@ -51,6 +51,41 @@ def _client(registry: ClaudeWakeRegistry, peer: tuple[str, int] = ("127.0.0.1", 
     return TestClient(app, client=peer)
 
 
+def test_registration_keeps_intent_when_store_unusable_marker_cannot_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hashlib import sha256
+
+    state_dir = tmp_path / "wake"
+    marker = state_dir / "store-unusable"
+    marker.parent.mkdir()
+    marker.write_text('{"unusable":true}', encoding="utf-8")
+    payload = {**PAYLOAD, "intent_id": "marker-recovery"}
+    intent = state_dir / "intents" / (sha256(PAYLOAD["session_ref"].encode("utf-8")).hexdigest() + ".json")
+    intent.parent.mkdir()
+    intent.write_text(json.dumps(payload), encoding="utf-8")
+    registry = ClaudeWakeRegistry(state_dir=state_dir)
+    original_unlink = Path.unlink
+
+    def fail_marker_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if path == marker:
+            raise OSError("marker remains")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_marker_unlink)
+    response = _client(registry).post("/internal/claude-wake/register", json=payload)
+    assert response.status_code == 409
+    assert json.loads(intent.read_text(encoding="utf-8")) == payload
+    assert registry.recovery_candidates() == []
+    assert (state_dir / "capabilities.json").exists()
+    assert ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates() == []
+
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    registry.recover_intents()
+    assert not marker.exists() and not intent.exists()
+    assert [candidate["state"] for candidate in registry.recovery_candidates()] == ["idle"]
+    assert [candidate["state"] for candidate in ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates()] == ["idle"]
+
 def test_loopback_registration_is_secret_free_and_scope_bound() -> None:
     registry = ClaudeWakeRegistry()
     secret = "never-in-response"
