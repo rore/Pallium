@@ -313,6 +313,7 @@ def _write_wake_intent(payload: dict[str, object]) -> bool:
     session_ref = payload.get("session_ref")
     if not isinstance(session_ref, str):
         return False
+    temporary: Path | None = None
     try:
         CLAUDE_WAKE_INTENTS_DIR.mkdir(parents=True, exist_ok=True)
         if os.name != "nt":
@@ -332,6 +333,11 @@ def _write_wake_intent(payload: dict[str, object]) -> bool:
         os.replace(temporary, target)
         return True
     except (OSError, TypeError, ValueError):
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
         return False
 
 

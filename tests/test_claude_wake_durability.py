@@ -101,6 +101,30 @@ def test_hook_writes_intent_before_loopback_and_keeps_it_after_ambiguous_failure
     saved = json.loads(_intent_path(tmp_path, "session-hook").read_text(encoding="utf-8"))
     assert saved["idle"] is True and isinstance(saved["intent_id"], str)
 
+
+def test_hook_replace_failure_cleans_credentials_before_loopback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    common = _load_claude_hook("common", monkeypatch)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", tmp_path)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", tmp_path / "intents")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/missing/claude.sock")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "test-token")
+    opener_calls: list[bool] = []
+    def fail_replace(source, _target):
+        assert Path(source).exists()
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(common.os, "replace", fail_replace)
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: opener_calls.append(True) or pytest.fail("write-ahead failure must not loop back"))
+    assert not common.register_claude_wake("replace-failure", "git:example/repo", "local", idle=True)
+    assert opener_calls == [] and list((tmp_path / "intents").glob("*.tmp")) == []
+    assert not _intent_path(tmp_path, "replace-failure").exists()
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path)
+    restarted.recover_intents()
+    assert restarted.recovery_candidates() == []
+
+
 def test_closed_intent_removes_capability_after_outage(tmp_path: Path) -> None:
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     assert _register(registry, tmp_path, PAYLOAD, "open")
