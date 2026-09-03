@@ -116,7 +116,7 @@ class TestTransport:
 
         pywintypes = SimpleNamespace(OVERLAPPED=Overlapped)
         win32event = SimpleNamespace(WAIT_OBJECT_0=0, CreateEvent=lambda *_: "event", WaitForSingleObject=lambda *_: 258)
-        win32file = SimpleNamespace(WriteFile=lambda *_: (997, 0), CancelIoEx=lambda handle, overlapped: cancelled.append((handle, overlapped)), CloseHandle=lambda handle: closed.append(handle))
+        win32file = SimpleNamespace(WriteFile=lambda *_: (997, 0), CancelIoEx=lambda handle, overlapped: cancelled.append((handle, overlapped)), GetOverlappedResult=lambda *_: 0, CloseHandle=lambda handle: closed.append(handle))
         winerror = SimpleNamespace(ERROR_IO_PENDING=997)
         assert _windows_write("pipe", b"frame", pywintypes, win32event, win32file, winerror) is False
         assert len(cancelled) == 1 and closed == ["event"]
@@ -608,21 +608,70 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
         _join(schedule_claude_relay_wake(result, scope, registry=registry))
     transport.assert_called_once()
     assert not registry.probe(runtime="claude-code", session_ref="session-test", container_ref="wrong", actor_ref=scope["actor_ref"], transport=transport)
+
+
 def test_windows_write_closes_event_after_cancelled_completion() -> None:
     class Overlapped:
         hEvent = None
+
+    class Aborted(OSError):
+        winerror = 995
+
+    waits = []
     pywintypes = SimpleNamespace(OVERLAPPED=Overlapped)
-    waits = iter([258])
-    win32event = SimpleNamespace(WAIT_OBJECT_0=0, CreateEvent=lambda *_: "event", WaitForSingleObject=lambda *_: next(waits))
+    win32event = SimpleNamespace(WAIT_OBJECT_0=0, CreateEvent=lambda *_: "event", WaitForSingleObject=lambda *_: 258)
     closed = []
+
+    def result(_handle, _overlapped, wait: bool) -> None:
+        waits.append(wait)
+        raise Aborted()
+
     win32file = SimpleNamespace(
-        WriteFile=lambda *_: (997, 0),
-        CancelIoEx=lambda *_: None,
-        GetOverlappedResult=lambda *_: (_ for _ in ()).throw(OSError("ERROR_OPERATION_ABORTED")),
-        CloseHandle=lambda handle: closed.append(handle),
+        WriteFile=lambda *_: (997, 0), CancelIoEx=lambda *_: None,
+        GetOverlappedResult=result, CloseHandle=lambda handle: closed.append(handle),
     )
     assert _windows_write("pipe", b"frame", pywintypes, win32event, win32file, SimpleNamespace(ERROR_IO_PENDING=997)) is False
-    assert closed == ["event"]
+    assert waits == [False] and closed == ["event"]
+
+
+@pytest.mark.parametrize("use_cancel_io_ex", (True, False))
+def test_windows_write_timeout_never_blocks_when_cancellation_stays_pending(use_cancel_io_ex: bool) -> None:
+    class Overlapped:
+        hEvent = None
+
+    class Incomplete(OSError):
+        winerror = 996
+
+    cancellations: list[str] = []
+    waits: list[bool] = []
+    closed = []
+
+    def cancel(label: str):
+        def fail(*_args: object) -> None:
+            cancellations.append(label)
+            raise OSError("cancel failed")
+        return fail
+
+    def still_pending(_handle, _overlapped, wait: bool) -> None:
+        waits.append(wait)
+        if wait:
+            pytest.fail("timeout cleanup must not block for completion")
+        raise Incomplete()
+
+    win32file = SimpleNamespace(
+        WriteFile=lambda *_: (997, 0),
+        CancelIoEx=cancel("ex") if use_cancel_io_ex else None,
+        CancelIo=cancel("io"),
+        GetOverlappedResult=still_pending,
+        CloseHandle=lambda handle: closed.append(handle),
+    )
+    assert _windows_write(
+        "pipe", b"frame", SimpleNamespace(OVERLAPPED=Overlapped),
+        SimpleNamespace(WAIT_OBJECT_0=0, CreateEvent=lambda *_: "event", WaitForSingleObject=lambda *_: 258),
+        win32file, SimpleNamespace(ERROR_IO_PENDING=997),
+    ) is False
+    assert cancellations == ["ex" if use_cancel_io_ex else "io"]
+    assert waits == [False] and closed == []
 
 def test_persisted_claude_d1_d2_d3_actual_hooks(
     client, monkeypatch, tmp_path, capsys,

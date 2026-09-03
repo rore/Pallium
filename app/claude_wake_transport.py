@@ -103,10 +103,10 @@ def _windows_write(handle, data, pywintypes, win32event, win32file, winerror) ->
             except Exception:
                 pass
             try:
-                win32file.GetOverlappedResult(handle, overlapped, True)
+                win32file.GetOverlappedResult(handle, overlapped, False)
                 completed = True
-            except Exception:
-                completed = True
+            except Exception as exc:
+                completed = getattr(exc, "winerror", None) == getattr(winerror, "ERROR_OPERATION_ABORTED", 995)
             return False
         completed = True
         win32file.GetOverlappedResult(handle, overlapped, True)
