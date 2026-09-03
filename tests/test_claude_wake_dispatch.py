@@ -133,14 +133,14 @@ class TestTransport:
         assert len(cancelled) == 1
         assert closed == ["event"]
     @pytest.mark.skipif(os.name != "nt", reason="Windows test")
-    def test_windows_transport_import_failure_returns_false(self) -> None:
+    def test_windows_transport_classifies_missing_endpoint(self) -> None:
         """Windows: win32file import failure returns False."""
         # This test can only run on Windows where win32file may not be available
         # If it is available, this test will naturally pass (the transport will work).
         # The point is to verify that ImportError is caught gracefully.
         result = claude_wake_transport(r"\\.\pipe\nonexistent", "token")
         # Either it works (win32file is installed) or returns False (not installed)
-        assert isinstance(result, bool)
+        assert result in {"accepted", "retryable", "terminal"}
 
 
 class TestDispatch:

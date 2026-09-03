@@ -124,6 +124,7 @@ def schedule_claude_relay_wake(
 
 def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any) -> None:
     """Read persisted exact-scope candidates and schedule only Relay-pending work."""
+    registry.recover_intents()
     for candidate in registry.recovery_candidates():
         try:
             status = relay_service.pending_candidate(
@@ -135,6 +136,15 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
             )
         except Exception:
             continue
+        if candidate["state"] == "wake_inflight":
+            delivery_id = candidate["delivery_id"]
+            if not isinstance(delivery_id, str):
+                continue
+            if not isinstance(status, dict) or status.get("state") != "pending":
+                registry.clear_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], actor_ref=candidate["actor_ref"], delivery_id=delivery_id)
+                continue
+            if not registry.rearm_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], actor_ref=candidate["actor_ref"], delivery_id=delivery_id, grace_seconds=1.0):
+                continue
         if not isinstance(status, dict) or status.get("state") != "pending":
             continue
         delivery_id = status.get("delivery_id")
@@ -154,31 +164,37 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
             registry=registry,
         )
 class ClaudeWakeReconciler:
-    """One app-local Condition/Event loop; no Relay claim or ACK path exists here."""
+    """One app-local Event loop; no Relay claim or ACK path exists here."""
 
     def __init__(self, registry: ClaudeWakeRegistry, relay_service: Any, *, interval_seconds: float = 1.0) -> None:
         self._registry = registry
         self._relay_service = relay_service
         self._interval_seconds = interval_seconds
         self._event = threading.Event()
+        self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        if self._thread is not None:
-            return
-        self._thread = threading.Thread(target=self._run, name="pallium-claude-wake-reconcile", daemon=True)
-        self._thread.start()
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._run, name="pallium-claude-wake-reconcile", daemon=True)
+            self._thread.start()
         self.signal()
 
     def signal(self) -> None:
         self._event.set()
 
+    def stop(self) -> None:
+        self._stop.set()
+        self._event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self._interval_seconds + 1)
+
     def _run(self) -> None:
-        while True:
+        while not self._stop.is_set():
             self._event.wait(timeout=self._interval_seconds)
             self._event.clear()
-            recover_claude_relay_wakes(self._registry, self._relay_service)
-
+            if not self._stop.is_set():
+                recover_claude_relay_wakes(self._registry, self._relay_service)
 
 def start_claude_wake_reconciler(registry: ClaudeWakeRegistry, relay_service: Any) -> ClaudeWakeReconciler | None:
     if not registry.persistent:

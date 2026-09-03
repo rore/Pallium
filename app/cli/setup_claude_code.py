@@ -126,6 +126,7 @@ def _register_hooks(settings: dict) -> dict:
 
     hook_defs = [
         ("SessionStart", "session_start.py", 8),
+        ("SessionEnd", "session_end.py", 8),
         ("UserPromptSubmit", "user_prompt_submit.py", 8),
         ("Stop", "stop.py", 15),
         ("PreCompact", "pre_compact.py", 8),

@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import threading
 import time
-from typing import Callable
+from typing import Callable, Literal
 import unicodedata
 
 RUNTIME = "claude-code"
@@ -35,6 +35,7 @@ class _Registration:
     idle: bool = False
     state: str = "busy"
     delivery_id: str | None = None
+    attempted_at: float | None = None
 
 
 Transport = Callable[[str, str], bool]
@@ -57,8 +58,9 @@ def _safe_session_file(session_ref: str) -> str:
 class ClaudeWakeRegistry:
     """Exact-scope capability state; persistence is trusted-local and fail closed."""
 
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic, state_dir: Path | None = None) -> None:
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic, wall_clock: Callable[[], float] = time.time, state_dir: Path | None = None) -> None:
         self._clock = clock
+        self._wall_clock = wall_clock
         self._lock = threading.RLock()
         self._generation = 0
         self._registrations: dict[tuple[str, str], _Registration] = {}
@@ -67,6 +69,8 @@ class ClaudeWakeRegistry:
         self._intents = state_dir / "intents" if state_dir else None
         self._unusable = state_dir / "store-unusable" if state_dir else None
         self._rehydration_refused = False
+        self._durability_degraded = False
+        self._reconcile_signal: Callable[[], None] | None = None
         if state_dir is not None:
             self._load()
 
@@ -124,6 +128,7 @@ class ClaudeWakeRegistry:
             if self._state_dir is not None:
                 self._delete_intent_locked(session_ref, expected_intent_id=intent_id)
                 self._clear_unusable_locked()
+                self.signal_reconcile()
             return True
 
     def mark_busy(
@@ -180,22 +185,39 @@ class ClaudeWakeRegistry:
                 return False
             self._registrations[key] = consumed
         try:
-            triggered = bool(transport(consumed.socket_path, consumed.token))
+            outcome = transport(consumed.socket_path, consumed.token)
         except Exception:
-            triggered = False
-        if not triggered:
+            outcome = "retryable"
+        if outcome is True:
+            outcome = "accepted"
+        elif outcome is False or outcome not in {"accepted", "retryable", "terminal"}:
+            outcome = "retryable"
+        if outcome != "accepted":
             with self._lock:
                 current = self._active_locked(runtime, session_ref)
                 if current is not None and current.generation == consumed.generation:
-                    idle = replace(current, idle=True, state="idle", delivery_id=None)
-                    if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref): idle}):
-                        self._registrations[(runtime, session_ref)] = idle
-        return triggered
+                    if outcome == "terminal":
+                        self.close(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
+                    else:
+                        idle = replace(current, idle=True, state="idle", delivery_id=None, attempted_at=None)
+                        if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref): idle}):
+                            self._registrations[(runtime, session_ref)] = idle
+        return outcome == "accepted"
 
     @property
     def persistent(self) -> bool:
         return self._state_dir is not None
 
+    @property
+    def durability_degraded(self) -> bool:
+        return self._durability_degraded
+
+    def set_reconcile_signal(self, signal: Callable[[], None] | None) -> None:
+        self._reconcile_signal = signal
+
+    def signal_reconcile(self) -> None:
+        if self._reconcile_signal is not None:
+            self._reconcile_signal()
     def recovery_candidates(self) -> list[dict[str, str | None]]:
         """Return scope-only eligible records; credentials never leave the registry."""
         with self._lock:
@@ -209,6 +231,7 @@ class ClaudeWakeRegistry:
                     "actor_ref": registration.actor_ref,
                     "state": registration.state,
                     "delivery_id": registration.delivery_id,
+                    "attempted_at": registration.attempted_at,
                 }
                 for registration in self._registrations.values()
                 if registration.state in {"idle", "wake_inflight"}
@@ -229,13 +252,30 @@ class ClaudeWakeRegistry:
                 if intent.get("closed") is True:
                     session_ref = intent.get("session_ref")
                     if isinstance(session_ref, str):
-                        self._remove_locked(session_ref)
+                        self.close(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
                     continue
                 try:
                     self.register(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle", "intent_id")})
                 except (KeyError, ValueError):
                     continue
 
+    def rearm_inflight(self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str, delivery_id: str, grace_seconds: float) -> bool:
+        """Make an observed pending inflight delivery eligible after bounded grace."""
+        with self._lock:
+            current = self._active_locked(runtime, session_ref)
+            if (current is None or current.container_ref != container_ref or current.actor_ref != actor_ref
+                    or current.state != "wake_inflight" or current.delivery_id != delivery_id
+                    or current.attempted_at is None or self._wall_clock() - current.attempted_at < grace_seconds):
+                return False
+            idle = replace(current, generation=current.generation + 1, idle=True, state="idle", delivery_id=None, attempted_at=None)
+            if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, (runtime, session_ref): idle}):
+                return False
+            self._generation = max(self._generation, idle.generation)
+            self._registrations[(runtime, session_ref)] = idle
+            return True
+
+    def clear_inflight(self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str, delivery_id: str) -> bool:
+        return self.rearm_inflight(runtime=runtime, session_ref=session_ref, container_ref=container_ref, actor_ref=actor_ref, delivery_id=delivery_id, grace_seconds=0)
     def close(
         self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str, intent_id: str | None = None
     ) -> bool:
@@ -268,6 +308,7 @@ class ClaudeWakeRegistry:
             return False
         self._registrations = updated
         self._delete_intent_locked(session_ref, expected_intent_id=None)
+        self.signal_reconcile()
         return True
 
     def _active_locked(self, runtime: str, session_ref: str) -> _Registration | None:
@@ -304,21 +345,34 @@ class ClaudeWakeRegistry:
         for item in raw["registrations"]:
             if not isinstance(item, dict):
                 continue
-            try:
-                registration = _Registration(**item)
-            except TypeError:
+            if not self._valid_loaded_item(item):
                 continue
-            if self._valid_registration(registration.runtime, registration.session_ref, registration.container_ref, registration.actor_ref, registration.socket_path, registration.token) and registration.state in {"idle", "busy", "wake_inflight"}:
+            registration = _Registration(**item)
+            if self._valid_registration(registration.runtime, registration.session_ref, registration.container_ref, registration.actor_ref, registration.socket_path, registration.token):
                 loaded[(registration.runtime, registration.session_ref)] = registration
                 self._generation = max(self._generation, registration.generation)
         self._registrations = loaded
 
+    @staticmethod
+    def _valid_loaded_item(item: dict) -> bool:
+        state = item.get("state")
+        delivery_id = item.get("delivery_id")
+        attempted_at = item.get("attempted_at")
+        return (
+            isinstance(item.get("generation"), int) and item["generation"] >= 0
+            and isinstance(item.get("idle"), bool)
+            and state in {"idle", "busy", "wake_inflight"}
+            and item["idle"] == (state == "idle")
+            and ((state == "wake_inflight" and _valid(delivery_id, 128) and isinstance(attempted_at, (int, float)))
+                 or (state != "wake_inflight" and delivery_id is None and attempted_at is None))
+            and all(key in item for key in ("runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "expires_at"))
+        )
     def _ensure_capacity_locked(self) -> bool:
         if len(self._registrations) < MAX_REGISTRATIONS:
             return True
-        # Capacity cleanup is deliberately non-admitting: only an absent POSIX path is proof.
+        # Capacity cleanup is deliberately non-admitting: only an absent endpoint is proof.
         for key, registration in list(self._registrations.items()):
-            if os.name == "nt" or Path(registration.socket_path).exists():
+            if not self._endpoint_is_provably_absent(registration.socket_path):
                 continue
             updated = dict(self._registrations)
             del updated[key]
@@ -327,6 +381,21 @@ class ClaudeWakeRegistry:
                 return True
         return False
 
+    @staticmethod
+    def _endpoint_is_provably_absent(socket_path: str) -> bool:
+        if os.name != "nt":
+            return not Path(socket_path).exists()
+        try:
+            import pywintypes
+            import win32pipe
+            import winerror
+            try:
+                win32pipe.WaitNamedPipe(socket_path, 0)
+                return False
+            except pywintypes.error as exc:
+                return exc.winerror == winerror.ERROR_FILE_NOT_FOUND
+        except Exception:
+            return False
     def _intent_path(self, session_ref: str) -> Path | None:
         return self._intents / _safe_session_file(session_ref) if self._intents else None
 
@@ -361,16 +430,16 @@ class ClaudeWakeRegistry:
         payload = {"version": 1, "registrations": [asdict(item) for item in registrations.values()]}
         return self._atomic_write(self._canonical, payload)
 
-    def _quarantine_or_mark_unusable_locked(self) -> None:
+    def _quarantine_or_mark_unusable_locked(self) -> bool:
         assert self._canonical is not None and self._unusable is not None
         try:
             if self._canonical.exists():
                 self._canonical.replace(self._canonical.with_suffix(".unusable"))
-                self._atomic_write(self._unusable, {"unusable": True})
+                return self._atomic_write(self._unusable, {"unusable": True})
                 return
         except OSError:
             pass
-        self._atomic_write(self._unusable, {"unusable": True})
+        return self._atomic_write(self._unusable, {"unusable": True})
 
     def _clear_unusable_locked(self) -> None:
         if self._unusable is None:

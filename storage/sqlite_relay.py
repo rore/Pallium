@@ -632,7 +632,7 @@ class SQLiteRelayMixin:
             if row is None:
                 return None
             delivery, message = row
-            state = "expired" if _now(message.expires_at) <= current and delivery.state in {"pending", "claimed"} else delivery.state
+            state = "expired" if _now(message.expires_at) <= current and delivery.state in {"pending", "claimed"} else ("pending" if delivery.state == "claimed" and delivery.lease_expires_at is not None and _now(delivery.lease_expires_at) <= current else delivery.state)
             return {"delivery_id": delivery.id, "state": state}
     def relay_message_status(
         self,
