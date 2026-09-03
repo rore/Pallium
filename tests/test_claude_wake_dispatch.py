@@ -49,67 +49,65 @@ def _wake_result(session_ref: str, delivery_id: str = "delivery-1") -> dict:
     }
 
 class TestTransport:
-    """Transport tests: write auth + frame, handle errors."""
+    """Transport tests: typed outcomes, auth frames, and platform failures."""
 
     @pytest.mark.skipif(os.name == "nt", reason="Unix socket test")
     def test_posix_transport_writes_auth_and_frame(self, tmp_path: Path) -> None:
-        """POSIX: connect, write auth line, write peer frame."""
         socket_path = str(tmp_path / "test.sock")
         received: list[str] = []
+        ready = threading.Event()
         done = threading.Event()
 
-        def listener():
+        def listener() -> None:
             try:
                 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 server.bind(socket_path)
                 server.listen(1)
+                ready.set()
                 conn, _ = server.accept()
                 data = b""
-                while True:
-                    chunk = conn.recv(4096)
-                    if not chunk:
-                        break
+                while chunk := conn.recv(4096):
                     data += chunk
                 received.extend(data.decode("utf-8").split("\n"))
                 conn.close()
                 server.close()
-            except Exception:
-                pass
             finally:
                 done.set()
 
         thread = threading.Thread(target=listener, daemon=True)
         thread.start()
-        import time
-        time.sleep(0.1)  # Let listener bind
-
-        result = claude_wake_transport(socket_path, "test-token")
-        done.wait(timeout=2)
+        assert ready.wait(timeout=1)
+        assert claude_wake_transport(socket_path, "test-token") == "accepted"
+        assert done.wait(timeout=2)
         thread.join(timeout=1)
-
-        assert result is True
         lines = [line for line in received if line.strip()]
-        assert len(lines) >= 2
-
-        auth = json.loads(lines[0])
-        assert auth["type"] == "auth"
-        assert auth["token"] == "test-token"
-
-        frame = json.loads(lines[1])
-        assert frame["msgV"] == 1
-        assert frame["type"] == "user"
-        assert frame["message"]["role"] == "user"
-        assert frame["priority"] == "next"
+        auth, frame = (json.loads(line) for line in lines[:2])
+        assert auth == {"type": "auth", "token": "test-token"}
+        assert frame["msgV"] == 1 and frame["type"] == "user"
+        assert frame["message"]["role"] == "user" and frame["priority"] == "next"
         assert frame["from"] == "pallium-relay"
 
     @pytest.mark.skipif(os.name == "nt", reason="Unix socket test")
-    def test_posix_transport_bad_socket_path_returns_false(self) -> None:
-        """POSIX: nonexistent socket returns False, no raise."""
-        result = claude_wake_transport("/nonexistent/socket.sock", "token")
-        assert result is False
+    def test_posix_transport_missing_path_is_terminal(self) -> None:
+        assert claude_wake_transport("/nonexistent/socket.sock", "token") == "terminal"
+
+    @pytest.mark.parametrize("error", [ConnectionRefusedError(), socket.timeout(), PermissionError()])
+    def test_posix_transport_classifies_uncertainty_retryable(self, monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+        import app.claude_wake_transport as transport
+
+        class BrokenSocket:
+            def settimeout(self, _seconds):
+                pass
+            def connect(self, _path):
+                raise error
+            def close(self):
+                pass
+
+        monkeypatch.setattr(transport.socket, "AF_UNIX", 1, raising=False)
+        monkeypatch.setattr(transport.socket, "socket", lambda *_: BrokenSocket())
+        assert transport._posix_transport("ignored", "token") == "retryable"
 
     def test_windows_write_cancels_after_bounded_timeout(self) -> None:
-        """Pending named-pipe writes must not block forever."""
         cancelled = []
         closed = []
 
@@ -117,31 +115,51 @@ class TestTransport:
             hEvent = None
 
         pywintypes = SimpleNamespace(OVERLAPPED=Overlapped)
-        win32event = SimpleNamespace(
-            WAIT_OBJECT_0=0,
-            CreateEvent=lambda *_args: "event",
-            WaitForSingleObject=lambda *_args: 258,
-        )
-        win32file = SimpleNamespace(
-            WriteFile=lambda *_args: (997, 0),
-            CancelIoEx=lambda handle, overlapped: cancelled.append((handle, overlapped)),
-            CloseHandle=lambda handle: closed.append(handle),
-        )
+        win32event = SimpleNamespace(WAIT_OBJECT_0=0, CreateEvent=lambda *_: "event", WaitForSingleObject=lambda *_: 258)
+        win32file = SimpleNamespace(WriteFile=lambda *_: (997, 0), CancelIoEx=lambda handle, overlapped: cancelled.append((handle, overlapped)), CloseHandle=lambda handle: closed.append(handle))
         winerror = SimpleNamespace(ERROR_IO_PENDING=997)
-
         assert _windows_write("pipe", b"frame", pywintypes, win32event, win32file, winerror) is False
-        assert len(cancelled) == 1
-        assert closed == ["event"]
-    @pytest.mark.skipif(os.name != "nt", reason="Windows test")
-    def test_windows_transport_classifies_missing_endpoint(self) -> None:
-        """Windows: win32file import failure returns False."""
-        # This test can only run on Windows where win32file may not be available
-        # If it is available, this test will naturally pass (the transport will work).
-        # The point is to verify that ImportError is caught gracefully.
-        result = claude_wake_transport(r"\\.\pipe\nonexistent", "token")
-        # Either it works (win32file is installed) or returns False (not installed)
-        assert result in {"accepted", "retryable", "terminal"}
+        assert len(cancelled) == 1 and closed == ["event"]
 
+    def test_windows_transport_clean_write_is_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import sys
+        import app.claude_wake_transport as transport
+
+        writes: list[bytes] = []
+        monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace())
+        monkeypatch.setitem(sys.modules, "win32event", SimpleNamespace())
+        monkeypatch.setitem(sys.modules, "winerror", SimpleNamespace())
+        monkeypatch.setitem(sys.modules, "win32file", SimpleNamespace(GENERIC_WRITE=1, OPEN_EXISTING=2, FILE_FLAG_OVERLAPPED=4, CreateFile=lambda *_: "pipe", CloseHandle=lambda *_: None))
+        monkeypatch.setattr(transport, "_windows_write", lambda _handle, data, *_: writes.append(data) or True)
+        assert transport._windows_transport(r"\\.\pipe\claude", "token") == "accepted"
+        auth, frame = (json.loads(data) for data in writes)
+        assert auth["type"] == "auth" and frame["type"] == "user"
+
+    @pytest.mark.parametrize("code, expected", [(2, "terminal"), (231, "retryable"), (121, "retryable"), (5, "retryable")])
+    def test_windows_transport_classifies_fake_open_errors(self, monkeypatch: pytest.MonkeyPatch, code: int, expected: str) -> None:
+        import sys
+        import app.claude_wake_transport as transport
+
+        class PipeError(Exception):
+            def __init__(self, winerror):
+                self.winerror = winerror
+
+        def create_file(*_args):
+            raise PipeError(code)
+
+        monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace(error=PipeError))
+        monkeypatch.setitem(sys.modules, "win32event", SimpleNamespace())
+        monkeypatch.setitem(sys.modules, "winerror", SimpleNamespace(ERROR_FILE_NOT_FOUND=2))
+        monkeypatch.setitem(sys.modules, "win32file", SimpleNamespace(GENERIC_WRITE=1, OPEN_EXISTING=2, FILE_FLAG_OVERLAPPED=4, CreateFile=create_file, CloseHandle=lambda *_: None))
+        assert transport._windows_transport(r"\\.\pipe\claude", "token") == expected
+
+    def test_windows_transport_import_failure_is_retryable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins
+        import app.claude_wake_transport as transport
+
+        original_import = builtins.__import__
+        monkeypatch.setattr(builtins, "__import__", lambda name, *args, **kwargs: (_ for _ in ()).throw(ImportError()) if name == "pywintypes" else original_import(name, *args, **kwargs))
+        assert transport._windows_transport(r"\\.\pipe\claude", "token") == "retryable"
 
 class TestDispatch:
     """Dispatch tests: route to correct handler, malformed=no-op."""
@@ -346,10 +364,10 @@ def test_wake_worker_returns_without_waiting_and_logs_credential_free_outcome(
     started = threading.Event()
     release = threading.Event()
 
-    def transport(*_: object) -> bool:
+    def transport(*_: object) -> str:
         started.set()
         assert release.wait(timeout=1)
-        return True
+        return "accepted"
 
     monkeypatch.setattr(wake, "claude_wake_transport", transport)
     caplog.set_level(logging.INFO, logger="app.claude_wake")
@@ -377,11 +395,11 @@ def test_wake_worker_coalesces_concurrent_sends(monkeypatch: pytest.MonkeyPatch)
     workers: list[threading.Thread | None] = []
     calls: list[bool] = []
 
-    def transport(*_: object) -> bool:
+    def transport(*_: object) -> str:
         calls.append(True)
         started.set()
         assert release.wait(timeout=1)
-        return True
+        return "accepted"
 
     monkeypatch.setattr(wake, "claude_wake_transport", transport)
 
@@ -412,12 +430,12 @@ def test_transport_failure_rearms_only_the_same_generation(monkeypatch: pytest.M
     registry.register(**{**PAYLOAD, "idle": True})
     calls = 0
 
-    def transport(*_: object) -> bool:
+    def transport(*_: object) -> str:
         nonlocal calls
         calls += 1
         if calls == 1:
             raise OSError("transport failed")
-        return True
+        return "accepted"
 
     monkeypatch.setattr(wake, "claude_wake_transport", transport)
     scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
@@ -434,10 +452,10 @@ def test_failed_old_generation_cannot_rearm_replacement(monkeypatch: pytest.Monk
     started = threading.Event()
     release = threading.Event()
 
-    def transport(*_: object) -> bool:
+    def transport(*_: object) -> str:
         started.set()
         assert release.wait(timeout=1)
-        return False
+        return "retryable"
 
     monkeypatch.setattr(wake, "claude_wake_transport", transport)
     scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
@@ -480,11 +498,11 @@ def test_relay_messages_response_does_not_wait_for_claude_transport(
     release = threading.Event()
     worker_threads: list[threading.Thread] = []
 
-    def transport(*_: object) -> bool:
+    def transport(*_: object) -> str:
         worker_threads.append(threading.current_thread())
         started.set()
         assert release.wait(timeout=1)
-        return True
+        return "accepted"
 
     monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
     response = http.post("/relay/messages", json={

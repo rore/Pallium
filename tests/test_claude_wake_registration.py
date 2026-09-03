@@ -111,13 +111,13 @@ def test_replace_expiry_and_callback_reentry_are_generation_safe() -> None:
 
     completed = threading.Event()
 
-    def transport(_socket_path: str, _token: str) -> bool:
+    def transport(_socket_path: str, _token: str) -> str:
         worker = threading.Thread(target=lambda: registry.register(**{**PAYLOAD, "token": "third"}))
         worker.start()
         worker.join(timeout=1)
         assert not worker.is_alive()
         completed.set()
-        return True
+        return "accepted"
 
     assert registry.probe(
         runtime=PAYLOAD["runtime"],
@@ -485,8 +485,8 @@ def test_explicit_idle_state_is_one_shot_and_scope_bound() -> None:
     registry = ClaudeWakeRegistry()
     registry.register(**{**PAYLOAD, "idle": False})
 
-    def transport(*_: object) -> bool:
-        return True
+    def transport(*_: object) -> str:
+        return "accepted"
 
     assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
     registry.register(**{**PAYLOAD, "idle": True})

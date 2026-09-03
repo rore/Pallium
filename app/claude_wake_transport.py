@@ -16,7 +16,7 @@ def claude_wake_transport(socket_path: str, token: str) -> str:
         token: Authentication token (never stored or logged).
 
     Returns:
-        True on clean write, False on any error (swallows all exceptions).
+        ``"accepted"`` on clean write, ``"terminal"`` only for a proven missing endpoint, and ``"retryable"`` for all uncertainty.
 
     Platform-specific:
         POSIX: AF_UNIX socket with ~2s timeout.

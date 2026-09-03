@@ -353,3 +353,41 @@ def test_session_end_outage_preserves_newer_registration_intent(tmp_path: Path, 
     restarted.recover_intents()
     assert restarted.recovery_candidates() == []
     assert json.loads(closed_path.read_text(encoding="utf-8"))["intent_id"] == "newer"
+
+@pytest.mark.parametrize(("present", "accepted"), [(False, True), (True, False)])
+def test_posix_capacity_reclaims_only_provably_absent_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, present: bool, accepted: bool) -> None:
+    import core.claude_wake as wake
+
+    monkeypatch.setattr(wake, "MAX_REGISTRATIONS", 1)
+    state_dir = tmp_path / "wake"
+    endpoint = tmp_path / "endpoint.sock"
+    if present:
+        endpoint.write_text("present", encoding="utf-8")
+    registry = ClaudeWakeRegistry(state_dir=state_dir)
+    assert _register(registry, state_dir, {**PAYLOAD, "socket_path": str(endpoint)}, "old")
+    monkeypatch.setattr(wake.os, "name", "posix")
+    monkeypatch.setattr(registry, "probe", lambda *_args, **_kwargs: pytest.fail("capacity cleanup must not admit a turn"))
+    assert _register(registry, state_dir, {**PAYLOAD, "session_ref": "new"}, "new") is accepted
+    assert [candidate["session_ref"] for candidate in registry.recovery_candidates()] == (["new"] if accepted else [PAYLOAD["session_ref"]])
+
+
+@pytest.mark.parametrize(("code", "accepted"), [(2, True), (231, False), (121, False)])
+def test_windows_capacity_reclaims_only_file_not_found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int, accepted: bool) -> None:
+    import sys
+    import core.claude_wake as wake
+
+    class PipeError(Exception):
+        def __init__(self, winerror):
+            self.winerror = winerror
+
+    monkeypatch.setattr(wake, "MAX_REGISTRATIONS", 1)
+    state_dir = tmp_path / "wake"
+    registry = ClaudeWakeRegistry(state_dir=state_dir)
+    assert _register(registry, state_dir, {**PAYLOAD, "socket_path": r"\\.\pipe\old"}, "old")
+    monkeypatch.setattr(wake.os, "name", "nt")
+    monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace(error=PipeError))
+    monkeypatch.setitem(sys.modules, "winerror", SimpleNamespace(ERROR_FILE_NOT_FOUND=2))
+    monkeypatch.setitem(sys.modules, "win32pipe", SimpleNamespace(WaitNamedPipe=lambda *_: (_ for _ in ()).throw(PipeError(code))))
+    monkeypatch.setattr(registry, "probe", lambda *_args, **_kwargs: pytest.fail("capacity cleanup must not admit a turn"))
+    assert _register(registry, state_dir, {**PAYLOAD, "session_ref": "new", "socket_path": r"\\.\pipe\new"}, "new") is accepted
+    assert [candidate["session_ref"] for candidate in registry.recovery_candidates()] == (["new"] if accepted else [PAYLOAD["session_ref"]])

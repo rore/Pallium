@@ -86,7 +86,7 @@ def schedule_claude_relay_wake(
         started = time.monotonic()
         attempted = False
         try:
-            def transport(socket_path: str, token: str) -> bool:
+            def transport(socket_path: str, token: str) -> str:
                 nonlocal attempted
                 attempted = True
                 return claude_wake_transport(socket_path, token)

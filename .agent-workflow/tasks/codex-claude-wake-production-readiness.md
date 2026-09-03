@@ -88,3 +88,4 @@ Approved by user 2026-09-03: "you have blanket approval for all tasks you get fr
 2026-09-03 — S1B slice 3 adds a real app-lifespan, post-start lost-loopback intent E2E: public Relay send signals reconciliation, imports the durable intent, invokes native transport once, leaves Relay pending, and joins the reconciler on shutdown.
 2026-09-03 — S1B slice 4 adds a real SQLite expired-lease recovery E2E: read-only effective pending rechecks a stale claim, rollback rearms one native retry, and preserves the Relay claim/token/receipt/attempt row until normal turn reclaim.
 2026-09-03 — S1B slice 5 qualifies SessionEnd setup, exact online close, and outage close-intent recovery: a stale close removes only its old capability while preserving a newer same-session registration intent.
+2026-09-03 — S1B slice 6 aligns typed native outcomes with deterministic POSIX/Windows fake transport and non-admitting capacity coverage; only proven missing endpoints are terminal/reclaimed.

@@ -39,7 +39,7 @@ class _Registration:
     attempted_at: float | None = None
 
 
-Transport = Callable[[str, str], bool]
+Transport = Callable[[str, str], Literal["accepted", "retryable", "terminal"]]
 
 
 def _valid(value: object, maximum: int) -> bool:
