@@ -137,6 +137,47 @@ def test_persistent_register_rejection_is_http_conflict(tmp_path: Path, monkeypa
     response = _client(registry).post("/internal/claude-wake/register", json={**PAYLOAD, "intent_id": "rejected"})
     assert response.status_code == 409
 
+def test_idle_registration_write_failure_rejects_and_preserves_recoverable_intent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_claude_wake_registration import _client
+
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    _write_intent(tmp_path, PAYLOAD, "idle")
+    monkeypatch.setattr(registry, "_write_canonical_locked", lambda *_: False)
+    assert _client(registry).post("/internal/claude-wake/register", json={**PAYLOAD, "intent_id": "idle"}).status_code == 409
+    assert registry.recovery_candidates() == []
+    assert json.loads(_intent_path(tmp_path, PAYLOAD["session_ref"]).read_text(encoding="utf-8"))["intent_id"] == "idle"
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path)
+    restarted.recover_intents()
+    assert restarted.recovery_candidates()[0]["state"] == "idle"
+
+
+def test_inflight_write_failure_never_transports_or_claims_relay(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.relay import RelayService
+
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    relay = RelayService(client.app.state.pallium_service._storage)
+    relay.turn(runtime="codex", session_ref="sender", **scope)
+    relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
+    sent = relay.send(sender_runtime="codex", sender_session_ref="sender", recipient="claude-code:" + PAYLOAD["session_ref"], payload="pending", **scope)
+    before = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(registry, "_write_canonical_locked", lambda *_: False)
+    assert not registry.probe(
+        runtime="claude-code", session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        delivery_id=before["delivery_id"], transport=lambda path, token: calls.append((path, token)) or "accepted",
+    )
+    assert calls == []
+    candidates = registry.recovery_candidates()
+    assert [(item["state"], item["delivery_id"]) for item in candidates] == [("idle", None)]
+    assert [(item["state"], item["delivery_id"]) for item in ClaudeWakeRegistry(state_dir=tmp_path).recovery_candidates()] == [("idle", None)]
+    after = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+    assert after["state"] == "pending" and after["claim_token"] is None and after["receipt"] is None and after["attempts"] == 0
+
 
 @pytest.mark.parametrize("item", [
     {"runtime": "claude-code", "session_ref": "s", "container_ref": "c", "actor_ref": "a", "socket_path": "p", "token": "t", "generation": "bad", "idle": True, "state": "idle", "delivery_id": None, "attempted_at": None, "expires_at": 1},
