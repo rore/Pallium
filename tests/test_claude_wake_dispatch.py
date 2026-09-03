@@ -1035,7 +1035,7 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
 
 def test_persisted_idle_wakes_once_after_real_app_restart(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
     from fastapi.testclient import TestClient
 
@@ -1093,4 +1093,65 @@ def test_persisted_idle_wakes_once_after_real_app_restart(
         assert delivery["claim_token"] is None and delivery["receipt"] is None and delivery["attempts"] == 0
         reconciler = app_b.state._claude_wake_reconciler
         assert reconciler is not None
+        registry = app_b.state.claude_wake_registry
+        registry.set_reconcile_signal(None)
+        stop = _load_claude_hook("stop", monkeypatch)
+        monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
+        monkeypatch.setattr(stop, "derive_actor_ref", lambda: scope["actor_ref"])
+        monkeypatch.setattr(stop, "read_hook_input", lambda: {
+            "session_id": "restart-target", "cwd": str(tmp_path), "transcript_path": "",
+        })
+        registrations: list[dict[str, object]] = []
+        claimed_ids: list[list[str]] = []
+        states_before_ack: list[str] = []
+        acknowledged_ids: list[str] = []
+
+        def register(session: object, container: object, actor: object, *, idle: bool = False) -> bool:
+            registration = {
+                **PAYLOAD, "session_ref": session, "container_ref": container,
+                "actor_ref": actor, "idle": idle, "intent_id": f"stop-{len(registrations)}",
+            }
+            registrations.append(registration)
+            assert common._write_wake_intent(registration)
+            return http_b.post("/internal/claude-wake/register", json=registration).status_code == 204
+
+        def relay(method: str, path: str, body: dict[str, object], *, timeout: float) -> object:
+            response = http_b.request(method, path, json=body)
+            assert response.status_code == 200
+            result = response.json() if response.content else None
+            if path == "/relay/turn":
+                claimed_ids.append([item["delivery_id"] for item in result["deliveries"]])
+            return result
+
+        def acknowledge(deliveries: list[dict[str, object]], **_kwargs: object) -> list[dict[str, object]]:
+            for item in deliveries:
+                status = http_b.get(f"/relay/messages/{sent['message_id']}", params=scope).json()["deliveries"][0]
+                states_before_ack.append(status["state"])
+                response = http_b.post("/relay/deliveries/ack", json={
+                    "delivery_id": item["delivery_id"], "claim_token": item["claim_token"], **scope,
+                })
+                assert response.status_code == 200
+                acknowledged_ids.append(item["delivery_id"])
+            return deliveries
+
+        monkeypatch.setattr(stop, "register_claude_wake", register)
+        monkeypatch.setattr(stop, "relay_request", relay)
+        monkeypatch.setattr(stop, "acknowledge_relay", acknowledge)
+        with pytest.raises(SystemExit) as exited:
+            stop.main()
+        assert exited.value.code == 2
+        emitted = capsys.readouterr().err
+        assert "persisted wake" in emitted and "codex" in emitted
+        assert claimed_ids == [[delivery["delivery_id"]]]
+        assert states_before_ack == ["claimed"] and acknowledged_ids == [delivery["delivery_id"]]
+        delivered = http_b.get(f"/relay/messages/{sent['message_id']}", params=scope).json()["deliveries"][0]
+        assert delivered["state"] == "delivered" and delivered["attempts"] == 1
+
+        stop.main()
+        assert capsys.readouterr().err == ""
+        assert claimed_ids == [[delivery["delivery_id"]], []]
+        assert acknowledged_ids == [delivery["delivery_id"]]
+        candidates = registry.recovery_candidates()
+        assert [candidate["session_ref"] for candidate in candidates] == ["restart-target"]
+        assert all(registration["idle"] is True for registration in registrations)
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
