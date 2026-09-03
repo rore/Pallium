@@ -597,6 +597,43 @@ class SQLiteRelayMixin:
             "deliveries": [_delivery_view(row, message) for row in deliveries],
         }
 
+    def relay_pending_candidate(
+        self,
+        *,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        actor_ref: str,
+        delivery_id: str | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Read exact-scope Relay state without claiming, ACKing, or admitting a turn."""
+        current = _now(now)
+        with self._relay_session_factory() as db:
+            statement = (
+                select(RelayDeliveryRecord, RelayMessageRecord)
+                .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                .where(
+                    RelayDeliveryRecord.recipient_runtime == runtime,
+                    RelayDeliveryRecord.recipient_session_ref == session_ref,
+                    RelayMessageRecord.container_ref == container_ref,
+                    RelayMessageRecord.actor_ref == actor_ref,
+                )
+                .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
+            )
+            if delivery_id is not None:
+                statement = statement.where(RelayDeliveryRecord.id == delivery_id)
+            else:
+                statement = statement.where(
+                    RelayDeliveryRecord.state == "pending",
+                    RelayMessageRecord.expires_at > current,
+                )
+            row = db.execute(statement).first()
+            if row is None:
+                return None
+            delivery, message = row
+            state = "expired" if message.expires_at <= current and delivery.state in {"pending", "claimed"} else delivery.state
+            return {"delivery_id": delivery.id, "state": state}
     def relay_message_status(
         self,
         *,

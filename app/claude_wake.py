@@ -6,7 +6,7 @@ import logging
 import re
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.claude_wake_transport import claude_wake_transport
 
@@ -97,6 +97,7 @@ def schedule_claude_relay_wake(
                 container_ref=container_ref,
                 actor_ref=actor_ref,
                 transport=transport,
+                delivery_id=delivery_id,
             )
             category = "trigger_written" if triggered else (
                 "transport_failed" if attempted else "not_eligible"
@@ -119,3 +120,36 @@ def schedule_claude_relay_wake(
         _log_outcome(delivery_id, session_ref, "worker_start_failed", started)
         return None
     return worker
+
+
+def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any) -> None:
+    """Read persisted exact-scope candidates and schedule only Relay-pending work."""
+    for candidate in registry.recovery_candidates():
+        try:
+            status = relay_service.pending_candidate(
+                runtime="claude-code",
+                session_ref=candidate["session_ref"],
+                container_ref=candidate["container_ref"],
+                actor_ref=candidate["actor_ref"],
+                delivery_id=candidate["delivery_id"] if candidate["state"] == "wake_inflight" else None,
+            )
+        except Exception:
+            continue
+        if not isinstance(status, dict) or status.get("state") != "pending":
+            continue
+        delivery_id = status.get("delivery_id")
+        if not isinstance(delivery_id, str) or not delivery_id:
+            continue
+        schedule_claude_relay_wake(
+            {
+                "recipient": "claude-code:" + str(candidate["session_ref"]),
+                "deliveries": [{
+                    "delivery_id": delivery_id,
+                    "state": "pending",
+                    "recipient_runtime": "claude-code",
+                    "recipient_session_ref": candidate["session_ref"],
+                }],
+            },
+            {"container_ref": candidate["container_ref"], "actor_ref": candidate["actor_ref"]},
+            registry=registry,
+        )

@@ -482,6 +482,8 @@ def create_router(
                 "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token",
             }, {
                 "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle",
+            }, {
+                "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle", "intent_id",
             }):
                 raise ValueError
             payload.setdefault("idle", False)

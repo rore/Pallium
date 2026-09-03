@@ -267,6 +267,27 @@ class RelayService:
             now=now,
         )
 
+    def pending_candidate(
+        self,
+        *,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        actor_ref: str,
+        delivery_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Read one exact-scope candidate without touching Relay delivery state."""
+        container, actor = self._scope(container_ref, actor_ref)
+        query = getattr(self._store, "relay_pending_candidate", None)
+        if not callable(query):
+            raise RelayUnavailableError("relay pending-candidate query is not supported by the configured storage")
+        return query(
+            runtime=validate_runtime(runtime),
+            session_ref=_opaque(session_ref, "session_ref"),
+            container_ref=container,
+            actor_ref=actor,
+            delivery_id=None if delivery_id is None else _opaque(delivery_id, "delivery_id", maximum=128),
+        )
     def message_status(self, *, message_id: str, container_ref: str, actor_ref: str) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
         return self._store.relay_message_status(

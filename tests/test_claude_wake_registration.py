@@ -166,7 +166,7 @@ def test_session_start_and_stop_refresh_before_early_return(monkeypatch: pytest.
     monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
     monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: stop_calls.append((args, kwargs)))
     stop.main()
-    assert stop_calls == [(('session-1', 'git:example/repo', 'local'), {'idle': True})]
+    assert stop_calls == [(('session-1', 'git:example/repo', 'local'), {'idle': True})] * 2
 
 
 def test_hook_registration_suppresses_credential_on_transport_failure(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -413,7 +413,7 @@ def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest
     elif case == "oversized":
         monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(assistant_text="x" * 20_001, tool_calls=[]))
     stop.main()
-    assert calls == [(('session-1', 'git:example/repo', 'local'), {'idle': True})]
+    assert calls == [(('session-1', 'git:example/repo', 'local'), {'idle': True})] * 2
 
 
 def test_usage_audit_failure_is_generic_and_later_rows_continue(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -479,7 +479,7 @@ def test_claude_hook_lifecycle_surfaces_registration_turn_and_stop(monkeypatch) 
     monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: calls.append(("stop", args)) or True)
     monkeypatch.setattr(stop, "read_turn", lambda *_: None)
     stop.main()
-    assert [entry[0] for entry in calls] == ["start", "prompt", "stop"]
+    assert [entry[0] for entry in calls] == ["start", "prompt", "stop", "stop"]
     assert calls[1][2] == "/relay/turn"
 def test_explicit_idle_state_is_one_shot_and_scope_bound() -> None:
     registry = ClaudeWakeRegistry()

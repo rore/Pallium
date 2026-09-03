@@ -9,7 +9,7 @@ from typing import Any
 from api.routes import create_router
 from core.claude_wake import ClaudeWakeRegistry
 from app.codex_wake import mark_codex_relay_wake_admitted, schedule_codex_relay_wake
-from app.claude_wake import schedule_claude_relay_wake
+from app.claude_wake import recover_claude_relay_wakes, schedule_claude_relay_wake
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.relay import RelayService, RelayUnavailableError
@@ -518,7 +518,9 @@ def _load_or_create_vector_index(
 
 
 def build_claude_wake_registry() -> ClaudeWakeRegistry:
-    return ClaudeWakeRegistry()
+    registry = ClaudeWakeRegistry(state_dir=Path.home() / ".pallium" / "claude-wake")
+    registry.recover_intents()
+    return registry
 
 
 def build_router(
@@ -535,6 +537,8 @@ def build_router(
         except RelayUnavailableError:
             pass
     registry = claude_wake_registry or build_claude_wake_registry()
+    if relay_service is not None and registry.persistent:
+        recover_claude_relay_wakes(registry, relay_service)
 
     def _relay_wake_dispatch(result: object, scope: object) -> None:
         """Route relay wake to the appropriate runtime handler."""
