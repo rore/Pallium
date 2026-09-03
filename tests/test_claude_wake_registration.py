@@ -86,6 +86,52 @@ def test_registration_keeps_intent_when_store_unusable_marker_cannot_clear(
     assert [candidate["state"] for candidate in registry.recovery_candidates()] == ["idle"]
     assert [candidate["state"] for candidate in ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates()] == ["idle"]
 
+@pytest.mark.parametrize("replace_closed_intent", (False, True))
+def test_close_endpoint_write_failure_preserves_exact_intent_for_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_closed_intent: bool,
+) -> None:
+    from hashlib import sha256
+
+    state_dir = tmp_path / "wake"
+    intent = state_dir / "intents" / (sha256(PAYLOAD["session_ref"].encode("utf-8")).hexdigest() + ".json")
+
+    def write_intent(payload: dict[str, object]) -> None:
+        intent.parent.mkdir(parents=True, exist_ok=True)
+        intent.write_text(json.dumps(payload), encoding="utf-8")
+
+    registry = ClaudeWakeRegistry(state_dir=state_dir)
+    opened = {**PAYLOAD, "intent_id": "open"}
+    write_intent(opened)
+    client = _client(registry)
+    assert client.post("/internal/claude-wake/register", json=opened).status_code == 204
+    closed = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref")}
+    closed.update(intent_id="closed", closed=True)
+    write_intent(closed)
+    original_write = registry._write_canonical_locked
+    monkeypatch.setattr(registry, "_write_canonical_locked", lambda *_: False)
+
+    assert client.post("/internal/claude-wake/close", json=closed).status_code == 400
+    assert json.loads(intent.read_text(encoding="utf-8")) == closed
+    assert [candidate["state"] for candidate in registry.recovery_candidates()] == ["idle"]
+    assert [candidate["state"] for candidate in ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates()] == ["idle"]
+
+    monkeypatch.setattr(registry, "_write_canonical_locked", original_write)
+    if replace_closed_intent:
+        newer = {**PAYLOAD, "token": "new-token", "intent_id": "new"}
+        write_intent(newer)
+    registry.recover_intents()
+    restarted = ClaudeWakeRegistry(state_dir=state_dir)
+    if not replace_closed_intent:
+        assert not intent.exists() and restarted.recovery_candidates() == []
+        return
+    observed: list[str] = []
+    assert restarted.probe(
+        runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        transport=lambda _socket_path, token: observed.append(token) or "accepted",
+    )
+    assert observed == ["new-token"]
+
 def test_loopback_registration_is_secret_free_and_scope_bound() -> None:
     registry = ClaudeWakeRegistry()
     secret = "never-in-response"
