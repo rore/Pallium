@@ -6,7 +6,7 @@ S1A is complete: the installed no-human Windows witness proved a peer Relay mess
 Pallium Claude Code Relay availability.
 
 **Scope:**
-S1A changes are complete. S1B is plan-only: no runtime edit is authorized until Codex review accepts a trusted-local exact-capability lifecycle. The proposed state distinguishes `idle`, `busy`, and `wake_inflight` with delivery id and UTC attempt time; it persists registration/idle/inflight mutations before publication or transport, fails closed to in-memory busy when busy persistence fails, and includes a one-file-per-session write-ahead registration intent from the hook, never claims or ACKs during recovery, and retains Relay as the source of once-only delivery truth. Every Stop registers idle with existing exact session/container/actor derivation. If `stop_hook_active` is false, call scoped `/relay/turn`; route admission marks busy. Send `max_chars=2400` in every non-recursive `/relay/turn` POST; storage is the authoritative claim boundary and skips over-budget items while retaining later fitting items pending/claimable. Stop candidate-renders exactly the returned claimed set without a second formatter cap; ACK each candidate; reformat only the ACK-success subset for attributed stderr and exit 2 only when that subset is nonempty. If recursive, empty, failed, invalid, or render-empty, ingest and exit 0. Preserve unrelated `uv.lock` and `.agent-workflow/.hooks.log`; no PR.
+S1A changes are complete. S1B implements the accepted trusted-local exact-capability lifecycle. The proposed state distinguishes `idle`, `busy`, and `wake_inflight` with delivery id and UTC attempt time; it persists registration/idle/inflight mutations before publication or transport, fails closed to in-memory busy when busy persistence fails, and includes a one-file-per-session write-ahead registration intent from the hook, never claims or ACKs during recovery, and retains Relay as the source of once-only delivery truth. Every Stop registers idle with existing exact session/container/actor derivation. If `stop_hook_active` is false, call scoped `/relay/turn`; route admission marks busy. Send `max_chars=2400` in every non-recursive `/relay/turn` POST; storage is the authoritative claim boundary and skips over-budget items while retaining later fitting items pending/claimable. Stop candidate-renders exactly the returned claimed set without a second formatter cap; ACK each candidate; reformat only the ACK-success subset for attributed stderr and exit 2 only when that subset is nonempty. If recursive, empty, failed, invalid, or render-empty, ingest and exit 0. Preserve unrelated `uv.lock` and `.agent-workflow/.hooks.log`; no PR.
 
 **Constraints:**
 Peer text -> Stop -> one scoped `/relay/turn` POST with authoritative `max_chars=2400` -> candidate render of the returned claimed set -> individual ACK -> reformat successful subset -> exit 2 -> continuation acts -> next Stop re-registers idle, ingests, exits 0. Native transport never changes delivery. Existing Stop scope is authoritative; no MCP or model scope/identity. One bounded non-recursive Stop probe is accepted; `stop_hook_active` prevents recursion. Empty/failure/render-empty/all-ACK-failure exits 0; unACKed claimed items stay lease-recoverable. `has_more` and `remaining_count` remain pending and are unqualified until S1B rearm/continuation; the S1A witness proves one bounded batch only. S1A introduced none of those durable mechanisms. The S1B plan is the narrow exception: one trusted-local exact-capability file, one durable fail-closed rehydration marker, plus one atomic per-session write-ahead hook registration-intent file, a read-only exact-scope pending candidate query, event-driven reconciliation, best-effort SessionEnd/strictly-missing-endpoint cleanup, and explicit idle/busy/wake_inflight state. It still forbids DPAPI, a secret table, generic framework, claim/ACK during recovery, silent age eviction, alternate delivery paths, and secrets in logs.
@@ -41,7 +41,7 @@ S0/S0.5 — MISQUALIFIED for causal peer admission.
 
 S1A — COMPLETE: Architect Codex re-review accepted; installed no-human Windows witness passed (Stop claimed and injected `relay-msg-facf9ae3…`, Claude replied without a human prompt).
 
-S1B — BLOCKED on plan review: service restart erases the memory-only Claude registration. Plan only: persist exact capability and state, rehydrate/reconcile safely, then prove restart behavior.
+S1B — ACTIVE: implement the accepted persistence, intent, fail-closed rehydration, read-only recovery query, and reconciler before the installed witness.
 
 S2 — Evidence-driven peer/lifecycle hardening. S3 — Codex MCP recovery remains fail-closed. S4 — cross-platform live qualification.
 
@@ -56,15 +56,17 @@ S2 — Evidence-driven peer/lifecycle hardening. S3 — Codex MCP recovery remai
 2026-09-03 — Prior S1 durability and MCP S1A proposals are superseded. Architect review found route-admission rearm, UTF-8 stderr, and storage-template gaps; all are corrected. Codex architect re-review is CLEAN: real boundary regression proves storage selection and Claude rendering stay within the same budget while preserving skipped-overbudget/later-fit `has_more`/`remaining_count`.
 
 **Approvals:**
-Approved by user 2026-09-03: "you have blanket approval for all tasks you get from the architect". Codex architect re-review CLEAN 2026-09-03; installed S1A runtime witness PASS. No Claude use is authorized for S1B planning.
+Approved by user 2026-09-03: "you have blanket approval for all tasks you get from the architect". Codex architect re-review CLEAN 2026-09-03; installed S1A runtime witness PASS. Architect accepted S1B plan b1991dc5 as CLEAN 2026-09-03 and authorized implementation; no Claude use, integration install/restart, PR, or merge is authorized.
 
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
+
+2026-09-03 — S1B implementation started from accepted plan b1991dc5. Planned shared-path files: core/claude_wake.py, app/claude_wake.py, app/dependencies.py, api/routes.py, core/relay.py, Relay storage, Claude hook registration/SessionEnd files, and focused caller-surface tests. Scope excludes Claude execution, integration service changes, PR, and merge.
 
 2026-09-03 — Implemented S1A: non-recursive Claude Stop probes scoped `/relay/turn` once with `max_chars=2400`, renders exactly the returned claimed set without a formatter cap, ACKs individually, re-renders only 2xx-confirmed items to stderr, and exits 2 only for that nonempty subset. Recursive Stop re-registers idle without a probe. `acknowledge_relay` now returns only confirmed deliveries while existing callers may ignore the return. Architect re-review fixed empty/request/render/all-ACK-failure rearm after route admission, non-UTF-8 stderr buffer emission, and exact storage/hook template budgeting. Focused caller-surface regressions and exact storage/Claude boundary regression pass. Module-form affected suite, relay E2E, and isolation counts are recorded by final verification. Workflow and diff checks clean. `ruff` is unavailable in the environment. Architect re-review and installed S1A witness are PASS. Overall work is blocked on S1B restart durability planning and its eventual implementation/witness.
 ## S1B amended plan (plan only; no runtime edits)
