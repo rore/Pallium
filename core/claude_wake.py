@@ -361,18 +361,13 @@ class ClaudeWakeRegistry:
 
     @staticmethod
     def _valid_loaded_item(item: dict) -> bool:
-        state = item.get("state")
-        delivery_id = item.get("delivery_id")
-        attempted_at = item.get("attempted_at")
-        return (
-            isinstance(item.get("generation"), int) and item["generation"] >= 0
-            and isinstance(item.get("idle"), bool)
-            and state in {"idle", "busy", "wake_inflight"}
-            and item["idle"] == (state == "idle")
-            and ((state == "wake_inflight" and _valid(delivery_id, 128) and isinstance(attempted_at, (int, float)))
-                 or (state != "wake_inflight" and delivery_id is None and attempted_at is None))
-            and all(key in item for key in ("runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "expires_at"))
-        )
+        required = {"runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "generation", "expires_at", "idle", "state", "delivery_id", "attempted_at"}
+        if set(item) != required or type(item["generation"]) is not int or item["generation"] < 0 or type(item["idle"]) is not bool or type(item["state"]) is not str or not isinstance(item["expires_at"], (int, float)):
+            return False
+        state, delivery_id, attempted_at = item["state"], item["delivery_id"], item["attempted_at"]
+        if state not in {"idle", "busy", "wake_inflight"} or item["idle"] != (state == "idle"):
+            return False
+        return (state == "wake_inflight" and _valid(delivery_id, 128) and isinstance(attempted_at, (int, float)) and math.isfinite(attempted_at)) or (state != "wake_inflight" and delivery_id is None and attempted_at is None)
     def _ensure_capacity_locked(self) -> bool:
         if len(self._registrations) < MAX_REGISTRATIONS:
             return True
