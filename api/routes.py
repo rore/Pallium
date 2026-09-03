@@ -468,7 +468,7 @@ def create_router(
                 if not 0 <= int(content_length) <= _CLAUDE_WAKE_BODY_MAX_BYTES:
                     raise ValueError
             except ValueError:
-                raise HTTPException(status_code=400, detail="invalid registration")
+                raise HTTPException(status_code=400, detail="invalid registration") from None
         try:
             chunks: list[bytes] = []
             size = 0
@@ -506,7 +506,7 @@ def create_router(
                 if not 0 <= int(content_length) <= _CLAUDE_WAKE_BODY_MAX_BYTES:
                     raise ValueError
             except ValueError:
-                raise HTTPException(status_code=400, detail="invalid registration")
+                raise HTTPException(status_code=400, detail="invalid registration") from None
         try:
             chunks: list[bytes] = []
             size = 0
