@@ -199,3 +199,17 @@ def test_busy_persistence_failure_reports_degradation(tmp_path: Path, monkeypatc
     monkeypatch.setattr(registry, "_quarantine_or_mark_unusable_locked", lambda: False)
     assert registry.mark_busy(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"])
     assert registry.durability_degraded
+
+def test_close_preserves_intent_replaced_after_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "open")
+    closed = {"runtime": "claude-code", "session_ref": PAYLOAD["session_ref"], "container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"], "intent_id": "close", "closed": True}
+    path = _intent_path(tmp_path, PAYLOAD["session_ref"])
+    path.write_text(json.dumps(closed), encoding="utf-8")
+    original = registry._delete_intent_locked
+    def replace_then_delete(session_ref: str, expected_intent_id: str | None) -> bool:
+        path.write_text(json.dumps({**PAYLOAD, "token": "new", "intent_id": "new"}), encoding="utf-8")
+        return original(session_ref, expected_intent_id)
+    monkeypatch.setattr(registry, "_delete_intent_locked", replace_then_delete)
+    assert registry.close(**{key: closed[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
+    assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "new"

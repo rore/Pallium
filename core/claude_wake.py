@@ -298,7 +298,7 @@ class ClaudeWakeRegistry:
             registration = self._registrations.get((runtime, session_ref))
             if registration is not None and (registration.container_ref != container_ref or registration.actor_ref != actor_ref):
                 return False
-            return self._remove_locked(session_ref)
+            return self._remove_locked(session_ref, expected_intent_id=intent_id)
     def remove(self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str) -> bool:
         with self._lock:
             registration = self._registrations.get((runtime, session_ref))
@@ -367,7 +367,7 @@ class ClaudeWakeRegistry:
         state, delivery_id, attempted_at = item["state"], item["delivery_id"], item["attempted_at"]
         if state not in {"idle", "busy", "wake_inflight"} or item["idle"] != (state == "idle"):
             return False
-        return (state == "wake_inflight" and _valid(delivery_id, 128) and isinstance(attempted_at, (int, float)) and math.isfinite(attempted_at)) or (state != "wake_inflight" and delivery_id is None and attempted_at is None)
+        return (state == "wake_inflight" and _valid(delivery_id, 128) and type(attempted_at) in (int, float) and math.isfinite(attempted_at)) or (state != "wake_inflight" and delivery_id is None and attempted_at is None)
     def _ensure_capacity_locked(self) -> bool:
         if len(self._registrations) < MAX_REGISTRATIONS:
             return True
