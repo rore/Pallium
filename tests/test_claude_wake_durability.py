@@ -213,3 +213,20 @@ def test_close_preserves_intent_replaced_after_validation(tmp_path: Path, monkey
     monkeypatch.setattr(registry, "_delete_intent_locked", replace_then_delete)
     assert registry.close(**{key: closed[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
     assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "new"
+
+def test_recovery_retries_rollback_inflight_once_without_relay_mutation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import claude_wake
+    wall = [100.0]
+    registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
+    calls = []
+    relay = SimpleNamespace(pending_candidate=lambda **kwargs: calls.append(kwargs) or {"delivery_id": "delivery", "state": "pending"})
+    scheduled = []
+    monkeypatch.setattr(claude_wake, "schedule_claude_relay_wake", lambda result, scope, *, registry: scheduled.append((result, scope)) or None)
+    claude_wake.recover_claude_relay_wakes(restarted, relay)
+    assert scheduled == []
+    wall[0] = 1.0
+    claude_wake.recover_claude_relay_wakes(restarted, relay)
+    assert len(scheduled) == 1 and len(calls) == 2
