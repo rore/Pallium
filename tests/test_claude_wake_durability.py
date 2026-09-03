@@ -182,3 +182,20 @@ def test_wall_clock_rollback_does_not_rearm_inflight(tmp_path: Path) -> None:
     assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
     wall[0] = 1.0
     assert not registry.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", grace_seconds=1)
+
+def test_terminal_transport_deletes_capability_but_preserves_newer_intent(tmp_path: Path) -> None:
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    _write_intent(tmp_path, {**PAYLOAD, "token": "new"}, "new")
+    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="d", transport=lambda *_: "terminal")
+    assert registry.recovery_candidates() == []
+    assert registry.register(**{**PAYLOAD, "token": "new"}, intent_id="new")
+
+
+def test_busy_persistence_failure_reports_degradation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    monkeypatch.setattr(registry, "_write_canonical_locked", lambda *_: False)
+    monkeypatch.setattr(registry, "_quarantine_or_mark_unusable_locked", lambda: False)
+    assert registry.mark_busy(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"])
+    assert registry.durability_degraded
