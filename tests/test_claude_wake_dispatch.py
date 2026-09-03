@@ -950,3 +950,68 @@ def test_empty_stop_rearms_claude_wake_after_turn_admission(client, monkeypatch,
     })
     assert sent.status_code == 200
     assert triggered.wait(timeout=1)
+
+
+def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    from app.config import AppConfig
+    from app.main import create_app
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    transport_called = threading.Event()
+    transport_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.claude_wake.claude_wake_transport",
+        lambda socket_path, token: transport_calls.append((socket_path, token)) or transport_called.set() or True,
+    )
+    app = create_app(AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as http:
+        common = _load_claude_hook("common", monkeypatch)
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", PAYLOAD["socket_path"])
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", PAYLOAD["token"])
+        monkeypatch.setattr(
+            common.urllib.request,
+            "build_opener",
+            lambda *_: SimpleNamespace(open=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())),
+        )
+        assert not common.register_claude_wake("lost-http", scope["container_ref"], scope["actor_ref"], idle=True)
+
+        assert http.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "sender", **scope,
+        }).status_code == 200
+        assert http.post("/relay/turn", json={
+            "runtime": "claude-code", "session_ref": "lost-http", **scope,
+        }).status_code == 200
+        sent = http.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "claude-code:lost-http", "payload": "recover me", **scope,
+        })
+        assert sent.status_code == 200
+        message_id = sent.json()["message_id"]
+        assert transport_called.wait(timeout=1)
+        assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+        status = http.get(f"/relay/messages/{message_id}", params=scope)
+        assert status.status_code == 200
+        delivery = status.json()["deliveries"][0]
+        assert delivery["state"] == "pending"
+        assert delivery["claim_token"] is None and delivery["receipt"] is None
+        assert delivery["claimed_at"] is None and delivery["delivered_at"] is None and delivery["attempts"] == 0
+
+        reconciler = app.state._claude_wake_reconciler
+        assert reconciler is not None
+    assert reconciler._thread is not None and not reconciler._thread.is_alive()
