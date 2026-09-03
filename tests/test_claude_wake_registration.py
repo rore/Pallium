@@ -556,3 +556,15 @@ def test_session_start_delivers_and_acks_relay_before_orientation(
         "container_ref": "git:example/repo",
         "actor_ref": "local",
     })]
+
+
+def test_claude_reconciler_is_lifespan_owned_and_stops_on_repeated_apps(tmp_path: Path) -> None:
+    def config(name: str) -> AppConfig:
+        return AppConfig(storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / name}", default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(enabled=False))
+
+    for name in ("first.db", "second.db"):
+        app = create_app(config(name))
+        with TestClient(app):
+            reconciler = app.state._claude_wake_reconciler
+            assert reconciler is not None and reconciler._thread is not None and reconciler._thread.is_alive()
+        assert not reconciler._thread.is_alive()

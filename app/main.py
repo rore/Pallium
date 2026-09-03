@@ -249,6 +249,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             else:
                 yield
         finally:
+            claude_wake_registry.set_reconcile_signal(None)
+            if claude_wake_reconciler is not None:
+                claude_wake_reconciler.stop()
             if rebuild_coordinator is not None:
                 rebuild_coordinator.stop()
             if stop is not None:
