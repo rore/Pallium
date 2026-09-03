@@ -143,6 +143,9 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
             if not isinstance(status, dict) or status.get("state") != "pending":
                 registry.clear_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], actor_ref=candidate["actor_ref"], delivery_id=delivery_id)
                 continue
+            with _workers_lock:
+                if (id(registry), candidate["session_ref"]) in _workers:
+                    continue
             if not registry.rearm_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], actor_ref=candidate["actor_ref"], delivery_id=delivery_id, grace_seconds=1.0):
                 continue
         if not isinstance(status, dict) or status.get("state") != "pending":

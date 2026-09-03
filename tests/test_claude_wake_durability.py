@@ -457,6 +457,72 @@ def test_reconciler_retries_pending_wake_until_native_transport_accepts(
     assert observed == [("pending", None, None, 0)] * 4
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
 
+def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    from app import claude_wake
+    from core.relay import RelayService
+
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    relay = RelayService(client.app.state.pallium_service._storage)
+    relay.turn(runtime="codex", session_ref="sender", **scope)
+    relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
+    wall = [100.0]
+    registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    sent = relay.send(
+        sender_runtime="codex", sender_session_ref="sender",
+        recipient="claude-code:" + PAYLOAD["session_ref"], payload="active worker", **scope,
+    )
+    delivery = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+    result = {
+        "recipient": "claude-code:" + PAYLOAD["session_ref"],
+        "deliveries": [{
+            "delivery_id": delivery["delivery_id"], "state": "pending",
+            "recipient_runtime": "claude-code", "recipient_session_ref": PAYLOAD["session_ref"],
+        }],
+    }
+    started = threading.Event()
+    release = threading.Event()
+    retried = threading.Event()
+    transport_calls: list[tuple[str, str]] = []
+
+    def transport(socket_path: str, token: str) -> str:
+        transport_calls.append((socket_path, token))
+        if len(transport_calls) == 1:
+            started.set()
+            assert release.wait(timeout=1)
+        else:
+            retried.set()
+        return "accepted"
+
+    monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
+    worker = claude_wake.schedule_claude_relay_wake(result, scope, registry=registry)
+    assert worker is not None and started.wait(timeout=1)
+    wall[0] = 102.0
+    try:
+        claude_wake.recover_claude_relay_wakes(registry, relay)
+        assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+        candidate = next(iter(registry.recovery_candidates()))
+        assert candidate["state"] == "wake_inflight" and candidate["delivery_id"] == delivery["delivery_id"]
+        pending = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+        assert pending["state"] == "pending"
+        assert tuple(pending[key] for key in ("claim_token", "receipt", "attempts")) == (None, None, 0)
+    finally:
+        release.set()
+        worker.join(timeout=1)
+    assert not worker.is_alive()
+
+    claude_wake.recover_claude_relay_wakes(registry, relay)
+    assert retried.wait(timeout=1)
+    assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])] * 2
+    pending = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+    assert pending["state"] == "pending"
+    assert tuple(pending[key] for key in ("claim_token", "receipt", "attempts")) == (None, None, 0)
+
+
 @pytest.mark.parametrize("terminal_state", ("claimed", "delivered", "expired"))
 def test_recovery_clears_terminal_inflight_and_reschedules_exact_scope(
     client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal_state: str,
