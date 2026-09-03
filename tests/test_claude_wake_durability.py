@@ -128,3 +128,37 @@ def test_pending_candidate_is_read_only_at_the_real_relay_surface(client) -> Non
     after = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
     assert candidate == {"delivery_id": before["delivery_id"], "state": "pending"}
     assert after["state"] == "pending" and after["attempts"] == before["attempts"] == 0
+
+def test_persistent_register_rejection_is_http_conflict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_claude_wake_registration import _client
+
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    monkeypatch.setattr(registry, "register", lambda **_kwargs: False)
+    response = _client(registry).post("/internal/claude-wake/register", json={**PAYLOAD, "intent_id": "rejected"})
+    assert response.status_code == 409
+
+
+@pytest.mark.parametrize("item", [
+    {"runtime": "claude-code", "session_ref": "s", "container_ref": "c", "actor_ref": "a", "socket_path": "p", "token": "t", "generation": "bad", "idle": True, "state": "idle", "delivery_id": None, "attempted_at": None, "expires_at": 1},
+    {"runtime": "claude-code", "session_ref": "s", "container_ref": "c", "actor_ref": "a", "socket_path": "p", "token": "t", "generation": 1, "idle": True, "state": "wake_inflight", "delivery_id": None, "attempted_at": None, "expires_at": 1},
+])
+def test_corrupt_persisted_records_fail_closed(tmp_path: Path, item: dict) -> None:
+    (tmp_path / "capabilities.json").write_text(json.dumps({"version": 1, "registrations": [item]}), encoding="utf-8")
+    assert ClaudeWakeRegistry(state_dir=tmp_path).recovery_candidates() == []
+
+
+def test_stale_closed_intent_cannot_remove_newer_intent(tmp_path: Path) -> None:
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    newer = {**PAYLOAD, "token": "new-token"}
+    _write_intent(tmp_path, newer, "new")
+    assert not registry.close(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], intent_id="old")
+    assert registry.register(**newer, intent_id="new")
+
+
+def test_reconciler_stop_joins_its_thread(tmp_path: Path) -> None:
+    from app.claude_wake import ClaudeWakeReconciler
+
+    reconciler = ClaudeWakeReconciler(ClaudeWakeRegistry(state_dir=tmp_path), SimpleNamespace(pending_candidate=lambda **_kwargs: None), interval_seconds=0.01)
+    reconciler.start()
+    reconciler.stop()
+    assert reconciler._thread is not None and not reconciler._thread.is_alive()
