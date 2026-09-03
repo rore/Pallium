@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
 import json
+import math
 import os
 from pathlib import Path
 import threading
@@ -140,7 +141,7 @@ class ClaudeWakeRegistry:
             if registration is None or registration.container_ref != container_ref or registration.actor_ref != actor_ref:
                 return False
             self._generation += 1
-            busy = replace(registration, generation=self._generation, idle=False, state="busy", delivery_id=None)
+            busy = replace(registration, generation=self._generation, idle=False, state="busy", delivery_id=None, attempted_at=None)
             key = (runtime, session_ref)
             if self._state_dir is None or self._write_canonical_locked({**self._registrations, key: busy}):
                 self._registrations[key] = busy
@@ -148,7 +149,7 @@ class ClaudeWakeRegistry:
             # A stale durable idle is unsafe after restart. Keep this process busy and fence rehydration.
             self._registrations[key] = busy
             self._rehydration_refused = True
-            self._quarantine_or_mark_unusable_locked()
+            self._durability_degraded = not self._quarantine_or_mark_unusable_locked()
             return True
 
     def probe(
@@ -197,7 +198,10 @@ class ClaudeWakeRegistry:
                 current = self._active_locked(runtime, session_ref)
                 if current is not None and current.generation == consumed.generation:
                     if outcome == "terminal":
-                        self.close(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
+                        updated = dict(self._registrations)
+                        updated.pop((runtime, session_ref), None)
+                        if self._state_dir is None or self._write_canonical_locked(updated):
+                            self._registrations = updated
                     else:
                         idle = replace(current, idle=True, state="idle", delivery_id=None, attempted_at=None)
                         if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref): idle}):
@@ -252,7 +256,10 @@ class ClaudeWakeRegistry:
                 if intent.get("closed") is True:
                     session_ref = intent.get("session_ref")
                     if isinstance(session_ref, str):
-                        self.close(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
+                        updated = dict(self._registrations)
+                        updated.pop((runtime, session_ref), None)
+                        if self._state_dir is None or self._write_canonical_locked(updated):
+                            self._registrations = updated
                     continue
                 try:
                     self.register(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle", "intent_id")})
