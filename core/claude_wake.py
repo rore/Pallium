@@ -255,12 +255,10 @@ class ClaudeWakeRegistry:
                 if not isinstance(intent, dict):
                     continue
                 if intent.get("closed") is True:
-                    session_ref = intent.get("session_ref")
-                    if isinstance(session_ref, str):
-                        updated = dict(self._registrations)
-                        updated.pop((runtime, session_ref), None)
-                        if self._state_dir is None or self._write_canonical_locked(updated):
-                            self._registrations = updated
+                    try:
+                        self.close(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
+                    except (KeyError, ValueError):
+                        pass
                     continue
                 try:
                     self.register(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle", "intent_id")})
@@ -273,7 +271,7 @@ class ClaudeWakeRegistry:
             current = self._active_locked(runtime, session_ref)
             if (current is None or current.container_ref != container_ref or current.actor_ref != actor_ref
                     or current.state != "wake_inflight" or current.delivery_id != delivery_id
-                    or current.attempted_at is None or self._wall_clock() - current.attempted_at < grace_seconds):
+                    or current.attempted_at is None or 0 <= self._wall_clock() - current.attempted_at < grace_seconds):
                 return False
             idle = replace(current, generation=current.generation + 1, idle=True, state="idle", delivery_id=None, attempted_at=None)
             if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, (runtime, session_ref): idle}):
@@ -300,13 +298,13 @@ class ClaudeWakeRegistry:
             registration = self._registrations.get((runtime, session_ref))
             if registration is not None and (registration.container_ref != container_ref or registration.actor_ref != actor_ref):
                 return False
-            return self._remove_locked(session_ref, expected_intent_id=intent_id)
+            return self._remove_locked(session_ref)
     def remove(self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str) -> bool:
         with self._lock:
             registration = self._registrations.get((runtime, session_ref))
             if registration is None or registration.container_ref != container_ref or registration.actor_ref != actor_ref:
                 return False
-            return self._remove_locked(session_ref, expected_intent_id=intent_id)
+            return self._remove_locked(session_ref)
 
     def _remove_locked(self, session_ref: str, *, expected_intent_id: str | None = None) -> bool:
         key = (RUNTIME, session_ref)

@@ -175,13 +175,13 @@ def test_accepted_inflight_rehydrates_and_rearms_after_grace(tmp_path: Path) -> 
     assert restarted.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", grace_seconds=1)
 
 
-def test_wall_clock_rollback_does_not_rearm_inflight(tmp_path: Path) -> None:
+def test_wall_clock_rollback_rearms_inflight_for_eventual_wake(tmp_path: Path) -> None:
     wall = [100.0]
     registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     assert _register(registry, tmp_path, PAYLOAD, "idle")
     assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
     wall[0] = 1.0
-    assert not registry.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", grace_seconds=1)
+    assert registry.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", grace_seconds=1)
 
 def test_terminal_transport_deletes_capability_but_preserves_newer_intent(tmp_path: Path) -> None:
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
