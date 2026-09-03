@@ -56,7 +56,7 @@ S2 — Evidence-driven peer/lifecycle hardening. S3 — Codex MCP recovery remai
 2026-09-03 — Prior S1 durability and MCP S1A proposals are superseded. Architect review found route-admission rearm, UTF-8 stderr, and storage-template gaps; all are corrected. Codex architect re-review is CLEAN: real boundary regression proves storage selection and Claude rendering stay within the same budget while preserving skipped-overbudget/later-fit `has_more`/`remaining_count`.
 
 **Approvals:**
-Approved by user 2026-09-03: "you have blanket approval for all tasks you get from the architect". Codex architect re-review CLEAN 2026-09-03; installed S1A runtime witness PASS. Architect accepted S1B plan b1991dc5 as CLEAN 2026-09-03 and authorized implementation; no Claude use, integration install/restart, PR, or merge is authorized.
+Approved by user 2026-09-03: "you have blanket approval for all tasks you get from the architect". Codex architect re-review CLEAN 2026-09-03; installed S1A runtime witness PASS. Architect accepted S1B plan b1991dc5 as CLEAN 2026-09-03 and authorized implementation; at that time no Claude use, integration install/restart, PR, or merge was authorized. Later user authorization covered Claude setup, the required wrapper restart, and the live Windows witness.
 
 **Exceptions:**
 —
@@ -79,7 +79,7 @@ Approved by user 2026-09-03: "you have blanket approval for all tasks you get fr
 2026-09-03 — Architect review rejected the first S1B implementation; remediation is in progress: focused Claude/Relay suites pass (127 passed, 2 skipped); the full suite has only the pre-existing `tests/test_config.py::test_prompt_variants_legacy_fallback_unaffected` failure. No installed Claude integration, service restart, or runtime witness was performed; the new SessionEnd helper remains uninstalled by scope.
 
 2026-09-03 — Implemented S1A: non-recursive Claude Stop probes scoped `/relay/turn` once with `max_chars=2400`, renders exactly the returned claimed set without a formatter cap, ACKs individually, re-renders only 2xx-confirmed items to stderr, and exits 2 only for that nonempty subset. Recursive Stop re-registers idle without a probe. `acknowledge_relay` now returns only confirmed deliveries while existing callers may ignore the return. Architect re-review fixed empty/request/render/all-ACK-failure rearm after route admission, non-UTF-8 stderr buffer emission, and exact storage/hook template budgeting. Focused caller-surface regressions and exact storage/Claude boundary regression pass. Module-form affected suite, relay E2E, and isolation counts are recorded by final verification. Workflow and diff checks clean. `ruff` is unavailable in the environment. Architect re-review and installed S1A witness are PASS. At that point, work was blocked on S1B restart durability planning and its eventual implementation/witness.
-## S1B amended plan (plan only; no runtime edits)
+## Historical accepted S1B plan (implemented and Windows-qualified)
 
 **Incident / redline:** Service outage during Claude Stop is a distinct lost-handoff window: the hook's loopback registration fails, Claude becomes idle, and a later restart can reload stale `busy` forever. Durable capability and intent files may contain socket/token material, so no secret value, path, or token enters logs, exceptions, status, or tests. Relay remains authoritative for delivery; persistence/reconciliation never claims, ACKs, or emits it.
 
