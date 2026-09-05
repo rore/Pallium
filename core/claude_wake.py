@@ -39,7 +39,7 @@ class _Registration:
     attempted_at: float | None = None
 
 
-Transport = Callable[[str, str], Literal["accepted", "retryable", "terminal"]]
+Transport = Callable[[str, str], Literal["accepted", "retryable", "unreachable"]]
 
 
 def _valid(value: object, maximum: int) -> bool:
@@ -162,6 +162,7 @@ class ClaudeWakeRegistry:
         actor_ref: str,
         transport: Transport | None,
         delivery_id: str | None = None,
+        on_unreachable: Callable[[], None] | None = None,
     ) -> bool:
         if transport is None:
             return False
@@ -193,21 +194,27 @@ class ClaudeWakeRegistry:
             outcome = "retryable"
         if outcome is True:
             outcome = "accepted"
-        elif outcome is False or outcome not in {"accepted", "retryable", "terminal"}:
+        elif outcome is False or outcome not in {"accepted", "retryable", "unreachable"}:
             outcome = "retryable"
+        if outcome == "unreachable" and on_unreachable is not None:
+            with self._lock:
+                current = self._active_locked(runtime, session_ref)
+                notify = current is not None and current.generation == consumed.generation
+            if notify:
+                try:
+                    on_unreachable()
+                except Exception:
+                    outcome = "retryable"
         if outcome != "accepted":
             with self._lock:
                 current = self._active_locked(runtime, session_ref)
                 if current is not None and current.generation == consumed.generation:
-                    if outcome == "terminal":
-                        updated = dict(self._registrations)
-                        updated.pop((runtime, session_ref), None)
-                        if self._state_dir is None or self._write_canonical_locked(updated):
-                            self._registrations = updated
+                    if outcome == "unreachable":
+                        updated = replace(current, idle=False, state="unreachable", delivery_id=None, attempted_at=None)
                     else:
-                        idle = replace(current, idle=True, state="idle", delivery_id=None, attempted_at=None)
-                        if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref): idle}):
-                            self._registrations[(runtime, session_ref)] = idle
+                        updated = replace(current, idle=True, state="idle", delivery_id=None, attempted_at=None)
+                    if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref): updated}):
+                        self._registrations[(runtime, session_ref)] = updated
         return outcome == "accepted"
 
     @property
@@ -366,7 +373,7 @@ class ClaudeWakeRegistry:
         if set(item) != required or type(item["generation"]) is not int or item["generation"] < 0 or type(item["idle"]) is not bool or type(item["state"]) is not str or not isinstance(item["expires_at"], (int, float)):
             return False
         state, delivery_id, attempted_at = item["state"], item["delivery_id"], item["attempted_at"]
-        if state not in {"idle", "busy", "wake_inflight"} or item["idle"] != (state == "idle"):
+        if state not in {"idle", "busy", "wake_inflight", "unreachable"} or item["idle"] != (state == "idle"):
             return False
         return (state == "wake_inflight" and _valid(delivery_id, 128) and type(attempted_at) in (int, float) and math.isfinite(attempted_at)) or (state != "wake_inflight" and delivery_id is None and attempted_at is None)
     def _ensure_capacity_locked(self) -> bool:

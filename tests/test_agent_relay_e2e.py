@@ -7,11 +7,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from api.routes import create_router
 from core.errors import ImmediateTransactionBusyError
-from storage.sqlite_schema import RelayMessageRecord
+from core.relay import RelayNotFoundError, RelayService
+from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
 
 
 SCOPE = {"container_ref": "git:example.test/team/relay", "actor_ref": "local-user"}
@@ -672,3 +673,138 @@ def test_turn_skips_legacy_unsafe_rows_and_drains_later_safe_delivery(client, re
     assert turn["remaining_count"] == 0
     assert _ack(client, turn["deliveries"][0]).status_code == 200
     assert _turn(client, "codex", "mixed-legacy-target")["deliveries"] == []
+
+
+def test_relay_destination_health_strict_cas_and_scope(client, relay_storage):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    relay = RelayService(relay_storage)
+    relay.turn(runtime="codex", session_ref="health", **SCOPE, now=base)
+
+    def state() -> str:
+        with relay_storage._relay_session_factory() as db:
+            return db.execute(
+                select(RelaySessionRecord).where(
+                    RelaySessionRecord.container_ref == SCOPE["container_ref"],
+                    RelaySessionRecord.runtime == "codex",
+                    RelaySessionRecord.session_ref == "health",
+                )
+            ).scalar_one().state
+
+    assert relay.mark_unreachable(
+        runtime="codex", session_ref="health", **SCOPE, attempt_started_at=base
+    ) is False
+    assert state() == "active"
+    assert relay.mark_unreachable(
+        runtime="codex", session_ref="health", **SCOPE,
+        attempt_started_at=base + timedelta(seconds=1),
+    ) is True
+    assert state() == "unreachable"
+    assert relay.mark_unreachable(
+        runtime="codex", session_ref="health", **SCOPE,
+        attempt_started_at=base + timedelta(seconds=2),
+    ) is False
+    with pytest.raises(RelayNotFoundError):
+        relay.mark_unreachable(
+            runtime="codex", session_ref="health",
+            container_ref=SCOPE["container_ref"], actor_ref="other",
+            attempt_started_at=base + timedelta(seconds=3),
+        )
+    with pytest.raises(RelayNotFoundError):
+        relay.mark_unreachable(
+            runtime="codex", session_ref="missing", **SCOPE,
+            attempt_started_at=base + timedelta(seconds=3),
+        )
+    assert relay.mark_active(
+        runtime="codex", session_ref="health", **SCOPE, now=base + timedelta(seconds=4)
+    ) is True
+    assert state() == "active"
+    assert relay.mark_active(
+        runtime="codex", session_ref="health", **SCOPE, now=base + timedelta(seconds=5)
+    ) is False
+
+    relay.close_session(runtime="codex", session_ref="health", **SCOPE)
+    assert relay.mark_unreachable(
+        runtime="codex", session_ref="health", **SCOPE,
+        attempt_started_at=base + timedelta(seconds=6),
+    ) is False
+    assert state() == "closed"
+    assert relay.mark_active(
+        runtime="codex", session_ref="health", **SCOPE, now=base + timedelta(seconds=7)
+    ) is True
+    assert state() == "active"
+
+def test_unreachable_destination_rejects_new_exact_and_alias_sends_only(client, relay_storage):
+    relay = RelayService(relay_storage)
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    _turn(client, "codex", "active-peer")
+    assert _name(client, "codex", "target", "target-alias").status_code == 200
+
+    first = _send(
+        client, "claude-code", "sender", "codex:target", "stable",
+        message_id="stable-health-message",
+    )
+    assert first.status_code == 200
+    delivery_id = first.json()["deliveries"][0]["delivery_id"]
+    assert relay.mark_unreachable(
+        runtime="codex", session_ref="target", **SCOPE,
+        attempt_started_at=datetime.now(timezone.utc) + timedelta(seconds=1),
+    )
+
+    sessions = client.get(
+        "/relay/sessions", params={**SCOPE, "include_inactive": True}
+    ).json()
+    target_session = next(row for row in sessions if row["session_ref"] == "target")
+    assert target_session["state"] == "recent"
+    assert target_session["destination_health"] == "unreachable"
+    status = client.get(f"/relay/messages/{first.json()['message_id']}", params=SCOPE).json()
+    assert status["deliveries"][0]["state"] == "pending"
+    assert status["deliveries"][0]["destination_health"] == "unreachable"
+
+    def row_counts() -> tuple[int, int]:
+        with relay_storage._relay_session_factory() as db:
+            return (
+                len(db.execute(select(RelayMessageRecord)).scalars().all()),
+                len(db.execute(select(RelayDeliveryRecord)).scalars().all()),
+            )
+
+    before = row_counts()
+    exact = _send(client, "claude-code", "sender", "codex:target", "new exact")
+    alias = _send(client, "claude-code", "sender", "codex:@target-alias", "new alias")
+    assert exact.status_code == alias.status_code == 409
+    assert exact.json()["detail"] == alias.json()["detail"] == "recipient session is unreachable"
+    assert row_counts() == before
+
+    assert _send(client, "claude-code", "sender", "codex:unknown").status_code == 404
+    _turn(client, "codex", "closed")
+    relay.close_session(runtime="codex", session_ref="closed", **SCOPE)
+    assert _send(client, "claude-code", "sender", "codex:closed").status_code == 404
+    closed_session = next(
+        row for row in client.get(
+            "/relay/sessions", params={**SCOPE, "include_inactive": True}
+        ).json()
+        if row["session_ref"] == "closed"
+    )
+    assert closed_session["state"] == "closed"
+    assert closed_session["destination_health"] is None
+
+    broadcast = _send(client, "claude-code", "sender", "codex", "active only")
+    assert broadcast.status_code == 200
+    assert {item["recipient_session_ref"] for item in broadcast.json()["deliveries"]} == {
+        "active-peer"
+    }
+
+    repeated = _send(
+        client, "claude-code", "sender", "codex:target", "stable",
+        message_id="stable-health-message",
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["deliveries"][0]["delivery_id"] == delivery_id
+    assert row_counts() == (before[0] + 1, before[1] + 1)
+
+    assert relay.mark_unreachable(
+        runtime="claude-code", session_ref="sender", **SCOPE,
+        attempt_started_at=datetime.now(timezone.utc) + timedelta(seconds=1),
+    )
+    assert _name(client, "claude-code", "sender", "sender-alias").status_code == 200
+    assert _send(client, "claude-code", "sender", "codex:active-peer", "outbound").status_code == 200

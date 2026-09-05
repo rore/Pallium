@@ -194,6 +194,27 @@ class RelayService:
             replace_existing=replace_existing,
         )
 
+    def mark_unreachable(
+        self, *, runtime: str, session_ref: str, container_ref: str,
+        actor_ref: str, attempt_started_at: datetime,
+    ) -> bool:
+        operation = getattr(self._store, "relay_mark_unreachable", None)
+        if not callable(operation):
+            raise RelayUnavailableError("relay destination health is not supported by configured storage")
+        container, actor = self._scope(container_ref, actor_ref)
+        return operation(runtime=validate_runtime(runtime), session_ref=_opaque(session_ref, "session_ref"),
+                         container_ref=container, actor_ref=actor, attempt_started_at=attempt_started_at)
+
+    def mark_active(
+        self, *, runtime: str, session_ref: str, container_ref: str,
+        actor_ref: str, now: datetime | None = None,
+    ) -> bool:
+        operation = getattr(self._store, "relay_mark_active", None)
+        if not callable(operation):
+            raise RelayUnavailableError("relay destination health is not supported by configured storage")
+        container, actor = self._scope(container_ref, actor_ref)
+        return operation(runtime=validate_runtime(runtime), session_ref=_opaque(session_ref, "session_ref"),
+                         container_ref=container, actor_ref=actor, now=now)
     def send(
         self,
         *,

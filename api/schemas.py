@@ -835,6 +835,7 @@ class RelaySessionResponse(BaseModel):
     title: str | None = None
     alias: str | None = None
     state: str
+    destination_health: Literal["active", "unreachable"] | None = None
     first_seen_at: datetime
     last_seen_at: datetime
     closed_at: datetime | None = None
@@ -844,6 +845,7 @@ class RelayDeliveryResponse(BaseModel):
     delivery_id: str
     message_id: str
     state: str
+    destination_health: Literal["active", "unreachable"] | None = None
     claim_token: str | None = None
     receipt: str | None = None
     recipient_runtime: str

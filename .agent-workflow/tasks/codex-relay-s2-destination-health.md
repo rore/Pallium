@@ -1,0 +1,69 @@
+<!-- agent-workflow:start -->
+**Outcome:** Relay keeps recoverable in-flight deliveries pending while exposing a separate self-healing destination-health signal that can fail new sends fast.
+
+**Target:** Pallium Agent Relay.
+
+**Scope:** Relay delivery/session persistence, wake-result classification, sender-visible status surfaces, affected wake adapters, contract documentation, and caller-surface E2E tests.
+
+**Constraints:** Destination health must never terminalize an existing delivery; passive fallback, exact-session isolation, restart durability, cross-platform behavior, and fast deterministic tests remain intact.
+
+**Completion criteria:** Caller-surface E2E proves recoverable wake failure leaves the delivery pending, advisory unreachable rejects only new sends, exact registration self-heals, and only separate proven-terminal delivery evidence can mark a delivery failed.
+
+**Risk:** High
+
+**Complexity:** Moderate
+
+**Reason:** The repository workflow checker detects High risk because the final intended scope changes the public Relay API response surface; no boundary violation or schema migration is currently implied. Moderate complexity spans persistence, wake adapters, public status, and E2E.
+
+**Discovery:** `relay_send()` resolves only internal session state `active` and creates delivery state `pending`; ACK/expiry are the only terminal transitions. Claude transport maps POSIX `FileNotFoundError` and Windows `ERROR_FILE_NOT_FOUND` to `terminal`, then `ClaudeWakeRegistry.probe()` evicts the wake registration while the Relay delivery remains pending. Wake outcomes are only logged; `app/dependencies.py::_relay_wake_dispatch()` does not pass Relay persistence into the scheduler; Relay status exposes no destination health. `relay_turn(register_session=True)` already restores session state to `active`. Claude validation identified two distinct stores: `ClaudeWakeRegistry._Registration.state` controls probe eligibility, while `RelaySessionRecord.state` controls new-send admission. Both need an advisory `unreachable` transition; delivery state remains independent and unchanged.
+
+**Material assumptions:** Reusing internal `RelaySessionRecord.state="unreachable"` is sufficient because `closed` takes precedence and does not need concurrent health; the durable Claude wake registry separately retains credentials in non-probed `_Registration.state="unreachable"`. Disprove if a supported lifecycle requires closed+unreachable observability, then return to planning. `last_seen_at` can serve as an optimistic Relay registration epoch because both `relay_turn(register_session=True)` and successful exact wake registration update it; feedback applies only while Relay state is active and `last_seen_at < attempt_started_at`; equality fails closed, and unrelated newer turns conservatively invalidate the result. Disprove with an ordering case that passes after re-registration, then add an explicit persisted epoch. Native missing-endpoint signals are advisory destination evidence, not terminal delivery evidence; if Windows/POSIX classification is unreliable, keep retryable and do not mark either store unreachable. No current signal proves a delivery terminal, so do not add delivery `failed`.
+
+**Plan:** 1. Record three independent transition tables in the existing wake design. Delivery remains `pending|claimed|delivered|expired` and is never touched by health. Durable Claude registry capability is `idle|wake_inflight|busy|unreachable`: qualified missing changes `wake_inflight→unreachable`, retains socket/token, and `recovery_candidates()` excludes it; retryable/ambiguous rearms `idle`; exact `register()` clears it to probe-eligible. Relay destination health is internal session state `active|unreachable`, with `closed` taking precedence. 2. Add one exact-scope Relay storage/core health operation with an `attempt_started_at` compare-and-set guard (`state == active` and `last_seen_at < attempt_started_at`). Unreachable senders may send and rename because health describes inbound wake; exact/alias recipients resolved solely to unreachable fail synchronously; runtime fan-out still reaches active sessions. Successful `relay_turn` sets active and advances `last_seen_at`; after `ClaudeWakeRegistry.register()` succeeds, `/internal/claude-wake/register` does the same through the scoped Relay operation. Do not add a table, dependency, or delivery `failed`. 3. Rename native transport outcome `terminal` to destination `unreachable`; change `ClaudeWakeRegistry.probe()` from eviction to retained non-probed `unreachable`; wire `app/dependencies.py` and the existing scheduler callback to persist Relay health. Existing delivery remains pending. 4. Surface `destination_health` separately on session views and each delivery status; closed destinations report no advisory health, and delivery vocabulary is unchanged. 5. Add fast deterministic caller-surface E2E for recoverable failure, Windows/POSIX absent endpoint, both-store transitions, no reconciler probing while unreachable, composition wiring, new-send fail-fast, existing-delivery preservation, stale-result-after-register CAS including equal timestamps, close/register races, unreachable sender/alias behavior, exact registration self-heal of both stores, restart durability, scope isolation, idempotence, and absence of delivery `failed`. Target files: `storage/sqlite_relay.py`, `core/relay.py`, `core/claude_wake.py`, `app/claude_wake.py`, `app/claude_wake_transport.py`, `app/dependencies.py`, `api/routes.py`, `api/schemas.py`, existing Relay/Claude E2E tests, and wake contract docs. Key conventions: persist before wake callback, exact scope, fail closed, deterministic clocks/events, no wall sleeps, no new dependency/schema abstraction. Stop and return to planning if the timestamp CAS assumption fails.
+
+**Verification plan:** Retryable/ambiguous wake → delivery remains pending, Relay health stays active, registry rearms idle → HTTP composition E2E. Qualified missing endpoint → delivery remains pending, Relay and registry become unreachable, reconciler does not probe, and new exact/alias send fails synchronously → Windows/POSIX classifier plus HTTP/reconciler E2E. Exact Relay turn or successful internal Claude wake register → Relay active, registry probe-eligible, advanced epoch, pending delivery receivable once; stale older result and close cannot overwrite → deterministic ordering/race E2E. Unreachable sender may send/rename while runtime fan-out excludes it as recipient → selector E2E. Cross-scope feedback cannot alter either store → isolation E2E. HTTP/MCP status exposes `destination_health` separately without adding delivery state → schema/client tests. Run focused suites, workflow checker, redline/API review, `git diff --check`, then one installed Claude witness.
+
+**Plan review:** Clean-context agent `s2_plan_review` approved the corrected concurrency/wiring plan. Claude architect `claude-code:@claude_arch` then approved the finalized three-state-machine plan with no blockers, including the strict timestamp CAS ceiling and required ordering E2E.
+
+**Approvals:** Approved by user 2026-09-05T15:54:17+03:00: "approve"
+
+**Exceptions:** —
+
+**State:** Ready for review
+<!-- agent-workflow:end -->
+
+## Implementation
+
+- Established task context before code discovery; no product code changed.
+- Repository checker raised Risk from Elevated to High because the planned diff includes the public API response surface; implementation remains blocked on Claude validation and explicit human approval.
+- S2 slice A implemented in `core/claude_wake.py` and `app/claude_wake_transport.py`; focused classifier/durability expectations updated and verified with `pytest -q tests/test_claude_wake_dispatch.py tests/test_claude_wake_durability.py` (73 passed, 2 skipped).
+- User approved the finalized High-risk plan; implementation may begin.
+- Slice B1: added exact-scoped strict timestamp-CAS active→unreachable and trusted registration restore in `storage/sqlite_relay.py`, with optional `RelayService` wrappers; no delivery rows mutate. Repaired the delegated regression to exercise the core surface, strict equality, scope, closed precedence, and self-heal; `tests/test_agent_relay_e2e.py` passes (37 tests).
+- Slice B2: new exact/alias sends now fail synchronously for known unreachable recipients without creating rows; runtime fan-out excludes them, idempotent existing sends remain valid, and unreachable senders may send/name. Full Relay caller-surface E2E passes (38 tests).
+- Dogfood incident: restarting the installed service while a delegated write was incomplete imported transient invalid syntax. The required wrapper also printed success before readiness. Recovered by syntax-checking, restarting, and verifying health/status/queue; follow-up operations hardening must add pre-stop syntax preflight and bounded post-start endpoint verification.
+- Slice B3: public session and delivery responses expose destination health separately from lifecycle/delivery state; closed sessions report no advisory health. Relay caller-surface E2E remains 38 passing.
+- Slice C1: qualified unreachable outcomes notify the scheduler outside the registry lock with an aware attempt timestamp; only after feedback succeeds does the registry persist non-probed unreachable. Feedback failure rearms retryable state.
+- Slice C2: the production router persists strict-CAS Relay unreachable feedback before committing registry unreachable, and successful exact Claude registration self-heals existing Relay destination health. Restart reconciliation uses the same callback; transient feedback failure stays retryable.
+- Slice C3: real-router coverage now proves retryable transport leaves Relay health active before qualified missing-endpoint feedback transitions both stores; design and roadmap align to durable no-TTL registration, independent state machines, current transport vocabulary, and the separate restart-wrapper follow-up. Full focused S2 gate passes (170 passed, 2 skipped).
+- Independent result review found and remediation covered restart-recovery feedback omission plus permanent divergence after transient feedback failure. Full deterministic S2 and MCP gate passes (263 passed, 2 skipped).
+- Follow-up result review found and remediation bound each asynchronous recovery callback to its exact candidate, preventing cross-session health updates. Two-candidate regression and focused wake/Relay gate pass (116 passed, 2 skipped); reviewer reports no remaining blocker.
+
+## Plan review
+
+- Initial clean-context review (agent `s2_plan_review`) found omitted `app/dependencies.py` wiring, stale asynchronous outcome risk after re-registration, undefined closed/sender/alias semantics, and underspecified per-delivery status. First re-review required equality to fail closed and explicit internal Claude registration→Relay wiring. The corrected plan now uses strict `last_seen_at < attempt_started_at`, treats unrelated newer activity as conservative invalidation, and wires successful exact wake registration to the scoped Relay health operation. Final focused re-review approved these corrections, conditional only on the pending one-shot Claude capability retry decision.
+
+- Claude architect validation chose a retained, non-probed registry-side `unreachable` state, plus separate Relay destination `unreachable`; it rejected both one-second re-probing and capability eviction. The plan now changes the probe eviction branch, excludes unreachable registrations from reconciliation, self-heals both stores on exact registration, and leaves delivery state unchanged.
+- Final Claude read-only confirmation approved the updated Work Record with no blockers and retained the installed-Claude witness as a post-test release gate, not merge authority.
+
+## Evidence
+
+- Deterministic S2 + MCP gate: 263 passed, 2 skipped; four pre-existing Pydantic forward-reference warnings.
+- Post-review focused wake/Relay gate: 116 passed, 2 skipped; exact two-candidate recovery binding regression passes.
+- git diff --check clean. Workflow checker has no blocking failure; only the shadow API-review advisory remains for PR review.
+- Installed service restarted from stable commit 657b7b8e; /health is ok with vector and embedding ready, /status reports ingestion ok and zero pending, and /debug/queue/health reports no pending, unclaimable, or leased work.
+- Live Relay dogfood: codex:@relaydev and claude-code:@claude_arch each woke automatically, claimed once, atomically replied/ACKed, and reached delivered with destination_health=active. Claude explicitly confirmed no human prompt and exact attribution.
+
+## Result review
+
+- Clean-context reviewer found restart feedback omission, transient feedback divergence, and a late-bound recovery closure. All three were fixed at the shared recovery path with deterministic regressions; final narrow re-review reports no blocker.
+- Installed Claude witness passed the supported UserPromptSubmit-rendered production path. Its stated no-hook boundary is outside the normal integration path. Relaydev's reply summary omitted health, while the live status surface returned it; no S2 formatter change is required.

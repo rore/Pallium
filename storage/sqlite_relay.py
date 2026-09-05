@@ -35,6 +35,7 @@ def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int) -
         "title": row.title,
         "alias": row.alias,
         "state": lifecycle,
+        "destination_health": None if row.state == "closed" else row.state,
         "first_seen_at": _iso(row.first_seen_at),
         "last_seen_at": _iso(row.last_seen_at),
         "closed_at": _iso(row.closed_at),
@@ -55,11 +56,16 @@ def _delivery_receipt(claim_token: str | None) -> str | None:
     return hashlib.sha256(claim_token.encode()).hexdigest()[:32]
 
 
-def _delivery_view(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -> dict[str, Any]:
+def _delivery_view(
+    delivery: RelayDeliveryRecord,
+    message: RelayMessageRecord,
+    destination_health: str | None,
+) -> dict[str, Any]:
     return {
         "delivery_id": delivery.id,
         "message_id": message.id,
         "state": delivery.state,
+        "destination_health": destination_health,
         "claim_token": delivery.claim_token if delivery.state == "claimed" else None,
         "receipt": _delivery_receipt(delivery.claim_token) if delivery.state == "claimed" else None,
         "recipient_runtime": delivery.recipient_runtime,
@@ -80,6 +86,37 @@ def _delivery_view(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -
 
 
 class SQLiteRelayMixin:
+    def relay_mark_unreachable(
+        self, *, runtime: str, session_ref: str, container_ref: str,
+        actor_ref: str, attempt_started_at: datetime,
+    ) -> bool:
+        attempted = _now(attempt_started_at)
+        with self._begin_relay_immediate() as db:
+            row = self._relay_session(db, container_ref=container_ref, runtime=runtime, session_ref=session_ref)
+            if row is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            self._require_actor(row, actor_ref)
+            if row.state != "active" or not (_now(row.last_seen_at) < attempted):
+                return False
+            row.state = "unreachable"
+            return True
+
+    def relay_mark_active(
+        self, *, runtime: str, session_ref: str, container_ref: str,
+        actor_ref: str, now: datetime | None = None,
+    ) -> bool:
+        current = _now(now)
+        with self._begin_relay_immediate() as db:
+            row = self._relay_session(db, container_ref=container_ref, runtime=runtime, session_ref=session_ref)
+            if row is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            self._require_actor(row, actor_ref)
+            changed = row.state != "active"
+            row.state = "active"
+            row.closed_at = None
+            if _now(row.last_seen_at) < current:
+                row.last_seen_at = current
+            return changed
 
     def _relay_session(
         self,
@@ -226,7 +263,7 @@ class SQLiteRelayMixin:
                 delivery.claimed_at = current
                 delivery.lease_expires_at = current + timedelta(seconds=lease_seconds)
                 delivery.attempts = int(delivery.attempts or 0) + 1
-                claimed.append(_delivery_view(delivery, message))
+                claimed.append(_delivery_view(delivery, message, registered.state))
 
             return {
                 "session": _session_view(registered, current, 24 * 60 * 60),
@@ -416,6 +453,22 @@ class SQLiteRelayMixin:
             if not recipients:
                 if recipient_kind == "runtime":
                     raise RelayConflictError("recipient resolved to no eligible sessions")
+                unreachable_statement = select(RelaySessionRecord).where(
+                    RelaySessionRecord.container_ref == container_ref,
+                    RelaySessionRecord.actor_ref == actor_ref,
+                    RelaySessionRecord.runtime == recipient_runtime,
+                    RelaySessionRecord.state == "unreachable",
+                )
+                if recipient_kind == "session":
+                    unreachable_statement = unreachable_statement.where(
+                        RelaySessionRecord.session_ref == recipient_value
+                    )
+                else:
+                    unreachable_statement = unreachable_statement.where(
+                        RelaySessionRecord.alias == recipient_value
+                    )
+                if db.execute(unreachable_statement).first() is not None:
+                    raise RelayConflictError("recipient session is unreachable")
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             if len(recipients) > broadcast_max_recipients:
                 raise RelayConflictError(
@@ -594,7 +647,23 @@ class SQLiteRelayMixin:
             "in_reply_to": message.in_reply_to,
             "created_at": _iso(message.created_at),
             "expires_at": _iso(message.expires_at),
-            "deliveries": [_delivery_view(row, message) for row in deliveries],
+            "deliveries": [
+                _delivery_view(
+                    row,
+                    message,
+                    (
+                        session.state
+                        if (session := self._relay_session(
+                            db,
+                            container_ref=message.container_ref,
+                            runtime=row.recipient_runtime,
+                            session_ref=row.recipient_session_ref,
+                        )) is not None and session.state != "closed"
+                        else None
+                    ),
+                )
+                for row in deliveries
+            ],
         }
 
     def relay_pending_candidate(

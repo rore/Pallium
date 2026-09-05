@@ -548,7 +548,18 @@ def build_router(
         runtime = deliveries[0].get("recipient_runtime")
         if runtime == "claude-code":
             registry.signal_reconcile()
-            schedule_claude_relay_wake(result, scope, registry=registry)
+            schedule_claude_relay_wake(
+                result,
+                scope,
+                registry=registry,
+                on_unreachable=lambda attempt_started_at: relay_service.mark_unreachable(
+                    runtime="claude-code",
+                    session_ref=deliveries[0]["recipient_session_ref"],
+                    container_ref=scope["container_ref"],
+                    actor_ref=scope["actor_ref"],
+                    attempt_started_at=attempt_started_at,
+                ),
+            )
         elif runtime == "codex" and relay_service is not None:
             schedule_codex_relay_wake(result, scope)
     def _relay_turn_admission(request: object) -> None:

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 import re
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from app.claude_wake_transport import claude_wake_transport
 
@@ -37,6 +38,7 @@ def schedule_claude_relay_wake(
     scope: object,
     *,
     registry: ClaudeWakeRegistry,
+    on_unreachable: Callable[[datetime], None] | None = None,
 ) -> threading.Thread | None:
     """Schedule one bounded wake for a pending Claude delivery."""
     if not isinstance(result, dict) or not isinstance(scope, dict):
@@ -84,12 +86,22 @@ def schedule_claude_relay_wake(
 
     def run() -> None:
         started = time.monotonic()
+        attempt_started_at = datetime.now(timezone.utc)
         attempted = False
         try:
             def transport(socket_path: str, token: str) -> str:
                 nonlocal attempted
                 attempted = True
                 return claude_wake_transport(socket_path, token)
+
+            def notify_unreachable() -> None:
+                if on_unreachable is None:
+                    return
+                try:
+                    on_unreachable(attempt_started_at)
+                except Exception:
+                    logger.exception("claude_relay_wake unreachable callback failed")
+                    raise
 
             triggered = registry.probe(
                 runtime="claude-code",
@@ -98,6 +110,7 @@ def schedule_claude_relay_wake(
                 actor_ref=actor_ref,
                 transport=transport,
                 delivery_id=delivery_id,
+                on_unreachable=notify_unreachable,
             )
             category = "trigger_written" if triggered else (
                 "transport_failed" if attempted else "not_eligible"
@@ -165,7 +178,16 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
             },
             {"container_ref": candidate["container_ref"], "actor_ref": candidate["actor_ref"]},
             registry=registry,
+            on_unreachable=lambda attempt_started_at, candidate=candidate: relay_service.mark_unreachable(
+                runtime="claude-code",
+                session_ref=candidate["session_ref"],
+                container_ref=candidate["container_ref"],
+                actor_ref=candidate["actor_ref"],
+                attempt_started_at=attempt_started_at,
+            ),
         )
+
+
 class ClaudeWakeReconciler:
     """One app-local Event loop; no Relay claim or ACK path exists here."""
 
