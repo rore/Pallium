@@ -348,6 +348,7 @@ def create_router(
     claude_wake_registry: ClaudeWakeRegistry | None = None,
     relay_send_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
     relay_turn_callback: Callable[[dict[str, Any]], None] | None = None,
+    relay_ack_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
 ) -> APIRouter:
     router = APIRouter()
     wake_registry = claude_wake_registry or ClaudeWakeRegistry()
@@ -451,7 +452,13 @@ def create_router(
 
     @router.post("/relay/deliveries/ack", response_model=RelayAckResponse)
     def relay_ack(request: RelayAckRequest):
-        return _relay_call(lambda: _relay().acknowledge(**request.model_dump()))
+        result = _relay_call(lambda: _relay().acknowledge(**request.model_dump()))
+        if relay_ack_callback is not None and not result.get("already_delivered", False):
+            try:
+                relay_ack_callback(result, {"container_ref": request.container_ref, "actor_ref": request.actor_ref})
+            except Exception:
+                logger.exception("Relay ACK callback failed after persistence")
+        return result
 
     @router.post("/relay/deliveries/mcp-ack", response_model=RelayAckResponse)
     def relay_mcp_ack(request: RelayMcpAckRequest):

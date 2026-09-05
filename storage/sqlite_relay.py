@@ -697,7 +697,7 @@ class SQLiteRelayMixin:
                     RelayDeliveryRecord.state == "pending",
                     RelayMessageRecord.expires_at > current,
                 )
-            row = db.execute(statement).first()
+            rows = db.execute(statement); row = next((candidate for candidate in rows if delivery_id is not None or _render_safe(candidate[1].payload)), None)
             if row is None:
                 return None
             delivery, message = row
@@ -827,6 +827,8 @@ class SQLiteRelayMixin:
                     "state": "delivered",
                     "delivered_at": _iso(current),
                     "already_delivered": False,
+                    "recipient_runtime": delivery.recipient_runtime,
+                    "recipient_session_ref": delivery.recipient_session_ref,
                 }
         if expired:
             raise RelayConflictError("message has expired")

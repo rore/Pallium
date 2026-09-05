@@ -562,6 +562,13 @@ def build_router(
             )
         elif runtime == "codex" and relay_service is not None:
             schedule_codex_relay_wake(result, scope)
+    def _relay_ack_rearm(result: object, scope: object) -> None:
+        if not isinstance(result, dict) or not isinstance(scope, dict) or result.get("recipient_runtime") != "codex":
+            return
+        candidate = relay_service.pending_candidate(runtime="codex", session_ref=result["recipient_session_ref"], container_ref=scope["container_ref"], actor_ref=scope["actor_ref"])
+        if candidate is not None:
+            _relay_wake_dispatch({"deliveries": [{"delivery_id": candidate["delivery_id"], "state": candidate["state"], "recipient": "codex:" + result["recipient_session_ref"], "recipient_runtime": "codex", "recipient_session_ref": result["recipient_session_ref"]}]}, scope)
+
     def _relay_turn_admission(request: object) -> None:
         if not isinstance(request, dict):
             return
@@ -589,4 +596,5 @@ def build_router(
             else None
         ),
         relay_turn_callback=_relay_turn_admission,
+        relay_ack_callback=(_relay_ack_rearm if relay_service is not None else None),
     )
