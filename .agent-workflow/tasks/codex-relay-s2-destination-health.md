@@ -9,11 +9,11 @@
 
 **Completion criteria:** Caller-surface E2E proves recoverable wake failure leaves the delivery pending, advisory unreachable rejects only new sends, exact registration self-heals, and only separate proven-terminal delivery evidence can mark a delivery failed.
 
-**Risk:** Elevated
+**Risk:** High
 
 **Complexity:** Moderate
 
-**Reason:** Redline found API red-zone review if response schemas/routes change, plus watched core/storage behavior; no boundary violation or schema migration is currently implied. Moderate complexity spans persistence, wake adapters, public status, and E2E.
+**Reason:** The repository workflow checker detects High risk because the final intended scope changes the public Relay API response surface; no boundary violation or schema migration is currently implied. Moderate complexity spans persistence, wake adapters, public status, and E2E.
 
 **Discovery:** `relay_send()` resolves only internal session state `active` and creates delivery state `pending`; ACK/expiry are the only terminal transitions. Claude transport maps POSIX `FileNotFoundError` and Windows `ERROR_FILE_NOT_FOUND` to `terminal`, then `ClaudeWakeRegistry.probe()` evicts the wake registration while the Relay delivery remains pending. Wake outcomes are only logged; `app/dependencies.py::_relay_wake_dispatch()` does not pass Relay persistence into the scheduler; Relay status exposes no destination health. `relay_turn(register_session=True)` already restores session state to `active`. The existing string session-state column can represent advisory `unreachable` without a schema migration. Clean review found that asynchronous wake feedback needs compare-and-set protection against a later registration.
 
@@ -25,7 +25,7 @@
 
 **Plan review:** Clean-context agent `s2_plan_review` conditionally approved the corrected plan; one-shot Claude-specific capability retry validation remains pending.
 
-**Approvals:** Not required at this risk level unless redline raises the task to High.
+**Approvals:** Pending explicit human approval after Claude-specific plan validation.
 
 **Exceptions:** —
 
@@ -35,6 +35,7 @@
 ## Implementation
 
 - Established task context before code discovery; no product code changed.
+- Repository checker raised Risk from Elevated to High because the planned diff includes the public API response surface; implementation remains blocked on Claude validation and explicit human approval.
 
 ## Plan review
 
