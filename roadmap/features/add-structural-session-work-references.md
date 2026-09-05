@@ -1,7 +1,7 @@
 ---
 id: add-structural-session-work-references
 title: Attach structural work references to session history
-status: active
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-session-history

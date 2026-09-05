@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- Ready to implement | Blocked | Ready for review -->
 <!-- agent-workflow:end -->
 
@@ -57,8 +57,9 @@ Resolution: sanitize only the new work-reference metadata key for every artifact
 
 - Focused Python: 136 passed in 8.53s; changed Python files compile; diff check clean.
 - OpenCode: 44 passed in 13.41s from its configured working directory.
-- Resolver timing, one cold plus fifty warm calls: Python cold 1.192 ms, median 0.783 ms, p95 0.911 ms, max 1.050 ms (pass); Node cold 133.642 ms, median 130.856 ms, p95 162.973 ms, max 3404.032 ms (warm threshold failed).
+- Initial resolver timing disproved uncached Node performance. After the approved cache, final timing was: Python cold 1.192 ms, warm median 0.783 ms, p95 0.911 ms, max 1.050 ms; Node cold 134.270 ms, warm median 0.496 ms, p95 0.762 ms, max 0.815 ms. Both cold <= 500 ms and warm p95 <= 100 ms passed.
 - Ruff was unavailable in the existing environment; no dependency was installed.
+- Verified implementation revision: `a458b4be0542f1c0a56ee072ba36be299e702ccc` (the tested worktree was committed unchanged). Final focused results: 136 Python tests and 45 OpenCode tests passed; changed Python compiled; diff check passed.
 
 ## Result review
 

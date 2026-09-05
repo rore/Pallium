@@ -178,7 +178,7 @@ session) from its own data. Agents do not need to classify turns.
 
 ### Runtime Hints for Work References
 
-Structural integration helpers add raw, ordered work references to this list: `git-branch:<branch>` for the current non-base Git branch, `agent-workflow:<slug>` when the exact `.agent-workflow/tasks/<slug>.md` Work Record resolves safely and contains both workflow markers, then any explicitly supplied list-valued refs. Non-Git, detached, base-branch, missing, malformed, or escaping records contribute nothing; integrations do not redact or normalize these candidates.
+Structural integration helpers add raw, ordered work references to this list: `git-branch:<branch>` for the current non-base Git branch, `agent-workflow:<slug>` when the exact `.agent-workflow/tasks/<slug>.md` Work Record resolves safely and contains both workflow markers, then any explicitly supplied list-valued refs. Non-Git, detached, base-branch, missing, malformed, or escaping records contribute nothing; integrations do not redact or normalize these candidates. OpenCode caches only the Git root and branch while the workspace's exact Git HEAD file is unchanged; Work Record validation and explicit refs remain per event.
 
 The integrating agent can provide `pallium_work_refs` in item `metadata` to
 supplement LLM extraction. When present, these refs are merged with any
