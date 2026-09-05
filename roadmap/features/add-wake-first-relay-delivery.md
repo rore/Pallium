@@ -203,9 +203,10 @@ where the runtime exists locally, an installed witness close it.
 | `RW-006` | A Codex MCP child can lack runtime-owned session identity or inherit another Codex task's forwarded identity and claim the wrong inbox. | **Fixed.** Per-request Codex transport metadata is authoritative; inherited `CODEX_*`, configured thread values, and model arguments are ignored. Missing/conflicting/malformed identity fails closed before HTTP. One-child real-stdio E2E covers exact ASCII/Unicode receive+ACK, max-boundary receive validation, and refusal paths; the installed synthetic witness returned the exact new Codex task ID instead of the outer ID. |
 | `RW-007` | A bounded turn can report `has_more` and `remaining_count`, but integrations did not prove automatic bounded continuation until the eligible backlog was empty. | **Fixed in PR #101 and Windows-qualified.** Default-three hook turns, fixed character reservation, Codex post-ACK continuation, Claude Stop/recovery continuation, safe candidate selection, caller-surface edge coverage, and installed automatic 3+2 Codex plus Claude wake witnesses are complete. |
 | `RW-008` | Crash after claim but before context injection recovers the lease, yet may wait for a natural turn instead of being re-woken automatically. | **Fixed in PR #102 and Windows-qualified.** A read-only exact-session sweep re-wakes eligible expired claims at startup and every 30 seconds through the existing adapters. Deterministic Codex/Claude restart E2E and an installed Codex witness prove automatic reclaim, single ACK, and terminal empty state after the 60-second lease expires. |
-| `RW-009` | Wake E2E leaked synthetic memory into the live store; the observed `a043f627-...` object appeared under `other`. | **Isolation fixed; cleanup open.** The unmocked live request is covered. Slice 5 pins the production routing invariant; the exact-provenance cleanup below owns only the historical 23 source items and 89 derived memories. |
+| `RW-009` | Wake E2E leaked synthetic memory into the live store; the observed `a043f627-...` object appeared under `other`. | **Fixed; reversible cleanup complete.** The unmocked live request is covered. The exact historical set was tagged `rw009-synthetic-wake-e2e-leak`: 23 source items were forgotten and 89 derived memories soft-deleted. The default dashboard read path now returns zero visible rows for the contaminated container; audit mode retains all 89 memories, including the cited object, for recovery. |
 | `RW-010` | The Windows restart wrapper can stop a healthy service while a checkout is mid-edit and can print success before all required endpoints are ready; this recurred after PR #98. | **Open — near-term operations follow-up below.** Add preflight, bounded readiness polling, all three endpoint checks, actionable logs, and non-zero failure. |
 | `RW-011` | A delegated agent can end a turn without the sender knowing whether requested work completed, causing manual polling or a stalled workflow. | **Optional product follow-up.** `idea-agent-relay.md` owns default-off `notify_on_turn_end`; it reports turn end only and never infers task completion or supervises work. |
+| `RW-012` | A normal hook-injected delivery reached an agent without the trusted container and actor scope needed by `pallium_relay_reply`; reply failed closed and encouraged an out-of-band fallback. | **Open — next correctness fix.** Make every hook-delivered message atomically replyable in the same turn under integration-owned exact scope, with no model-supplied identity or scope. Pin it with caller-surface E2E for reply, ACK-only, wrong-scope refusal, and restart/installed-state drift. |
 
 The Windows Claude regression floor remains: idle text and zero-tool turns, empty
 Stop rearm, busy delivery, ordered bursts, Unicode, recursive-Stop loop prevention,
@@ -222,10 +223,10 @@ The following related work stays separate to keep ownership clear:
   proposal. Turn end is not task completion and is not a prerequisite for delivery
   correctness.
 - `validate-relay-dependency-workflows` starts only after S2/S3 are stable.
-- One local dogfood cleanup remains: verify the historically measured 23 synthetic
-  source items and 89 derived memories from the fixed wake-test isolation leak,
-  then remove only rows with exact fixture provenance through a reviewed scoped
-  repair. This is operational data repair, not Relay routing behavior.
+- The local wake-test pollution repair is complete and reversible: the exact 23
+  synthetic source items are forgotten and 89 derived memories are soft-deleted
+  under one audit reason; the default dashboard read path exposes none of them.
+  This was operational data repair, not Relay routing behavior.
 - **Near-term operations follow-up (separate from S2):** harden the Windows
   restart wrapper after the dogfood incident: preflight syntax/imports before
   stopping a healthy service; bounded-poll readiness; verify `/health`, `/status`,
