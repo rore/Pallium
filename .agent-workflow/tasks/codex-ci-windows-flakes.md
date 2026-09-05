@@ -58,7 +58,7 @@ Not required at this risk level.
 - Three repeated prior-failure runs: 5 passed each in 6.37-6.84s.
 - OpenCode integration suite: 45 passed, 6 Windows skips in 10.93s.
 - Thread-summary accumulation file: 3 passed in 4.89s.
-- Existing Pydantic warnings unchanged. Revision pending commit; CI is the final Windows runner evidence.
+- Existing Pydantic warnings unchanged. Verified revision: `d175438c`; CI is the final Windows runner evidence.
 
 ## Result review
 
