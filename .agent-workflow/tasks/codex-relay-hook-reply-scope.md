@@ -49,12 +49,15 @@ Live vNext dogfood reported that a hook-injected delivery lacked visible trusted
 - 2026-09-06: A queued vNext report plus local reproduction identified oversized recipient listings returning only a generic response-budget error; queued separately as RW-014.
 - 2026-09-06: Bounded Claude architecture review accepted; implementation started with the existing formatter and no new abstraction.
 - 2026-09-06: `apply_patch` hit the known Windows 1327 sandbox failure; all edits used exact one-occurrence PowerShell replacements limited to named files.
+- 2026-09-06: Initial Linux CI exposed one stale SessionStart assertion that assumed the Relay notice was the final output; updated it to assert the independently bounded Relay section plus the exact appended scope.
 
 ## Evidence
 
 - Added `investigate-cross-repository-relay-coordination` behind RW-012/013/014 with explicit opt-in membership and a transport-only boundary.
 - Local verification: 200 affected Python tests passed with 2 intentional skips and 4 pre-existing Pydantic warnings; OpenCode 45 passed with 6 platform skips; import-linter clean.
+- CI regression verification: `tests/test_claude_wake_registration.py` plus `tests/test_agent_relay_hooks.py` passed 80 tests after the stale output-shape assertion was corrected.
+- Installed Windows witness: Relay message `relay-msg-55e630f56d0842d1ab39c31ee2b5b1e7` auto-woke Claude session `3c4744b9-1b2e-4bcb-820e-0f16f3ce685a`; the hook claimed and delivered in under one second, and Claude returned `rw012-installed-pass` by receiptless atomic reply six seconds after send, without a manual turn or MCP receive. Codex and Claude setups point at this checkout; service health, status, and queue-health endpoints passed after wrapper restart.
 
 ## Result review
 
-- Clean-context Luna final review found no correctness, security, lifecycle, ACK, scope, budget, roadmap, or documentation blockers; its focused run passed 97 tests with 2 skips. Installed witness remains the only completion gate.
+- Clean-context Luna final review found no correctness, security, lifecycle, ACK, scope, budget, roadmap, or documentation blockers; its focused run passed 97 tests with 2 skips. The installed automatic Claude wake/reply witness passed. Remaining merge gates are refreshed CI and an actual CodeRabbit review after its rate-limit window.
