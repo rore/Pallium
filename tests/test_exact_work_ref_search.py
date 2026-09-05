@@ -148,7 +148,7 @@ def test_punctuation_is_not_structural_but_unicode_query_is_searchable(
 def test_exact_ref_refills_past_deterministic_forgotten_first_page(
     client, drain_queue
 ) -> None:
-    all_ids = [_add(client, f"item-{i}", "proj-1") for i in range(7)]
+    all_ids = [_add(client, f"item-{i}", "proj-1") for i in range(20)]
     drain_queue(client)
     with _session(client) as session:
         first_page = [
@@ -157,13 +157,13 @@ def test_exact_ref_refills_past_deterministic_forgotten_first_page(
                 sa_text(
                     "SELECT target_id FROM lexical_fts "
                     "WHERE lexical_fts MATCH :query AND target_kind = 'source_item' "
-                    "ORDER BY bm25(lexical_fts), index_entry_id LIMIT 3"
+                    "ORDER BY bm25(lexical_fts), index_entry_id LIMIT 12"
                 ),
                 {"query": "\"alpha\""},
             ).fetchall()
             if row.target_id in all_ids
         ]
-    assert len(first_page) == 3
+    assert len(first_page) == 12
     for source_id in first_page:
         response = client.post(
             "/source/forget",
@@ -230,26 +230,36 @@ def test_exact_ref_combines_actor_container_and_legacy_safety(
 ) -> None:
     secret = "ghp_" + "abcdefghijklmnopqrstuvwxyz1234567890"
     keep = _add(client, "keep", "proj-1", actor_ref="actor-a")
+    malformed_scalar = _add(client, "malformed-scalar", "proj-1", actor_ref="actor-a")
+    malformed_object = _add(client, "malformed-object", "proj-1", actor_ref="actor-a")
     _add(client, "other-actor", "proj-1", actor_ref="actor-b")
     _add(client, "other-container", "proj-1", container="other")
     drain_queue(client)
 
     with _session(client) as session:
-        session.execute(
-            sa_text("UPDATE source_items SET metadata_json = :metadata WHERE id = :id"),
-            {
-                "id": keep,
-                "metadata": json.dumps(
-                    {"pallium_work_refs": ["proj-1", secret, "[REDACTED_TOKEN]"]}
-                ),
+        legacy_metadata = {
+            keep: {
+                "pallium_work_refs": [
+                    "proj-1", secret, "[REDACTED_TOKEN]", 42, None, True
+                ]
             },
-        )
+            malformed_scalar: {"pallium_work_refs": 42},
+            malformed_object: {"pallium_work_refs": {"nested": "proj-1"}},
+        }
+        for source_id, metadata in legacy_metadata.items():
+            session.execute(
+                sa_text(
+                    "UPDATE source_items SET metadata_json = :metadata WHERE id = :id"
+                ),
+                {"id": source_id, "metadata": json.dumps(metadata)},
+            )
         session.commit()
 
     rows = _exact(client, "", actor_ref="actor-a")
     assert [row["source_item_id"] for row in rows] == [keep]
     assert rows[0]["work_refs"] == ["proj-1"]
     assert secret not in json.dumps(rows)
+    assert [row["source_item_id"] for row in _exact(client, "alpha", actor_ref="actor-a")] == [keep]
 
 
 def test_unknown_exact_is_empty_and_broad_compatibility_filter_still_works(
@@ -442,3 +452,128 @@ def test_exact_http_rejects_secret_bearing_wrong_types_without_echo(
     assert response.status_code == 422
     assert "secret-bearing-wrong-type" not in response.text
     assert "nested" not in response.text
+
+def test_exact_http_maximum_and_over_maximum_result_journey(
+    client, drain_queue
+) -> None:
+    for i in range(55):
+        _add(
+            client,
+            f"boundary-{i}",
+            "proj-1",
+            content=f"unique boundary content {i}",
+        )
+    drain_queue(client)
+
+    rows = _exact(client, "", limit=50)
+    assert len(rows) == len({row["source_item_id"] for row in rows}) == 50
+
+    response = client.post(
+        "/query",
+        json={
+            "text": "",
+            "limit": 51,
+            "source_only": True,
+            "trigger_origin": "agent_pull_work",
+            "work_refs": ["proj-1"],
+            "container_ref": "room",
+            "visibility": "private",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_exact_work_ref_search_through_enabled_vector_http(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("usearch")
+    from app.config import AppConfig
+    from app.main import create_app
+    from core.models import IndexEntry, SourceItem
+    from fastapi.testclient import TestClient
+    from providers.embedding.base import EmbeddingProvider
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+
+    class FixedEmbedding(EmbeddingProvider):
+        def embed(self, texts, *, mode="passage"):
+            return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
+
+        def dimensions(self) -> int:
+            return 4
+
+        def model_name(self) -> str:
+            return "exact-work-e2e"
+
+    monkeypatch.setattr(
+        "app.dependencies.build_embedding_provider",
+        lambda _config, *, provider_name: FixedEmbedding(),
+    )
+    app = create_app(
+        AppConfig(
+            storage_backend="sqlite",
+            sqlite_url=f"sqlite:///{tmp_path / 'vector.db'}",
+            default_use_case="demo_agent_memory",
+            semantic_packages=DEMO_SEMANTIC_PACKAGES,
+            vector_index=VectorIndexConfig(
+                enabled=True,
+                index_path=str(tmp_path / "vector.index"),
+                embedding_provider="onnx",
+                min_similarity=0.0,
+            ),
+        )
+    )
+    service = app.state.pallium_service
+    assert service._vector_index is not None
+
+    right_ids = []
+    for i in range(22):
+        is_right = i >= 20
+        source = SourceItem(
+            source_type="chat",
+            source_id=f"vector-{i}",
+            content_type="text/plain",
+            content=f"vector-only content {i}",
+            artifact_kind="message",
+            role="user",
+            container_ref="room",
+            thread_ref="thread",
+            visibility="private",
+            metadata={
+                "pallium_work_refs": ["PROJ 1" if is_right else "other-2"]
+            },
+        )
+        service._storage.create_source_item(source)
+        entry = IndexEntry(
+            target_kind="source_item",
+            target_id=source.id,
+            index_type="vector",
+            text_view=source.content,
+            provider_name="exact-work-e2e",
+        )
+        service._storage.create_index_entry(entry)
+        service._vector_index.add(
+            entry.id,
+            [0.8, 0.2, 0.0, 0.0] if is_right else [1.0, 0.0, 0.0, 0.0],
+        )
+        if is_right:
+            right_ids.append(source.id)
+
+    response = TestClient(app).post(
+        "/query",
+        json={
+            "text": "semantic-only-query",
+            "limit": 2,
+            "source_only": True,
+            "trigger_origin": "agent_pull_work",
+            "work_refs": ["proj-1"],
+            "container_ref": "room",
+            "thread_ref": "thread",
+            "visibility": "private",
+        },
+    )
+    assert response.status_code == 200, response.text
+    returned = [row["source_item_id"] for row in response.json()["results"]]
+    assert len(returned) == 2
+    assert set(returned) == set(right_ids)
+

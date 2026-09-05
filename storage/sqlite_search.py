@@ -71,7 +71,13 @@ class SQLiteSearchMixin:
             def exact_pages():
                 with self._session_factory() as session:
                     session.connection().connection.create_function(
-                        "pallium_normalize_work_ref", 1, _normalize_work_ref
+                        "pallium_normalize_work_ref",
+                        1,
+                        lambda value: (
+                            _normalize_work_ref(value)
+                            if isinstance(value, str)
+                            else None
+                        ),
                     )
                     if structural_work_ref_query:
                         result = session.execute(
