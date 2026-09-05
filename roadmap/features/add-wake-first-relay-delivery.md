@@ -166,12 +166,11 @@ use deterministic clocks/events rather than wall-clock sleeps in the normal suit
    generic wake turns. It rearms after admission and covers delivery completed by
    another turn, concurrent sends, active-writer fallback, failure, restart, and
    no lost pending work.
-4. **S2 Codex MCP recovery and integration reload — next.** Fresh-session dogfood
-   must prove that the MCP child receives runtime-owned identity and can
-   receive/ACK; an already-running child after setup must fail closed with an
-   explicit host-restart requirement rather than look like message loss. If a
-   fresh child still lacks identity, fix the supported launcher handoff; never
-   accept model-supplied identity or borrow a parent process's unverified context.
+4. **S2 Codex MCP recovery and integration reload — complete in PR #99.**
+   Runtime-owned per-call MCP metadata supplies exact task identity; inherited
+   parent IDs and model arguments are ignored. Missing, malformed, or conflicting
+   metadata fails closed before Relay HTTP with reload/upgrade guidance. Real
+   stdio E2E and an installed fresh-session witness prove exact receive/ACK.
 5. **S2 bounded backlog draining.** Verify `has_more` and `remaining_count`
    reach every supported integration and cause bounded automatic continuation
    until the eligible backlog is empty, including new arrivals during draining,
@@ -334,7 +333,7 @@ Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wak
 Phase 0 decision and installed-runtime evidence:
 [Relay wake Phase 0 decision record](../../docs/designs/017-relay-wake-phase0.md).
 
-Current result: Codex exact-session wake uses hidden `codex exec resume` for an unloaded stored task. The Windows desktop app retains active writers, so the live adapter falls back to hidden `codex queue --thread` for that exact session; both launch paths are best-effort and retain durable natural-turn fallback on launch failure. The active-writer fallback explicitly encodes Relay prompts as UTF-8, and the pre-fix claim-before-queue behavior reproduced a 409 `claim lease has expired` when a delivery was claimed before queueing and the queued turn executed after the lease. The live adapter now queues a generic trigger and lets the installed UserPromptSubmit hook claim at admitted-turn execution; delayed busy-target caller-surface E2E proves no stale receipt, loss, or duplicate action. Hook-delivery wake and per-session burst coalescing are proven for the tested Windows paths. Codex MCP receive still needs fresh-versus-stale host qualification; bounded automatic backlog drain, crash-after-claim re-wake, interrupted/restart admission, sender-side reply admission, telemetry, macOS/Linux, and sustained dogfood also remain. Claude Windows wake is complete, installed UDS is S4, and OpenCode remains deferred.
+Current result: Codex exact-session wake uses hidden `codex exec resume` for an unloaded stored task. The Windows desktop app retains active writers, so the live adapter falls back to hidden `codex queue --thread` for that exact session; both launch paths are best-effort and retain durable natural-turn fallback on launch failure. The active-writer fallback explicitly encodes Relay prompts as UTF-8, and the pre-fix claim-before-queue behavior reproduced a 409 `claim lease has expired` when a delivery was claimed before queueing and the queued turn executed after the lease. The live adapter now queues a generic trigger and lets the installed UserPromptSubmit hook claim at admitted-turn execution; delayed busy-target caller-surface E2E proves no stale receipt, loss, or duplicate action. Hook-delivery wake and per-session burst coalescing are proven for the tested Windows paths. Codex MCP receive is exact-session qualified; bounded automatic backlog drain, crash-after-claim re-wake, interrupted/restart admission, sender-side reply admission, telemetry, macOS/Linux, and sustained dogfood also remain. Claude Windows wake is complete, installed UDS is S4, and OpenCode remains deferred.
 
 ## Research References
 
