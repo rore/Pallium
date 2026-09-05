@@ -447,6 +447,22 @@ class SQLiteRelayMixin:
             if not recipients:
                 if recipient_kind == "runtime":
                     raise RelayConflictError("recipient resolved to no eligible sessions")
+                unreachable_statement = select(RelaySessionRecord).where(
+                    RelaySessionRecord.container_ref == container_ref,
+                    RelaySessionRecord.actor_ref == actor_ref,
+                    RelaySessionRecord.runtime == recipient_runtime,
+                    RelaySessionRecord.state == "unreachable",
+                )
+                if recipient_kind == "session":
+                    unreachable_statement = unreachable_statement.where(
+                        RelaySessionRecord.session_ref == recipient_value
+                    )
+                else:
+                    unreachable_statement = unreachable_statement.where(
+                        RelaySessionRecord.alias == recipient_value
+                    )
+                if db.execute(unreachable_statement).first() is not None:
+                    raise RelayConflictError("recipient session is unreachable")
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             if len(recipients) > broadcast_max_recipients:
                 raise RelayConflictError(

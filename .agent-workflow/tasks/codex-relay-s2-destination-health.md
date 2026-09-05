@@ -39,6 +39,8 @@
 - S2 slice A implemented in `core/claude_wake.py` and `app/claude_wake_transport.py`; focused classifier/durability expectations updated and verified with `pytest -q tests/test_claude_wake_dispatch.py tests/test_claude_wake_durability.py` (73 passed, 2 skipped).
 - User approved the finalized High-risk plan; implementation may begin.
 - Slice B1: added exact-scoped strict timestamp-CAS active→unreachable and trusted registration restore in `storage/sqlite_relay.py`, with optional `RelayService` wrappers; no delivery rows mutate. Repaired the delegated regression to exercise the core surface, strict equality, scope, closed precedence, and self-heal; `tests/test_agent_relay_e2e.py` passes (37 tests).
+- Slice B2: new exact/alias sends now fail synchronously for known unreachable recipients without creating rows; runtime fan-out excludes them, idempotent existing sends remain valid, and unreachable senders may send/name. Full Relay caller-surface E2E passes (38 tests).
+- Dogfood incident: restarting the installed service while a delegated write was incomplete imported transient invalid syntax. The required wrapper also printed success before readiness. Recovered by syntax-checking, restarting, and verifying health/status/queue; follow-up operations hardening must add pre-stop syntax preflight and bounded post-start endpoint verification.
 
 ## Plan review
 
