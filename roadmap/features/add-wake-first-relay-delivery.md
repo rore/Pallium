@@ -73,8 +73,9 @@ support remains required and unqualified combinations stay passive.
    recipient context. A trigger request or transport acknowledgement is not enough.
 5. If activation is unsupported, disabled, unavailable, stale, or fails, leave the
    same delivery pending for the existing next-natural-turn path. The immediate
-   S2 contract gate below may add a terminal outcome only for a destination proven
-   impossible to reach; missing wake capability, ambiguous transport, and temporary
+   S2 contract gate below may add a terminal outcome only from separate,
+   proven-terminal delivery evidence. Destination health never terminalizes an
+   existing delivery; missing wake capability, ambiguous transport, and temporary
    runtime absence remain durable fallback, not failure.
 
 Track activation separately from the durable delivery lifecycle. Operationally,
@@ -140,25 +141,23 @@ platform expansion. Keep each numbered slice small enough to implement, review,
 and report independently; use deterministic clocks/events rather than wall-clock
 sleeps in the normal suite.
 
-1. **S2 contract gate — proven failure versus durable fallback.** Define one
-   state table covering unknown Relay recipient, supported recipient without a
-   current wake capability, temporary/ambiguous transport failure, reliably
-   unreachable destination, admitted delivery, expiry, and any terminal delivery
-   failure. Preserve the current invariant that no wake capability is not itself
-   failed delivery. Decide whether a missing native endpoint proves permanent
-   delivery failure or only a self-healing `unreachable` wake state before adding
-   a delivery `failed` state. Do not implement contradictory semantics where a
-   destination can re-register but its still-valid delivery can never recover.
-2. **S2 wake feedback and destination health.** Once the table is accepted, make
-   known-impossible sends fail synchronously without probing or blocking on a live
-   wake. The currently observed reliable candidate is a Windows missing-pipe
-   result; qualify equivalent Windows and POSIX signals before treating them as
-   terminal rather than retryable. Record reliable terminal native outcomes for
-   sender status; keep all uncertain outcomes asynchronous and retryable.
-   Replace terminal eviction with a persisted, sender-visible `unreachable`
-   destination state only if the signal is reliable; successful exact-session
-   registration must clear it. Surface the distinction through Relay status,
-   dashboard telemetry, and sanitized logs.
+1. **S2 contract gate — independent delivery and destination state.** Define two
+   state tables: delivery lifecycle (`pending`, `claimed`, `delivered`, `expired`,
+   plus `failed` only on separate proven-terminal delivery evidence) and advisory
+   destination health (`active` or `unreachable`). A destination-health transition
+   must never change an existing delivery. Missing wake capability and recoverable
+   or ambiguous transport leave that delivery pending and retryable. An advisory
+   `unreachable` mark may make new sends fail fast and must clear on successful
+   exact-session registration.
+2. **S2 wake feedback and destination health.** Implement those tables without
+   coupling them. The currently observed Windows missing-pipe result is a candidate
+   for advisory `unreachable`; qualify equivalent Windows and POSIX signals before
+   relying on it. It remains retryable for the in-flight delivery unless separate
+   evidence proves that delivery terminal. Replace terminal registration eviction
+   with the persisted, sender-visible advisory state when the signal is reliable;
+   successful exact-session registration clears it. Surface delivery and
+   destination state distinctly through Relay status, dashboard telemetry, and
+   sanitized logs.
 3. **S2 Codex burst coalescing.** Fix the reproduced loaded-task incident where
    several close sends were delivered once in the first admitted turn but already
    queued generic wake turns appeared later with no attributed payload. Coalesce

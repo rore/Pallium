@@ -216,10 +216,10 @@ fan-out. A wake attempt is not delivery: Pallium marks a delivery complete only
 after the runtime confirms that the message entered the recipient's context, and
 the fallback must not inject a successfully admitted message twice. Missing wake
 capability and ambiguous or retryable wake failures remain observable durable
-pending delivery. The active wake-first S2 contract gate must separately decide
-whether a reliably known-impossible destination warrants a terminal delivery
-outcome; it may not weaken passive fallback or strand a delivery that can recover
-when the exact session re-registers.
+pending delivery. The active wake-first S2 contract gate keeps destination health
+and delivery lifecycle independent: advisory `unreachable` may fail a new send
+fast and self-heals on exact-session registration, but never terminalizes an
+existing delivery. Only separate proven-terminal delivery evidence may do that.
 
 Use only qualified runtime-native mechanisms. Claude Code native Windows idle wake
 and Codex `queue --thread` exact-session admission are proven candidates; Claude

@@ -45,7 +45,8 @@ resent merely because no reply followed.
   after their lease and retain next-turn fallback until expiry
 - retain sender-visible `unreachable` destination evidence for the bounded
   diagnostic window accepted by S2; an exact successful registration self-heals
-  the destination before ordinary cleanup considers it obsolete
+  the destination before ordinary cleanup considers it obsolete, and destination
+  health never changes the lifecycle of an existing delivery
 - treat replies as separate linked messages: delivery alone never implies a reply,
   and absence of a reply never causes automatic redelivery
 - use the existing cleaner process rather than adding another worker
