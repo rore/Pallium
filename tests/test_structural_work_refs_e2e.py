@@ -144,7 +144,6 @@ def _python_payloads(
 def _opencode_payloads(cwd: Path, explicit: list[str], state_home: Path) -> list[dict]:
     plugin = Path("integrations/opencode/.opencode/plugins/pallium.mjs").resolve().as_uri()
     script = r'''import pluginFactory from "__PLUGIN__";
-process.env.PATH = "";
 const calls = [];
 global.fetch = async (url, init) => {
   const body = init?.body ? JSON.parse(init.body) : undefined;
