@@ -2,9 +2,9 @@
 
 # Pallium
 
-Pallium is a local service that lets agent sessions send messages to each other
-and search earlier session history. It currently supports Claude Code, Codex,
-and OpenCode.
+Pallium is a local service that lets agent sessions across coding tools send
+messages to each other and search earlier session history. It currently supports
+Claude Code, Codex, and OpenCode.
 
 ## What it does
 
