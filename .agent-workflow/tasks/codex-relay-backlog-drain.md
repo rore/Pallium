@@ -23,13 +23,13 @@
 
 **Verification plan:** When a Codex hook ACK succeeds with more safe pending work, the system shall schedule one exact-session continuation and drain ordered IDs once, including a new arrival before the next batch -> real HTTP route + actual UserPromptSubmit lifecycle E2E with synchronous scheduler capture. When ACK fails or is replayed, the system shall schedule nothing -> HTTP conflict/idempotence regressions. When Claude has more than one bounded batch, Stop/idle reconciliation shall wake and drain again without recursive Stop looping -> actual Claude hooks + persistent registry/reconciler E2E with deterministic events. When unsafe legacy or over-current-budget work precedes safe work, the safe candidate shall continue and the unrenderable row shall not cause a loop -> storage + callback caller-surface regression. When `has_more` is true, both runtimes shall receive the automatic-continuation notice and perform no memory query/ingest; when false, no notice or extra wake shall occur -> hook output/routing tests. Public ACK response and OpenAPI shall remain unchanged -> response-shape/OpenAPI assertion. Final gate -> focused suites, import-linter, redline, agent-workflow, diff check, CodeRabbit, and installed Codex/Claude burst witness after integration reinstall.
 
-**Plan review:** Initial clean-context Luna review accepted the plan. Supplemental review is pending for the newly discovered unbounded-hook-claim correction.
+**Plan review:** Initial and supplemental clean-context Luna reviews accepted the plan with no blockers; findings are incorporated under `## Plan review`.
 
 **Approvals:** Approved by user 2026-09-05: "you don't need to ask every time, you have a constant approval to get what you're working on to a done state"
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -39,6 +39,7 @@
 - 2026-09-05: Plan recorded; blocked pending clean-context plan review.
 - 2026-09-05: Clean-context review accepted the plan. Incorporated bounded notice reservation and exact render-safety convergence; user standing approval satisfies the High-risk human gate. State moved to Ready to implement before production-code edits.
 - 2026-09-05: Focused regression exposed omitted hook bounds: `max_chars=0` is intentionally unbounded for MCP receive but unsafe for context-injecting hooks. Expanded the same High-risk plan to cover Claude SessionStart and explicit 2,400-character requests; blocked only for supplemental clean-context review.
+- 2026-09-05: Supplemental clean-context review accepted the correction as the minimal root fix with no new checkpoint. State returned to Ready to implement before editing Claude SessionStart.
 
 ## Evidence
 
@@ -60,3 +61,5 @@ Verification: deterministic caller-surface E2E across Codex and Claude, includin
 ## Plan review
 
 Clean-context reviewer `/root/rw007_plan_review` (Luna, 2026-09-05) verdict: **ACCEPT; no material blocker**. The review confirmed the injected callback keeps `api/routes.py` thin, ACK commits precede candidate lookup, hook ACK and MCP receipt ACK remain separate, exact `delivery_id` status semantics remain unchanged, Codex admission can reuse current coalescing, Claude can reuse Stop/idle reconciliation if caller-surface E2E proves it, and OpenCode active wake remains out of scope. Non-blocking findings incorporated: gate continuation on a successful non-duplicate hook ACK, reserve any `has_more` notice inside the existing 2,400-character output budget, and make no-ID pending-candidate safety match `relay_turn` so legacy-invalid work cannot loop ahead of a safe row.
+
+Supplemental review by the same clean-context reviewer accepted explicit `max_chars=2400` on Codex UserPromptSubmit and Claude SessionStart/UserPromptSubmit as the minimal model-context boundary fix while preserving MCP's intentional unbounded drain-all contract. Claude Stop already supplies the bound. No new risk or checkpoint was introduced; SessionStart must receive caller-surface empty/fitting/over-budget/Unicode/`has_more` coverage.
