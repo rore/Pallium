@@ -62,9 +62,9 @@ jobs:
         id: changed
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" > changed-files.txt
+          git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > changed-files.txt
           echo "--- changed-files.txt ---"
           cat changed-files.txt
 
@@ -219,9 +219,9 @@ jobs:
         id: changed
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" > changed-files.txt
+          git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > changed-files.txt
           echo "--- changed-files.txt ---"
           cat changed-files.txt
 

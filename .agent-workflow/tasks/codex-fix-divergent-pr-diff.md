@@ -47,13 +47,14 @@ Clean-context Luna review approved the plan with required regression details rec
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-06: Confirmed live PR-report contamination against GitHub's authoritative file list; initialized the High-risk Work Record before workflow edits.
 - 2026-09-06: Clean-context architecture review approved three-dot semantics and required base-only/head-only fixture assertions plus exact checks for both changed-file jobs.
+- 2026-09-06: Implemented the approved minimal change in both jobs and added one deterministic divergent-history contract test. Because apply_patch hit the documented Windows 1327 launch failure, used exact scoped replacements only.
 
 ## Checkpoint: architecture-review
 
@@ -69,7 +70,7 @@ Clean-context Luna verdict: approved with two required corrections. The determin
 
 ## Evidence
 
-Pending.
+Focused divergent-history regression: 1 passed in 5.65s. Workflow YAML parsed successfully; staged diff check passed. Local agent-workflow gate is advisory only for the expected PR-time `architecture-reviewed` checkpoint; every blocking predicate passed.
 
 ## Result review
 
