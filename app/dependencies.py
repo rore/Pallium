@@ -563,11 +563,35 @@ def build_router(
         elif runtime == "codex" and relay_service is not None:
             schedule_codex_relay_wake(result, scope)
     def _relay_ack_rearm(result: object, scope: object) -> None:
-        if not isinstance(result, dict) or not isinstance(scope, dict) or result.get("recipient_runtime") != "codex":
+        if (
+            relay_service is None
+            or not isinstance(result, dict)
+            or not isinstance(scope, dict)
+            or result.get("recipient_runtime") != "codex"
+        ):
             return
-        candidate = relay_service.pending_candidate(runtime="codex", session_ref=result["recipient_session_ref"], container_ref=scope["container_ref"], actor_ref=scope["actor_ref"])
+        session_ref = result.get("recipient_session_ref")
+        if not isinstance(session_ref, str):
+            return
+        candidate = relay_service.pending_candidate(
+            runtime="codex",
+            session_ref=session_ref,
+            container_ref=scope.get("container_ref"),
+            actor_ref=scope.get("actor_ref"),
+        )
         if candidate is not None:
-            _relay_wake_dispatch({"deliveries": [{"delivery_id": candidate["delivery_id"], "state": candidate["state"], "recipient": "codex:" + result["recipient_session_ref"], "recipient_runtime": "codex", "recipient_session_ref": result["recipient_session_ref"]}]}, scope)
+            _relay_wake_dispatch(
+                {
+                    "recipient": f"codex:{session_ref}",
+                    "deliveries": [{
+                        "delivery_id": candidate["delivery_id"],
+                        "state": candidate["state"],
+                        "recipient_runtime": "codex",
+                        "recipient_session_ref": session_ref,
+                    }],
+                },
+                scope,
+            )
 
     def _relay_turn_admission(request: object) -> None:
         if not isinstance(request, dict):

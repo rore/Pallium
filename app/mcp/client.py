@@ -320,6 +320,7 @@ class PalliumMcpClient:
             "runtime": runtime,
             "session_ref": session_ref,
             "max_chars": max_chars,
+            "max_messages": 0,
             **self._relay_scope_params(),
         }
         return await self._post_or_error("/relay/turn", payload)

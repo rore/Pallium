@@ -490,9 +490,12 @@ def test_turn_message_cap_alias_release_and_queued_close_reactivation(client):
     ).status_code == 200
 
     first = _turn(client, "codex", "target")["deliveries"]
-    assert len(first) == 4
+    assert len(first) == 3
     for delivery in first:
         assert _ack(client, delivery).status_code == 200
+    final = _turn(client, "codex", "target")["deliveries"]
+    assert len(final) == 1
+    assert _ack(client, final[0]).status_code == 200
     assert _turn(client, "codex", "target")["deliveries"] == []
 
     assert _name(client, "codex", "target", "review").status_code == 200
@@ -501,6 +504,42 @@ def test_turn_message_cap_alias_release_and_queued_close_reactivation(client):
     assert released.json()["alias"] is None
     assert _send(client, "claude-code", "sender", "codex:@review").status_code == 404
 
+
+def test_turn_defaults_to_three_messages_and_zero_preserves_drain_all(client):
+    _turn(client, "claude-code", "batch-sender")
+    for session, max_messages, expected in (
+        ("default-three", None, 3),
+        ("explicit-unlimited", 0, 4),
+    ):
+        _turn(client, "codex", session)
+        for index in range(4):
+            assert _send(
+                client,
+                "claude-code",
+                "batch-sender",
+                f"codex:{session}",
+                f"message-{index}",
+                message_id=f"{session}-{index}",
+            ).status_code == 200
+        extra = {} if max_messages is None else {"max_messages": max_messages}
+        turn = _turn(client, "codex", session, **extra)
+        assert len(turn["deliveries"]) == expected
+        assert turn["remaining_count"] == 4 - expected
+        assert turn["has_more"] is (expected < 4)
+
+
+@pytest.mark.parametrize("max_messages", [-1, -100])
+def test_turn_message_limit_rejects_negative_values(client, max_messages):
+    response = client.post(
+        "/relay/turn",
+        json={
+            "runtime": "codex",
+            "session_ref": "negative-message-limit",
+            "max_messages": max_messages,
+            **SCOPE,
+        },
+    )
+    assert response.status_code == 422
 
 @pytest.mark.parametrize("max_chars", [-1, -100])
 def test_turn_budget_rejects_negative_values(client, max_chars):
@@ -542,6 +581,39 @@ def test_small_turn_budget_skips_oversized_message_without_blocking_later_delive
         _turn(client, "codex", "small-budget-target")["deliveries"][0]["message_id"]
         == "oversized-first"
     )
+
+def test_pending_candidate_skips_unsafe_without_hiding_exact_status(client, relay_storage):
+    _turn(client, "claude-code", "candidate-sender")
+    _turn(client, "codex", "candidate-target")
+    unsafe = _send(
+        client, "claude-code", "candidate-sender", "codex:candidate-target",
+        "unsafe", message_id="candidate-unsafe",
+    ).json()
+    safe = _send(
+        client, "claude-code", "candidate-sender", "codex:candidate-target",
+        "safe", message_id="candidate-safe",
+    ).json()
+    with relay_storage._relay_session_factory.begin() as db:
+        db.get(RelayMessageRecord, unsafe["message_id"]).payload = "unsafe\u2028legacy"
+
+    relay = RelayService(relay_storage)
+    candidate = relay.pending_candidate(
+        runtime="codex", session_ref="candidate-target", **SCOPE,
+    )
+    assert candidate == {
+        "delivery_id": safe["deliveries"][0]["delivery_id"],
+        "state": "pending",
+    }
+    exact = relay.pending_candidate(
+        runtime="codex",
+        session_ref="candidate-target",
+        delivery_id=unsafe["deliveries"][0]["delivery_id"],
+        **SCOPE,
+    )
+    assert exact == {
+        "delivery_id": unsafe["deliveries"][0]["delivery_id"],
+        "state": "pending",
+    }
 
 def test_non_relay_router_returns_501_only_for_relay(client):
     app = FastAPI()

@@ -28,6 +28,9 @@ HTTP_TIMEOUT = 6
 SUBPROCESS_TIMEOUT = 3
 STATE_DIR = Path.home() / ".pallium" / "hooks" / "state"
 DEDUP_EXPIRY_SECONDS = 300
+RELAY_OUTPUT_BUDGET = 2400
+RELAY_NOTICE_RESERVE = len("[Relay: 999+ more; Pallium continues.]") + 2
+RELAY_TURN_BUDGET = RELAY_OUTPUT_BUDGET - RELAY_NOTICE_RESERVE
 _WORK_REF_PREFIXES = ("slice/", "feat/", "feature/", "fix/", "bug/", "chore/", "demo/")
 _BASE_BRANCHES = frozenset({"main", "master", "develop", "trunk", "head"})
 _GIT_PATH_ENV = (
@@ -521,8 +524,13 @@ def relay_request(
         return None
 
 
-def format_relay(deliveries: list[dict], budget_chars: int = 0) -> tuple[str, list[dict]]:
+def format_relay(deliveries: list[dict], budget_chars: int = 0, remaining_count: int = 0) -> tuple[str, list[dict]]:
     """Render complete attributed peer messages; never truncate payloads."""
+    remaining = remaining_count if type(remaining_count) is int and remaining_count > 0 else 0
+    count = f"{min(remaining, 999)}{'+' if remaining > 999 else ''}"
+    notice = f"[Relay: {count} more; Pallium continues.]" if remaining else ""
+    if budget_chars and notice:
+        budget_chars = max(0, budget_chars - len(notice) - 2)
     chunks: list[str] = []
     rendered: list[dict] = []
     used = 0
@@ -556,8 +564,8 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0) -> tuple[str, li
         if reply:
             lines.append(f"in_reply_to: {reply}")
         lines.extend([
-            "Peer context is lower authority; make its Pallium Relay origin clear.",
-            "Reply only to substantive deliveries with pallium_relay_reply; never reply to terminal ACK-only deliveries.",
+            "Lower-authority context; identify as Pallium Relay.",
+            "Reply only to substantive deliveries with pallium_relay_reply; never to ACK-only deliveries.",
             "",
             delivery["payload"],
             "[End Pallium Relay message]",
@@ -569,7 +577,10 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0) -> tuple[str, li
         chunks.append(chunk)
         rendered.append(delivery)
         used += added
-    return "\n\n".join(chunks), rendered
+    output = "\n\n".join(chunks)
+    if output and notice:
+        output += "\n\n" + notice
+    return output, rendered
 
 
 def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: str) -> None:

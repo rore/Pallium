@@ -455,7 +455,10 @@ def create_router(
         result = _relay_call(lambda: _relay().acknowledge(**request.model_dump()))
         if relay_ack_callback is not None and not result.get("already_delivered", False):
             try:
-                relay_ack_callback(result, {"container_ref": request.container_ref, "actor_ref": request.actor_ref})
+                relay_ack_callback(result, {
+                    "container_ref": request.container_ref,
+                    "actor_ref": request.actor_ref,
+                })
             except Exception:
                 logger.exception("Relay ACK callback failed after persistence")
         return result

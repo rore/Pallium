@@ -127,12 +127,15 @@ class RelayService:
         actor_ref: str,
         title: str | None = None,
         max_chars: int = 0,
+        max_messages: int = RELAY_TURN_MAX_MESSAGES,
         register_session: bool = True,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
         if max_chars < 0:
             raise ValueError("max_chars must be >= 0 (0 = no limit)")
+        if max_messages < 0:
+            raise ValueError("max_messages must be >= 0 (0 = no limit)")
         return self._store.relay_turn(
             runtime=validate_runtime(runtime),
             session_ref=_opaque(session_ref, "session_ref"),
@@ -140,7 +143,7 @@ class RelayService:
             actor_ref=actor,
             title=None if title is None else _opaque(title, "title", maximum=255),
             max_chars=max_chars,
-            max_messages=0,
+            max_messages=max_messages,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
             register_session=register_session,
             now=now,

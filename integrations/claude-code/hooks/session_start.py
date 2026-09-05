@@ -26,6 +26,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (
+    RELAY_OUTPUT_BUDGET,
+    RELAY_TURN_BUDGET,
     SUBPROCESS_TIMEOUT,
     derive_actor_ref,
     derive_container_ref,
@@ -166,8 +168,16 @@ def main() -> None:
         relay_response = relay_request("POST", "/relay/turn", {
             "runtime": "claude-code", "session_ref": session_id,
             "container_ref": container_ref, "actor_ref": actor_ref,
-        }, timeout=0.75)
-        relay_output, rendered = format_relay((relay_response or {}).get("deliveries") or [])
+            "max_chars": RELAY_TURN_BUDGET,
+        }, timeout=0.75) or {}
+        relay_output, rendered = format_relay(
+            relay_response.get("deliveries") or [],
+            budget_chars=RELAY_OUTPUT_BUDGET,
+            remaining_count=(
+                relay_response.get("remaining_count")
+                if relay_response.get("has_more") is True else 0
+            ),
+        )
         if rendered:
             print(relay_output)
             acknowledge_relay(rendered, container_ref=container_ref, actor_ref=actor_ref)

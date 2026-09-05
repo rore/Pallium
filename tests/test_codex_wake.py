@@ -522,6 +522,305 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     ).json()["deliveries"][0]["state"] == "delivered"
 
 
+def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
+    client, monkeypatch, tmp_path,
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    scope = {"container_ref": SCOPE["container_ref"], "actor_ref": hook.derive_actor_ref()}
+    state_dir = tmp_path / "drain-hook-state"
+    monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    scheduled = []
+    monkeypatch.setattr(
+        "app.dependencies.schedule_codex_relay_wake",
+        lambda result, scope: scheduled.append((result, scope)),
+    )
+    for runtime, session in (("claude-code", "drain-sender"), ("codex", "drain-target")):
+        assert client.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": session, **scope,
+        }).status_code == 200
+
+    sent = []
+    contexts = []
+
+    def send(index: int) -> None:
+        response = client.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "drain-sender",
+            "recipient": "codex:drain-target",
+            "message_id": f"drain-{index}",
+            "payload": f"work-{index} →",
+            **scope,
+        })
+        assert response.status_code == 200
+        sent.append(response.json())
+
+    def relay_request(method: str, path: str, payload: dict, *, timeout: float):
+        response = client.request(method, path, json=payload)
+        assert response.status_code == 200, f"{path}: {response.text}"
+        return response.json()
+
+    monkeypatch.setattr(hook, "relay_request", relay_request)
+    monkeypatch.setattr(hook._common, "relay_request", relay_request)
+    monkeypatch.setattr(
+        hook,
+        "pallium_request",
+        lambda *_args, **_kwargs: pytest.fail("Relay wake text must not become memory"),
+    )
+    monkeypatch.setattr(hook, "emit_context", lambda text, _event: contexts.append(text))
+    hook._common.pin_container("drain-target", scope["container_ref"])
+    monkeypatch.setattr(
+        hook,
+        "read_hook_input",
+        lambda: {
+            "cwd": str(tmp_path),
+            "session_id": "drain-target",
+            "prompt": codex_wake._wake_prompt(),
+        },
+    )
+
+    for index in range(4):
+        send(index)
+    assert len(scheduled) == 4
+    scheduled.clear()
+
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert len(scheduled) == 3
+    assert {
+        call[0]["deliveries"][0]["delivery_id"] for call in scheduled
+    } == {sent[3]["deliveries"][0]["delivery_id"]}
+    assert contexts[0].count("[Pallium Relay message") == 3
+    assert contexts[0].endswith("[Relay: 1 more; Pallium continues.]")
+
+    send(4)
+    assert len(scheduled) == 4
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert len(scheduled) == 4
+    assert contexts[1].count("[Pallium Relay message") == 2
+    assert "[Relay:" not in contexts[1]
+    combined = "\n".join(contexts)
+    for index in range(5):
+        assert combined.count(f"message_id: drain-{index}\n") == 1
+        status = client.get(f"/relay/messages/{sent[index]['message_id']}", params=scope)
+        assert status.json()["deliveries"][0]["state"] == "delivered"
+
+def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
+    client, monkeypatch, tmp_path,
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    scope = {
+        "container_ref": SCOPE["container_ref"],
+        "actor_ref": hook.derive_actor_ref(),
+    }
+    state_dir = tmp_path / "maximum-hook-state"
+    monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda *_: None)
+
+    sender = "s" * 255
+    target = "maximum-target"
+    for runtime, session in (("claude-code", sender), ("codex", target)):
+        assert client.post("/relay/turn", json={
+            "runtime": runtime,
+            "session_ref": session,
+            **scope,
+        }).status_code == 200
+
+    parent_id = "p" * 128
+    parent = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code",
+        "sender_session_ref": sender,
+        "recipient": f"codex:{target}",
+        "message_id": parent_id,
+        "payload": "parent",
+        **scope,
+    }).json()
+    parent_claim = client.post("/relay/turn", json={
+        "runtime": "codex",
+        "session_ref": target,
+        "max_messages": 1,
+        **scope,
+    }).json()["deliveries"][0]
+    assert client.post("/relay/deliveries/ack", json={
+        "delivery_id": parent_claim["delivery_id"],
+        "claim_token": parent_claim["claim_token"],
+        **scope,
+    }).status_code == 200
+    assert parent["message_id"] == parent_id
+
+    maximum = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code",
+        "sender_session_ref": sender,
+        "recipient": f"codex:{target}",
+        "message_id": "m" * 128,
+        "in_reply_to": parent_id,
+        "payload": "😀" * 1500,
+        **scope,
+    }).json()
+    later = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code",
+        "sender_session_ref": sender,
+        "recipient": f"codex:{target}",
+        "message_id": "later",
+        "payload": "later",
+        **scope,
+    }).json()
+
+    def relay_request(method: str, path: str, payload: dict, *, timeout: float):
+        response = client.request(method, path, json=payload)
+        assert response.status_code == 200, f"{path}: {response.text}"
+        return response.json()
+
+    contexts = []
+    monkeypatch.setattr(hook, "relay_request", relay_request)
+    monkeypatch.setattr(hook._common, "relay_request", relay_request)
+    monkeypatch.setattr(
+        hook,
+        "pallium_request",
+        lambda *_args, **_kwargs: pytest.fail("Relay must skip memory"),
+    )
+    monkeypatch.setattr(hook, "emit_context", lambda text, _event: contexts.append(text))
+    hook._common.pin_container(target, scope["container_ref"])
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path),
+        "session_id": target,
+        "prompt": codex_wake._wake_prompt(),
+    })
+
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    assert len(contexts) == 1
+    assert contexts[0].count("😀") == 1500
+    assert contexts[0].endswith("[Relay: 1 more; Pallium continues.]")
+    assert len(contexts[0]) <= hook.RELAY_OUTPUT_BUDGET
+    assert client.get(
+        f"/relay/messages/{maximum['message_id']}", params=scope,
+    ).json()["deliveries"][0]["state"] == "delivered"
+    assert client.get(
+        f"/relay/messages/{later['message_id']}", params=scope,
+    ).json()["deliveries"][0]["state"] == "pending"
+
+def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client) -> None:
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+    ))
+    route = TestClient(app)
+    with patch("app.dependencies.schedule_codex_relay_wake") as schedule:
+        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+            assert route.post("/relay/turn", json={
+                "runtime": runtime, "session_ref": session, **SCOPE,
+            }).status_code == 200
+        sent = []
+        for message_id in ("batch-1", "batch-2"):
+            response = route.post("/relay/messages", json={
+                "sender_runtime": "claude-code",
+                "sender_session_ref": "sender",
+                "recipient": "codex:target",
+                "message_id": message_id,
+                "payload": "x" * 1500,
+                **SCOPE,
+            })
+            assert response.status_code == 200
+            sent.append(response.json())
+
+        schedule.reset_mock()
+        turn = route.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", "max_chars": 2400, **SCOPE,
+        }).json()
+        assert len(turn["deliveries"]) == 1 and turn["has_more"] is True
+        claimed = turn["deliveries"][0]
+        ack_body = {
+            "delivery_id": claimed["delivery_id"],
+            "claim_token": claimed["claim_token"],
+            **SCOPE,
+        }
+        assert route.post(
+            "/relay/deliveries/ack", json={**ack_body, "claim_token": "stale"},
+        ).status_code == 409
+        schedule.assert_not_called()
+
+        ack = route.post("/relay/deliveries/ack", json=ack_body)
+        assert ack.status_code == 200
+        assert set(ack.json()) == {
+            "delivery_id", "state", "delivered_at", "already_delivered",
+        }
+        wake, scope = schedule.call_args.args
+        assert scope == SCOPE
+        assert wake["recipient"] == "codex:target"
+        assert wake["deliveries"] == [{
+            "delivery_id": sent[1]["deliveries"][0]["delivery_id"],
+            "state": "pending",
+            "recipient_runtime": "codex",
+            "recipient_session_ref": "target",
+        }]
+
+        duplicate = route.post("/relay/deliveries/ack", json=ack_body)
+        assert duplicate.status_code == 200
+        assert duplicate.json()["already_delivered"] is True
+        assert schedule.call_count == 1
+
+        second = route.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", **SCOPE,
+        }).json()["deliveries"][0]
+        schedule.reset_mock()
+        assert route.post("/relay/deliveries/mcp-ack", json={
+            "delivery_id": second["delivery_id"],
+            "receipt": second["receipt"],
+            **SCOPE,
+        }).status_code == 200
+        schedule.assert_not_called()
+
+        third = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": "codex:target",
+            "payload": "callback failure remains fail-soft",
+            **SCOPE,
+        }).json()
+        route.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": "codex:target",
+            "payload": "pending candidate invokes the callback",
+            **SCOPE,
+        }).raise_for_status()
+        claimed_third = route.post("/relay/turn", json={
+            "runtime": "codex",
+            "session_ref": "target",
+            "max_messages": 1,
+            **SCOPE,
+        }).json()["deliveries"][0]
+        schedule.reset_mock()
+        schedule.side_effect = RuntimeError("wake failure")
+        assert route.post("/relay/deliveries/ack", json={
+            "delivery_id": claimed_third["delivery_id"],
+            "claim_token": claimed_third["claim_token"],
+            **SCOPE,
+        }).status_code == 200
+        assert third["deliveries"][0]["delivery_id"] == claimed_third["delivery_id"]
+        schedule.assert_called_once()
+
+    properties = app.openapi()["components"]["schemas"]["RelayAckResponse"]["properties"]
+    assert set(properties) == {
+        "delivery_id", "state", "delivered_at", "already_delivered",
+    }
+
+    turn_limit = (
+        app.openapi()["components"]["schemas"]["RelayTurnRequest"]
+        ["properties"]["max_messages"]
+    )
+    assert turn_limit["default"] == 3
+    assert turn_limit["minimum"] == 0
+
 def test_relay_turn_callback_rearms_only_after_success(client) -> None:
     callbacks = []
     app = FastAPI()

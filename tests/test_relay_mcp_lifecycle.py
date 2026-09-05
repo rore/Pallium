@@ -261,7 +261,12 @@ def test_drain_all_beyond_legacy_char_limit(client: TestClient):
     for p in payloads:
         _send(client, p, sender_session=f"drain-sender-{payloads.index(p)}")
 
-    turn = _turn(client)
+    response = client.post("/relay/turn", json={
+        "runtime": RUNTIME, "session_ref": SESSION,
+        "max_chars": 0, "max_messages": 0, **SCOPE,
+    })
+    assert response.status_code == 200
+    turn = response.json()
     assert len(turn["deliveries"]) == 4, f"expected 4, got {len(turn['deliveries'])}"
     assert turn["has_more"] is False
     assert turn["remaining_count"] == 0

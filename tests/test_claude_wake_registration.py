@@ -701,13 +701,14 @@ def test_session_start_delivers_and_acks_relay_before_orientation(
         "sender_runtime": "codex",
         "sender_session_ref": "sender",
         "recipient": "claude-code:session-1",
-        "payload": "startup work",
+        "payload": "startup work →",
         "redacted": False,
         "in_reply_to": None,
         "created_at": "2026-09-02T10:00:00+00:00",
         "expires_at": "2026-09-03T10:00:00+00:00",
     }
     acknowledgements = []
+    relay_calls = []
     monkeypatch.setattr(
         start, "read_hook_input",
         lambda: {"cwd": ".", "session_id": "session-1", "source": "startup"},
@@ -718,7 +719,8 @@ def test_session_start_delivers_and_acks_relay_before_orientation(
     monkeypatch.setattr(start, "register_claude_wake", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         start, "relay_request",
-        lambda *_args, **_kwargs: {"deliveries": [delivery]},
+        lambda method, path, body, **_kwargs: relay_calls.append((method, path, body))
+        or {"deliveries": [delivery], "has_more": True, "remaining_count": 2},
     )
     monkeypatch.setattr(
         start, "acknowledge_relay",
@@ -732,7 +734,15 @@ def test_session_start_delivers_and_acks_relay_before_orientation(
     with pytest.raises(SystemExit):
         start.main()
 
-    assert "startup work" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "startup work →" in output
+    assert output.rstrip().endswith("[Relay: 2 more; Pallium continues.]")
+    assert len(output.rstrip()) <= 2400
+    assert relay_calls == [("POST", "/relay/turn", {
+        "runtime": "claude-code", "session_ref": "session-1",
+        "container_ref": "git:example/repo", "actor_ref": "local",
+        "max_chars": 2360,
+    })]
     assert acknowledgements == [([delivery], {
         "container_ref": "git:example/repo",
         "actor_ref": "local",
