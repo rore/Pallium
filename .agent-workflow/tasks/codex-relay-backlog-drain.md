@@ -45,6 +45,9 @@
 - 2026-09-05: Final clean-context confirmation found no design blocker after the correction. State returned to Ready to implement before schema/service/MCP-client edits.
 - 2026-09-05: Implemented default-three HTTP/hook turns with explicit MCP drain-all, fresh-hook-ACK Codex continuation, render-safe pending-candidate selection, bounded Codex/Claude hook notices, and real caller-surface Codex/Claude lifecycle regressions.
 - 2026-09-05: Final correctness review found and reproduced a maximum-envelope stranding edge. Shortened the two canonical safety instructions without removing either rule, bringing the generated maximum from 2,390 to 2,357 characters and to 2,397 with the fixed notice. Added unit, storage, and actual HTTP + Codex hook regressions; clean-context re-review reported no blocker.
+- 2026-09-05: PR #101 passed Python 3.12/3.13, Windows smoke, workflow/redline, and CodeRabbit; its sole documentation finding was fixed and confirmed before squash merge as b3bace5c.
+- 2026-09-05: Refreshed Claude Code and Codex setup from clean primary-checkout main, verified OpenCode's stable loader and 45 passing plugin tests, restarted through scripts/restart-service.ps1, and confirmed health/status/queue readiness.
+- 2026-09-05: Installed live witness delivered five Codex messages exactly once in automatic 3+2 batches and one Claude message exactly once by automatic wake; no manual wake was needed.
 
 ## Evidence
 
@@ -53,6 +56,8 @@
 - Final focused verification: 271 passed, 2 skipped, 4 existing Pydantic forward-reference warnings in 21.04 seconds after the final rebase; no wall-clock lease sleep was added.
 - Repository-wide verification: 4,348 passed, 14 skipped, 2 expected failures; one reproducible existing `test_prompt_variants_legacy_fallback_unaffected` failure remains outside every RW-007 changed path.
 - Import-linter: zero boundary violations. Agent-workflow: clean. Redline: expected red API surface with `api-review`; clean-context final correctness review and re-review reported no blockers.
+- Merged/installed gate: PR #101 merged as b3bace5c; all required GitHub checks passed. Stable main matched origin/main; Claude MCP connected, Codex MCP enabled, OpenCode loader resolved C:/Dev/rore/Pallium, and no installed config referenced a temporary worktree.
+- Live backlog gate: Codex parts 1-3 delivered at 19:55:58Z and parts 4-5 at 19:56:12Z, each with one attempt; Claude delivered at 19:55:50Z with one attempt. The second Codex batch and Claude turn required no manual wake.
 
 ## Checkpoint: api-review
 
