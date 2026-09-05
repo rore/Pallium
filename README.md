@@ -59,8 +59,8 @@ Relay works across the current integrations. Every supported path has durable
 next-turn delivery; some qualified paths can also start a new turn. See the
 [Relay support details](docs/agent-relay.md#delivery-and-wake-behavior).
 
-Session History supports search and nearby-message lookup. Exact work-scoped
-search and a simpler package-independent setup are planned next. See the
+Session History supports broad topic search, exact work-reference search, and
+nearby-message lookup. A simpler package-independent setup is planned next. See the
 [Session History status](docs/session-history.md#available-now) and current
 [roadmap](roadmap/board.md).
 

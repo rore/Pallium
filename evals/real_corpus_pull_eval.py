@@ -381,7 +381,7 @@ def load_corpus(
         rows = conn.execute(
             "SELECT id, created_at, session_id, container_ref, visibility, actor_ref, exposed_json, query_text, request_source_item_id "
             "FROM historical_lookup_reuse_event "
-            "WHERE event_type = 'lookup' AND trigger_origin = 'agent_pull' "
+            "WHERE event_type = 'lookup' AND trigger_origin IN ('agent_pull', 'agent_pull_work') "
             "AND container_ref = ? "
             "ORDER BY created_at, id",
             (container_ref,),

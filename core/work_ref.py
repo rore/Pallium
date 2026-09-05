@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from redaction import redact_sensitive
+
 _WORK_REF_SEPARATOR_RE = re.compile(r"[\s_\-]+")
 MAX_WORK_REFS = 5
 
@@ -51,3 +53,21 @@ def _normalize_work_refs(value: Any) -> tuple[str, ...]:
         if len(result) == MAX_WORK_REFS:
             break
     return tuple(result)
+
+
+def work_refs_from_metadata(metadata: Any) -> tuple[str, ...]:
+    """Safely project legacy metadata into normalized work references."""
+    if not isinstance(metadata, dict):
+        return ()
+    value = metadata.get("pallium_work_refs")
+    if not isinstance(value, list):
+        return ()
+    safe = [
+        item
+        for item in value
+        if isinstance(item, str)
+        and "\x00" not in item
+        and "[REDACTED" not in item
+        and redact_sensitive(item) == item
+    ]
+    return _normalize_work_refs(safe)

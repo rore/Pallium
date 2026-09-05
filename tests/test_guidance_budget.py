@@ -15,11 +15,11 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     tree = ast.parse(Path("app/mcp/server.py").read_text(encoding="utf-8"))
     names = {node.name for node in ast.walk(tree)
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-             and node.name in {"pallium_search_history", "pallium_expand_source"}}
-    assert names == {"pallium_search_history", "pallium_expand_source"}
+             and node.name in {"pallium_search_history_by_work_ref", "pallium_search_history", "pallium_expand_source"}}
+    assert names == {"pallium_search_history_by_work_ref", "pallium_search_history", "pallium_expand_source"}
     combined = sum(len(ast.get_docstring(node) or "") for node in ast.walk(tree)
                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names)
-    assert combined <= 980
+    assert combined <= 1300
 
 
 def test_all_guidance_surfaces_present_pallium_capabilities() -> None:
@@ -73,3 +73,31 @@ def test_relay_stale_delivery_guidance_stops_only_that_delivery() -> None:
     rule = ("only that delivery copy is stale: do not retry/reply/use its payload, but "
             "continue the surrounding user task and independently established work")
     assert all(rule in skill.read_text(encoding="utf-8") for skill in skills)
+
+def test_history_guidance_distinguishes_modes_without_dropping_safety() -> None:
+    paths = (
+        Path("integrations/claude-code/skills/pallium-memory/SKILL.md"),
+        Path("integrations/codex/skills/pallium-memory/SKILL.md"),
+        Path("integrations/opencode/skills/pallium-memory/SKILL.md"),
+    )
+    for path in paths:
+        rendered = path.read_text(encoding="utf-8")
+        lines = rendered.splitlines()
+        exact_line = lines.index("- `pallium_search_history_by_work_ref`")
+        broad_line = lines.index("- `pallium_search_history`")
+        assert lines[exact_line + 1].startswith("  Narrow exact-ref")
+        assert lines[broad_line + 1].startswith("  Broad topic search")
+        assert "can miss another/no ref" in rendered
+        assert "compatibility-only" in rendered
+        assert "only to either history search" in rendered
+        assert "Flag bad cards with `pallium_flag_memory`" in rendered
+        assert "Do not ingest routine turns" in rendered
+        assert "use forget as vote suppression" in rendered
+        for tool in (
+            "pallium_remember",
+            "pallium_correct",
+            "pallium_supersede",
+            "pallium_forget",
+            "pallium_record_outcome",
+        ):
+            assert f"`{tool}`" in rendered

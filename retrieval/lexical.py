@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from core.work_ref import work_refs_from_metadata
 from core.models import (
     QueryFilters,
     QueryResultItem,
@@ -93,7 +94,11 @@ class LexicalRetrievalProvider(RetrievalProvider):
                     ),
                 )
             return RetrievalQueryResult(results=[], trace=trace)
-        if not tokens:
+        # A blank exact work-ref search is structural; punctuation still uses FTS.
+        exact_source_work_query = bool(
+            filters and filters.work_refs and target_kind == "source_item"
+        )
+        if not tokens and (text.strip() or not exact_source_work_query):
             trace = None
             if include_trace:
                 trace = QueryTrace(
@@ -115,7 +120,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
 
         search_result = self._storage.search_index_entries(
             tokens=tokens,
-            limit=limit * 4,
+            limit=limit if exact_source_work_query else limit * 4,
             filters=filters,
             query_container_ref=query_container_ref,
             query_visibility=visibility,
@@ -192,6 +197,7 @@ class LexicalRetrievalProvider(RetrievalProvider):
                         score=hit.score,
                         evidence=[build_evidence(source_item)],
                         visibility=source_item.visibility,
+                        work_refs=work_refs_from_metadata(source_item.metadata),
                     )
                 )
             else:

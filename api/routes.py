@@ -80,6 +80,22 @@ def _normalize_query_work_refs(raw: list[str] | None) -> tuple[str, ...]:
     ) if ref is not None)
 
 
+def _validated_query_work_refs(request: QueryRequest) -> tuple[str, ...]:
+    normalized = _normalize_query_work_refs(request.work_refs)
+    if request.trigger_origin != "agent_pull_work":
+        return normalized
+
+    from core.work_ref import work_refs_from_metadata
+
+    safe = work_refs_from_metadata({"pallium_work_refs": request.work_refs})
+    if not request.source_only or len(request.work_refs or []) != 1 or len(safe) != 1:
+        raise HTTPException(
+            status_code=422,
+            detail="exact work search requires one valid work_ref",
+        )
+    return safe
+
+
 def _deserialize_runtime_context(payload) -> QueryRuntimeContext | None:
     if payload is None:
         return None
@@ -135,6 +151,7 @@ def _serialize_result(item: QueryResultItem) -> dict[str, object]:
         "visibility": item.visibility,
         "retrieval_source": item.retrieval_source,
         "raw_rank": item.raw_rank,
+        "work_refs": list(item.work_refs),
     }
 
 
@@ -286,6 +303,7 @@ _VALID_TRIGGER_ORIGINS: frozenset[str] = frozenset({
     # take the normal routing path.
     "agent_pull",
     "mcp_pull",
+    "agent_pull_work",
 })
 
 
@@ -657,6 +675,7 @@ def create_router(
 
     @router.post("/query", response_model=QueryResponse)
     def query_items(request: QueryRequest) -> QueryResponse:
+        work_refs = _validated_query_work_refs(request)
         # Phase 4: validate trigger_origin (rejects unknown values).
         _trigger_origin = _validate_trigger_origin(request.trigger_origin)
         try:
@@ -670,7 +689,7 @@ def create_router(
                 thread_ref=request.thread_ref,
                 actor_ref=request.actor_ref,
                 request_source_item_id=request.request_source_item_id,
-                work_refs=_normalize_query_work_refs(request.work_refs),
+                work_refs=work_refs,
                 visibility=request.visibility_kind(),
                 runtime_context=_deserialize_runtime_context(request.runtime_context),
                 trigger_origin=_trigger_origin,
@@ -727,6 +746,7 @@ def create_router(
 
     @router.post("/query/debug", response_model=QueryDebugResponse)
     def query_items_debug(request: QueryRequest) -> QueryDebugResponse:
+        work_refs = _validated_query_work_refs(request)
         try:
             result = service.query(
                 request.text,
@@ -738,7 +758,7 @@ def create_router(
                 thread_ref=request.thread_ref,
                 actor_ref=request.actor_ref,
                 request_source_item_id=request.request_source_item_id,
-                work_refs=_normalize_query_work_refs(request.work_refs),
+                work_refs=work_refs,
                 visibility=request.visibility_kind(),
                 runtime_context=_deserialize_runtime_context(request.runtime_context),
                 include_trace=True,

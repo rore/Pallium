@@ -5,9 +5,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 from core.models import EvidenceReference, QueryFilters, SourceItem
+from core.work_ref import work_refs_from_metadata
 
 
 def source_item_matches_filters(source_item: SourceItem, filters: QueryFilters) -> bool:
+    if filters.work_refs and not set(filters.work_refs).intersection(work_refs_from_metadata(source_item.metadata)):
+        return False
     if filters.source_type is not None and source_item.source_type != filters.source_type:
         return False
     if filters.role is not None and source_item.role != filters.role:

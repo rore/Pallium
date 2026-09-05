@@ -1069,3 +1069,42 @@ class TestSourceOnlyExpansion:
         provider.query("test", limit=2)
 
         assert index.search_calls == [8]
+
+    def test_exact_work_ref_filter_expands_past_higher_ranked_wrong_refs(self) -> None:
+        entries: dict[str, IndexEntry] = {}
+        sources: dict[str, SourceItem] = {}
+        hits: list[tuple[str, float]] = []
+        for i in range(20):
+            entry_id = f"wrong-{i}"
+            entries[entry_id] = _make_index_entry(
+                entry_id=entry_id, target_kind="source_item", target_id=entry_id,
+            )
+            sources[entry_id] = replace(
+                _make_source_item(si_id=entry_id),
+                metadata={"pallium_work_refs": ["other-2"]},
+            )
+            hits.append((entry_id, 0.99 - i * 0.001))
+        for i in range(2):
+            entry_id = f"right-{i}"
+            entries[entry_id] = _make_index_entry(
+                entry_id=entry_id, target_kind="source_item", target_id=entry_id,
+            )
+            sources[entry_id] = replace(
+                _make_source_item(si_id=entry_id),
+                metadata={"pallium_work_refs": ["PROJ 1"]},
+            )
+            hits.append((entry_id, 0.8 - i * 0.01))
+        provider, index = self._provider(hits, entries, sources)
+
+        result = provider.query(
+            "test",
+            limit=2,
+            target_kind="source_item",
+            filters=QueryFilters(work_refs=("proj-1",)),
+        )
+
+        assert [item.source_item_id for item in result.results] == [
+            "right-0",
+            "right-1",
+        ]
+        assert index.search_calls == [16, 22]

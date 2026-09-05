@@ -17,7 +17,8 @@ Relay messages, and supports Pallium's optional derived-memory behavior.
 ### Session History
 
 - record user and assistant turns from Claude Code sessions
-- search earlier sessions deliberately with `pallium_search_history`
+- search earlier sessions broadly with `pallium_search_history`
+- search one known exact work reference with `pallium_search_history_by_work_ref`
 - open bounded surrounding turns with `pallium_expand_source`
 
 ### Optional derived memory

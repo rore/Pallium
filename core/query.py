@@ -168,28 +168,43 @@ class QueryExecutor:
         # injectable_blocks stays empty). The P0 forgotten-source gate applies
         # via effective_filters -> matches_filters in the providers.
         if source_only:
-            # Overfetch within a fixed local-work bound so duplicates at the
-            # public maximum do not automatically leave visible slots empty.
+            # Start with bounded overfetch. Exact-work searches expand only when
+            # post-retrieval dedup still leaves slots empty.
             retrieval_limit = min(max(limit * 4, 12), 200)
-            retrieval_result = self._retrieval.query(
-                text=text,
-                limit=retrieval_limit,
-                filters=effective_filters,
-                visibility=visibility if plugin.requires_visibility_context else None,
-                query_container_ref=container_ref if plugin.requires_visibility_context else None,
-                include_trace=include_trace,
-                require_visibility=plugin.requires_visibility_context,
-                query_actor_ref=actor_ref if plugin.requires_visibility_context else None,
-                target_kind="source_item",
-            )
-            results = retrieval_result.results
-            if exclude_source_identity is not None:
-                results = [
-                    item for item in results
-                    if item.result_kind != "source_hit"
-                    or (item.source_type, item.source_id) != exclude_source_identity
-                ]
-            distinct = _collapse_source_duplicates(results)
+            while True:
+                retrieval_result = self._retrieval.query(
+                    text=text,
+                    limit=retrieval_limit,
+                    filters=effective_filters,
+                    visibility=visibility if plugin.requires_visibility_context else None,
+                    query_container_ref=(
+                        container_ref if plugin.requires_visibility_context else None
+                    ),
+                    include_trace=include_trace,
+                    require_visibility=plugin.requires_visibility_context,
+                    query_actor_ref=(
+                        actor_ref if plugin.requires_visibility_context else None
+                    ),
+                    target_kind="source_item",
+                )
+                results = retrieval_result.results
+                if exclude_source_identity is not None:
+                    results = [
+                        item
+                        for item in results
+                        if item.result_kind != "source_hit"
+                        or (item.source_type, item.source_id) != exclude_source_identity
+                    ]
+                distinct = _collapse_source_duplicates(results)
+                if (
+                    not work_refs
+                    or len(distinct) >= limit
+                    or len(retrieval_result.results) < retrieval_limit
+                ):
+                    break
+                if retrieval_limit == 200:
+                    break
+                retrieval_limit = min(retrieval_limit * 2, 200)
             ranked = [
                 replace(item, raw_rank=rank)
                 for rank, item in enumerate(distinct[:limit], start=1)

@@ -88,6 +88,19 @@ class PalliumMcpClient:
             payload["request_source_item_id"] = request_source_item_id
         return await self._post("/query", payload)
 
+    async def search_history_by_work_ref(
+        self, work_ref: str, query: str | None = None, *, limit: int = 3,
+        request_source_item_id: str | None = None, defer_delivery: bool = False,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "text": query or "", "limit": limit, "source_only": True,
+            "trigger_origin": "agent_pull_work", "defer_delivery": defer_delivery,
+            "work_refs": [work_ref],
+        }
+        payload.update(self._scope_params())
+        if request_source_item_id is not None:
+            payload["request_source_item_id"] = request_source_item_id
+        return await self._post("/query", payload)
     async def query_debug(self, text: str) -> dict[str, Any]:
         # Intentionally omits limit — uses API default (5).
         payload: dict[str, Any] = {"text": text}

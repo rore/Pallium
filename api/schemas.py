@@ -93,7 +93,19 @@ class ProcessingStatusResponse(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    text: str = Field(min_length=1)
+    @model_validator(mode="before")
+    @classmethod
+    def mask_invalid_exact_work_refs(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("trigger_origin") == "agent_pull_work":
+            refs = data.get("work_refs")
+            if refs is not None and (
+                not isinstance(refs, list)
+                or any(not isinstance(ref, str) for ref in refs)
+            ):
+                return {**data, "work_refs": ["\x00"]}
+        return data
+
+    text: str = Field(min_length=0)
     defer_delivery: bool = False
     limit: int = Field(default=5, ge=1, le=50)
     source_type: str | None = None
@@ -116,6 +128,14 @@ class QueryRequest(BaseModel):
     # and skip the memory injection/abstention path (should_inject=False,
     # empty injectable_blocks). Default false = normal proactive query.
     source_only: bool = False
+
+    @model_validator(mode="after")
+    def validate_history_blank(self) -> QueryRequest:
+        # Exact-work validation runs in the route so secret-bearing invalid
+        # references are rejected without Pydantic echoing the request body.
+        if not self.text.strip() and self.trigger_origin != "agent_pull_work":
+            raise ValueError("text must be non-empty")
+        return self
 
     def visibility_kind(self) -> str | None:
         if isinstance(self.visibility, VisibilityContextModel):
@@ -177,6 +197,7 @@ class QueryResultResponse(BaseModel):
     retrieval_source: str | None = None
     # Source-only search: 1-based rank within the source-only page; None otherwise.
     raw_rank: int | None = None
+    work_refs: list[str] = Field(default_factory=list)
 
 
 class InjectableBlockResponse(BaseModel):

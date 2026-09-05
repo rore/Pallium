@@ -14,8 +14,10 @@ MCP tools and installed integrations instead of calling these routes directly.
   was exposed to the requesting session.
 - `POST /source/forget` applies governed raw-source forgetting.
 
-The MCP wrappers `pallium_search_history` and `pallium_expand_source` provide the
-normal agent-facing safeguards and compact result shape.
+The MCP wrappers `pallium_search_history` (broad topic search),
+`pallium_search_history_by_work_ref` (narrow exact-reference search), and
+`pallium_expand_source` provide the normal agent-facing safeguards and compact result
+shape.
 
 ### Relay
 

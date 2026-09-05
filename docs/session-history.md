@@ -20,6 +20,12 @@ The agent uses `pallium_search_history` with a query such as:
 why did we reject the queue approach?
 ```
 
+If the exact work reference is known, use
+`pallium_search_history_by_work_ref(work_ref, query?)`. Omitting the query returns
+the newest eligible items carrying that exact normalized reference. This search is
+deliberately narrow and can miss related work stored under another reference or no
+reference; use the broad topic search in that case.
+
 Search returns concise matches with source identifiers. When a match looks
 relevant, the agent uses `pallium_expand_source` to open a bounded number of
 turns around it.
@@ -52,7 +58,8 @@ cross-user sharing or authorization system.
 
 ## Available now
 
-- broad search across accessible earlier sessions with `pallium_search_history`
+- broad topic search across accessible earlier sessions with `pallium_search_history`
+- exact-reference search with `pallium_search_history_by_work_ref`
 - bounded surrounding-turn expansion with `pallium_expand_source`
 - linked lookup and expansion telemetry
 - redaction, visibility checks, and forgetting
@@ -63,7 +70,6 @@ cross-user sharing or authorization system.
 
 ## Planned, not yet available
 
-- a separate exact work-scoped search operation
 - baseline Session History that runs with every semantic package disabled
 - additional navigation and temporary on-demand compression options
 
