@@ -23,7 +23,7 @@
 
 **Verification plan:** Retryable/ambiguous wake → delivery remains pending, Relay health stays active, registry rearms idle → HTTP composition E2E. Qualified missing endpoint → delivery remains pending, Relay and registry become unreachable, reconciler does not probe, and new exact/alias send fails synchronously → Windows/POSIX classifier plus HTTP/reconciler E2E. Exact Relay turn or successful internal Claude wake register → Relay active, registry probe-eligible, advanced epoch, pending delivery receivable once; stale older result and close cannot overwrite → deterministic ordering/race E2E. Unreachable sender may send/rename while runtime fan-out excludes it as recipient → selector E2E. Cross-scope feedback cannot alter either store → isolation E2E. HTTP/MCP status exposes `destination_health` separately without adding delivery state → schema/client tests. Run focused suites, workflow checker, redline/API review, `git diff --check`, then one installed Claude witness.
 
-**Plan review:** Clean-context agent `s2_plan_review` approved its corrected concurrency/wiring plan. Claude architect validation selected retained non-probed registry `unreachable` and identified the two-store transition requirements now incorporated; final confirmation pending.
+**Plan review:** Clean-context agent `s2_plan_review` approved the corrected concurrency/wiring plan. Claude architect `claude-code:@claude_arch` then approved the finalized three-state-machine plan with no blockers, including the strict timestamp CAS ceiling and required ordering E2E.
 
 **Approvals:** Pending explicit human approval after Claude-specific plan validation.
 
@@ -42,6 +42,7 @@
 - Initial clean-context review (agent `s2_plan_review`) found omitted `app/dependencies.py` wiring, stale asynchronous outcome risk after re-registration, undefined closed/sender/alias semantics, and underspecified per-delivery status. First re-review required equality to fail closed and explicit internal Claude registration→Relay wiring. The corrected plan now uses strict `last_seen_at < attempt_started_at`, treats unrelated newer activity as conservative invalidation, and wires successful exact wake registration to the scoped Relay health operation. Final focused re-review approved these corrections, conditional only on the pending one-shot Claude capability retry decision.
 
 - Claude architect validation chose a retained, non-probed registry-side `unreachable` state, plus separate Relay destination `unreachable`; it rejected both one-second re-probing and capability eviction. The plan now changes the probe eviction branch, excludes unreachable registrations from reconciliation, self-heals both stores on exact registration, and leaves delivery state unchanged.
+- Final Claude read-only confirmation approved the updated Work Record with no blockers and retained the installed-Claude witness as a post-test release gate, not merge authority.
 
 ## Evidence
 
