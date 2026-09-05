@@ -12,6 +12,11 @@ from app.mcp.context import PalliumContext
 from app.mcp.server import _compact_history, _json_text, create_server
 
 
+def _create_server():
+    pytest.importorskip("mcp", reason="mcp[cli] not installed")
+    return create_server()
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -92,7 +97,7 @@ async def test_tool_schema_and_descriptions_distinguish_exact_from_broad(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
-    tools = await create_server().list_tools()
+    tools = await _create_server().list_tools()
     exact = next(t for t in tools if t.name == "pallium_search_history_by_work_ref")
     broad = next(t for t in tools if t.name == "pallium_search_history")
 
@@ -117,10 +122,9 @@ async def test_tool_schema_and_descriptions_distinguish_exact_from_broad(
 async def test_exact_tool_rejects_secret_bearing_wrong_types_without_echo(
     monkeypatch: pytest.MonkeyPatch, work_ref
 ) -> None:
-    pytest.importorskip("mcp")
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
     try:
-        content, _ = await create_server().call_tool(
+        content, _ = await _create_server().call_tool(
             "pallium_search_history_by_work_ref",
             {"work_ref": work_ref, "container_ref": "c", "visibility": "private"},
         )
@@ -153,7 +157,7 @@ async def test_exact_tool_finalizes_only_compacted_hits_and_normalizes_ref(
             new=receipt,
         ),
     ):
-        content, _ = await create_server().call_tool(
+        content, _ = await _create_server().call_tool(
             "pallium_search_history_by_work_ref",
             {
                 "work_ref": "PROJ 42",
@@ -184,7 +188,7 @@ async def test_exact_tool_errors_are_visible_bounded_and_do_not_finalize(
         new=finalize,
     ):
         for bad_ref in ("---", "x" * 129, "bad\x00secret"):
-            content, _ = await create_server().call_tool(
+            content, _ = await _create_server().call_tool(
                 "pallium_search_history_by_work_ref",
                 {
                     "work_ref": bad_ref,
@@ -213,7 +217,7 @@ async def test_exact_tool_surfaces_request_and_finalize_failures(
         "app.mcp.client.PalliumMcpClient.search_history_by_work_ref",
         new=AsyncMock(return_value=request_error),
     ):
-        content, _ = await create_server().call_tool(
+        content, _ = await _create_server().call_tool(
             "pallium_search_history_by_work_ref",
             {
                 "work_ref": "proj-1",
@@ -240,7 +244,7 @@ async def test_exact_tool_surfaces_request_and_finalize_failures(
             new=AsyncMock(return_value={"error": "finalization failed"}),
         ),
     ):
-        content, _ = await create_server().call_tool(
+        content, _ = await _create_server().call_tool(
             "pallium_search_history_by_work_ref",
             {
                 "work_ref": "proj-1",
@@ -306,7 +310,7 @@ async def test_exact_empty_deferred_result_reserves_final_lookup_uuid_budget(
             new=AsyncMock(return_value={"lookup_event_id": final_id}),
         ),
     ):
-        content, _ = await create_server().call_tool(
+        content, _ = await _create_server().call_tool(
             "pallium_search_history_by_work_ref",
             {
                 "work_ref": "x" * 128,

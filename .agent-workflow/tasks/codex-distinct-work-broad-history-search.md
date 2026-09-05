@@ -92,4 +92,5 @@ Verification complete on code revision `736efcf0`: 368 affected Python tests pas
 - Ruff is neither installed nor configured as a repository or CI check; `compileall`, `git diff --check`, import-linter, and full tests supplied the configured static/runtime verification.
 - Clean-context final result review: architecture-review and api-review approved; no P0–P2 findings.
 - Skill-feedback check: all seven triggers were false; no upstream skill issue required.
+- PR CI portability follow-up: optional MCP-server contract tests now skip only when `mcp[cli]` is absent; all 12 focused contract tests pass when installed.
 - Workflow gate: all blocking predicates passed; the sole advisory is a false-positive commit-order signal because the first commit contained the Work Record plus roadmap planning, before any guarded code edit.
