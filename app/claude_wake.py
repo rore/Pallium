@@ -101,6 +101,7 @@ def schedule_claude_relay_wake(
                     on_unreachable(attempt_started_at)
                 except Exception:
                     logger.exception("claude_relay_wake unreachable callback failed")
+                    raise
 
             triggered = registry.probe(
                 runtime="claude-code",
@@ -177,7 +178,16 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
             },
             {"container_ref": candidate["container_ref"], "actor_ref": candidate["actor_ref"]},
             registry=registry,
+            on_unreachable=lambda attempt_started_at, candidate=candidate: relay_service.mark_unreachable(
+                runtime="claude-code",
+                session_ref=candidate["session_ref"],
+                container_ref=candidate["container_ref"],
+                actor_ref=candidate["actor_ref"],
+                attempt_started_at=attempt_started_at,
+            ),
         )
+
+
 class ClaudeWakeReconciler:
     """One app-local Event loop; no Relay claim or ACK path exists here."""
 

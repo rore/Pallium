@@ -349,7 +349,7 @@ def test_recovery_retries_rollback_inflight_once_without_relay_mutation(tmp_path
     calls = []
     relay = SimpleNamespace(pending_candidate=lambda **kwargs: calls.append(kwargs) or {"delivery_id": "delivery", "state": "pending"})
     scheduled = []
-    monkeypatch.setattr(claude_wake, "schedule_claude_relay_wake", lambda result, scope, *, registry: scheduled.append((result, scope)) or None)
+    monkeypatch.setattr(claude_wake, "schedule_claude_relay_wake", lambda result, scope, *, registry, **_kwargs: scheduled.append((result, scope)) or None)
     claude_wake.recover_claude_relay_wakes(restarted, relay)
     assert scheduled == []
     wall[0] = 1.0
@@ -709,7 +709,7 @@ def test_windows_capacity_reclaims_only_file_not_found(tmp_path: Path, monkeypat
     assert [candidate["session_ref"] for candidate in registry.recovery_candidates()] == (["new"] if accepted else [PAYLOAD["session_ref"]])
 
 
-def test_unreachable_callback_requires_persisted_transition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unreachable_feedback_precedes_registry_transition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     registry = ClaudeWakeRegistry(state_dir=tmp_path / "success")
     root = tmp_path / "success"
@@ -748,4 +748,83 @@ def test_unreachable_callback_requires_persisted_transition(tmp_path: Path, monk
         container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
         transport=lambda *_: "unreachable", on_unreachable=lambda: events.append("failed"),
     )
-    assert events == ["unreachable"]
+    assert events == ["unreachable", "failed"]
+    candidate = failed_registry.recovery_candidates()[0]
+    assert candidate["state"] == "wake_inflight"
+
+
+
+def test_restart_recovery_persists_unreachable_relay_health(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    from app import claude_wake
+    from core.relay import RelayService
+
+    relay = RelayService(client.app.state.pallium_service._storage)
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    relay.turn(runtime="codex", session_ref="sender", **scope)
+    relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "restart-health")
+    sent = relay.send(
+        sender_runtime="codex",
+        sender_session_ref="sender",
+        recipient=f"claude-code:{PAYLOAD['session_ref']}",
+        payload="persist health after restart",
+        **scope,
+    )
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path)
+    persisted = threading.Event()
+
+    class RelayWitness:
+        def pending_candidate(self, **kwargs: object) -> dict | None:
+            return relay.pending_candidate(**kwargs)
+
+        def mark_unreachable(self, **kwargs: object) -> bool:
+            changed = relay.mark_unreachable(**kwargs)
+            persisted.set()
+            return changed
+
+    monkeypatch.setattr(claude_wake, "claude_wake_transport", lambda *_: "unreachable")
+    claude_wake.recover_claude_relay_wakes(restarted, RelayWitness())
+    assert persisted.wait(timeout=1)
+    delivery = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+    assert delivery["state"] == "pending"
+    assert delivery["destination_health"] == "unreachable"
+    assert restarted.recovery_candidates() == []
+
+def test_recovery_health_callbacks_bind_each_exact_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timezone
+
+    from app import claude_wake
+
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    second = {**PAYLOAD, "session_ref": "session-β", "actor_ref": "other-local"}
+    assert _register(registry, tmp_path, PAYLOAD, "first")
+    assert _register(registry, tmp_path, second, "second")
+    callbacks = []
+    marked: list[tuple[str, str]] = []
+
+    def schedule(_result: object, _scope: object, *, registry: object, on_unreachable) -> None:
+        callbacks.append(on_unreachable)
+
+    relay = SimpleNamespace(
+        pending_candidate=lambda **kwargs: {
+            "delivery_id": "delivery-" + str(kwargs["session_ref"]),
+            "state": "pending",
+        },
+        mark_unreachable=lambda **kwargs: marked.append((
+            str(kwargs["session_ref"]), str(kwargs["actor_ref"])
+        )) or True,
+    )
+    monkeypatch.setattr(claude_wake, "schedule_claude_relay_wake", schedule)
+    claude_wake.recover_claude_relay_wakes(registry, relay)
+    assert len(callbacks) == 2
+    for callback in callbacks:
+        callback(datetime.now(timezone.utc))
+    assert marked == [(PAYLOAD["session_ref"], PAYLOAD["actor_ref"]),
+                      (second["session_ref"], second["actor_ref"])]

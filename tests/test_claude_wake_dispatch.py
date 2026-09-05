@@ -1305,7 +1305,19 @@ def test_unreachable_callback_is_aware_and_exception_safe(monkeypatch: pytest.Mo
         registry=registry, on_unreachable=callback,
     ))
     assert len(observed) == 1 and observed[0].tzinfo is not None
+    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"])].state == "idle"
+    assert registry.recovery_candidates()[0]["state"] == "idle"
+
+    retried: list[datetime] = []
+    _join(schedule_claude_relay_wake(
+        _wake_result(PAYLOAD["session_ref"], "delivery-2"),
+        {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]},
+        registry=registry, on_unreachable=retried.append,
+    ))
+    assert len(retried) == 1
     assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"])].state == "unreachable"
+
+
 
 def test_real_router_unreachable_feedback_and_registration_self_heal(
     client, monkeypatch: pytest.MonkeyPatch,

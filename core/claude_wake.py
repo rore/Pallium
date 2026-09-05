@@ -196,22 +196,25 @@ class ClaudeWakeRegistry:
             outcome = "accepted"
         elif outcome is False or outcome not in {"accepted", "retryable", "unreachable"}:
             outcome = "retryable"
+        if outcome == "unreachable" and on_unreachable is not None:
+            with self._lock:
+                current = self._active_locked(runtime, session_ref)
+                notify = current is not None and current.generation == consumed.generation
+            if notify:
+                try:
+                    on_unreachable()
+                except Exception:
+                    outcome = "retryable"
         if outcome != "accepted":
-            unreachable_persisted = False
             with self._lock:
                 current = self._active_locked(runtime, session_ref)
                 if current is not None and current.generation == consumed.generation:
                     if outcome == "unreachable":
-                        unreachable = replace(current, idle=False, state="unreachable", delivery_id=None, attempted_at=None)
-                        if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref): unreachable}):
-                            self._registrations[(runtime, session_ref)] = unreachable
-                            unreachable_persisted = True
+                        updated = replace(current, idle=False, state="unreachable", delivery_id=None, attempted_at=None)
                     else:
-                        idle = replace(current, idle=True, state="idle", delivery_id=None, attempted_at=None)
-                        if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref): idle}):
-                            self._registrations[(runtime, session_ref)] = idle
-            if unreachable_persisted and on_unreachable is not None:
-                on_unreachable()
+                        updated = replace(current, idle=True, state="idle", delivery_id=None, attempted_at=None)
+                    if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref): updated}):
+                        self._registrations[(runtime, session_ref)] = updated
         return outcome == "accepted"
 
     @property

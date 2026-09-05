@@ -42,9 +42,11 @@
 - Slice B2: new exact/alias sends now fail synchronously for known unreachable recipients without creating rows; runtime fan-out excludes them, idempotent existing sends remain valid, and unreachable senders may send/name. Full Relay caller-surface E2E passes (38 tests).
 - Dogfood incident: restarting the installed service while a delegated write was incomplete imported transient invalid syntax. The required wrapper also printed success before readiness. Recovered by syntax-checking, restarting, and verifying health/status/queue; follow-up operations hardening must add pre-stop syntax preflight and bounded post-start endpoint verification.
 - Slice B3: public session and delivery responses expose destination health separately from lifecycle/delivery state; closed sessions report no advisory health. Relay caller-surface E2E remains 38 passing.
-- Slice C1: durable registry unreachable transitions now notify the scheduler outside the registry lock; the scheduler supplies an aware attempt timestamp and contains callback failures. Focused wake suites pass (75 passed, 2 skipped).
-- Slice C2: the production router now persists strict-CAS Relay unreachable feedback after durable registry transition, and successful exact Claude registration self-heals existing Relay destination health. Deterministic real-router lifecycle coverage passes; combined composition/Relay suites pass (77 passed, 2 skipped).
+- Slice C1: qualified unreachable outcomes notify the scheduler outside the registry lock with an aware attempt timestamp; only after feedback succeeds does the registry persist non-probed unreachable. Feedback failure rearms retryable state.
+- Slice C2: the production router persists strict-CAS Relay unreachable feedback before committing registry unreachable, and successful exact Claude registration self-heals existing Relay destination health. Restart reconciliation uses the same callback; transient feedback failure stays retryable.
 - Slice C3: real-router coverage now proves retryable transport leaves Relay health active before qualified missing-endpoint feedback transitions both stores; design and roadmap align to durable no-TTL registration, independent state machines, current transport vocabulary, and the separate restart-wrapper follow-up. Full focused S2 gate passes (170 passed, 2 skipped).
+- Independent result review found and remediation covered restart-recovery feedback omission plus permanent divergence after transient feedback failure. Full deterministic S2 and MCP gate passes (263 passed, 2 skipped).
+- Follow-up result review found and remediation bound each asynchronous recovery callback to its exact candidate, preventing cross-session health updates. Two-candidate regression and focused wake/Relay gate pass (116 passed, 2 skipped); reviewer reports no remaining blocker.
 
 ## Plan review
 
@@ -55,8 +57,10 @@
 
 ## Evidence
 
-- Pending.
+- Deterministic S2 + MCP gate: 263 passed, 2 skipped; four pre-existing Pydantic forward-reference warnings.
+- Post-review focused wake/Relay gate: 116 passed, 2 skipped; exact two-candidate recovery binding regression passes.
+- git diff --check clean. Workflow checker has no blocking failure; only shadow advisory pi-review remains for PR review.
 
 ## Result review
 
-- Pending.
+- Clean-context reviewer found restart feedback omission, transient feedback divergence, and a late-bound recovery closure. All three were fixed at the shared recovery path with deterministic regressions; final narrow re-review reports no blocker.
