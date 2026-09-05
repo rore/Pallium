@@ -40,7 +40,7 @@ def claude_wake_transport(socket_path: str, token: str) -> str:
         token: Authentication token (never stored or logged).
 
     Returns:
-        ``"accepted"`` on clean write, ``"terminal"`` only for a proven missing endpoint, and ``"retryable"`` for all uncertainty.
+        ``"accepted"`` on clean write, ``"unreachable"`` only for a proven missing endpoint, and ``"retryable"`` for all uncertainty.
 
     Platform-specific:
         POSIX: AF_UNIX socket with ~2s timeout.
@@ -66,7 +66,7 @@ def _posix_transport(socket_path: str, token: str) -> str:
         sock.sendall((json.dumps(frame) + "\n").encode("utf-8"))
         return "accepted"
     except FileNotFoundError:
-        return "terminal"
+        return "unreachable"
     except (OSError, ValueError, socket.timeout):
         return "retryable"
     finally:
@@ -77,7 +77,7 @@ def _posix_transport(socket_path: str, token: str) -> str:
                 pass
 
 def _windows_transport(socket_path: str, token: str) -> str:
-    """Open a named pipe and classify only proven endpoint absence as terminal."""
+    """Open a named pipe and classify only proven endpoint absence as unreachable."""
     try:
         import pywintypes
         import win32event
@@ -94,7 +94,7 @@ def _windows_transport(socket_path: str, token: str) -> str:
         frame = {"msgV": 1, "msg_id": uuid.uuid4().hex, "type": "user", "message": {"role": "user", "content": "Pallium Relay wake notice: new messages available."}, "priority": "next", "from": "pallium-relay"}
         return "accepted" if _windows_write(handle, (json.dumps(frame) + "\n").encode("utf-8"), pywintypes, win32event, win32file, winerror) else "retryable"
     except pywintypes.error as exc:
-        return "terminal" if exc.winerror == winerror.ERROR_FILE_NOT_FOUND else "retryable"
+        return "unreachable" if exc.winerror == winerror.ERROR_FILE_NOT_FOUND else "retryable"
     except Exception:
         return "retryable"
     finally:

@@ -203,7 +203,7 @@ def test_inflight_write_failure_never_transports_or_claims_relay(
     assert after["state"] == "pending" and after["claim_token"] is None and after["receipt"] is None and after["attempts"] == 0
 
 
-@pytest.mark.parametrize("outcome", ["retryable", "terminal"])
+@pytest.mark.parametrize("outcome", ["retryable", "unreachable"])
 def test_post_transport_write_failure_rearms_durable_inflight_for_later_retry(
     client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
 ) -> None:
@@ -304,13 +304,17 @@ def test_wall_clock_rollback_rearms_inflight_for_eventual_wake(tmp_path: Path) -
     wall[0] = 1.0
     assert registry.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", grace_seconds=1)
 
-def test_terminal_transport_deletes_capability_but_preserves_newer_intent(tmp_path: Path) -> None:
+def test_unreachable_transport_retains_capability_but_preserves_newer_intent(tmp_path: Path) -> None:
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     assert _register(registry, tmp_path, PAYLOAD, "idle")
     _write_intent(tmp_path, {**PAYLOAD, "token": "new"}, "new")
-    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="d", transport=lambda *_: "terminal")
+    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="d", transport=lambda *_: "unreachable")
     assert registry.recovery_candidates() == []
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert restarted.recovery_candidates() == []
+    assert json.loads((tmp_path / "capabilities.json").read_text(encoding="utf-8"))["registrations"][0]["state"] == "unreachable"
     assert registry.register(**{**PAYLOAD, "token": "new"}, intent_id="new")
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=lambda _path, token: token == "new")
 
 
 def test_busy_persistence_failure_reports_degradation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

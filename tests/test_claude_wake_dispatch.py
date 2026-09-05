@@ -88,8 +88,8 @@ class TestTransport:
         assert frame["from"] == "pallium-relay"
 
     @pytest.mark.skipif(os.name == "nt", reason="Unix socket test")
-    def test_posix_transport_missing_path_is_terminal(self) -> None:
-        assert claude_wake_transport("/nonexistent/socket.sock", "token") == "terminal"
+    def test_posix_transport_missing_path_is_unreachable(self) -> None:
+        assert claude_wake_transport("/nonexistent/socket.sock", "token") == "unreachable"
 
     @pytest.mark.parametrize("error", [ConnectionRefusedError(), socket.timeout(), PermissionError()])
     def test_posix_transport_classifies_uncertainty_retryable(self, monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
@@ -139,7 +139,7 @@ class TestTransport:
         auth, frame = (json.loads(data) for data in writes)
         assert auth["type"] == "auth" and frame["type"] == "user"
 
-    @pytest.mark.parametrize("code, expected", [(2, "terminal"), (231, "retryable"), (121, "retryable"), (5, "retryable")])
+    @pytest.mark.parametrize("code, expected", [(2, "unreachable"), (231, "retryable"), (121, "retryable"), (5, "retryable")])
     def test_windows_transport_classifies_fake_open_errors(self, monkeypatch: pytest.MonkeyPatch, code: int, expected: str) -> None:
         import sys
         import app.claude_wake_transport as transport
