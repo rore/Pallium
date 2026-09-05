@@ -14,6 +14,11 @@ Make session addressing and message outcomes honest when a recipient is inactive
 closed, unavailable, or never responds. Bound old terminal records through the
 existing cleaner after preserving enough evidence to diagnose delivery behavior.
 
+This item consumes the destination and delivery outcomes defined by
+`add-wake-first-relay-delivery` S2. It does not decide whether a native transport
+failure is terminal, and it must not use age alone to turn a resumable recipient
+or durable pending delivery into failure.
+
 ## Why
 
 Relay currently retains discovered sessions and terminal messages indefinitely.
@@ -35,8 +40,12 @@ resent merely because no reply followed.
   resolved target is inactive, closed, or has no usable wake capability
 - define explicit retention windows for expired and old terminal messages,
   deliveries, and obsolete session-discovery records
-- keep `pending`, `claimed`, `delivered`, and `expired` distinct; recover
-  abandoned claims after their lease and retain next-turn fallback until expiry
+- keep `pending`, `claimed`, `delivered`, and `expired` distinct, plus any
+  separately accepted proven-terminal `failed` outcome; recover abandoned claims
+  after their lease and retain next-turn fallback until expiry
+- retain sender-visible `unreachable` destination evidence for the bounded
+  diagnostic window accepted by S2; an exact successful registration self-heals
+  the destination before ordinary cleanup considers it obsolete
 - treat replies as separate linked messages: delivery alone never implies a reply,
   and absence of a reply never causes automatic redelivery
 - use the existing cleaner process rather than adding another worker

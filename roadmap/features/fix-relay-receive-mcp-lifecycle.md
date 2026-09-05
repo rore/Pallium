@@ -15,6 +15,14 @@ or exposed claim tokens. `pallium_relay_receive` claims through injected session
 identity, `pallium_relay_ack` confirms by opaque receipt, and
 `pallium_relay_reply` atomically acknowledges while replying.
 
+The `done` status covers this storage/API/MCP contract, not every host launcher.
+The 2026-09-05 dogfood run confirmed that an already-running Codex MCP child can
+still lack runtime-owned session identity after integration setup. Fresh-host
+identity qualification, explicit restart guidance for stale hosts, and any
+supported launcher-handoff fix are tracked as S2 in
+`add-wake-first-relay-delivery`; this item remains closed rather than duplicating
+that runtime work.
+
 ## Shipped contract (2026-08-27)
 
 1. `pallium_relay_receive` — claims pending deliveries using injected session

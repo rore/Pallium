@@ -72,7 +72,10 @@ support remains required and unqualified combinations stay passive.
 4. Mark the delivery complete only when the runtime confirms admission into the
    recipient context. A trigger request or transport acknowledgement is not enough.
 5. If activation is unsupported, disabled, unavailable, stale, or fails, leave the
-   same delivery pending for the existing next-natural-turn path.
+   same delivery pending for the existing next-natural-turn path. The immediate
+   S2 contract gate below may add a terminal outcome only for a destination proven
+   impossible to reach; missing wake capability, ambiguous transport, and temporary
+   runtime absence remain durable fallback, not failure.
 
 Track activation separately from the durable delivery lifecycle. Operationally,
 Pallium must distinguish `queued` (persisted, not activated), `triggered` (a runtime
@@ -130,22 +133,81 @@ enabling live wake still requires the relevant safety evidence.
 3. **MCP receive lifecycle foundation — code complete, runtime qualification pending:**
    `fix-relay-receive-mcp-lifecycle` is merged. The MCP path remains fail-closed and unqualified on Codex Desktop until a runtime-owned session handoff reaches the MCP child; hook-delivery wake does not depend on this recovery path.
 
-### Next execution order
+### Next execution order (updated 2026-09-05)
 
-1. **Claude S1B restart durability:** COMPLETE on Windows. Exact-capability persistence, write-ahead intent handling, read-only recovery, capped reconciliation, and the no-manual-re-registration restart witness are qualified. Linux/macOS installed UDS qualification remains S4.
-2. **Claude S1A Stop admission:** COMPLETE — Architect re-review and installed no-human witness are PASS: every non-continuing Stop re-registers idle after route admission; UTF-8 stderr buffer fallback emits before exit 2; storage budgets the exact emitted template. The non-recursive authoritative-storage `/relay/turn` uses `max_chars=2400`, then returned-set candidate-render/individual-ACK/success-subset-reformat/exit-2 continuation. Module-form real-hook HTTP coverage passes for empty rearm, max/over-budget-skip-then-fitting-render/`has_more`/`remaining_count`/Unicode, scope/failure, recursion, partial/all ACK, duplicate, continuation ingest/rearm, and lease recovery.
-3. **Codex remaining lifecycle gates:** qualify busy/interrupted/restart admission,
-   sender-side reply admission, correlation telemetry, and sustained no-ping
-   implementation/review/remediation dogfood.
-4. **Codex MCP recovery:** keep receive fail-closed unless Codex Desktop supplies a
-   runtime-owned session identity to the MCP child; this is not a blocker for the
-   qualified hook-delivery path.
-   S3 dogfood regression: a parent `CODEX_THREAD_ID` does not prove the MCP child inherited it; absent child identity must fail closed rather than borrow parent process context.
-5. **Additional platforms:** qualify Claude UDS and Codex wake on macOS/Linux only
-   after their Windows lifecycle gates pass.
-6. **Optional correlated turn-end notification:** retain the default-off proposal
-   in `roadmap/ideas/idea-agent-relay.md`; it improves supervision but is not a
-   prerequisite for Claude wake correctness.
+The next work is the dogfood remediation below. It precedes additional runtime and
+platform expansion. Keep each numbered slice small enough to implement, review,
+and report independently; use deterministic clocks/events rather than wall-clock
+sleeps in the normal suite.
+
+1. **S2 contract gate — proven failure versus durable fallback.** Define one
+   state table covering unknown Relay recipient, supported recipient without a
+   current wake capability, temporary/ambiguous transport failure, reliably
+   unreachable destination, admitted delivery, expiry, and any terminal delivery
+   failure. Preserve the current invariant that no wake capability is not itself
+   failed delivery. Decide whether a missing native endpoint proves permanent
+   delivery failure or only a self-healing `unreachable` wake state before adding
+   a delivery `failed` state. Do not implement contradictory semantics where a
+   destination can re-register but its still-valid delivery can never recover.
+2. **S2 wake feedback and destination health.** Once the table is accepted, make
+   known-impossible sends fail synchronously without probing or blocking on a live
+   wake. The currently observed reliable candidate is a Windows missing-pipe
+   result; qualify equivalent Windows and POSIX signals before treating them as
+   terminal rather than retryable. Record reliable terminal native outcomes for
+   sender status; keep all uncertain outcomes asynchronous and retryable.
+   Replace terminal eviction with a persisted, sender-visible `unreachable`
+   destination state only if the signal is reliable; successful exact-session
+   registration must clear it. Surface the distinction through Relay status,
+   dashboard telemetry, and sanitized logs.
+3. **S2 Codex burst coalescing.** Fix the reproduced loaded-task incident where
+   several close sends were delivered once in the first admitted turn but already
+   queued generic wake turns appeared later with no attributed payload. Coalesce
+   scheduling per exact recipient, preserve a later wake when bounded backlog
+   remains, and make duplicate/late scheduling an observable no-op rather than a
+   conversational acknowledgement turn. Cover delivery completing by another turn
+   before queued execution, concurrent sends, active-writer fallback, restart, and
+   no lost pending work.
+4. **S2 Codex MCP recovery and integration reload.** Fresh-session dogfood must
+   prove that the MCP child receives runtime-owned identity and can receive/ACK;
+   an already-running child after setup must fail closed with an explicit host-
+   restart requirement rather than look like message loss. If a fresh child still
+   lacks identity, fix the supported launcher handoff; never accept model-supplied
+   identity or borrow a parent process's unverified context. This is qualification
+   follow-up to the code-complete `fix-relay-receive-mcp-lifecycle` item.
+5. **S2 bounded backlog draining.** Verify `has_more` and `remaining_count` reach
+   every supported integration and cause bounded automatic continuation until the
+   eligible backlog is empty, including new arrivals during draining, old
+   oversized-before-later-fitting items, ordering, duplicate triggers, and loop
+   prevention. Measure real burst cost before changing the current three-message /
+   2,400-character turn limits; do not raise them speculatively.
+6. **S3 remaining Codex lifecycle gates.** Qualify busy, interrupted, and restart
+   admission; sender-side reply admission; correlation telemetry; and a sustained
+   no-ping implementation/review/remediation journey.
+7. **S4 additional platforms.** Qualify installed Claude UDS wake on Linux and
+   macOS, then Codex wake on those platforms. Windows Claude S1A+S1B remains
+   complete and must not be reopened without contrary evidence.
+8. **OpenCode active wake.** Implement only after the Claude/Codex contract above
+   is stable; retain its current passive next-turn delivery meanwhile.
+
+The following related work stays separate to keep ownership clear:
+
+- `add-relay-retention-and-lifecycle-hardening` owns bounded cleanup of the final
+  session/destination/delivery states defined here; it must not invent liveness or
+  terminal-failure semantics independently.
+- `idea-agent-relay.md` retains the optional default-off `notify_on_turn_end`
+  proposal. Turn end is not task completion and is not a prerequisite for delivery
+  correctness.
+- `validate-relay-dependency-workflows` starts only after S2/S3 are stable.
+- One local dogfood cleanup remains: verify the historically measured 23 synthetic
+  source items and 89 derived memories from the fixed wake-test isolation leak,
+  then remove only rows with exact fixture provenance through a reviewed scoped
+  repair. This is operational data repair, not Relay routing behavior.
+
+S2 is done only with caller-surface E2E for unknown, passive, unreachable,
+self-healing re-registration, retryable and terminal transport, async status,
+burst coalescing, delivery-before-queued-execution, fresh versus stale MCP hosts,
+bounded backlog, Unicode, scope isolation, restart, and idempotence. Tests must be
+fast and deterministic; installed-runtime witnesses remain opt-in release gates.
 
 **Core scope:** Derive the smallest coordinator from the Codex delivery trace.
 Do not wait for a second adapter or build speculative multi-runtime machinery.

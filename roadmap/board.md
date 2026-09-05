@@ -1,6 +1,6 @@
 # Parallel · Agent Relay
-- idea-agent-relay
 - add-wake-first-relay-delivery
+- idea-agent-relay
 - add-relay-retention-and-lifecycle-hardening
 - validate-relay-dependency-workflows
 - idea-deferred-relay
