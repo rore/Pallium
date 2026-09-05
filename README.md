@@ -34,6 +34,22 @@ state.
 
 [Read the Session History guide](docs/session-history.md).
 
+## Use cases
+
+- **Unexpected dependency.** One session learns a contract, compatibility fact,
+  or constraint that changes another session's work and sends it directly.
+- **Blocked decision.** A worker asks a named session a specific question and uses
+  the reply when it arrives.
+- **Independent review.** A builder sends a commit or diff reference and a review
+  request to a session using another supported coding tool; the reviewer returns
+  concrete findings through Relay.
+- **Architect-led coordination.** An architect session sends targeted decisions or
+  review requests to named worker sessions. The architect coordinates the work;
+  Pallium only delivers the messages.
+- **Returning to earlier work.** A later session searches Session History for a
+  previous decision or investigation and opens the surrounding messages before
+  continuing.
+
 Pallium is a personal open-source project under active development. It is useful
 in its current form, but setup and behavior still have rough edges.
 
