@@ -165,11 +165,18 @@ def main() -> None:
         actor_ref = derive_actor_ref()
         register_claude_wake(session_id, container_ref, actor_ref, idle=False)
 
-        relay_response = relay_request("POST", "/relay/turn", {
-            "runtime": "claude-code", "session_ref": session_id,
-            "container_ref": container_ref, "actor_ref": actor_ref,
-            "max_chars": RELAY_TURN_BUDGET,
-        }, timeout=0.75) or {}
+        relay_scope = format_injection(
+            [], container_ref, budget_chars=RELAY_OUTPUT_BUDGET,
+            thread_ref=session_id, actor_ref=actor_ref,
+            agent_ref="claude-code", visibility="private",
+        )
+        relay_response = (
+            relay_request("POST", "/relay/turn", {
+                "runtime": "claude-code", "session_ref": session_id,
+                "container_ref": container_ref, "actor_ref": actor_ref,
+                "max_chars": RELAY_TURN_BUDGET,
+            }, timeout=0.75) or {}
+        ) if relay_scope else {}
         relay_output, rendered = format_relay(
             relay_response.get("deliveries") or [],
             budget_chars=RELAY_OUTPUT_BUDGET,
@@ -179,7 +186,7 @@ def main() -> None:
             ),
         )
         if rendered:
-            print(relay_output)
+            print("\n\n".join((relay_output, relay_scope)))
             acknowledge_relay(rendered, container_ref=container_ref, actor_ref=actor_ref)
             sys.exit(0)
 

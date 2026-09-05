@@ -28,6 +28,7 @@ from common import (
     build_work_trace_metadata,
     build_work_refs_metadata,
     derive_actor_ref,
+    format_injection,
     format_relay,
     pallium_request,
     read_hook_input,
@@ -150,18 +151,25 @@ def main() -> None:
 
         if payload.get("stop_hook_active") is not True and isinstance(session_id, str) and session_id:
             try:
-                turn = relay_request(
-                    "POST",
-                    "/relay/turn",
-                    {
-                        "runtime": "claude-code",
-                        "session_ref": session_id,
-                        "container_ref": container_ref,
-                        "actor_ref": actor_ref,
-                        "max_chars": RELAY_TURN_BUDGET,
-                    },
-                    timeout=0.75,
-                ) or {}
+                relay_scope = format_injection(
+                    [], container_ref, budget_chars=RELAY_OUTPUT_BUDGET,
+                    thread_ref=session_id, actor_ref=actor_ref,
+                    agent_ref="claude-code", visibility="private",
+                )
+                turn = (
+                    relay_request(
+                        "POST",
+                        "/relay/turn",
+                        {
+                            "runtime": "claude-code",
+                            "session_ref": session_id,
+                            "container_ref": container_ref,
+                            "actor_ref": actor_ref,
+                            "max_chars": RELAY_TURN_BUDGET,
+                        },
+                        timeout=0.75,
+                    ) or {}
+                ) if relay_scope else {}
                 deliveries = turn.get("deliveries") if isinstance(turn, dict) else []
                 remaining_count = (
                     turn.get("remaining_count") if turn.get("has_more") is True else 0
@@ -176,7 +184,7 @@ def main() -> None:
                     acknowledged, budget_chars=RELAY_OUTPUT_BUDGET, remaining_count=remaining_count,
                 )
                 if rendered:
-                    _emit_relay(rendered)
+                    _emit_relay("\n\n".join((rendered, relay_scope)))
                     raise SystemExit(2)
             except Exception:
                 pass

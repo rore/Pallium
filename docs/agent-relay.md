@@ -36,6 +36,9 @@ Codex and Claude hooks claim within 2,360 characters, reserving 40 characters
 for a compact backlog notice inside their 2,400-character output budget.
 `has_more` and `remaining_count` report omitted eligible work, and integrations
 acknowledge only blocks actually added to model context.
+Hook delivery appends a separately bounded exact-scope block so the same turn
+can reply without a receipt. If trusted scope cannot be rendered safely, the hook
+does not claim or acknowledge Relay work; the persisted delivery remains recoverable.
 
 ## Select a recipient
 

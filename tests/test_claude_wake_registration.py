@@ -735,9 +735,16 @@ def test_session_start_delivers_and_acks_relay_before_orientation(
         start.main()
 
     output = capsys.readouterr().out
-    assert "startup work →" in output
-    assert output.rstrip().endswith("[Relay: 2 more; Pallium continues.]")
-    assert len(output.rstrip()) <= 2400
+    relay_text, scope_line = output.rstrip().rsplit("\n\n", 1)
+    assert "startup work →" in relay_text
+    assert relay_text.endswith("[Relay: 2 more; Pallium continues.]")
+    assert len(relay_text) <= 2400
+    assert json.loads(
+        scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
+    ) == {
+        "container_ref": "git:example/repo", "thread_ref": "session-1",
+        "actor_ref": "local", "agent_ref": "claude-code", "visibility": "private",
+    }
     assert relay_calls == [("POST", "/relay/turn", {
         "runtime": "claude-code", "session_ref": "session-1",
         "container_ref": "git:example/repo", "actor_ref": "local",

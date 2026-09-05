@@ -855,6 +855,15 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
         assert response.status_code == 200
         return response.json()["deliveries"][0]["state"]
 
+    def injected_scope(output):
+        scope_line = next(
+            line for line in output.splitlines()
+            if line.startswith("[Pallium scope — ")
+        )
+        return json.loads(
+            scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
+        )
+
     sent1 = send("D1")
     assert state(sent1) == "pending"
     prompt_payload = {
@@ -867,7 +876,21 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     with pytest.raises(SystemExit):
         prompt.main()
     assert state(sent1) == "delivered"
-    assert "D1" in capsys.readouterr().out
+    prompt_output = capsys.readouterr().out
+    assert "D1" in prompt_output
+    prompt_scope = injected_scope(prompt_output)
+    assert prompt_scope == {
+        **scope,
+        "thread_ref": "session-test",
+        "agent_ref": "claude-code",
+        "visibility": "private",
+    }
+    assert http.post("/relay/replies", json={
+        "delivery_id": sent1["deliveries"][0]["delivery_id"],
+        "payload": "handled D1",
+        "container_ref": prompt_scope["container_ref"],
+        "actor_ref": prompt_scope["actor_ref"],
+    }).status_code == 200
 
     sent2 = send("D2")
     assert state(sent2) == "pending"
@@ -881,7 +904,16 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
         stop.main()
     assert stopped.value.code == 2
     assert state(sent2) == "delivered"
-    assert "D2" in capsys.readouterr().err
+    stop_output = capsys.readouterr().err
+    assert "D2" in stop_output
+    stop_scope = injected_scope(stop_output)
+    assert stop_scope == prompt_scope
+    assert http.post("/relay/replies", json={
+        "delivery_id": sent2["deliveries"][0]["delivery_id"],
+        "payload": "handled D2",
+        "container_ref": stop_scope["container_ref"],
+        "actor_ref": stop_scope["actor_ref"],
+    }).status_code == 200
     ingested = []
 
     def pallium(method, path, body):
@@ -1496,9 +1528,11 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
         stop.main()
     assert first.value.code == 2
     first_output = capsys.readouterr().err
-    assert all(word in first_output for word in ("one", "two", "three"))
-    assert "four" not in first_output
-    assert first_output.rstrip().endswith("[Relay: 1 more; Pallium continues.]")
+    first_relay, first_scope = first_output.rstrip().rsplit("\n\n", 1)
+    assert all(word in first_relay for word in ("one", "two", "three"))
+    assert "four" not in first_relay
+    assert first_relay.endswith("[Relay: 1 more; Pallium continues.]")
+    assert first_scope.startswith("[Pallium scope — ")
     assert [
         http.get(f"/relay/messages/{item['message_id']}", params=scope)
         .json()["deliveries"][0]["state"]
