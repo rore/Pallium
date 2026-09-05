@@ -601,7 +601,7 @@ def test_codex_relay_delivery_bypasses_identical_prompt_dedup(
         "relay_request",
         lambda *_args, **_kwargs: events.append("relay") or {"deliveries": [delivery]},
     )
-    monkeypatch.setattr(hook, "format_relay", lambda _: ("relay block", [delivery]))
+    monkeypatch.setattr(hook, "format_relay", lambda _deliveries, **_kwargs: ("relay block", [delivery]))
     monkeypatch.setattr(
         hook, "check_dedup", lambda *_: events.append("dedup") or True
     )
@@ -640,7 +640,7 @@ def test_codex_no_relay_still_dedups_before_ingestion(
         "relay_request",
         lambda *_args, **_kwargs: events.append("relay") or {"deliveries": []},
     )
-    monkeypatch.setattr(hook, "format_relay", lambda _: ("", []))
+    monkeypatch.setattr(hook, "format_relay", lambda _deliveries, **_kwargs: ("", []))
     monkeypatch.setattr(
         hook, "check_dedup", lambda *_: events.append("dedup") or True
     )

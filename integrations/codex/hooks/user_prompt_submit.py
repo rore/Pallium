@@ -15,6 +15,8 @@ sys.modules["codex_common"] = _common
 _spec.loader.exec_module(_common)  # type: ignore[union-attr]
 
 AGENT_REF = _common.AGENT_REF
+RELAY_OUTPUT_BUDGET = _common.RELAY_OUTPUT_BUDGET
+RELAY_TURN_BUDGET = _common.RELAY_TURN_BUDGET
 SOURCE_TYPE = _common.SOURCE_TYPE
 acknowledge_relay = _common.acknowledge_relay
 check_dedup = _common.check_dedup
@@ -86,11 +88,20 @@ def main() -> None:
                     "session_ref": session_id,
                     "container_ref": container_ref,
                     "actor_ref": actor_ref,
+                    "max_chars": RELAY_TURN_BUDGET,
                 },
                 timeout=0.75,
             )
-            deliveries = (relay_response or {}).get("deliveries") or []
-            relay_output, rendered_deliveries = format_relay(deliveries)
+            relay_response = relay_response or {}
+            deliveries = relay_response.get("deliveries") or []
+            relay_output, rendered_deliveries = format_relay(
+                deliveries,
+                budget_chars=RELAY_OUTPUT_BUDGET,
+                remaining_count=(
+                    relay_response.get("remaining_count")
+                    if relay_response.get("has_more") is True else 0
+                ),
+            )
             if rendered_deliveries:
                 emit_context(relay_output, "UserPromptSubmit")
                 acknowledge_relay(rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref)

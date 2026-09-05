@@ -22,6 +22,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (
+    RELAY_OUTPUT_BUDGET,
+    RELAY_TURN_BUDGET,
     acknowledge_relay,
     build_work_trace_metadata,
     build_work_refs_metadata,
@@ -156,16 +158,23 @@ def main() -> None:
                         "session_ref": session_id,
                         "container_ref": container_ref,
                         "actor_ref": actor_ref,
-                        "max_chars": 2400,
+                        "max_chars": RELAY_TURN_BUDGET,
                     },
                     timeout=0.75,
                 ) or {}
                 deliveries = turn.get("deliveries") if isinstance(turn, dict) else []
-                _, claimed = format_relay(deliveries or [])
+                remaining_count = (
+                    turn.get("remaining_count") if turn.get("has_more") is True else 0
+                )
+                _, claimed = format_relay(
+                    deliveries or [], budget_chars=RELAY_OUTPUT_BUDGET, remaining_count=remaining_count,
+                )
                 acknowledged = acknowledge_relay(
                     claimed, container_ref=container_ref, actor_ref=actor_ref,
                 )
-                rendered, _ = format_relay(acknowledged)
+                rendered, _ = format_relay(
+                    acknowledged, budget_chars=RELAY_OUTPUT_BUDGET, remaining_count=remaining_count,
+                )
                 if rendered:
                     _emit_relay(rendered)
                     raise SystemExit(2)

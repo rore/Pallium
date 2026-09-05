@@ -1402,3 +1402,143 @@ def test_real_router_unreachable_feedback_and_registration_self_heal(
     target = next(row for row in sessions if row["session_ref"] == "health-target")
     assert target["destination_health"] == "active"
     assert registry._registrations[("claude-code", "health-target")].state == "idle"
+
+def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.claude_wake import recover_claude_relay_wakes
+    from app.dependencies import build_router
+    from core.relay import RelayService
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    scope = {
+        "container_ref": PAYLOAD["container_ref"],
+        "actor_ref": PAYLOAD["actor_ref"],
+    }
+    registry = ClaudeWakeRegistry()
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+        claude_wake_registry=registry,
+    ))
+    http = TestClient(app, client=("127.0.0.1", 50000))
+    relay = RelayService(client.app.state.pallium_service._storage)
+    stop = _load_claude_hook("stop", monkeypatch)
+
+    def register(session, container, actor, **kwargs):
+        response = http.post("/internal/claude-wake/register", json={
+            **PAYLOAD,
+            "session_ref": session,
+            "container_ref": container,
+            "actor_ref": actor,
+            "idle": kwargs.get("idle", False),
+        })
+        return response.status_code == 204
+
+    def request(method, path, body, **_kwargs):
+        response = http.request(method, path, json=body)
+        assert response.status_code == 200, response.text
+        return response.json() if response.content else None
+
+    def acknowledge(deliveries, **_kwargs):
+        for item in deliveries:
+            response = http.post("/relay/deliveries/ack", json={
+                "delivery_id": item["delivery_id"],
+                "claim_token": item["claim_token"],
+                **scope,
+            })
+            assert response.status_code == 200
+        return deliveries
+
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda: scope["actor_ref"])
+    monkeypatch.setattr(stop, "register_claude_wake", register)
+    monkeypatch.setattr(stop, "relay_request", request)
+    monkeypatch.setattr(stop, "acknowledge_relay", acknowledge)
+    normal = {
+        "session_id": "rw007",
+        "cwd": str(tmp_path),
+        "transcript_path": "",
+    }
+    monkeypatch.setattr(stop, "read_hook_input", lambda: normal)
+
+    relay.turn(runtime="codex", session_ref="sender", **scope)
+    relay.turn(runtime="claude-code", session_ref="rw007", **scope)
+    sent = [
+        relay.send(
+            sender_runtime="codex",
+            sender_session_ref="sender",
+            recipient="claude-code:rw007",
+            payload=payload,
+            **scope,
+        )
+        for payload in ("one", "two", "three", "four")
+    ]
+
+    with pytest.raises(SystemExit) as first:
+        stop.main()
+    assert first.value.code == 2
+    first_output = capsys.readouterr().err
+    assert all(word in first_output for word in ("one", "two", "three"))
+    assert "four" not in first_output
+    assert first_output.rstrip().endswith("[Relay: 1 more; Pallium continues.]")
+    assert [
+        http.get(f"/relay/messages/{item['message_id']}", params=scope)
+        .json()["deliveries"][0]["state"]
+        for item in sent
+    ] == ["delivered", "delivered", "delivered", "pending"]
+
+    recursive = {**normal, "stop_hook_active": True}
+    monkeypatch.setattr(stop, "read_hook_input", lambda: recursive)
+    stop.main()
+    assert capsys.readouterr().err == ""
+    assert http.get(
+        f"/relay/messages/{sent[3]['message_id']}", params=scope
+    ).json()["deliveries"][0]["state"] == "pending"
+
+    sent.append(relay.send(
+        sender_runtime="codex",
+        sender_session_ref="sender",
+        recipient="claude-code:rw007",
+        payload="five",
+        **scope,
+    ))
+    transport_called = threading.Event()
+    transport_calls: list[tuple[str, str]] = []
+
+    def transport(socket: str, token: str) -> str:
+        transport_calls.append((socket, token))
+        transport_called.set()
+        return "accepted"
+
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
+    recover_claude_relay_wakes(registry, relay)
+    assert transport_called.wait(timeout=1)
+    assert len(transport_calls) == 1
+
+    monkeypatch.setattr(stop, "read_hook_input", lambda: normal)
+    with pytest.raises(SystemExit) as final:
+        stop.main()
+    assert final.value.code == 2
+    final_output = capsys.readouterr().err
+    assert "four" in final_output and "five" in final_output
+    assert "[Relay:" not in final_output
+
+    monkeypatch.setattr(stop, "read_hook_input", lambda: recursive)
+    stop.main()
+    transport_calls.clear()
+    recover_claude_relay_wakes(registry, relay)
+    assert transport_calls == []
+    assert [
+        http.get(f"/relay/messages/{item['message_id']}", params=scope)
+        .json()["deliveries"][0]["state"]
+        for item in sent
+    ] == ["delivered"] * 5
+    combined = first_output + final_output
+    assert all(combined.count(payload) == 1 for payload in ("one", "two", "three", "four", "five"))
+    registration = registry._registrations[("claude-code", "rw007")]
+    assert registration.state == "idle" and registration.delivery_id is None

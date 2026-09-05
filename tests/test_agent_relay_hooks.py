@@ -45,12 +45,12 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
     common = _load(name, relative)
     rendered, rendered_deliveries = common.format_relay([DELIVERY], budget_chars=2000)
     assert rendered.startswith("[Pallium Relay message from claude-code:sender-session]")
-    assert "lower authority" in rendered
+    assert "Lower-authority context" in rendered
     assert "delivery_id: relay-delivery-1" in rendered
     assert "pallium_relay_reply" in rendered
-    assert "make its Pallium Relay origin clear" in rendered
+    assert "identify as Pallium Relay" in rendered
     assert "Reply only to substantive deliveries" in rendered
-    assert "never reply to terminal ACK-only deliveries" in rendered
+    assert "never to ACK-only deliveries" in rendered
     assert rendered_deliveries == [DELIVERY]
     assert "line one\nline two\tvalue" in common.format_relay(
         [{**DELIVERY, "payload": "line one\nline two\tvalue"}], budget_chars=2000
@@ -59,12 +59,20 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
     assert common.format_relay([{**DELIVERY, "payload": "bad\x00value"}])[0] == ""
     maximum = {
         **DELIVERY,
+        "delivery_id": "relay-delivery-" + "d" * 32,
+        "claim_token": "relay-claim-" + "c" * 32,
         "message_id": "m" * 128,
         "sender_session_ref": "s" * 255,
         "in_reply_to": "p" * 128,
         "payload": "😀" * 1500,
+        "created_at": "2026-09-05T12:34:56.123456+00:00",
     }
-    assert common.format_relay([maximum], budget_chars=2400)[0]
+    maximum_output, maximum_rendered = common.format_relay(
+        [maximum], budget_chars=2400, remaining_count=1000,
+    )
+    assert maximum_rendered == [maximum]
+    assert maximum_output.endswith("[Relay: 999+ more; Pallium continues.]")
+    assert len(maximum_output) <= 2400
 
     observed = []
 
@@ -130,6 +138,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
             "session_ref": "target-session",
             "container_ref": "git:example/repo",
             "actor_ref": "actor",
+            "max_chars": 2360,
         },
         0.75,
     )
@@ -300,7 +309,10 @@ def test_codex_combined_output_is_relay_first_and_bounded(monkeypatch):
     monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
-    monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: {"deliveries": [DELIVERY]})
+    monkeypatch.setattr(
+        hook, "relay_request",
+        lambda *_a, **_k: {"deliveries": [DELIVERY], "has_more": True, "remaining_count": 2},
+    )
     monkeypatch.setattr(
         hook,
         "pallium_request",
@@ -320,7 +332,8 @@ def test_codex_combined_output_is_relay_first_and_bounded(monkeypatch):
     with pytest.raises(SystemExit):
         hook.main()
     assert outputs[0].startswith("[Pallium Relay")
-    assert len(outputs[0]) <= 4000
+    assert outputs[0].endswith("[Relay: 2 more; Pallium continues.]")
+    assert len(outputs[0]) <= 2400
 
 
 def test_claude_relay_uses_utf8_and_skips_memory_after_a_claim(monkeypatch):
@@ -354,6 +367,8 @@ def test_claude_relay_uses_utf8_and_skips_memory_after_a_claim(monkeypatch):
 
     rendered = output.buffer.getvalue().decode("utf-8")
     assert "→" in rendered
+    assert rendered.rstrip().endswith("[Relay: 1 more; Pallium continues.]")
+    assert len(rendered) <= 2400
     assert acknowledgements == [[{**DELIVERY, "payload": "review → then continue"}]]
 
 @pytest.mark.parametrize(
@@ -401,13 +416,17 @@ def test_claude_stop_claims_only_nonrecursive_turns_and_emits_acknowledged_subse
     monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         hook, "relay_request",
-        lambda method, path, payload, *, timeout: calls.append((method, path, payload, timeout)) or {"deliveries": deliveries},
+        lambda method, path, payload, *, timeout: calls.append((method, path, payload, timeout)) or {
+            "deliveries": deliveries, "has_more": True, "remaining_count": 1,
+        },
     )
     monkeypatch.setattr(hook, "acknowledge_relay", lambda claimed, **_scope: claimed[:1])
     original_format = hook.format_relay
     formatted = []
     monkeypatch.setattr(
-        hook, "format_relay", lambda rendered: formatted.append(rendered) or original_format(rendered),
+        hook, "format_relay",
+        lambda rendered, **kwargs: formatted.append((rendered, kwargs))
+        or original_format(rendered, **kwargs),
     )
 
     with pytest.raises(SystemExit) as stopped:
@@ -416,11 +435,15 @@ def test_claude_stop_claims_only_nonrecursive_turns_and_emits_acknowledged_subse
     assert stopped.value.code == 2
     assert calls == [("POST", "/relay/turn", {
         "runtime": "claude-code", "session_ref": "target", "container_ref": "git:example/repo",
-        "actor_ref": "actor", "max_chars": 2400,
+        "actor_ref": "actor", "max_chars": 2360,
     }, 0.75)]
     output = capsys.readouterr().err
     assert "first ✓" in output and "second" not in output
-    assert formatted == [deliveries, deliveries[:1]]
+    assert output.rstrip().endswith("[Relay: 1 more; Pallium continues.]")
+    assert formatted == [
+        (deliveries, {"budget_chars": 2400, "remaining_count": 1}),
+        (deliveries[:1], {"budget_chars": 2400, "remaining_count": 1}),
+    ]
 
 
 def test_claude_stop_does_not_claim_during_recursive_continuation(monkeypatch):
@@ -499,7 +522,7 @@ def test_claude_stop_emits_unicode_to_utf8_stderr_buffer(monkeypatch):
     assert "review → ✓" in output.buffer.getvalue().decode("utf-8")
 
 
-def test_storage_budget_matches_claude_rendered_boundary(client):
+def test_storage_budget_reserves_notice_without_dropping_claim(client):
     common = _load("claude_boundary_format", "integrations/claude-code/hooks/common.py")
     scope = {"container_ref": "git:example/repo", "actor_ref": "actor"}
     sender = "s" * 255
@@ -533,11 +556,18 @@ def test_storage_budget_matches_claude_rendered_boundary(client):
     near_id = send("b" * 128, payload)
     fits_id = send("fits", "fits")
     turn = client.post("/relay/turn", json={
-        "runtime": "claude-code", "session_ref": target, "max_chars": boundary - 1, **scope,
+        "runtime": "claude-code", "session_ref": target, "max_chars": common.RELAY_TURN_BUDGET, **scope,
     }).json()
-    rendered, _ = common.format_relay(turn["deliveries"])
+    rendered, rendered_deliveries = common.format_relay(
+        turn["deliveries"],
+        budget_chars=common.RELAY_OUTPUT_BUDGET,
+        remaining_count=turn["remaining_count"],
+    )
 
     assert baseline_id != near_id
-    assert [delivery["message_id"] for delivery in turn["deliveries"]] == [fits_id]
-    assert len(rendered) <= boundary - 1
+    assert [delivery["message_id"] for delivery in turn["deliveries"]] == [near_id]
+    assert rendered_deliveries == turn["deliveries"]
+    assert rendered.endswith("[Relay: 1 more; Pallium continues.]")
+    assert len(rendered) <= common.RELAY_OUTPUT_BUDGET
+    assert fits_id != near_id
     assert turn["has_more"] is True and turn["remaining_count"] == 1
