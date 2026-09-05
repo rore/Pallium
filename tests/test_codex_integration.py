@@ -433,7 +433,9 @@ def test_codex_skill_historical_lookup_documents_scope_params() -> None:
 
     # The historical-lookup section names both scope params for the P1 tools
     # and preserves the global-scope exception wording.
-    assert "`pallium_search_history` and `pallium_expand_source`" in skill
+    assert "`pallium_search_history_by_work_ref`" in skill
+    assert "`pallium_search_history`" in skill
+    assert "`pallium_expand_source`" in skill
     assert "`container_ref`" in skill
     assert "`thread_ref`" in skill
     assert "`request_source_item_id`" in skill

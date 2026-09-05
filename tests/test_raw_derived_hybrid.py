@@ -541,3 +541,40 @@ def test_recovery_universe_excludes_tombstoned_objects(synthetic_db) -> None:
     ids = {o.memory_object_id for o in universe}
     assert dead.id not in ids            # tombstoned excluded (can't be a DERIVED miss)
     assert synthetic_db["dec"] in ids    # active derived object still present
+
+def test_exact_work_origin_is_excluded_from_unscoped_replay_even_for_all(
+    synthetic_db,
+) -> None:
+    storage = synthetic_db["storage"]
+    storage.write_historical_lookup_event_row({
+        "id": "work-lk",
+        "created_at": utc_now(),
+        "event_type": "lookup",
+        "session_id": None,
+        "container_ref": None,
+        "actor_ref": None,
+        "trigger_origin": "agent_pull_work",
+        "parent_lookup_id": None,
+        "exposed_json": "[]",
+        "visibility": None,
+        "source_session_ref": None,
+        "query_text": "scoped query must not replay broadly",
+    })
+
+    population = count_lookup_population(
+        synthetic_db["db"],
+        container_ref=None,
+        thread_ref=None,
+        actor_ref=None,
+        trigger_origins=None,
+    )
+    rows = load_query_rows(
+        synthetic_db["db"],
+        container_ref=None,
+        thread_ref=None,
+        actor_ref=None,
+        trigger_origins=None,
+    )
+
+    assert population["total"] == 1
+    assert [row.trigger_origin for row in rows] == ["agent_pull"]

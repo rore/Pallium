@@ -54,6 +54,8 @@ from evals.raw_derived_hybrid.represent import (
     parse_representation_response,
 )
 
+# Exact-work pulls are deliberately never replayed: work scope is not persisted.
+EXCLUDED_TRIGGER_ORIGINS = ("agent_pull_work",)
 # Default agent-pull trigger origins (see WR Discovery; may include proactive MCP pulls).
 DEFAULT_TRIGGER_ORIGINS = ("agent_pull", "mcp_pull")
 
@@ -106,18 +108,20 @@ def load_query_rows(
         "SELECT query_text, container_ref, session_id AS thread_ref, actor_ref, visibility, "
         "trigger_origin FROM historical_lookup_reuse_event "
         "WHERE event_type = 'lookup' AND query_text IS NOT NULL "
+        "AND (trigger_origin IS NULL OR trigger_origin NOT IN :excluded_origins) "
         "AND (:container_ref IS NULL OR container_ref = :container_ref) "
         "AND (:thread_ref IS NULL OR session_id = :thread_ref) "
         "AND (:actor_ref IS NULL OR actor_ref = :actor_ref) "
         "AND (:filter_origin = 0 OR trigger_origin IN :origins) "
         "ORDER BY created_at, id"  # deterministic → seeded shuffle+truncate reproducible
-    ).bindparams(bindparam("origins", expanding=True))
+    ).bindparams(bindparam("origins", expanding=True), bindparam("excluded_origins", expanding=True))
     params = {
         "container_ref": container_ref,
         "thread_ref": thread_ref,
         "actor_ref": actor_ref,
         "filter_origin": filter_origin,
         "origins": origins,
+        "excluded_origins": list(EXCLUDED_TRIGGER_ORIGINS),
     }
     engine = create_engine(f"sqlite:///{db_path}", future=True)
     try:
@@ -163,17 +167,19 @@ def count_lookup_population(
         "SUM(CASE WHEN query_text IS NOT NULL THEN 1 ELSE 0 END) AS with_qt "
         "FROM historical_lookup_reuse_event "
         "WHERE event_type = 'lookup' "
+        "AND (trigger_origin IS NULL OR trigger_origin NOT IN :excluded_origins) "
         "AND (:container_ref IS NULL OR container_ref = :container_ref) "
         "AND (:thread_ref IS NULL OR session_id = :thread_ref) "
         "AND (:actor_ref IS NULL OR actor_ref = :actor_ref) "
         "AND (:filter_origin = 0 OR trigger_origin IN :origins)"
-    ).bindparams(bindparam("origins", expanding=True))
+    ).bindparams(bindparam("origins", expanding=True), bindparam("excluded_origins", expanding=True))
     params = {
         "container_ref": container_ref,
         "thread_ref": thread_ref,
         "actor_ref": actor_ref,
         "filter_origin": filter_origin,
         "origins": origins,
+        "excluded_origins": list(EXCLUDED_TRIGGER_ORIGINS),
     }
     engine = create_engine(f"sqlite:///{db_path}", future=True)
     try:
@@ -530,6 +536,10 @@ def run_eval(
                 "The default agent_pull/mcp_pull filter may include proactive MCP "
                 "pulls, not only reactive agent lookups."
             ),
+            "exact_work_excluded": (
+                "agent_pull_work is excluded even when requested because its work "
+                "scope is not persisted and cannot be faithfully replayed."
+            ),
             "token_budget_estimate": (
                 "Token budget uses the ceil(len/4) estimate (no tiktoken); the "
                 "comparison is relative, not an absolute token count."
@@ -548,6 +558,7 @@ def run_eval(
             "container_ref": container_ref, "thread_ref": thread_ref,
             "actor_ref": actor_ref,
             "trigger_origins": list(trigger_origins) if trigger_origins else None,
+            "excluded_trigger_origins": list(EXCLUDED_TRIGGER_ORIGINS),
         },
         "candidate_recovery_aggregate": {
             "seam": "candidate_recovery",

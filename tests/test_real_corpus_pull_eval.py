@@ -919,3 +919,26 @@ def test_as_of_lineage_is_conservative_for_future_missing_cycle_and_conflict(tmp
         conn.execute("INSERT INTO relations VALUES ('memory_object', 'new2', 'supersedes', 'memory_object', 'old')")
         updates, _ = _load_lineage(conn, container_ref="c:test", visibility="private", query_actor_ref=None)
         assert updates["s1"][0]["replacement_status"] == "conflict"
+
+def test_real_corpus_includes_actual_exact_work_exposures(tmp_path: Path) -> None:
+    db = tmp_path / "exact-work.db"
+    _db(
+        db,
+        [("work-event", "exact work request", json.dumps([{"source_item_id": "s1"}]))],
+        [("s1", "useful exact history", None)],
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE historical_lookup_reuse_event "
+            "SET trigger_origin = 'agent_pull_work'"
+        )
+
+    snapshot = load_corpus(
+        db,
+        container_ref="c:test",
+        visibility="private",
+        sample_size=1,
+    )
+
+    assert len(snapshot.cases) == 1
+    assert snapshot.cases[0].event_id == "work-event"

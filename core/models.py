@@ -278,6 +278,7 @@ class QueryResultItem:
     # Source-only search (vNext P1): 1-based rank of this raw hit within the
     # source-only result page (by fused order). None on the proactive path.
     raw_rank: int | None = None
+    work_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.result_id is None:

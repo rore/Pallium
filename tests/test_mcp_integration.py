@@ -394,6 +394,7 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
                 "container_ref": container,
                 "thread_ref": source_thread,
                 "visibility": "private",
+                "metadata": {"pallium_work_refs": ["feature-42"]},
             }])
             assert response.status_code == 200, response.text
             source_ids.append(response.json()[0]["source_item_id"])
@@ -491,8 +492,24 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
             "thread_ref": active_thread,
             "visibility": "private",
         })
-        search = json.loads(search_content[0].text)
+        broad_search = json.loads(search_content[0].text)
         assert len(search_content[0].text) <= 2000
+        exact_content, _ = await server.call_tool(
+            "pallium_search_history_by_work_ref",
+            {
+                "work_ref": "FEATURE 42",
+                "query": "distinctive lookup anchor phrase",
+                "container_ref": "git:github.com/Rore/Pallium",
+                "thread_ref": active_thread,
+                "visibility": "private",
+            },
+        )
+        search = json.loads(exact_content[0].text)
+        assert len(exact_content[0].text) <= 2000
+        assert search["search_mode"] == "exact_work_ref"
+        assert search["requested_work_ref"] == "feature-42"
+        assert search["results"][0]["work_refs"] == ["feature-42"]
+        assert broad_search["results"][0]["source_item_id"] == search["results"][0]["source_item_id"]
         assert search["lookup_event_id"]
         anchor_id = search["results"][0]["source_item_id"]
         assert anchor_id == source_ids[1]
@@ -549,10 +566,11 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
         with storage._engine.connect() as connection:
             rows = connection.execute(text(
                 "SELECT id, event_type, session_id, source_session_ref, "
-                "parent_lookup_id, exposed_json "
+                "parent_lookup_id, exposed_json, trigger_origin "
                 "FROM historical_lookup_reuse_event ORDER BY created_at"
             )).mappings().all()
         lookup = next(row for row in rows if row["id"] == search["lookup_event_id"])
+        assert lookup["trigger_origin"] == "agent_pull_work"
         assert json.loads(lookup["exposed_json"]) == [
             {"source_item_id": item["source_item_id"], "role": "search_match"}
             for item in search["results"]

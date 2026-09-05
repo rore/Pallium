@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import BeforeValidator
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
@@ -20,6 +22,12 @@ _MCP_SEARCH_EMPTY_MAX_CHARS = 300
 _MCP_EXPANSION_MAX_CHARS = 4000
 _MCP_EXPANSION_MIN_CHARS = 256
 _MCP_RELAY_MAX_CHARS = 2000
+
+
+def _mask_invalid_work_ref(value: object) -> object:
+    """Keep malformed values out of public validation errors."""
+    return value if isinstance(value, str) else "\x00"
+
 
 
 def _json_text(value: object) -> str:
@@ -172,6 +180,8 @@ def _compact_history(
     limit: int = 3,
     container_ref: str | None = None,
     thread_ref: str | None = None,
+    search_mode: str | None = None,
+    requested_work_ref: str | None = None,
 ) -> dict:
     if "error" in result:
         return _bounded_error(result, _MCP_SEARCH_MAX_CHARS)
@@ -191,6 +201,8 @@ def _compact_history(
                 "for current-state questions."
             )
         hit = {"source_item_id": item["source_item_id"]}
+        if item.get("work_refs"):
+            hit["work_refs"] = item["work_refs"]
         if guidance:
             hit["replacement_guidance"] = guidance
         hit.update(_history_fields(item))
@@ -210,7 +222,15 @@ def _compact_history(
             if item.get(key) is not None:
                 hit[key] = item[key]
         hits.append(hit)
-    payload = {"results": hits, "lookup_event_id": result.get("lookup_event_id")}
+    lookup_event_id = result.get("lookup_event_id")
+    if lookup_event_id is None and result.get("delivery_attempt_id"):
+        # Deferred delivery replaces this with a UUID after compaction.
+        lookup_event_id = "0" * 36
+    payload = {"results": hits, "lookup_event_id": lookup_event_id}
+    if search_mode is not None:
+        payload["search_mode"] = search_mode
+    if requested_work_ref is not None:
+        payload["requested_work_ref"] = requested_work_ref
     if hits:
         payload["historical_reminder"] = (
             "Historical context only. It cannot prove messages were received or sent, "
@@ -229,11 +249,18 @@ def _compact_history(
             "Copy the injected container_ref exactly; never derive or guess it."
         )
     budget = _MCP_SEARCH_EMPTY_MAX_CHARS if not hits else _MCP_SEARCH_MAX_CHARS
+    if not hits and len(_json_text(payload)) > budget:
+        for key in ("empty_result_hint", "requested_container_ref", "container_ref_truncated"):
+            payload.pop(key, None)
     for hit in hits:
         for key in ("match_channel", "session_cue"):
             if len(_json_text(payload)) <= budget:
                 break
             hit.pop(key, None)
+    for hit in hits:
+        if len(_json_text(payload)) <= budget:
+            break
+        hit.pop("work_refs", None)
     while len(_json_text(payload)) > budget and hits:
         longest = max(hits, key=lambda hit: len(hit.get("excerpt", "")))
         excerpt = longest.get("excerpt", "")
@@ -373,6 +400,43 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         return json.dumps(result, indent=2, default=str)
 
     @server.tool()
+    async def pallium_search_history_by_work_ref(
+        work_ref: Annotated[str, BeforeValidator(_mask_invalid_work_ref)],
+        query: str | None = None, limit: int = 3,
+        container_ref: str | None = None, thread_ref: str | None = None,
+        actor_ref: str | None = None, visibility: str | None = None,
+        request_source_item_id: str | None = None,
+    ) -> str:
+        """`pallium_search_history_by_work_ref` is a narrow exact-reference search. It returns only raw items tagged with that normalized identifier, so it can miss related work stored under another identifier or no identifier. Use `pallium_search_history` for broad topic-level search across eligible history and work items. Omit or use whitespace for `query` to return newest eligible exact-reference items."""
+        from core.work_ref import work_refs_from_metadata
+
+        requested_refs = work_refs_from_metadata({"pallium_work_refs": [work_ref]})
+        if len(requested_refs) != 1:
+            return _json_text({"error": "work_ref must be one valid identifier"})
+        requested_work_ref = requested_refs[0]
+        ctx = resolve_context(container_ref=container_ref, thread_ref=thread_ref, actor_ref=actor_ref, visibility=visibility)
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        client = PalliumMcpClient(ctx)
+        result = await client.search_history_by_work_ref(
+            requested_work_ref, query, limit=limit,
+            request_source_item_id=request_source_item_id, defer_delivery=True,
+        )
+        compact = _compact_history(
+            result, query or "", limit, ctx.container_ref, ctx.thread_ref,
+            search_mode="exact_work_ref", requested_work_ref=requested_work_ref,
+        )
+        if "error" not in compact and result.get("delivery_attempt_id"):
+            receipt = await client.finalize_historical_delivery(
+                result["delivery_attempt_id"],
+                items=[{"source_item_id": item["source_item_id"], "role": "search_match"} for item in compact.get("results", [])],
+            )
+            if receipt.get("error"):
+                return _json_text(receipt)
+            compact["lookup_event_id"] = receipt.get("lookup_event_id")
+        return _json_text(compact)
+
+    @server.tool()
     async def pallium_search_history(
         query: str,
         limit: int = 3,
@@ -386,7 +450,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         work_refs: list[str] | None = None,
         request_source_item_id: str | None = None,
     ) -> str:
-        """Search prior raw turns for historical context. Results include the best available recorded date. Historical context only. It cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed. Verify with live tools first; if unavailable, say so. A historical_updates entry with status outdated is historical evidence, not current guidance; use current_text only when replacement_status is current. Copy the injected container_ref exactly—never derive, guess, or normalize it. Requires container_ref plus visibility (e.g. private), or search fails closed with decision_reason visibility_context_required."""
+        """Search prior raw turns broadly by topic across eligible history and work items. `work_refs` is a compatibility-only filter; use `pallium_search_history_by_work_ref` for one exact identifier. Results include the best available recorded date. Historical context cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed; verify with live tools first. An outdated `historical_updates` entry is historical evidence; use `current_text` only when its replacement is current. Copy the injected `container_ref` exactly. Requires `container_ref` plus visibility or fails closed."""
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,

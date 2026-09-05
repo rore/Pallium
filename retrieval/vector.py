@@ -4,6 +4,7 @@ import logging
 from collections.abc import Iterator
 
 from core.filters import matches_filters, target_visibility_and_container
+from core.work_ref import work_refs_from_metadata
 from core.models import (
     IndexEntry,
     QueryFilters,
@@ -109,6 +110,14 @@ class VectorRetrievalProvider(RetrievalProvider):
                     ),
                 )
             return RetrievalQueryResult(results=[], trace=trace)
+
+        if (
+            target_kind == "source_item"
+            and filters
+            and filters.work_refs
+            and not text.strip()
+        ):
+            return RetrievalQueryResult(results=[], trace=None)
 
         # Capture index reference once to avoid TOCTOU across search/remove
         index = self._vector_index
@@ -262,6 +271,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                             score=score,
                             evidence=[build_evidence(source_item)],
                             visibility=source_item.visibility,
+                            work_refs=work_refs_from_metadata(source_item.metadata),
                         )
                     )
                 else:

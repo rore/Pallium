@@ -58,6 +58,8 @@ Target files or classes: `core.work_ref`, `core.filters.source_item_matches_filt
 
 No active blocker. User approval is recorded above, Relay integration coordination is complete, and the feature remains isolated from the other agent's checkout.
 
+Rebased the required first Work Record commit onto origin/main 7b8dcf09 before guarded edits; implementation now proceeds only in this isolated worktree.
+
 Before guarded edits, intended implementation targets are: core/work_ref.py, core/filters.py, core/models.py, storage/sqlite_search.py, retrieval/lexical.py, retrieval/vector.py, api/schemas.py, api/routes.py, app/mcp/client.py, app/mcp/server.py, eval origin selection, the three generated integration skills/setup guidance, and focused tests. The branch will be rebased onto the current main before any of these files are edited.
 
 ## Plan review
@@ -73,3 +75,9 @@ The reviewer approved the shared-retrieval architecture conditionally on these c
 ### Naming/guidance delta review
 
 A fresh reviewer accepted pallium_search_history_by_work_ref as the clearer identity-search name, conditional on four wording corrections now in the plan: update the canonical roadmap; accept and normalize one valid structural ref rather than demanding caller-normalized input; define omitted/whitespace query as newest eligible exact-ref history; and repeat the narrow/may-miss versus broad-topic distinction in both tool descriptions and all three integration skills. The old broad work_refs argument remains explicitly labeled a compatibility filter.
+
+Implementation completed in the isolated `codex/distinct-work-broad-history-search` worktree: one exact-work MCP wrapper reuses the source-only HTTP query, shared expansion, delivery finalization, and existing lexical/vector providers. Exact matching now uses the shared safe normalization projection before top-K, streams one ordered SQLite result through lifecycle/visibility gates, skips blank vector embedding, expands only the exact post-retrieval dedup window, and preserves broad-search behavior. Public output carries bounded safe work cues and a distinct `agent_pull_work` origin; actual-use evaluation includes it while unfaithful unscoped replay excludes it.
+
+The first clean-context result review found five P2 gaps: legacy SQL/core normalization disagreement, repeated SQLite scans, deferred empty-result budget overflow, malformed public validation input echo, and incomplete caller-surface coverage. All five were addressed with regressions, including real MCP → HTTP → delivery telemetry → expansion, one-statement refill, vector exact-filter exhaustion, malformed secret-bearing HTTP/MCP inputs, and 128-character empty exact searches. The whitespace-only `/query` compatibility tightening is intentional and limited to the new exact origin; existing broad history still requires a nonblank query.
+
+Verification so far: 366 affected Python tests passed; OpenCode Node integration tests passed (45 passed, 6 platform skips). Final full-repository and workflow/redline checks remain before advancing State. All edits used narrowly scoped deterministic PowerShell replacements after `apply_patch` failed with the documented local Windows 1327/1385 process-creation limitation.

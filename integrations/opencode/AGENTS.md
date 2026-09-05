@@ -19,9 +19,18 @@ It also has optional derived memory:
 
 ### Session History
 
-Picking up prior work? Call `pallium_search_history` first. After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`.
+Picking up prior work? Choose the narrow or broad search below.
 
-Copy the injected `container_ref` exactly—never derive, guess, or normalize it. Pass the active `thread_ref` to both tools for telemetry. When the injected scope includes `request_source_item_id`, pass it to `pallium_search_history` only. These values are not authorization or the historical source identity.
+`pallium_search_history_by_work_ref`
+Narrow exact-ref continuity. Pass a valid structural ref; Pallium normalizes it. It can miss related work under another/no ref. Omit `query` for newest eligible items.
+
+`pallium_search_history`
+Broad topic search across eligible history/work items. Its `work_refs` filter is compatibility-only.
+
+`pallium_expand_source`
+After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`.
+
+Copy the injected `container_ref` exactly—never derive, guess, or normalize it. Pass the active `thread_ref` to search and expansion for telemetry. Pass an injected `request_source_item_id` only to either history search. These values are not authorization or the historical source identity.
 
 ### Derived memory
 

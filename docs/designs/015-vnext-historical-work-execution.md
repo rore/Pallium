@@ -196,7 +196,7 @@ committed time-boxed investigation:
    and explicit issue/PR/ticket identifiers through the existing normalized
    `pallium_work_refs` metadata. No LLM, directory scan, or inferred task episode.
 2. `add-distinct-work-and-broad-history-search-tools` — add exact
-   `pallium_search_work_history(work_ref, query?)` alongside broad
+   `pallium_search_history_by_work_ref(work_ref, query?)` alongside broad
    `pallium_search_history(query)`. Both reuse source-only retrieval and expansion;
    raw work-reference filtering must happen before visible top-K.
 3. `decouple-session-history-from-derived-packages` — zero enabled semantic
