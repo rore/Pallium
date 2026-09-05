@@ -21,7 +21,13 @@
 
 **Plan:** 1) Extend the existing work-ref normalizer with one shared five-reference bound. In `core/service.py`, immediately before SourceItem construction, sanitize only `metadata["pallium_work_refs"]` for every artifact kind: copy the top-level metadata dict, accept only a list of strings, drop candidates changed by `redact_sensitive` or containing its replacement marker, normalize/deduplicate/cap once, and remove an empty/invalid key. Preserve the note carveout for content and all unrelated metadata. 2) Add the smallest structural resolver to the mirrored Python and JavaScript integration helpers. Use exactly one bounded `git rev-parse --show-toplevel --abbrev-ref HEAD` subprocess; skip detached/non-Git/main/master/develop/trunk/head; derive the exact Agent Workflow slug by stripping only `slice/|feat/|feature/|fix/|bug/|chore/|demo/` and replacing remaining slashes; validate only `<git-root>/.agent-workflow/tasks/<slug>.md` via strict resolution, containment/no symlink escape, regular-file status, and both Work Record markers. Emit branch then Work Record then list-valued explicit caller refs. Do not scan, infer, cache, redact, or normalize in integrations. 3) Attach those raw candidates at all six user/assistant ingest sites. OpenCode resolves per event and supports cwd changes only through plugin reinitialization. 4) Make semantic merge keep metadata refs before extracted refs and apply the same shared cap. 5) Extend existing table-driven Python parity and Node tests, plus a composed E2E that captures each hook payload, posts it through the real API, and reads the raw SourceItem from storage before semantic processing. Cover provider-token and separator mutation cases. 6) The first measurement justified caching only OpenCode's structural Git result. Reuse the existing module with a tiny workspace-keyed cache; obtain root, branch, and the exact HEAD path in the same `git rev-parse --show-toplevel --abbrev-ref HEAD --git-path HEAD` call; store HEAD text with branch/root, reuse only while that exact file is unchanged and consistent with the reported branch, and still validate the exact Work Record plus merge event-specific explicit refs on every call. Do not cache Python. Re-run one cold and fifty warm calls and require cold <= 500 ms and warm p95 <= 100 ms. 7) Update roadmap/docs after verification. Stop on API/schema/persistence changes, undocumented host-field parsing, a second failed performance threshold, or unresolved pall-arc overlap.
 
-**Verification plan:** Resolver tables cover same repo/branch/caller ordering; non-Git, detached, every base branch, missing/non-file/partially marked/malformed Work Record, exact slug prefixes including unstripped `codex/`, containment and symlink escape, duplicate, Unicode, empty, max, over-max, branch change, and workspace reinitialization. Six user/assistant wiring tests assert metadata without disturbing existing payload behavior. Full lifecycle tests ingest captured hook/plugin payloads through the real HTTP app and verify bounded/redacted raw metadata through storage before processing; a note case proves its content and unrelated metadata stay unchanged while secret-bearing work refs are absent. Semantic tests prove metadata precedence and the final cap. Focused regressions cover Claude/Codex integration, work-ref, parity, raw ingest/redaction, and OpenCode suites. Final gates are the agent-workflow checker, redline report, diff review, CI, PR comments, and fresh clean-context result review.
+**Verification plan:**
+- Cross-runtime derivation, ordering, exact Git command, branch/record/path edge cases, and Unicode → `tests/test_hook_common_parity.py` plus `integrations/opencode/tests/common.test.mjs`.
+- Six user/assistant caller surfaces and workspace/branch changes → focused Claude/Codex integration tests plus `integrations/opencode/tests/plugin.test.mjs`.
+- Redaction, empty/max/over-max bounds, raw pre-semantic storage, and unchanged note content/unrelated metadata → `tests/test_work_ref.py` plus the HTTP lifecycle case in `tests/test_secret_redaction_e2e.py`.
+- Metadata precedence and final semantic cap → `TestMergeWorkRefs`.
+- Cold/warm latency and cache invalidation → one-cold/fifty-warm Python and Node benchmark plus OpenCode normal/linked-worktree cache tests.
+- Regression and workflow integrity → focused Python/OpenCode suites, compile, diff check, agent-workflow checker, redline report, CI, PR review, and fresh clean-context result review.
 
 **Plan review:** Initial clean-context review: `/root/architect_structural_refs_plan`. Revised review: `/root/validate_revised_structural_refs_plan`. Final root-cause review: `/root/final_structural_refs_architecture`; approved after the two amendments recorded below.
 
@@ -30,7 +36,7 @@
 **Exceptions:** —
 
 **State:** Ready for review
-<!-- Ready to implement | Blocked | Ready for review -->
+
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -59,6 +65,7 @@ Resolution: sanitize only the new work-reference metadata key for every artifact
 - OpenCode: 44 passed in 13.41s from its configured working directory.
 - Initial resolver timing disproved uncached Node performance. After the approved cache, final timing was: Python cold 1.192 ms, warm median 0.783 ms, p95 0.911 ms, max 1.050 ms; Node cold 134.270 ms, warm median 0.496 ms, p95 0.762 ms, max 0.815 ms. Both cold <= 500 ms and warm p95 <= 100 ms passed.
 - Ruff was unavailable in the existing environment; no dependency was installed.
+- Skill feedback issue filed: https://github.com/rore/agent-workflow/issues/16
 - Verified implementation revision: `a458b4be0542f1c0a56ee072ba36be299e702ccc` (the tested worktree was committed unchanged). Final focused results: 136 Python tests and 45 OpenCode tests passed; changed Python compiled; diff check passed.
 
 ## Result review
