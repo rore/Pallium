@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (
     acknowledge_relay,
     build_work_trace_metadata,
+    build_work_refs_metadata,
     derive_actor_ref,
     format_relay,
     pallium_request,
@@ -183,7 +184,7 @@ def main() -> None:
         if len(content) > CONTENT_LENGTH_GATE:
             return
 
-        metadata = {}
+        metadata = build_work_refs_metadata(cwd, payload.get("pallium_work_refs"))
         work_trace_meta = build_work_trace_metadata(turn_data)
         if work_trace_meta:
             metadata["agent_work_trace_turn"] = work_trace_meta

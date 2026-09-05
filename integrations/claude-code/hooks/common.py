@@ -32,6 +32,43 @@ CLAUDE_WAKE_INTENTS_DIR = CLAUDE_WAKE_DIR / "intents"
 _CREDENTIAL_HTTP_TIMEOUT = 1
 _CREDENTIAL_BODY_MAX_BYTES = 16_384
 _CREDENTIAL_LIMITS = (32, 512, 512, 255, 4096, 8192)
+_WORK_REF_PREFIXES = ("slice/", "feat/", "feature/", "fix/", "bug/", "chore/", "demo/")
+_BASE_BRANCHES = frozenset({"main", "master", "develop", "trunk", "head"})
+
+
+def build_work_refs_metadata(cwd: str, explicit_refs: object = None) -> dict[str, object]:
+    refs: list[str] = []
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=SUBPROCESS_TIMEOUT,
+        )
+        lines = result.stdout.splitlines()
+        if result.returncode == 0 and len(lines) >= 2:
+            root, branch = lines[0].strip(), lines[1].strip()
+            if branch and branch.lower() not in _BASE_BRANCHES:
+                refs.append(f"git-branch:{branch}")
+                slug = branch
+                for prefix in _WORK_REF_PREFIXES:
+                    if slug.startswith(prefix):
+                        slug = slug[len(prefix):]
+                        break
+                slug = slug.replace("/", "-")
+                root_path = Path(root).resolve(strict=True)
+                tasks_path = (root_path / ".agent-workflow" / "tasks").resolve(strict=True)
+                record = (tasks_path / f"{slug}.md").resolve(strict=True)
+                if tasks_path.is_relative_to(root_path) and record.parent == tasks_path and record.is_file():
+                    text = record.read_text(encoding="utf-8")
+                    if "<!-- agent-workflow:start -->" in text and "<!-- agent-workflow:end -->" in text:
+                        refs.append(f"agent-workflow:{slug}")
+    except (OSError, UnicodeError, ValueError):
+        pass
+    if isinstance(explicit_refs, list):
+        refs.extend(value for value in explicit_refs if isinstance(value, str))
+    return {"pallium_work_refs": refs} if refs else {}
 
 
 def read_hook_input() -> dict:

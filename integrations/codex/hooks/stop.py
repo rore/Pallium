@@ -21,6 +21,7 @@ _spec.loader.exec_module(_common)  # type: ignore[union-attr]
 AGENT_REF = _common.AGENT_REF
 SOURCE_TYPE = _common.SOURCE_TYPE
 build_work_trace_metadata = _common.build_work_trace_metadata
+build_work_refs_metadata = _common.build_work_refs_metadata
 derive_actor_ref = _common.derive_actor_ref
 derive_container_ref = _common.derive_container_ref
 pallium_request = _common.pallium_request
@@ -152,7 +153,7 @@ def main() -> None:
         container_ref = resolve_container_ref(cwd, session_id)
         actor_ref = derive_actor_ref()
 
-        metadata = {}
+        metadata = build_work_refs_metadata(cwd, payload.get("pallium_work_refs"))
         work_trace_meta = build_work_trace_metadata(turn_data)
         if work_trace_meta:
             metadata["agent_work_trace_turn"] = work_trace_meta

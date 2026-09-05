@@ -38,6 +38,31 @@ from redaction import redact_sensitive
 from storage.base import QueueHealthSnapshot, RetentionLeaseLostError, RetentionRunStats, StorageProvider, ThreadProcessingLease
 from storage.vector_index import VectorIndex
 from core.text import normalize_for_index as _normalize_for_index
+from core.work_ref import _normalize_work_refs
+
+_WORK_REFS_METADATA_KEY = "pallium_work_refs"
+
+def _sanitize_work_ref_metadata(metadata: dict | None) -> dict | None:
+    """Keep only safe, list-valued structural work references."""
+    if not isinstance(metadata, dict) or _WORK_REFS_METADATA_KEY not in metadata:
+        return metadata
+    sanitized = dict(metadata)
+    raw = metadata[_WORK_REFS_METADATA_KEY]
+    if not isinstance(raw, list):
+        sanitized.pop(_WORK_REFS_METADATA_KEY, None)
+        return sanitized
+    candidates = [
+        value for value in raw
+        if isinstance(value, str)
+        and redact_sensitive(value) == value
+        and "[REDACTED" not in value
+    ]
+    refs = _normalize_work_refs(candidates)
+    if refs:
+        sanitized[_WORK_REFS_METADATA_KEY] = list(refs)
+    else:
+        sanitized.pop(_WORK_REFS_METADATA_KEY, None)
+    return sanitized
 
 
 def _build_workstream_capability(storage) -> WorkstreamCapability | None:
@@ -340,6 +365,7 @@ class PalliumService:
         if not is_user_note:
             content = redact_sensitive(content) if content else content
             metadata = _redact_ingest_value(metadata) if metadata else metadata
+        metadata = _sanitize_work_ref_metadata(metadata)
 
         source_item = build_source_item(
             source_type=source_type,

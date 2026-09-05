@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-plugin-"));
@@ -79,7 +80,7 @@ test("chat.message ingests the user prompt and queues memory for the system prom
 
   const parts = [{ type: "text", text: "How does the injection policy abstention work here?" }];
   const output = { message: { sessionID: "sesA", role: "user" }, parts };
-  await hooks["chat.message"]({}, output);
+  await hooks["chat.message"]({ metadata: { pallium_work_refs: ["ISSUE-1"] } }, output);
 
   const iq = fetchCalls.find((c) => c.url.includes("/item-and-query"));
   assert.ok(iq, "should call /item-and-query");
@@ -87,6 +88,7 @@ test("chat.message ingests the user prompt and queues memory for the system prom
   assert.equal(iq.body.role, "user");
   assert.equal(iq.body.thread_ref, "sesA");
   assert.equal(iq.body.query_trigger_origin, "user_prompt_submit");
+  assert.deepEqual(iq.body.metadata.pallium_work_refs, ["ISSUE-1"]);
   assert.match(iq.body.source_id, /^oc-[0-9a-f]{12}$/);
   const modelMessage = await messagesTransform(hooks, output.message, output.parts);
   assert.match(modelMessage.parts[0].text, /<system-reminder>\n\[Pallium scope — /);
@@ -442,4 +444,37 @@ test("session.deleted closes Relay with pinned scope and removes the pin", async
   assert.equal(close.body.container_ref, "git:example.test/team/project");
   assert.equal(close.body.actor_ref, "Relay Operator");
   assert.equal(fs.existsSync(pinFile), false);
+});
+
+
+test("assistant ingest includes structural work references", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-plugin-work-ref-"));
+  try {
+    execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+    execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: dir });
+    fs.writeFileSync(path.join(dir, "README.md"), "test");
+    execFileSync("git", ["add", "README.md"], { cwd: dir });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["checkout", "-b", "fix/item"], { cwd: dir, stdio: "ignore" });
+    const tasks = path.join(dir, ".agent-workflow", "tasks");
+    fs.mkdirSync(tasks, { recursive: true });
+    fs.writeFileSync(
+      path.join(tasks, "item.md"),
+      "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->",
+    );
+    installFetch({ "/items": [{ source_item_id: "sid-work-ref" }] });
+    const messages = [
+      { info: { role: "assistant", id: "a-work-ref" }, parts: [{ type: "text", text: "Done." }] },
+    ];
+    const hooks = await loadPlugin({ client: makeClient(messages), directory: dir });
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "ses-work-ref" } } });
+    const item = fetchCalls.find((call) => call.url.includes("/items")).body[0];
+    assert.deepEqual(item.metadata.pallium_work_refs, [
+      "git-branch:fix/item",
+      "agent-workflow:item",
+    ]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -6,6 +6,7 @@ import json
 import pytest
 
 from core.models import MemoryEnvelopeScope
+from core.service import _sanitize_work_ref_metadata
 from semantic.llm_agent_memory import (
     _normalize_extraction,
     _normalize_work_ref,
@@ -91,6 +92,21 @@ class TestNormalizeWorkRefs:
         assert _normalize_work_refs(["", "  ", "PROJ-123"]) == ("proj-123",)
 
 
+class TestIngestWorkRefSanitization:
+    def test_sanitizes_key_only_and_preserves_other_metadata(self):
+        metadata = {
+            "pallium_work_refs": ["PROJ 1", "ghp_abcdefghijklmnopqrstuvwxyz1234567890"],
+            "other": {"keep": "value"},
+        }
+        result = _sanitize_work_ref_metadata(metadata)
+        assert result == {"pallium_work_refs": ["proj-1"], "other": {"keep": "value"}}
+        assert metadata["other"] == {"keep": "value"}
+
+    def test_invalid_work_ref_key_is_removed_without_touching_note_metadata(self):
+        metadata = {"pallium_work_refs": "PROJ-1", "content_hint": "verbatim"}
+        assert _sanitize_work_ref_metadata(metadata) == {"content_hint": "verbatim"}
+
+
 class TestSourceIdFilter:
     """Verify that _normalize_extraction filters work_refs matching the source_id."""
 
@@ -137,6 +153,11 @@ class TestMergeWorkRefs:
 
     def test_merge_one_empty(self):
         assert _merge_work_refs(("a",), ()) == ("a",)
+
+    def test_metadata_precedes_extracted_and_caps_at_five(self):
+        assert _merge_work_refs(("meta-1", "meta-2"), tuple(f"x-{i}" for i in range(5))) == (
+            "meta-1", "meta-2", "x-0", "x-1", "x-2"
+        )
 
 
 class TestWorkRefsFromMetadata:

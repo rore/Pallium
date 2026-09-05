@@ -28,6 +28,7 @@ pallium_request = _common.pallium_request
 read_hook_input = _common.read_hook_input
 relay_request = _common.relay_request
 resolve_container_ref = _common.resolve_container_ref
+build_work_refs_metadata = _common.build_work_refs_metadata
 
 _IDE_TAG_RE = re.compile(
     r"<ide_(?:opened_file|selection)>.*?</ide_(?:opened_file|selection)>",
@@ -122,6 +123,7 @@ def main() -> None:
                 "query_limit": 5,
                 "query_actor_ref": actor_ref,
                 "query_trigger_origin": "user_prompt_submit",
+                "metadata": build_work_refs_metadata(cwd, payload.get("pallium_work_refs")),
             })
             if response:
                 memory_output = format_injection(

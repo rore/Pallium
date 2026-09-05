@@ -16,7 +16,7 @@ from semantic.agent_conversation_memory_constraints import (
     _merge_subject_anchors,
     _serialize_subject_anchors,
 )
-from semantic.llm_agent_memory import _normalize_work_refs
+from core.work_ref import MAX_WORK_REFS, _normalize_work_refs
 
 MEMORY_ENVELOPE_SCHEMA_ID = "core.memory_envelope"
 
@@ -55,6 +55,8 @@ def _merge_work_refs(*groups: tuple[str, ...]) -> tuple[str, ...]:
             if ref not in seen:
                 seen.add(ref)
                 result.append(ref)
+                if len(result) == MAX_WORK_REFS:
+                    return tuple(result)
     return tuple(result)
 
 
@@ -250,9 +252,9 @@ def _apply_direct_memory_envelopes(
         source_updates = dict(updated_metadata.get(source_item.id, {}))
         source_updates[SUBJECT_HINT_METADATA_KEY] = _serialize_subject_anchors(extraction.subject_hints)
         updated_metadata[source_item.id] = source_updates
-    # Merge work_refs from LLM extraction and runtime metadata hints
+    # Merge runtime metadata hints before LLM extraction work_refs
     metadata_work_refs = _work_refs_from_metadata(source_item.metadata)
-    merged_work_refs = _merge_work_refs(extraction.work_refs, metadata_work_refs)
+    merged_work_refs = _merge_work_refs(metadata_work_refs, extraction.work_refs)
     # Persist merged work_refs back to source item metadata
     if merged_work_refs:
         source_updates = dict(updated_metadata.get(source_item.id, {}))

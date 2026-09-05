@@ -21,6 +21,7 @@ from common import (
     read_hook_input,
     relay_request,
     resolve_container_ref,
+    build_work_refs_metadata,
     register_claude_wake,
 )
 
@@ -122,6 +123,7 @@ def main() -> None:
                 "query_limit": 5,
                 "query_actor_ref": actor_ref,
                 "query_trigger_origin": "user_prompt_submit",
+                "metadata": build_work_refs_metadata(cwd, payload.get("pallium_work_refs")),
             })
             if response:
                 memory_output = format_injection(

@@ -722,6 +722,72 @@ export function buildWorkTraceMetadata(turnData) {
 
 // --- misc helpers -----------------------------------------------------------
 
+
+const WORK_REF_PREFIXES = ["slice/", "feat/", "feature/", "fix/", "bug/", "chore/", "demo/"];
+const BASE_BRANCHES = new Set(["main", "master", "develop", "trunk", "head"]);
+const workRefGitCache = new Map();
+
+function workRefGitState(cwd) {
+  const workspace = path.resolve(cwd || ".");
+  const cacheKey = process.platform === "win32" ? workspace.toLowerCase() : workspace;
+  const cached = workRefGitCache.get(cacheKey);
+  if (cached) {
+    try {
+      if (fs.readFileSync(cached.headPath, "utf8") === cached.headText) return cached;
+    } catch { /* a missing HEAD is a cache miss */ }
+    workRefGitCache.delete(cacheKey);
+  }
+
+  const result = _runGit(
+    ["rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD", "--git-path", "HEAD"],
+    cwd,
+  );
+  const lines = result.stdout.split(/\r?\n/);
+  if (!result.ok || lines.length < 3) return null;
+
+  const state = { root: lines[0].trim(), branch: lines[1].trim() };
+  try {
+    const headPath = path.resolve(workspace, lines[2].trim());
+    const headText = fs.readFileSync(headPath, "utf8");
+    const current = headText.trim();
+    const agrees = state.branch === "HEAD"
+      ? !current.startsWith("ref:")
+      : current === `ref: refs/heads/${state.branch}`;
+    if (agrees) {
+      Object.assign(state, { headPath, headText });
+      workRefGitCache.set(cacheKey, state);
+    }
+  } catch { /* use the uncached result */ }
+  return state;
+}
+
+export function buildWorkRefsMetadata(cwd, explicitRefs) {
+  const refs = [];
+  const state = workRefGitState(cwd);
+  if (state) {
+    const { root, branch } = state;
+    if (branch && !BASE_BRANCHES.has(branch.toLowerCase())) {
+      refs.push(`git-branch:${branch}`);
+      let slug = branch;
+      for (const prefix of WORK_REF_PREFIXES) {
+        if (slug.startsWith(prefix)) { slug = slug.slice(prefix.length); break; }
+      }
+      slug = slug.replaceAll("/", "-");
+      try {
+        const rootPath = fs.realpathSync(root);
+        const tasksPath = fs.realpathSync(path.join(rootPath, ".agent-workflow", "tasks"));
+        const tasksRelative = path.relative(rootPath, tasksPath);
+        const record = fs.realpathSync(path.join(tasksPath, `${slug}.md`));
+        if (!tasksRelative.startsWith("..") && !path.isAbsolute(tasksRelative) && path.dirname(record) === tasksPath && fs.statSync(record).isFile()) {
+          const text = fs.readFileSync(record, "utf8");
+          if (text.includes("<!-- agent-workflow:start -->") && text.includes("<!-- agent-workflow:end -->")) refs.push(`agent-workflow:${slug}`);
+        }
+      } catch { /* missing, malformed, or escaping records are absent */ }
+    }
+  }
+  if (Array.isArray(explicitRefs)) refs.push(...explicitRefs.filter((value) => typeof value === "string"));
+  return refs.length ? { pallium_work_refs: refs } : {};
+}
 export function ocSourceId() {
   return "oc-" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
 }
