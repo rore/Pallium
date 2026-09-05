@@ -78,7 +78,12 @@ def main() -> None:
         deliveries = []
         rendered_deliveries = []
         relay_output = ""
-        if has_session:
+        relay_scope = format_injection(
+            [], container_ref, budget_chars=RELAY_OUTPUT_BUDGET,
+            thread_ref=session_id, actor_ref=actor_ref,
+            agent_ref="claude-code", visibility="private",
+        ) if has_session else ""
+        if relay_scope:
             relay_response = relay_request(
                 "POST",
                 "/relay/turn",
@@ -103,9 +108,11 @@ def main() -> None:
             )
             if rendered_deliveries:
                 if (sys.stdout.encoding or "").lower().replace("-", "") == "utf8":
-                    print(relay_output)
+                    print("\n\n".join((relay_output, relay_scope)))
                 else:
-                    sys.stdout.buffer.write((relay_output + "\n").encode("utf-8"))
+                    sys.stdout.buffer.write(
+                        ("\n\n".join((relay_output, relay_scope)) + "\n").encode("utf-8")
+                    )
                 acknowledge_relay(rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref)
                 sys.exit(0)
 

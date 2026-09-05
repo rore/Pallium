@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 import os
 import subprocess
 import threading
@@ -512,7 +513,28 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     assert delivery["receipt"]
     assert sent["deliveries"][0]["delivery_id"] == delivery["delivery_id"]
     assert "delayed busy delivery" in contexts[-1]
-    reply_body = {"delivery_id": delivery["delivery_id"], "payload": "handled once", **scope}
+    scope_line = next(
+        line for line in contexts[-1].splitlines()
+        if line.startswith("[Pallium scope — ")
+    )
+    injected_scope = json.loads(
+        scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
+    )
+    assert injected_scope == {
+        **scope,
+        "thread_ref": "target-session",
+        "agent_ref": "codex",
+        "visibility": "private",
+    }
+    reply_body = {
+        "delivery_id": delivery["delivery_id"],
+        "payload": "handled once",
+        "container_ref": injected_scope["container_ref"],
+        "actor_ref": injected_scope["actor_ref"],
+    }
+    assert client.post(
+        "/relay/replies", json={**reply_body, "container_ref": "git:example.test/other"}
+    ).status_code == 404
     first = client.post("/relay/replies", json=reply_body)
     duplicate = client.post("/relay/replies", json=reply_body)
     assert first.status_code == duplicate.status_code == 200
@@ -592,8 +614,10 @@ def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
     assert {
         call[0]["deliveries"][0]["delivery_id"] for call in scheduled
     } == {sent[3]["deliveries"][0]["delivery_id"]}
-    assert contexts[0].count("[Pallium Relay message") == 3
-    assert contexts[0].endswith("[Relay: 1 more; Pallium continues.]")
+    first_relay, first_scope = contexts[0].rsplit("\n\n", 1)
+    assert first_relay.count("[Pallium Relay message") == 3
+    assert first_relay.endswith("[Relay: 1 more; Pallium continues.]")
+    assert first_scope.startswith("[Pallium scope — ")
 
     send(4)
     assert len(scheduled) == 4
@@ -697,9 +721,11 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
         hook.main()
 
     assert len(contexts) == 1
-    assert contexts[0].count("😀") == 1500
-    assert contexts[0].endswith("[Relay: 1 more; Pallium continues.]")
-    assert len(contexts[0]) <= hook.RELAY_OUTPUT_BUDGET
+    relay_text, scope_line = contexts[0].rsplit("\n\n", 1)
+    assert relay_text.count("😀") == 1500
+    assert relay_text.endswith("[Relay: 1 more; Pallium continues.]")
+    assert len(relay_text) <= hook.RELAY_OUTPUT_BUDGET
+    assert len(scope_line) <= hook.RELAY_OUTPUT_BUDGET
     assert client.get(
         f"/relay/messages/{maximum['message_id']}", params=scope,
     ).json()["deliveries"][0]["state"] == "delivered"

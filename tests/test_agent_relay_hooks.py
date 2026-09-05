@@ -74,6 +74,15 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
     assert maximum_output.endswith("[Relay: 999+ more; Pallium continues.]")
     assert len(maximum_output) <= 2400
 
+    quote = '"'
+    maximum_scope = common.format_injection(
+        [], "g" + quote * 511, budget_chars=2400,
+        thread_ref=quote * 255, actor_ref=quote * 255,
+        agent_ref="claude-code" if name == "claude_common" else "codex",
+        visibility="private",
+    )
+    assert maximum_scope and len(maximum_scope) <= 2400
+
     observed = []
 
     def timeout(_request, timeout):
@@ -143,7 +152,18 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
         0.75,
     )
     assert output and output[0][0].startswith("[Pallium Relay message")
-    assert "[Pallium scope — " not in output[0][0]
+    relay_text, scope_line = output[0][0].rsplit("\n\n", 1)
+    assert "Review the migration before editing." in relay_text
+    injected_scope = json.loads(
+        scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
+    )
+    assert injected_scope == {
+        "container_ref": "git:example/repo",
+        "thread_ref": "target-session",
+        "actor_ref": "actor",
+        "agent_ref": "codex" if codex else "claude-code",
+        "visibility": "private",
+    }
     assert acknowledged and acknowledged[0][0] == [DELIVERY]
 
 
@@ -190,6 +210,98 @@ def test_short_turn_without_delivery_still_exposes_current_relay_identity(
         "agent_ref": runtime,
         "visibility": "private",
     }
+
+
+@pytest.mark.parametrize(
+    ("relative", "imported"),
+    [
+        ("integrations/claude-code/hooks/user_prompt_submit.py", False),
+        ("integrations/codex/hooks/user_prompt_submit.py", True),
+    ],
+)
+def test_invalid_scope_never_claims_prompt_delivery(monkeypatch, relative, imported):
+    if imported:
+        from integrations.codex.hooks import user_prompt_submit as hook
+    else:
+        hook = _load("claude_invalid_scope", relative)
+    monkeypatch.setattr(
+        hook, "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "target-session", "prompt": "hi"},
+    )
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "bad\nscope")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(
+        hook, "relay_request",
+        lambda *_a, **_k: pytest.fail("invalid scope must not claim Relay"),
+    )
+    monkeypatch.setattr(
+        hook, "pallium_request",
+        lambda *_a, **_k: pytest.fail("short prompt must skip memory"),
+    )
+    if not imported:
+        monkeypatch.setattr(hook, "register_claude_wake", lambda *_a, **_k: None)
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+
+
+def test_claude_session_start_delivery_includes_exact_scope(monkeypatch, capsys):
+    hook = _load("claude_session_start_scope", "integrations/claude-code/hooks/session_start.py")
+    monkeypatch.setattr(
+        hook, "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "target-session", "source": "startup"},
+    )
+    monkeypatch.setattr(hook, "derive_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "register_claude_wake", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        hook, "relay_request", lambda *_a, **_k: {"deliveries": [DELIVERY]},
+    )
+    acknowledged = []
+    monkeypatch.setattr(
+        hook, "acknowledge_relay",
+        lambda deliveries, **_scope: acknowledged.append(deliveries),
+    )
+    monkeypatch.setattr(
+        hook, "_fetch_orientation",
+        lambda *_: pytest.fail("Relay delivery must skip orientation"),
+    )
+
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+    relay_text, scope_line = capsys.readouterr().out.rstrip().rsplit("\n\n", 1)
+    assert "Review the migration before editing." in relay_text
+    assert json.loads(
+        scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
+    ) == {
+        "container_ref": "git:example/repo", "thread_ref": "target-session",
+        "actor_ref": "actor", "agent_ref": "claude-code", "visibility": "private",
+    }
+    assert acknowledged == [[DELIVERY]]
+
+
+def test_claude_session_start_invalid_scope_never_claims(monkeypatch):
+    hook = _load("claude_session_start_invalid", "integrations/claude-code/hooks/session_start.py")
+    monkeypatch.setattr(
+        hook, "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "target-session", "source": "startup"},
+    )
+    monkeypatch.setattr(hook, "derive_container_ref", lambda *_: "bad\nscope")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "register_claude_wake", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        hook, "relay_request",
+        lambda *_a, **_k: pytest.fail("invalid scope must not claim Relay"),
+    )
+    monkeypatch.setattr(hook, "_fetch_orientation", lambda *_: [])
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
 
 
 def test_claude_short_prompt_delivers_relay_before_memory_gate(monkeypatch):
@@ -331,9 +443,17 @@ def test_codex_combined_output_is_relay_first_and_bounded(monkeypatch):
     monkeypatch.setattr(hook, "emit_context", lambda text, _event: outputs.append(text))
     with pytest.raises(SystemExit):
         hook.main()
-    assert outputs[0].startswith("[Pallium Relay")
-    assert outputs[0].endswith("[Relay: 2 more; Pallium continues.]")
-    assert len(outputs[0]) <= 2400
+    relay_text, scope_line = outputs[0].rsplit("\n\n", 1)
+    assert relay_text.startswith("[Pallium Relay")
+    assert relay_text.endswith("[Relay: 2 more; Pallium continues.]")
+    assert len(relay_text) <= 2400
+    assert len(scope_line) <= 2400
+    assert json.loads(
+        scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
+    ) == {
+        "container_ref": "git:example/repo", "thread_ref": "target",
+        "actor_ref": "actor", "agent_ref": "codex", "visibility": "private",
+    }
 
 
 def test_claude_relay_uses_utf8_and_skips_memory_after_a_claim(monkeypatch):
@@ -366,9 +486,17 @@ def test_claude_relay_uses_utf8_and_skips_memory_after_a_claim(monkeypatch):
         hook.main()
 
     rendered = output.buffer.getvalue().decode("utf-8")
-    assert "→" in rendered
-    assert rendered.rstrip().endswith("[Relay: 1 more; Pallium continues.]")
-    assert len(rendered) <= 2400
+    relay_text, scope_line = rendered.rstrip().rsplit("\n\n", 1)
+    assert "→" in relay_text
+    assert relay_text.endswith("[Relay: 1 more; Pallium continues.]")
+    assert len(relay_text) <= 2400
+    assert len(scope_line) <= 2400
+    assert json.loads(
+        scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
+    ) == {
+        "container_ref": "git:example/repo", "thread_ref": "utf8",
+        "actor_ref": "actor", "agent_ref": "claude-code", "visibility": "private",
+    }
     assert acknowledgements == [[{**DELIVERY, "payload": "review → then continue"}]]
 
 @pytest.mark.parametrize(
@@ -439,11 +567,40 @@ def test_claude_stop_claims_only_nonrecursive_turns_and_emits_acknowledged_subse
     }, 0.75)]
     output = capsys.readouterr().err
     assert "first ✓" in output and "second" not in output
-    assert output.rstrip().endswith("[Relay: 1 more; Pallium continues.]")
+    relay_text, scope_line = output.rstrip().rsplit("\n\n", 1)
+    assert relay_text.endswith("[Relay: 1 more; Pallium continues.]")
+    assert json.loads(
+        scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
+    ) == {
+        "container_ref": "git:example/repo", "thread_ref": "target",
+        "actor_ref": "actor", "agent_ref": "claude-code", "visibility": "private",
+    }
     assert formatted == [
         (deliveries, {"budget_chars": 2400, "remaining_count": 1}),
         (deliveries[:1], {"budget_chars": 2400, "remaining_count": 1}),
     ]
+
+
+def test_claude_stop_invalid_scope_never_claims(monkeypatch):
+    hook = _load("claude_stop_invalid_scope", "integrations/claude-code/hooks/stop.py")
+    monkeypatch.setattr(
+        hook, "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "target", "transcript_path": ""},
+    )
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "bad\nscope")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    registrations = []
+    monkeypatch.setattr(
+        hook, "register_claude_wake",
+        lambda *_a, **kwargs: registrations.append(kwargs["idle"]),
+    )
+    monkeypatch.setattr(
+        hook, "relay_request",
+        lambda *_a, **_k: pytest.fail("invalid scope must not claim Relay"),
+    )
+
+    hook.main()
+    assert registrations == [True, True]
 
 
 def test_claude_stop_does_not_claim_during_recursive_continuation(monkeypatch):

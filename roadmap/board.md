@@ -8,6 +8,7 @@
 - idea-agent-relay
 - add-relay-retention-and-lifecycle-hardening
 - validate-relay-dependency-workflows
+- investigate-cross-repository-relay-coordination
 - idea-deferred-relay
 - add-copilot-relay-integration
 
