@@ -38,6 +38,7 @@
 - Repository checker raised Risk from Elevated to High because the planned diff includes the public API response surface; implementation remains blocked on Claude validation and explicit human approval.
 - S2 slice A implemented in `core/claude_wake.py` and `app/claude_wake_transport.py`; focused classifier/durability expectations updated and verified with `pytest -q tests/test_claude_wake_dispatch.py tests/test_claude_wake_durability.py` (73 passed, 2 skipped).
 - User approved the finalized High-risk plan; implementation may begin.
+- Slice B1: added exact-scoped strict timestamp-CAS active→unreachable and trusted registration restore in `storage/sqlite_relay.py`, with optional `RelayService` wrappers; no delivery rows mutate. Repaired the delegated regression to exercise the core surface, strict equality, scope, closed precedence, and self-heal; `tests/test_agent_relay_e2e.py` passes (37 tests).
 
 ## Plan review
 

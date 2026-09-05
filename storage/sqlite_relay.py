@@ -80,6 +80,37 @@ def _delivery_view(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -
 
 
 class SQLiteRelayMixin:
+    def relay_mark_unreachable(
+        self, *, runtime: str, session_ref: str, container_ref: str,
+        actor_ref: str, attempt_started_at: datetime,
+    ) -> bool:
+        attempted = _now(attempt_started_at)
+        with self._begin_relay_immediate() as db:
+            row = self._relay_session(db, container_ref=container_ref, runtime=runtime, session_ref=session_ref)
+            if row is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            self._require_actor(row, actor_ref)
+            if row.state != "active" or not (_now(row.last_seen_at) < attempted):
+                return False
+            row.state = "unreachable"
+            return True
+
+    def relay_mark_active(
+        self, *, runtime: str, session_ref: str, container_ref: str,
+        actor_ref: str, now: datetime | None = None,
+    ) -> bool:
+        current = _now(now)
+        with self._begin_relay_immediate() as db:
+            row = self._relay_session(db, container_ref=container_ref, runtime=runtime, session_ref=session_ref)
+            if row is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            self._require_actor(row, actor_ref)
+            changed = row.state != "active"
+            row.state = "active"
+            row.closed_at = None
+            if _now(row.last_seen_at) < current:
+                row.last_seen_at = current
+            return changed
 
     def _relay_session(
         self,
