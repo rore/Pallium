@@ -13,7 +13,7 @@
 
 **Complexity:** Moderate
 
-**Reason:** `api/routes.py` is a red API surface requiring api-review; `/relay/turn` gains one intentional additive request field while Relay responses remain unchanged; storage and app wiring are gray/watch paths. High follows the repository contract-surface rule. Moderate covers coordinated storage, route, wake, three hook surfaces, and lifecycle E2E.
+**Reason:** `api/routes.py` is a red API surface requiring api-review; `/relay/turn` gains one intentional additive request field while Relay responses remain unchanged; storage and app wiring are gray/watch paths. High follows the repository contract-surface rule. Moderate covers coordinated storage, route, wake, four hook surfaces, and lifecycle E2E.
 
 **Discovery:** `relay_turn` returns bounded ordered claims plus `has_more`/`remaining_count`, but Codex/Claude hooks ignore both. Codex clears its per-session coalescing state on turn admission and has no post-ACK rearm; Claude already re-registers idle and signals its durable reconciler from Stop. Hook ACK uses `/relay/deliveries/ack` while MCP uses a separate receipt endpoint, providing the correct no-race boundary. `relay_pending_candidate` currently returns the first pending row without render-safety filtering, so a legacy unsafe row can block a later safe wake candidate. Existing maximum-field formatter coverage proves every currently valid delivery fits the hooks' 2,400-character turn budget, but Codex/Claude UserPromptSubmit and Claude SessionStart currently omit `max_chars`, so they claim an unbounded character set before formatting. Separately, the documented three-message default is not enforced because `RelayService.turn()` hardcodes `max_messages=0`; MCP intentionally requires explicit zero-valued drain-all for both bounds. OpenCode remains passive by roadmap and is not an automatic-wake target in this slice. PR #100 changed the same hook files for structural work references and is now merged; this branch started from that merge.
 
@@ -23,13 +23,13 @@
 
 **Verification plan:** When a Codex hook ACK succeeds with more safe pending work, the system shall schedule one exact-session continuation and drain ordered IDs once, including a new arrival before the next batch -> real HTTP route + actual UserPromptSubmit lifecycle E2E with synchronous scheduler capture. When ACK fails or is replayed, the system shall schedule nothing -> HTTP conflict/idempotence regressions. When Claude has more than one bounded batch, Stop/idle reconciliation shall wake and drain again without recursive Stop looping -> actual Claude hooks + persistent registry/reconciler E2E with deterministic events. When unsafe legacy or over-current-budget work precedes safe work, the safe candidate shall continue and the unrenderable row shall not cause a loop -> storage + callback caller-surface regression. When `has_more` is true, both runtimes shall receive the automatic-continuation notice and perform no memory query/ingest; when false, no notice or extra wake shall occur -> hook output/routing tests. Public ACK response shall remain unchanged, while OpenAPI shall show only the intentional `RelayTurnRequest.max_messages` field with default `3` and minimum `0` -> response-shape/OpenAPI assertions. Final gate -> focused suites, import-linter, redline, agent-workflow, diff check, CodeRabbit, and installed Codex/Claude burst witness after integration reinstall.
 
-**Plan review:** Initial hook/drain reviews passed. Supplemental clean-context review is pending for the additive default-three/MCP-zero request boundary.
+**Plan review:** All clean-context reviews accepted the final plan; the additive default-three/MCP-zero request boundary is approved and recorded under `## Plan review`.
 
 **Approvals:** Approved by user 2026-09-05: "you don't need to ask every time, you have a constant approval to get what you're working on to a done state"
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -42,6 +42,7 @@
 - 2026-09-05: Supplemental clean-context review accepted the correction as the minimal root fix with no new checkpoint. State returned to Ready to implement before editing Claude SessionStart.
 - 2026-09-05: Regression discovery found `RELAY_TURN_MAX_MESSAGES=3` was dead while the service hardcoded unlimited messages. Expanded the plan to restore default-three and preserve MCP drain-all with explicit zero; blocked for a focused boundary review before schema/service/client edits.
 - 2026-09-05: Boundary review accepted the root fix but rejected stale no-schema-change wording. Corrected Scope, assumptions, verification, and api-review evidence to approve exactly one additive request field; response schemas remain fixed.
+- 2026-09-05: Final clean-context confirmation found no design blocker after the correction. State returned to Ready to implement before schema/service/MCP-client edits.
 
 ## Evidence
 
@@ -65,3 +66,5 @@ Verification: deterministic caller-surface E2E across Codex and Claude, includin
 Clean-context reviewer `/root/rw007_plan_review` (Luna, 2026-09-05) verdict: **ACCEPT; no material blocker**. The review confirmed the injected callback keeps `api/routes.py` thin, ACK commits precede candidate lookup, hook ACK and MCP receipt ACK remain separate, exact `delivery_id` status semantics remain unchanged, Codex admission can reuse current coalescing, Claude can reuse Stop/idle reconciliation if caller-surface E2E proves it, and OpenCode active wake remains out of scope. Non-blocking findings incorporated: gate continuation on a successful non-duplicate hook ACK, reserve any `has_more` notice inside the existing 2,400-character output budget, and make no-ID pending-candidate safety match `relay_turn` so legacy-invalid work cannot loop ahead of a safe row.
 
 Supplemental review by the same clean-context reviewer accepted explicit `max_chars=2400` on Codex UserPromptSubmit and Claude SessionStart/UserPromptSubmit as the minimal model-context boundary fix while preserving MCP's intentional unbounded drain-all contract. Claude Stop already supplies the bound. No new risk or checkpoint was introduced; SessionStart must receive caller-surface empty/fitting/over-budget/Unicode/`has_more` coverage.
+
+A final boundary review first rejected stale no-public-schema wording, then accepted the corrected plan: `RelayTurnRequest.max_messages` is the sole additive request field (`default=3`, `ge=0`, `0` unlimited), omitted HTTP calls intentionally become bounded, MCP explicitly preserves drain-all, and all response schemas remain unchanged.
