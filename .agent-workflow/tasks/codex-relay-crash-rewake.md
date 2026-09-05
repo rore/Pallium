@@ -13,29 +13,36 @@
 
 **Complexity:** Moderate
 
-**Reason:** Preliminary High because this changes persisted claim/exact-once recovery and exact-session wake admission; redline classification and focused discovery must confirm the exact surfaces before planning. Moderate spans storage/service scheduling, two runtime adapters, and real lifecycle E2E.
+**Reason:** High by engineering judgment because a failure here strands or duplicates persisted deliveries across exact-session admission, although redline classifies the intended storage/core/app paths gray with no checkpoint. Moderate spans one shared persistence query, existing reconciliation/dispatch wiring, two runtime adapters, and real lifecycle E2E.
 
-**Discovery:** Pending focused code/test/roadmap trace; implementation is blocked until current lease recovery ownership and all callers are mapped.
+**Discovery:** `relay_turn` already reclaims expired leases, but only when another turn occurs. `relay_pending_candidate` maps an exact expired claim to pending yet excludes expired claims from ordinary candidate selection. Codex clears in-memory wake state at admission and has no recovery scan; Claude has the sole app-local event loop, but its idle reconciliation also uses the excluding query. The persisted delivery, message, and active session rows contain exact runtime/session/container/actor identity and lease deadline. Existing dispatchers already coalesce per session and fail safely. The manual-prompt recovery test proves reclaim, not unattended wake. Redline: intended storage/core/app paths gray, tests/docs blue, no boundary violation or checkpoint; schema/API expansion would require reclassification.
 
-**Material assumptions:** Existing persisted delivery and session state contains enough runtime-owned identity to rearm after lease expiry; discovery must identify the authoritative event and fails back to planning if recovery needs new identity or polling infrastructure.
+**Material assumptions:** (1) Active Relay session plus delivery/message rows are the authoritative runtime-owned recovery identity; any need for model-supplied scope returns to planning. (2) The existing app-local thread can be generalized and started whenever Relay is available, independent of Claude registry persistence or health; a test counterexample requires a separate coordinator. (3) A fixed 30-second expired-claim sweep plus existing per-session adapters bounds failed-launch cost while guaranteeing retry until message expiry; measured unacceptable latency or process cost requires backoff state. (4) Existing adapter coalescing plus sweep-local exact-scope dedup suppresses repeated signals until admission; a caller-surface counterexample requires persisted retry state. (5) No schema or public API change is needed; touching either returns to redline and plan review.
 
-**Plan:** Blocked pending discovery, clean-context redline classification, and clean-context plan review. The first implementation step after approval will be the smallest shared recovery trigger that reuses existing runtime wake dispatch.
+**Plan:** 1. Make ordinary no-ID pending-candidate selection treat unexpired render-safe expired claims as pending for Claude idle recovery, while preserving the intentional exact-ID status/cleanup contract. Add one strict read-only SQLite/RelayService recovery query: active exact session, unexpired render-safe message, expired claimed delivery only, oldest one per `(container_ref, actor_ref, runtime, session_ref)`, optional exact-ID recheck, no mutation/schema. 2. Extract the existing app-level send wake routing into one reusable function; both sends and recovery use the same Codex/Claude validation, destination feedback, and adapter coalescing. 3. Generalize the existing app-local reconciler and start it whenever Relay is available, independent of Claude registry persistence/health. Preserve immediate event-driven Claude reconciliation; run the expired-claim sweep immediately at startup and every fixed 30 seconds, sweep-dedup by exact scope, strict recheck immediately before dispatch, and let existing asynchronous adapters serialize by session. Failed launch leaves the expired claim durable for a later sweep. 4. Drive actual HTTP plus installed-hook modules for Codex and Claude crash-after-claim, lease expiry, automatic re-wake, ACK, terminal empty, duplicate/concurrent signals, new arrival, scope/closed/expired/unrenderable exclusions, failed-launch retry cadence, service restart, Unicode/max boundary, and no synthetic memory. Use controlled clocks/events only. 5. Align RW-008 docs and stop if tests require new identity, persistence state, API/schema changes, a second background thread, or hook/MCP mixing.
 
-**Verification plan:** When an admitted hook crashes after claim, deterministic time/control shall cross lease expiry and observable wake/hook surfaces shall show one rearm, one delivery/ACK, and empty terminal state; failure, duplicate, restart, concurrent-arrival, Unicode/max-boundary, and cross-scope cases shall be driven through real HTTP/hooks without wall-clock sleep.
+**Verification plan:** When an admitted hook crashes after claim, the system shall re-wake after deterministic lease expiry and produce one delivery/ACK with an empty terminal state → actual HTTP plus Codex/Claude hook lifecycle E2E. Failure, duplicate, restart, concurrent-arrival, Unicode/max-boundary, cross-scope, closed, expired, and unrenderable cases shall preserve exact-once durable behavior → focused storage/coordinator tests with controlled clocks/events and no wall-clock sleep.
 
-**Plan review:** Pending clean-context review after discovery.
+**Plan review:** Clean-context review accepted the amended plan; see `## Plan review`.
 
 **Approvals:** Approved by user 2026-09-05: "you don't need to ask every time, you have a constant approval to get what you're working on to a done state"
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- 2026-09-05: Established RW-008 from merged/installed RW-007. No production code inspected or edited; discovery, redline classification, and plan review remain.
+- 2026-09-05: Established RW-008 from merged/installed RW-007. No production code inspected or edited before the Work Record.
+- 2026-09-05: Traced lease storage, service/router callbacks, Codex admission, Claude registry/reconciler, real hooks, and existing recovery tests. Root gap is unattended expiry-to-wake signaling, not reclaim semantics.
+- 2026-09-05: Clean-context redline classified intended storage/core/app paths gray, tests/docs blue, with no boundary violation/checkpoint. Risk remains High by exact-once persistence judgment; plan is blocked only for clean-context review.
+- 2026-09-05: Clean-context plan review blocked the Claude-gated draft, then accepted the amended Relay-wide, startup-independent, bounded-retry design. Standing user approval satisfies the High-risk gate; State moved to Ready to implement before code edits.
 
 ## Evidence
 
 - Canonical roadmap row RW-008 records crash-after-claim lease recovery without unattended re-wake as the next open correctness bug.
+
+## Plan review
+
+Clean-context review `/root/rw008_plan_review` initially blocked the draft because the existing loop was Claude-gated, retry cadence could hammer a 330-second Codex launch path, and coalescing/recheck invariants were implicit. The amended plan makes the coordinator Relay-wide and startup-independent, separates immediate Claude signals from a fixed 30-second expired-claim sweep, deduplicates/rechecks exact scopes, and retains durable retry. The suggestion to hide unsafe/delivered rows from `pending_candidate(delivery_id=...)` was not adopted: that method is intentional exact status used to clear stale Claude inflight state and is pinned by `test_pending_candidate_skips_unsafe_without_hiding_exact_status`; the new recovery query owns strict active/render-safe/unexpired/expired-claim eligibility instead.
