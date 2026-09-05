@@ -1,6 +1,8 @@
 # Session History
 
-Session History records selected user and agent turns so later coding-agent sessions can search earlier work. Scope checks, redaction, telemetry, and forgetting govern what is stored and returned.
+Session History records selected user and agent turns so later agent sessions can
+search earlier work. Scope checks, redaction, telemetry, and forgetting govern
+what is stored and returned.
 
 It is useful when the important context is not in the current checkout: why a
 decision was made, what an earlier investigation found, which constraint shaped

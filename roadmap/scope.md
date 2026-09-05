@@ -2,8 +2,8 @@ Pallium currently has two primary capabilities:
 
 1. **Session History** records governed agent work and makes earlier sessions
    searchable. Its vNext strategy is in `docs/context/strategy-vnext.md`.
-2. **Agent Relay** moves bounded context between existing supported coding-agent
-   sessions. Its roadmap starts at `roadmap/ideas/idea-agent-relay.md`.
+2. **Agent Relay** moves bounded context between existing agent sessions. Its
+   roadmap starts at `roadmap/ideas/idea-agent-relay.md`.
 
 They share Pallium's local service and integration foundation. Each has its own
 validation gates and can succeed or fail independently.
@@ -56,7 +56,8 @@ Contract milestone is wound down (W2/W3/W4/W6 shipped; W1/W5/W7 parked as residu
 under Paused).
 
 vNext is validation-first and experiment-gated: each phase must pass its live
-experiment before the next earns significant investment. The product has two primary capabilities: Agent Relay and **Session History**.
+experiment before the next earns significant investment. The product has two
+primary capabilities: Agent Relay and **Session History**.
 The Session History target is a package-independent raw record of governed agent
 work. Generated memories become optional and disabled by default when the queued
 decoupling slice ships.
@@ -145,7 +146,7 @@ recipient's next applicable natural turn. The committed wake-first extension wil
 attempt immediate activation by default and retain that R1 path as the fallback
 when wake is unsupported, unsafe, or unavailable.
 
-Initial consumers are **Claude Code, Codex, and OpenCode**. R1 supports
+Pallium currently integrates with **Claude Code, Codex, and OpenCode**. R1 supports
 runtime-wide fan-out plus exact-session and Relay-alias delivery within the same
 repository/container. Extracted `work_refs` are retrieval hints, not reliable
 delivery addresses, and must not be used to route Relay messages. Future-recipient

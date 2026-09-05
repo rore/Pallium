@@ -1,12 +1,12 @@
 # Relay
 
-Relay sends a bounded plain-text message from one existing coding-agent session
-to another. Pallium stores the message before attempting delivery, so a busy or
+Relay sends a bounded plain-text message from one existing agent session to
+another. Pallium stores the message before attempting delivery, so a busy or
 unavailable recipient can receive it later.
 
-Relay supports Claude Code, Codex, and OpenCode sessions connected to the same
-local Pallium service. Routing uses explicit session identity; it does not use
-search, embeddings, ranking, or an LLM.
+Pallium currently ships Relay integrations for Claude Code, Codex, and OpenCode.
+Sessions must connect to the same local Pallium service. Routing uses explicit
+session identity; it does not use search, embeddings, ranking, or an LLM.
 
 ## Send a message
 

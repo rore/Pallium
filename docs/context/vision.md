@@ -2,8 +2,7 @@
 
 ## What Pallium is
 
-Pallium is a local service for agent work that crosses coding-tool and session
-boundaries.
+Pallium is a local service for work that crosses agent tools and sessions.
 
 It has two primary capabilities:
 
@@ -11,9 +10,9 @@ It has two primary capabilities:
 - **Session History** records governed agent and user turns and makes earlier
   work searchable.
 
-Claude Code, Codex, and OpenCode remain normal, independently operated tools.
-Pallium connects their sessions and keeps earlier work available; it does not own
-their execution or workflow.
+Agent tools remain normal and independently operated. Pallium connects their
+sessions and keeps earlier work available; it does not own their execution or
+workflow. Pallium currently integrates with Claude Code, Codex, and OpenCode.
 
 Pallium also contains derived-memory packages. They can turn session evidence
 into compact decisions, findings, facts, constraints, and checkpoints. These

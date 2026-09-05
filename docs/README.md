@@ -1,8 +1,8 @@
 # Documentation
 
-Pallium connects existing coding-agent sessions and keeps earlier session work
-searchable. Start with the two main capabilities, then use the integration and
-reference guides as needed.
+Pallium connects existing agent sessions and keeps earlier session work
+searchable. Current integrations are listed separately below. Start with the two
+main capabilities, then use the integration and reference guides as needed.
 
 ## Start
 
@@ -14,7 +14,7 @@ reference guides as needed.
 
 | Document | What it covers |
 |---|---|
-| [Relay](agent-relay.md) | Send messages between existing Claude Code, Codex, and OpenCode sessions |
+| [Relay](agent-relay.md) | Send messages between connected agent sessions |
 | [Session History](session-history.md) | Search earlier sessions and open the surrounding conversation |
 
 ## Coding-tool integrations

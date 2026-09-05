@@ -2,9 +2,9 @@
 
 # Pallium
 
-Pallium is a local service for Claude Code, Codex, and OpenCode. It lets
-existing coding-agent sessions send messages to each other and search work from
-earlier sessions.
+Pallium is a local service that lets agent sessions send messages to each other
+and search work from earlier sessions. It currently supports Claude Code, Codex,
+and OpenCode.
 
 Pallium is a personal open-source project under active development. It is useful
 in its current form, but setup and behavior still have rough edges.
@@ -27,9 +27,9 @@ create agents, assign tasks, or supervise work.
 
 ### Session History
 
-Session History records selected user and agent turns, with scope, redaction, and forgetting controls. A later session can
-search that history, inspect a concise match, and open a bounded part of the
-surrounding conversation.
+Session History records selected user and agent turns, with scope, redaction,
+and forgetting controls. A later session can search that history, inspect a
+concise match, and open a bounded part of the surrounding conversation.
 
 Historical content is evidence about earlier work, not proof of current live
 state. A previous session saying that a pull request was approved does not mean
@@ -75,8 +75,9 @@ The OpenCode integration currently uses a local plugin. See its
 [setup guide](integrations/opencode/README.md).
 
 The current installation still includes semantic-package configuration and an
-LLM provider. Making Relay and baseline Session History run without semantic
-packages is queued work; the documentation does not assume it has shipped.
+LLM provider. Relay itself does not use either. Removing that requirement from
+baseline Session History is queued work; the documentation does not assume it
+has shipped.
 
 Continue with [Getting Started](docs/getting-started.md) to try Relay and Session
 History in real coding-tool sessions.
@@ -84,10 +85,10 @@ History in real coding-tool sessions.
 ## How the pieces fit
 
 ```text
-Claude Code, Codex, OpenCode
-             |
-             v
-          Pallium
+Agent tools
+    |
+    v
+ Pallium
           |     |
        Relay   Session History
                   |

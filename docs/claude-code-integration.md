@@ -8,7 +8,8 @@ Relay messages, and supports Pallium's optional derived-memory behavior.
 
 ### Relay
 
-- send messages to another Claude Code, Codex, or OpenCode session
+- send messages to another connected session; current integrations are Claude
+  Code, Codex, and OpenCode
 - receive attributed messages and reply to the sender
 - wake an existing Claude Code session on qualified Windows installations
 - keep undelivered messages for the next normal turn

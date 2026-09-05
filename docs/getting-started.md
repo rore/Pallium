@@ -10,9 +10,10 @@ message, and searches earlier session work.
 - Claude Code or Codex for the shortest setup path
 - an OpenAI-compatible or Anthropic API key for the current installation
 
-The planned base service is intended to run Relay and Session History without an LLM.
-That package-independent setup has not shipped yet, so the current installation
-still includes semantic-package and provider configuration.
+Relay does not use an LLM. Baseline Session History is intended to run without
+one, but that package-independent setup has not shipped yet. The current
+installation therefore still includes semantic-package and provider
+configuration.
 
 ## 1. Install and start Pallium
 
@@ -76,7 +77,10 @@ In the first session, ask:
 
 > List Pallium Relay recipients.
 
-Confirm that the `review` alias points to the intended session, then send a small message. Use the target runtime shown by recipient discovery (`codex:@review` or `claude-code:@review`). An exact session or alias is safer than a runtime-wide send when several sessions are open:
+Confirm that the `review` alias points to the intended session, then send a
+small message. Use the target runtime shown by recipient discovery
+(`codex:@review` or `claude-code:@review`). An exact session or alias is safer
+than a runtime-wide send when several sessions are open:
 
 > Use Pallium Relay to send `codex:@review`: "Please check whether the API change
 > preserves the old response field."

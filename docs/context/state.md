@@ -7,7 +7,7 @@
 
 Pallium has two primary capabilities:
 
-- Relay connects existing Claude Code, Codex, and OpenCode sessions.
+- Relay connects existing agent sessions.
 - Session History records governed turns and lets later sessions search earlier
   work.
 

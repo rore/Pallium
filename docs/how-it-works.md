@@ -23,6 +23,11 @@ Coding agents
 Relay and Session History share one local service, session registration, scope,
 storage, and integration hooks.
 
+Derived memory is optional in the product model, but the current Session History
+installation still requires a configured semantic package, model, and provider.
+Package-independent baseline Session History is planned. See
+[Configuration](configuration.md) for the current setup.
+
 ## Relay
 
 Relay routes explicitly addressed messages between existing sessions. It

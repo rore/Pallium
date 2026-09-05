@@ -22,6 +22,10 @@ Relay and Session History share session identity, scope, storage, integration,
 and operational foundations. Relay delivery does not depend on history search,
 ranking, embeddings, or an LLM.
 
+Derived memory is optional in the product model. The current Session History
+installation still runs with configured semantic packages; package-independent
+baseline Session History is planned.
+
 Internal layers:
 
 1. API layer
