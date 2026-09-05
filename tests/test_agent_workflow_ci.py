@@ -29,7 +29,7 @@ def test_changed_file_jobs_use_pr_head_and_merge_base(tmp_path: Path) -> None:
     (repo / "common.txt").write_text("common", encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "common")
-    merge_base = _git(repo, "rev-parse", "HEAD")
+    event_base = _git(repo, "rev-parse", "HEAD")
 
     _git(repo, "switch", "-c", "feature")
     (repo / "head-only.txt").write_text("head", encoding="utf-8")
@@ -41,14 +41,13 @@ def test_changed_file_jobs_use_pr_head_and_merge_base(tmp_path: Path) -> None:
     (repo / "base-only.txt").write_text("base", encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "base")
-    current_base = _git(repo, "rev-parse", "HEAD")
     _git(repo, "merge", "--no-ff", head, "-m", "synthetic merge")
     synthetic_merge = _git(repo, "rev-parse", "HEAD")
 
-    assert _git(repo, "diff", "--name-only", f"{current_base}...{head}").splitlines() == [
+    assert _git(repo, "diff", "--name-only", f"{event_base}...{head}").splitlines() == [
         "head-only.txt"
     ]
-    assert set(_git(repo, "diff", "--name-only", merge_base, synthetic_merge).splitlines()) == {
+    assert set(_git(repo, "diff", "--name-only", event_base, synthetic_merge).splitlines()) == {
         "base-only.txt",
         "head-only.txt",
     }

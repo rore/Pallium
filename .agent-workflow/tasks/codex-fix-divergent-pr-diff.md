@@ -27,7 +27,7 @@ Redline marks `.github/workflows/agent-workflow.yml` as a red-zone self-protecti
 After PR #104 advanced `main` from `585799b4` to `77018a03`, PR #105's authoritative GitHub file list remained 13 files, but its redline/workflow sticky comments included PR #104's API, model, retrieval, and history files. The workflow currently uses `github.sha` (the pull-request merge ref) and a two-dot `BASE_SHA HEAD_SHA` diff in both changed-file jobs.
 
 **Material assumptions:**
-Git's three-dot diff between the current base SHA and `github.event.pull_request.head.sha` is the repository's intended PR change set. Disproof: a deterministic divergent-history fixture includes base-only files or excludes head-only files; if so, use an explicit `git merge-base` command instead.
+Git's three-dot diff between the pull-request event's base SHA and `github.event.pull_request.head.sha` is the repository's intended PR change set, including when the event base SHA lags the live base branch. Disproof: a deterministic divergent-history fixture includes base-only files or excludes head-only files; if so, use an explicit `git merge-base` command instead.
 
 **Plan:**
 Replace both changed-file jobs' synthetic `github.sha` input with `github.event.pull_request.head.sha`, and replace two-dot with three-dot diff syntax. Add one focused test that pins both workflow occurrences and demonstrates divergent Git history returns only head-side files. Stop if the regression shows three-dot semantics do not match GitHub's PR file list.
@@ -55,6 +55,7 @@ Clean-context Luna review approved the plan with required regression details rec
 - 2026-09-06: Confirmed live PR-report contamination against GitHub's authoritative file list; initialized the High-risk Work Record before workflow edits.
 - 2026-09-06: Clean-context architecture review approved three-dot semantics and required base-only/head-only fixture assertions plus exact checks for both changed-file jobs.
 - 2026-09-06: Implemented the approved minimal change in both jobs and added one deterministic divergent-history contract test. Because apply_patch hit the documented Windows 1327 launch failure, used exact scoped replacements only.
+- 2026-09-06: Final review challenged the fixture. Live PR #105 logs confirmed the exact failure: event BASE_SHA remained 585799b4 while github.sha was a synthetic merge containing newer base work. Renamed the fixture input to event_base and exercised both exact old and new commands.
 
 ## Checkpoint: architecture-review
 
@@ -70,8 +71,8 @@ Clean-context Luna verdict: approved with two required corrections. The determin
 
 ## Evidence
 
-Focused divergent-history regression: 1 passed in 5.65s. Workflow YAML parsed successfully; staged diff check passed. Local agent-workflow gate is advisory only for the expected PR-time `architecture-reviewed` checkpoint; every blocking predicate passed.
+Focused divergent-history regression: 1 passed in 5.69s. Workflow YAML parsed successfully; staged diff check passed. Local agent-workflow gate is advisory only for the expected PR-time `architecture-reviewed` checkpoint; every blocking predicate passed.
 
 ## Result review
 
-Pending.
+Clean-context final review initially challenged the fixture, prompting validation against the live PR #105 job log. After the fixture was aligned to the stale event-base/synthetic-merge inputs, re-review found no blockers. The exact global workflow assertions are adequate for this narrow change; their only residual risk is brittleness if unrelated matching steps are later added.
