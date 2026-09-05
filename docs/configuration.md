@@ -2,6 +2,21 @@
 
 This page explains Pallium's local configuration surface today.
 
+## Capability setup
+
+Pallium has configuration for the local service and storage, Relay, Session
+History retrieval, optional embedding search, and optional derived-memory
+packages.
+
+The intended base setup is a local service with Relay and lexical Session
+History, with no LLM required. That package-independent runtime is queued work,
+not current behavior. Until it ships, the normal installation still needs a
+configured semantic package, model, and provider key. The examples below reflect
+that transitional implementation.
+
+Do not remove current provider configuration on the assumption that the future
+base setup is already available.
+
 **Contents:**
 [Quick Reference](#quick-reference) ·
 [Configuration Sources](#configuration-sources) ·

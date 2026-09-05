@@ -2,289 +2,136 @@
 
 # Pallium
 
-Local context sidecar for AI agents. Its memory track extracts structured memory from conversations
-— decisions, facts, investigation outcomes, work checkpoints — and returns
-compact evidence-backed cards when the agent needs context from earlier
-threads.
+Pallium is a local service for Claude Code, Codex, and OpenCode. It lets
+existing coding-agent sessions send messages to each other and search work from
+earlier sessions.
 
-Multilingual by design: queries in one language retrieve memory stored in
-another. Local-first, no cloud dependencies.
+Pallium is a personal open-source project under active development. It is useful
+in its current form, but setup and behavior still have rough edges.
 
-## Project Status
+## What it does
 
-Pallium is active research-grade software, not a finished product. The
-extraction → retrieval → injection pipeline works end-to-end and is used
-daily as a local memory sidecar for Claude Code and Codex, but proactive
-injection precision is the dominant open quality knob. A measurement
-snapshot from 2026-06-27 put baseline precision at ~44% across containers
-(68% bad-rate on a multi-topic container, 53% on focused single-topic
-ones); none of the proactive memory types cleared a 70% precision bar on
-chronological holdout. An opt-in per-type abstention policy targets ≥75%
-precision and is described in
-[docs/specs/2026-06-27-injection-policy-abstention.md](docs/specs/2026-06-27-injection-policy-abstention.md).
-A separate thread-rebuild near-duplicate supersession fix landed
-2026-06-28; databases that predate it may carry accumulated paraphrase
-duplicates.
+### Relay
 
-Agent Relay is a parallel experimental track: Claude Code, Codex, and OpenCode can send
-bounded, durable messages to a runtime or exact session for next-turn delivery. It is
-deterministic and independent of memory retrieval. See [Agent Relay](docs/agent-relay.md).
+Relay sends a plain-text message to another existing agent session. Pallium
+stores the message before delivery, addresses it to a runtime, exact session, or
+alias, and keeps it pending if the recipient cannot receive it immediately.
 
-The memory system is genuinely useful in a narrow slice — carrying forward
-explicit decisions, investigation outcomes, and constraints across
-sessions on the same repo — and is being measured honestly outside that
-slice. Curated-benchmark numbers below are real; live-use numbers are
-tracked separately.
+> Use Pallium Relay to send Codex: "The legacy endpoint is still used by mobile.
+> Do not remove it."
 
-## What It Looks Like
+Relay can start a new turn in some supported existing sessions. It does not
+create agents, assign tasks, or supervise work.
 
-Thread 1: your agent helps debug a deployment issue. After investigation,
-it decides to use event timestamps for ordering. Pallium extracts and stores
-the decision with its evidence.
+[Read the Relay guide](docs/agent-relay.md).
 
-Thread 2 (days later): a colleague asks "why do we use event time for
-ordering?" Pallium returns a compact card:
+### Session History
 
-    decision: "Use event time for reservation ordering — avoids timezone drift."
-    evidence: thread-A, 2024-03-15
+Session History records selected user and agent turns, with scope, redaction, and forgetting controls. A later session can
+search that history, inspect a concise match, and open a bounded part of the
+surrounding conversation.
 
-The agent answers immediately with the original reasoning — no
-re-investigation, no guessing, no pasting from old threads.
+Historical content is evidence about earlier work, not proof of current live
+state. A previous session saying that a pull request was approved does not mean
+it is approved now.
 
-## Quick Example
+[Read the Session History guide](docs/session-history.md).
 
-Store a decision, then ask about it later:
+## Current status
 
-```bash
-# Ingest + query in one call (recommended pattern)
-curl -X POST http://localhost:8000/item-and-query \
-  -H 'Content-Type: application/json' -d '{
-  "source_type": "chat_message",
-  "source_id": "msg-042",
-  "content_type": "text/plain",
-  "content": "Why did we choose event time for reservation ordering?",
-  "role": "user",
-  "artifact_kind": "message",
-  "container_ref": "channel:catalog-sync",
-  "visibility": "container",
-  "thread_ref": "thread-17"
-}'
-```
+Relay supports durable messages, exact-session and alias addressing, replies,
+status, and next-turn delivery for Claude Code, Codex, and OpenCode.
 
-Pallium returns a compact memory card with an injection decision:
+Wake support is narrower:
 
-```json
-{
-  "should_inject": true,
-  "decision_reason": "carry_forward_available",
-  "injectable_blocks": [
-    {
-      "block_type": "memory_hit",
-      "title": "decision",
-      "text": "Use item event time for reservation ordering — avoids timezone drift.",
-      "memory_type": "decision"
-    }
-  ]
-}
-```
+- Claude Code wake is qualified on Windows.
+- Codex exact-session wake is proven on Windows, with more lifecycle and
+  sustained-use checks still open.
+- OpenCode currently uses next-turn delivery.
+- Unqualified runtime and operating-system combinations use next-turn delivery.
 
-The agent injects that card directly. No reranking, no local filtering — 
-`should_inject` and `injectable_blocks` are the contract.
+Session History currently supports broad historical search, bounded source
+expansion, access telemetry, forgetting, safeguards for outdated guidance, and
+structural work references supplied by supported integrations. A separate exact
+work-scoped search and operation without semantic packages are planned work.
 
-## Getting Started
+See the current [roadmap](roadmap/board.md) and
+[wake status](roadmap/features/add-wake-first-relay-delivery.md) for moving
+details. There is no scheduled or delayed Relay feature.
+
+## Getting started
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -e ".[dev,vector]"
+pip install -e ".[dev,vector,mcp]"
 cp pallium.example.toml pallium.local.toml
 cp .env.example .env.local
-# Set your LLM API key in .env.local
+pallium service install
+pallium setup claude-code       # or: pallium setup codex
 ```
 
-Start the service and try the interactive harness:
+The OpenCode integration currently uses a local plugin. See its
+[setup guide](integrations/opencode/README.md).
 
-```bash
-python -m app.run --host 127.0.0.1 --port 8000 --processors 1
-# In another terminal:
-python -m app.agent_simulation chat-lite
+The current installation still includes semantic-package configuration and an
+LLM provider. Making Relay and baseline Session History run without semantic
+packages is queued work; the documentation does not assume it has shipped.
+
+Continue with [Getting Started](docs/getting-started.md) to try Relay and Session
+History in real coding-tool sessions.
+
+## How the pieces fit
+
+```text
+Claude Code, Codex, OpenCode
+             |
+             v
+          Pallium
+          |     |
+       Relay   Session History
+                  |
+                  +-- optional derived memory
 ```
 
-The harness runs a thin-agent loop against the real HTTP endpoints — ask
-repeated questions or resume interrupted work and inspect Pallium's memory
-decisions.
+Relay and Session History share the local service, session identity, storage,
+scope, and integration hooks. They do not depend on each other for routing or
+delivery.
 
-See [docs/getting-started.md](docs/getting-started.md) for the full
-walkthrough.
+## Optional derived memory
 
-## How It Works
+Pallium also contains an experimental derived-memory system. It can turn stored
+conversation evidence into compact decisions, findings, facts, constraints, and
+work checkpoints, then retrieve or inject them later.
 
-```mermaid
-flowchart LR
-    A[Agent] -->|POST /item-and-query| P[Pallium]
-    P -->|background| W[Extract & Embed]
-    W -->|decisions, facts,\ncheckpoints| M[(Memory + Index)]
-    M -->|hybrid retrieval| P
-    P -->|should_inject\ninjectable_blocks| A
-```
+This subsystem remains available, but it is not the definition of Pallium:
 
-1. **Ingest** — selected evidence goes in via `POST /items` (not everything, just high-value events)
-2. **Process** — background workers extract structured memory and concrete facts, then embed for retrieval
-3. **Query** — `POST /query` retrieves compact memory + source evidence, scoped by visibility, with an injection decision
-4. **Combined** — `POST /item-and-query` does ingest + query in one call (recommended for the common per-message pattern)
-5. **Debug** — `POST /query/debug` or `POST /item-and-query/debug` exposes the full retrieval and routing trace
-
-From stored evidence, Pallium derives typed memory:
-
-| Type | Example |
-|------|---------|
-| `decision` | "Use event time for ordering — avoids timezone drift" |
-| `investigation_outcome` | "Root cause: stale cache after deploy" |
-| `task_checkpoint` | "Blocked on API rate limit, next: implement backoff" |
-| `atomic_fact` | "Jordan completed a half-marathon in Denver in March 2024" |
-| `thread_summary` | "Discussed migration strategy, agreed on staged rollout" |
-| `constraint_memory` | "Must stay on Python 3.12 for compatibility" |
-| `note` | Verbatim durable note; explicit ingest with `artifact_kind="note"` |
-| `operational_fact` | "Working python interpreter on this machine is at `.venv/Scripts/python.exe`" — derived from tool traces, surfaced on-demand |
-
-Every memory object stays linked to its supporting source evidence.
-
-Agents that want direct control over memory writes can use the explicit
-MCP tools: `pallium_remember`, `pallium_correct`, `pallium_supersede`,
-`pallium_forget`, `pallium_record_outcome`. See
-[docs/agent-integration.md](docs/agent-integration.md#mcp-tools-agent-initiated-memory-access).
-
-Retrieval combines lexical search (FTS5 + BM25), vector similarity, and
-hybrid RRF fusion. The query path is deterministic by default, with selective
-LLM-assisted disambiguation only for bounded ambiguous cases.
-
-See [docs/how-it-works.md](docs/how-it-works.md) for the full model.
-
-## Integration
-
-Pallium sits between your agent and its LLM. On each user message, the agent
-calls Pallium once; Pallium stores the message and returns any relevant prior
-memory. After the LLM responds, the agent sends the reply back as evidence.
-
-    User message → Pallium (store + query) → inject memory → LLM → reply → Pallium (store)
-
-Two endpoints cover the full loop:
-- `POST /item-and-query` — store the user message, get memory back
-  (before the LLM call)
-- `POST /items` — store the reply and artifacts (after the LLM call)
-
-Pallium applies a configurable policy for what to extract, what to
-inject, and when to stay silent. The agent trusts `should_inject` and
-passes `injectable_blocks` through. Per-type proactive injection is
-governed by an opt-in `[injection.policy]` block in `pallium.local.toml`
-(see commented template in
-[pallium.example.toml](pallium.example.toml) and the spec linked under
-"Project Status"); by default the policy is permissive and every type is
-proactive.
-
-See [agent-integration.md](docs/agent-integration.md) for the full guide and
-[integration-example.md](docs/integration-example.md) for a Slack agent
-walkthrough.
-
-## Use with Claude Code and Codex
-
-Pallium works as a **local memory layer for Claude Code and OpenAI Codex** —
-decisions, findings, and context carry forward across sessions without manual
-copy-paste or file maintenance.
-
-```bash
-pallium service install                     # install + start (runs at login)
-python -m app.run setup claude-code         # register with Claude Code
-python -m app.run setup codex              # register with Codex CLI
-```
-
-After setup, every session automatically:
-- receives relevant memory from past sessions on the same repo
-- ingests conversation turns for future recall
-- gives the agent tools to query, flag, or store memories explicitly
-
-One Pallium instance serves all your repos (isolated by git remote) and both
-tools. Memory is shared across Claude Code and Codex sessions on the same
-repo — a decision captured in one is retrievable in the other.
-
-Pallium also exposes an **MCP server** (`/mcp` endpoint or standalone via
-`python -m app.run mcp`) for direct tool access from any MCP-compatible
-client. Tools: `pallium_query`, `pallium_ingest`, `pallium_get_evidence`,
-`pallium_flag_memory`, `pallium_query_debug`, `pallium_status`.
-
-See [docs/claude-code-integration.md](docs/claude-code-integration.md) or
-[docs/codex-integration.md](docs/codex-integration.md) for setup guides and
-[docs/agent-integration.md](docs/agent-integration.md) for MCP details.
-
-## Multilingual by Design
-
-Pallium is designed to be multilingual. Memory is preserved in the original
-language and cross-language recall works natively — a query in one language
-can retrieve memory stored in another.
-
-This is an intentional architectural property, not an undocumented side effect.
-Tokenization, lexical scoring, content-overlap gates, and embedding are all
-built to handle non-Latin scripts (Hebrew, Arabic, CJK, Cyrillic) as
-first-class content.
+- [How Pallium Works](docs/how-it-works.md)
+- [Configuration](docs/configuration.md)
+- [Derived-memory integration](docs/agent-integration.md)
+- [Derived-memory benchmarks](docs/benchmarks.md)
 
 ## Scope
 
-Good fit:
-- agent-mediated conversations and follow-up questions
-- resumed investigations or implementation work
-- scoped public/private memory boundaries
-- inspectable retrieval when results look wrong
+Pallium works around coding agents that already exist. It is not an agent
+runtime, task manager, workflow engine, or autonomous agent team.
 
-Not a fit:
-- transcript archive or raw event storage
-- broad workspace or org-wide knowledge search
-- agent runtime or workflow engine
-- general-purpose vector database
+Session History keeps bounded, governed agent and user turns for later search.
+It is not intended to store every tool event, mirror external systems, or act as
+a complete machine audit log.
 
-## Benchmarks
-
-Pallium optimizes for work continuity — carrying forward decisions,
-investigations, and checkpoints across threads. These benchmarks test a
-broader mix including trivia-style factual recall.
-
-Results show both retrieval rate (did Pallium deliver the right memory?) and
-end-to-end accuracy (did the LLM answer correctly?). Retrieval rate isolates
-what Pallium controls; the gap shows what the answering LLM adds or loses.
-
-These are curated benchmarks on third-party datasets. They are not a
-proxy for live-use precision on real agent traffic — that is measured
-separately and is the subject of the abstention spec linked under
-"Project Status".
-
-| Benchmark | Retrieval | End-to-end | Questions |
-|---|---|---|---|
-| **LoCoMo** — conversational recall (ACL 2024) | 45.5% | 61.0% | 1,540 |
-| **LongMemEval** — multi-session memory (ICLR 2025) | 91.7% | 93.2% | 60 (mini) |
-| **FactConsolidation** — contradiction handling (MABench, ICLR 2026) | 65% | 54.0% | 200 |
-
-LoCoMo end-to-end exceeds retrieval because the answering LLM compensates
-with its own knowledge on trivia questions. FactConsolidation single-hop
-reached 86% after fact extraction hardening; multi-hop (22%) remains an
-active improvement area. Per-category breakdowns and
-reproduction commands are in [docs/benchmarks.md](docs/benchmarks.md).
+Pallium is currently a local, single-user system. Its scope fields are not a
+cross-user authorization model.
 
 ## Documentation
 
-**Using Pallium:**
-- [Getting Started](docs/getting-started.md) — local setup to first query
-- [Dashboard](docs/dashboard.md) — browser-based memory inspector
-- [Demo Session](examples/demo-session.md) — complete walkthrough with real requests
-- [HTTP API](docs/http-api.md) — endpoints, shapes, examples
-
-**Integrating Pallium:**
-- [Agent Integration](docs/agent-integration.md) — wiring into a runtime, MCP tools
-- [Agent Relay](docs/agent-relay.md) — explicit durable messages between local agent sessions
-- [Claude Code Integration](docs/claude-code-integration.md) — local memory sidecar for Claude Code
-- [Codex Integration](docs/codex-integration.md) — local memory sidecar for OpenAI Codex CLI
-- [Integration Example](docs/integration-example.md) — Slack agent walkthrough
-- [Privacy and Visibility](docs/privacy-and-visibility.md) — scoped memory boundaries
-
-**Understanding Pallium:**
-- [How It Works](docs/how-it-works.md) — architecture, memory model, retrieval
-- [Configuration](docs/configuration.md) — providers, packages, tuning
-- [Benchmarks](docs/benchmarks.md) — per-category results, reproduction commands
+- [Documentation index](docs/README.md)
+- [Getting Started](docs/getting-started.md)
+- [Relay](docs/agent-relay.md)
+- [Session History](docs/session-history.md)
+- [Claude Code integration](docs/claude-code-integration.md)
+- [Codex integration](docs/codex-integration.md)
+- [OpenCode integration](integrations/opencode/README.md)
+- [HTTP API](docs/http-api.md)
+- [Privacy and visibility](docs/privacy-and-visibility.md)
+- [Dashboard](docs/dashboard.md)

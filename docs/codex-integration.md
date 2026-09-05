@@ -1,19 +1,33 @@
 # Codex Integration
 
-This guide covers running Pallium as a local memory service for OpenAI Codex CLI.
-After setup, every Codex session automatically receives relevant memory from
-past sessions and contributes new memory for future ones.
+This guide connects Codex to the local Pallium service. The integration
+registers each task, records governed turns for Session History, delivers Relay
+messages, and supports Pallium's optional derived-memory behavior.
 
 ## What You Get
 
-- **Session orientation** — on session start, Codex sees recent decisions,
-  progress, and open tasks from prior sessions in this repo
-- **Per-turn memory** — each prompt gets relevant memories injected
-  automatically before the model responds
-- **Automatic extraction** — assistant responses are ingested and processed
-  for reusable memory (decisions, findings, facts, checkpoints)
-- **Explicit tools** — Codex can query, flag, and ingest memories directly
-  via MCP when automatic injection isn't enough
+### Relay
+
+- send messages to another Codex, Claude Code, or OpenCode session
+- receive attributed messages and reply to the sender
+- wake loaded or unloaded exact Codex tasks on proven Windows paths
+- keep undelivered messages for the next normal turn
+
+### Session History
+
+- record user and assistant turns from Codex tasks
+- search earlier sessions deliberately with `pallium_search_history`
+- open bounded surrounding turns with `pallium_expand_source`
+
+### Optional derived memory
+
+- extract compact decisions, findings, facts, constraints, and checkpoints
+- retrieve or inject selected memory on later turns
+- inspect, flag, and write memory through MCP tools
+
+Windows exact-session wake is proven, but busy, interrupted, restart, telemetry,
+and sustained-use qualification is still in progress. Other platforms retain
+next-turn delivery.
 
 ## Architecture
 
@@ -27,7 +41,7 @@ past sessions and contributes new memory for future ones.
                                      ▼
                               ┌─────────────┐
                               │   Pallium   │
-                              │  (sidecar)  │
+                              │local service│
                               │             │
                               │ port 19836  │
                               └──────┬──────┘
@@ -45,7 +59,7 @@ isolated by `container_ref` (derived from the git remote URL).
 ## Prerequisites
 
 - Python 3.12+ with Pallium installed (`pip install -e ".[dev,vector,mcp]"`)
-- An LLM provider API key configured in `.env.local`
+- An LLM provider API key configured in `.env.local` for the current package-coupled installation
 - Git (for container derivation from repos)
 
 ## 1. Start Pallium
@@ -103,35 +117,31 @@ pallium setup codex --port 9999
 
 ### Hooks (Automatic)
 
-Three hooks run automatically during every Codex session:
+Three hooks run automatically during Codex tasks:
 
-| Hook | When | What it does |
-|------|------|-------------|
-| **SessionStart** | Session begins (startup or resume) | Queries Pallium for orientation (recent decisions, progress, open tasks). Injects ~300 tokens of context. |
-| **UserPromptSubmit** | Each user message | Ingests the prompt as evidence, queries for relevant memories. Injects 400–800 tokens of context. |
-| **Stop** | Model finishes responding | Reads the assistant response from the transcript and ingests it for extraction. No output. |
+| Hook | What it does |
+|---|---|
+| **SessionStart** | Registers or resumes the task and can provide orientation from earlier work. |
+| **UserPromptSubmit** | Records the user turn, claims automatic Relay deliveries after turn admission, and runs optional derived-memory lookup. |
+| **Stop** | Records the assistant turn and updates the task lifecycle used by Relay and history capture. |
 
-Hooks are safe by design:
-- They always exit with code 0 (never block Codex)
-- Errors go to stderr, never stdout (never pollute context)
-- If Pallium is unreachable, hooks return empty output silently
-- All output is budget-capped (never floods the context window)
-- On fresh start (`source: "clear"`), SessionStart skips injection
-
+Hooks are fail-safe and budget-capped. If Pallium is unavailable, they do not
+block Codex. On a fresh start (`source: "clear"`), SessionStart skips optional
+memory orientation.
 ### MCP Tools (Explicit)
 
-When automatic injection isn't enough, Codex can use these tools directly:
+The main operations are:
 
-| Tool | When to use |
-|------|-------------|
-| `pallium_query` | Injected context is empty or missing something specific |
-| `pallium_expand` | Need the full structured payload or original conversation behind a memory card |
-| `pallium_flag_memory` | A memory contradicts current knowledge |
-| `pallium_rate_memory` | Optionally rate clearly useful or off-topic injected memory |
-| `pallium_ingest` | User explicitly asks to remember something |
-| `pallium_query_debug` | Investigating why a memory wasn't found |
-| `pallium_status` | Checking system health |
+| Need | Tools |
+|---|---|
+| Send or reply through Relay | `pallium_relay_recipients`, `pallium_relay_name`, `pallium_relay_send`, `pallium_relay_reply`, `pallium_relay_status` |
+| Search earlier sessions | `pallium_search_history`, then `pallium_expand_source` for surrounding turns |
+| Use optional derived memory | `pallium_query`, `pallium_expand`, `pallium_flag_memory`, `pallium_rate_memory`, `pallium_ingest`, and the explicit memory-write tools |
+| Check the service | `pallium_status` |
 
+`pallium_relay_receive` and `pallium_relay_ack` are recovery or non-hook
+integration tools. Do not use them in a task receiving Relay automatically
+through hooks.
 ### Scoping
 
 Each repo gets its own memory container, derived from the git remote URL:
@@ -145,7 +155,7 @@ Each repo gets its own memory container, derived from the git remote URL:
 Multiple Codex sessions on the same repo share the container (same memory)
 but have distinct threads (different `session_id`).
 
-### Cross-Agent Memory Sharing
+### Shared history and derived memory
 
 If you also use Claude Code with Pallium, both tools share the same memory
 pool for a given repo (same `container_ref` derivation). A decision captured

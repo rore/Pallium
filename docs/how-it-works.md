@@ -1,28 +1,48 @@
 # How Pallium Works
 
-This document covers Pallium's design rationale, memory model, and retrieval
-architecture. Read the [README](../README.md) first for the quick version.
+Read the [README](../README.md) first for the short product description. This
+page separates Pallium's two primary capabilities from its optional
+memory-processing subsystem.
 
-## Why Pallium Exists
+## Product architecture
 
-Most agents can see the current thread. Many still fail at continuity:
+```text
+Coding agents
+     |
+     v
+  Pallium
+  |-- Relay
+  |    sessions -> address -> persist -> wake/deliver -> reply/status
+  |
+  +-- Session History
+       record turns -> govern/index -> search -> expand
+              |
+              +-- optional derived-memory packages
+```
 
-- they forget why a decision was made
-- they lose investigation outcomes across later follow-ups
-- they resume interrupted work without the right context
-- they blur public and private memory boundaries
+Relay and Session History share one local service, session registration, scope,
+storage, and integration hooks.
 
-Common approaches each cover part of this gap:
+## Relay
 
-- **Transcript replay** — too much text, too much noise, repeated prompt cost
-- **Prompt summaries** — lossy, hard to audit, disconnected from evidence
-- **Vector search** — finds related text but doesn't give you structured
-  conclusions, rejected hypotheses, or evidence-backed checkpoints
-- **Runtime-local state** — helps within one session but doesn't survive across
-  threads or conversations
+Relay routes explicitly addressed messages between existing sessions. It
+persists before delivery and uses next-turn delivery when a safe wake path is
+not available. Relay does not use history search, embeddings, ranking, or an
+LLM. See [Relay](agent-relay.md).
 
-Pallium's approach is to keep small, reusable, evidence-backed memory for
-agent-mediated conversations — especially repeated questions and resumed work.
+## Session History
+
+Session History stores governed user and agent turns. Search returns concise
+historical matches; expansion returns a bounded chronological neighborhood.
+Visibility and redaction are enforced before content is returned. Historical
+results do not prove current live state. See [Session History](session-history.md).
+
+## Optional derived memory
+
+Pallium can also process stored evidence into smaller reusable objects such as
+decisions, findings, facts, constraints, and work checkpoints. The rest of this
+document explains that subsystem. It remains implemented, but is no longer the
+product's organizing definition.
 
 ## What Goes In
 

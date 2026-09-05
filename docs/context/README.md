@@ -27,6 +27,9 @@ For broader docs ownership, see ../README.md.
 - state.md
   Small repo and handoff snapshot. Not a queue or planning document.
 
+- strategy-vnext.md
+  Session History direction, evidence, experiments, and ordered foundation work.
+
 - lessons.md
   Durable notes about important implementation problems, debugging traps, and
   the solutions or operating rules that should not be rediscovered.

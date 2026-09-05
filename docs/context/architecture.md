@@ -2,14 +2,32 @@
 
 ## Top-Level Shape
 
-Pallium runs as a single local-first service with clear internal module boundaries.
+Pallium is one local service with two primary capability paths:
 
-Main layers:
+```text
+Coding agents
+     |
+     v
+  Pallium
+  |-- Relay
+  |    sessions -> address -> persist -> wake/deliver -> reply/status
+  |
+  +-- Session History
+       record turns -> govern/index -> search -> expand
+              |
+              +-- optional derived-memory packages
+```
+
+Relay and Session History share session identity, scope, storage, integration,
+and operational foundations. Relay delivery does not depend on history search,
+ranking, embeddings, or an LLM.
+
+Internal layers:
 
 1. API layer
 2. Generic core
 3. Reusable capability layer
-4. Semantic use-case layer
+4. Optional semantic use-case layer
 5. Provider layer
 6. Storage layer
 7. Retrieval layer
@@ -18,12 +36,14 @@ Main layers:
 ## MCP Endpoint
 
 `app/mcp/` provides an MCP server mounted on the FastAPI app at `/mcp` via
-streamable-http transport. Agent runtimes connect to `http://<host>:<port>/mcp`
-to access `pallium_query`, `pallium_query_debug`, `pallium_ingest`,
-`pallium_expand`, and `pallium_flag_memory` tools.
+streamable-http transport. Its tools cover Relay, Session History, optional
+derived-memory access and writes, and service status. The main history tools are
+`pallium_search_history` and `pallium_expand_source`; Relay exposes recipient,
+alias, send, reply, status, and recovery receive/ack operations.
+
 The MCP module depends only on `mcp[cli]` and `httpx` — no core Pallium imports.
-It proxies tool calls to the HTTP API on the same server. Also available as a
-standalone entry point (`python -m app.run mcp`) for stdio transport.
+It proxies tool calls to the HTTP API on the same server. It is also available as
+a standalone entry point (`python -m app.run mcp`) for stdio transport.
 
 ## Implemented Core and Retrieval Slice
 
@@ -234,9 +254,9 @@ The first package using this capability is `agent_conversation_memory`, which pr
 
 ## Agent Conversation Memory Package
 
-The first concrete product package is now agent conversation memory.
+The first implemented derived-memory package is `agent_conversation_memory`.
 
-That package reuses the generic core and existing typed-memory path. It should be treated as the first semantic package proving value on top of Pallium, not as the definition of the platform itself.
+It reuses the generic core and existing typed-memory path. It is an optional semantic package, not Pallium's product definition.
 
 Current package boundary:
 

@@ -1,9 +1,9 @@
-# Pallium vNext: Historical Agent Work as a First-Class Context Layer
+# Session History vNext Strategy
 
-> Status: adopted direction (2026-08-12), refined 2026-09-05. Refines and partially supersedes the
-> derived-knowledge-first framing in [vision.md](vision.md): derived memory is
-> reframed from *the* differentiator to *one continuously-evaluated representation*
-> of the underlying asset — the accumulated history of agent-mediated work.
+> Status: adopted direction (2026-08-12), refined 2026-09-05. This is the
+> Session History strategy within the two-capability product model in
+> [vision.md](vision.md). Derived memory is one continuously evaluated
+> representation of accumulated agent-work history, not the product itself.
 >
 > Evidence below comes from read-only empirical studies over the real local
 > corpus (opportunity, debiased retrieval, and representation/handoff studies).
@@ -16,22 +16,24 @@ agent work reliably usable across sessions, agents, and users.
 The next phase should validate whether this creates real value before adding more memory
 mechanisms.
 
-## Product thesis
+## Session History thesis
 
-> Pallium makes prior agent work usable across agent contexts, sessions, agents, and users.
+> Session History makes prior agent work usable across later agent contexts and sessions.
 
 The core asset is the accumulated history of agent-mediated work, with retrieval, scope,
 provenance, and continuity.
 
 Derived memory is one possible representation of that history, not the product itself.
 
-The product now has two complementary capabilities:
+Pallium has two primary capabilities:
 
-- **Session History** records and retrieves governed raw agent work, including exact
-  work references, without requiring generated-memory packages.
+- **Session History** records and retrieves governed raw agent work, including
+  structural work references supplied by supported integrations.
 - **Agent Relay** explicitly transfers context between supported agent runtimes.
 
-Derived packages may consume Session History, but they are not required for it.
+Session History currently runs alongside configured generated-memory packages.
+Removing that dependency is planned work; derived memory remains an optional
+representation rather than the product identity.
 
 ## Why change direction
 
@@ -226,14 +228,14 @@ materially benefits another.
 
 ---
 
-## Near-term roadmap
+## Ordered roadmap
 
-1. Attach structural branch, exact Work Record, and explicit issue/PR/ticket
-   references to raw turns without semantic inference.
-2. Expose separate exact work-scoped and broad Session History search tools, backed
-   by the same raw retrieval and expansion paths.
-3. Decouple raw Session History from derived packages and disable those packages by
-   default.
+1. **Shipped:** attach structural branch, exact Work Record, and explicit
+   issue/PR/ticket references to raw turns without semantic inference.
+2. **Next:** expose separate exact work-scoped and broad Session History search tools,
+   backed by the same raw retrieval and expansion paths.
+3. **Next:** decouple raw Session History from derived packages and disable those
+   packages by default.
 4. Run a time-boxed comparison of flat, grouped, and index-first navigation and of
    raw, on-demand-compressed, and persistent-derived representations.
 5. Accumulate diverse post-change activity, then run the real-corpus value gate.

@@ -1,23 +1,53 @@
 # HTTP API
 
-This page documents the current HTTP surface for Pallium.
+This page documents Pallium's local HTTP surface. Most coding-tool users use the
+MCP tools and installed integrations instead of calling these routes directly.
 
-The examples below assume the current `agent_conversation_memory` package,
-which is the main product focus today.
+## Capability map
 
-## Base Model
+### Session History
 
-The API has three main operations:
+- `POST /items` records governed turns and other source evidence.
+- `POST /query` with `source_only: true` searches raw historical sources.
+- `GET /source/{source_item_id}/context` returns a bounded surrounding window.
+- `POST /historical-access/{attempt_id}/delivery` records which returned history
+  was exposed to the requesting session.
+- `POST /source/forget` applies governed raw-source forgetting.
 
-- send selected evidence with `POST /items`
-- ask for continuity context with `POST /query` or `POST /query/debug`
-- do both in one call with `POST /item-and-query` or
-  `POST /item-and-query/debug`
+The MCP wrappers `pallium_search_history` and `pallium_expand_source` provide the
+normal agent-facing safeguards and compact result shape.
 
-There are also two operational endpoints:
+### Relay
 
-- inspect processing for one item with `GET /items/{source_item_id}/processing`
-- inspect queue and background-worker state with `GET /debug/queue/health`
+| Route | Purpose |
+|---|---|
+| `POST /relay/turn` | Register or update a session and claim eligible deliveries. |
+| `POST /relay/sessions/close` | Close a session and release its alias. |
+| `GET /relay/sessions` | List addressable sessions. |
+| `POST /relay/sessions/name` | Assign or transfer an alias. |
+| `POST /relay/messages` | Persist and send a new message. |
+| `POST /relay/replies` | Reply to one received delivery. |
+| `GET /relay/messages/{message_id}` | Read delivery status. |
+| `POST /relay/deliveries/ack` | Acknowledge automatic hook delivery. |
+| `POST /relay/deliveries/mcp-ack` | Acknowledge MCP recovery delivery. |
+
+### Optional derived memory
+
+- `POST /query` and `POST /query/debug` retrieve memory.
+- `POST /item-and-query` and its debug form combine source ingest and memory
+  query.
+- `/memory/...` routes expand, flag, rate, correct, supersede, forget, or record
+  outcomes for derived memory.
+
+The examples below mainly cover this derived-memory API because its request and
+response shapes require the most integration detail.
+
+### Operations
+
+- `GET /health` reports process reachability.
+- `GET /status` reports configured subsystem status.
+- `GET /debug/queue/health` reports ingestion queue health.
+- dashboard and retry routes support local operation and debugging.
 
 ## POST /items
 

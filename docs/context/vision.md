@@ -1,150 +1,89 @@
 # Vision
 
-> Direction update (2026-08-12): [strategy-vnext.md](strategy-vnext.md) refines the
-> emphasis below. The accumulated history of agent-mediated work is the core asset;
-> derived knowledge memory is reframed as one continuously-evaluated representation of
-> that history rather than the product itself. Read the two together.
+## What Pallium is
 
-## What Pallium Is
+Pallium is a local service for agent work that crosses coding-tool and session
+boundaries.
 
-Pallium is a generic memory engine for agents.
+It has two primary capabilities:
 
-It stores selected source items, derives reusable knowledge from them through
-extensible semantic layers, and returns compact evidence-backed memory objects
-to downstream consumers.
+- **Relay** moves a bounded message to another existing coding-agent session.
+- **Session History** records governed agent and user turns and makes earlier
+  work searchable.
 
-One important internal use case is team knowledge support for an agent, but the
-project itself should remain generic and open-source friendly.
+Claude Code, Codex, and OpenCode remain normal, independently operated tools.
+Pallium connects their sessions and keeps earlier work available; it does not own
+their execution or workflow.
 
-The first concrete semantic package is agent_conversation_memory. That package
-is intentionally narrower than Pallium itself and is the first product slice
-being used to prove value.
+Pallium also contains derived-memory packages. They can turn session evidence
+into compact decisions, findings, facts, constraints, and checkpoints. These
+packages are optional product direction and must earn their complexity through
+measured quality or cost improvements over raw Session History.
 
-Pallium's differentiated direction is derived knowledge memory for agents:
-not only fact storage and not only episodic transcript recall, but compact,
-evidence-backed knowledge objects such as decisions, investigation outcomes,
-and later higher-level recurring patterns.
+## Why it exists
 
-The main thing Pallium is trying to preserve is knowledge produced during the
-agent's own reasoning work: conclusions, findings, checkpoints, constraints,
-and later the evolution of those conclusions over time. That is different from
-only re-finding facts that already existed cleanly in source systems.
+Coding work often spans sessions and tools. Useful context is lost when a chat
+ends, and parallel sessions still depend on a person copying findings between
+them.
 
-Real downstream incidents should shape Pallium's priorities, but they should be
-translated into reusable memory behaviors rather than turning Pallium into a
-collection of scenario-specific fixes. Product decisions should therefore be
-framed as generic retrieval policy, routing policy, packaging policy,
-memory-worthiness policy, lifecycle policy, compatibility handling, or
-benchmark categories rather than as one downstream product's vocabulary.
+Pallium addresses those two concrete gaps:
 
-## North-Star Use Cases
+1. send relevant context to another session now;
+2. find relevant work from an earlier session later.
 
-Pallium's roadmap should be driven by the downstream-agent use cases it is meant
-to solve, not by generic memory-system feature accumulation.
+The project should be judged by whether these actions help real downstream work,
+not by how much data it stores or how many memory objects it creates.
 
-The north-star use cases are:
-
-- requirement and architecture questions answered from prior decisions,
-  reasoning, and evidence rather than transcript rediscovery
-- long-running investigation continuity, where prior findings, rejected paths,
-  and supporting evidence are carried forward cleanly
-- resumed work after interruption, where a later continuation begins with prior
-  progress, blockers, and next-step orientation instead of restarting analysis
-- repeated-question reuse across later conversations when the same conclusion
-  should safely help again
-- evidence-backed reuse of findings discovered while exploring external
-  systems, without turning Pallium into the system of record for those systems
-- long-lived conversation continuity that relies on compact memory and explicit
-  injection decisions rather than growing transcript replay
-- evaluation of whether downstream agents remember what matters, stay quiet
-  when they should, and remain thin rather than accumulating local memory
-  heuristics
-
-These use cases should be the standard for deciding what Pallium needs next,
-what gaps matter most, and which later capabilities are worth the complexity.
-Concrete incidents are useful evidence, but they should not narrow Pallium into
-product-specific names, tool terms, or one-off prompt wording.
-
-## Benchmark Direction
-
-Pallium's benchmark program should be treated as part of the product
-architecture, not as an afterthought.
-
-The benchmark north star is the thin-agent memory-decision boundary:
-
-- remember what matters
-- stay quiet when local context is already sufficient
-- return compact, evidence-backed, injection-ready carry-forward
-- avoid stale, wrong-scope, privacy-unsafe, or low-value memory
-- avoid forcing semantic cleanup back into the downstream agent
-
-The benchmark architecture should therefore keep:
-
-- deterministic contract and trace grading as the foundation
-- usefulness judging narrow and secondary
-- authored and reviewed realism sets as the product-shaping realism layer
-- external benchmark packs as complementary pressure on the core memory engine,
-  not as product truth
-- live misses promoted into replay assets so real interaction failures become
-  permanent regressions
-
-That benchmark program should also preserve Pallium's generic scope:
-
-- live misses should be generalized into Pallium-owned failure classes before
-  they become replay assets
-- benchmark and replay fixtures should stay anonymized and domain-generic by
-  default
-- scenario-specific downstream vocabulary should not become the benchmark
-  architecture's naming system
-
-## What Pallium Is Not
+## What Pallium is not
 
 Pallium is not:
 
-- a system-of-record database
-- a connector framework as its core identity
-- an agent runtime
+- an agent runtime or agent creator
+- a task assignment or supervision system
 - a workflow engine
-- a replacement for source retrieval from Jira, GitHub, docs, logs, or chat
+- an autonomous agent team
+- an exhaustive transcript archive or raw tool-log store
+- a replacement for live source systems such as GitHub, issue trackers, logs, or
+  documentation
+- a cross-user sharing system without an explicit authorization contract
 
-## Core Principles
+Relay may start a new turn in an existing supported session. That is different
+from creating or managing an agent.
 
-1. Generic core, extensible semantic layer.
-   The core stores memory primitives. Semantic layers define meaning.
+Session History stores bounded, governed turns needed for later search. That is
+different from storing every event forever.
 
-2. Source of truth stays outside.
-   Pallium stores selected copies and derived knowledge, not the authoritative
-   record for external systems.
+## Stable principles
 
-3. Selective ingestion.
-   Important source items should be ingested intentionally, not mirrored
-   exhaustively.
+1. **Local first.** Run as one local service before adding deployment complexity.
+2. **Existing agents keep control.** Pallium supplies context; the coding tool
+   owns execution, tools, and user interaction.
+3. **Explicit identity and scope.** Address Relay recipients directly and enforce
+   history visibility before retrieval or expansion.
+4. **Persist before processing.** Store source evidence or Relay messages before
+   optional processing or delivery.
+5. **Historical evidence stays historical.** Earlier session content cannot prove
+   current live state.
+6. **Provenance remains inspectable.** Derived outputs and historical matches link
+   back to source evidence.
+7. **Retrieval alone is not use.** Accessibility and reuse state change only after
+   verified downstream use.
+8. **Derived memory is optional.** Keep it only where experiments show an
+   advantage over raw history.
+9. **Generic capabilities, concrete language.** Generalize real failures in the
+   implementation, but explain the public product through Relay, Session History,
+   and the coding tools people use.
+10. **Build the smallest useful slice.** Add mechanisms only when current evidence
+    justifies them.
 
-4. Raw first, semantics second.
-   Source items are persisted first. Semantic output is additive and replayable.
+## Current validation questions
 
-5. Evidence-backed memory.
-   Durable memory objects must link back to supporting source evidence.
+- Does searching earlier sessions improve work enough to justify its token,
+  latency, and contamination cost?
+- Does Relay reduce manual copying between sessions without turning into noisy
+  coordination?
+- Does derived memory improve precision, completeness, cost, or downstream
+  results compared with raw history?
 
-6. Local-first deployment.
-   Pallium should run as a simple local stack first and scale only when needed.
-
-7. Provider abstraction.
-   Model access must sit behind adapters so model choices can change without
-   reshaping the core.
-
-8. Structured retrieval first.
-   Prefer filters, relations, and lexical retrieval where possible. Semantic
-   retrieval is an enhancement, not the only foundation.
-
-9. Versioned semantics.
-   Memory objects and consolidation outputs should be attributable
-   to a schema and producer version.
-
-10. Tiered memory is an extension.
-    Higher-level consolidation is important, but it should not be required for
-    the base system to function.
-
-11. Build iteratively around a walking skeleton.
-    Prefer a thin end-to-end system with all major layers present over a large
-    upfront design freeze.
+The roadmap and experiments answer these questions. This file defines the stable
+product boundary, not the current queue.

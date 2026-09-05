@@ -1,42 +1,53 @@
 # Documentation
 
-## For Users
+Pallium connects existing coding-agent sessions and keeps earlier session work
+searchable. Start with the two main capabilities, then use the integration and
+reference guides as needed.
 
-Start here if you're evaluating or using Pallium.
+## Start
 
-| Doc | What it covers |
-|-----|---------------|
-| [Getting Started](getting-started.md) | Local setup to first query in ~10 minutes |
-| [How It Works](how-it-works.md) | Design rationale, memory model, retrieval architecture |
-| [HTTP API](http-api.md) | Endpoints, request/response shapes, examples |
-| [Configuration](configuration.md) | Providers, packages, prompt roles, tuning knobs |
-| [Agent Integration](agent-integration.md) | Wiring Pallium into an agent runtime |
-| [Claude Code Integration](claude-code-integration.md) | Local memory sidecar for Claude Code sessions |
-| [Codex Integration](codex-integration.md) | Local memory sidecar for OpenAI Codex CLI sessions |
-| [Integration Example](integration-example.md) | Concrete Slack agent walkthrough with code |
-| [Privacy and Visibility](privacy-and-visibility.md) | Scoped memory boundaries and enforcement |
+| Document | What it covers |
+|---|---|
+| [Getting Started](getting-started.md) | Install the service, connect a coding tool, try Relay, and search Session History |
 
-Recommended order for a first read: Getting Started → How It Works → HTTP API.
+## Core capabilities
 
-## For Contributors
+| Document | What it covers |
+|---|---|
+| [Relay](agent-relay.md) | Send messages between existing Claude Code, Codex, and OpenCode sessions |
+| [Session History](session-history.md) | Search earlier sessions and open the surrounding conversation |
 
-Project internals, architecture decisions, and planning.
+## Coding-tool integrations
 
-| Doc | What it covers |
-|-----|---------------|
-| [context/architecture.md](context/architecture.md) | Stable architecture truths |
-| [context/decisions.md](context/decisions.md) | Accepted design decisions |
-| [context/state.md](context/state.md) | Current repo state and handoff snapshot |
-| [context/validation.md](context/validation.md) | Benchmark architecture and acceptance gates |
-| [context/lessons.md](context/lessons.md) | Problem-solution pairs worth remembering |
-| [context/prompt-improvement.md](context/prompt-improvement.md) | Prompt variant workflow |
-| [context/vision.md](context/vision.md) | Project identity and principles |
-| [context/strategy-vnext.md](context/strategy-vnext.md) | vNext direction: historical agent work as a first-class context layer |
-| [designs/](designs/) | Design threads, proposals, and analyses |
+| Document | What it covers |
+|---|---|
+| [Claude Code](claude-code-integration.md) | Hooks, MCP tools, Relay delivery, and history capture for Claude Code |
+| [Codex](codex-integration.md) | Hooks, MCP tools, Relay delivery, and history capture for Codex |
+| [OpenCode](../integrations/opencode/README.md) | Local OpenCode plugin setup and current limitations |
 
-## Ownership
+## Reference and optional features
 
-- `docs/` — user-facing guides and references
-- `docs/context/` — stable project truth for contributors
-- `docs/designs/` — longer design threads and tradeoff analyses
-- `roadmap/` — planning, queue, milestones, feature status
+| Document | What it covers |
+|---|---|
+| [How Pallium Works](how-it-works.md) | Product architecture and optional derived-memory internals |
+| [HTTP API](http-api.md) | Session History, Relay, derived-memory, and operational endpoints |
+| [Configuration](configuration.md) | Local service, storage, providers, packages, and tuning |
+| [Privacy and Visibility](privacy-and-visibility.md) | Scope rules across history, Relay, and derived memory |
+| [Dashboard](dashboard.md) | Service health, Relay activity, search activity, and memory inspection |
+| [Agent Integration](agent-integration.md) | Building a custom integration; mostly advanced derived-memory behavior |
+| [Slack derived-memory example](integration-example.md) | A custom Slack integration using the derived-memory API |
+| [Derived-memory benchmarks](benchmarks.md) | Evaluation of the optional derived-memory subsystem |
+
+## Contributor context
+
+| Document | What it covers |
+|---|---|
+| [Vision](context/vision.md) | Stable product identity and principles |
+| [Architecture](context/architecture.md) | Current top-level system shape |
+| [Decisions](context/decisions.md) | Accepted decisions and open architectural questions |
+| [State](context/state.md) | Short implementation and handoff snapshot |
+| [Lessons](context/lessons.md) | Durable implementation and evaluation rules |
+| [Session History vNext strategy](context/strategy-vnext.md) | Direction and validation plan for historical work |
+| [Designs](designs/) | Proposals, tradeoffs, and historical design records |
+
+Current planning and feature status live in [`roadmap/`](../roadmap/).

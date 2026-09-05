@@ -1,18 +1,12 @@
-# Benchmarks
+# Derived-Memory Benchmarks
 
-Detailed results, per-category breakdowns, and reproduction commands for
-Pallium's benchmark suite. For the summary table, see the
-[README](../README.md#benchmarks).
+These benchmarks evaluate Pallium's optional derived-memory subsystem: whether
+it retrieves relevant memory and whether an answering model uses that memory
+correctly. They do not measure Relay, the value of Session History as a product,
+or Pallium as a whole.
 
-All benchmarks measure end-to-end accuracy — retrieve relevant memory,
-generate an answer, evaluate correctness. Retrieval rate (did the right
-memory reach the LLM?) is shown separately to isolate what Pallium controls
-from what the answering LLM does with it.
-
-These benchmarks run against curated third-party datasets. They are not
-a proxy for live-use proactive-injection precision on real agent
-traffic, which is measured separately and tracked in
-[the injection-policy abstention spec](specs/2026-06-27-injection-policy-abstention.md).
+The current product-validation work for Session History measures historical
+reuse and downstream effect separately.
 
 ## LoCoMo — Conversational Recall (ACL 2024)
 

@@ -1,137 +1,133 @@
 # Getting Started
 
-Goal: run the local service, try a realistic memory loop, and inspect
-Pallium's decisions — in about 10 minutes.
+This guide starts the local service, connects a coding tool, sends one Relay
+message, and searches earlier session work.
 
 ## Prerequisites
 
-- Python 3.12 or 3.13 recommended (3.14 is supported but has known native library issues on Windows)
-- An API key for an LLM provider (OpenAI-compatible or Anthropic) if you want
-  the full `agent_conversation_memory` setup
+- Python 3.12 or 3.13 recommended
+- Git
+- Claude Code or Codex for the shortest setup path
+- an OpenAI-compatible or Anthropic API key for the current installation
 
-To evaluate without a live LLM provider, set
-`default_use_case = "demo_agent_memory"` in `pallium.local.toml`. Retrieval
-still works; extraction falls back to deterministic behavior.
+The planned base service is intended to run Relay and Session History without an LLM.
+That package-independent setup has not shipped yet, so the current installation
+still includes semantic-package and provider configuration.
 
-## 1. Set Up
+## 1. Install and start Pallium
+
+From the repository checkout:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -e ".[dev,vector]"
+pip install -e ".[dev,vector,mcp]"
 cp pallium.example.toml pallium.local.toml
 cp .env.example .env.local
 ```
 
-Set your LLM API key in `.env.local` (e.g. `PALLIUM_OPENAI_API_KEY` or
-`ANTHROPIC_API_KEY`).
-
-See [configuration.md](configuration.md) for the full config surface.
-
-## 2. Start Pallium
-
-### As a service (recommended)
+Set the provider key required by your selected package in `.env.local`, then
+install the local service:
 
 ```bash
 pallium service install
-```
-
-One command — creates `~/.pallium/`, seeds config from your dev setup, downloads
-the embedding model, starts the service on port 19836, and registers it for
-auto-start at login (Windows Task Scheduler or Linux systemd).
-
-Check status:
-
-```bash
 pallium service status
 ```
 
-### Development mode
+The installed service uses port `19836` and starts at login. For local Pallium
+development, use the repository's `scripts/restart-service.ps1` wrapper when
+restarting it; the wrapper removes stale child processes before checking the
+service again.
 
-For working on Pallium itself, run from the repo checkout:
+For foreground development instead:
 
 ```bash
 python -m app.run --host 127.0.0.1 --port 8000 --processors 1
 ```
 
-This starts the API server, one background processor, and one cleaner using
-CWD-relative config (`pallium.local.toml`, `.env.local`).
+## 2. Connect a coding tool
 
-For split-mode (separate processes):
-
-```bash
-python -m app.run serve --host 127.0.0.1 --port 8000
-python -m app.run processor
-python -m app.run cleaner
-```
-
-## 3. Run the Harness
-
-In another terminal:
+Run the setup command for the tool you use:
 
 ```bash
-python -m app.agent_simulation chat-lite
+pallium setup claude-code
+# or
+pallium setup codex
 ```
 
-`chat-lite` runs a thin-agent loop against the real HTTP endpoints: it ingests
-your messages, queries Pallium before each assistant turn, and auto-accepts
-replies. Ask repeated questions or resume interrupted work to see memory in
-action.
+Run setup from the checkout you intend to keep. The integrations contain
+absolute local paths, so moving or deleting that checkout requires uninstalling
+and reinstalling the integration.
 
-For the operator/debug workflow with accept/edit/discard and artifact capture:
+OpenCode uses a local plugin path. Follow the
+[OpenCode integration guide](../integrations/opencode/README.md).
+
+Open two sessions in the same Git repository after setup. Pallium derives their
+shared container from the repository identity while keeping each session
+separately addressable.
+
+## 3. Try Relay
+
+In the second session, give it a Relay alias:
+
+> Use Pallium Relay to name this session `review`.
+
+In the first session, ask:
+
+> List Pallium Relay recipients.
+
+Confirm that the `review` alias points to the intended session, then send a small message. Use the target runtime shown by recipient discovery (`codex:@review` or `claude-code:@review`). An exact session or alias is safer than a runtime-wide send when several sessions are open:
+
+> Use Pallium Relay to send `codex:@review`: "Please check whether the API change
+> preserves the old response field."
+
+On qualified Windows Claude Code targets, Pallium can start a new turn in the
+existing session. Windows Codex wake is proven but still completing broader
+lifecycle qualification. OpenCode and unqualified platforms keep the message
+pending until the next normal recipient turn.
+
+The recipient can reply using the received delivery. Pallium derives the return
+address; the recipient does not need to look up the sender again.
+
+See [Relay](agent-relay.md) for aliases, delivery limits, recovery tools, and
+current wake status.
+
+## 4. Try Session History
+
+Do a small piece of work in one session and record a clear decision or finding.
+Open another session in the same repository and ask:
+
+> Search Pallium Session History for why we chose that approach.
+
+The agent uses `pallium_search_history` to find concise historical matches. Ask
+it to expand the relevant match; `pallium_expand_source` returns a bounded part
+of the surrounding conversation.
+
+Treat the result as historical evidence. If the answer depends on current pull
+request status, files, services, or another external system, verify that live
+state separately.
+
+See [Session History](session-history.md) for the current scope and planned work.
+
+## 5. Optional derived memory
+
+The current installation can also extract decisions, findings, facts,
+constraints, and work checkpoints from stored turns. Integrations may retrieve
+or inject those compact memory objects on later turns.
+
+This is an experimental optional subsystem in the product direction, although
+the current runtime has not yet been decoupled from its package configuration.
+
+## Check the service
+
+Open `http://localhost:19836/dashboard` for service health, Relay activity,
+ingestion/search activity, and the current derived-memory views.
 
 ```bash
-python -m app.agent_simulation
+curl http://localhost:19836/health
+curl http://localhost:19836/status
+curl http://localhost:19836/debug/queue/health
 ```
 
-Useful commands:
-
-| Command | Effect |
-|---------|--------|
-| `/new` | Start a new conversation (enables cross-thread recall) |
-| `/debug on` | Show full trace detail |
-| `/save demo-run` | Save a replayable JSON session |
-| `/replay <path>` | Replay a saved session |
-| `/mode chat-lite` | Switch to lightweight auto-accept mode |
-| `/mode chat` | Switch to operator/debug mode |
-| `/help advanced` | Full command reference |
-
-## 4. What to Look For
-
-A good session looks like this:
-
-1. You ask a question — Pallium ingests it and returns `should_inject: false`
-   (no prior memory yet)
-2. The agent answers — the reply is stored as evidence
-3. You start a new thread (`/new`) and ask a related question — Pallium returns
-   `should_inject: true` with a compact memory card carrying forward the
-   decision or finding from the earlier thread
-
-Use `/debug on` to see the full trace: which retrieval method found the match,
-what routing lane selected it, and why injection was approved or declined.
-
-## 5. Lower-Level HTTP Example
-
-If you want raw HTTP calls without the harness:
-
-```bash
-python examples/agent_memory_simulation.py
-```
-
-This script shows the ingest and query flow as plain HTTP requests.
-
-## 6. Dashboard
-
-Open http://localhost:19836/dashboard (service mode) or http://localhost:8000/dashboard
-(dev mode) to browse stored memories, view evidence chains, inspect extraction
-results, and check system health — no API calls needed.
-
-## Next Steps
-
-- Demo walkthrough: [examples/demo-session.md](../examples/demo-session.md) — complete session with real API requests and debug trace
-- Dashboard: [dashboard.md](dashboard.md) — browser-based memory inspector
-- Full config reference: [configuration.md](configuration.md)
-- API endpoints and shapes: [http-api.md](http-api.md)
-- Wiring into a runtime: [agent-integration.md](agent-integration.md)
-- Claude Code setup: [claude-code-integration.md](claude-code-integration.md)
-- How the system works: [how-it-works.md](how-it-works.md)
+See [Dashboard](dashboard.md), [HTTP API](http-api.md), and
+[Configuration](configuration.md) for details.

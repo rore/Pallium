@@ -207,6 +207,9 @@ Why:
 
 ### 2026-03-12 - Position Pallium as derived knowledge memory for agents
 
+> Superseded for product positioning by the 2026-09-05 two-capability model in
+> [vision.md](vision.md). The implementation decisions below remain historical context.
+
 Pallium should be positioned as a generic memory engine whose differentiated direction is derived knowledge memory, not only fact storage or episodic transcript recall.
 
 Why:

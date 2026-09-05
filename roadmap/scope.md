@@ -1,14 +1,12 @@
-Pallium currently has two parallel product tracks:
+Pallium currently has two primary capabilities:
 
-1. **Pallium vNext: historical agent work as a first-class context layer**
-   (strategy `docs/context/strategy-vnext.md`, execution
-   `docs/designs/015-vnext-historical-work-execution.md`).
-2. **Agent Relay: explicit durable context exchange between supported local agent
-   runtimes** (`roadmap/ideas/idea-agent-relay.md`).
+1. **Session History** records governed agent work and makes earlier sessions
+   searchable. Its vNext strategy is in `docs/context/strategy-vnext.md`.
+2. **Agent Relay** moves bounded context between existing supported coding-agent
+   sessions. Its roadmap starts at `roadmap/ideas/idea-agent-relay.md`.
 
-They reuse Pallium's local service and integration foundation but test separate
-product hypotheses. Neither track gates the other.
-
+They share Pallium's local service and integration foundation. Each has its own
+validation gates and can succeed or fail independently.
 Everything below the current-focus sections records the shipped foundation these
 tracks build on. It is context, **not** an invitation to reopen the prior
 proactive-injection / routing-optimization program — that program is not the
@@ -49,19 +47,19 @@ Shipped since last major scope update:
 - **Shared prompt-role governance**: contract ownership for `write_extraction`, `write_enrichment`, `query_ambiguity_resolution`
 - **Live improvement loop**: drift metrics, shadow routing comparison, replay-promotion tooling
 
-Current focus — Pallium vNext (refined 2026-09-05):
+Current focus — Session History vNext (refined 2026-09-05):
 
-The active milestone is **Pallium vNext: historical agent work as a first-class
-context layer** (strategy: `docs/context/strategy-vnext.md`; execution plan:
+The active milestone is **Session History vNext: historical agent work as a
+first-class context layer** (strategy: `docs/context/strategy-vnext.md`; execution plan:
 `docs/designs/015-vnext-historical-work-execution.md`). The prior Shaped Memory
 Contract milestone is wound down (W2/W3/W4/W6 shipped; W1/W5/W7 parked as residuals
 under Paused).
 
 vNext is validation-first and experiment-gated: each phase must pass its live
-experiment before the next earns significant investment. The immediate product
-model has two capabilities: Agent Relay and **Session History**. Session History is
-the package-independent raw record of governed agent work; generated memories are
-optional representations of that record, disabled by default.
+experiment before the next earns significant investment. The product has two primary capabilities: Agent Relay and **Session History**.
+The Session History target is a package-independent raw record of governed agent
+work. Generated memories become optional and disabled by default when the queued
+decoupling slice ships.
 
 The Session History slice is ordered. The first item is shipped; the next two are
 vNext features, followed by a committed, time-boxed investigation:
@@ -137,7 +135,7 @@ but orchestrated manually today. This argues for changing the interaction model
 (deliberate pull + continuity), not abandoning historical memory — with derivation
 demoted to a continuously-evaluated optimization layer.
 
-Parallel track — Agent Relay (2026-08):
+Agent Relay capability (2026-08):
 
 Agent Relay tests a separate product hypothesis: Pallium's durable local service
 and agent integration points may be valuable as a context-exchange layer, even

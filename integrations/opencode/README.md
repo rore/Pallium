@@ -1,17 +1,15 @@
 # Pallium — OpenCode integration
 
-Persistent, cross-session memory for [OpenCode](https://opencode.ai) via the local
-Pallium daemon. This is the OpenCode peer of `integrations/claude-code` and
-`integrations/codex`: it adapts OpenCode's plugin lifecycle to Pallium's REST
-API so memory **auto-injection** and **auto-ingestion** work the same way they
-do in Claude Code.
+This plugin connects OpenCode sessions to the local Pallium service. It records
+governed turns for Session History, delivers Relay messages on normal turns, and
+supports optional derived-memory ingestion and retrieval.
 
-OpenCode does **not** run Claude Code's `settings.json` hooks and has no
-Claude-style JSONL transcript, so this integration ships as an **OpenCode
-plugin** (JS module) that reads structured messages through the injected SDK
-`client` and talks to the daemon over HTTP.
+OpenCode does not use Claude Code's hooks or transcript format, so the integration
+runs as a JavaScript plugin inside the OpenCode server process.
 
 ## What it does
+
+Relay currently uses durable next-turn delivery. Active OpenCode wake is deferred until the Claude Code and Codex delivery contract is stable.
 
 | Pallium behaviour | Claude hook | OpenCode adapter |
 |---|---|---|
@@ -105,7 +103,7 @@ config file's directory, so for a *global* install add the entry to
 The plugin's `config` hook registers the `pallium-memory` skill directory and the
 `/pallium-memory` slash command automatically.
 
-### 3. Add the memory guidance to AGENTS.md
+### 3. Add the Pallium guidance to AGENTS.md
 
 OpenCode reads `AGENTS.md`. Append the block from this directory's `AGENTS.md`
 (the `<!-- pallium:start -->…<!-- pallium:end -->` region) to your project or
@@ -140,6 +138,8 @@ shapes with a mocked daemon + SDK client (no live OpenCode or Pallium required),
 including the fail-safe (daemon-unreachable) path.
 
 ## Known gaps / later phases
+
+- **No active wake yet.** Relay messages remain durable and are delivered on the next normal OpenCode turn.
 
 - **Phase 5b usage-audit populator** (`GET/POST /memory-usage-audit`,
   `GET /memory/<id>/expand`) is implemented in the Python Stop hooks but deferred

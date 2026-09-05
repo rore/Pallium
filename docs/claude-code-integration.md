@@ -1,21 +1,32 @@
 # Claude Code Integration
 
-This guide covers running Pallium as a local memory service for Claude Code.
-After setup, every Claude Code session automatically receives relevant memory
-from past sessions and contributes new memory for future ones.
+This guide connects Claude Code to the local Pallium service. The integration
+registers each session, records governed turns for Session History, delivers
+Relay messages, and supports Pallium's optional derived-memory behavior.
 
 ## What You Get
 
-- **Session orientation** — on session start, Claude sees recent decisions,
-  progress, and open tasks from prior sessions in this repo
-- **Per-turn memory** — each prompt gets relevant memories injected
-  automatically before the model responds
-- **Automatic extraction** — assistant responses are ingested and processed
-  for reusable memory (decisions, findings, facts, checkpoints)
-- **Compaction survival** — key context is re-injected before Claude Code
-  compacts the conversation
-- **Explicit tools** — Claude can query, flag, and ingest memories directly
-  via MCP when automatic injection isn't enough
+### Relay
+
+- send messages to another Claude Code, Codex, or OpenCode session
+- receive attributed messages and reply to the sender
+- wake an existing Claude Code session on qualified Windows installations
+- keep undelivered messages for the next normal turn
+
+### Session History
+
+- record user and assistant turns from Claude Code sessions
+- search earlier sessions deliberately with `pallium_search_history`
+- open bounded surrounding turns with `pallium_expand_source`
+
+### Optional derived memory
+
+- extract compact decisions, findings, facts, constraints, and checkpoints
+- retrieve or inject selected memory on later turns
+- inspect, flag, and write memory through MCP tools
+
+Claude Code wake is qualified on Windows. Linux and macOS wake remain
+qualification work; those installations retain next-turn delivery.
 
 ## Architecture
 
@@ -29,7 +40,7 @@ from past sessions and contributes new memory for future ones.
                                      ▼
                               ┌─────────────┐
                               │   Pallium   │
-                              │  (sidecar)  │
+                              │local service│
                               │             │
                               │ port 19836  │
                               └──────┬──────┘
@@ -48,7 +59,7 @@ URL).
 ## Prerequisites
 
 - Python 3.12+ with Pallium installed (`pip install -e ".[dev,vector,mcp]"`)
-- An LLM provider API key configured in `.env.local`
+- An LLM provider API key configured in `.env.local` for the current package-coupled installation
 - Git (for container derivation from repos)
 
 ## 1. Start Pallium
@@ -74,7 +85,7 @@ To manage the service:
 | Command | Effect |
 |---------|--------|
 | `pallium service stop` | Stop the running service |
-| `pallium service restart` | Stop and restart |
+| `scripts/restart-service.ps1` | Restart the installed development service and clear stale child processes |
 | `pallium service uninstall` | Remove OS registration (data preserved) |
 | `pallium service uninstall --remove-data` | Remove registration and all data |
 
@@ -87,7 +98,7 @@ pallium service run --port 19836
 ## 2. Register with Claude Code
 
 ```bash
-python -m app.run setup claude-code
+pallium setup claude-code
 ```
 
 This command:
@@ -101,41 +112,38 @@ This command:
 To remove the integration:
 
 ```bash
-python -m app.run setup claude-code --uninstall
+pallium setup claude-code --uninstall
 ```
 
 ## How It Works
 
 ### Hooks (Automatic)
 
-Four hooks run automatically during every Claude Code session:
+Four hooks run automatically during Claude Code sessions:
 
-| Hook | When | What it does |
-|------|------|-------------|
-| **SessionStart** | Session begins | Queries Pallium for orientation (recent decisions, progress, open tasks). Injects ~300 tokens of context. |
-| **UserPromptSubmit** | Each user message | Ingests the prompt as evidence, queries for relevant memories. Injects 400–800 tokens of context. |
-| **Stop** | Model finishes responding | Reads the assistant response from the transcript and ingests it for extraction. No output. |
-| **PreCompact** | Before context compaction | Re-queries for key context that would otherwise be lost. Injects 400–800 tokens. |
+| Hook | What it does |
+|---|---|
+| **SessionStart** | Registers or resumes the session and can provide orientation from earlier work. |
+| **UserPromptSubmit** | Records the user turn, handles normal next-turn Relay delivery, and runs optional derived-memory lookup. |
+| **Stop** | Records the assistant turn, marks the session idle, and participates in qualified wake/continuation delivery. |
+| **PreCompact** | Preserves the latest session evidence and can re-query optional derived memory before compaction. |
 
-Hooks are safe by design:
-- They always exit with code 0 (never block Claude Code)
-- Errors go to stderr, never stdout (never pollute context)
-- If Pallium is unreachable, hooks return empty output silently
-- All output is budget-capped (never floods the context window)
-
+Hooks are fail-safe and budget-capped. If Pallium is unavailable, they do not
+block Claude Code.
 ### MCP Tools (Explicit)
 
-When automatic injection isn't enough, Claude can use these tools directly:
+The main operations are:
 
-| Tool | When to use |
-|------|-------------|
-| `pallium_query` | Injected context is empty or missing something specific |
-| `pallium_expand` | Need the full structured payload or original conversation behind a memory card |
-| `pallium_flag_memory` | A memory contradicts current knowledge (see [flagging](#flagging-wrong-memories)) |
-| `pallium_ingest` | User explicitly asks to remember something |
-| `pallium_query_debug` | Investigating why a memory wasn't found |
-| `pallium_status` | Checking system health |
+| Need | Tools |
+|---|---|
+| Send or reply through Relay | `pallium_relay_recipients`, `pallium_relay_name`, `pallium_relay_send`, `pallium_relay_reply`, `pallium_relay_status` |
+| Search earlier sessions | `pallium_search_history`, then `pallium_expand_source` for surrounding turns |
+| Use optional derived memory | `pallium_query`, `pallium_expand`, `pallium_flag_memory`, `pallium_ingest`, and the explicit memory-write tools |
+| Check the service | `pallium_status` |
 
+`pallium_relay_receive` and `pallium_relay_ack` are recovery or non-hook
+integration tools. Do not use them in a session receiving Relay automatically
+through hooks.
 ### Scoping
 
 Each repo gets its own memory container, derived from the git remote URL:
@@ -200,7 +208,7 @@ If memory doesn't appear:
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | No memory injected | Pallium not running | Start service or check port |
-| No memory injected | Hooks not registered | Re-run `python -m app.run setup claude-code` |
+| No memory injected | Hooks not registered | Re-run `pallium setup claude-code` |
 | Memory injected but irrelevant | Early in project history | Give it more sessions to build up relevant memory |
 | Specific memory type stopped auto-injecting | Abstention policy enabled in `pallium.local.toml` | See [Abstention Policy](#abstention-policy-opt-in). Use `pallium_query` for explicit retrieval. |
 | Hook timeout errors in stderr | Pallium responding slowly | Check processor queue, ensure embedding model is downloaded |

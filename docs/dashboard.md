@@ -1,7 +1,6 @@
 # Dashboard
 
-Pallium includes a browser-based dashboard for inspecting stored memories,
-viewing evidence chains, checking system health, and debugging query behavior.
+The dashboard shows local service health, Relay activity, ingestion and search activity, and the optional derived-memory subsystem. It does not yet provide a Session History browser.
 
 ![Dashboard](../assets/dashboard_screenshot.png)
 

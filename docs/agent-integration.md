@@ -1,38 +1,27 @@
-# Agent Integration Guide
+# Custom Agent Integration
 
-This guide explains how to integrate Pallium with an agent runtime today.
+Use the [Claude Code](claude-code-integration.md),
+[Codex](codex-integration.md), or
+[OpenCode](../integrations/opencode/README.md) guide for a supported coding tool.
+This document is for building another runtime integration.
 
-Short version: the runtime decides which upstream events to send and when to
-query. Pallium decides what is worth remembering, how to package it, and when a
-returned memory block is useful to inject.
+A complete integration can expose three separate responsibilities:
 
-## Where Pallium Fits
+1. **Relay:** register exact sessions, deliver attributed messages, and expose
+   send, reply, recipient, alias, and status operations.
+2. **Session History:** record governed user and agent turns, search earlier
+   sessions, and expand a bounded part of the surrounding conversation.
+3. **Optional derived memory:** process stored evidence into compact memory and
+   decide when that memory should be returned or injected.
 
-```mermaid
-flowchart LR
-    A["Agent runtime"] -->|user message + refs| B["Pallium /item-and-query"]
-    B -->|injection decision + injectable blocks| A
-    A -->|assistant reply + artifacts| C["Pallium /items"]
-    C --> D["source evidence + derived memory"]
-```
+The runtime owns the live conversation, tools, and user interaction. Pallium
+owns persisted Relay messages, governed history, scope enforcement, and any
+configured derived-memory behavior.
 
-Pallium sits on the edge of your runtime:
+The rest of this guide concentrates on the older custom derived-memory API.
+Relay and Session History are the normal front door for coding-tool users.
 
-- your runtime owns the live conversation, tools, and user interaction
-- Pallium owns selected evidence, derived memory, retrieval, ranking, and
-  injectability judgment
-- original systems stay the system of record
-
-The intended model is:
-
-- agent owns transport and runtime facts
-- Pallium owns memory judgment
-
-If the agent starts doing phrase filtering, memory-kind preference, local
-reranking, or injectability policy, the integration has become a second memory
-engine.
-
-## One Concrete Flow
+## One derived-memory flow
 
 A realistic current-package loop looks like this:
 
@@ -45,7 +34,7 @@ A realistic current-package loop looks like this:
 6. later the user asks the same question again, or the work is resumed after an
    interruption — step 2 fires again and Pallium returns the right memory
 
-That is the present value story. Pallium is not trying to be the whole runtime.
+That is one advanced derived-memory flow. It is not required for Relay or deliberate Session History search.
 
 ## When To Ingest
 
@@ -259,7 +248,7 @@ but the integration loop does not require you to think in those terms first.
 
 Proactive injection precision on real agent traffic is the dominant open
 quality knob (see the
-[Project Status](../README.md#project-status) section and
+[Current status](../README.md#current-status) section and
 [docs/specs/2026-06-27-injection-policy-abstention.md](specs/2026-06-27-injection-policy-abstention.md)).
 An optional `[injection.policy]` TOML block lets operators demote
 specific memory types from proactive injection. Available modes per
@@ -504,7 +493,7 @@ for the full request/response contract.
 
 ## Boundaries
 
-Pallium is the memory layer, not an authorization service or agent runtime.
+Pallium is not an authorization service or agent runtime. Its current scope model is local and single-user.
 The downstream agent should be a thin client that provides runtime facts and
 accepts Pallium's memory decisions — not a second memory engine.
 

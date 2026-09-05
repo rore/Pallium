@@ -1,4 +1,4 @@
-# Integration Example: Slack Agent
+# Custom Derived-Memory Integration Example: Slack
 
 A concrete walkthrough showing how a Slack-connected agent integrates with
 Pallium. Based on a real production integration pattern.

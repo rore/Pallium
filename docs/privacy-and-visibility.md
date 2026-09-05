@@ -1,10 +1,21 @@
 # Privacy And Visibility
 
-This document explains the current privacy model for Pallium's
-`agent_conversation_memory` package.
+This document explains Pallium's current scope model across Session History,
+Relay, and optional derived memory.
 
-The main point is simple: `container_ref` is the scope boundary, and
-`visibility` controls who can see items across containers.
+The main rule is simple: scope is checked before history or memory content is
+returned, and Relay recipients are resolved within the same local container and
+actor context. `container_ref`, `actor_ref`, and `visibility` are claimed local
+scope. They are not a cross-user authentication or authorization system.
+
+## How each capability uses scope
+
+- **Session History:** search and every neighboring turn returned by expansion
+  must be visible to the requesting context.
+- **Relay:** session discovery, addressing, messages, and replies remain within
+  the resolved local container and actor scope.
+- **Derived memory:** retrieval filters source evidence and derived objects before
+  ranking, then preserves visibility through derivation.
 
 ## One Concrete Scenario
 
@@ -175,8 +186,7 @@ Your application owns:
 - sending `container_ref` on ingest and query
 - any user or tenant authorization outside Pallium
 
-Pallium is not an authorization service for your app. It is the memory layer
-that enforces the visibility boundary you provide.
+Pallium enforces the scope values it receives. Your application still owns user and tenant authorization, and current Pallium does not provide a cross-user sharing grant model.
 
 ## Practical Integration Rules
 

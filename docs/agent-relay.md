@@ -1,47 +1,117 @@
-# Agent Relay
+# Relay
 
-Agent Relay is Pallium's explicit communication track, parallel to semantic memory. It persists a bounded message from one supported agent session and injects it at the recipient's next model-bound turn. Routing is deterministic; it never uses search, embeddings, ranking, or an LLM.
+Relay sends a bounded plain-text message from one existing coding-agent session
+to another. Pallium stores the message before attempting delivery, so a busy or
+unavailable recipient can receive it later.
 
-R1 supports Claude Code, Codex, and OpenCode in one local Pallium container.
+Relay supports Claude Code, Codex, and OpenCode sessions connected to the same
+local Pallium service. Routing uses explicit session identity; it does not use
+search, embeddings, ranking, or an LLM.
 
-## How to use it
+## Send a message
 
-Tell an agent plainly what to send and where:
+Tell an agent what to send and which session should receive it:
 
-> Use Pallium Relay to send Codex: "The legacy endpoint is still used by mobile. Do not remove it." List recipients first if the target is ambiguous.
+> Use Pallium Relay to send Codex: "The legacy endpoint is still used by mobile.
+> Do not remove it."
 
-The agent uses five MCP tools:
+If the target is ambiguous, ask the agent to list Relay recipients first.
 
-- `pallium_relay_recipients` lists recent sessions and optional aliases.
-- `pallium_relay_name` sets or transfers an alias.
-- `pallium_relay_send` sends a new message to a runtime, exact session, or alias.
-- `pallium_relay_reply` replies to one received delivery without supplying either endpoint.
-- `pallium_relay_status` reports per-recipient delivery state.
+Use Relay when another session should change its work because of what you
+learned, when you need a decision from that session, when it is now unblocked,
+or when you need a concrete review or action.
 
-Selectors are `codex` for every currently recent Codex session, `codex:<session_ref>` for one immutable session, or `codex:@review` for a Pallium alias. Runtime-wide sends require explicit user intent and snapshot at send time; sessions opened later do not receive them.
+Avoid routine status, unrelated context, speculative “maybe useful” messages,
+open-ended chat, and broadcasts whose only purpose is to keep every session
+informed. A delivered message can start a paid model turn on supported targets.
 
-The current identity comes from injected Pallium scope: copy `agent_ref` to the current/sender runtime field and `thread_ref` to the current/sender session field. Recipient discovery is only for finding targets, never for inferring the current session. Bundled integrations register it automatically at normal turns.
+## Select a recipient
 
-## Session names and lifecycle
+`pallium_relay_recipients` lists recent sessions and their optional aliases.
+Selectors have three forms:
 
-Harness titles are discovery metadata, not routing identities. An alias such as `review` is unique within a container and runtime. If a new session replaces the old review session, transfer it deliberately with `replace_existing=true`. Already queued deliveries remain pinned to the old immutable session; future sends resolve to the new one.
+- `codex` — every currently recent Codex session in scope
+- `codex:<session_ref>` — one immutable session
+- `codex:@review` — the session currently holding the `review` alias
 
-Claude Code and Codex follow a deliberate change into a recognized Git repository at the next model-bound turn. The hook best-effort closes the old project registration and releases its project-local alias before registering the session in the new project; transient non-Git cwd excursions keep the existing project pin. OpenCode plugin instances remain bound to their injected project directory/worktree and pin both container and actor identity across resumed turns; deleting the session releases that pin.
+The same forms apply to other supported runtimes. Runtime-wide sends require
+explicit user intent and resolve their recipients at send time. Sessions opened
+later do not receive the message.
 
-Recent sessions are shown by default. A session becomes dormant after 24 hours without a turn but remains exactly addressable. A close event marks it closed and releases its alias. A later turn reactivates the same session ID. R1 retains session records; automatic purge waits for evidence that accumulation causes real operational pain.
+`pallium_relay_name` assigns or transfers an alias. Transferring an alias
+affects future sends; messages already queued remain addressed to the original
+session.
 
-## Delivery contract
+## Replies
 
-Messages contain at most 1,500 Unicode code points and expire after 24 hours by default (allowed range: 60 seconds to 7 days). A turn claims at most three complete messages within a 2,400-character Relay budget. If renderable eligible messages remain, its response sets `has_more: true` and a non-negative `remaining_count`; integrations reserve room for a compact backlog notice and acknowledge only blocks actually added to model context. Relay emission is independent of memory retrieval. OpenCode claims on `chat.message`, injects the lower-authority envelope through its model-bound message transform, and acknowledges only after that mutation; this avoids its resumed-session system-transform loss mode. Interrupted claims become eligible again after a lease; stable IDs make acknowledgement idempotent. Transient SQLite write contention retries during bounded transaction acquisition; exhaustion is the retryable HTTP 503 code `relay_busy` with `Retry-After: 1`, never a database error.
+A received message includes a `delivery_id`. `pallium_relay_reply` uses that ID
+to address a reply to the original sender.
 
-A received block includes its `delivery_id`. `pallium_relay_reply` accepts that ID and reply text; Pallium derives the current sender, the original message sender as recipient, and the `in_reply_to` parent from the delivered record. Reply text has the same 1,500-character limit as a new message. One delivery permits one idempotent reply; for multipart continuations, use new `pallium_relay_send` messages rather than repeated replies. Repeating the same reply is idempotent; changing its text conflicts. Replies do not create a live or autonomous conversation. Delivery means the runtime received the context, not that the model read or acted on it.
+One delivery permits one idempotent reply. Repeating the same reply is safe;
+changing its text conflicts. Use a new `pallium_relay_send` message for a longer
+follow-up rather than treating Relay as a continuous conversation.
 
-Relay is local single-user coordination. `actor_ref` is claimed scope, not authenticated cross-user authorization. The generic secret redactor runs before persistence.
+Delivery means that the message entered the recipient session's context. It
+does not prove that the model acted on it.
 
-## Storage and operations
+## Delivery and wake behavior
 
-Relay persistence may use the separate sibling SQLite file configured by Pallium. This is transparent to Relay callers: sessions, messages, delivery claims, replies, and acknowledgements use the Relay file, while memory and ingestion remain in the main file. Both files use WAL, incremental auto-vacuum, busy-timeout handling, and the same service lifecycle. A first-run upgrade from a legacy combined file requires the old service to be fully stopped; the migration is transactional and idempotent, and refuses a missing or mismatched target after its durable split marker. Back up and restore the two files as one validated snapshot pair. A rollback after new Relay writes requires an explicit data reconciliation; it is not an automatic switch-back.
+Pallium persists first, then attempts the safest delivery supported by the
+recipient runtime. If wake is unsupported, disabled, unsafe, or unavailable,
+the same message remains pending for the recipient's next natural turn.
 
-## Not in R1
+| Runtime | Current behavior |
+|---|---|
+| Claude Code on Windows | Existing-session wake is qualified. |
+| Codex on Windows | Loaded and unloaded exact-session wake is proven; more lifecycle, telemetry, and sustained-use checks remain. |
+| OpenCode | Durable next-turn delivery; active wake is deferred. |
+| Other operating systems | Use next-turn delivery until that runtime/OS combination is qualified. |
 
-R1 does not infer a shared `work_ref`, route to a future worker, spawn agents, assign work, wake sessions, create groups, or maintain continuous conversations. Those remain evidence-driven R2/R3 questions.
+This table follows the current
+[wake roadmap](../roadmap/features/add-wake-first-relay-delivery.md). Recheck it
+before making release claims.
+
+Pallium can start a new turn in an existing supported session. It does not
+create agents, assign work, restart sessions, or supervise a workflow.
+
+There is no delayed or scheduled Relay product.
+
+## Busy, unavailable, and dormant sessions
+
+A busy or temporarily unavailable recipient keeps the delivery pending. Claims
+that are interrupted become eligible again after their lease expires.
+
+Recent sessions appear in recipient discovery by default. A session becomes
+dormant after 24 hours without a turn but remains exactly addressable. A close
+event marks it closed and releases its alias; a later turn reactivates the same
+session ID.
+
+## Limits and scope
+
+- message and reply text: at most 1,500 Unicode code points
+- default expiry: 24 hours; allowed range is 60 seconds to 7 days
+- per-turn delivery: at most three complete messages within a 2,400-character
+  Relay budget
+- storage: local persistent SQLite state
+- security boundary: local single-user coordination
+
+The generic secret redactor runs before persistence. `actor_ref` is claimed
+scope, not authenticated cross-user authorization.
+
+## Tools
+
+Normal use:
+
+- `pallium_relay_recipients`
+- `pallium_relay_name`
+- `pallium_relay_send`
+- `pallium_relay_reply`
+- `pallium_relay_status`
+
+Normal hook delivery is automatic. `pallium_relay_receive` and
+`pallium_relay_ack` are recovery or non-hook integration tools. A runtime that
+claims with `receive` must acknowledge with `ack`, or use `reply` with the
+receipt to acknowledge and reply atomically.
+
+Do not mix automatic hook delivery and MCP receive in the same session; they
+compete for the same pending delivery.
