@@ -131,6 +131,7 @@ Four hooks run automatically during Claude Code sessions:
 
 Hooks are fail-safe and budget-capped. If Pallium is unavailable, they do not
 block Claude Code.
+
 ### MCP Tools (Explicit)
 
 The main operations are:
@@ -145,9 +146,10 @@ The main operations are:
 `pallium_relay_receive` and `pallium_relay_ack` are recovery or non-hook
 integration tools. Do not use them in a session receiving Relay automatically
 through hooks.
+
 ### Scoping
 
-Each repo gets its own memory container, derived from the git remote URL:
+Each repo gets its own Pallium container, derived from the git remote URL:
 
 | Scenario | Container |
 |----------|-----------|
@@ -155,11 +157,11 @@ Each repo gets its own memory container, derived from the git remote URL:
 | Git repo, no remote | `repo:<root-commit-hash>` |
 | Not a git repo | `path:<hash-of-cwd>` |
 
-Multiple Claude Code sessions on the same repo share the container (same
-memory) but have distinct threads (different `session_id`). Container-level
-memories (decisions, facts) are visible across concurrent sessions.
+Multiple Claude Code sessions in the same repo share the container but keep
+distinct threads. Relay addressing and Session History work across those
+sessions; configured derived memory follows the same scope.
 
-### What Gets Remembered
+### Optional derived-memory capture
 
 Pallium extracts structured memory from ingested conversation turns:
 
@@ -173,7 +175,7 @@ Not everything is remembered. Short prompts (<20 chars), slash commands, and
 duplicate prompts (within 5 minutes) are filtered. Assistant responses over
 20K chars are skipped (avoids ingesting large tool dumps).
 
-## Flagging Wrong Memories
+### Correcting derived memory
 
 When an injected memory is incorrect, outdated, or nonsensical, Claude can
 flag it using the `pallium_flag_memory` MCP tool. Each injected memory block
@@ -188,91 +190,56 @@ and stops appearing in results. For details on the flagging mechanism, see
 
 ## Verify It's Working
 
-After setup, open a new Claude Code session in a git repo:
+After setup, open two Claude Code sessions in the same Git repository.
 
-1. **Check service:** `curl http://localhost:19836/status` should return JSON
-2. **First session:** type a meaningful prompt — you should see a
-   `[Pallium memory ...]` block in the context (visible in verbose mode)
-3. **Make a decision:** ask Claude to make a technical choice and explain it
-4. **New session:** open a fresh session and ask about the topic — the
-   decision from the previous session should appear in the injection
+### Verify Relay
 
-If memory doesn't appear:
+1. In the second session, ask: “Use Pallium Relay to name this session `review`.”
+2. In the first session, ask it to list Relay recipients and send a short message
+   to `claude-code:@review`.
+3. Confirm that the second session receives the attributed message and can reply.
 
-- Check Pallium is running: `curl http://localhost:19836/status`
-- Check hooks are registered: look for "pallium" in `~/.claude/settings.json`
-- Check processing: `curl http://localhost:19836/debug/queue/health`
-- Inspect retrieval: use the `pallium_query_debug` MCP tool
+Qualified Windows installations can start a new Claude Code turn. On other
+paths, make a normal turn in the recipient session to collect the pending
+message.
+
+### Verify Session History
+
+1. In one session, record a clear decision or investigation finding.
+2. In the other, ask it to search Session History for that earlier work.
+3. Expand the relevant result and confirm that the nearby messages provide the
+   expected context.
+
+This uses `pallium_search_history` followed by `pallium_expand_source`. It does
+not depend on automatic derived-memory injection.
+
+### Optional: verify derived memory
+
+If derived memory is configured, use `pallium_query` for the earlier decision or
+inspect an automatically injected memory block. No injection is also a valid
+outcome when Pallium abstains; use `pallium_query_debug` to inspect why.
 
 ## Troubleshooting
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| No memory injected | Pallium not running | Start service or check port |
-| No memory injected | Hooks not registered | Re-run `pallium setup claude-code` |
-| Memory injected but irrelevant | Early in project history | Give it more sessions to build up relevant memory |
-| Specific memory type stopped auto-injecting | Abstention policy enabled in `pallium.local.toml` | See [Abstention Policy](#abstention-policy-opt-in). Use `pallium_query` for explicit retrieval. |
-| Hook timeout errors in stderr | Pallium responding slowly | Check processor queue, ensure embedding model is downloaded |
-| "Pallium not configured" from MCP | `PALLIUM_BASE_URL` not set | Setup command configures this automatically |
-
-## Abstention Policy (opt-in)
-
-The default install proactively injects every memory type when relevant.
-A per-type `[injection.policy]` block in `pallium.local.toml` can
-demote specific types to event- or on-demand mode. See
-[`docs/specs/2026-06-27-injection-policy-abstention.md`](specs/2026-06-27-injection-policy-abstention.md)
-for the full spec; quick summary below.
-
-**Modes** (per memory type, per container):
-
-| Mode | Behavior |
+| Symptom | Check |
 |---|---|
-| `proactive` | Auto-inject when score ≥ `min_score` |
-| `event` | Drop from proactive; surfaced only by deterministic triggers (Phase 4 hooks) |
-| `on_demand` | Drop from proactive; surfaced only by explicit `pallium_query` |
-| `suspended` | Drop entirely (Phase 6 measurement / data-driven decision) |
+| Pallium tools are unavailable | Run `pallium service status`, then re-run `pallium setup claude-code`. |
+| Relay recipient is missing | Make a normal turn in both sessions, confirm they use the same repository, then list recipients again. |
+| Relay message remains pending | Make a normal recipient turn or inspect `pallium_relay_status`; active wake is not qualified on every platform. |
+| Session History search is empty | Confirm the hooks are present in `~/.claude/settings.json` and search for a distinctive phrase from the earlier turn. |
+| Hook errors or slow responses | Check `http://localhost:19836/debug/queue/health` and the configured embedding provider. |
+| Derived memory is absent or irrelevant | Derived memory is optional. Use `pallium_query_debug` before changing prompts or policy. |
+| MCP reports “Pallium not configured” | Re-run setup; it supplies `PALLIUM_BASE_URL` automatically. |
 
-**Deterministic triggers** added in Phase 4 — wired automatically by
-`setup claude-code`:
+## Optional derived-memory policy
 
-| Hook | Trigger | Type surfaced |
-|---|---|---|
-| `SessionStart` | Prior open work matches current cwd/branch/paths | `task_checkpoint` |
-| `PostToolUse` | Tool call failed (non-zero exit) | `investigation_outcome` matching error signature |
-| `PostToolUse` | Same `(tool, target)` failed ≥3 times | `investigation_outcome` matching the retried operation |
+The optional `[injection.policy]` configuration controls whether each derived
+memory type may appear proactively, only after an event, only on demand, or not
+at all. It does not control Relay or deliberate Session History search.
 
-Every Pallium query — proactive, triggered, or explicit — now carries a
-`trigger_origin` label that lands in `query_audit_log.trigger_origin`
-and `memory_usage_audit.trigger_origin` for measurement. Valid values:
-`session_start_orientation`, `session_start_checkpoint`,
-`user_prompt_submit`, `pre_compact`, `post_tool_failure`,
-`retry_threshold`, `user_explicit`. Unknown values are rejected by the
-API.
-
-**Usage telemetry** (Phase 5a): every injected block now writes a row
-to `memory_usage_audit` with `referenced_in_next_turn = NULL`. The
-Phase 5b populator hook (not yet shipped) will fill in whether the
-agent actually used the memory in its next turn. The
-`GET /memory-usage-audit?query_audit_log_id=...` and
-`POST /memory-usage-audit/{audit_row_id}` endpoints support the
-populator.
-
-**Default install does NOT enable the policy** — `pallium.local.toml`
-ships without an `[injection.policy]` block, and the gate is a
-bit-exact no-op when absent. To opt in, copy the commented block from
-`pallium.example.toml` and uncomment. The recommended starting point
-is:
-
-- `task_checkpoint` → `event`
-- `investigation_outcome` → `on_demand`
-- `thread_summary` → `on_demand`
-- `fact_summary` → `suspended`
-
-Phase 1 data showed no type met ≥70% precision on holdout, so the
-shipped example block does NOT enable proactive injection for any
-type. Operators tighten via per-container overrides once Phase 6
-measurement (4-week window after Phase 5b) yields usage rates that
-justify it.
+See [Configuration — Injection Policy](configuration.md#injection-policy-abstention),
+[Derived Memory](derived-memory.md#when-pallium-returns-nothing), and the
+[detailed policy specification](specs/2026-06-27-injection-policy-abstention.md).
 
 ## Configuration
 
@@ -306,7 +273,8 @@ enabled = false
 Multiple Claude Code sessions on the same repo work correctly:
 
 - Each session has its own thread (from `session_id`)
-- Container-level memories are shared immediately
+- Sessions in the same repo share Relay addressing and Session History
+- Configured derived memory follows the same container scope
 - Thread-level state doesn't leak between sessions
 - SQLite WAL mode handles concurrent reads safely
 - Per-session dedup state files eliminate race conditions

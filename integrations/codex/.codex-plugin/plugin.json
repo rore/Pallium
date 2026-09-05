@@ -1,7 +1,7 @@
 {
   "name": "pallium-memory",
   "version": "0.1.0",
-  "description": "Persistent cross-session memory for Codex via Pallium",
+  "description": "Relay and searchable session history for Codex via Pallium",
   "author": "pallium",
   "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json",

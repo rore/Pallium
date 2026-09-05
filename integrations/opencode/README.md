@@ -1,126 +1,167 @@
 # Pallium — OpenCode integration
 
 This plugin connects OpenCode sessions to the local Pallium service. It records
-governed turns for Session History, delivers Relay messages on normal turns, and
-supports optional derived-memory ingestion and retrieval.
+selected turns for Session History, delivers Relay messages on normal turns, and
+supports optional derived-memory processing.
 
-OpenCode does not use Claude Code's hooks or transcript format, so the integration
-runs as a JavaScript plugin inside the OpenCode server process.
+## What you get
 
-## What it does
+### Relay
 
-Relay currently uses durable next-turn delivery. Active OpenCode wake is deferred until the Claude Code and Codex delivery contract is stable.
+- send messages to another connected Pallium session through the MCP tools;
+- receive attributed messages on the next normal OpenCode turn;
+- reply to the sender and inspect delivery status.
 
-| Pallium behaviour | Claude hook | OpenCode adapter |
-|---|---|---|
-| Orientation query + inject | SessionStart | `event` → `session.created` → `POST /query` (`trigger_origin: session_start_orientation`) → injected via `experimental.chat.system.transform` |
-| Ingest user msg + inject memories | UserPromptSubmit | `chat.message` → `POST /item-and-query` (`query_trigger_origin: user_prompt_submit`) → blocks injected via `experimental.chat.system.transform` |
-| Deliver Agent Relay | UserPromptSubmit | `chat.message` claims → `experimental.chat.messages.transform` appends an attributed lower-authority reminder → acknowledge |
-| Ingest assistant turn | Stop | `event` → `session.idle` → read last assistant message via `client.session.messages` → `POST /items` |
-| Failure/retry triggers | PostToolUse | `tool.execute.after` — **off** unless `PALLIUM_POSTTOOL_TRIGGERS=1` |
-| Ingest before compaction | PreCompact | `experimental.session.compacting` → `POST /items` (best-effort) |
+OpenCode does not have active Relay wake today. Messages remain stored until the
+recipient's next normal turn.
 
-Every hook is **fail-safe**: it swallows all errors and never breaks the user's
-turn, matching the Python hooks' `try/except` + exit-0 behaviour. HTTP calls use
-a short (~6s) timeout. Injection formatting (header/footer, `[+expand]`, and the
-per-trigger char budgets of 1200 / 2400 / 1200) reuses the same
-`format_injection` semantics as the Python integrations, and conforms to
-`docs/specs/2026-06-27-injection-policy-abstention.md` (grounded structural
-orientation query; no gate bypass except the opt-in deterministic triggers).
+> List Pallium Relay recipients, then send `codex:@review`: "The API response
+> still needs the legacy field."
 
-## Files
+### Session History
 
-```
-integrations/opencode/
-├─ package.json                         # npm-publishable ("@pallium/opencode")
-├─ opencode.json                        # example wiring (local plugin path)
-├─ AGENTS.md                            # Pallium guidance block (OpenCode reads AGENTS.md)
-├─ README.md
-├─ skills/
-│  └─ pallium-memory/SKILL.md           # auto-discovered skill
-├─ .opencode/
-│  ├─ command/pallium-memory.md         # /pallium-memory slash command
-│  └─ plugins/
-│     ├─ pallium.mjs                    # the plugin (hook entrypoints)
-│     └─ pallium-common.mjs             # JS reimpl of common.py helpers
-└─ tests/
-   ├─ common.test.mjs                   # parity: container / redaction / dedup / budget / turn extraction
-   └─ plugin.test.mjs                   # hook smoke: item-and-query→inject, idle→items, opt-in triggers
-```
+- record OpenCode user and assistant messages;
+- search earlier sessions with `pallium_search_history`;
+- open nearby messages with `pallium_expand_source`.
 
-`pallium-common.mjs` is the OpenCode-runtime copy of the shared helpers. Pallium's
-established pattern is that **each host integration carries its own self-contained
-`common`** (claude-code and codex each ship a full Python copy, sharing only the
-usage-audit matcher). Since OpenCode plugins run as JS in the OpenCode server
-process, this is the JS copy — one source of truth per runtime, asserted against
-the Python contract by the parity suite.
+> Search Pallium Session History for why we kept the legacy response field.
+
+### Optional derived memory
+
+The plugin can ingest turns, request compact memory, and inject selected results.
+Failure and retry triggers remain opt-in. None of this is required for Relay
+routing or deliberate Session History search.
 
 ## Install
 
-### 1. Run the Pallium daemon
+### 1. Run Pallium
 
-The plugin talks to `http://localhost:${PALLIUM_PORT:-19836}`. Start Pallium and
-confirm it is healthy:
+The plugin and MCP client use the local Pallium service on port `19836` by
+default:
 
 ```bash
 python -m app.run all --port 19836
 curl http://localhost:19836/status
 ```
 
-### 2. Add the plugin to your OpenCode config
+### 2. Add the plugin and MCP server
 
-**From npm** (once published) — in `opencode.json` / `opencode.jsonc`:
+OpenCode needs both pieces:
 
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@pallium/opencode"]
-}
-```
+- the plugin for automatic session registration, history capture, incoming Relay
+  delivery, and optional derived-memory behavior;
+- the Pallium MCP endpoint for Relay send/reply tools and deliberate Session
+  History search.
 
-**From a local checkout** — point at the plugin file:
+From npm, once the package is published:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["./integrations/opencode/.opencode/plugins/pallium.mjs"]
+  "plugin": ["@pallium/opencode"],
+  "mcp": {
+    "pallium": {
+      "type": "remote",
+      "url": "http://localhost:19836/mcp",
+      "enabled": true
+    }
+  }
 }
 ```
 
-The **`"plugin"` array entry is the recommended, verified method** (it is how
-OpenCode loads plugins in practice). A relative path is resolved against the
-config file's directory, so for a *global* install add the entry to
-`~/.config/opencode/opencode.json` with a path to the plugin file.
+From a local checkout:
 
-> Note: OpenCode also documents auto-loading any file dropped into a
-> `.opencode/plugins/` (project) or `~/.config/opencode/plugins/` (global)
-> directory. That directory auto-load has been observed **not** to pick the
-> plugin up on some setups — prefer the explicit `"plugin"` array entry above.
-> If you point the entry at the in-repo file, the plugin imports its sibling
-> `pallium-common.mjs` relative to its own location, so keep the two files
-> together.
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["./integrations/opencode/.opencode/plugins/pallium.mjs"],
+  "mcp": {
+    "pallium": {
+      "type": "remote",
+      "url": "http://localhost:19836/mcp",
+      "enabled": true
+    }
+  }
+}
+```
 
-The plugin's `config` hook registers the `pallium-memory` skill directory and the
-`/pallium-memory` slash command automatically.
+A relative plugin path is resolved from the configuration file. For a global
+install, put the entry in `~/.config/opencode/opencode.json` and use a path that
+reaches the checked-out plugin file.
 
-### 3. Add the Pallium guidance to AGENTS.md
+The explicit `"plugin"` array is the verified loading method. Directory
+auto-loading has failed on some setups. Keep `pallium.mjs` and
+`pallium-common.mjs` together because the plugin imports its sibling by relative
+path.
 
-OpenCode reads `AGENTS.md`. Append the block from this directory's `AGENTS.md`
-(the `<!-- pallium:start -->…<!-- pallium:end -->` region) to your project or
-global `AGENTS.md` so the agent knows how to do deliberate memory work with the
-Pallium MCP tools. The skill in `skills/pallium-memory/SKILL.md` carries the same
-guidance for on-demand use.
+The `mcp` block follows OpenCode's
+[remote MCP configuration](https://opencode.ai/docs/mcp-servers/). If Pallium
+uses another port, change both the service command and MCP URL.
+
+### 3. Add the Pallium guidance
+
+OpenCode reads `AGENTS.md`. Append this directory's
+`<!-- pallium:start -->...<!-- pallium:end -->` block to a project or global
+`AGENTS.md`. It explains when to use Relay, Session History, and optional
+derived memory.
+
+The plugin automatically registers the bundled `pallium-memory` skill and
+`/pallium-memory` command. Their compatibility names remain memory-oriented, but
+their guidance covers all three Pallium uses.
+
+## How the hooks map
+
+| Pallium behavior | Claude hook | OpenCode adapter |
+|---|---|---|
+| Register and orient a session | SessionStart | `event` → `session.created` → optional orientation query |
+| Record a user message | UserPromptSubmit | `chat.message` → `POST /item-and-query` |
+| Deliver incoming Relay | UserPromptSubmit | `chat.message` claims deliveries → `experimental.chat.messages.transform` appends an attributed reminder → acknowledge |
+| Record an assistant turn | Stop | `event` → `session.idle` → read the last assistant message → `POST /items` |
+| Optional failure/retry memory | PostToolUse | `tool.execute.after`, off unless `PALLIUM_POSTTOOL_TRIGGERS=1` |
+| Preserve before compaction | PreCompact | `experimental.session.compacting` → `POST /items`, best effort |
+
+Every hook is fail-safe: it catches errors and never breaks the user's turn.
+HTTP calls use a short timeout. Incoming Relay uses the message transform
+because resumed sessions can discard system-transform additions.
+
+Injection formatting and trigger behavior follow the same contracts as the
+Python integrations. See
+[the injection policy specification](../../docs/specs/2026-06-27-injection-policy-abstention.md)
+for the optional derived-memory details.
+
+## Files
+
+```text
+integrations/opencode/
+|-- package.json
+|-- opencode.json
+|-- AGENTS.md
+|-- README.md
+|-- skills/
+|   +-- pallium-memory/SKILL.md
+|-- .opencode/
+|   |-- command/pallium-memory.md
+|   +-- plugins/
+|       |-- pallium.mjs
+|       +-- pallium-common.mjs
++-- tests/
+    |-- common.test.mjs
+    +-- plugin.test.mjs
+```
+
+`pallium-common.mjs` is the OpenCode JavaScript copy of the shared integration
+helpers. Each runtime keeps a self-contained adapter; parity tests compare their
+observable behavior.
 
 ## Configuration
 
-| Env var | Default | Meaning |
+| Environment variable | Default | Meaning |
 |---|---|---|
-| `PALLIUM_PORT` | `19836` | Port of the local Pallium daemon. No port or secret is ever hardcoded. |
-| `PALLIUM_POSTTOOL_TRIGGERS` | *(unset)* | Set to `1` to enable opt-in `tool.execute.after` failure/retry triggers. Off by default (matches the Python hooks) because an enabled trigger injects regardless of the server-side injection policy. |
+| `PALLIUM_PORT` | `19836` | Port used by the plugin's HTTP calls. Keep the MCP URL on the same port. |
+| `PALLIUM_POSTTOOL_TRIGGERS` | unset | Set to `1` to enable optional failure/retry derived-memory triggers. |
 
-Per-session state (dedup window + container pinning) is stored under
-`~/.pallium/hooks/state/`, the **same** directory and file format as the Python
-integrations, so a mixed-agent box shares one store.
+Per-session deduplication and container-pinning state uses
+`~/.pallium/hooks/state/`, the same format as the Python integrations.
 
 ## Tests
 
@@ -129,36 +170,19 @@ cd integrations/opencode
 node --test tests/*.test.mjs
 ```
 
-The suite has parity with the codex/claude-code Python suites: git-remote and
-path container derivation, redaction behavioural parity (identical inputs →
-identical outputs), the 5-minute dedup window, session pinning, injection budget
-trimming, and turn extraction / work-trace metadata over OpenCode's message-part
-shape. `plugin.test.mjs` drives each hook against the structural OpenCode hook
-shapes with a mocked daemon + SDK client (no live OpenCode or Pallium required),
-including the fail-safe (daemon-unreachable) path.
+The suite covers container derivation, redaction parity, deduplication, session
+pinning, injection budgets, turn extraction, hook behavior, and fail-safe
+operation when Pallium is unavailable.
 
-## Known gaps / later phases
+## Known gaps
 
-- **No active wake yet.** Relay messages remain durable and are delivered on the next normal OpenCode turn.
-
-- **Phase 5b usage-audit populator** (`GET/POST /memory-usage-audit`,
-  `GET /memory/<id>/expand`) is implemented in the Python Stop hooks but deferred
-  here; it is best-effort telemetry, not load-bearing for injection or ingestion.
-- **Compaction ingests but does not query.** `experimental.session.compacting`
-  captures the latest assistant turn via `/items` (so pre-compaction work isn't
-  lost) but does not issue a `pre_compact`-tagged `/query`; there is no
-  pre-compaction memory *injection*, unlike Claude Code's `pre_compact.py`.
-- **Synchronous git.** Container/actor/orientation derivation uses synchronous
-  `git` calls (bounded at 3s each). The Python peers are short-lived subprocesses
-  where this is free; this plugin runs in the long-lived OpenCode server process,
-  so a hung `git` can briefly block the event loop. Acceptable for the local
-  single-user daemon; the upgrade path is async `execFile` if it ever regresses.
-- **Orientation only on new sessions.** Session-start orientation fires on the
-  `session.created` event, so a *resumed* session (e.g. after an OpenCode
-  restart) gets per-message injection and ingest but no session-start
-  orientation query. The Python hooks orient on startup *and* resume; this is a
-  minor best-effort parity gap (orientation usually abstains anyway).
-- A `pallium setup opencode` CLI (mirroring `setup_codex.py` /
-  `setup_claude_code.py`) could automate steps 2–3 and write the working
-  `"plugin"` + MCP config deterministically; the npm `"plugin"` entry is the
-  idiomatic OpenCode install and is documented above.
+- Active OpenCode wake is not implemented; Relay uses durable next-turn
+  delivery.
+- The usage-audit populator available in Python Stop hooks is not implemented.
+- Compaction records the latest assistant turn but does not run a pre-compaction
+  query.
+- Session orientation runs on `session.created`, not on every resumed session.
+- Git discovery is synchronous and bounded; a hung Git call can briefly block
+  the OpenCode event loop.
+- There is no `pallium setup opencode` command. Plugin, MCP, and guidance setup
+  remain manual.

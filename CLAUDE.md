@@ -2,7 +2,7 @@
 
 ## Project
 
-Pallium — local-first memory sidecar for AI agents. Python 3.12+, FastAPI, SQLite.
+Pallium — local messaging and searchable session history for coding agents. Python 3.12+, FastAPI, SQLite.
 
 ## Execution Discipline
 

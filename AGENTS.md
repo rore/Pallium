@@ -13,7 +13,7 @@ Repo-level non-negotiables:
 - optimize for the smallest valuable slice that strengthens the current product claim
 - protect the generic core, reusable capability, and package-specific semantic boundaries
 - call out roadmap, docs, and code drift explicitly before endorsing a change
-- treat concrete downstream incidents as bug sources, but generalize fixes into reusable memory-system capabilities before proposing roadmap or implementation work
+- treat concrete downstream incidents as bug sources, but generalize fixes into reusable Pallium capabilities before proposing roadmap or implementation work
 - avoid proposing or implementing scenario-specific features keyed to product names, tool names, ticket ids, or one-off phrasing unless the work is explicitly integration-scoped
 - keep new tests, fixtures, replay assets, and benchmark cases anonymized and domain-generic by default
 - translate scenario-specific reproductions into generalized retrieval, routing, packaging, lifecycle, compatibility, or benchmark failure classes before defining the work

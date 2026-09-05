@@ -95,7 +95,7 @@ pallium setup codex
 
 This command:
 
-1. Enables the `codex_hooks` feature flag in `~/.codex/config.toml`
+1. Enables the `hooks` feature flag in `~/.codex/config.toml`
 2. Registers Pallium's MCP server in `~/.codex/config.toml`
 3. Registers 3 hook scripts (SessionStart, UserPromptSubmit, Stop) in `~/.codex/hooks.json`
 4. Appends Pallium agent instructions to `~/.codex/AGENTS.md`
@@ -129,6 +129,7 @@ Three hooks run automatically during Codex tasks:
 Hooks are fail-safe and budget-capped. If Pallium is unavailable, they do not
 block Codex. On a fresh start (`source: "clear"`), SessionStart skips optional
 memory orientation.
+
 ### MCP Tools (Explicit)
 
 The main operations are:
@@ -143,9 +144,10 @@ The main operations are:
 `pallium_relay_receive` and `pallium_relay_ack` are recovery or non-hook
 integration tools. Do not use them in a task receiving Relay automatically
 through hooks.
+
 ### Scoping
 
-Each repo gets its own memory container, derived from the git remote URL:
+Each repo gets its own Pallium container, derived from the git remote URL:
 
 | Scenario | Container |
 |----------|-----------|
@@ -153,19 +155,20 @@ Each repo gets its own memory container, derived from the git remote URL:
 | Git repo, no remote | `repo:<root-commit-hash>` |
 | Not a git repo | `path:<hash-of-cwd>` |
 
-Multiple Codex sessions on the same repo share the container (same memory)
-but have distinct threads (different `session_id`).
+Multiple Codex tasks in the same repo share the container but keep distinct
+threads.
 
-### Shared history and derived memory
+### Shared Session History
 
-If you also use Claude Code with Pallium, both tools share the same memory
-pool for a given repo (same `container_ref` derivation). A decision captured
-in a Claude Code session is retrievable in a Codex session and vice versa.
+If you also use Claude Code with Pallium, both integrations record Session
+History in the same repository container. A turn recorded in Claude Code is
+searchable from Codex and vice versa. Configured derived memory follows the
+same scope.
 
-The `source_type` field (`"codex"` vs `"claude-code"`) tracks provenance but
-does not affect retrieval.
+The `source_type` field (`"codex"` or `"claude-code"`) records where each item
+came from; it does not change retrieval.
 
-### What Gets Remembered
+### Optional derived-memory capture
 
 Pallium extracts structured memory from ingested conversation turns:
 
@@ -181,37 +184,52 @@ duplicate prompts (within 5 minutes) are filtered. Assistant responses over
 
 ## Verify It's Working
 
-After setup, open a new Codex session in a git repo:
+After setup, open two Codex tasks in the same Git repository.
 
-1. **Check service:** `curl http://localhost:19836/status` should return JSON
-2. **First session:** type a meaningful prompt — you should see a
-   `[Pallium memory ...]` block in the injected context
-3. **Make a decision:** ask Codex to make a technical choice and explain it
-4. **New session:** open a fresh session and ask about the topic — the
-   decision from the previous session should appear in the injection
+### Verify Relay
 
-If memory doesn't appear:
+1. In the second task, ask: “Use Pallium Relay to name this session `review`.”
+2. In the first task, ask it to list Relay recipients and send a short message
+   to `codex:@review`.
+3. Confirm that the second task receives the attributed message and can reply.
 
-- Check Pallium is running: `curl http://localhost:19836/status`
-- Check hooks are registered: look in `~/.codex/hooks.json`
-- Check MCP is configured: look for `[mcp_servers.pallium]` in `~/.codex/config.toml`. Relay receive uses the current Codex request metadata (top-level `threadId` and/or nested `x-codex-turn-metadata`, with every supplied task ID agreeing), not inherited environment IDs or model-supplied arguments; missing or conflicting metadata fails closed before any claim. Hook-delivery wake is independent of MCP recovery.
-- Check MCP command: it should use an absolute Python executable with
-  `args = ["-m", "app.run", "mcp"]`; this avoids blocked venv launcher
-  stubs on Windows
-- Check feature flag: ensure `codex_hooks = true` under `[features]` in config.toml
-- Inspect retrieval: use the `pallium_query_debug` MCP tool
+Windows exact-session wake is proven but still completing broader lifecycle
+qualification. On other paths, make a normal turn in the recipient task to
+collect the pending message.
+
+### Verify Session History
+
+1. In one task, record a clear decision or investigation finding.
+2. In the other, ask it to search Session History for that earlier work.
+3. Expand the relevant result and confirm that the nearby messages provide the
+   expected context.
+
+This uses `pallium_search_history` followed by `pallium_expand_source`. It does
+not depend on automatic derived-memory injection.
+
+### Optional: verify derived memory
+
+If derived memory is configured, use `pallium_query` for the earlier decision or
+inspect an automatically injected memory block. No injection is also a valid
+outcome when Pallium abstains; use `pallium_query_debug` to inspect why.
 
 ## Troubleshooting
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| No memory injected | Pallium not running | Start service or check port |
-| No memory injected | Hooks not registered | Re-run `pallium setup codex` |
-| No memory injected | Feature flag disabled | Ensure `codex_hooks = true` in `~/.codex/config.toml` |
-| MCP tools not visible after setup | `pallium-mcp` command not resolvable by Codex | Re-run `pallium setup codex`; it writes an absolute executable path |
-| "Pallium not configured" from MCP | `PALLIUM_BASE_URL` not set | Re-run `pallium setup codex` (it sets this automatically) |
-| Memory injected but irrelevant | Early in project history | Give it more sessions to build up relevant memory |
-| Hook timeout errors in stderr | Pallium responding slowly | Check processor queue, ensure embedding model is downloaded |
+| Symptom | Check |
+|---|---|
+| Pallium tools are unavailable | Run `pallium service status`, then re-run `pallium setup codex`. |
+| Relay recipient is missing | Make a normal turn in both tasks, confirm they use the same repository, then list recipients again. |
+| Relay message remains pending | Make a normal recipient turn or inspect `pallium_relay_status`; active wake is not qualified on every path. |
+| Session History search is empty | Confirm hooks exist in `~/.codex/hooks.json` and search for a distinctive phrase from the earlier turn. |
+| MCP tools are missing | Check `[mcp_servers.pallium]` in `~/.codex/config.toml` and re-run setup. |
+| Hooks do not run | Ensure `hooks = true` under `[features]` in `~/.codex/config.toml`. |
+| Derived memory is absent or irrelevant | Derived memory is optional. Use `pallium_query_debug` before changing prompts or policy. |
+| MCP reports “Pallium not configured” | Re-run setup; it supplies `PALLIUM_BASE_URL` automatically. |
+
+Relay recovery receive uses current Codex request metadata: top-level `threadId`
+and/or nested `x-codex-turn-metadata`, with every supplied task ID agreeing.
+Missing or conflicting metadata fails closed before a delivery is claimed.
+Normal hook delivery is independent of this recovery path.
 
 ## Configuration
 
@@ -256,8 +274,9 @@ For testing the plugin path:
 
 Multiple Codex sessions on the same repo work correctly:
 
-- Each session has its own thread (from `session_id`)
-- Container-level memories are shared immediately
-- Thread-level state doesn't leak between sessions
+- Each task has its own thread (from `session_id`)
+- Tasks in the same repo share Relay addressing and Session History
+- Configured derived memory follows the same container scope
+- Thread-level state doesn't leak between tasks
 - SQLite WAL mode handles concurrent reads safely
 - Per-session dedup state files eliminate race conditions

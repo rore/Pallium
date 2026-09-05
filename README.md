@@ -3,61 +3,50 @@
 # Pallium
 
 Pallium is a local service that lets agent sessions send messages to each other
-and search work from earlier sessions. It currently supports Claude Code, Codex,
+and search earlier session history. It currently supports Claude Code, Codex,
 and OpenCode.
-
-Pallium is a personal open-source project under active development. It is useful
-in its current form, but setup and behavior still have rough edges.
 
 ## What it does
 
 ### Relay
 
 Relay sends a plain-text message to another existing agent session. Pallium
-stores the message before delivery, addresses it to a runtime, exact session, or
-alias, and keeps it pending if the recipient cannot receive it immediately.
+stores the message before delivery and keeps it pending if the recipient cannot
+receive it immediately. You can send to a specific session or a named session.
 
 > Use Pallium Relay to send Codex: "The legacy endpoint is still used by mobile.
 > Do not remove it."
 
-Relay can start a new turn in some supported existing sessions. It does not
-create agents, assign tasks, or supervise work.
+Relay can start a new turn in some supported sessions. It does not create
+agents, assign tasks, or supervise work.
 
 [Read the Relay guide](docs/agent-relay.md).
 
 ### Session History
 
-Session History records selected user and agent turns, with scope, redaction,
-and forgetting controls. A later session can search that history, inspect a
-concise match, and open a bounded part of the surrounding conversation.
+Session History keeps selected user and agent messages from earlier sessions. A
+later session can search them and open nearby messages when it needs more
+context.
 
+Scope, redaction, and forgetting rules control what is stored and returned.
 Historical content is evidence about earlier work, not proof of current live
-state. A previous session saying that a pull request was approved does not mean
-it is approved now.
+state.
 
 [Read the Session History guide](docs/session-history.md).
 
+Pallium is a personal open-source project under active development. It is useful
+in its current form, but setup and behavior still have rough edges.
+
 ## Current status
 
-Relay supports durable messages, exact-session and alias addressing, replies,
-status, and next-turn delivery for Claude Code, Codex, and OpenCode.
+Relay works across the current integrations. Every supported path has durable
+next-turn delivery; some qualified paths can also start a new turn. See the
+[Relay support details](docs/agent-relay.md#delivery-and-wake-behavior).
 
-Wake support is narrower:
-
-- Claude Code wake is qualified on Windows.
-- Codex exact-session wake is proven on Windows, with more lifecycle and
-  sustained-use checks still open.
-- OpenCode currently uses next-turn delivery.
-- Unqualified runtime and operating-system combinations use next-turn delivery.
-
-Session History currently supports broad historical search, bounded source
-expansion, access telemetry, forgetting, safeguards for outdated guidance, and
-structural work references supplied by supported integrations. A separate exact
-work-scoped search and operation without semantic packages are planned work.
-
-See the current [roadmap](roadmap/board.md) and
-[wake status](roadmap/features/add-wake-first-relay-delivery.md) for moving
-details. There is no scheduled or delayed Relay feature.
+Session History supports search and nearby-message lookup. Exact work-scoped
+search and a simpler package-independent setup are planned next. See the
+[Session History status](docs/session-history.md#available-now) and current
+[roadmap](roadmap/board.md).
 
 ## Getting started
 
@@ -76,28 +65,19 @@ The OpenCode integration currently uses a local plugin. See its
 
 The current installation still includes semantic-package configuration and an
 LLM provider. Relay itself does not use either. Removing that requirement from
-baseline Session History is queued work; the documentation does not assume it
-has shipped.
+baseline Session History is planned work.
 
 Continue with [Getting Started](docs/getting-started.md) to try Relay and Session
-History in real coding-tool sessions.
+History in real agent sessions.
 
 ## How the pieces fit
 
 ```text
-Agent tools
-    |
-    v
- Pallium
-          |     |
-       Relay   Session History
-                  |
-                  +-- optional derived memory
+Pallium
+|-- Relay: send context to another session
++-- Session History: find context from an earlier session
+    +-- derived memory (experimental)
 ```
-
-Relay and Session History share the local service, session identity, storage,
-scope, and integration hooks. They do not depend on each other for routing or
-delivery.
 
 ## Optional derived memory
 
@@ -107,7 +87,7 @@ work checkpoints, then retrieve or inject them later.
 
 This subsystem remains available, but it is not the definition of Pallium:
 
-- [How Pallium Works](docs/how-it-works.md)
+- [Derived memory](docs/derived-memory.md)
 - [Configuration](docs/configuration.md)
 - [Derived-memory integration](docs/agent-integration.md)
 - [Derived-memory benchmarks](docs/benchmarks.md)
@@ -117,9 +97,9 @@ This subsystem remains available, but it is not the definition of Pallium:
 Pallium works around coding agents that already exist. It is not an agent
 runtime, task manager, workflow engine, or autonomous agent team.
 
-Session History keeps bounded, governed agent and user turns for later search.
-It is not intended to store every tool event, mirror external systems, or act as
-a complete machine audit log.
+Session History keeps selected agent and user turns for later search. It is not
+intended to store every tool event, mirror external systems, or act as a complete
+machine audit log.
 
 Pallium is currently a local, single-user system. Its scope fields are not a
 cross-user authorization model.
@@ -130,6 +110,8 @@ cross-user authorization model.
 - [Getting Started](docs/getting-started.md)
 - [Relay](docs/agent-relay.md)
 - [Session History](docs/session-history.md)
+- [How Pallium Works](docs/how-it-works.md)
+- [Derived memory](docs/derived-memory.md)
 - [Claude Code integration](docs/claude-code-integration.md)
 - [Codex integration](docs/codex-integration.md)
 - [OpenCode integration](integrations/opencode/README.md)

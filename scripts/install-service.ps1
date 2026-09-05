@@ -117,7 +117,7 @@ Register-ScheduledTask `
     -Trigger $Trigger `
     -Settings $Settings `
     -RunLevel Limited `
-    -Description "Pallium memory sidecar service" | Out-Null
+    -Description "Pallium local agent service" | Out-Null
 
 Write-Host ""
 Write-Host "Pallium scheduled task installed. It will start at next logon."

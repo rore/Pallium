@@ -1,8 +1,8 @@
 {
   "name": "@pallium/opencode",
   "version": "0.1.0",
-  "description": "Persistent cross-session memory for OpenCode via Pallium — auto-injection and auto-ingestion against the local Pallium daemon.",
-  "keywords": ["opencode-plugin", "opencode", "pallium", "memory", "skills"],
+  "description": "Relay and searchable session history for OpenCode via the local Pallium service.",
+  "keywords": ["opencode-plugin", "opencode", "pallium", "agent-relay", "session-history", "agent-memory", "skills"],
   "license": "MIT",
   "author": "pallium",
   "homepage": "https://github.com/rore/Pallium",

@@ -250,7 +250,7 @@ def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Author>{username}</Author>
-    <Description>Pallium memory sidecar service</Description>
+    <Description>Pallium local agent service</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
@@ -338,7 +338,7 @@ def _install_linux(pallium_cmd: str, port: int, home: Path) -> None:
     unit_file = service_dir / "pallium.service"
 
     unit_content = f"""[Unit]
-Description=Pallium memory sidecar
+Description=Pallium local agent service
 After=network.target
 
 [Service]

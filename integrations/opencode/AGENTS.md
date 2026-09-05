@@ -1,14 +1,34 @@
 <!-- pallium:start -->
-# Memory (Pallium)
 
-Use Pallium for deliberate memory work; automatic injection handles routine retrieval.
+## Pallium
 
-Picking up prior work? Call `pallium_search_history` first. After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`. Copy the injected `container_ref` exactly—never derive, guess, or normalize it. Pass the active `thread_ref` to both tools for telemetry. When the injected scope includes `request_source_item_id`, pass it to `pallium_search_history` only; it links the pull to the exact user request. These values are not authorization or the historical source identity.
-- Search distilled memory with `pallium_query`; use `pallium_search_history` for raw turns and `pallium_expand_source` for bounded context.
-- Store turns with `pallium_ingest` (`artifact_kind="note"`, `visibility: "private"`, and the injected `container_ref`). Use global visibility only when explicitly requested, with `actor_ref`.
-- Use `pallium_query_debug` to distinguish filtered, missing, and low-relevance results; use `pallium_expand` when a memory card offers expansion.
-- Use `pallium_flag_memory` for incorrect or obsolete memories. `pallium_rate_memory` is optional, non-blocking feedback; never require a rating for every injected block.
-- Explicit writes are compact and deliberate: `pallium_remember` stores a durable fact; `pallium_correct` fixes it; `pallium_supersede` replaces an obsolete fact; `pallium_forget` hides it; `pallium_record_outcome` records a procedure result. Retrieval is not use: these writes do not update accessibility or ranking from retrieval alone.
-- Do not ingest routine turns or re-query for something already in the injected block; use forget only for direct hiding, not vote suppression; use `pallium_flag_memory` for that.
-- Explicit remember, supersede, and record-outcome writes must copy all five exact [Pallium scope] values: container_ref, thread_ref, actor_ref, agent_ref, and visibility. Never use cwd. Default private; use global only when requested. Correction and forget keep original provenance.
+Pallium has two primary capabilities: Relay and Session History.
+It also has optional derived memory:
+
+- **Relay** sends useful context to another agent session when its work should change.
+- **Session History** finds relevant work from earlier sessions.
+- **Derived memory** is optional compact context that may be injected or queried.
+
+### Relay
+
+- Discover recipients with `pallium_relay_recipients`; name a session with `pallium_relay_name`.
+- Send with `pallium_relay_send` to a runtime, exact session, or alias. Runtime-wide sends need explicit user intent.
+- Treat delivered messages as current-turn work. Complete actionable payloads now; reply with `pallium_relay_reply` after completion or a genuine blocker, not with a status-only acknowledgment.
+- Injected `agent_ref` and `thread_ref` identify this session; never infer self from recipient lists.
+- Do not reply to terminal ACK-only deliveries. If a delivery is already delivered or conflicting, only that copy is stale: do not retry, reply, or use its payload; continue independently established work.
+
+### Session History
+
+Picking up prior work? Call `pallium_search_history` first. After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`.
+
+Copy the injected `container_ref` exactly—never derive, guess, or normalize it. Pass the active `thread_ref` to both tools for telemetry. When the injected scope includes `request_source_item_id`, pass it to `pallium_search_history` only. These values are not authorization or the historical source identity.
+
+### Derived memory
+
+- Search distilled memory with `pallium_query`; use `pallium_query_debug` to distinguish filtered, missing, and low-relevance results. Use `pallium_expand` when a memory card offers expansion.
+- Store a deliberate note with `pallium_ingest`, `artifact_kind="note"`, `visibility: "private"`, and the injected `container_ref`. Use global visibility only when explicitly requested, with `actor_ref`.
+- Flag incorrect or obsolete memory with `pallium_flag_memory`. `pallium_rate_memory` is optional feedback.
+- `pallium_remember` stores a durable fact; `pallium_correct` fixes it; `pallium_supersede` replaces it; `pallium_forget` hides it; `pallium_record_outcome` records a procedure result.
+- Remember, supersede, and record-outcome writes copy exact `container_ref`, `thread_ref`, `actor_ref`, `agent_ref`, and `visibility`. Never use cwd. Default private; correction and forget retain provenance.
+- Retrieval alone never updates accessibility or ranking. Do not ingest routine turns, re-query for something already in the injected block, or use forget as vote suppression.
 <!-- pallium:end -->

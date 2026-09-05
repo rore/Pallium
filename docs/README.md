@@ -29,7 +29,8 @@ main capabilities, then use the integration and reference guides as needed.
 
 | Document | What it covers |
 |---|---|
-| [How Pallium Works](how-it-works.md) | Product architecture and optional derived-memory internals |
+| [How Pallium Works](how-it-works.md) | Product architecture and capability boundaries |
+| [Derived Memory](derived-memory.md) | The optional derived-memory subsystem, retrieval, lifecycle, and limitations |
 | [HTTP API](http-api.md) | Session History, Relay, derived-memory, and operational endpoints |
 | [Configuration](configuration.md) | Local service, storage, providers, packages, and tuning |
 | [Privacy and Visibility](privacy-and-visibility.md) | Scope rules across history, Relay, and derived memory |

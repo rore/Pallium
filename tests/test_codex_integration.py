@@ -413,7 +413,7 @@ def test_codex_setup_deploys_and_removes_skill(
     dest = skill_dir / "SKILL.md"
     assert dest.exists()
     content = dest.read_text(encoding="utf-8")
-    assert "Pallium Memory Workflow" in content
+    assert "Pallium Workflow" in content
     assert "pallium_search_history" in content
 
     # Reinstall is idempotent (overwrites, no duplication/error).

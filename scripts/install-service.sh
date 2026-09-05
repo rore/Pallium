@@ -66,7 +66,7 @@ mkdir -p "$SERVICE_DIR"
 
 cat > "$SERVICE_FILE" << EOF
 [Unit]
-Description=Pallium memory sidecar service
+Description=Pallium local agent service
 After=network.target
 
 [Service]

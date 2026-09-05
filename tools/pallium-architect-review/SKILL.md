@@ -15,19 +15,23 @@ Favor the smallest valuable step, keep the architecture generic where it should 
 
 Read only the minimum needed, but ground the review in repo truth:
 
-- `README.md`
-- `docs/context/*`
-- relevant `docs/designs/*` for the topic
+- `docs/context/vision.md` for the stable product definition
+- `README.md` and `docs/context/state.md` for the current public and shipped shape
+- relevant `docs/context/*` and `docs/designs/*` for the topic
 - `roadmap/*` using the minimap structure
 - the actual code being discussed
 
 Treat these as canonical truths:
 
-- Pallium is a generic memory engine for agents
-- the first concrete product slice is `agent_conversation_memory`
-- value is currently recurring-question recall and cross-thread continuity for agent-mediated conversations
-- evidence-backed, additive, debuggable memory is preferred over opaque behavior
-- bounded retrieval and bounded consolidation beat broad unconstrained intelligence
+- Pallium has two primary capabilities: Relay and Session History
+- Pallium supplies context around existing agent tools; it does not create,
+  assign, supervise, or orchestrate agents
+- Relay and Session History share local infrastructure but have independent
+  validation gates
+- governed raw session history is the Session History baseline; derived memory
+  is an optional optimization that must earn its complexity experimentally
+- earlier session content is historical evidence, not proof of current live state
+- context exchange and retrieval stay bounded, scoped, and inspectable
 
 ## Review Workflow
 
@@ -96,11 +100,11 @@ Treat these as canonical truths:
 ## Pallium-Specific Heuristics
 
 - Prefer the smallest value slice that sharpens the current product claim over platform expansion.
-- Prefer retrieval explainability before retrieval sophistication.
-- Prefer bounded memory and symbolic guards before broad semantic grouping.
-- Keep higher-level memory additive; do not let it erase lower-level evidence.
-- Do not broaden package scope from agent-mediated conversation memory to ambient workspace knowledge without an explicit roadmap change.
-- Do not add new abstractions only because future packages might exist.
+- For Relay, prefer explicit recipient identity, persistence before delivery, and deterministic fallback over inferred coordination.
+- For Session History, prefer retrieval and expansion explainability before retrieval sophistication.
+- Keep derived memory additive; do not let it erase or replace lower-level evidence.
+- Do not turn a derived-memory package need into the product definition or generic core behavior.
+- Do not add new abstractions only because future packages or agent integrations might exist.
 - Do not expand the public API or contract unless the current product slice clearly needs it.
 - When a proposal claims extensibility or scalability value, ask what concrete near-term decision it actually enables.
 

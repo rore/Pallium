@@ -21,6 +21,32 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names)
     assert combined <= 980
 
+
+def test_all_guidance_surfaces_present_pallium_capabilities() -> None:
+    spec = importlib.util.spec_from_file_location(
+        "claude_block_capabilities", "integrations/claude-code/claude_md_block.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    surfaces = (
+        module.get_claude_md_block("base"),
+        Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8"),
+        Path("integrations/opencode/AGENTS.md").read_text(encoding="utf-8"),
+        Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8"),
+        Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8"),
+        Path("integrations/opencode/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8"),
+        Path("integrations/opencode/.opencode/command/pallium-memory.md").read_text(encoding="utf-8"),
+    )
+    for rendered in surfaces[:3]:
+        assert "two primary capabilities" in rendered
+        assert "three separate uses" not in rendered
+    for rendered in surfaces:
+        assert "Relay" in rendered
+        assert "Session History" in rendered
+        assert "Derived memory" in rendered or "derived memory" in rendered
+        assert "Pallium Memory Workflow" not in rendered
+
+
 def test_all_guidance_surfaces_preserve_search_to_expansion_telemetry_link() -> None:
     spec = importlib.util.spec_from_file_location("claude_block_linkage", "integrations/claude-code/claude_md_block.py")
     module = importlib.util.module_from_spec(spec)
