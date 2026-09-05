@@ -226,6 +226,11 @@ def test_claude_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     monkeypatch.setattr(hook, "check_dedup", lambda _prompt, _session: False)
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(
+        hook,
+        "build_work_refs_metadata",
+        lambda *_args: {"pallium_work_refs": ["git-branch:feature/demo"]},
+    )
 
     def request(_method: str, _path: str, body: dict) -> dict:
         requests.append(body)
@@ -235,6 +240,9 @@ def test_claude_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     with pytest.raises(SystemExit):
         hook.main()
     assert requests[-1]["thread_ref"] == "claude:task:1"
+    assert requests[-1]["metadata"] == {
+        "pallium_work_refs": ["git-branch:feature/demo"]
+    }
     scope = capsys.readouterr().out.strip()
     scope_values = json.loads(scope[scope.index("{"):-1])
     assert scope_values["thread_ref"] == "claude:task:1"
@@ -256,6 +264,11 @@ def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monk
         assistant_text="A completed assistant response.", tool_calls=[], has_productive_action=False
     ))
     monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _turn: None)
+    monkeypatch.setattr(
+        stop,
+        "build_work_refs_metadata",
+        lambda *_args: {"pallium_work_refs": ["git-branch:feature/demo"]},
+    )
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
     monkeypatch.setattr(stop, "_populate_usage_audit_rows", lambda _session, _text: None)
@@ -263,6 +276,9 @@ def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monk
     with pytest.raises(SystemExit):
         stop.main()
     assert calls[0][0]["thread_ref"] is None
+    assert calls[0][0]["metadata"]["pallium_work_refs"] == [
+        "git-branch:feature/demo"
+    ]
 
 
 @pytest.mark.parametrize("failure", ("missing", "invalid_cwd", "close"))

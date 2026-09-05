@@ -214,7 +214,8 @@ export default async ({ client, directory, worktree } = {}) => {
         artifact_kind: "message",
       };
       const workTrace = pallium.buildWorkTraceMetadata(turn);
-      if (workTrace) item.metadata = { agent_work_trace_turn: workTrace, cwd };
+      item.metadata = { ...pallium.buildWorkRefsMetadata(cwd), ...(workTrace ? { agent_work_trace_turn: workTrace, cwd } : {}) };
+      if (!Object.keys(item.metadata).length) delete item.metadata;
 
       const response = await pallium.palliumRequest("POST", "/items", [item]);
       // palliumRequest returns null on any failure; drop the dedup key so the
@@ -418,6 +419,7 @@ export default async ({ client, directory, worktree } = {}) => {
           query_limit: 5,
           query_actor_ref: actorRef,
           query_trigger_origin: "user_prompt_submit",
+          metadata: pallium.buildWorkRefsMetadata(cwd, input && input.metadata && input.metadata.pallium_work_refs),
         });
         if (!resp) return;
         const output_text = pallium.formatInjection(resp.injectable_blocks || [], containerRef, USER_PROMPT_BUDGET, sessionId, actorRef, pallium.AGENT_REF, "private", resp.source_item_id);

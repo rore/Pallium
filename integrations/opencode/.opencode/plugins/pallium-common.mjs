@@ -722,6 +722,189 @@ export function buildWorkTraceMetadata(turnData) {
 
 // --- misc helpers -----------------------------------------------------------
 
+
+const WORK_REF_PREFIXES = ["slice/", "feat/", "feature/", "fix/", "bug/", "chore/", "demo/"];
+const BASE_BRANCHES = new Set(["main", "master", "develop", "trunk", "head"]);
+const MAX_WORK_REF_CWD = 4096;
+const MAX_WORK_REF_FILE = 4096;
+const MAX_WORK_REF_RECORD = 256 * 1024;
+const MAX_WORK_REF_PARENTS = 64;
+const GIT_PATH_ENV = [
+  "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_CEILING_DIRECTORIES",
+];
+const WORKFLOW_START = "<!-- agent-workflow:start -->";
+const WORKFLOW_END = "<!-- agent-workflow:end -->";
+
+function unsafeFsStat(info) {
+  return Boolean(info?.isSymbolicLink?.() || (info?.attributes & 0x400));
+}
+
+function safeDirectoryChain(directory) {
+  const components = [];
+  for (let current = directory;; current = path.dirname(current)) {
+    components.push(current);
+    if (path.dirname(current) === current) break;
+  }
+  for (const component of components.reverse()) {
+    const info = fs.lstatSync(component);
+    if (unsafeFsStat(info) || !info.isDirectory()) throw new Error("unsafe path component");
+  }
+}
+
+function strictUtf8(buffer) {
+  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer); }
+  catch { return null; }
+}
+
+function readBounded(file, maxBytes) {
+  try {
+    const before = fs.lstatSync(file);
+    if (unsafeFsStat(before) || !before.isFile() || before.size > maxBytes) return null;
+    const flags = fs.constants.O_RDONLY |
+      (fs.constants.O_NOFOLLOW || 0) |
+      (fs.constants.O_NONBLOCK || 0);
+    const fd = fs.openSync(file, flags);
+    try {
+      const opened = fs.fstatSync(fd);
+      const same = (left, right) =>
+        left.isFile() &&
+        left.dev === right.dev &&
+        left.ino === right.ino &&
+        left.size === right.size &&
+        left.mtimeMs === right.mtimeMs;
+      if (!same(opened, before)) return null;
+      const buffer = Buffer.alloc(maxBytes + 1);
+      const length = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      if (!same(fs.fstatSync(fd), opened)) return null;
+      return length > maxBytes ? null : strictUtf8(buffer.subarray(0, length));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
+function localAbsolute(file) {
+  return typeof file === "string" &&
+    path.isAbsolute(file) &&
+    !file.startsWith("//") &&
+    !file.startsWith("\\\\");
+}
+
+function validWorkRefBranch(branch) {
+  return Boolean(
+    branch &&
+    branch.length <= 1024 &&
+    !branch.startsWith("/") &&
+    !branch.startsWith(".") &&
+    !branch.endsWith("/") &&
+    !branch.endsWith(".") &&
+    !branch.includes("//") &&
+    !branch.includes("..") &&
+    !branch.includes("@{") &&
+    !/[\x00-\x20\x7f~^:?*\[\\]/.test(branch) &&
+    branch.split("/").every((part) => part && !part.startsWith(".") && !part.endsWith(".lock"))
+  );
+}
+
+function workRefState(cwd) {
+  if (GIT_PATH_ENV.some((name) => process.env[name])) return null;
+  if (typeof cwd !== "string" || !cwd || cwd.length > MAX_WORK_REF_CWD || !localAbsolute(cwd)) return null;
+  let workspace;
+  try {
+    workspace = path.normalize(cwd);
+    safeDirectoryChain(workspace);
+  } catch { return null; }
+
+  for (let i = 0; i < MAX_WORK_REF_PARENTS; i++) {
+    try {
+      const cwdStat = fs.lstatSync(workspace);
+      if (unsafeFsStat(cwdStat) || !cwdStat.isDirectory()) return null;
+    } catch (error) {
+      if (error?.code !== "ENOENT") return null;
+      const parent = path.dirname(workspace);
+      if (parent === workspace) break;
+      workspace = parent;
+      continue;
+    }
+    const marker = path.join(workspace, ".git");
+    let gitStat;
+    try { gitStat = fs.lstatSync(marker); }
+    catch (error) {
+      if (error?.code !== "ENOENT") return null;
+      const parent = path.dirname(workspace);
+      if (parent === workspace) break;
+      workspace = parent;
+      continue;
+    }
+    if (unsafeFsStat(gitStat) || (!gitStat.isDirectory() && !gitStat.isFile())) return null;
+
+    let gitDir = marker;
+    if (gitStat.isFile()) {
+      const pointer = readBounded(marker, MAX_WORK_REF_FILE);
+      const match = pointer && /^gitdir: ([^\r\n]+)\r?\n?$/.exec(pointer);
+      if (!match) return null;
+      gitDir = path.resolve(path.dirname(marker), match[1]);
+      if (!localAbsolute(gitDir)) return null;
+    }
+    try {
+      safeDirectoryChain(gitDir);
+      const head = path.join(gitDir, "HEAD");
+      const headStat = fs.lstatSync(head);
+      if (unsafeFsStat(headStat) || !headStat.isFile()) return null;
+      const text = readBounded(head, MAX_WORK_REF_FILE);
+      const match = text && /^ref: refs\/heads\/([^\r\n]{1,1024})\r?\n?$/.exec(text);
+      if (!match || !validWorkRefBranch(match[1])) return null;
+      return { root: workspace, branch: match[1], headPath: head, headText: text };
+    } catch { return null; }
+  }
+  return null;
+}
+
+export function buildWorkRefsMetadata(cwd, explicitRefs) {
+  const explicit = Array.isArray(explicitRefs)
+    ? explicitRefs.filter((value) => typeof value === "string")
+    : [];
+  const refs = [];
+  const state = process.platform === "win32" ? null : workRefState(cwd);
+  if (state && !BASE_BRANCHES.has(state.branch.toLowerCase())) {
+    const { root, branch } = state;
+    refs.push(`git-branch:${branch}`);
+    let slug = branch;
+    for (const prefix of WORK_REF_PREFIXES) {
+      if (slug.startsWith(prefix)) {
+        slug = slug.slice(prefix.length);
+        break;
+      }
+    }
+    slug = slug.replaceAll("/", "-");
+    try {
+      const workflow = path.join(root, ".agent-workflow");
+      const tasks = path.join(workflow, "tasks");
+      for (const directory of [workflow, tasks]) {
+        const info = fs.lstatSync(directory);
+        if (unsafeFsStat(info) || !info.isDirectory()) throw new Error("unsafe workflow path");
+      }
+      const record = path.join(tasks, `${slug}.md`);
+      const recordInfo = fs.lstatSync(record);
+      if (unsafeFsStat(recordInfo) || !recordInfo.isFile()) throw new Error("unsafe record");
+      if (path.dirname(fs.realpathSync(record)) !== fs.realpathSync(tasks)) throw new Error("escaping record");
+      const text = readBounded(record, MAX_WORK_REF_RECORD);
+      const start = text?.indexOf(WORKFLOW_START) ?? -1;
+      if (start >= 0 && text.indexOf(WORKFLOW_END, start + WORKFLOW_START.length) > start) {
+        refs.push(`agent-workflow:${slug}`);
+      }
+    } catch {}
+    if (readBounded(state.headPath, MAX_WORK_REF_FILE) !== state.headText) refs.length = 0;
+  }
+  return (refs.length || explicit.length)
+    ? { pallium_work_refs: refs.concat(explicit) }
+    : {};
+}
+
 export function ocSourceId() {
   return "oc-" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
 }

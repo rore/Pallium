@@ -16,6 +16,7 @@ import re
 from typing import Any
 
 _WORK_REF_SEPARATOR_RE = re.compile(r"[\s_\-]+")
+MAX_WORK_REFS = 5
 
 
 def _normalize_work_ref(raw: str) -> str | None:
@@ -47,4 +48,6 @@ def _normalize_work_refs(value: Any) -> tuple[str, ...]:
             continue
         seen.add(normalized)
         result.append(normalized)
+        if len(result) == MAX_WORK_REFS:
+            break
     return tuple(result)

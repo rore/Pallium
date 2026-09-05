@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -27,7 +28,221 @@ HTTP_TIMEOUT = 6
 SUBPROCESS_TIMEOUT = 3
 STATE_DIR = Path.home() / ".pallium" / "hooks" / "state"
 DEDUP_EXPIRY_SECONDS = 300
+_WORK_REF_PREFIXES = ("slice/", "feat/", "feature/", "fix/", "bug/", "chore/", "demo/")
+_BASE_BRANCHES = frozenset({"main", "master", "develop", "trunk", "head"})
+_GIT_PATH_ENV = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CEILING_DIRECTORIES",
+)
 
+
+def _explicit_work_refs(explicit_refs: object) -> list[str]:
+    if not isinstance(explicit_refs, list):
+        return []
+    return [value for value in explicit_refs if isinstance(value, str)]
+
+
+def _windows_drive_is_local(value: str) -> bool:
+    if os.name != "nt":
+        return True
+    drive, _ = os.path.splitdrive(value)
+    if not drive:
+        return False
+    try:
+        import ctypes
+
+        drive_type = ctypes.windll.kernel32.GetDriveTypeW(drive + "\\")
+    except (AttributeError, OSError, ValueError):
+        return False
+    return drive_type not in {0, 1, 4}  # unknown, unavailable, or remote
+
+
+def _is_local_absolute_path(value: object) -> bool:
+    if not isinstance(value, str) or not value or len(value) > 4096:
+        return False
+    backslash = chr(92)
+    normalized = value.replace("/", backslash)
+    if normalized.startswith(
+        (backslash * 2, backslash * 2 + "?" + backslash, backslash * 2 + "." + backslash)
+    ):
+        return False
+    try:
+        return Path(value).is_absolute() and _windows_drive_is_local(value)
+    except (OSError, ValueError):
+        return False
+
+def _safe_lstat(path: Path) -> os.stat_result:
+    info = path.lstat()
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    if stat.S_ISLNK(info.st_mode) or (getattr(info, "st_file_attributes", 0) & reparse):
+        raise OSError("unsafe reparse point")
+    return info
+
+def _safe_directory_chain(path: Path) -> None:
+    for component in (*reversed(path.parents), path):
+        info = _safe_lstat(component)
+        if not stat.S_ISDIR(info.st_mode):
+            raise OSError("unsafe path component")
+
+
+
+def _bounded_text(path: Path, limit: int) -> str:
+    before = _safe_lstat(path)
+    if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+        raise OSError("unsafe metadata file")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        signature = lambda info: (
+            info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+        )
+        if not stat.S_ISREG(opened.st_mode) or signature(opened) != signature(before):
+            raise OSError("metadata file changed")
+        raw = os.read(descriptor, limit + 1)
+        if signature(os.fstat(descriptor)) != signature(opened):
+            raise OSError("metadata file changed")
+    finally:
+        os.close(descriptor)
+    if len(raw) > limit:
+        raise OSError("metadata file too large")
+    return raw.decode("utf-8", errors="strict")
+
+
+def _single_line(text: str) -> str | None:
+    if text.endswith("\r\n"):
+        text = text[:-2]
+    elif text.endswith("\n"):
+        text = text[:-1]
+    return None if "\r" in text or "\n" in text else text
+
+
+def _valid_branch(branch: str) -> bool:
+    if not branch or len(branch) > 1024 or branch.startswith(("/", ".")) or branch.endswith(("/", ".")):
+        return False
+    if "//" in branch or ".." in branch or "@{" in branch or "\\" in branch:
+        return False
+    if any(ord(char) < 32 or ord(char) == 127 or char in " ~^:?*[" for char in branch):
+        return False
+    return all(
+        part and not part.startswith(".") and not part.endswith(".lock")
+        for part in branch.split("/")
+    )
+
+
+def _find_repo(cwd: object) -> tuple[Path, Path] | None:
+    if any(os.environ.get(name) for name in _GIT_PATH_ENV):
+        return None
+    if not _is_local_absolute_path(cwd):
+        return None
+    current = Path(os.path.normpath(cwd))
+    try:
+        _safe_directory_chain(current)
+    except (OSError, ValueError):
+        return None
+
+    for _ in range(64):
+        marker = current / ".git"
+        try:
+            marker_info = _safe_lstat(marker)
+        except FileNotFoundError:
+            parent = current.parent
+            if parent == current:
+                return None
+            current = parent
+            continue
+        except (OSError, ValueError):
+            return None
+
+        try:
+            if stat.S_ISDIR(marker_info.st_mode):
+                git_dir = marker
+            elif stat.S_ISREG(marker_info.st_mode):
+                pointer = _single_line(_bounded_text(marker, 4096))
+                if pointer is None or not pointer.startswith("gitdir: "):
+                    return None
+                target = pointer[len("gitdir: "):]
+                if not target:
+                    return None
+                git_dir = Path(target)
+                if not git_dir.is_absolute():
+                    git_dir = marker.parent / git_dir
+                git_dir = Path(os.path.abspath(os.path.normpath(git_dir)))
+                if not _is_local_absolute_path(str(git_dir)):
+                    return None
+                _safe_directory_chain(git_dir)
+            else:
+                return None
+            return current, git_dir
+        except (OSError, UnicodeError, ValueError):
+            return None
+    return None
+
+
+def _structural_work_refs(cwd: object) -> list[str]:
+    repo = _find_repo(cwd)
+    if repo is None:
+        return []
+    root, git_dir = repo
+    head_path = git_dir / "HEAD"
+    try:
+        head = _single_line(_bounded_text(head_path, 4096))
+        prefix = "ref: refs/heads/"
+        if head is None or not head.startswith(prefix):
+            return []
+        branch = head[len(prefix):]
+        if not _valid_branch(branch) or branch.lower() in _BASE_BRANCHES:
+            return []
+    except (OSError, UnicodeError, ValueError):
+        return []
+
+    refs = [f"git-branch:{branch}"]
+    slug = branch
+    for work_prefix in _WORK_REF_PREFIXES:
+        if slug.startswith(work_prefix):
+            slug = slug[len(work_prefix):]
+            break
+    slug = slug.replace("/", "-")
+    try:
+        workflow = root / ".agent-workflow"
+        tasks = workflow / "tasks"
+        record = tasks / f"{slug}.md"
+        for directory in (workflow, tasks):
+            info = _safe_lstat(directory)
+            if not stat.S_ISDIR(info.st_mode):
+                raise OSError("unsafe workflow path")
+        record_info = _safe_lstat(record)
+        if not stat.S_ISREG(record_info.st_mode):
+            raise OSError("unsafe work record")
+        resolved_tasks = tasks.resolve(strict=True)
+        resolved_record = record.resolve(strict=True)
+        if resolved_record.parent != resolved_tasks:
+            raise OSError("escaping work record")
+        text = _bounded_text(resolved_record, 256 * 1024)
+        start = text.find("<!-- agent-workflow:start -->")
+        finish = text.find("<!-- agent-workflow:end -->", start + 1)
+        if start >= 0 and finish > start:
+            refs.append(f"agent-workflow:{slug}")
+    except (OSError, UnicodeError, ValueError):
+        pass
+
+    try:
+        if _single_line(_bounded_text(head_path, 4096)) != head:
+            return []
+    except (OSError, UnicodeError, ValueError):
+        return []
+    return refs
+
+
+def build_work_refs_metadata(cwd: str, explicit_refs: object = None) -> dict[str, object]:
+    refs = _explicit_work_refs(explicit_refs)
+    try:
+        refs = _structural_work_refs(cwd) + refs
+    except Exception:
+        pass
+    return {"pallium_work_refs": refs} if refs else {}
 
 def read_hook_input() -> dict:
     """Read JSON payload from stdin. Returns empty dict on any failure."""

@@ -63,11 +63,12 @@ model has two capabilities: Agent Relay and **Session History**. Session History
 the package-independent raw record of governed agent work; generated memories are
 optional representations of that record, disabled by default.
 
-The next Session History slice is ordered. The first three items are the next three
-vNext features; the fourth is a committed, time-boxed investigation:
+The Session History slice is ordered. The first item is shipped; the next two are
+vNext features, followed by a committed, time-boxed investigation:
 
-1. `add-structural-session-work-references` — attach branch, exact Agent Workflow
-   Work Record, and explicit issue/PR/ticket references without semantic inference.
+1. `add-structural-session-work-references` — shipped: attach branch, exact Agent
+   Workflow Work Record, and explicit issue/PR/ticket references without semantic
+   inference.
 2. `add-distinct-work-and-broad-history-search-tools` — provide exact work-scoped
    search and broad history search as separate agent operations over one retrieval
    and expansion implementation.

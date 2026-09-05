@@ -414,6 +414,48 @@ class TestNotOverRedacted:
         assert rows, "user-explicit note was redacted despite artifact_kind='note'"
 
 
+    def test_note_work_refs_sanitize_before_storage(self, client):
+        source_id = f"note-refs-{new_id()[:8]}"
+        content = "verbatim procedure: key=NEW_KEY"
+        response = client.post(
+            "/items",
+            json=[
+                {
+                    "source_type": "agent_artifact",
+                    "source_id": source_id,
+                    "content_type": "text/plain",
+                    "content": content,
+                    "metadata": {
+                        "pallium_work_refs": [
+                            "PROJ 1",
+                            _GITHUB_PAT,
+                            "SYNC-2",
+                            "third",
+                            "fourth",
+                            "fifth",
+                            "sixth",
+                        ],
+                        "unrelated": {"keep": "exact"},
+                    },
+                    "use_case": "demo_agent_memory",
+                    "artifact_kind": "note",
+                    "role": "user",
+                    "container_ref": CONTAINER_REF,
+                    "thread_ref": THREAD_REF,
+                    "visibility": "private",
+                }
+            ],
+        )
+        assert response.status_code == 200
+        service = client.app.state.pallium_service
+        item = service._storage.find_source_item("agent_artifact", source_id)
+        assert item is not None
+        assert item.content == content
+        assert item.metadata == {
+            "pallium_work_refs": ["proj-1", "sync-2", "third", "fourth", "fifth"],
+            "unrelated": {"keep": "exact"},
+        }
+
 class TestRetrievalBarrierDefenseInDepth:
     """Locks the retrieval-side redaction: even if a secret slipped
     past the write barrier (e.g. was persisted before PR 0 landed
