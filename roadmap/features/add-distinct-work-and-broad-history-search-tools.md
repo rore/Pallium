@@ -18,11 +18,12 @@ without creating another retrieval system.
 
 ### Work-scoped search
 
-`pallium_search_work_history(work_ref, query?)`
+`pallium_search_history_by_work_ref(work_ref, query?)`
 
-- Requires one exact normalized work reference.
+- Requires one valid structural work reference; Pallium normalizes it and then matches it exactly.
 - Searches raw SourceItems carrying that reference.
-- Uses the optional query only to rank or narrow results inside that work.
+- With `query` omitted or whitespace-only, returns newest eligible exact-reference items; a nonblank query (including punctuation-only text) ranks or narrows only within that reference.
+- This is deliberately narrow: it can miss related work stored under another work reference or with no work reference.
 - Supports branch, Agent Workflow Work Record, Jira, PR, issue, incident, and other
   structurally supplied references from the shared work-reference contract.
 
@@ -30,8 +31,9 @@ without creating another retrieval system.
 
 `pallium_search_history(query)`
 
-- Searches relevant raw history across work items and sessions.
+- Searches relevant raw history by topic across eligible work items and sessions; use this when the exact work reference is unknown or related work may live under other references.
 - Supports the short keyword-style queries agents use in practice.
+- The existing optional work_refs argument remains only as a compatibility filter; new one-work callers should use pallium_search_history_by_work_ref.
 - Shows or groups work references when present while keeping unreferenced history
   searchable.
 - Uses session only as fallback grouping, never as a semantic work boundary.
