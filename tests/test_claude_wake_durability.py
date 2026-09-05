@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -828,3 +829,90 @@ def test_recovery_health_callbacks_bind_each_exact_candidate(
         callback(datetime.now(timezone.utc))
     assert marked == [(PAYLOAD["session_ref"], PAYLOAD["actor_ref"]),
                       (second["session_ref"], second["actor_ref"])]
+
+
+def test_expired_claim_recovery_rechecks_and_isolates_candidate_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import dependencies
+
+    def candidate(delivery_id: str) -> dict:
+        return {
+            "delivery_id": delivery_id,
+            "state": "pending",
+            "recipient_runtime": "codex",
+            "recipient_session_ref": "target",
+            "container_ref": "git:example/repo",
+            "actor_ref": "local",
+        }
+
+    broken, stale, current = (candidate(name) for name in ("broken", "stale", "current"))
+
+    class Relay:
+        def expired_claim_candidates(self, *, delivery_id=None):
+            if delivery_id is None:
+                return [broken, stale, current]
+            if delivery_id == "broken":
+                raise RuntimeError("candidate changed during recheck")
+            return [current] if delivery_id == "current" else []
+
+    dispatched: list[tuple[dict, dict]] = []
+    monkeypatch.setattr(
+        dependencies,
+        "dispatch_relay_wake",
+        lambda result, scope, **_kwargs: dispatched.append((result, scope)),
+    )
+
+    dependencies.recover_expired_relay_wakes(Relay(), ClaudeWakeRegistry())
+
+    assert [item[0]["deliveries"][0]["delivery_id"] for item in dispatched] == ["current"]
+    assert dispatched[0][1] == {
+        "container_ref": current["container_ref"],
+        "actor_ref": current["actor_ref"],
+    }
+
+
+def test_relay_claim_recovery_is_startup_immediate_rate_limited_and_resilient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import claude_wake
+
+    clock = [0.0]
+    calls: list[float] = []
+    called = threading.Event()
+
+    def recover() -> None:
+        calls.append(clock[0])
+        called.set()
+        if len(calls) == 1:
+            raise RuntimeError("one failed sweep must not stop the loop")
+
+    monkeypatch.setattr(
+        claude_wake,
+        "recover_claude_relay_wakes",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("Claude capability failure")),
+    )
+    reconciler = claude_wake.ClaudeWakeReconciler(
+        ClaudeWakeRegistry(),
+        SimpleNamespace(),
+        claim_recovery=recover,
+        interval_seconds=0.01,
+        claim_interval_seconds=30.0,
+        clock=lambda: clock[0],
+    )
+    reconciler.start()
+    try:
+        assert called.wait(timeout=0.5)
+        called.clear()
+        reconciler.signal()
+        assert not called.wait(timeout=0.05)
+        assert calls == [0.0]
+
+        clock[0] = 30.0
+        reconciler.signal()
+        assert called.wait(timeout=0.5)
+        assert calls == [0.0, 30.0]
+    finally:
+        reconciler.stop()
+
+    assert reconciler._thread is not None and not reconciler._thread.is_alive()

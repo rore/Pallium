@@ -932,3 +932,196 @@ def test_idempotent_send_schedules_one_codex_wake(client, monkeypatch) -> None:
     assert codex_wake._scheduled_delivery_ids == {
         first.json()["deliveries"][0]["delivery_id"]
     }
+
+
+def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    import storage.sqlite_relay as sqlite_relay
+    from app.dependencies import recover_expired_relay_wakes
+    from core.claude_wake import ClaudeWakeRegistry
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    scheduled: list[tuple[dict, dict]] = []
+    monkeypatch.setattr(
+        "app.dependencies.schedule_codex_relay_wake",
+        lambda result, scope: scheduled.append((result, scope)),
+    )
+    relay = RelayService(client.app.state.pallium_service._storage)
+    relay.turn(runtime="claude-code", session_ref="sender", **SCOPE)
+    relay.turn(runtime="codex", session_ref="crash-target", **SCOPE)
+    sent = relay.send(
+        sender_runtime="claude-code",
+        sender_session_ref="sender",
+        recipient="codex:crash-target",
+        payload="😀" * 1500,
+        **SCOPE,
+    )
+    scheduled.clear()
+
+    claimed = relay.turn(
+        runtime="codex", session_ref="crash-target", max_messages=1, **SCOPE
+    )["deliveries"][0]
+    assert claimed["delivery_id"] == sent["deliveries"][0]["delivery_id"]
+    assert relay.message_status(message_id=sent["message_id"], **SCOPE)["deliveries"][0]["state"] == "claimed"
+
+    clock[0] += timedelta(seconds=61)
+    recover_expired_relay_wakes(relay, ClaudeWakeRegistry())
+    assert len(scheduled) == 1
+    wake, wake_scope = scheduled[0]
+    assert wake_scope == SCOPE
+    assert wake["recipient"] == "codex:crash-target"
+    assert wake["deliveries"][0] == {
+        "delivery_id": claimed["delivery_id"],
+        "state": "pending",
+        "recipient_runtime": "codex",
+        "recipient_session_ref": "crash-target",
+    }
+
+    state_dir = tmp_path / "crash-hook-state"
+    monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: SCOPE["actor_ref"])
+    monkeypatch.setattr(
+        hook,
+        "pallium_request",
+        lambda *_args, **_kwargs: pytest.fail("Relay recovery must not ingest synthetic memory"),
+    )
+    contexts: list[str] = []
+    monkeypatch.setattr(hook, "emit_context", lambda output, _event: contexts.append(output))
+
+    def relay_request(method: str, path: str, payload: dict, *, timeout: float):
+        response = client.request(method, path, json=payload)
+        assert response.status_code == 200, response.text
+        return response.json() if response.content else None
+
+    monkeypatch.setattr(hook, "relay_request", relay_request)
+    monkeypatch.setattr(hook._common, "relay_request", relay_request)
+    hook._common.pin_container("crash-target", SCOPE["container_ref"])
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path),
+        "session_id": "crash-target",
+        "prompt": codex_wake._wake_prompt(),
+    })
+
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    assert len(contexts) == 1 and contexts[0].count("😀") == 1500
+    delivered = relay.message_status(message_id=sent["message_id"], **SCOPE)["deliveries"][0]
+    assert delivered["state"] == "delivered" and delivered["attempts"] == 2
+    scheduled.clear()
+    recover_expired_relay_wakes(relay, ClaudeWakeRegistry())
+    assert scheduled == []
+    assert relay.turn(runtime="codex", session_ref="crash-target", **SCOPE)["deliveries"] == []
+
+def test_expired_codex_claim_rewakes_once_after_real_app_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    import app.main as main
+    import storage.sqlite_relay as sqlite_relay
+    from app.config import AppConfig
+    from storage.vector_index import VectorIndexConfig
+
+    clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    config = AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    )
+    original_start = main.start_claude_wake_reconciler
+    monkeypatch.setattr(
+        main, "start_claude_wake_reconciler", lambda *_args, **_kwargs: None
+    )
+    with TestClient(create_app(config), client=("127.0.0.1", 50000)) as http_a:
+        relay = RelayService(http_a.app.state.pallium_service._storage)
+        relay.turn(runtime="claude-code", session_ref="sender", **SCOPE)
+        relay.turn(runtime="codex", session_ref="restart-target", **SCOPE)
+        sent = relay.send(
+            sender_runtime="claude-code",
+            sender_session_ref="sender",
+            recipient="codex:restart-target",
+            payload="persisted Codex crash ✓",
+            **SCOPE,
+        )
+        claimed = relay.turn(
+            runtime="codex", session_ref="restart-target", **SCOPE
+        )["deliveries"][0]
+        assert claimed["delivery_id"] == sent["deliveries"][0]["delivery_id"]
+
+    clock[0] += timedelta(seconds=61)
+    scheduled = threading.Event()
+    wake_calls: list[tuple[dict, dict]] = []
+
+    def schedule(result: dict, scope: dict) -> None:
+        wake_calls.append((result, scope))
+        scheduled.set()
+
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", schedule)
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", original_start)
+    app_b = create_app(config)
+    with TestClient(app_b, client=("127.0.0.1", 50000)) as http_b:
+        assert scheduled.wait(timeout=1)
+        assert len(wake_calls) == 1
+        assert wake_calls[0][0]["deliveries"][0]["delivery_id"] == claimed["delivery_id"]
+        assert wake_calls[0][1] == SCOPE
+
+        from integrations.codex.hooks import user_prompt_submit as hook
+
+        state_dir = tmp_path / "restart-hook-state"
+        monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
+        monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
+        monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+        monkeypatch.setattr(hook, "derive_actor_ref", lambda: SCOPE["actor_ref"])
+        monkeypatch.setattr(
+            hook,
+            "pallium_request",
+            lambda *_args, **_kwargs: pytest.fail("Relay recovery must not ingest synthetic memory"),
+        )
+        contexts: list[str] = []
+        monkeypatch.setattr(hook, "emit_context", lambda output, _event: contexts.append(output))
+
+        def relay_request(method: str, path: str, payload: dict, *, timeout: float):
+            response = http_b.request(method, path, json=payload)
+            assert response.status_code == 200, response.text
+            return response.json() if response.content else None
+
+        monkeypatch.setattr(hook, "relay_request", relay_request)
+        monkeypatch.setattr(hook._common, "relay_request", relay_request)
+        hook._common.pin_container("restart-target", SCOPE["container_ref"])
+        monkeypatch.setattr(hook, "read_hook_input", lambda: {
+            "cwd": str(tmp_path),
+            "session_id": "restart-target",
+            "prompt": codex_wake._wake_prompt(),
+        })
+        with pytest.raises(SystemExit):
+            hook.main()
+
+        relay = RelayService(http_b.app.state.pallium_service._storage)
+        assert len(contexts) == 1 and "persisted Codex crash ✓" in contexts[0]
+        delivered = relay.message_status(message_id=sent["message_id"], **SCOPE)["deliveries"][0]
+        assert delivered["state"] == "delivered" and delivered["attempts"] == 2
+        wake_calls.clear()
+        assert relay.turn(
+            runtime="codex", session_ref="restart-target", **SCOPE
+        )["deliveries"] == []
+        assert wake_calls == []
+
+    reconciler = app_b.state._claude_wake_reconciler
+    assert reconciler._thread is not None and not reconciler._thread.is_alive()

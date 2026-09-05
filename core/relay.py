@@ -312,6 +312,22 @@ class RelayService:
             actor_ref=actor,
             delivery_id=None if delivery_id is None else _opaque(delivery_id, "delivery_id", maximum=128),
         )
+
+    def expired_claim_candidates(
+        self, *, delivery_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Read strict recovery candidates without changing delivery state."""
+        query = getattr(self._store, "relay_expired_claim_candidates", None)
+        if not callable(query):
+            raise RelayUnavailableError(
+                "relay expired-claim recovery is not supported by the configured storage"
+            )
+        return query(
+            delivery_id=None
+            if delivery_id is None
+            else _opaque(delivery_id, "delivery_id", maximum=128)
+        )
+
     def message_status(self, *, message_id: str, container_ref: str, actor_ref: str) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
         return self._store.relay_message_status(

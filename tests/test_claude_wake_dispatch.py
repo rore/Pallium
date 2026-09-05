@@ -1164,12 +1164,13 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
         assert reconciler is not None
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
 
-def test_persisted_idle_wakes_once_after_real_app_restart(
+def test_expired_claim_rewakes_once_after_real_app_restart(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
     from fastapi.testclient import TestClient
 
     import app.main as main
+    import storage.sqlite_relay as sqlite_relay
     from app.config import AppConfig
     from app.main import create_app
     from core.relay import RelayService
@@ -1177,6 +1178,13 @@ def test_persisted_idle_wakes_once_after_real_app_restart(
     from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
     from tests.test_claude_code_integration import _load_claude_hook
 
+    clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
     scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
     transport_called = threading.Event()
     transport_calls: list[tuple[str, str]] = []
@@ -1193,7 +1201,7 @@ def test_persisted_idle_wakes_once_after_real_app_restart(
         vector_index=VectorIndexConfig(enabled=False),
     )
     original_start = main.start_claude_wake_reconciler
-    monkeypatch.setattr(main, "start_claude_wake_reconciler", lambda *_: None)
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", lambda *_args, **_kwargs: None)
     with TestClient(create_app(config), client=("127.0.0.1", 50000)) as http_a:
         common = _load_claude_hook("common", monkeypatch)
         monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", tmp_path / "wake")
@@ -1208,9 +1216,14 @@ def test_persisted_idle_wakes_once_after_real_app_restart(
             sender_runtime="codex", sender_session_ref="sender",
             recipient="claude-code:restart-target", payload="persisted wake", **scope,
         )
+        claimed = relay.turn(
+            runtime="claude-code", session_ref="restart-target", **scope,
+        )["deliveries"][0]
         delivery = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
-        assert delivery["state"] == "pending" and delivery["claim_token"] is None and delivery["attempts"] == 0
+        assert claimed["delivery_id"] == delivery["delivery_id"]
+        assert delivery["state"] == "claimed" and delivery["attempts"] == 1
 
+    clock[0] += timedelta(seconds=61)
     monkeypatch.setattr(main, "start_claude_wake_reconciler", original_start)
     app_b = create_app(config)
     with TestClient(app_b, client=("127.0.0.1", 50000)) as http_b:
@@ -1219,8 +1232,8 @@ def test_persisted_idle_wakes_once_after_real_app_restart(
         response = http_b.get(f"/relay/messages/{sent['message_id']}", params=scope)
         assert response.status_code == 200
         delivery = response.json()["deliveries"][0]
-        assert delivery["state"] == "pending"
-        assert delivery["claim_token"] is None and delivery["receipt"] is None and delivery["attempts"] == 0
+        assert delivery["state"] == "claimed"
+        assert delivery["claim_token"] is not None and delivery["attempts"] == 1
         reconciler = app_b.state._claude_wake_reconciler
         assert reconciler is not None
         registry = app_b.state.claude_wake_registry
@@ -1275,7 +1288,7 @@ def test_persisted_idle_wakes_once_after_real_app_restart(
         assert claimed_ids == [[delivery["delivery_id"]]]
         assert states_before_ack == ["claimed"] and acknowledged_ids == [delivery["delivery_id"]]
         delivered = http_b.get(f"/relay/messages/{sent['message_id']}", params=scope).json()["deliveries"][0]
-        assert delivered["state"] == "delivered" and delivered["attempts"] == 1
+        assert delivered["state"] == "delivered" and delivered["attempts"] == 2
 
         stop.main()
         assert capsys.readouterr().err == ""
@@ -1542,3 +1555,130 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
     assert all(combined.count(payload) == 1 for payload in ("one", "two", "three", "four", "five"))
     registration = registry._registrations[("claude-code", "rw007")]
     assert registration.state == "idle" and registration.delivery_id is None
+
+
+def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import storage.sqlite_relay as sqlite_relay
+    from app.dependencies import build_router, recover_expired_relay_wakes
+    from core.relay import RelayService
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    registry = ClaudeWakeRegistry()
+    assert registry.register(**PAYLOAD, idle=False)
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+        claude_wake_registry=registry,
+    ))
+    http = TestClient(app, client=("127.0.0.1", 50000))
+    relay = RelayService(client.app.state.pallium_service._storage)
+    relay.turn(runtime="codex", session_ref="sender", **scope)
+    relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
+    sent = relay.send(
+        sender_runtime="codex",
+        sender_session_ref="sender",
+        recipient="claude-code:" + PAYLOAD["session_ref"],
+        payload="wake after crash ✓",
+        **scope,
+    )
+    claimed = relay.turn(
+        runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope
+    )["deliveries"][0]
+    assert claimed["delivery_id"] == sent["deliveries"][0]["delivery_id"]
+
+    def register(session, container, actor, **kwargs):
+        response = http.post("/internal/claude-wake/register", json={
+            **PAYLOAD,
+            "session_ref": session,
+            "container_ref": container,
+            "actor_ref": actor,
+            "idle": kwargs.get("idle", False),
+        })
+        return response.status_code == 204
+
+    def relay_request(method, path, body, *, timeout=0.75):
+        response = http.request(method, path, json=body)
+        assert response.status_code == 200, response.text
+        return response.json() if response.content else None
+
+    def acknowledge(deliveries, **_kwargs):
+        acknowledged = []
+        for delivery in deliveries:
+            response = http.post("/relay/deliveries/ack", json={
+                "delivery_id": delivery["delivery_id"],
+                "claim_token": delivery["claim_token"],
+                **scope,
+            })
+            assert response.status_code == 200
+            acknowledged.append(delivery)
+        return acknowledged
+
+    stop = _load_claude_hook("stop", monkeypatch)
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda: scope["actor_ref"])
+    monkeypatch.setattr(stop, "register_claude_wake", register)
+    monkeypatch.setattr(stop, "relay_request", relay_request)
+    monkeypatch.setattr(stop, "acknowledge_relay", acknowledge)
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {
+        "session_id": PAYLOAD["session_ref"],
+        "cwd": str(tmp_path),
+        "transcript_path": "",
+    })
+    stop.main()
+    assert registry.recovery_candidates()[0]["state"] == "idle"
+
+    transported = threading.Event()
+    transport_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.claude_wake.claude_wake_transport",
+        lambda path, token: transport_calls.append((path, token)) or transported.set() or True,
+    )
+    clock[0] += timedelta(seconds=61)
+    recover_expired_relay_wakes(relay, registry)
+    assert transported.wait(timeout=0.5)
+    assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+
+    prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
+    monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda: scope["actor_ref"])
+    monkeypatch.setattr(prompt, "register_claude_wake", register)
+    monkeypatch.setattr(prompt, "relay_request", relay_request)
+    monkeypatch.setattr(prompt, "acknowledge_relay", acknowledge)
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(
+        prompt,
+        "pallium_request",
+        lambda *_args, **_kwargs: pytest.fail("Relay recovery must not ingest synthetic memory"),
+    )
+    monkeypatch.setattr(prompt, "read_hook_input", lambda: {
+        "session_id": PAYLOAD["session_ref"],
+        "cwd": str(tmp_path),
+        "prompt": "Pallium Relay wake: a persisted delivery may be pending.",
+    })
+
+    with pytest.raises(SystemExit):
+        prompt.main()
+
+    assert "wake after crash ✓" in capsys.readouterr().out
+    delivered = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+    assert delivered["state"] == "delivered" and delivered["attempts"] == 2
+    transport_calls.clear()
+    recover_expired_relay_wakes(relay, registry)
+    assert transport_calls == []
+    assert relay.turn(
+        runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope
+    )["deliveries"] == []

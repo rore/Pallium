@@ -188,20 +188,40 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
         )
 
 
-class ClaudeWakeReconciler:
-    """One app-local Event loop; no Relay claim or ACK path exists here."""
+_CLAIM_RECOVERY_INTERVAL_SECONDS = 30.0
 
-    def __init__(self, registry: ClaudeWakeRegistry, relay_service: Any, *, interval_seconds: float = 1.0) -> None:
+
+class ClaudeWakeReconciler:
+    """One app-local event loop for Claude capability and Relay claim recovery."""
+
+    def __init__(
+        self,
+        registry: ClaudeWakeRegistry,
+        relay_service: Any,
+        *,
+        claim_recovery: Callable[[], None] | None = None,
+        interval_seconds: float = 1.0,
+        claim_interval_seconds: float = _CLAIM_RECOVERY_INTERVAL_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._registry = registry
         self._relay_service = relay_service
+        self._claim_recovery = claim_recovery
         self._interval_seconds = interval_seconds
+        self._claim_interval_seconds = claim_interval_seconds
+        self._clock = clock
+        self._next_claim_recovery = 0.0
         self._event = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
         if self._thread is None:
-            self._thread = threading.Thread(target=self._run, name="pallium-claude-wake-reconcile", daemon=True)
+            self._thread = threading.Thread(
+                target=self._run,
+                name="pallium-relay-wake-reconcile",
+                daemon=True,
+            )
             self._thread.start()
         self.signal()
 
@@ -218,12 +238,33 @@ class ClaudeWakeReconciler:
         while not self._stop.is_set():
             self._event.wait(timeout=self._interval_seconds)
             self._event.clear()
-            if not self._stop.is_set():
+            if self._stop.is_set():
+                continue
+            try:
                 recover_claude_relay_wakes(self._registry, self._relay_service)
+            except Exception:
+                logger.exception("Claude wake reconciliation failed")
+            now = self._clock()
+            if self._claim_recovery is None or now < self._next_claim_recovery:
+                continue
+            self._next_claim_recovery = now + self._claim_interval_seconds
+            try:
+                self._claim_recovery()
+            except Exception:
+                logger.exception("Relay expired-claim sweep failed")
 
-def start_claude_wake_reconciler(registry: ClaudeWakeRegistry, relay_service: Any) -> ClaudeWakeReconciler | None:
-    if not registry.persistent:
-        return None
-    reconciler = ClaudeWakeReconciler(registry, relay_service)
+
+def start_claude_wake_reconciler(
+    registry: ClaudeWakeRegistry,
+    relay_service: Any,
+    *,
+    claim_recovery: Callable[[], None] | None = None,
+) -> ClaudeWakeReconciler:
+    # ponytail: reuse one service loop; split by runtime only if recovery workloads diverge.
+    reconciler = ClaudeWakeReconciler(
+        registry,
+        relay_service,
+        claim_recovery=claim_recovery,
+    )
     reconciler.start()
     return reconciler
