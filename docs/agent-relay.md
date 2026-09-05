@@ -28,8 +28,9 @@ informed. A delivered message can start a paid model turn on supported targets.
 ## Limits
 
 Messages contain at most 1,500 Unicode code points and expire after 24 hours by
-default. HTTP and hook turns claim at most three messages unless
-`max_messages=0` is explicit; MCP receive uses that drain-all value.
+default. HTTP and hook turns claim three messages by default; a positive
+`max_messages` sets an explicit cap, while `0` means unlimited. MCP receive
+explicitly uses the drain-all value.
 
 Codex and Claude hooks claim within 2,360 characters, reserving 40 characters
 for a compact backlog notice inside their 2,400-character output budget.
@@ -101,8 +102,8 @@ session ID.
 
 - message and reply text: at most 1,500 Unicode code points
 - default expiry: 24 hours; allowed range is 60 seconds to 7 days
-- per-turn delivery: at most three complete messages within a 2,400-character
-  Relay budget
+- per-turn delivery: three complete messages by default; positive `max_messages`
+  sets a cap and `0` means unlimited
 - storage: local persistent SQLite state
 - security boundary: local single-user coordination
 
