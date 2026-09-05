@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -59,8 +59,11 @@
 
 - Deterministic S2 + MCP gate: 263 passed, 2 skipped; four pre-existing Pydantic forward-reference warnings.
 - Post-review focused wake/Relay gate: 116 passed, 2 skipped; exact two-candidate recovery binding regression passes.
-- git diff --check clean. Workflow checker has no blocking failure; only shadow advisory pi-review remains for PR review.
+- git diff --check clean. Workflow checker has no blocking failure; only the shadow API-review advisory remains for PR review.
+- Installed service restarted from stable commit 657b7b8e; /health is ok with vector and embedding ready, /status reports ingestion ok and zero pending, and /debug/queue/health reports no pending, unclaimable, or leased work.
+- Live Relay dogfood: codex:@relaydev and claude-code:@claude_arch each woke automatically, claimed once, atomically replied/ACKed, and reached delivered with destination_health=active. Claude explicitly confirmed no human prompt and exact attribution.
 
 ## Result review
 
 - Clean-context reviewer found restart feedback omission, transient feedback divergence, and a late-bound recovery closure. All three were fixed at the shared recovery path with deterministic regressions; final narrow re-review reports no blocker.
+- Installed Claude witness passed the supported UserPromptSubmit-rendered production path. Its stated no-hook boundary is outside the normal integration path. Relaydev's reply summary omitted health, while the live status surface returned it; no S2 formatter change is required.
