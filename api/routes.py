@@ -491,6 +491,17 @@ def create_router(
                 raise ValueError
             if not wake_registry.register(**payload):
                 raise HTTPException(status_code=409, detail="registration rejected")
+            if relay_service is not None:
+                try:
+                    _relay_call(lambda: relay_service.mark_active(
+                        runtime=payload["runtime"],
+                        session_ref=payload["session_ref"],
+                        container_ref=payload["container_ref"],
+                        actor_ref=payload["actor_ref"],
+                    ))
+                except HTTPException as exc:
+                    if exc.status_code != 404:
+                        raise
         except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="invalid registration")
         return Response(status_code=204)

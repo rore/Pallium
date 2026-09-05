@@ -1306,3 +1306,60 @@ def test_unreachable_callback_is_aware_and_exception_safe(monkeypatch: pytest.Mo
     ))
     assert len(observed) == 1 and observed[0].tzinfo is not None
     assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"])].state == "unreachable"
+
+def test_real_router_unreachable_feedback_and_registration_self_heal(
+    client, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.dependencies import build_router
+    from core.relay import RelayService
+
+    registry = ClaudeWakeRegistry()
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+        claude_wake_registry=registry,
+    ))
+    http = TestClient(app, client=("127.0.0.1", 50000))
+    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    for runtime, session_ref in (("claude-code", "health-target"), ("codex", "sender")):
+        assert http.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": session_ref, **scope,
+        }).status_code == 200
+
+    registration = {**PAYLOAD, "session_ref": "health-target", "idle": True}
+    assert http.post("/internal/claude-wake/register", json=registration).status_code == 204
+    persisted = threading.Event()
+    original_mark = RelayService.mark_unreachable
+
+    def mark_and_signal(service: RelayService, **kwargs: object) -> bool:
+        changed = original_mark(service, **kwargs)
+        persisted.set()
+        return changed
+
+    monkeypatch.setattr(RelayService, "mark_unreachable", mark_and_signal)
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", lambda *_: "unreachable")
+    sent = http.post("/relay/messages", json={
+        "sender_runtime": "codex",
+        "sender_session_ref": "sender",
+        "recipient": "claude-code:health-target",
+        "payload": "health feedback",
+        **scope,
+    })
+    assert sent.status_code == 200
+    assert persisted.wait(timeout=1)
+    status = http.get(f"/relay/messages/{sent.json()['message_id']}", params=scope).json()
+    assert status["deliveries"][0]["state"] == "pending"
+    assert status["deliveries"][0]["destination_health"] == "unreachable"
+    assert registry._registrations[("claude-code", "health-target")].state == "unreachable"
+
+    assert http.post("/internal/claude-wake/register", json=registration).status_code == 204
+    sessions = http.get(
+        "/relay/sessions", params={**scope, "include_inactive": True}
+    ).json()
+    target = next(row for row in sessions if row["session_ref"] == "health-target")
+    assert target["destination_health"] == "active"
+    assert registry._registrations[("claude-code", "health-target")].state == "idle"

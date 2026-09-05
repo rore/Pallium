@@ -43,6 +43,7 @@
 - Dogfood incident: restarting the installed service while a delegated write was incomplete imported transient invalid syntax. The required wrapper also printed success before readiness. Recovered by syntax-checking, restarting, and verifying health/status/queue; follow-up operations hardening must add pre-stop syntax preflight and bounded post-start endpoint verification.
 - Slice B3: public session and delivery responses expose destination health separately from lifecycle/delivery state; closed sessions report no advisory health. Relay caller-surface E2E remains 38 passing.
 - Slice C1: durable registry unreachable transitions now notify the scheduler outside the registry lock; the scheduler supplies an aware attempt timestamp and contains callback failures. Focused wake suites pass (75 passed, 2 skipped).
+- Slice C2: the production router now persists strict-CAS Relay unreachable feedback after durable registry transition, and successful exact Claude registration self-heals existing Relay destination health. Deterministic real-router lifecycle coverage passes; combined composition/Relay suites pass (77 passed, 2 skipped).
 
 ## Plan review
 
