@@ -10,7 +10,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-plugin-"));
@@ -450,13 +449,8 @@ test("session.deleted closes Relay with pinned scope and removes the pin", async
 test("assistant ingest includes structural work references", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-plugin-work-ref-"));
   try {
-    execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
-    execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
-    execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: dir });
-    fs.writeFileSync(path.join(dir, "README.md"), "test");
-    execFileSync("git", ["add", "README.md"], { cwd: dir });
-    execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
-    execFileSync("git", ["checkout", "-b", "fix/item"], { cwd: dir, stdio: "ignore" });
+    fs.mkdirSync(path.join(dir, ".git"));
+    fs.writeFileSync(path.join(dir, ".git", "HEAD"), "ref: refs/heads/fix/item\n");
     const tasks = path.join(dir, ".agent-workflow", "tasks");
     fs.mkdirSync(tasks, { recursive: true });
     fs.writeFileSync(
@@ -470,11 +464,32 @@ test("assistant ingest includes structural work references", async () => {
     const hooks = await loadPlugin({ client: makeClient(messages), directory: dir });
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: "ses-work-ref" } } });
     const item = fetchCalls.find((call) => call.url.includes("/items")).body[0];
-    assert.deepEqual(item.metadata.pallium_work_refs, [
-      "git-branch:fix/item",
-      "agent-workflow:item",
-    ]);
+    if (process.platform === "win32") {
+      assert.equal(item.metadata?.pallium_work_refs, undefined);
+    } else {
+      assert.deepEqual(item.metadata.pallium_work_refs, [
+        "git-branch:fix/item",
+        "agent-workflow:item",
+      ]);
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+
+test("chat.message does not suppress ingestion for an oversized explicit-ref list", async () => {
+  installFetch({ "/item-and-query": oneBlock });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  const refs = Array(200000).fill("KEEP");
+  await hooks["chat.message"](
+    { metadata: { pallium_work_refs: refs } },
+    {
+      message: { sessionID: "sesHugeRefs", role: "user" },
+      parts: [{ type: "text", text: "Continue this substantial task safely" }],
+    },
+  );
+  const request = fetchCalls.find((call) => call.url.includes("/item-and-query"));
+  assert.ok(request, "oversized explicit refs must not suppress ordinary ingestion");
+  assert.equal(request.body.metadata.pallium_work_refs.length, refs.length);
 });

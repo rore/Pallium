@@ -324,113 +324,199 @@ test("formatRelay preserves complete attributed messages and enforces budget", (
 });
 
 
-test("buildWorkRefsMetadata caches Git state but rechecks records and HEAD", () => {
+test("buildWorkRefsMetadata is filesystem-only and rechecks state", { skip: process.platform === "win32" }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-work-ref-"));
-  const originalPath = process.env.PATH;
   try {
-    execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
-    execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
-    execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: dir });
-    fs.writeFileSync(path.join(dir, "README.md"), "test");
-    execFileSync("git", ["add", "README.md"], { cwd: dir });
-    execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
-    execFileSync("git", ["checkout", "-b", "demo/item"], { cwd: dir, stdio: "ignore" });
+    fs.mkdirSync(path.join(dir, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".git", "HEAD"), "ref: refs/heads/demo/item\r\n");
     const tasks = path.join(dir, ".agent-workflow", "tasks");
-    const record = path.join(tasks, "item.md");
     fs.mkdirSync(tasks, { recursive: true });
-    fs.writeFileSync(
-      record,
-      "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->",
-    );
+    const record = path.join(tasks, "item.md");
+    fs.writeFileSync(record, "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->");
+    const oldPath = process.env.PATH; process.env.PATH = "";
+    try { assert.deepEqual(P.buildWorkRefsMetadata(dir, ["Ticket_Ünicode"]), { pallium_work_refs: ["git-branch:demo/item", "agent-workflow:item", "Ticket_Ünicode"] }); } finally { process.env.PATH = oldPath; }
+    fs.rmSync(record); assert.deepEqual(P.buildWorkRefsMetadata(dir), { pallium_work_refs: ["git-branch:demo/item"] });
+    fs.writeFileSync(record, "<!-- agent-workflow:end -->\n<!-- agent-workflow:start -->"); assert.deepEqual(P.buildWorkRefsMetadata(dir), { pallium_work_refs: ["git-branch:demo/item"] });
+    fs.writeFileSync(record, "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->"); assert.deepEqual(P.buildWorkRefsMetadata(dir), { pallium_work_refs: ["git-branch:demo/item", "agent-workflow:item"] });
+    fs.rmSync(path.join(dir, ".git", "HEAD")); assert.deepEqual(P.buildWorkRefsMetadata(dir, ["ISSUE-2"]), { pallium_work_refs: ["ISSUE-2"] });
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
-    assert.deepEqual(P.buildWorkRefsMetadata(dir, ["Ticket_Ünicode"]), {
-      pallium_work_refs: [
-        "git-branch:demo/item",
-        "agent-workflow:item",
-        "Ticket_Ünicode",
-      ],
-    });
+test("buildWorkRefsMetadata handles linked gitdirs and rejects unsafe cwd", { skip: process.platform === "win32" }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-worktree-"));
+  try {
+    fs.mkdirSync(path.join(dir, "gitdir", "one"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".git"), `gitdir: ${path.join(dir, "gitdir", "one")}\n`);
+    fs.writeFileSync(path.join(dir, "gitdir", "one", "HEAD"), "ref: refs/heads/feature/one\n");
+    const tasks = path.join(dir, ".agent-workflow", "tasks"); fs.mkdirSync(tasks, { recursive: true });
+    fs.writeFileSync(path.join(tasks, "one.md"), "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->");
+    assert.deepEqual(P.buildWorkRefsMetadata(dir), { pallium_work_refs: ["git-branch:feature/one", "agent-workflow:one"] });
+    for (const cwd of ["relative", "", "x".repeat(4097), "\\\\server\\share", "\\\\?\\C:\\device"]) assert.deepEqual(P.buildWorkRefsMetadata(cwd), {});
+    fs.writeFileSync(path.join(dir, "gitdir", "one", "HEAD"), Buffer.from([0xff])); assert.deepEqual(P.buildWorkRefsMetadata(dir), {});
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
-    process.env.PATH = "";
-    assert.deepEqual(P.buildWorkRefsMetadata(dir, ["NEXT-2"]), {
-      pallium_work_refs: ["git-branch:demo/item", "agent-workflow:item", "NEXT-2"],
-    });
-    fs.rmSync(record);
-    assert.deepEqual(P.buildWorkRefsMetadata(dir), {
-      pallium_work_refs: ["git-branch:demo/item"],
-    });
-    fs.writeFileSync(record, "<!-- agent-workflow:start -->");
-    assert.deepEqual(P.buildWorkRefsMetadata(dir), {
-      pallium_work_refs: ["git-branch:demo/item"],
-    });
-    fs.writeFileSync(
-      record,
-      "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->",
-    );
-    assert.deepEqual(P.buildWorkRefsMetadata(dir), {
-      pallium_work_refs: ["git-branch:demo/item", "agent-workflow:item"],
-    });
+test("buildWorkRefsMetadata rejects malformed bounded metadata and deep discovery", { skip: process.platform === "win32" }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-defensive-"));
+  try {
+    const git = path.join(dir, ".git");
+    fs.mkdirSync(git);
+    const head = path.join(git, "HEAD");
+    const explicit = { pallium_work_refs: ["KEEP"] };
+    for (const value of [
+      "deadbeef\n",
+      "ref: refs/tags/v1\n",
+      "ref: refs/heads/main\n",
+      "ref: refs/heads/feature/../escape\n",
+      "ref: refs/heads/bad branch\n",
+      "ref: refs/heads/feature/item\nsecond\n",
+    ]) {
+      fs.writeFileSync(head, value);
+      assert.deepEqual(P.buildWorkRefsMetadata(dir, ["KEEP"]), explicit);
+    }
+    fs.writeFileSync(head, Buffer.alloc(4097, 97));
+    assert.deepEqual(P.buildWorkRefsMetadata(dir, ["KEEP"]), explicit);
+    fs.writeFileSync(head, Buffer.from([0xff, 0xfe]));
+    assert.deepEqual(P.buildWorkRefsMetadata(dir, ["KEEP"]), explicit);
 
-    process.env.PATH = originalPath;
-    execFileSync("git", ["checkout", "main"], { cwd: dir, stdio: "ignore" });
-    assert.deepEqual(P.buildWorkRefsMetadata(dir, ["ISSUE-1"]), {
-      pallium_work_refs: ["ISSUE-1"],
-    });
+    fs.writeFileSync(head, "ref: refs/heads/feature/item\n");
+    const tasks = path.join(dir, ".agent-workflow", "tasks");
+    fs.mkdirSync(tasks, { recursive: true });
+    const record = path.join(tasks, "item.md");
+    fs.writeFileSync(record, Buffer.alloc(256 * 1024 + 1, 120));
+    assert.deepEqual(P.buildWorkRefsMetadata(dir), { pallium_work_refs: ["git-branch:feature/item"] });
+    fs.writeFileSync(record, Buffer.from([0xff]));
+    assert.deepEqual(P.buildWorkRefsMetadata(dir), { pallium_work_refs: ["git-branch:feature/item"] });
 
-    const head = path.join(dir, ".git", "HEAD");
-    const missingHead = path.join(dir, ".git", "HEAD.missing");
-    fs.renameSync(head, missingHead);
-    assert.deepEqual(P.buildWorkRefsMetadata(dir, ["ISSUE-2"]), {
-      pallium_work_refs: ["ISSUE-2"],
-    });
-    fs.renameSync(missingHead, head);
+    let nested = dir;
+    for (let i = 0; i < 65; i++) {
+      nested = path.join(nested, "d");
+      fs.mkdirSync(nested);
+    }
+    assert.deepEqual(P.buildWorkRefsMetadata(nested, ["KEEP"]), explicit);
+    assert.deepEqual(P.buildWorkRefsMetadata(path.join(dir, "missing"), ["KEEP"]), explicit);
   } finally {
-    process.env.PATH = originalPath;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("buildWorkRefsMetadata does not negative-cache and isolates linked worktrees", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-worktrees-"));
-  const one = `${dir}-one`;
-  const two = `${dir}-two`;
+test("buildWorkRefsMetadata rejects malformed gitdir pointers and symlinks", { skip: process.platform === "win32" }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-pointer-"));
   try {
-    assert.deepEqual(P.buildWorkRefsMetadata(dir), {});
-    execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
-    execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
-    execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: dir });
-    fs.writeFileSync(path.join(dir, "README.md"), "test");
-    execFileSync("git", ["add", "README.md"], { cwd: dir });
-    execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
-    execFileSync("git", ["checkout", "-b", "feature/init"], { cwd: dir, stdio: "ignore" });
-    fs.mkdirSync(path.join(dir, ".agent-workflow", "tasks"), { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, ".agent-workflow", "tasks", "init.md"),
-      "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->",
-    );
-    assert.deepEqual(P.buildWorkRefsMetadata(dir), {
-      pallium_work_refs: ["git-branch:feature/init", "agent-workflow:init"],
-    });
+    const marker = path.join(dir, ".git");
+    for (const value of [
+      "gitdir:",
+      "other: metadata\n",
+      "gitdir: relative\nextra\n",
+      "gitdir: " + "\\\\server\\share\\repo" + "\n",
+      "gitdir: " + "x".repeat(4097),
+    ]) {
+      fs.writeFileSync(marker, value);
+      assert.deepEqual(P.buildWorkRefsMetadata(dir, ["KEEP"]), { pallium_work_refs: ["KEEP"] });
+    }
 
-    execFileSync("git", ["worktree", "add", "-b", "feature/one", one, "main"], { cwd: dir, stdio: "ignore" });
-    execFileSync("git", ["worktree", "add", "-b", "feature/two", two, "main"], { cwd: dir, stdio: "ignore" });
-    for (const [workspace, slug] of [[one, "one"], [two, "two"]]) {
-      const tasks = path.join(workspace, ".agent-workflow", "tasks");
-      fs.mkdirSync(tasks, { recursive: true });
-      fs.writeFileSync(
-        path.join(tasks, `${slug}.md`),
-        "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->",
-      );
-      assert.deepEqual(P.buildWorkRefsMetadata(workspace), {
-        pallium_work_refs: [
-          `git-branch:feature/${slug}`,
-          `agent-workflow:${slug}`,
-        ],
-      });
+    const target = path.join(dir, "metadata");
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, "HEAD"), "ref: refs/heads/fix/link\n");
+    fs.writeFileSync(marker, "gitdir: metadata\n");
+    assert.deepEqual(P.buildWorkRefsMetadata(dir), { pallium_work_refs: ["git-branch:fix/link"] });
+
+    fs.rmSync(marker);
+    try {
+      fs.symlinkSync(target, marker, "junction");
+      assert.deepEqual(P.buildWorkRefsMetadata(dir, ["KEEP"]), { pallium_work_refs: ["KEEP"] });
+    } catch (error) {
+      if (!["EPERM", "EACCES", "UNKNOWN"].includes(error?.code)) throw error;
     }
   } finally {
-    fs.rmSync(one, { recursive: true, force: true });
-    fs.rmSync(two, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("buildWorkRefsMetadata rejects intermediate symlink components", { skip: process.platform === "win32" }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-components-"));
+  try {
+    const real = path.join(dir, "real");
+    fs.mkdirSync(path.join(real, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(real, ".git", "HEAD"), "ref: refs/heads/fix/link\n");
+    fs.mkdirSync(path.join(real, "nested"));
+    const alias = path.join(dir, "alias");
+    try {
+      fs.symlinkSync(real, alias, "junction");
+    } catch (error) {
+      if (["EPERM", "EACCES", "UNKNOWN"].includes(error?.code)) return;
+      throw error;
+    }
+    assert.deepEqual(P.buildWorkRefsMetadata(path.join(alias, "nested"), ["KEEP"]), { pallium_work_refs: ["KEEP"] });
+
+    const checkout = path.join(dir, "checkout");
+    const metadata = path.join(dir, "metadata");
+    fs.mkdirSync(checkout);
+    fs.mkdirSync(path.join(metadata, "one"), { recursive: true });
+    fs.writeFileSync(path.join(metadata, "one", "HEAD"), "ref: refs/heads/fix/link\n");
+    const metadataAlias = path.join(dir, "metadata-alias");
+    fs.symlinkSync(metadata, metadataAlias, "junction");
+    fs.writeFileSync(path.join(checkout, ".git"), `gitdir: ${path.join(metadataAlias, "one")}\n`);
+    assert.deepEqual(P.buildWorkRefsMetadata(checkout, ["KEEP"]), { pallium_work_refs: ["KEEP"] });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("buildWorkRefsMetadata performs no structural filesystem access on Windows", { skip: process.platform !== "win32" }, () => {
+  const original = fs.lstatSync;
+  fs.lstatSync = () => { throw new Error("structural filesystem access"); };
+  try {
+    assert.deepEqual(P.buildWorkRefsMetadata("C:\\repo", ["KEEP"]), { pallium_work_refs: ["KEEP"] });
+    assert.deepEqual(P.buildWorkRefsMetadata("C:\\repo"), {});
+  } finally {
+    fs.lstatSync = original;
+  }
+});
+
+
+test("buildWorkRefsMetadata rejects BOM, dot branches, Git overrides, and HEAD races", { skip: process.platform === "win32" }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-parity-"));
+  try {
+    const git = path.join(dir, ".git");
+    fs.mkdirSync(git);
+    const head = path.join(git, "HEAD");
+    for (const value of [
+      "\ufeffref: refs/heads/fix/item\n",
+      "ref: refs/heads/fix/.hidden\n",
+    ]) {
+      fs.writeFileSync(head, value);
+      assert.deepEqual(P.buildWorkRefsMetadata(dir, ["KEEP"]), { pallium_work_refs: ["KEEP"] });
+    }
+
+    fs.writeFileSync(head, "ref: refs/heads/fix/item\n");
+    const previous = process.env.GIT_DIR;
+    process.env.GIT_DIR = path.join(dir, "elsewhere");
+    try {
+      assert.deepEqual(P.buildWorkRefsMetadata(dir, ["KEEP"]), { pallium_work_refs: ["KEEP"] });
+    } finally {
+      if (previous === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = previous;
+    }
+
+    const originalRead = fs.readSync;
+    let changed = false;
+    fs.readSync = function (...args) {
+      const length = originalRead.apply(this, args);
+      if (!changed) {
+        changed = true;
+        fs.writeFileSync(head, "ref: refs/heads/fix/other\n");
+      }
+      return length;
+    };
+    try {
+      assert.deepEqual(P.buildWorkRefsMetadata(dir, ["KEEP"]), { pallium_work_refs: ["KEEP"] });
+    } finally {
+      fs.readSync = originalRead;
+    }
+  } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -236,6 +236,7 @@ def test_codex_stop_hook_ingests_quietly(monkeypatch: pytest.MonkeyPatch) -> Non
         has_productive_action=False,
     ))
     monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _: None)
+    monkeypatch.setattr(stop, "build_work_refs_metadata", lambda *_: {})
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session_id: "git:github.com/rore/pallium")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda: "Rotem")
 
