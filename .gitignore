@@ -57,6 +57,7 @@ tmp/
 .claude/worktrees/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+.agent-workflow/.hooks.log
 .worktrees/
 vector_index*
 pallium_vector.index*
