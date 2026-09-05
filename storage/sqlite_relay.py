@@ -694,8 +694,15 @@ class SQLiteRelayMixin:
                 statement = statement.where(RelayDeliveryRecord.id == delivery_id)
             else:
                 statement = statement.where(
-                    RelayDeliveryRecord.state == "pending",
                     RelayMessageRecord.expires_at > current,
+                    or_(
+                        RelayDeliveryRecord.state == "pending",
+                        and_(
+                            RelayDeliveryRecord.state == "claimed",
+                            RelayDeliveryRecord.lease_expires_at.is_not(None),
+                            RelayDeliveryRecord.lease_expires_at <= current,
+                        ),
+                    ),
                 )
             rows = db.execute(statement)
             row = next(
@@ -710,6 +717,70 @@ class SQLiteRelayMixin:
             delivery, message = row
             state = "expired" if _now(message.expires_at) <= current and delivery.state in {"pending", "claimed"} else ("pending" if delivery.state == "claimed" and delivery.lease_expires_at is not None and _now(delivery.lease_expires_at) <= current else delivery.state)
             return {"delivery_id": delivery.id, "state": state}
+
+    def relay_expired_claim_candidates(
+        self,
+        *,
+        delivery_id: str | None = None,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return one safe expired claim per active exact session without mutation."""
+        current = _now(now)
+        with self._relay_session_factory() as db:
+            statement = (
+                select(RelayDeliveryRecord, RelayMessageRecord)
+                .join(
+                    RelayMessageRecord,
+                    RelayMessageRecord.id == RelayDeliveryRecord.message_id,
+                )
+                .join(
+                    RelaySessionRecord,
+                    and_(
+                        RelaySessionRecord.runtime == RelayDeliveryRecord.recipient_runtime,
+                        RelaySessionRecord.session_ref == RelayDeliveryRecord.recipient_session_ref,
+                        RelaySessionRecord.container_ref == RelayMessageRecord.container_ref,
+                        RelaySessionRecord.actor_ref == RelayMessageRecord.actor_ref,
+                    ),
+                )
+                .where(
+                    RelayDeliveryRecord.recipient_runtime.in_(("codex", "claude-code")),
+                    RelayDeliveryRecord.state == "claimed",
+                    RelayDeliveryRecord.lease_expires_at.is_not(None),
+                    RelayDeliveryRecord.lease_expires_at <= current,
+                    RelayMessageRecord.expires_at > current,
+                    RelaySessionRecord.state == "active",
+                )
+                .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
+            )
+            if delivery_id is not None:
+                statement = statement.where(RelayDeliveryRecord.id == delivery_id)
+
+            candidates: list[dict[str, Any]] = []
+            seen: set[tuple[str, str, str, str]] = set()
+            for delivery, message in db.execute(statement):
+                if not _render_safe(message.payload):
+                    continue
+                key = (
+                    message.container_ref,
+                    message.actor_ref,
+                    delivery.recipient_runtime,
+                    delivery.recipient_session_ref,
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append(
+                    {
+                        "delivery_id": delivery.id,
+                        "state": "pending",
+                        "recipient_runtime": delivery.recipient_runtime,
+                        "recipient_session_ref": delivery.recipient_session_ref,
+                        "container_ref": message.container_ref,
+                        "actor_ref": message.actor_ref,
+                    }
+                )
+            return candidates
+
     def relay_message_status(
         self,
         *,

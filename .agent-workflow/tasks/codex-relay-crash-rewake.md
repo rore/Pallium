@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -39,9 +39,17 @@
 - 2026-09-05: Clean-context redline classified intended storage/core/app paths gray, tests/docs blue, with no boundary violation/checkpoint. Risk remains High by exact-once persistence judgment; plan is blocked only for clean-context review.
 - 2026-09-05: Clean-context plan review blocked the Claude-gated draft, then accepted the amended Relay-wide, startup-independent, bounded-retry design. Standing user approval satisfies the High-risk gate; State moved to Ready to implement before code edits.
 
+- 2026-09-05: Implemented one strict read-only expired-claim query over existing Relay rows, one candidate per active exact Codex/Claude session, with render safety, message expiry, closed-session, scope, and optional delivery recheck gates. Ordinary Claude pending selection now treats an expired claim as pending without changing exact-ID cleanup semantics.
+- 2026-09-05: Reused the existing app-local reconciler and runtime dispatchers. The loop starts independently of Claude persistence, isolates Claude capability failures, sweeps at startup and every 30 seconds, exact-rechecks before dispatch, and leaves failed launches durable for the next bounded retry.
+- 2026-09-05: Added controlled-clock actual HTTP/hook E2E for Codex and Claude crash-after-claim, real Claude Stop idle transition, both full-app restart paths, Unicode maximum payload, duplicate/terminal suppression, strict exclusions, read-only state, candidate error isolation, and retry cadence. No schema, API, dependency, identity, second thread, wall-clock sleep, or hook/MCP mixing was added.
+- 2026-09-05: `apply_patch` was unavailable on this Windows host (CreateProcess error); edits used deterministic replacements limited to the named RW-008 files, per local AGENTS.md fallback.
+
 ## Evidence
 
-- Canonical roadmap row RW-008 records crash-after-claim lease recovery without unattended re-wake as the next open correctness bug.
+- Focused Relay wake/hook/durability/registration/integration suite: 237 passed, 2 platform skips in 17.18 seconds; all newly added tests pass.
+- Import boundary report, agent-workflow check, Python compilation, and `git diff --check` are clean. Ruff is not installed in the project environment, so no dependency was added solely to run it.
+- Full-suite execution found one unrelated pre-existing local-config isolation failure in `tests/test_config.py::test_prompt_variants_legacy_fallback_unaffected`: the test reads the user's default Pallium config. The same unchanged test fails alone on `main`; RW-008 focused coverage is clean.
+- Clean-context final review initially required a Codex startup-surface restart E2E; that test was added and the reviewer then accepted the implementation.
 
 ## Plan review
 

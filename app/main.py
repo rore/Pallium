@@ -19,7 +19,13 @@ from app.asyncio_windows_accept import apply_patch as _apply_accept_patch
 from app.config import AppConfig
 from app.dashboard import mount_dashboard
 from app.claude_wake import start_claude_wake_reconciler
-from app.dependencies import build_claude_wake_registry, build_router, build_service, build_storage_provider
+from app.dependencies import (
+    build_claude_wake_registry,
+    build_router,
+    build_service,
+    build_storage_provider,
+    recover_expired_relay_wakes,
+)
 from app.snapshot import resolve_live_db_path
 from core.observability import QueryStats
 from core.relay import RelayService, RelayUnavailableError
@@ -231,8 +237,13 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         claude_wake_reconciler = None
         try:
             claude_wake_registry.recover_intents()
+            relay_service = RelayService(build_result.storage)
             claude_wake_reconciler = start_claude_wake_reconciler(
-                claude_wake_registry, RelayService(build_result.storage),
+                claude_wake_registry,
+                relay_service,
+                claim_recovery=lambda: recover_expired_relay_wakes(
+                    relay_service, claude_wake_registry
+                ),
             )
             claude_wake_registry.set_reconcile_signal(
                 None if claude_wake_reconciler is None else claude_wake_reconciler.signal,

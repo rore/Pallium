@@ -523,6 +523,73 @@ def build_claude_wake_registry() -> ClaudeWakeRegistry:
     return registry
 
 
+def dispatch_relay_wake(
+    result: object,
+    scope: object,
+    *,
+    relay_service: RelayService | None,
+    registry: ClaudeWakeRegistry,
+) -> None:
+    """Route a persisted Relay candidate through its existing runtime adapter."""
+    if relay_service is None or not isinstance(result, dict) or not isinstance(scope, dict):
+        return
+    deliveries = result.get("deliveries")
+    if not isinstance(deliveries, list) or not deliveries or not isinstance(deliveries[0], dict):
+        return
+    runtime = deliveries[0].get("recipient_runtime")
+    if runtime == "claude-code":
+        registry.signal_reconcile()
+        schedule_claude_relay_wake(
+            result,
+            scope,
+            registry=registry,
+            on_unreachable=lambda attempt_started_at: relay_service.mark_unreachable(
+                runtime="claude-code",
+                session_ref=deliveries[0]["recipient_session_ref"],
+                container_ref=scope["container_ref"],
+                actor_ref=scope["actor_ref"],
+                attempt_started_at=attempt_started_at,
+            ),
+        )
+    elif runtime == "codex":
+        schedule_codex_relay_wake(result, scope)
+
+
+def recover_expired_relay_wakes(
+    relay_service: RelayService,
+    registry: ClaudeWakeRegistry,
+) -> None:
+    """Recheck and dispatch expired claims without changing Relay state."""
+    for candidate in relay_service.expired_claim_candidates():
+        try:
+            current = relay_service.expired_claim_candidates(
+                delivery_id=candidate["delivery_id"]
+            )
+            if current != [candidate]:
+                continue
+            runtime = candidate["recipient_runtime"]
+            session_ref = candidate["recipient_session_ref"]
+            dispatch_relay_wake(
+                {
+                    "recipient": f"{runtime}:{session_ref}",
+                    "deliveries": [{
+                        "delivery_id": candidate["delivery_id"],
+                        "state": candidate["state"],
+                        "recipient_runtime": runtime,
+                        "recipient_session_ref": session_ref,
+                    }],
+                },
+                {
+                    "container_ref": candidate["container_ref"],
+                    "actor_ref": candidate["actor_ref"],
+                },
+                relay_service=relay_service,
+                registry=registry,
+            )
+        except Exception:
+            logger.exception("Relay expired-claim recovery failed")
+
+
 def build_router(
     service: PalliumService,
     *,
@@ -538,30 +605,10 @@ def build_router(
             pass
     registry = claude_wake_registry or build_claude_wake_registry()
 
-    def _relay_wake_dispatch(result: object, scope: object) -> None:
-        """Route relay wake to the appropriate runtime handler."""
-        if not isinstance(result, dict):
-            return
-        deliveries = result.get("deliveries")
-        if not isinstance(deliveries, list) or not deliveries or not isinstance(deliveries[0], dict):
-            return
-        runtime = deliveries[0].get("recipient_runtime")
-        if runtime == "claude-code":
-            registry.signal_reconcile()
-            schedule_claude_relay_wake(
-                result,
-                scope,
-                registry=registry,
-                on_unreachable=lambda attempt_started_at: relay_service.mark_unreachable(
-                    runtime="claude-code",
-                    session_ref=deliveries[0]["recipient_session_ref"],
-                    container_ref=scope["container_ref"],
-                    actor_ref=scope["actor_ref"],
-                    attempt_started_at=attempt_started_at,
-                ),
-            )
-        elif runtime == "codex" and relay_service is not None:
-            schedule_codex_relay_wake(result, scope)
+    _relay_wake_dispatch = partial(
+        dispatch_relay_wake, relay_service=relay_service, registry=registry
+    )
+
     def _relay_ack_rearm(result: object, scope: object) -> None:
         if (
             relay_service is None

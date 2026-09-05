@@ -615,6 +615,129 @@ def test_pending_candidate_skips_unsafe_without_hiding_exact_status(client, rela
         "state": "pending",
     }
 
+def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage):
+    relay = RelayService(relay_storage)
+    scope = SCOPE
+    relay.turn(runtime="claude-code", session_ref="sender", **scope)
+
+    def register(runtime: str, session_ref: str) -> None:
+        relay.turn(runtime=runtime, session_ref=session_ref, **scope)
+
+    def send(recipient: str, payload: str, message_id: str) -> dict:
+        return relay.send(
+            sender_runtime="claude-code",
+            sender_session_ref="sender",
+            recipient=recipient,
+            payload=payload,
+            message_id=message_id,
+            **scope,
+        )
+
+    def claim(runtime: str, session_ref: str, max_messages: int = 1) -> list[dict]:
+        return relay.turn(
+            runtime=runtime,
+            session_ref=session_ref,
+            max_messages=max_messages,
+            **scope,
+        )["deliveries"]
+
+    register("codex", "recover-codex")
+    first = send("codex:recover-codex", "😀" * 1500, "recover-first")
+    second = send("codex:recover-codex", "second", "recover-second")
+    first_claim, second_claim = claim("codex", "recover-codex", max_messages=0)
+
+    register("claude-code", "recover-claude")
+    claude = send("claude-code:recover-claude", "claude", "recover-claude")
+    claude_claim = claim("claude-code", "recover-claude")[0]
+
+    excluded: dict[str, tuple[dict, dict]] = {}
+    for name in ("active", "closed", "expired", "unsafe", "mismatch"):
+        session_ref = "recover-" + name
+        register("codex", session_ref)
+        message = send(f"codex:{session_ref}", name, "recover-" + name)
+        excluded[name] = (message, claim("codex", session_ref)[0])
+    relay.close_session(runtime="codex", session_ref="recover-closed", **scope)
+
+    register("codex", "recover-pending")
+    pending = send("codex:recover-pending", "pending", "recover-pending")
+    register("codex", "recover-delivered")
+    delivered = send("codex:recover-delivered", "delivered", "recover-delivered")
+    delivered_claim = claim("codex", "recover-delivered")[0]
+    relay.acknowledge(
+        delivery_id=delivered_claim["delivery_id"],
+        claim_token=delivered_claim["claim_token"],
+        **scope,
+    )
+
+    register("opencode", "recover-passive")
+    passive = send("opencode:recover-passive", "passive", "recover-passive")
+    passive_claim = claim("opencode", "recover-passive")[0]
+
+    past = datetime.now(timezone.utc) - timedelta(seconds=1)
+    expired_claims = [
+        first_claim,
+        second_claim,
+        claude_claim,
+        excluded["closed"][1],
+        excluded["expired"][1],
+        excluded["unsafe"][1],
+        excluded["mismatch"][1],
+        passive_claim,
+    ]
+    with relay_storage._relay_session_factory.begin() as db:
+        for item in expired_claims:
+            db.get(RelayDeliveryRecord, item["delivery_id"]).lease_expires_at = past
+        db.get(RelayMessageRecord, excluded["expired"][0]["message_id"]).expires_at = past
+        db.get(RelayMessageRecord, excluded["unsafe"][0]["message_id"]).payload = "unsafe\u2028legacy"
+        db.get(RelayMessageRecord, excluded["mismatch"][0]["message_id"]).actor_ref = "other-actor"
+
+    pairs = ((first, first_claim), (second, second_claim), (claude, claude_claim))
+    before = {
+        item["delivery_id"]: relay.message_status(
+            message_id=message["message_id"], **scope
+        )["deliveries"][0]
+        for message, item in pairs
+    }
+    candidates = relay.expired_claim_candidates()
+    assert [item["delivery_id"] for item in candidates] == [
+        first_claim["delivery_id"],
+        claude_claim["delivery_id"],
+    ]
+    assert candidates[0] == {
+        "delivery_id": first_claim["delivery_id"],
+        "state": "pending",
+        "recipient_runtime": "codex",
+        "recipient_session_ref": "recover-codex",
+        **scope,
+    }
+    assert relay.expired_claim_candidates(
+        delivery_id=first_claim["delivery_id"]
+    ) == [candidates[0]]
+    assert relay.pending_candidate(
+        runtime="codex", session_ref="recover-codex", **scope
+    ) == {"delivery_id": first_claim["delivery_id"], "state": "pending"}
+
+    for message, item in (
+        (excluded["active"][0], excluded["active"][1]),
+        (excluded["closed"][0], excluded["closed"][1]),
+        (excluded["expired"][0], excluded["expired"][1]),
+        (excluded["unsafe"][0], excluded["unsafe"][1]),
+        (excluded["mismatch"][0], excluded["mismatch"][1]),
+        (pending, pending["deliveries"][0]),
+        (delivered, delivered_claim),
+        (passive, passive_claim),
+    ):
+        assert relay.expired_claim_candidates(delivery_id=item["delivery_id"]) == []
+
+    after = {
+        item["delivery_id"]: relay.message_status(
+            message_id=message["message_id"], **scope
+        )["deliveries"][0]
+        for message, item in pairs
+    }
+    assert after == before
+    assert all(item["state"] == "claimed" and item["attempts"] == 1 for item in after.values())
+
 def test_non_relay_router_returns_501_only_for_relay(client):
     app = FastAPI()
     app.include_router(create_router(client.app.state.pallium_service))
