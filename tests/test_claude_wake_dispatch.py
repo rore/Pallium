@@ -1332,6 +1332,33 @@ def test_real_router_unreachable_feedback_and_registration_self_heal(
 
     registration = {**PAYLOAD, "session_ref": "health-target", "idle": True}
     assert http.post("/internal/claude-wake/register", json=registration).status_code == 204
+
+    probe_finished = threading.Event()
+    original_probe = registry.probe
+
+    def probe_and_signal(**kwargs: object) -> bool:
+        result = original_probe(**kwargs)
+        probe_finished.set()
+        return result
+
+    monkeypatch.setattr(registry, "probe", probe_and_signal)
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", lambda *_: "retryable")
+    retryable = http.post("/relay/messages", json={
+        "sender_runtime": "codex",
+        "sender_session_ref": "sender",
+        "recipient": "claude-code:health-target",
+        "payload": "retryable feedback",
+        **scope,
+    })
+    assert retryable.status_code == 200
+    assert probe_finished.wait(timeout=1)
+    retryable_status = http.get(
+        f"/relay/messages/{retryable.json()['message_id']}", params=scope
+    ).json()
+    assert retryable_status["deliveries"][0]["destination_health"] == "active"
+    assert registry._registrations[("claude-code", "health-target")].state == "idle"
+    monkeypatch.setattr(registry, "probe", original_probe)
+
     persisted = threading.Event()
     original_mark = RelayService.mark_unreachable
 

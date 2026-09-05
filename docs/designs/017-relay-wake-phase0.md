@@ -140,17 +140,18 @@ production admission callback/recovery coordinator does not yet exist.
 | 2. Idle attributed turn | PASS | A transport write to a verified-idle target started a distinct model-visible turn and Claude returned the unique marker. Transport ACK and model-visible admission were observed separately. |
 | 3. Busy non-steering | FAIL for direct ingress / policy PASS only as `idle_wake` | During a 25-second tool call, native ingress inserted the wake into the active user turn. Claude completed the original request and did not process the wake as a distinct subsequent turn. Pallium must never invoke this transport while busy; defer to verified idle or use durable next-turn fallback. |
 | 4. Correlated admission | PARTIAL | The disposable test correlated the exact marker in target history, but production still needs the receiving `Stop` hook to report the delivery ID before Relay marks admission. Pipe write is not admission. |
-| 5. Closed/stale/unavailable | PARTIAL | After target exit, the registered pipe rejected transport with a missing-endpoint error. Production must classify this as stale/unavailable, clear the capability, and release fallback. Permission-denied remains unforced. |
+| 5. Closed/stale/unavailable | PARTIAL | After target exit, the registered pipe rejected transport with a missing-endpoint error. Production retains the qualified registration as advisory `unreachable`, rejects new sends, and keeps existing deliveries retryable; exact registration self-heals the state. Permission-denied remains unforced. |
 | 6. Runtime/Pallium restart | PARTIAL | Every fresh runtime launch re-registered successfully through `SessionStart`; a closed endpoint was not reusable. Outstanding-trigger and already-admitted exactly-once recovery remain unproven. |
 | 7. Ambiguous/duplicate | FAIL natively | Two byte-identical frames carrying the same message ID produced two queue operations and two user admissions. Pallium must deduplicate before native ingress and must not blind-retry an ambiguous write. |
 
 **Idle and security boundaries:** `Stop` is the primary idle boundary;
 `user_prompt_submit` exit is not. `idle_prompt` may be secondary telemetry. The
-approved registration remains loopback-only, memory-only, fixed-TTL, and
-redacted. The production adapter may advertise only `idle_wake`, never
-`busy_queue`, until a future supported runtime contract proves distinct queued
-turns. A process restart loses the memory-only registration by design and falls
-back until the fresh session registers again.
+production registration remains loopback-only, durably persisted without silent
+time expiry, and redacted; exact registration replaces stale credentials and
+restores probe eligibility. The production adapter may advertise only
+`idle_wake`, never `busy_queue`, until a future supported runtime contract proves
+distinct queued turns. Pallium restart reloads the persisted registration;
+runtime restart still requires the runtime to publish its new endpoint.
 
 **Channels decision:** Keep the official Channels path documented as a future
 alternative, not an implementation dependency. It is preview/organization-gated
@@ -188,7 +189,16 @@ All adapters must prove these cases before entering implementation. The fixtures
 
 ## Normalized adapter result contract
 
-Adapters return one of five normalized outcomes to the wake coordinator:
+Relay delivery state is independent from destination health. Deliveries remain
+`pending`, `claimed`, `delivered`, or `expired`; destination health is separately
+`active` or `unreachable` (with `closed` taking precedence for a closed session).
+An unreachable mark never terminalizes or mutates an existing delivery. New
+exact/alias sends fail synchronously while the destination is unreachable, while
+existing deliveries remain retryable. Stale transport feedback uses strict CAS:
+it may mark a row unreachable only when `last_seen_at < attempt_started_at`.
+Successful exact internal registration restores both registry and Relay health.
+
+The future generic wake coordinator uses the five normalized outcomes below. The current Claude transport boundary is narrower: `accepted`, `retryable`, or `unreachable`; those transport results never change delivery state directly.
 
 | Outcome | Meaning | Wake state after |
 |---|---|---|

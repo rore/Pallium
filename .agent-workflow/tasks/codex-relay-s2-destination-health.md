@@ -44,6 +44,7 @@
 - Slice B3: public session and delivery responses expose destination health separately from lifecycle/delivery state; closed sessions report no advisory health. Relay caller-surface E2E remains 38 passing.
 - Slice C1: durable registry unreachable transitions now notify the scheduler outside the registry lock; the scheduler supplies an aware attempt timestamp and contains callback failures. Focused wake suites pass (75 passed, 2 skipped).
 - Slice C2: the production router now persists strict-CAS Relay unreachable feedback after durable registry transition, and successful exact Claude registration self-heals existing Relay destination health. Deterministic real-router lifecycle coverage passes; combined composition/Relay suites pass (77 passed, 2 skipped).
+- Slice C3: real-router coverage now proves retryable transport leaves Relay health active before qualified missing-endpoint feedback transitions both stores; design and roadmap align to durable no-TTL registration, independent state machines, current transport vocabulary, and the separate restart-wrapper follow-up. Full focused S2 gate passes (170 passed, 2 skipped).
 
 ## Plan review
 

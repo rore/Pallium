@@ -149,15 +149,14 @@ sleeps in the normal suite.
    or ambiguous transport leave that delivery pending and retryable. An advisory
    `unreachable` mark may make new sends fail fast and must clear on successful
    exact-session registration.
-2. **S2 wake feedback and destination health.** Implement those tables without
-   coupling them. The currently observed Windows missing-pipe result is a candidate
-   for advisory `unreachable`; qualify equivalent Windows and POSIX signals before
-   relying on it. It remains retryable for the in-flight delivery unless separate
-   evidence proves that delivery terminal. Replace terminal registration eviction
-   with the persisted, sender-visible advisory state when the signal is reliable;
-   successful exact-session registration clears it. Surface delivery and
-   destination state distinctly through Relay status, dashboard telemetry, and
-   sanitized logs.
+2. **S2 wake feedback and destination health.** The implementation keeps the
+   tables independent. Qualified Windows missing-pipe and POSIX missing-socket
+   signals retain the durable registration as non-probed `unreachable`; the
+   in-flight delivery remains pending unless separate evidence proves it terminal.
+   New exact/alias sends fail fast, strict timestamp CAS drops stale feedback, and
+   successful exact registration restores both stores. Relay API status now
+   exposes delivery state and `destination_health` separately. Remaining gate:
+   installed Claude witness and review of the deterministic caller-surface suite.
 3. **S2 Codex burst coalescing.** Fix the reproduced loaded-task incident where
    several close sends were delivered once in the first admitted turn but already
    queued generic wake turns appeared later with no attributed payload. Coalesce
@@ -201,9 +200,14 @@ The following related work stays separate to keep ownership clear:
   source items and 89 derived memories from the fixed wake-test isolation leak,
   then remove only rows with exact fixture provenance through a reviewed scoped
   repair. This is operational data repair, not Relay routing behavior.
+- **Near-term operations follow-up (separate from S2):** harden the Windows
+  restart wrapper after the dogfood incident: preflight syntax/imports before
+  stopping a healthy service; bounded-poll readiness; verify `/health`, `/status`,
+  and `/debug/queue/health`; emit actionable logs and a non-success result on
+  failure; and never restart from a checkout that another agent is mutating.
 
 S2 is done only with caller-surface E2E for unknown, passive, unreachable,
-self-healing re-registration, retryable and terminal transport, async status,
+self-healing re-registration, retryable and qualified missing-endpoint transport, async status,
 burst coalescing, delivery-before-queued-execution, fresh versus stale MCP hosts,
 bounded backlog, Unicode, scope isolation, restart, and idempotence. Tests must be
 fast and deterministic; installed-runtime witnesses remain opt-in release gates.
