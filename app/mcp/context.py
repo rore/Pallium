@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,7 +37,7 @@ def _canonicalize_container_ref(value: str | None) -> str | None:
 def _runtime_thread_ref(agent_ref: str | None) -> str | None:
     """Resolve a session ID supplied by the owning runtime, never by the model."""
     if agent_ref == "codex":
-        return os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID")
+        return None
     if agent_ref != "claude-code":
         return None
     inherited = os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -53,6 +54,45 @@ def _runtime_thread_ref(agent_ref: str | None) -> str | None:
         return None
     session_id = session_id.strip()
     return session_id if 0 < len(session_id) <= 255 else None
+
+
+def resolve_codex_thread_ref(meta: object) -> tuple[str | None, str | None]:
+    """Resolve Codex task identity from one MCP request's transport metadata."""
+    if meta is None:
+        values: dict[str, object] = {}
+    elif isinstance(meta, Mapping):
+        values = dict(meta)
+    elif callable(model_dump := getattr(meta, "model_dump", None)):
+        dumped = model_dump()
+        if not isinstance(dumped, Mapping):
+            return None, "invalid Codex request metadata"
+        values = dict(dumped)
+    else:
+        return None, "invalid Codex request metadata"
+    supplied: list[object] = []
+    if "threadId" in values:
+        supplied.append(values["threadId"])
+    nested = values.get("x-codex-turn-metadata")
+    if nested is not None:
+        if not isinstance(nested, Mapping):
+            return None, "metadata x-codex-turn-metadata must be an object"
+        for key in ("thread_id", "session_id"):
+            if key in nested:
+                supplied.append(nested[key])
+    if not supplied:
+        return None, "missing Codex task identity metadata"
+    if any(
+        not isinstance(value, str)
+        or value != value.strip()
+        or not 0 < len(value) <= 255
+        or not value.isprintable()
+        for value in supplied
+    ):
+        return None, "invalid Codex task identity metadata"
+    if len(set(supplied)) != 1:
+        return None, "conflicting Codex task identity metadata"
+    return supplied[0], None
+
 
 def resolve_context(
     *,

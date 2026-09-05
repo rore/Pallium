@@ -2,9 +2,25 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from app.mcp.context import PalliumContext, _canonicalize_container_ref, resolve_context
+
+def test_server_module_import_does_not_require_optional_mcp_package() -> None:
+    script = """
+import builtins
+original_import = builtins.__import__
+def without_mcp(name, *args, **kwargs):
+    if name == 'mcp' or name.startswith('mcp.'):
+        raise ModuleNotFoundError(name)
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = without_mcp
+import app.mcp.server
+"""
+    subprocess.run([sys.executable, "-c", script], check=True)
 
 
 class TestResolveContext:
@@ -110,19 +126,20 @@ def test_unknown_container_refs_are_preserved(value: str) -> None:
     assert _canonicalize_container_ref(value) == value
 
 
-def test_codex_thread_ref_comes_from_runtime_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_codex_thread_ref_ignores_runtime_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
     monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
     monkeypatch.setenv("CODEX_THREAD_ID", "codex-session-123")
-    assert resolve_context().thread_ref == "codex-session-123"
+    assert resolve_context().thread_ref is None
 
 
-def test_codex_thread_ref_falls_back_to_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_codex_thread_ref_ignores_session_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
     monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     monkeypatch.setenv("CODEX_SESSION_ID", "codex-session-456")
-    assert resolve_context().thread_ref == "codex-session-456"
+    assert resolve_context().thread_ref is None
+
 
 def test_explicit_thread_ref_overrides_runtime_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")

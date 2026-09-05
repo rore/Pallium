@@ -183,7 +183,7 @@ If memory doesn't appear:
 
 - Check Pallium is running: `curl http://localhost:19836/status`
 - Check hooks are registered: look in `~/.codex/hooks.json`
-- Check MCP is configured: look for `[mcp_servers.pallium]` in `~/.codex/config.toml`. Setup may include `env_vars = ["CODEX_THREAD_ID", "CODEX_SESSION_ID"]` as observed Codex compatibility inputs, not a public stable guarantee; Codex Desktop may not forward them to the MCP child, so `pallium_relay_receive` correctly fails closed until a runtime-owned handoff exists. Hook-delivery wake is independent of MCP recovery.
+- Check MCP is configured: look for `[mcp_servers.pallium]` in `~/.codex/config.toml`. Relay receive uses the current Codex request metadata (top-level `threadId` and/or nested `x-codex-turn-metadata`, with every supplied task ID agreeing), not inherited environment IDs or model-supplied arguments; missing or conflicting metadata fails closed before any claim. Hook-delivery wake is independent of MCP recovery.
 - Check MCP command: it should use an absolute Python executable with
   `args = ["-m", "app.run", "mcp"]`; this avoids blocked venv launcher
   stubs on Windows
