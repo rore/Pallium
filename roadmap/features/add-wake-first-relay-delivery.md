@@ -116,10 +116,11 @@ selects durable fallback. Runtime names are never global capability claims, and 
 exited arbitrary process is not wakeable merely because its conversation can be
 resumed by launching another process.
 
-### Remaining production gates (priority updated 2026-09-02)
+### Remaining production gates (priority updated 2026-09-05)
 
-Gate each runtime independently. Claude Windows live qualification is complete;
-enabling live wake still requires the relevant safety evidence.
+Gate each runtime independently. Claude Windows live wake and its deterministic
+safety evidence are complete; only installed UDS qualification on Linux/macOS
+remains for that adapter.
 
 1. **Codex-first product gate:** Windows exact-session wake is now proven for
    unloaded tasks through `codex exec resume` and loaded Desktop-owned tasks
@@ -130,62 +131,89 @@ enabling live wake still requires the relevant safety evidence.
    turn, telemetry, macOS/Linux qualification, and a sustained
    implementation-review-remediation dogfood journey.
 
-2. **Claude Code production gates:** Windows S1A+S1B live journey and deterministic caller-surface coverage are proven. Installed UDS qualification on Linux/macOS remains S4.
+2. **Claude Code production gates:** Windows S1A+S1B live journey and deterministic
+   caller-surface coverage are proven. Installed UDS qualification on Linux/macOS
+   remains S4.
 3. **MCP receive lifecycle foundation — code complete, runtime qualification pending:**
-   `fix-relay-receive-mcp-lifecycle` is merged. The MCP path remains fail-closed and unqualified on Codex Desktop until a runtime-owned session handoff reaches the MCP child; hook-delivery wake does not depend on this recovery path.
+   `fix-relay-receive-mcp-lifecycle` is merged. The MCP path remains fail-closed
+   and unqualified on Codex Desktop until a runtime-owned session handoff reaches
+   the MCP child; hook-delivery wake does not depend on this recovery path.
 
 ### Next execution order (updated 2026-09-05)
 
-The next work is the dogfood remediation below. It precedes additional runtime and
-platform expansion. Keep each numbered slice small enough to implement, review,
-and report independently; use deterministic clocks/events rather than wall-clock
-sleeps in the normal suite.
+The next work is the first open dogfood remediation below: Codex MCP recovery and
+integration reload. It precedes additional runtime and platform expansion. Keep
+each numbered slice small enough to implement, review, and report independently;
+use deterministic clocks/events rather than wall-clock sleeps in the normal suite.
 
-1. **S2 contract gate — independent delivery and destination state.** Define two
-   state tables: delivery lifecycle (`pending`, `claimed`, `delivered`, `expired`,
-   plus `failed` only on separate proven-terminal delivery evidence) and advisory
-   destination health (`active` or `unreachable`). A destination-health transition
-   must never change an existing delivery. Missing wake capability and recoverable
-   or ambiguous transport leave that delivery pending and retryable. An advisory
-   `unreachable` mark may make new sends fail fast and must clear on successful
-   exact-session registration.
-2. **S2 wake feedback and destination health.** The implementation keeps the
-   tables independent. Qualified Windows missing-pipe and POSIX missing-socket
-   signals retain the durable registration as non-probed `unreachable`; the
-   in-flight delivery remains pending unless separate evidence proves it terminal.
-   New exact/alias sends fail fast, strict timestamp CAS drops stale feedback, and
-   successful exact registration restores both stores. Relay API status now
-   exposes delivery state and `destination_health` separately. Remaining gate:
-   installed Claude witness and review of the deterministic caller-surface suite.
-3. **S2 Codex burst coalescing.** Fix the reproduced loaded-task incident where
-   several close sends were delivered once in the first admitted turn but already
-   queued generic wake turns appeared later with no attributed payload. Coalesce
-   scheduling per exact recipient, preserve a later wake when bounded backlog
-   remains, and make duplicate/late scheduling an observable no-op rather than a
-   conversational acknowledgement turn. Cover delivery completing by another turn
-   before queued execution, concurrent sends, active-writer fallback, restart, and
+1. **S2 contract gate — complete in PR #98.** Delivery lifecycle
+   (`pending`, `claimed`, `delivered`, `expired`; `failed` only on separate
+   proven-terminal delivery evidence) remains independent from advisory destination
+   health (`active` or `unreachable`). Destination-health transitions never
+   change an existing delivery. Missing capability and recoverable or ambiguous
+   transport leave it pending and retryable; advisory `unreachable` may reject new
+   sends and clears on successful exact-session registration.
+2. **S2 wake feedback and destination health — complete in PR #98.** Qualified
+   Windows missing-pipe and POSIX missing-socket signals retain the durable
+   registration as non-probed `unreachable`; the in-flight delivery remains
+   pending. New exact/alias sends fail fast, strict timestamp CAS drops stale
+   feedback, and successful exact registration restores both stores. Relay API
+   status exposes delivery state and `destination_health` separately.
+   Deterministic caller-surface review and installed Claude/Codex automatic-wake
+   witnesses passed before merge.
+3. **S2 Codex burst coalescing — complete in PR #95.** Per-session scheduling
+   coalesces through admission, so several close sends cannot leave later empty
+   generic wake turns. It rearms after admission and covers delivery completed by
+   another turn, concurrent sends, active-writer fallback, failure, restart, and
    no lost pending work.
-4. **S2 Codex MCP recovery and integration reload.** Fresh-session dogfood must
-   prove that the MCP child receives runtime-owned identity and can receive/ACK;
-   an already-running child after setup must fail closed with an explicit host-
-   restart requirement rather than look like message loss. If a fresh child still
-   lacks identity, fix the supported launcher handoff; never accept model-supplied
-   identity or borrow a parent process's unverified context. This is qualification
-   follow-up to the code-complete `fix-relay-receive-mcp-lifecycle` item.
-5. **S2 bounded backlog draining.** Verify `has_more` and `remaining_count` reach
-   every supported integration and cause bounded automatic continuation until the
-   eligible backlog is empty, including new arrivals during draining, old
-   oversized-before-later-fitting items, ordering, duplicate triggers, and loop
-   prevention. Measure real burst cost before changing the current three-message /
-   2,400-character turn limits; do not raise them speculatively.
+4. **S2 Codex MCP recovery and integration reload — next.** Fresh-session dogfood
+   must prove that the MCP child receives runtime-owned identity and can
+   receive/ACK; an already-running child after setup must fail closed with an
+   explicit host-restart requirement rather than look like message loss. If a
+   fresh child still lacks identity, fix the supported launcher handoff; never
+   accept model-supplied identity or borrow a parent process's unverified context.
+5. **S2 bounded backlog draining.** Verify `has_more` and `remaining_count`
+   reach every supported integration and cause bounded automatic continuation
+   until the eligible backlog is empty, including new arrivals during draining,
+   old oversized-before-later-fitting items, ordering, duplicate triggers, and
+   loop prevention. Relay-generated trigger text must not become memory, and
+   admitted agent output must retain the pinned Relay container rather than fall
+   into `other`. Measure real burst cost before changing the current
+   three-message / 2,400-character turn limits; do not raise them speculatively.
 6. **S3 remaining Codex lifecycle gates.** Qualify busy, interrupted, and restart
-   admission; sender-side reply admission; correlation telemetry; and a sustained
-   no-ping implementation/review/remediation journey.
+   admission; automatic re-wake after crash-after-claim and lease recovery;
+   sender-side reply admission; correlation telemetry; and a sustained no-ping
+   implementation/review/remediation journey.
 7. **S4 additional platforms.** Qualify installed Claude UDS wake on Linux and
    macOS, then Codex wake on those platforms. Windows Claude S1A+S1B remains
    complete and must not be reopened without contrary evidence.
 8. **OpenCode active wake.** Implement only after the Claude/Codex contract above
    is stable; retain its current passive next-turn delivery meanwhile.
+
+### Wake dogfood defect ledger
+
+Every confirmed dogfood failure stays here until a caller-surface regression and,
+where the runtime exists locally, an installed witness close it.
+
+| ID | Observed failure | State and owner |
+|---|---|---|
+| `RW-001` | A busy Codex wake claimed at scheduling time; queued execution after the 60-second lease produced a stale receipt conflict. A related Windows CP1252 write stranded a claimed Unicode delivery. | **Fixed.** Claim now occurs in the admitted UserPromptSubmit hook and subprocess input is UTF-8. Delayed deterministic caller-surface and Unicode regressions cover both paths. |
+| `RW-002` | Several close sends queued later generic Codex turns after the first admitted turn had already drained the payload, producing empty conversational acknowledgement turns. | **Fixed in PR #95.** Per-session scheduling coalesces through admission and rearms afterward; concurrent, duplicate, failure, and restart acceptance is on `main`. |
+| `RW-003` | An agent treated one stale/duplicate receipt conflict as a reason to stop the surrounding task, and terminal reports triggered wasteful status-only replies. | **Fixed.** Installed guidance says the stale rule applies only to that delivery, work continues independently, substantive replies wait for completion or blockage, and terminal ACK-only deliveries receive no reply. `test_guidance_budget.py` and hook guidance tests pin the contract. |
+| `RW-004` | Pallium restart lost in-memory Claude wake capability, so pending Relay work required a manual Claude turn. | **Fixed and Windows-qualified.** Durable exact-session capabilities, write-ahead intents, event-driven reconciliation, restart recovery, and installed no-manual-wake evidence are on `main`; Linux/macOS UDS remains S4. |
+| `RW-005` | Missing Claude endpoints were evicted while deliveries stayed pending; restart feedback was omitted, transient callback failure could diverge the two health stores, and a late-bound recovery callback could update the wrong session. | **Fixed in PR #98.** Retained non-probed `unreachable`, strict stale-feedback CAS, exception-safe retry, bound per-candidate callbacks, self-healing registration, status exposure, deterministic E2E, and installed witnesses are complete. |
+| `RW-006` | A Codex MCP child opened before integration setup/reload can lack runtime-owned session identity and look like message loss. | **Open — next slice 4.** Qualify fresh versus stale hosts and fail closed with an explicit restart requirement; never accept model-supplied identity. |
+| `RW-007` | A bounded turn can report `has_more` and `remaining_count`, but integrations do not yet prove automatic bounded continuation until the eligible backlog is empty. | **Open — slice 5.** Cover limits, oversized-first ordering, new arrivals, duplicate triggers, exact-once drain, memory routing, and loop prevention without wall-clock sleeps. |
+| `RW-008` | Crash after claim but before context injection recovers the lease, yet may wait for a natural turn instead of being re-woken automatically. | **Open — slice 6.** Prove unattended lease-expiry rearm through the real hook/wake surface with no loss or duplicate action. |
+| `RW-009` | Wake E2E leaked synthetic memory into the live store; the observed `a043f627-...` object appeared under `other`. | **Isolation fixed; cleanup open.** The unmocked live request is covered. Slice 5 pins the production routing invariant; the exact-provenance cleanup below owns only the historical 23 source items and 89 derived memories. |
+| `RW-010` | The Windows restart wrapper can stop a healthy service while a checkout is mid-edit and can print success before all required endpoints are ready; this recurred after PR #98. | **Open — near-term operations follow-up below.** Add preflight, bounded readiness polling, all three endpoint checks, actionable logs, and non-zero failure. |
+| `RW-011` | A delegated agent can end a turn without the sender knowing whether requested work completed, causing manual polling or a stalled workflow. | **Optional product follow-up.** `idea-agent-relay.md` owns default-off `notify_on_turn_end`; it reports turn end only and never infers task completion or supervises work. |
+
+The Windows Claude regression floor remains: idle text and zero-tool turns, empty
+Stop rearm, busy delivery, ordered bursts, Unicode, recursive-Stop loop prevention,
+duplicate send/trigger, arrivals during continuation, preservation of the original
+human-owned turn, exact scope, and no manual prompt after a case begins. Deterministic
+tests cover the contract; installed runtime witnesses stay opt-in to protect budget.
 
 The following related work stays separate to keep ownership clear:
 
@@ -206,11 +234,13 @@ The following related work stays separate to keep ownership clear:
   and `/debug/queue/health`; emit actionable logs and a non-success result on
   failure; and never restart from a checkout that another agent is mutating.
 
-S2 is done only with caller-surface E2E for unknown, passive, unreachable,
-self-healing re-registration, retryable and qualified missing-endpoint transport, async status,
-burst coalescing, delivery-before-queued-execution, fresh versus stale MCP hosts,
-bounded backlog, Unicode, scope isolation, restart, and idempotence. Tests must be
-fast and deterministic; installed-runtime witnesses remain opt-in release gates.
+The remaining S2 qualification is done only with caller-surface E2E for fresh
+versus stale MCP hosts, bounded backlog, memory routing, Unicode, scope isolation,
+restart, and idempotence. Existing unknown, passive, unreachable, self-healing
+registration, retryable/qualified missing-endpoint transport, async status, burst
+coalescing, and delivery-before-queued-execution regressions remain mandatory.
+Tests must be fast and deterministic; installed-runtime witnesses remain opt-in
+release gates.
 
 **Core scope:** Derive the smallest coordinator from the Codex delivery trace.
 Do not wait for a second adapter or build speculative multi-runtime machinery.
@@ -304,7 +334,7 @@ Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wak
 Phase 0 decision and installed-runtime evidence:
 [Relay wake Phase 0 decision record](../../docs/designs/017-relay-wake-phase0.md).
 
-Current result: Codex exact-session wake uses hidden `codex exec resume` for an unloaded stored task. The Windows desktop app retains active writers, so the live adapter falls back to hidden `codex queue --thread` for that exact session; both launch paths are best-effort and retain durable natural-turn fallback on launch failure. The active-writer fallback explicitly encodes Relay prompts as UTF-8, and the pre-fix claim-before-queue behavior reproduced a 409 `claim lease has expired` when a delivery was claimed before queueing and the queued turn executed after the lease. The live adapter now queues a generic trigger and lets the installed UserPromptSubmit hook claim at admitted-turn execution; delayed busy-target caller-surface E2E proves no stale receipt, loss, or duplicate action. Hook-delivery wake is proven for the tested Windows paths. Codex MCP receive remains fail-closed and unqualified on Desktop because no runtime-owned identity handoff reaches its child. Codex wake remains unqualified only for interrupted/restart admission, sender-side reply admission, telemetry, macOS/Linux, and sustained dogfood; Claude idle-only work follows the Codex-first milestone, and OpenCode remains deferred.
+Current result: Codex exact-session wake uses hidden `codex exec resume` for an unloaded stored task. The Windows desktop app retains active writers, so the live adapter falls back to hidden `codex queue --thread` for that exact session; both launch paths are best-effort and retain durable natural-turn fallback on launch failure. The active-writer fallback explicitly encodes Relay prompts as UTF-8, and the pre-fix claim-before-queue behavior reproduced a 409 `claim lease has expired` when a delivery was claimed before queueing and the queued turn executed after the lease. The live adapter now queues a generic trigger and lets the installed UserPromptSubmit hook claim at admitted-turn execution; delayed busy-target caller-surface E2E proves no stale receipt, loss, or duplicate action. Hook-delivery wake and per-session burst coalescing are proven for the tested Windows paths. Codex MCP receive still needs fresh-versus-stale host qualification; bounded automatic backlog drain, crash-after-claim re-wake, interrupted/restart admission, sender-side reply admission, telemetry, macOS/Linux, and sustained dogfood also remain. Claude Windows wake is complete, installed UDS is S4, and OpenCode remains deferred.
 
 ## Research References
 
