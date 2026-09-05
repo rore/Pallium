@@ -53,7 +53,9 @@ _STRONG_DIRECTIVE = """\
 ### Resuming prior work
 
 When you resume or continue prior work on this task, call
-`pallium_search_history` first — before assuming that earlier context is gone.
+`pallium_search_history_by_work_ref` first when a valid structural work ref is
+known; otherwise call `pallium_search_history` before assuming that earlier
+context is gone.
 Pull the raw prior turns (a past discussion, an earlier attempt, the original
 context of a decision) and read them before acting, rather than starting cold.
 

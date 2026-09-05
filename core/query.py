@@ -202,7 +202,9 @@ class QueryExecutor:
                     or len(retrieval_result.results) < retrieval_limit
                 ):
                     break
-                retrieval_limit *= 2
+                if retrieval_limit == 200:
+                    break
+                retrieval_limit = min(retrieval_limit * 2, 200)
             ranked = [
                 replace(item, raw_rank=rank)
                 for rank, item in enumerate(distinct[:limit], start=1)

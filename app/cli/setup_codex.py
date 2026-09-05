@@ -372,7 +372,8 @@ def _get_agents_md_block() -> str:
 _STRONG_DIRECTIVE = (
     "\n## Resuming prior work\n\n"
     "When you resume or continue prior work on this task, call\n"
-    "`pallium_search_history` first — before assuming that earlier context is\n"
+    "`pallium_search_history_by_work_ref` first when a valid structural work ref\n"
+    "is known; otherwise call `pallium_search_history` before assuming that earlier context is\n"
     "gone. Pull the raw prior turns (a past discussion, an earlier attempt, the\n"
     "original context of a decision) and read them before acting, rather than\n"
     "starting cold.\n\n"

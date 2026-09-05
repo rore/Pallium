@@ -355,6 +355,8 @@ def test_codex_guidance_strength_selects_block_variant() -> None:
     # The strong variant appends the resume directive; base does not.
     assert "## Resuming prior work" in strong
     assert "## Resuming prior work" not in base
+    assert "`pallium_search_history_by_work_ref` first when a valid structural work ref" in strong
+    assert "`pallium_search_history` first —" not in strong
     assert strong != base
 
     # Both variants preserve the Codex block invariants.

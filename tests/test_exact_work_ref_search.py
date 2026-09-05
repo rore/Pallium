@@ -8,8 +8,10 @@ import pytest
 
 from sqlalchemy import event, text as sa_text
 
-from core.models import QueryFilters
+from core.models import QueryFilters, QueryResultItem
+from core.query import QueryExecutor
 from core.work_ref import work_refs_from_metadata
+from retrieval.base import RetrievalQueryResult
 from retrieval.vector import VectorRetrievalProvider
 
 
@@ -224,6 +226,31 @@ def test_exact_ref_expands_past_post_retrieval_duplicate_window(
     assert len(returned) == 3
     assert set(unique_ids) <= set(returned)
     assert len(set(returned).intersection(duplicate_ids)) == 1
+
+def test_exact_ref_dedup_refill_stops_at_candidate_ceiling() -> None:
+    requested_limits: list[int] = []
+    duplicate = QueryResultItem(
+        result_kind="source_hit",
+        score=1.0,
+        evidence=[],
+        source_item_id="same-source",
+        source_type="chat",
+        source_id="same",
+        source_content_fingerprint="same-content",
+    )
+
+    def query(*, limit, **_kwargs):
+        requested_limits.append(limit)
+        return RetrievalQueryResult(results=[duplicate] * limit)
+
+    retrieval = MagicMock(query=query)
+    plugin = MagicMock(requires_visibility_context=False)
+    result = QueryExecutor(MagicMock(), retrieval, {"test": plugin}, "test").query(
+        "alpha", 3, source_only=True, work_refs=("proj-1",)
+    )
+
+    assert len(result.results) == 1
+    assert requested_limits == [12, 24, 48, 96, 192, 200]
 
 def test_exact_ref_combines_actor_container_and_legacy_safety(
     client, drain_queue

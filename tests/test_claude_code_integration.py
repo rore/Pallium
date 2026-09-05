@@ -67,6 +67,8 @@ def test_claude_guidance_strength_selects_block_variant() -> None:
 
     assert "### Resuming prior work" in strong
     assert "### Resuming prior work" not in base
+    assert "`pallium_search_history_by_work_ref` first when a valid structural work ref" in strong
+    assert "`pallium_search_history` first —" not in strong
     assert strong != base
 
     # `pallium_query`/`pallium_expand` remain present in both variants.
