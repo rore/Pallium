@@ -40,19 +40,20 @@ Target files or classes: `.github/workflows/agent-workflow.yml`; `tests/test_age
 When `main` advances independently, changed-file computation shall contain only PR-head changes → temporary Git-history regression plus exact workflow contract assertion. When the workflow runs normally, existing governance shall remain enforced → local workflow checker, redline report, `git diff --check`, and PR CI.
 
 **Plan review:**
-Pending clean-context architecture review.
+Clean-context Luna review approved the plan with required regression details recorded below.
 
 **Approvals:** Approved by user 2026-09-05T22:47:09.9831044Z: "you don't need to ask every time, you have a constant approval to get what you're working on to a done state"
 
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-06: Confirmed live PR-report contamination against GitHub's authoritative file list; initialized the High-risk Work Record before workflow edits.
+- 2026-09-06: Clean-context architecture review approved three-dot semantics and required base-only/head-only fixture assertions plus exact checks for both changed-file jobs.
 
 ## Checkpoint: architecture-review
 
@@ -64,7 +65,7 @@ Verification plan: focused workflow contract test, temporary Git history, local 
 
 ## Plan review
 
-Pending.
+Clean-context Luna verdict: approved with two required corrections. The deterministic regression must create divergent history with a merge base, one base-only file, and one head-only file; it must prove only the head-side change is selected and the old synthetic-merge/two-dot form fails. Exact contract assertions must cover both changed-file jobs and reject `github.sha` there, while preserving the checker's separate existing head-SHA inputs. No policy, checkpoint, fork-PR, or fetch-depth blocker was found.
 
 ## Evidence
 
