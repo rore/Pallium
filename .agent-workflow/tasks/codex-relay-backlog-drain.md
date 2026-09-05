@@ -50,7 +50,8 @@
 
 - Read-only lifecycle trace: `/relay/turn` bounds claims; hook ACK and MCP receipt ACK are separate routes; Codex admission clears scheduling before hook ACK; Claude Stop idle registration signals reconciliation.
 - Existing floor: maximum valid Unicode formatter boundary, storage ordering/backlog accounting, hook memory suppression, Codex burst coalescing, Claude recursive Stop protection, and durable reconciler tests.
-- Final focused verification: 271 passed, 2 skipped, 4 existing Pydantic forward-reference warnings in 20.05 seconds; no wall-clock lease sleep was added.
+- Final focused verification: 271 passed, 2 skipped, 4 existing Pydantic forward-reference warnings in 21.04 seconds after the final rebase; no wall-clock lease sleep was added.
+- Repository-wide verification: 4,348 passed, 14 skipped, 2 expected failures; one reproducible existing `test_prompt_variants_legacy_fallback_unaffected` failure remains outside every RW-007 changed path.
 - Import-linter: zero boundary violations. Agent-workflow: clean. Redline: expected red API surface with `api-review`; clean-context final correctness review and re-review reported no blockers.
 
 ## Checkpoint: api-review
