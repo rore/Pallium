@@ -49,7 +49,7 @@ Shipped since last major scope update:
 - **Shared prompt-role governance**: contract ownership for `write_extraction`, `write_enrichment`, `query_ambiguity_resolution`
 - **Live improvement loop**: drift metrics, shadow routing comparison, replay-promotion tooling
 
-Current focus — Pallium vNext (2026-08):
+Current focus — Pallium vNext (refined 2026-09-05):
 
 The active milestone is **Pallium vNext: historical agent work as a first-class
 context layer** (strategy: `docs/context/strategy-vnext.md`; execution plan:
@@ -58,25 +58,46 @@ Contract milestone is wound down (W2/W3/W4/W6 shipped; W1/W5/W7 parked as residu
 under Paused).
 
 vNext is validation-first and experiment-gated: each phase must pass its live
-experiment before the next earns significant investment. Primary KPI: fraction of
+experiment before the next earns significant investment. The immediate product
+model has two capabilities: Agent Relay and **Session History**. Session History is
+the package-independent raw record of governed agent work; generated memories are
+optional representations of that record, disabled by default.
+
+The next Session History slice is ordered. The first three items are the next three
+vNext features; the fourth is a committed, time-boxed investigation:
+
+1. `add-structural-session-work-references` — attach branch, exact Agent Workflow
+   Work Record, and explicit issue/PR/ticket references without semantic inference.
+2. `add-distinct-work-and-broad-history-search-tools` — provide exact work-scoped
+   search and broad history search as separate agent operations over one retrieval
+   and expansion implementation.
+3. `decouple-session-history-from-derived-packages` — make start, ingest, raw
+   indexing, governance, search, and expansion work with zero semantic packages;
+   derived packages default off. There is no migration requirement for this
+   single-operator deployment, but existing code and stored outputs remain usable.
+4. `investigate-history-navigation-and-on-demand-compression` — compare flat,
+   grouped, and index-first access plus raw, temporary on-demand compression, and
+   persistent-derived representations before committing to another structure.
+
+Primary KPI: fraction of
 *eligible* sessions with ≥1 confirmed historical-reuse × 100 (session incidence,
 capped at 100), reported as three rungs
 (verified incorporation → judged influence → downstream benefit). Hard invariant
 across all phases: visibility violations = 0, reported with attempted-disallowed-
 access counts/types.
 
-- **Phase 0 (First) — Measurement contract & raw-history governance**: before the
-  tools are exposed, land the linked event chain (`lookup_event_id`, exposed source
+- **Phase 0 (Shipped foundation) — Measurement contract & raw-history governance**:
+  shipped the linked event chain (`lookup_event_id`, exposed source
   ids/ranks, expansion parentage, session/agent identity), the eligible-session
   denominator and retrospective judge protocol, and raw-history governance (redaction
   on search+expansion, per-neighbor visibility, bounded windows, access audit,
-  raw-turn forgetting, shared-raw revocation). Not experiment-gated; it makes
-  Experiment 1 valid and safe.
-- **Phase 1 (Now) — Historical Lookup**: expose raw-history search as a deliberate
-  agent pull, shipped as one vertical slice (source-only retrieval target,
-  `pallium_search_history` tool, source-context expansion). Note: routing already
-  scores/selects source hits — the gap is a clean source-only target, not a second
-  stack. Gate = Experiment 1 (reframed): the open question is NO LONGER "will agents
+  raw-turn forgetting, shared-raw revocation). These mechanics made Experiment 1
+  valid and safe.
+- **Phase 1 (Shipped foundation) — Historical Lookup**: shipped deliberate
+  agent-pull raw-history search as one vertical slice (source-only retrieval target,
+  `pallium_search_history` tool, source-context expansion). That slice reused the
+  existing retrieval stack. Gate = Experiment 1 (reframed): the open question is NO
+  LONGER "will agents
   pull unprompted?" — evidence shows they over-pull (≈0.75 on no-opportunity
   controls). The headline is now: **does agent-filtered historical pull improve the
   work enough to justify its token, latency, and contamination cost?** Measured on
@@ -87,8 +108,8 @@ access counts/types.
   showed that exposure telemetry, expansion replay, temporal replacement handling,
   and result diversity are not yet faithful enough for a product verdict. The
   access-and-evaluation fix and its capped expansion are complete. The next step is
-  to let broader post-fix cases accumulate, then run the 20-case
-  `idea-pull-real-corpus-validation` gate before Phase 2 earns investment.
+  the ordered Session History slice above. Broader post-change cases then feed the
+  20-case `idea-pull-real-corpus-validation` gate before Phase 2 earns investment.
 - **Continuous — Derived-memory evaluation (RAW/DERIVED/HYBRID + coverage/fidelity)**:
   not a sequential phase. Decompose why a DERIVED result loses into four seams
   (retrieval / extraction / derived-retrieval / representation). The shadow measures
@@ -154,4 +175,6 @@ Still out of scope:
 - broad ontology management
 - public API expansion for explicit retention administration
 - replacing lower-level evidence-backed memory with only higher-level summaries
-- turning Pallium into a workflow engine, transcript archive, or raw tool-log store
+- turning Pallium into a workflow engine, exhaustive transcript archive, or raw
+  tool-log store; bounded, governed agent/user turns needed for Session History
+  remain in scope

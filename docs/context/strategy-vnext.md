@@ -1,6 +1,6 @@
 # Pallium vNext: Historical Agent Work as a First-Class Context Layer
 
-> Status: adopted direction (2026-08-12). Refines and partially supersedes the
+> Status: adopted direction (2026-08-12), refined 2026-09-05. Refines and partially supersedes the
 > derived-knowledge-first framing in [vision.md](vision.md): derived memory is
 > reframed from *the* differentiator to *one continuously-evaluated representation*
 > of the underlying asset — the accumulated history of agent-mediated work.
@@ -24,6 +24,14 @@ The core asset is the accumulated history of agent-mediated work, with retrieval
 provenance, and continuity.
 
 Derived memory is one possible representation of that history, not the product itself.
+
+The product now has two complementary capabilities:
+
+- **Session History** records and retrieves governed raw agent work, including exact
+  work references, without requiring generated-memory packages.
+- **Agent Relay** explicitly transfers context between supported agent runtimes.
+
+Derived packages may consume Session History, but they are not required for it.
 
 ## Why change direction
 
@@ -57,7 +65,8 @@ Expected flow:
 
 Primary unknown:
 
-> Will agents recognize when historical lookup is useful and actually use it?
+> Does retrieved history improve the work enough to justify its token, latency, and
+> contamination cost?
 
 ### 2. Work continuity across contexts
 
@@ -94,11 +103,16 @@ multi-user environment.
 
 ## Derived memory strategy
 
-Do **not** remove derived memory based on the current results.
+Keep the derived-memory implementations and stored outputs, but disable their
+packages by default. There is no migration constraint for changing the default in
+the current single-operator deployment.
 
-Instead:
+> **Raw history is the package-independent baseline. Derived memory is an optional,
+> continuously evaluated optimization layer.**
 
-> **Raw history is the baseline. Derived memory is a continuously evaluated optimization layer.**
+With every derived package disabled, Pallium must still start, ingest and redact
+raw turns, attach structural work references, index raw history, search and expand
+it, and enforce governance. It must make no derived-memory model calls.
 
 The current derivation implementation has not demonstrated an advantage. That may mean:
 
@@ -214,15 +228,18 @@ materially benefits another.
 
 ## Near-term roadmap
 
-1. Make raw historical search a first-class Pallium capability.
-2. Make the agent-facing pull workflow simple and obvious.
-3. Add telemetry connecting lookup → returned history → downstream use.
-4. Add RAW / DERIVED / HYBRID shadow evaluation.
-5. Support explicit work/session continuation.
-6. Run the pull and continuity live experiments.
+1. Attach structural branch, exact Work Record, and explicit issue/PR/ticket
+   references to raw turns without semantic inference.
+2. Expose separate exact work-scoped and broad Session History search tools, backed
+   by the same raw retrieval and expansion paths.
+3. Decouple raw Session History from derived packages and disable those packages by
+   default.
+4. Run a time-boxed comparison of flat, grouped, and index-first navigation and of
+   raw, on-demand-compressed, and persistent-derived representations.
+5. Accumulate diverse post-change activity, then run the real-corpus value gate.
+6. Support explicit work/session continuation only after that evidence warrants it.
 7. Improve derivation only in response to measured failure modes.
 8. Validate shared knowledge in an actual multi-user deployment.
-9. Reassess the strategy from observed reuse data.
 
 ---
 

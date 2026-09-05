@@ -1,6 +1,6 @@
 # Pallium vNext — Historical Agent Work: Execution Plan
 
-Date: 2026-08-12
+Date: 2026-08-12 (refined 2026-09-05)
 Status: Accepted direction (execution plan for [strategy-vnext](../context/strategy-vnext.md))
 
 ## Purpose
@@ -17,9 +17,10 @@ success gates, and architecture rationale**. Item-level scope lives in the
 1. **Experiment-gated phases.** Each phase is gated by one of the strategy's four
    live experiments. A phase must pass its gate before the next earns
    significant investment. We are validating a thesis, not shipping a backlog.
-2. **Raw history is the baseline; derived memory is an evaluated optimization
-   layer.** We do not remove derivation and we do not assume it. It earns
-   responsibility only where it beats RAW/HYBRID on a measured dimension.
+2. **Raw history is the package-independent baseline; derived memory is an optional
+   evaluated optimization layer.** Derived packages default off; their code and
+   stored outputs remain available. Derivation earns responsibility only where it
+   beats RAW/HYBRID on a measured dimension.
 3. **Primary KPI: fraction of eligible sessions with ≥1 confirmed
    historical-reuse × 100** (session incidence, capped at 100; history retrieved
    *and* materially used). Retrieval Recall@K is an
@@ -57,13 +58,13 @@ What already exists that this plan builds on (with the gaps each phase closes):
   source hits**, not just memory objects: `_specificity_bonus_source_hit`
   (`semantic/agent_conversation_memory_routing_scoring.py`), a reserved
   `MIN_SOURCE_HIT_SLOTS` in recall selection, and work-resumption source companions
-  (`semantic/agent_conversation_memory_routing_selection.py`). **Gap:** raw turns
-  compete in a *mixed* candidate pool and are then subject to memory-oriented
-  routing/injection policy, where memory objects can starve raw candidates; there is
-  no source-only retrieval target that ranks raw turns on their own before
-  top-K/fusion, and no agent-facing tool to invoke one. The fix is a source-only
-  target that **reuses** the existing lexical/vector fusion, visibility, filtering,
-  redaction, and trace infrastructure — not a second retrieval stack.
+  (`semantic/agent_conversation_memory_routing_selection.py`). The shipped
+  source-only retrieval target and broad `pallium_search_history` tool expose this
+  substrate without the mixed-pool starvation problem. **Current gaps:**
+  `QueryFilters.work_refs` is not
+  enforced for raw SourceItems; structurally known branch/Work Record references
+  are not attached consistently; and one broad tool does not express exact
+  work-scoped intent separately.
 - **Shadow-experiment harness pattern exists and is removable.** The
   `subtask_selector_shadow` runner attaches at a single seam in
   `core/query.py`, gated by an `ObservabilityConfig` flag, dispatches off the hot
@@ -183,6 +184,49 @@ sessions with ≥1 confirmed reuse × 100) and the three-rung breakdown.
 
 **Dependencies.** P0 contract (event schema + governance) precedes exposure. Enables
 the continuous evaluation track (RAW arm) and Phases 2–3, and the KPI.
+
+## Next ordered slice — Session History core (2026-09-05)
+
+The shipped Phase 0/1 work proves the raw retrieval substrate. The next three
+features, in order, make it a coherent package-independent product; the fourth is a
+committed time-boxed investigation:
+
+1. `add-structural-session-work-references` — integrations attach the current Git
+   branch, the exact convention-derived Agent Workflow Work Record when it exists,
+   and explicit issue/PR/ticket identifiers through the existing normalized
+   `pallium_work_refs` metadata. No LLM, directory scan, or inferred task episode.
+2. `add-distinct-work-and-broad-history-search-tools` — add exact
+   `pallium_search_work_history(work_ref, query?)` alongside broad
+   `pallium_search_history(query)`. Both reuse source-only retrieval and expansion;
+   raw work-reference filtering must happen before visible top-K.
+3. `decouple-session-history-from-derived-packages` — zero enabled semantic
+   packages must still support startup, ingest/redaction, structural references,
+   lexical search, optional raw-vector search, expansion, and governance, with zero
+   derived-memory model calls. Reuse package `enabled`; do not add a second
+   generation flag. Derived packages default off; no migration work is required for
+   the current single-operator deployment.
+4. `investigate-history-navigation-and-on-demand-compression` — compare flat raw
+   search with work-grouped/landmark and index-first navigation, then compare raw
+   evidence with temporary request-specific compression and persistent derived
+   memory at equal or reported budgets. Commit only to the investigation, not an
+   index, cache, or semantic episode model.
+
+**Implementation grounding.** Current code couples raw behavior to semantic
+packages: service construction requires an active default package, ingest resolves
+that package before raw storage, source vector text is package-owned, source-only
+visibility reads the default package, and queued work fails when its package is
+unavailable. Explicit note/remember ownership is also package-bound. These are
+planning inputs for item 3, not reasons to build a second raw stack.
+
+**Decisions to record before item 3 edits.** Which event kinds are searchable;
+whether lexical is the unconditional baseline and vector remains optional; what
+happens to queued work when a package is disabled; whether old derived objects stay
+queryable while disabled; whether explicit note/remember belongs to core; and
+confirmation that raw forgetting/deletion/retention is package-independent.
+
+**Gate.** After the slice, accumulate diverse post-change activity and run the
+real-corpus value gate. Retrieval alone is never counted as use, and every eval
+labels candidate recovery, injection precision, or downstream task effect.
 
 ## Continuous evaluation track — is derivation worth it? (RAW/DERIVED/HYBRID + fidelity)
 
@@ -337,15 +381,18 @@ must justify itself on live precision.
 |---|---|---|
 | Measurement contract + KPI | P0 | add-historical-lookup-funnel-telemetry |
 | Raw-history governance | P0 | add-raw-history-governance |
-| Bet 1: historical lookup (vertical slice) | P1 | add-raw-historical-search-mode, add-agent-historical-lookup-tool, add-source-context-expansion |
+| Bet 1: historical lookup (shipped foundation) | P1 | add-raw-historical-search-mode, add-agent-historical-lookup-tool, add-source-context-expansion |
+| Session History core (ordered) | Next | add-structural-session-work-references; add-distinct-work-and-broad-history-search-tools; decouple-session-history-from-derived-packages |
+| Navigation + representation evidence | Next investigation | investigate-history-navigation-and-on-demand-compression |
 | Derived-memory as evaluated layer / Exp 3 | Continuous | idea-raw-derived-hybrid-shadow-eval, idea-derivation-fidelity-eval |
 | Bet 2: continuity / Exp 2 | P2 | idea-cross-context-work-continuity |
 | Bet 3: shared knowledge / Exp 4 | P3 | idea-visibility-vocab-reconciliation (first), idea-cross-user-raw-history-value, add-bounded-memory-lifecycle-hardening, add-explicit-shared-memory-derivation (uncommitted), add-cross-container-bounded-memory (uncommitted) |
 
 ## Risks / open questions
 
-- **Pull adoption is the make-or-break unknown** and cannot be de-risked by more
-  corpus analysis — hence Phase 1 is a live behavioral test, not a build-and-hope.
+- **Net downstream value is the make-or-break unknown.** Agents already over-pull
+  on no-opportunity controls, so adoption alone is not evidence; the post-change
+  gate must weigh help against token, latency, contamination, and outdated guidance.
 - **Material-use measurement** is currently citation-level; the KPI needs a
   stronger signal without over-claiming.
 - **Cross-agent frequency** is unknown outside this corpus; Phase 2 continuity must

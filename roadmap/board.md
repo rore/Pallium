@@ -1,3 +1,9 @@
+# Next · Session History
+- add-structural-session-work-references
+- add-distinct-work-and-broad-history-search-tools
+- decouple-session-history-from-derived-packages
+- investigate-history-navigation-and-on-demand-compression
+
 # Parallel · Agent Relay
 - add-wake-first-relay-delivery
 - idea-agent-relay

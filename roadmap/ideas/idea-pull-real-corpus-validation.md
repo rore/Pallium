@@ -15,6 +15,11 @@ commitment: committed
 > measurement integrity (KPI taxonomy + attribution + continuous-eval population) and a calibrated reuse
 > judge (κ≥0.70) are in place. See the merged tickets for their full DoD detail.
 >
+> **Sequencing refined 2026-09-05.** Run this product gate after the ordered
+> Session History core slice and its time-boxed navigation/representation study, so
+> the paid comparison evaluates the intended interfaces and package-independent
+> baseline rather than immediately-obsolete behavior.
+>
 > **Unblocked 2026-09-02; waiting for broader post-fix activity.**
 > `fix-real-corpus-memory-access-and-evaluation` is complete. Its final capped run
 > used eight previously unevaluated tasks: two old replay bundles were contaminated
