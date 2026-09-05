@@ -35,6 +35,7 @@ def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int) -
         "title": row.title,
         "alias": row.alias,
         "state": lifecycle,
+        "destination_health": None if row.state == "closed" else row.state,
         "first_seen_at": _iso(row.first_seen_at),
         "last_seen_at": _iso(row.last_seen_at),
         "closed_at": _iso(row.closed_at),
@@ -55,11 +56,16 @@ def _delivery_receipt(claim_token: str | None) -> str | None:
     return hashlib.sha256(claim_token.encode()).hexdigest()[:32]
 
 
-def _delivery_view(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -> dict[str, Any]:
+def _delivery_view(
+    delivery: RelayDeliveryRecord,
+    message: RelayMessageRecord,
+    destination_health: str | None,
+) -> dict[str, Any]:
     return {
         "delivery_id": delivery.id,
         "message_id": message.id,
         "state": delivery.state,
+        "destination_health": destination_health,
         "claim_token": delivery.claim_token if delivery.state == "claimed" else None,
         "receipt": _delivery_receipt(delivery.claim_token) if delivery.state == "claimed" else None,
         "recipient_runtime": delivery.recipient_runtime,
@@ -257,7 +263,7 @@ class SQLiteRelayMixin:
                 delivery.claimed_at = current
                 delivery.lease_expires_at = current + timedelta(seconds=lease_seconds)
                 delivery.attempts = int(delivery.attempts or 0) + 1
-                claimed.append(_delivery_view(delivery, message))
+                claimed.append(_delivery_view(delivery, message, registered.state))
 
             return {
                 "session": _session_view(registered, current, 24 * 60 * 60),
@@ -641,7 +647,23 @@ class SQLiteRelayMixin:
             "in_reply_to": message.in_reply_to,
             "created_at": _iso(message.created_at),
             "expires_at": _iso(message.expires_at),
-            "deliveries": [_delivery_view(row, message) for row in deliveries],
+            "deliveries": [
+                _delivery_view(
+                    row,
+                    message,
+                    (
+                        session.state
+                        if (session := self._relay_session(
+                            db,
+                            container_ref=message.container_ref,
+                            runtime=row.recipient_runtime,
+                            session_ref=row.recipient_session_ref,
+                        )) is not None and session.state != "closed"
+                        else None
+                    ),
+                )
+                for row in deliveries
+            ],
         }
 
     def relay_pending_candidate(

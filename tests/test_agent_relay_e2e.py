@@ -751,6 +751,16 @@ def test_unreachable_destination_rejects_new_exact_and_alias_sends_only(client, 
         attempt_started_at=datetime.now(timezone.utc) + timedelta(seconds=1),
     )
 
+    sessions = client.get(
+        "/relay/sessions", params={**SCOPE, "include_inactive": True}
+    ).json()
+    target_session = next(row for row in sessions if row["session_ref"] == "target")
+    assert target_session["state"] == "recent"
+    assert target_session["destination_health"] == "unreachable"
+    status = client.get(f"/relay/messages/{first.json()['message_id']}", params=SCOPE).json()
+    assert status["deliveries"][0]["state"] == "pending"
+    assert status["deliveries"][0]["destination_health"] == "unreachable"
+
     def row_counts() -> tuple[int, int]:
         with relay_storage._relay_session_factory() as db:
             return (
@@ -769,6 +779,14 @@ def test_unreachable_destination_rejects_new_exact_and_alias_sends_only(client, 
     _turn(client, "codex", "closed")
     relay.close_session(runtime="codex", session_ref="closed", **SCOPE)
     assert _send(client, "claude-code", "sender", "codex:closed").status_code == 404
+    closed_session = next(
+        row for row in client.get(
+            "/relay/sessions", params={**SCOPE, "include_inactive": True}
+        ).json()
+        if row["session_ref"] == "closed"
+    )
+    assert closed_session["state"] == "closed"
+    assert closed_session["destination_health"] is None
 
     broadcast = _send(client, "claude-code", "sender", "codex", "active only")
     assert broadcast.status_code == 200
