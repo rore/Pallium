@@ -42,6 +42,7 @@
 - Slice B2: new exact/alias sends now fail synchronously for known unreachable recipients without creating rows; runtime fan-out excludes them, idempotent existing sends remain valid, and unreachable senders may send/name. Full Relay caller-surface E2E passes (38 tests).
 - Dogfood incident: restarting the installed service while a delegated write was incomplete imported transient invalid syntax. The required wrapper also printed success before readiness. Recovered by syntax-checking, restarting, and verifying health/status/queue; follow-up operations hardening must add pre-stop syntax preflight and bounded post-start endpoint verification.
 - Slice B3: public session and delivery responses expose destination health separately from lifecycle/delivery state; closed sessions report no advisory health. Relay caller-surface E2E remains 38 passing.
+- Slice C1: durable registry unreachable transitions now notify the scheduler outside the registry lock; the scheduler supplies an aware attempt timestamp and contains callback failures. Focused wake suites pass (75 passed, 2 skipped).
 
 ## Plan review
 

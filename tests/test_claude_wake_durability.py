@@ -707,3 +707,45 @@ def test_windows_capacity_reclaims_only_file_not_found(tmp_path: Path, monkeypat
     monkeypatch.setattr(registry, "probe", lambda *_args, **_kwargs: pytest.fail("capacity cleanup must not admit a turn"))
     assert _register(registry, state_dir, {**PAYLOAD, "session_ref": "new", "socket_path": r"\\.\pipe\new"}, "new") is accepted
     assert [candidate["session_ref"] for candidate in registry.recovery_candidates()] == (["new"] if accepted else [PAYLOAD["session_ref"]])
+
+
+def test_unreachable_callback_requires_persisted_transition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+    registry = ClaudeWakeRegistry(state_dir=tmp_path / "success")
+    root = tmp_path / "success"
+    assert _register(registry, root, PAYLOAD, "success")
+    assert not registry.probe(
+        runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        transport=lambda *_: "unreachable", on_unreachable=lambda: events.append("unreachable"),
+    )
+    assert events == ["unreachable"]
+
+    retry_root = tmp_path / "retry"
+    retry_registry = ClaudeWakeRegistry(state_dir=retry_root)
+    assert _register(retry_registry, retry_root, PAYLOAD, "retry")
+    assert not retry_registry.probe(
+        runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        transport=lambda *_: "retryable", on_unreachable=lambda: events.append("retryable"),
+    )
+    assert events == ["unreachable"]
+
+    failed_root = tmp_path / "failed"
+    failed_registry = ClaudeWakeRegistry(state_dir=failed_root)
+    assert _register(failed_registry, failed_root, PAYLOAD, "failed")
+    original_write = failed_registry._write_canonical_locked
+    writes = 0
+
+    def fail_unreachable_persist(state: object) -> bool:
+        nonlocal writes
+        writes += 1
+        return original_write(state) if writes == 1 else False
+
+    monkeypatch.setattr(failed_registry, "_write_canonical_locked", fail_unreachable_persist)
+    assert not failed_registry.probe(
+        runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        transport=lambda *_: "unreachable", on_unreachable=lambda: events.append("failed"),
+    )
+    assert events == ["unreachable"]

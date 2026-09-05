@@ -162,6 +162,7 @@ class ClaudeWakeRegistry:
         actor_ref: str,
         transport: Transport | None,
         delivery_id: str | None = None,
+        on_unreachable: Callable[[], None] | None = None,
     ) -> bool:
         if transport is None:
             return False
@@ -196,6 +197,7 @@ class ClaudeWakeRegistry:
         elif outcome is False or outcome not in {"accepted", "retryable", "unreachable"}:
             outcome = "retryable"
         if outcome != "accepted":
+            unreachable_persisted = False
             with self._lock:
                 current = self._active_locked(runtime, session_ref)
                 if current is not None and current.generation == consumed.generation:
@@ -203,10 +205,13 @@ class ClaudeWakeRegistry:
                         unreachable = replace(current, idle=False, state="unreachable", delivery_id=None, attempted_at=None)
                         if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref): unreachable}):
                             self._registrations[(runtime, session_ref)] = unreachable
+                            unreachable_persisted = True
                     else:
                         idle = replace(current, idle=True, state="idle", delivery_id=None, attempted_at=None)
                         if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref): idle}):
                             self._registrations[(runtime, session_ref)] = idle
+            if unreachable_persisted and on_unreachable is not None:
+                on_unreachable()
         return outcome == "accepted"
 
     @property

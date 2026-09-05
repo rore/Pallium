@@ -1285,3 +1285,24 @@ def test_persisted_idle_wakes_once_after_real_app_restart(
         assert [candidate["session_ref"] for candidate in candidates] == ["restart-target"]
         assert all(registration["idle"] is True for registration in registrations)
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
+
+
+def test_unreachable_callback_is_aware_and_exception_safe(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.claude_wake as wake
+
+    registry = ClaudeWakeRegistry()
+    registry.register(**{**PAYLOAD, "idle": True})
+    observed: list[datetime] = []
+    monkeypatch.setattr(wake, "claude_wake_transport", lambda *_: "unreachable")
+
+    def callback(attempt_started_at: datetime) -> None:
+        observed.append(attempt_started_at)
+        raise RuntimeError("callback failure")
+
+    _join(schedule_claude_relay_wake(
+        _wake_result(PAYLOAD["session_ref"]),
+        {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]},
+        registry=registry, on_unreachable=callback,
+    ))
+    assert len(observed) == 1 and observed[0].tzinfo is not None
+    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"])].state == "unreachable"
