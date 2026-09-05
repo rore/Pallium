@@ -32,7 +32,8 @@ wake remain open. There is no scheduled Relay feature.
 ### Session History
 
 - source-only historical retrieval
-- `pallium_search_history`
+- `pallium_search_history` for broad topic search
+- `pallium_search_history_by_work_ref` for exact-reference search
 - bounded `pallium_expand_source` context
 - linked lookup/expansion telemetry
 - search and expansion redaction
@@ -40,9 +41,9 @@ wake remain open. There is no scheduled Relay feature.
 - raw-turn forgetting and shared-raw revocation
 - safeguards for superseded historical guidance
 
-Supported integrations now attach structural work references. Separate exact
-work-scoped search and running raw Session History with zero semantic packages
-remain ordered work, not shipped behavior.
+Supported integrations attach structural work references, and exact work-reference
+search is shipped. Running raw Session History with zero semantic packages remains
+ordered work, not shipped behavior.
 
 ### Derived memory
 

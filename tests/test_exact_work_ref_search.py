@@ -576,4 +576,3 @@ def test_exact_work_ref_search_through_enabled_vector_http(
     returned = [row["source_item_id"] for row in response.json()["results"]]
     assert len(returned) == 2
     assert set(returned) == set(right_ids)
-

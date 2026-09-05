@@ -51,7 +51,7 @@ Target files or classes: `core.work_ref`, `core.filters.source_item_matches_filt
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -80,4 +80,16 @@ Implementation completed in the isolated `codex/distinct-work-broad-history-sear
 
 The first clean-context result review found five P2 gaps: legacy SQL/core normalization disagreement, repeated SQLite scans, deferred empty-result budget overflow, malformed public validation input echo, and incomplete caller-surface coverage. All five were addressed with regressions, including real MCP → HTTP → delivery telemetry → expansion, one-statement refill, vector exact-filter exhaustion, malformed secret-bearing HTTP/MCP inputs, and 128-character empty exact searches. The whitespace-only `/query` compatibility tightening is intentional and limited to the new exact origin; existing broad history still requires a nonblank query.
 
-Verification so far: 366 affected Python tests passed; OpenCode Node integration tests passed (45 passed, 6 platform skips). Final full-repository and workflow/redline checks remain before advancing State. All edits used narrowly scoped deterministic PowerShell replacements after `apply_patch` failed with the documented local Windows 1327/1385 process-creation limitation.
+Verification complete on code revision `736efcf0`: 368 affected Python tests passed; the full repository passed with 4,395 tests, 14 platform/dependency skips, and 2 expected failures; OpenCode Node integration passed with 45 tests and 6 Windows platform skips; compileall and `git diff --check` passed; the repository import-linter adapter reported zero violations. Final clean-context result review approved both architecture and API with no P0–P2 findings. All edits used narrowly scoped deterministic PowerShell replacements after `apply_patch` failed with the documented local Windows 1327/1385 process-creation limitation.
+
+## Evidence
+
+- Code revision: `736efcf0` (final following commit contains documentation and Work Record alignment only).
+- Affected verification: `368 passed`.
+- Full repository: `4395 passed, 14 skipped, 2 xfailed`.
+- OpenCode integration: `45 passed, 6 skipped` (Windows-only structural-ref skips).
+- Import boundaries: `build/import-linter-report.json` contains zero violations.
+- Ruff is neither installed nor configured as a repository or CI check; `compileall`, `git diff --check`, import-linter, and full tests supplied the configured static/runtime verification.
+- Clean-context final result review: architecture-review and api-review approved; no P0–P2 findings.
+- Skill-feedback check: all seven triggers were false; no upstream skill issue required.
+- Workflow gate: all blocking predicates passed; the sole advisory is a false-positive commit-order signal because the first commit contained the Work Record plus roadmap planning, before any guarded code edit.

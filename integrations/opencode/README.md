@@ -21,7 +21,8 @@ recipient's next normal turn.
 ### Session History
 
 - record OpenCode user and assistant messages;
-- search earlier sessions with `pallium_search_history`;
+- search earlier sessions broadly with `pallium_search_history`;
+- search one known exact work reference with `pallium_search_history_by_work_ref`;
 - open nearby messages with `pallium_expand_source`.
 
 > Search Pallium Session History for why we kept the legacy response field.

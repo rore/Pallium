@@ -1,7 +1,7 @@
 ---
 id: add-distinct-work-and-broad-history-search-tools
 title: Split work-scoped and broad Session History search
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-session-history

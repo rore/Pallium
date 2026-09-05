@@ -232,7 +232,7 @@ materially benefits another.
 
 1. **Shipped:** attach structural branch, exact Work Record, and explicit
    issue/PR/ticket references to raw turns without semantic inference.
-2. **Next:** expose separate exact work-scoped and broad Session History search tools,
+2. **Shipped:** expose separate exact work-scoped and broad Session History search tools,
    backed by the same raw retrieval and expansion paths.
 3. **Next:** decouple raw Session History from derived packages and disable those
    packages by default.

@@ -1,5 +1,4 @@
 # Next · Session History
-- add-distinct-work-and-broad-history-search-tools
 - decouple-session-history-from-derived-packages
 - investigate-history-navigation-and-on-demand-compression
 
@@ -45,6 +44,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-distinct-work-and-broad-history-search-tools
 - add-structural-session-work-references
 - fix-relay-receive-mcp-lifecycle
 - fix-relay-claim-before-context-emission
