@@ -11,7 +11,7 @@ import os
 from typing import Literal
 
 from app.mcp.client import PalliumMcpClient
-from app.mcp.context import resolve_context, resolve_relay_context
+from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
 from retrieval.common import build_excerpt
 
 
@@ -342,7 +342,7 @@ NOT_CONFIGURED_MSG = (
 
 def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp import Context, FastMCP
     # stateless_http: every Pallium MCP tool is a single-shot RPC, so we don't
     # need server-side session affinity. Stateless mode survives server
     # restarts (sessions are otherwise in-process only) — without it, clients
@@ -708,11 +708,11 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         result = await PalliumMcpClient(ctx).relay_status(message_id)
         return _relay_text(result)
 
-    @server.tool()
     async def pallium_relay_receive(
         max_chars: int = 0,
         container_ref: str | None = None,
         actor_ref: str | None = None,
+        request_ctx: object | None = None,
     ) -> str:
         """Claim pending Relay deliveries for this runtime session. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. Uses only integration-owned runtime/session identity. Call pallium_relay_ack(delivery_id, receipt), or pallium_relay_reply to reply and ACK atomically."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
@@ -727,6 +727,16 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         session_ref = ctx.thread_ref
         if not runtime:
             return "Error: PALLIUM_AGENT_REF is not set. Relay receive requires integration-injected runtime identity."
+        if runtime == "codex":
+            metadata = None
+            if request_ctx:
+                try:
+                    metadata = request_ctx.request_context.meta
+                except ValueError:
+                    pass
+            session_ref, metadata_error = resolve_codex_thread_ref(metadata)
+            if metadata_error:
+                return f"Error: {metadata_error}; upgrade or reload Codex, then retry. Relay receive remains fail-closed."
         if not session_ref:
             return "Error: PALLIUM_THREAD_REF is not set. Relay receive requires integration-injected session identity."
         result = await PalliumMcpClient(ctx).relay_receive(runtime=runtime, session_ref=session_ref, max_chars=max_chars)
@@ -734,6 +744,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             for d in result["deliveries"]:
                 d.pop("claim_token", None)  # receipt stays; claim_token is never exposed
         return _json_text(result)
+
+    pallium_relay_receive.__annotations__["request_ctx"] = Context | None
+    server.tool()(pallium_relay_receive)
 
     @server.tool()
     async def pallium_relay_ack(

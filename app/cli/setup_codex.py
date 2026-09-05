@@ -220,7 +220,6 @@ def _ensure_mcp_server(content: str, port: int = 19836) -> str:
         f'command = "{_mcp_command()}"\n'
         'args = ["-m", "app.run", "mcp"]\n'
         f'env = {_mcp_env_toml(port)}\n'
-        'env_vars = ["CODEX_THREAD_ID", "CODEX_SESSION_ID"]\n'
         'startup_timeout_sec = 10\n'
         'tool_timeout_sec = 30\n'
         'default_tools_approval_mode = "prompt"\n'
