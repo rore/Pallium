@@ -44,16 +44,21 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-06: Established the task from repeated Windows CI failures. Redline classified the intended test-only scope blue; no production code or boundary change is planned.
+- 2026-09-06: Removed the broad OpenCode E2E PATH override so dedicated resolver tests own missing-git behavior; replaced the rapid-fire 30-second poll with worker shutdown checks plus the existing deterministic queue drain. Production code is unchanged.
 
 ## Evidence
 
-Pending.
+- Focused matrix: 8 passed in 6.91s.
+- Three repeated prior-failure runs: 5 passed each in 6.37-6.84s.
+- OpenCode integration suite: 45 passed, 6 Windows skips in 10.93s.
+- Thread-summary accumulation file: 3 passed in 4.89s.
+- Existing Pydantic warnings unchanged. Revision pending commit; CI is the final Windows runner evidence.
 
 ## Result review
 

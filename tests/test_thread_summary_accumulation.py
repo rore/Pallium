@@ -346,17 +346,14 @@ def test_dual_package_concurrent_rapid_fire(monkeypatch, test_db_url: str) -> No
         else:
             raise AssertionError("Ingest failed after retries: database is locked")
 
-    for _poll in range(60):
-        summaries = _collect_memory(app.state.pallium_service._storage, container_ref, thread_ref, "thread_summary")
-        if any(mo.lifecycle == "active" for mo in summaries):
-            break
-        time.sleep(0.5)
-
     stop_event.set()
     t1.join(timeout=5)
     t2.join(timeout=5)
 
+    assert not t1.is_alive()
+    assert not t2.is_alive()
     assert not errors, f"Worker errors: {errors}"
+    app.state.pallium_service.drain_processing_queue(worker_id="final-drain")
 
     summaries = _collect_memory(app.state.pallium_service._storage, container_ref, thread_ref, "thread_summary")
     active_summaries = _report("Dual-package RAPID-FIRE", summaries, "thread_summary")
