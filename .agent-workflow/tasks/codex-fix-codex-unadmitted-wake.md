@@ -55,13 +55,16 @@ Standing user approval to carry managed PRs through merge.
 
 - 2026-09-06: Traced native CLI launch, HTTP callbacks, hook admission, storage health, historical Phase-0 evidence, and RW-015 dogfood. Rejected App Server substitution and timeout retry because they target the wrong runtime or duplicate native queued turns.
 - 2026-09-06: Corrected the incident after durable status and exact-task history proved both earlier sends eventually admitted. Implemented only the remaining root hardening: blocking-exec/no-hook detection, exact-scope admission, strict-CAS health feedback, and indefinite coalescing for accepted queue writes or timed-out exec/queue subprocesses.
+- 2026-09-06: CodeRabbit found that session-only ownership could suppress a valid second scope sharing the session reference. Qualified the existing ownership key by session, container, and actor; removed the now-redundant scope map; and added deterministic two-scope isolation coverage.
 
 ## Evidence
 
-- `.venv\Scripts\python.exe -m pytest tests\test_codex_wake.py tests\test_agent_relay_e2e.py tests\test_relay_wake_contract.py tests\test_codex_integration.py -q` → 107 passed in 13.14s; four pre-existing Pydantic forward-reference warnings.
+- `.venv\Scripts\python.exe -m pytest tests\test_codex_wake.py tests\test_agent_relay_e2e.py tests\test_relay_wake_contract.py tests\test_codex_integration.py -q` → 108 passed in 14.44s; four pre-existing Pydantic forward-reference warnings.
 - Caller-surface E2E drives HTTP persistence and dispatch through actual `_launch`; proves exact hook admission before exec return, completed/no-hook pending recovery, queue-timeout coalescing without duplicate launch, wrong-scope refusal, Unicode, and single ACK without wall-clock sleeps.
 - `scripts/agent-workflow-check.py --repo-root . --slug codex-fix-codex-unadmitted-wake` → clean. Redline → GRAY/watch-only for `app/codex_wake.py` and `app/dependencies.py`; no boundary, API, schema, security, runtime-config, or checkpoint findings. `git diff --check` → clean.
 
 ## Result review
 
-- 2026-09-06 final clean-context Luna review: APPROVE; no blocking findings and no unnecessary abstraction or unsafe live-service test behavior.
+- 2026-09-06 initial final clean-context Luna review: APPROVE after timeout and caller-surface corrections.
+- CodeRabbit then identified one valid cross-scope ownership suppression bug; the PR template warning was corrected, while the test-function docstring metric was rejected as non-substantive bloat.
+- Post-fix clean-context Luna re-review: APPROVE; tuple ownership is consistent across schedule, worker, stale-generation, and admission paths, and the intentional two-worker cross-scope behavior is regression-tested.

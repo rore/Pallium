@@ -51,7 +51,6 @@ def setup_function() -> None:
     codex_wake._scheduled_delivery_ids.clear()
     codex_wake._scheduled_session_generations.clear()
     codex_wake._scheduled_session_delivery_ids.clear()
-    codex_wake._scheduled_session_scopes.clear()
 
 
 def test_successful_resume_does_not_queue_and_hides_process() -> None:
@@ -169,6 +168,30 @@ def test_duplicate_and_non_codex_do_not_start_child() -> None:
         _schedule(_delivery("delivery-2", "claude-code"))
         _schedule({**_delivery("delivery-3"), "recipient": "codex"})
     thread.assert_called_once()
+
+
+def test_same_session_in_two_scopes_has_independent_ownership() -> None:
+    other_scope = {
+        "container_ref": "git:example.test/other-wake",
+        "actor_ref": "other-user",
+    }
+    first_key = ("target-session", SCOPE["container_ref"], SCOPE["actor_ref"])
+    other_key = (
+        "target-session",
+        other_scope["container_ref"],
+        other_scope["actor_ref"],
+    )
+    with patch("app.codex_wake.threading.Thread") as thread:
+        _schedule(_delivery())
+        codex_wake.schedule_codex_relay_wake(_delivery("delivery-2"), other_scope)
+    assert thread.call_count == 2
+    assert set(codex_wake._scheduled_session_generations) == {first_key, other_key}
+
+    codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
+
+    assert first_key not in codex_wake._scheduled_session_generations
+    assert other_key in codex_wake._scheduled_session_generations
+    assert codex_wake._scheduled_delivery_ids == {"delivery-2"}
 
 
 @pytest.mark.parametrize("outcome", ["queued", "ambiguous"])
@@ -570,9 +593,9 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
     assert ambiguous_status["destination_health"] == "active"
     assert ambiguous_status["attempts"] == 0
     assert not contexts
-    assert codex_wake._scheduled_session_scopes["target"] == (
-        scope["container_ref"], scope["actor_ref"]
-    )
+    assert (
+        "target", scope["container_ref"], scope["actor_ref"]
+    ) in codex_wake._scheduled_session_generations
     with patch("app.codex_wake.threading.Thread") as thread:
         duplicate = route.post("/relay/messages", json={
             "sender_runtime": "claude-code",
@@ -1132,16 +1155,19 @@ def test_build_router_turn_rearms_actual_codex_wake_state(client, monkeypatch) -
         assert not codex_wake._scheduled_delivery_ids
         _schedule(_delivery("delivery-2"))
     assert thread.call_count == 2
+
+
 def test_failed_old_generation_cannot_clear_replacement(monkeypatch) -> None:
-    codex_wake._scheduled_session_generations['target-session'] = 2
-    codex_wake._scheduled_session_delivery_ids['target-session'] = 'delivery-new'
-    codex_wake._scheduled_delivery_ids.add('delivery-new')
-    monkeypatch.setattr(codex_wake.time, 'sleep', lambda _: None)
-    monkeypatch.setattr(codex_wake, '_wake', lambda _: "failed")
-    codex_wake._wake_after_debounce('delivery-old', 'target-session', 1)
-    assert codex_wake._scheduled_session_generations['target-session'] == 2
-    assert codex_wake._scheduled_session_delivery_ids['target-session'] == 'delivery-new'
-    assert codex_wake._scheduled_delivery_ids == {'delivery-new'}
+    wake_key = ("target-session", SCOPE["container_ref"], SCOPE["actor_ref"])
+    codex_wake._scheduled_session_generations[wake_key] = 2
+    codex_wake._scheduled_session_delivery_ids[wake_key] = "delivery-new"
+    codex_wake._scheduled_delivery_ids.add("delivery-new")
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    monkeypatch.setattr(codex_wake, "_wake", lambda _: "failed")
+    codex_wake._wake_after_debounce("delivery-old", wake_key, 1)
+    assert codex_wake._scheduled_session_generations[wake_key] == 2
+    assert codex_wake._scheduled_session_delivery_ids[wake_key] == "delivery-new"
+    assert codex_wake._scheduled_delivery_ids == {"delivery-new"}
 
 
 def test_old_scheduled_worker_cannot_clear_new_schedule(monkeypatch) -> None:
@@ -1155,12 +1181,13 @@ def test_old_scheduled_worker_cannot_clear_new_schedule(monkeypatch) -> None:
         old_args = thread.call_args.kwargs["args"]
         codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
         _schedule(_delivery("delivery-new"))
-        new_generation = codex_wake._scheduled_session_generations["target-session"]
+        wake_key = ("target-session", SCOPE["container_ref"], SCOPE["actor_ref"])
+        new_generation = codex_wake._scheduled_session_generations[wake_key]
 
     assert old_args[2] != new_generation
     codex_wake._wake_after_debounce(*old_args)
-    assert codex_wake._scheduled_session_generations["target-session"] == new_generation
-    assert codex_wake._scheduled_session_delivery_ids["target-session"] == "delivery-new"
+    assert codex_wake._scheduled_session_generations[wake_key] == new_generation
+    assert codex_wake._scheduled_session_delivery_ids[wake_key] == "delivery-new"
     assert codex_wake._scheduled_delivery_ids == {"delivery-new"}
 
 
