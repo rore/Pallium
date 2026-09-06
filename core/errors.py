@@ -22,6 +22,8 @@ def is_transient_error(exc: Exception) -> bool:
     Currently covers SQLite transient errors (disk I/O, busy, locked),
     handling both raw sqlite3.OperationalError and SQLAlchemy-wrapped versions.
     """
+    if isinstance(exc, ImmediateTransactionBusyError):
+        return True
     original = exc
     if isinstance(exc, SAOperationalError) and exc.orig is not None:
         original = exc.orig

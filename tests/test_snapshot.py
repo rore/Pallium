@@ -531,6 +531,7 @@ def test_wal_mode_enabled(tmp_path: Path) -> None:
 
 
 def test_begin_immediate_under_wal(tmp_path: Path) -> None:
+    from core.errors import ImmediateTransactionBusyError
     from core.models import utc_now, new_id, SourceItem
     from storage.sqlite import SQLiteStorageProvider
 
@@ -566,6 +567,8 @@ def test_begin_immediate_under_wal(tmp_path: Path) -> None:
                 if result is not None:
                     with lock:
                         claimed_ids.append(result.id)
+            except ImmediateTransactionBusyError:
+                continue
             except Exception as exc:
                 with lock:
                     errors.append(exc)

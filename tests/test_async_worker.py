@@ -15,7 +15,7 @@ from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES, _vector_index_path_for_sqlite
 from app.processor import run_processor
 from app.worker import run_worker
-from core.errors import is_transient_error
+from core.errors import ImmediateTransactionBusyError, is_transient_error
 from app import supervisor
 from core.contracts import ProcessResult, build_source_item
 from core.service import DEFAULT_PROCESSING_LEASE_SECONDS, PalliumService
@@ -762,6 +762,9 @@ def testis_transient_error_recognizes_known_errors() -> None:
     # SQLAlchemy-wrapped errors (what actually propagates from storage)
     assert is_transient_error(_make_sa_operational_error("disk I/O error"))
     assert is_transient_error(_make_sa_operational_error("database is locked"))
+    assert is_transient_error(
+        ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)")
+    )
 
 
 def testis_transient_error_rejects_non_transient() -> None:
@@ -790,7 +793,7 @@ def test_worker_retries_on_transient_sqlite_error_then_recovers(monkeypatch, tes
     def failing_then_working(**kwargs):
         call_count[0] += 1
         if call_count[0] <= 2:
-            raise _make_sa_operational_error("disk I/O error")
+            raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)")
         return original_process(**kwargs)
 
     service.process_next_source_item = failing_then_working
