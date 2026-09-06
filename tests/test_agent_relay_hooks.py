@@ -167,6 +167,113 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     assert acknowledged and acknowledged[0][0] == [DELIVERY]
 
 
+def test_codex_confirmed_empty_internal_wake_blocks_before_model(monkeypatch, capsys):
+    from app import codex_wake
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    assert hook.RELAY_WAKE_PROMPT == codex_wake._wake_prompt()
+    monkeypatch.setattr(
+        hook,
+        "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "target", "prompt": hook.RELAY_WAKE_PROMPT},
+    )
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(
+        hook,
+        "relay_request",
+        lambda *_a, **_k: {
+            "deliveries": [], "has_more": False, "remaining_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        hook, "check_dedup", lambda *_: pytest.fail("empty wake must block before dedup"),
+    )
+    monkeypatch.setattr(
+        hook, "pallium_request", lambda *_a, **_k: pytest.fail("empty wake must not query memory"),
+    )
+    monkeypatch.setattr(
+        hook, "emit_context", lambda *_a, **_k: pytest.fail("empty wake must not emit context"),
+    )
+
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+
+    assert exited.value.code == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "decision": "block",
+        "reason": "Pallium Relay wake superseded: no pending delivery.",
+    }
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    "relay_response",
+    [
+        None,
+        {},
+        {"deliveries": None},
+        {"deliveries": "invalid"},
+        ["invalid"],
+        {"deliveries": []},
+        {"deliveries": [], "has_more": True, "remaining_count": 1},
+        {"deliveries": [], "has_more": False, "remaining_count": False},
+    ],
+)
+def test_codex_internal_wake_fails_open_without_confirmed_empty(
+    monkeypatch, capsys, relay_response,
+):
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    monkeypatch.setattr(
+        hook,
+        "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "target", "prompt": hook.RELAY_WAKE_PROMPT},
+    )
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: relay_response)
+    monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "emit_context", lambda *_a, **_k: None)
+
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+
+    assert exited.value.code == 0
+    captured = capsys.readouterr()
+    assert '"decision":"block"' not in captured.out
+    assert "superseded" not in captured.err
+
+
+def test_codex_internal_wake_without_valid_scope_fails_open(monkeypatch, capsys):
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    monkeypatch.setattr(
+        hook,
+        "read_hook_input",
+        lambda: {"cwd": ".", "session_id": "target", "prompt": hook.RELAY_WAKE_PROMPT},
+    )
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "bad\nscope")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(
+        hook, "relay_request", lambda *_a, **_k: pytest.fail("invalid scope must not claim Relay"),
+    )
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: None)
+
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+
+    assert exited.value.code == 0
+    captured = capsys.readouterr()
+    assert '"decision":"block"' not in captured.out
+    assert "superseded" not in captured.err
+
 @pytest.mark.parametrize(
     ("relative", "runtime", "imported"),
     [
