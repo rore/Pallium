@@ -408,6 +408,90 @@ class TestStartWindows:
         assert call_args[0] == "wscript.exe"
         assert str(vbs_path) in call_args[1]
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
+    @pytest.mark.parametrize("home_name", [None, "custom", "home with spaces", "בית עם רווחים"])
+    def test_install_carries_exact_home_in_unicode_launcher(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        home_name: str | None,
+    ):
+        profile = tmp_path / "profile"
+        monkeypatch.setattr(Path, "home", lambda: profile)
+        expected_home = profile / ".pallium" if home_name is None else tmp_path / home_name
+        python_exe = tmp_path / "פייתון with spaces" / "python.exe"
+        monkeypatch.setattr(sys, "executable", str(python_exe))
+        monkeypatch.setattr("app.cli.service._find_pallium_cmd", lambda: "pallium")
+        monkeypatch.setattr("app.cli.service._seed_config", lambda _home: None)
+        monkeypatch.setattr("app.cli.service._apply_home_env", lambda _home: None)
+        monkeypatch.setattr("app.cli.service._missing_declared_credentials", lambda _config: [])
+        monkeypatch.setattr("app.config.AppConfig.from_env", lambda: object())
+        monkeypatch.setattr("app.run._run_download_embedding_model", lambda: None)
+        monkeypatch.setattr("app.cli.service._check_health", lambda _port: {"status": "ok"})
+        monkeypatch.setattr("app.cli.service.time.sleep", lambda _seconds: None)
+
+        task_xml: list[str] = []
+
+        def fake_run(argv, **_kwargs):
+            task_xml.append(Path(argv[5]).read_text(encoding="utf-16"))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        monkeypatch.setattr("app.cli.service.subprocess.run", fake_run)
+        popen_calls: list[list[str]] = []
+        monkeypatch.setattr(
+            "app.cli.service.subprocess.Popen",
+            lambda argv, **_kwargs: popen_calls.append(argv),
+        )
+
+        args = ["install", "--port", "21987"]
+        if home_name is not None:
+            args.extend(["--home", str(expected_home)])
+        assert service_main(args) == 0
+
+        expected_home = expected_home.resolve()
+        vbs_path = expected_home / "run" / "pallium_launcher.vbs"
+        raw = vbs_path.read_bytes()
+        assert raw.startswith(b"\xff\xfe")
+        assert vbs_path.read_text(encoding="utf-16") == (
+            'Set WshShell = CreateObject("WScript.Shell")\n'
+            f'WshShell.Run """{python_exe}"" -m app.run service run --port 21987 '
+            f'--home ""{expected_home}""", 0, False\n'
+        )
+        assert len(task_xml) == 1
+        assert f'<Arguments>"{vbs_path}"</Arguments>' in task_xml[0]
+        assert popen_calls == [["wscript.exe", str(vbs_path)]]
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
+    def test_run_uses_explicit_unicode_home_for_runtime_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        home = (tmp_path / "שירות with spaces").resolve()
+        config = SimpleNamespace(
+            semantic_packages={},
+            llm_providers={},
+            default_use_case="test",
+            embedding_providers={},
+        )
+        monkeypatch.setattr("app.config.AppConfig.from_env", lambda: config)
+        monkeypatch.setattr("app.dependencies.build_semantic_plugins", lambda _config: {})
+        monkeypatch.setattr("app.runtime_logging.configure_file_logging", lambda _path: None)
+        monkeypatch.setattr("app.runtime_logging.emit_runtime_log", lambda *_args: None)
+
+        observed: dict[str, Path] = {}
+
+        def fake_supervisor(_args, *, log_file, log_stream):
+            assert log_stream is None
+            observed["log_file"] = log_file
+            assert (home / "run" / "pallium.pid").read_text() == str(os.getpid())
+            assert (home / "run" / "port").read_text() == "21987"
+            return 0
+
+        monkeypatch.setattr("app.supervisor.run_supervisor", fake_supervisor)
+
+        assert service_main(["run", "--port", "21987", "--home", str(home)]) == 0
+        assert observed == {"log_file": home / "logs" / "pallium.log"}
+        assert not (home / "run" / "pallium.pid").exists()
+        assert not (home / "run" / "port").exists()
 
 class TestCmdRestart:
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only guard is Windows-specific")

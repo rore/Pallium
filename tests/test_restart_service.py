@@ -80,6 +80,9 @@ function Get-NetTCPConnection {
 
 function Get-Process {
     param($Id, $ErrorAction)
+    if ($env:RW016_PID -and $Id -eq [int]$env:RW016_PID) {
+        return [pscustomobject]@{ Id = $Id }
+    }
     return $null
 }
 
@@ -177,14 +180,20 @@ def _run_restart(
     task_shape: str = "canonical",
     port: int | str | None = 21987,
     working_directory: Path | None = None,
+    service_home: Path | None = None,
+    pid_file_value: int | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     shell = shutil.which("pwsh") or shutil.which("powershell")
     assert shell is not None, "PowerShell is required on Windows"
 
     call_log = tmp_path / "calls.log"
     harness = tmp_path / "harness.ps1"
+    service_home = service_home or tmp_path / "service-home"
     vbs = tmp_path / "launcher.vbs"
     harness.write_text(HARNESS, encoding="utf-8")
+    if pid_file_value is not None:
+        (service_home / "run").mkdir(parents=True, exist_ok=True)
+        (service_home / "run" / "pallium.pid").write_text(str(pid_file_value))
     if task_shape == "legacy":
         python = Path(sys.executable).with_name("pythonw.exe")
         launcher = tmp_path / "service_launcher.py"
@@ -196,10 +205,19 @@ def _run_restart(
         command = f'WshShell.Run """{python}"" ""{launcher}""", 0, False\n'
     elif task_shape == "unparseable":
         command = 'WshShell.Run "not-python", 0, False\n'
-    else:
+    elif task_shape == "canonical_missing_home":
         port_arg = "" if port is None else f" --port {port}"
         command = f'WshShell.Run """{sys.executable}"" -m app.run service run{port_arg}", 0, False\n'
-    vbs.write_text('Set WshShell = CreateObject("WScript.Shell")\n' + command, encoding="ascii")
+    else:
+        port_arg = "" if port is None else f" --port {port}"
+        command = (
+            f'WshShell.Run """{sys.executable}"" -m app.run service run{port_arg} '
+            f'--home ""{service_home}""", 0, False\n'
+        )
+    vbs.write_text(
+        'Set WshShell = CreateObject("WScript.Shell")\n' + command,
+        encoding="ascii" if task_shape == "legacy" else "utf-16",
+    )
 
     env = os.environ.copy()
     env.update(
@@ -214,6 +232,7 @@ def _run_restart(
             if task_shape == "invalid_workdir"
             else str(working_directory or tmp_path)
         ),
+        RW016_PID="" if pid_file_value is None else str(pid_file_value),
     )
     result = subprocess.run(
         [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness)],
@@ -221,6 +240,7 @@ def _run_restart(
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         errors="replace",
         timeout=15,
     )
@@ -236,7 +256,8 @@ def _assert_failure(result: subprocess.CompletedProcess[str]) -> str:
     output = _output(result)
     assert result.returncode != 0
     assert "Pallium restarted." not in output
-    assert ".pallium\\logs\\pallium.log" in output
+    assert "Pallium log:" in output
+    assert "\\logs\\pallium.log" in output
     return output
 
 
@@ -314,6 +335,36 @@ def test_legacy_task_passes_unicode_working_directory_exactly(tmp_path: Path) ->
     assert result.returncode == 0, _output(result)
     assert f"PreflightWorkingDirectory:{working_directory}" in calls
 
+
+def test_canonical_unicode_home_controls_pid_cleanup_and_failure_log(tmp_path: Path) -> None:
+    service_home = tmp_path / "שירות %TEMP% עם רווחים"
+    result, calls = _run_restart(
+        tmp_path,
+        "start_failure",
+        service_home=service_home,
+        pid_file_value=5151,
+    )
+
+    output = _assert_failure(result)
+    assert any(call.endswith("/PID 5151") for call in calls)
+    assert f"Pallium log: {service_home / 'logs' / 'pallium.log'}" in output
+
+
+def test_legacy_task_failure_keeps_default_home_log_path(tmp_path: Path) -> None:
+    result, _calls = _run_restart(tmp_path, "start_failure", task_shape="legacy")
+
+    output = _assert_failure(result)
+    default_log = tmp_path / "home" / ".pallium" / "logs" / "pallium.log"
+    assert f"Pallium log: {default_log}" in output
+
+def test_canonical_missing_home_fails_before_stop(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "ready", task_shape="canonical_missing_home")
+
+    output = _assert_failure(result)
+    assert "resolve the installed service home" in output
+    assert "Stop-ScheduledTask" not in calls
+    assert "Stop-Process" not in calls
+    assert not any(call.startswith("taskkill") for call in calls)
 
 @pytest.mark.parametrize("port", [None, "abc", 0, 65536])
 def test_missing_or_invalid_port_never_stops(tmp_path: Path, port: int | str | None) -> None:

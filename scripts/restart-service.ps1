@@ -8,7 +8,8 @@
 
 $ErrorActionPreference = "Stop"
 $TaskName = "Pallium"
-$LogPath = "$env:USERPROFILE\.pallium\logs\pallium.log"
+$ServiceHome = "$env:USERPROFILE\.pallium"
+$LogPath = "$ServiceHome\logs\pallium.log"
 
 function Stop-WithError([string]$Message) {
     [Console]::Error.WriteLine("Error: $Message")
@@ -36,6 +37,11 @@ if (-not $vbsPath -or -not (Test-Path -LiteralPath $vbsPath)) {
 }
 
 $vbs = Get-Content -Raw -LiteralPath $vbsPath
+$homeMatch = [regex]::Match($vbs, '--home\s+""([^"\r\n]+)""', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+if ($homeMatch.Success) {
+    $ServiceHome = $homeMatch.Groups[1].Value
+    $LogPath = "$ServiceHome\logs\pallium.log"
+}
 $pythonMatch = [regex]::Match(
     $vbs,
     'WshShell\.Run\s+"""([^"\r\n]+pythonw?\.exe)""',
@@ -55,6 +61,9 @@ $portMatch = [regex]::Match(
     'WshShell\.Run\s+"""[^"\r\n]+pythonw?\.exe""\s+-m\s+app\.run\s+service\s+run\b[^"\r\n]*?--port\s+([^\s",]+)',
     [Text.RegularExpressions.RegexOptions]::IgnoreCase
 )
+if ($portMatch.Success -and -not $homeMatch.Success) {
+    Stop-WithError "Could not resolve the installed service home from canonical launcher metadata in $vbsPath"
+}
 $portText = if ($portMatch.Success) { $portMatch.Groups[1].Value } else { "" }
 if (-not $portText) {
     $launcherMatch = [regex]::Match(
@@ -116,7 +125,7 @@ if ($conn) {
 
 # Strategy 2: kill by PID file (handles WinError 64 stuck-socket where port is
 # no longer in Listen state — process alive but accept loop dead)
-$PidFile = "$env:USERPROFILE\.pallium\run\pallium.pid"
+$PidFile = "$ServiceHome\run\pallium.pid"
 if (Test-Path $PidFile) {
     $filePid = [int](Get-Content $PidFile -ErrorAction SilentlyContinue)
     if ($filePid -and ($filePid -ne $conn.OwningProcess)) {
