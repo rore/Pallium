@@ -41,7 +41,7 @@
 
 ## Evidence
 
-- Current implementation defaults: `core/relay.py::RELAY_DEFAULT_EXPIRY_SECONDS`, `RelaySendRequest`, and `RelayReplyRequest` use 86,400 seconds.
+- Pre-fix implementation defaults: `core/relay.py::RELAY_DEFAULT_EXPIRY_SECONDS`, `RelaySendRequest`, and `RelayReplyRequest` used 86,400 seconds.
 - MCP forwarding already preserves omission as `expires_in_seconds=None` in `tests/test_mcp_server.py::test_relay_send_uses_exact_scope_and_preserves_unicode`.
 - In-memory SQLAlchemy/SQLite probe round-tripped `9999-12-31T23:59:59.999999+00:00` through the existing non-null DateTime column and selected it with `expires_at > now`.
 - Revision `2fa3969d`: 383 Relay, wake, MCP, isolation, and dashboard tests passed in 27.50s; four existing Pydantic forward-reference warnings. The narrower 170-test surface passed in 16.22s and the new two-test slice in 4.66s. Workflow and diff checks are clean; no wall-clock sleep was added.
