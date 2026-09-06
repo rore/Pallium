@@ -89,40 +89,64 @@ def main() -> None:
         rendered_deliveries = []
         relay_output = ""
         relay_response = None
+        relay_outcome = "invalid_scope"
         relay_scope = format_injection(
             [], container_ref, budget_chars=RELAY_OUTPUT_BUDGET,
             thread_ref=session_id, actor_ref=actor_ref,
             agent_ref=AGENT_REF, visibility="private", work_ref=current_work_ref,
         ) if has_session else ""
         if relay_scope:
+            relay_outcome = "unavailable"
             try:
                 relay_response = relay_request(
                     "POST", "/relay/turn",
-                    {"runtime": "codex", "session_ref": session_id,
-                     "container_ref": container_ref, "actor_ref": actor_ref,
-                     "max_chars": RELAY_TURN_BUDGET},
+                    {
+                        "runtime": "codex",
+                        "session_ref": session_id,
+                        "container_ref": container_ref,
+                        "actor_ref": actor_ref,
+                        "max_chars": RELAY_TURN_BUDGET,
+                    },
                     timeout=0.75,
                 )
                 if isinstance(relay_response, dict):
                     deliveries = relay_response.get("deliveries") or []
                     relay_output, rendered_deliveries = format_relay(
-                        deliveries, budget_chars=RELAY_OUTPUT_BUDGET,
+                        deliveries,
+                        budget_chars=RELAY_OUTPUT_BUDGET,
                         remaining_count=(
                             relay_response.get("remaining_count")
                             if relay_response.get("has_more") is True else 0
                         ),
                     )
+                    relay_outcome = "delivered" if rendered_deliveries else (
+                        "empty" if (
+                            relay_response.get("deliveries", object()) == []
+                            and relay_response.get("has_more") is False
+                            and type(relay_response.get("remaining_count")) is int
+                            and relay_response["remaining_count"] == 0
+                        ) else "malformed"
+                    )
+                elif relay_response is not None:
+                    relay_outcome = "malformed"
             except Exception:
                 relay_response = None
+                relay_outcome = "malformed"
         if rendered_deliveries:
             emit_context("\n\n".join((relay_output, relay_scope)), "UserPromptSubmit")
-            acknowledge_relay(rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref)
+            acknowledge_relay(
+                rendered_deliveries,
+                container_ref=container_ref,
+                actor_ref=actor_ref,
+            )
             sys.exit(0)
 
         if internal_wake:
+            if relay_outcome != "empty":
+                print(f"pallium relay wake: outcome={relay_outcome}", file=sys.stderr)
             print(json.dumps({
                 "decision": "block",
-                "reason": "Pallium Relay wake superseded: no pending delivery.",
+                "reason": "Pallium Relay wake suppressed: no verified pending delivery.",
             }, separators=(",", ":")))
             sys.exit(0)
 

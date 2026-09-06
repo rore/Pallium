@@ -78,17 +78,22 @@ def schedule_codex_relay_wake(
         return
     wake_key = (session_ref, container_ref, actor_ref)
     with _scheduled_lock:
-        if delivery_id in _scheduled_delivery_ids or wake_key in _scheduled_session_generations:
+        if wake_key in _scheduled_session_generations:
             retry_at = _scheduled_session_retry_at.get(wake_key)
             if retry_at is None or time.monotonic() < retry_at:
                 return
-            _clear_schedule_locked(wake_key)
-        _scheduled_delivery_ids.add(delivery_id)
+            # The persisted recovery sweep owns retries; retain the oldest trigger.
+            delivery_id = _scheduled_session_delivery_ids[wake_key]
+            _scheduled_session_retry_at.pop(wake_key, None)
+        else:
+            if delivery_id in _scheduled_delivery_ids:
+                return
+            _scheduled_delivery_ids.add(delivery_id)
+            _scheduled_session_delivery_ids[wake_key] = delivery_id
         global _generation_counter
         _generation_counter += 1
         generation = _generation_counter
         _scheduled_session_generations[wake_key] = generation
-        _scheduled_session_delivery_ids[wake_key] = delivery_id
     try:
         threading.Thread(
             target=_wake_after_debounce,

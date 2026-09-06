@@ -87,6 +87,19 @@ not recognized by the worker's transient classifier. The shared classifier and r
 worker recovery lifecycle now cover that exact exception without increasing retry
 budgets or changing SQLite's bounded-failure contract.
 
+2026-09-06 Relay load incident follow-up:
+
+- Current corrective work isolates Relay SQLite operations from the default sync-route
+  capacity, keeps health on the event loop, drains active Relay work before storage
+  shutdown, moves persistent SQLite PRAGMAs out of pooled connection creation, and
+  adds deterministic contention coverage plus an opt-in disposable load witness.
+- The supported service remains one Uvicorn process serving concurrent users. A
+  horizontally scaled multi-process deployment needs a durable cross-process wake
+  attempt reservation; process-local coalescing is intentionally not claimed as that
+  future guarantee.
+- Backend replacement remains evidence-driven. Re-measure main-DB writer hold times,
+  queue depth, Relay latency, and processing amplification before selecting a larger
+  storage or worker architecture.
 The highest-value likely future levers are:
 
 1. selective/debounced thread rebuilds

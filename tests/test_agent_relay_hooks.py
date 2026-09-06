@@ -208,26 +208,26 @@ def test_codex_confirmed_empty_internal_wake_blocks_before_model(monkeypatch, ca
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {
         "decision": "block",
-        "reason": "Pallium Relay wake superseded: no pending delivery.",
+        "reason": "Pallium Relay wake suppressed: no verified pending delivery.",
     }
     assert captured.err == ""
 
 
 @pytest.mark.parametrize(
-    "relay_response",
+    ("relay_response", "expected_outcome"),
     [
-        None,
-        {},
-        {"deliveries": None},
-        {"deliveries": "invalid"},
-        ["invalid"],
-        {"deliveries": []},
-        {"deliveries": [], "has_more": True, "remaining_count": 1},
-        {"deliveries": [], "has_more": False, "remaining_count": False},
+        (None, "unavailable"),
+        ({}, "malformed"),
+        ({"deliveries": None}, "malformed"),
+        ({"deliveries": "invalid"}, "malformed"),
+        (["invalid"], "malformed"),
+        ({"deliveries": []}, "malformed"),
+        ({"deliveries": [], "has_more": True, "remaining_count": 1}, "malformed"),
+        ({"deliveries": [], "has_more": False, "remaining_count": False}, "malformed"),
     ],
 )
 def test_codex_internal_wake_blocks_without_confirmed_empty(
-    monkeypatch, capsys, relay_response,
+    monkeypatch, capsys, relay_response, expected_outcome,
 ):
     from integrations.codex.hooks import user_prompt_submit as hook
 
@@ -250,7 +250,7 @@ def test_codex_internal_wake_blocks_without_confirmed_empty(
     assert exited.value.code == 0
     captured = capsys.readouterr()
     assert json.loads(captured.out)["decision"] == "block"
-    assert captured.err == ""
+    assert captured.err == f"pallium relay wake: outcome={expected_outcome}\n"
 
 
 def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):
@@ -276,7 +276,7 @@ def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):
     assert exited.value.code == 0
     captured = capsys.readouterr()
     assert json.loads(captured.out)["decision"] == "block"
-    assert captured.err == ""
+    assert captured.err == "pallium relay wake: outcome=invalid_scope\n"
 
 @pytest.mark.parametrize(
     ("relative", "runtime", "imported"),

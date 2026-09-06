@@ -385,7 +385,9 @@ def create_router(
             if relay_runner is None:
                 import anyio
 
-                result = await anyio.to_thread.run_sync(operation)
+                result = await anyio.to_thread.run_sync(
+                    operation, abandon_on_cancel=False
+                )
             else:
                 result = await relay_runner(operation)
             elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -541,12 +543,15 @@ def create_router(
                 raise HTTPException(status_code=409, detail="registration rejected")
             if relay_service is not None:
                 try:
-                    _relay_call(lambda: relay_service.mark_active(
-                        runtime=payload["runtime"],
-                        session_ref=payload["session_ref"],
-                        container_ref=payload["container_ref"],
-                        actor_ref=payload["actor_ref"],
-                    ))
+                    await _relay_call(
+                        "mark_active",
+                        lambda: relay_service.mark_active(
+                            runtime=payload["runtime"],
+                            session_ref=payload["session_ref"],
+                            container_ref=payload["container_ref"],
+                            actor_ref=payload["actor_ref"],
+                        ),
+                    )
                 except HTTPException as exc:
                     if exc.status_code != 404:
                         raise

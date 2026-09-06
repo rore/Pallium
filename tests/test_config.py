@@ -110,6 +110,7 @@ def test_legacy_env_values_still_map_to_llm_packages(monkeypatch, tmp_path: Path
     )
 
     monkeypatch.setenv("PALLIUM_ENV_FILE", str(env_file))
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(tmp_path / "missing.toml"))
     config = AppConfig.from_env()
 
     package = config.package_config("agent_conversation_memory")
@@ -260,6 +261,7 @@ def test_prompt_variants_legacy_fallback_unaffected(monkeypatch, tmp_path: Path)
     )
 
     monkeypatch.setenv("PALLIUM_ENV_FILE", str(env_file))
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(tmp_path / "missing.toml"))
     config = AppConfig.from_env()
     package = config.package_config("agent_conversation_memory")
 

@@ -214,7 +214,7 @@ def test_busy_wakes_coalesce_until_admission_then_rearm(monkeypatch, outcome: st
 
 
 @pytest.mark.parametrize("outcome", ["queued", "ambiguous"])
-def test_busy_wake_retries_after_bounded_coalescing_window(monkeypatch, caplog, outcome: str) -> None:
+def test_busy_wake_retry_retains_earliest_session_trigger(monkeypatch, caplog, outcome: str) -> None:
     workers = []
     clock = [10.0]
     caplog.set_level("INFO", logger="app.codex_wake")
@@ -235,10 +235,64 @@ def test_busy_wake_retries_after_bounded_coalescing_window(monkeypatch, caplog, 
         _schedule(_delivery("delivery-after-retry"))
 
     assert len(workers) == 2
-    assert codex_wake._scheduled_delivery_ids == {"delivery-after-retry"}
+    assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
     assert "outcome=retry_scheduled delay_seconds=30" in caplog.text
     assert SCOPE["container_ref"] not in caplog.text
 
+
+def test_concurrent_recovery_sweep_retries_busy_wake_without_new_delivery(monkeypatch) -> None:
+    from app import dependencies
+    from core.claude_wake import ClaudeWakeRegistry
+
+    workers = []
+    clock = [10.0]
+    real_thread = threading.Thread
+    start = threading.Barrier(3)
+    candidate = {
+        "delivery_id": "delivery-1",
+        "recipient_runtime": "codex",
+        "recipient_session_ref": "target-session",
+        "state": "pending",
+        **SCOPE,
+    }
+
+    class Relay:
+        def wake_candidates(self, delivery_id=None):
+            return [candidate] if delivery_id in (None, "delivery-1") else []
+
+        def mark_unreachable(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    monkeypatch.setattr(codex_wake.time, "monotonic", lambda: clock[0])
+    with patch("app.codex_wake.threading.Thread") as thread, patch(
+        "app.codex_wake._wake", return_value="queued"
+    ):
+        thread.side_effect = lambda **kwargs: (
+            workers.append(kwargs["args"]),
+            type("Worker", (), {"start": lambda self: None})(),
+        )[1]
+        _schedule(_delivery())
+        codex_wake._wake_after_debounce(*workers[0])
+        clock[0] += codex_wake._RETRY_SECONDS
+
+        def recover():
+            start.wait()
+            dependencies.recover_expired_relay_wakes(
+                Relay(), ClaudeWakeRegistry()
+            )
+
+        recovery_threads = [real_thread(target=recover) for _ in range(2)]
+        for recovery_thread in recovery_threads:
+            recovery_thread.start()
+        start.wait()
+        for recovery_thread in recovery_threads:
+            recovery_thread.join(timeout=1)
+            assert not recovery_thread.is_alive()
+
+    assert len(workers) == 2
+    assert workers[1][0] == "delivery-1"
+    assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
 
 def test_exec_completion_requires_matching_admission_before_return(monkeypatch) -> None:
     workers = []
@@ -931,7 +985,7 @@ def test_competing_hook_consumes_delivery_before_accepted_queue_blocks_empty_wak
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {
         "decision": "block",
-        "reason": "Pallium Relay wake superseded: no pending delivery.",
+        "reason": "Pallium Relay wake suppressed: no verified pending delivery.",
     }
     assert captured.err == ""
     assert route.get(

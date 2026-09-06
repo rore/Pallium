@@ -275,7 +275,12 @@ class SQLiteStorageProvider(
         if engine.url.get_backend_name() != "sqlite":
             return
         with self._schema_initialization_lock(engine):
-            with engine.begin() as connection:
+            with engine.connect().execution_options(
+                isolation_level="AUTOCOMMIT"
+            ) as connection:
+                previous_timeout = int(
+                    connection.exec_driver_sql("PRAGMA busy_timeout").scalar() or 0
+                )
                 # Bootstrap must fail fast under a competing owner; pooled work keeps 15s.
                 connection.exec_driver_sql("PRAGMA busy_timeout=0")
                 try:
@@ -283,7 +288,9 @@ class SQLiteStorageProvider(
                     connection.exec_driver_sql("PRAGMA auto_vacuum=INCREMENTAL")
                     connection.exec_driver_sql("PRAGMA journal_mode=WAL")
                 finally:
-                    connection.exec_driver_sql("PRAGMA busy_timeout=15000")
+                    connection.exec_driver_sql(
+                        f"PRAGMA busy_timeout={previous_timeout}"
+                    )
 
     _LOCKED_MAX_RETRIES = 3
     _LOCKED_BACKOFF_BASE = 0.2
@@ -310,6 +317,9 @@ class SQLiteStorageProvider(
         if engine.url.get_backend_name() != "sqlite":
             return {"freelist_before": 0, "freelist_after": 0, "reclaimed_pages": 0, "checkpoint_busy": 0}
         with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            previous_timeout = int(
+                conn.exec_driver_sql("PRAGMA busy_timeout").scalar() or 0
+            )
             conn.exec_driver_sql("PRAGMA busy_timeout=0")
             try:
                 before = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
@@ -318,7 +328,7 @@ class SQLiteStorageProvider(
                 row = conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
                 checkpoint_busy = int(row[0]) if row is not None else 0
             finally:
-                conn.exec_driver_sql("PRAGMA busy_timeout=15000")
+                conn.exec_driver_sql(f"PRAGMA busy_timeout={previous_timeout}")
         return {"freelist_before": before, "freelist_after": after, "reclaimed_pages": max(0, before - after), "checkpoint_busy": checkpoint_busy}
 
     def reclaim_free_pages(self) -> dict[str, int]:

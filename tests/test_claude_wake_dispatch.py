@@ -589,15 +589,20 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     from core.relay import RelayService
 
     registry = ClaudeWakeRegistry()
+    relay = RelayService(client.app.state.pallium_service._storage)
     app = FastAPI()
-    app.include_router(create_router(client.app.state.pallium_service, relay_service=RelayService(client.app.state.pallium_service._storage), claude_wake_registry=registry,
+    app.include_router(create_router(client.app.state.pallium_service, relay_service=relay, claude_wake_registry=registry,
         relay_turn_callback=lambda req: registry.mark_busy(
             runtime=req["runtime"], session_ref=req["session_ref"],
             container_ref=req["container_ref"], actor_ref=req["actor_ref"])))
     client = TestClient(app, client=("127.0.0.1", 50000))
     payload = {**PAYLOAD, "session_ref": "session-test", "socket_path": "/tmp/test.sock", "idle": True}
-    assert client.post("/internal/claude-wake/register", json=payload).status_code == 204
     scope = {"container_ref": payload["container_ref"], "actor_ref": payload["actor_ref"]}
+    relay.turn(runtime="claude-code", session_ref=payload["session_ref"], **scope)
+    relay.close_session(runtime="claude-code", session_ref=payload["session_ref"], **scope)
+    assert relay.list_sessions(runtime="claude-code", include_inactive=True, **scope)[0]["state"] == "closed"
+    assert client.post("/internal/claude-wake/register", json=payload).status_code == 204
+    assert relay.list_sessions(runtime="claude-code", include_inactive=True, **scope)[0]["destination_health"] == "active"
     assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": payload["session_ref"], **scope}).status_code == 200
     result = {"recipient": "claude-code:session-test", "deliveries": [{"delivery_id": "d1",
                     "state": "pending", "recipient_runtime": "claude-code", "recipient_session_ref": "session-test"}]}

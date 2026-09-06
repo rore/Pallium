@@ -62,6 +62,45 @@ def test_relay_and_health_survive_saturated_memory_worker_capacity(tmp_path, mon
                 await blocked
                 limiter.total_tokens = original_tokens
 
+            relay_started = threading.Event()
+            relay_release = threading.Event()
+            relay_finished = threading.Event()
+            storage = app.state.pallium_service._storage
+            original_relay_turn = storage.relay_turn
+
+            def block_relay_operation(**kwargs):
+                relay_started.set()
+                assert relay_release.wait(2)
+                try:
+                    return original_relay_turn(**kwargs)
+                finally:
+                    relay_finished.set()
+
+            monkeypatch.setattr(storage, "relay_turn", block_relay_operation)
+            cancelled = asyncio.create_task(client.post("/relay/turn", json={
+                "runtime": "codex",
+                "session_ref": "cancelled-request-target",
+                "container_ref": "git:example.test/capacity",
+                "actor_ref": "capacity-user",
+            }))
+            assert await asyncio.to_thread(relay_started.wait, 0.5)
+            cancelled.cancel()
+            try:
+                await cancelled
+            except asyncio.CancelledError:
+                pass
+            else:
+                raise AssertionError("cancelled Relay request must stay cancelled")
+            assert not relay_finished.is_set()
+            shutdown_barrier = asyncio.create_task(
+                asyncio.to_thread(app.state._wait_for_relay_operations)
+            )
+            await asyncio.sleep(0)
+            assert not shutdown_barrier.done()
+            relay_release.set()
+            assert await asyncio.to_thread(relay_finished.wait, 0.5)
+            await asyncio.wait_for(shutdown_barrier, 0.5)
+
     try:
         asyncio.run(exercise())
     finally:
