@@ -1,6 +1,6 @@
 """Pallium local service lifecycle management.
 
-Commands: install, uninstall, status, stop, restart, run.
+Commands: install, uninstall, status, start, stop, restart, run.
 """
 
 from __future__ import annotations
@@ -23,6 +23,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 _DEFAULT_PORT = 19836
+_SERVICE_NAME = "pallium.service"
+_SERVICE_HOME_MARKER = ".pallium-service-home"
 
 # Seeded into a fresh service config when the dev config has no [observability]
 # section, so `pallium service install` arms the historical-lookup reuse funnel
@@ -59,6 +61,38 @@ def _apply_home_env(home: Path) -> None:
 def _ensure_dirs(home: Path) -> None:
     for sub in ("data", "logs", "run", "config"):
         (home / sub).mkdir(parents=True, exist_ok=True)
+
+
+def _validate_service_home(home: Path) -> None:
+    if home == Path(home.anchor) or home == Path.home().resolve():
+        raise ValueError(f"Refusing unsafe Pallium home: {home}")
+
+
+def _mark_service_home(home: Path) -> None:
+    marker = home / _SERVICE_HOME_MARKER
+    expected = str(home) + "\n"
+    if marker.exists() and marker.read_text(encoding="utf-8") != expected:
+        raise RuntimeError(f"Invalid service-home marker: {marker}")
+    marker.write_text(expected, encoding="utf-8")
+
+
+def _remove_service_data(home: Path) -> None:
+    _validate_service_home(home)
+    default_home = (Path.home() / ".pallium").resolve()
+    if home != default_home:
+        raise RuntimeError(
+            f"Refusing to remove custom Pallium home automatically: {home}\n"
+            "Uninstall preserves custom homes; remove it manually after inspection."
+        )
+    marker = home / _SERVICE_HOME_MARKER
+    if not marker.exists() or marker.read_text(encoding="utf-8") != str(home) + "\n":
+        raise RuntimeError(
+            f"Refusing to remove unmanaged data directory: {home}\n"
+            "Run service install for this exact --home before using --remove-data."
+        )
+    if home.exists():
+        import shutil
+        shutil.rmtree(home)
 
 
 def _seed_config(home: Path) -> None:
@@ -214,6 +248,39 @@ def _check_health(port: int, timeout: float = 3.0) -> dict | None:
         return None
 
 
+def _read_endpoint_json(port: int, path: str, timeout: float = 3.0) -> dict | None:
+    try:
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=timeout)
+        payload = json.loads(resp.read())
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def _service_ready(port: int, timeout: float = 1.0) -> bool:
+    health = _check_health(port, timeout=timeout)
+    if not health or health.get("status") != "ok":
+        return False
+    if health.get("vector_index_ready") is not True:
+        return False
+    if health.get("embedding_provider_ok") is not True:
+        return False
+    return (
+        _read_endpoint_json(port, "/status", timeout=timeout) is not None
+        and _read_endpoint_json(port, "/debug/queue/health", timeout=timeout) is not None
+    )
+
+
+def _wait_for_service(port: int, timeout: float = 30.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(1)
+        if _service_ready(port):
+            return True
+        print(".", end="", flush=True)
+    return False
+
+
 def _find_pallium_cmd() -> str:
     if sys.platform == "win32":
         venv_scripts = Path(sys.executable).parent
@@ -332,46 +399,129 @@ def _start_windows(home: Path | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _install_linux(pallium_cmd: str, port: int, home: Path) -> None:
-    service_dir = Path.home() / ".config" / "systemd" / "user"
-    service_dir.mkdir(parents=True, exist_ok=True)
-    unit_file = service_dir / "pallium.service"
+def _linux_unit_file() -> Path:
+    return Path.home() / ".config" / "systemd" / "user" / _SERVICE_NAME
 
-    unit_content = f"""[Unit]
+
+def _systemd_quote(value: str) -> str:
+    if "\x00" in value or "\n" in value or "\r" in value:
+        raise ValueError("systemd unit values cannot contain NUL or newlines")
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'"{escaped}"'
+
+
+def _systemctl(*args: str) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ["systemctl", "--user", *args],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
+        raise RuntimeError(f"systemctl --user {' '.join(args)} failed: {detail}")
+    return result
+
+
+def _linux_unit_home() -> Path | None:
+    unit_file = _linux_unit_file()
+    if not unit_file.exists():
+        return None
+    for line in unit_file.read_text(encoding="utf-8").splitlines():
+        if line.startswith("# PalliumHome="):
+            try:
+                return Path(json.loads(line.removeprefix("# PalliumHome="))).resolve()
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise RuntimeError(f"Invalid Pallium home marker in {unit_file}") from exc
+        if line.startswith("Environment=PALLIUM_HOME="):
+            return Path(line.removeprefix("Environment=PALLIUM_HOME=")).resolve()
+    raise RuntimeError(f"Cannot determine Pallium home from existing unit: {unit_file}")
+
+
+def _assert_linux_unit_home(home: Path) -> None:
+    installed_home = _linux_unit_home()
+    if installed_home is not None and installed_home != home:
+        raise RuntimeError(
+            f"{_SERVICE_NAME} already targets {installed_home}; refusing to retarget it to {home}. "
+            f"Uninstall the existing service first."
+        )
+
+
+def _linux_unit_state() -> dict[str, str]:
+    result = _systemctl(
+        "show",
+        _SERVICE_NAME,
+        "--property=LoadState",
+        "--property=ActiveState",
+        "--property=SubState",
+        "--property=MainPID",
+        "--property=TasksCurrent",
+        "--property=Result",
+    )
+    return dict(
+        line.split("=", 1)
+        for line in result.stdout.splitlines()
+        if "=" in line
+    )
+
+
+def _install_linux(pallium_cmd: str, port: int, home: Path) -> None:
+    _systemctl("show-environment")
+    _assert_linux_unit_home(home)
+
+    unit_file = _linux_unit_file()
+    unit_file.parent.mkdir(parents=True, exist_ok=True)
+    unit_content = f"""# PalliumHome={json.dumps(str(home), ensure_ascii=False)}
+[Unit]
 Description=Pallium local agent service
 After=network.target
 
 [Service]
 Type=simple
-ExecStart={pallium_cmd} service run --port {port}
-Environment=PALLIUM_HOME={home}
+ExecStart={_systemd_quote(pallium_cmd)} service run --port {port} --home {_systemd_quote(str(home))}
+Environment={_systemd_quote(f"PALLIUM_HOME={home}")}
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
 RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
 
 [Install]
 WantedBy=default.target
 """
-    unit_file.write_text(unit_content)
+    unit_file.write_text(unit_content, encoding="utf-8")
     print(f"  Wrote {unit_file}")
 
-    subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
-    subprocess.run(["systemctl", "--user", "enable", "--now", "pallium.service"], capture_output=True)
-    print("  Enabled and started pallium.service")
+    _systemctl("daemon-reload")
+    _systemctl("enable", _SERVICE_NAME)
+    (home / "run" / "port").write_text(str(port), encoding="utf-8")
+    _systemctl("restart", _SERVICE_NAME)
+    print(f"  Enabled and started {_SERVICE_NAME}")
 
 
-def _uninstall_linux() -> None:
-    subprocess.run(["systemctl", "--user", "stop", "pallium.service"], capture_output=True)
-    subprocess.run(["systemctl", "--user", "disable", "pallium.service"], capture_output=True)
-    unit_file = Path.home() / ".config" / "systemd" / "user" / "pallium.service"
-    if unit_file.exists():
-        unit_file.unlink()
-    subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
-    print("  Removed pallium.service")
+def _uninstall_linux(home: Path) -> None:
+    unit_file = _linux_unit_file()
+    if not unit_file.exists():
+        print(f"  {_SERVICE_NAME} is not installed")
+        return
+    _systemctl("show-environment")
+    _assert_linux_unit_home(home)
+    _systemctl("stop", _SERVICE_NAME)
+    _systemctl("disable", _SERVICE_NAME)
+    unit_file.unlink()
+    _systemctl("daemon-reload")
+    print(f"  Removed {_SERVICE_NAME}")
 
 
 def _start_linux() -> None:
-    subprocess.run(["systemctl", "--user", "start", "pallium.service"], capture_output=True)
+    _systemctl("start", _SERVICE_NAME)
+
+
+def _stop_linux() -> None:
+    _systemctl("stop", _SERVICE_NAME)
+
+
+def _restart_linux() -> None:
+    _systemctl("restart", _SERVICE_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -400,11 +550,25 @@ def _cmd_install(args: argparse.Namespace) -> int:
     home = _pallium_home(args.home)
     port = args.port
 
-    print(f"Installing Pallium service...")
+    print("Installing Pallium service...")
     print(f"  Home: {home}")
     print(f"  Port: {port}")
 
+    try:
+        _validate_service_home(home)
+        if sys.platform == "linux":
+            _systemctl("show-environment")
+            _assert_linux_unit_home(home)
+    except (RuntimeError, ValueError) as exc:
+        print(f"  Error: {exc}", file=sys.stderr)
+        return 1
+
     _ensure_dirs(home)
+    try:
+        _mark_service_home(home)
+    except RuntimeError as exc:
+        print(f"  Error: {exc}", file=sys.stderr)
+        return 1
 
     # Copy local config to service home if none exists there yet.
     _seed_config(home)
@@ -428,46 +592,33 @@ def _cmd_install(args: argparse.Namespace) -> int:
 
     if sys.platform == "win32":
         _install_windows(pallium_cmd, port, home)
-    elif sys.platform == "linux":
-        _install_linux(pallium_cmd, port, home)
-    else:
+    elif sys.platform != "linux":
         print(f"  macOS auto-start not yet supported. Run manually: pallium service run --port {port}")
 
-    # Download embedding model with home env applied
+    # Download before enabling the Linux unit so a slow first download cannot
+    # race a separately started service process.
     print("  Downloading embedding model...")
     from app.run import _run_download_embedding_model
     _run_download_embedding_model()
 
-    # Start the service
     print("  Starting service...")
-    if sys.platform == "win32":
-        try:
+    try:
+        if sys.platform == "win32":
             _start_windows(home)
-        except RuntimeError as exc:
-            print(f"  Error starting service: {exc}", file=sys.stderr)
-            return 1
-    elif sys.platform == "linux":
-        _start_linux()
-    else:
-        pass
+        elif sys.platform == "linux":
+            _install_linux(pallium_cmd, port, home)
+    except RuntimeError as exc:
+        print(f"  Error starting service: {exc}", file=sys.stderr)
+        return 1
 
-    # Wait for health
-    print("  Waiting for health check...", end="", flush=True)
-    for _ in range(30):
-        time.sleep(1)
-        health = _check_health(port)
-        if health and health.get("status") == "ok":
-            print(" OK")
-            print(f"\nPallium service installed and running on port {port}.")
-            return 0
-        print(".", end="", flush=True)
-
-    print(" TIMEOUT")
-    health = _check_health(port)
-    if health:
-        print(f"  Service responding but not ready: {health}")
+    print("  Waiting for health, status, and queue checks...", end="", flush=True)
+    if _wait_for_service(port):
+        print(" OK")
+        print(f"\nPallium service installed and running on port {port}.")
         return 0
-    print("  Service did not become healthy within 30s.", file=sys.stderr)
+
+    print(" TIMEOUT", file=sys.stderr)
+    print("  Service did not become ready within 30s.", file=sys.stderr)
     print("  Check logs at:", home / "logs", file=sys.stderr)
     return 1
 
@@ -476,20 +627,25 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     home = _pallium_home(args.home if hasattr(args, "home") else None)
 
     print("Uninstalling Pallium service...")
-    _cmd_stop_impl(home)
-
-    if sys.platform == "win32":
-        _uninstall_windows()
-    elif sys.platform == "linux":
-        _uninstall_linux()
-    else:
-        print("  No service registration to remove (macOS stub).")
+    try:
+        if sys.platform == "win32":
+            _cmd_stop_impl(home)
+            _uninstall_windows()
+        elif sys.platform == "linux":
+            _uninstall_linux(home)
+        else:
+            print("  No service registration to remove (macOS stub).")
+    except RuntimeError as exc:
+        print(f"  Error: {exc}", file=sys.stderr)
+        return 1
 
     if args.remove_data:
-        import shutil
-        if home.exists():
-            shutil.rmtree(home)
-            print(f"  Removed data directory: {home}")
+        try:
+            _remove_service_data(home)
+        except (RuntimeError, ValueError) as exc:
+            print(f"  Error: {exc}", file=sys.stderr)
+            return 1
+        print(f"  Removed data directory: {home}")
     else:
         print(f"  Data preserved at: {home}")
 
@@ -500,21 +656,48 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
 def _cmd_status(args: argparse.Namespace) -> int:
     home = _pallium_home(args.home if hasattr(args, "home") else None)
     port = _read_port(home)
-    pid = _read_pid(home)
 
-    if pid is None:
-        print("Pallium: not running (no PID file)")
-        print(f"  Home: {home}")
-        return 1
-
-    if not _is_pid_alive(pid):
-        print(f"Pallium: not running (stale PID {pid})")
-        print(f"  Home: {home}")
-        return 1
+    if sys.platform == "linux":
+        try:
+            _assert_linux_unit_home(home)
+            state = _linux_unit_state()
+        except RuntimeError as exc:
+            print(f"Pallium: service-manager error: {exc}", file=sys.stderr)
+            return 1
+        if state.get("LoadState") != "loaded":
+            print("Pallium: not installed")
+            print(f"  Home: {home}")
+            return 1
+        if state.get("ActiveState") != "active":
+            print(
+                f"Pallium: not running "
+                f"(systemd {state.get('ActiveState', '?')}/{state.get('SubState', '?')})"
+            )
+            print(f"  Home: {home}")
+            return 1
+        try:
+            pid = int(state.get("MainPID", "0"))
+        except ValueError:
+            pid = 0
+        if pid <= 0:
+            print("Pallium: systemd is active but has no main process")
+            print(f"  Home: {home}")
+            return 1
+    else:
+        pid = _read_pid(home)
+        if pid is None or not _is_pid_alive(pid):
+            detail = "no PID file" if pid is None else f"stale PID {pid}"
+            print(f"Pallium: not running ({detail})")
+            print(f"  Home: {home}")
+            return 1
 
     health = _check_health(port)
     if not health:
         print(f"Pallium: process alive (PID {pid}) but not responding on port {port}")
+        print(f"  Home: {home}")
+        return 1
+    if sys.platform == "linux" and not _service_ready(port):
+        print(f"Pallium: process alive (PID {pid}) but readiness checks are incomplete")
         print(f"  Home: {home}")
         return 1
 
@@ -599,8 +782,31 @@ def _cmd_stop_impl(home: Path) -> bool:
 
 def _cmd_stop(args: argparse.Namespace) -> int:
     home = _pallium_home(args.home if hasattr(args, "home") else None)
-    pid = _read_pid(home)
 
+    if sys.platform == "linux":
+        try:
+            _assert_linux_unit_home(home)
+            state = _linux_unit_state()
+            if state.get("LoadState") != "loaded" or state.get("ActiveState") != "active":
+                print("Pallium: not running")
+                return 0
+            print(f"Stopping Pallium (PID {state.get('MainPID', '?')})...", end="", flush=True)
+            _stop_linux()
+            stopped = _linux_unit_state()
+        except RuntimeError as exc:
+            print(f" failed: {exc}", file=sys.stderr)
+            return 1
+        if (
+            stopped.get("ActiveState") == "inactive"
+            and stopped.get("MainPID") == "0"
+            and stopped.get("TasksCurrent", "") in {"", "0", "[not set]"}
+        ):
+            print(" stopped.")
+            return 0
+        print(f" failed: systemd state is {stopped}", file=sys.stderr)
+        return 1
+
+    pid = _read_pid(home)
     if pid is None or not _is_pid_alive(pid):
         print("Pallium: not running")
         return 0
@@ -609,15 +815,38 @@ def _cmd_stop(args: argparse.Namespace) -> int:
     if _cmd_stop_impl(home):
         print(" stopped.")
         return 0
-    else:
-        print(" failed to stop.", file=sys.stderr)
+    print(" failed to stop.", file=sys.stderr)
+    return 1
+
+
+def _cmd_start(args: argparse.Namespace) -> int:
+    home = _pallium_home(args.home if hasattr(args, "home") else None)
+    port = _read_port(home)
+    try:
+        if sys.platform == "win32":
+            _start_windows(home)
+        elif sys.platform == "linux":
+            _assert_linux_unit_home(home)
+            _start_linux()
+        else:
+            print("Cannot auto-start on this platform. Run: pallium service run")
+            return 1
+    except RuntimeError as exc:
+        print(f"Error starting service: {exc}", file=sys.stderr)
         return 1
+
+    print(f"Starting Pallium on port {port}...", end="", flush=True)
+    if _wait_for_service(port):
+        print(" OK")
+        return 0
+    print(" TIMEOUT", file=sys.stderr)
+    return 1
 
 
 def _cmd_restart(args: argparse.Namespace) -> int:
     home = _pallium_home(args.home if hasattr(args, "home") else None)
+    port = _read_port(home)
 
-    # Validate launch preconditions before stopping the running service
     if sys.platform == "win32":
         vbs_path = home / "run" / "pallium_launcher.vbs"
         if not vbs_path.exists():
@@ -625,28 +854,24 @@ def _cmd_restart(args: argparse.Namespace) -> int:
             print("Run 'pallium service install' to create it.", file=sys.stderr)
             return 1
 
-    # Stop
-    _cmd_stop_impl(home)
-
-    # Start
-    if sys.platform == "win32":
-        _start_windows(home)
-    elif sys.platform == "linux":
-        _start_linux()
-    else:
-        print("Cannot auto-start on this platform. Run: pallium service run")
+    try:
+        if sys.platform == "win32":
+            _cmd_stop_impl(home)
+            _start_windows(home)
+        elif sys.platform == "linux":
+            _assert_linux_unit_home(home)
+            _restart_linux()
+        else:
+            print("Cannot auto-start on this platform. Run: pallium service run")
+            return 1
+    except RuntimeError as exc:
+        print(f"Error restarting service: {exc}", file=sys.stderr)
         return 1
 
-    port = _read_port(home)
     print(f"Restarting Pallium on port {port}...", end="", flush=True)
-    for _ in range(30):
-        time.sleep(1)
-        health = _check_health(port)
-        if health and health.get("status") == "ok":
-            print(" OK")
-            return 0
-        print(".", end="", flush=True)
-
+    if _wait_for_service(port):
+        print(" OK")
+        return 0
     print(" TIMEOUT", file=sys.stderr)
     return 1
 
@@ -709,9 +934,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         pid_file = home / "run" / "pallium.pid"
         if pid_file.exists():
             pid_file.unlink(missing_ok=True)
-        port_file = home / "run" / "port"
-        if port_file.exists():
-            port_file.unlink(missing_ok=True)
+        # The port describes the installed service, not process liveness.
+        # Keep it across stop/start so custom-port lifecycle commands stay exact.
 
 
 # ---------------------------------------------------------------------------
@@ -734,6 +958,9 @@ def service_main(args: list[str]) -> int:
     status_p = sub.add_parser("status", help="Show service status")
     status_p.add_argument("--home", type=str, default=None)
 
+    start_p = sub.add_parser("start", help="Start the installed service")
+    start_p.add_argument("--home", type=str, default=None)
+
     stop_p = sub.add_parser("stop", help="Stop the running service")
     stop_p.add_argument("--home", type=str, default=None)
 
@@ -753,6 +980,7 @@ def service_main(args: list[str]) -> int:
         "install": _cmd_install,
         "uninstall": _cmd_uninstall,
         "status": _cmd_status,
+        "start": _cmd_start,
         "stop": _cmd_stop,
         "restart": _cmd_restart,
         "run": _cmd_run,

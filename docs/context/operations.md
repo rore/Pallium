@@ -21,6 +21,31 @@ historical source, and grants no access. If the host supplies no task identity,
 Pallium leaves attribution absent rather than guessing or writing `unknown`. The
 marker uses the existing injection character budget.
 
+## Linux user service
+
+The Linux implementation uses one `systemd --user` unit,
+`~/.config/systemd/user/pallium.service`. The public
+`pallium service install|status|start|stop|restart|uninstall` commands are the
+lifecycle authority; the shipped `.sh` wrappers delegate to those commands
+instead of generating a second unit form. Manager failures are errors, and
+install, start, and restart return success only after `/health`, `/status`,
+and `/debug/queue/health` are ready.
+
+There is one Pallium unit per Linux user. Every lifecycle command must use the
+same `--home`; installing a different home fails rather than silently
+retargeting the unit. Uninstall preserves data by default. `--remove-data` accepts only the default home with its exact managed-home marker
+written by install. Custom homes are always preserved and must be removed manually
+after inspection; filesystem root and the user home are always refused.
+
+Live qualification covers Ubuntu 24.04 under WSL2 with systemd enabled:
+install, idempotent install, status, stop/start, restart, crash recovery,
+occupied-port failure, missing unit, custom port, spaces/Unicode home, wrapper
+delegation, uninstall, safe data removal, and named-distro restart. Linger is
+not changed. When WSL stops the distro, the Linux service is also stopped; the
+enabled unit starts and becomes ready when the Ubuntu user session starts
+again. This is WSL qualification, not a live claim for every Linux distribution
+or for macOS.
+
 ## SQLite database operations
 
 Both SQLite files use the same lifecycle: WAL, auto_vacuum=INCREMENTAL, and a bounded connection busy timeout. Relay writes use only the Relay file, so a long ingestion transaction in the main file does not hold the Relay writer lock. Each file must still be backed up, checked, and restored as a pair; never mix files from different snapshot generations.

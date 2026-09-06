@@ -23,6 +23,12 @@ from app.cli.service import (
     _processor_count,
     _start_windows,
     _cmd_restart,
+    _cmd_status,
+    _cmd_stop,
+    _install_linux,
+    _remove_service_data,
+    _systemctl,
+    _wait_for_service,
     service_main,
 )
 
@@ -179,8 +185,19 @@ class TestServiceMain:
         result = service_main(["status", "--home", str(tmp_path)])
         assert result == 1
 
-    def test_stop_with_no_running_instance(self, tmp_path: Path, capsys: pytest.CaptureFixture):
+    def test_stop_with_no_running_instance(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
         (tmp_path / "run").mkdir(parents=True)
+        if sys.platform == "linux":
+            monkeypatch.setattr("app.cli.service._assert_linux_unit_home", lambda _home: None)
+            monkeypatch.setattr(
+                "app.cli.service._linux_unit_state",
+                lambda: {"LoadState": "not-found", "ActiveState": "inactive"},
+            )
         result = service_main(["stop", "--home", str(tmp_path)])
         assert result == 0
         captured = capsys.readouterr()
@@ -492,7 +509,7 @@ class TestStartWindows:
             assert service_main(["run", "--port", "21987", "--home", str(home)]) == 0
         assert observed == {"log_file": home / "logs" / "pallium.log"}
         assert not (home / "run" / "pallium.pid").exists()
-        assert not (home / "run" / "port").exists()
+        assert (home / "run" / "port").read_text() == "21987"
 
 class TestCmdRestart:
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only guard is Windows-specific")
@@ -510,3 +527,218 @@ class TestCmdRestart:
 
         assert result != 0
         mock_stop.assert_not_called()
+
+
+class TestLinuxServiceLifecycle:
+    @pytest.fixture(autouse=True)
+    def _linux_only(self):
+        if sys.platform != "linux":
+            pytest.skip("Linux-only")
+
+    def test_systemctl_failure_is_actionable(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            "app.cli.service.subprocess.run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "user bus unavailable"),
+        )
+        with pytest.raises(RuntimeError, match="user bus unavailable"):
+            _systemctl("start", "pallium.service")
+
+    def test_wait_for_service_uses_monotonic_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        clock = iter([100.0, 100.0, 131.0])
+        monkeypatch.setattr("app.cli.service.time.monotonic", lambda: next(clock))
+        monkeypatch.setattr("app.cli.service.time.sleep", lambda _seconds: None)
+        monkeypatch.setattr("app.cli.service._service_ready", lambda _port: False)
+
+        assert not _wait_for_service(21987, timeout=30.0)
+
+    def test_install_writes_safe_unit_and_starts_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        profile = tmp_path / "profile"
+        home = (tmp_path / "home with spaces" / "בית").resolve()
+        executable = str(tmp_path / "venv with spaces" / "pallium%test")
+        monkeypatch.setattr(Path, "home", lambda: profile)
+        (home / "run").mkdir(parents=True)
+
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **_kwargs):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        monkeypatch.setattr("app.cli.service.subprocess.run", fake_run)
+        _install_linux(executable, 21987, home)
+
+        unit = (profile / ".config/systemd/user/pallium.service").read_text(encoding="utf-8")
+        assert f"# PalliumHome={home!s}" not in unit
+        assert f'"{executable.replace("%", "%%")}" service run --port 21987' in unit
+        assert f'--home "{home}"' in unit
+        assert f'Environment="PALLIUM_HOME={home}"' in unit
+        assert "KillMode=control-group" in unit
+        assert "TimeoutStopSec=15" in unit
+        assert calls == [
+            ["systemctl", "--user", "show-environment"],
+            ["systemctl", "--user", "daemon-reload"],
+            ["systemctl", "--user", "enable", "pallium.service"],
+            ["systemctl", "--user", "restart", "pallium.service"],
+        ]
+
+    def test_install_refuses_cross_home_retarget(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        profile = tmp_path / "profile"
+        unit = profile / ".config/systemd/user/pallium.service"
+        unit.parent.mkdir(parents=True)
+        unit.write_text('# PalliumHome="/existing/home"\n', encoding="utf-8")
+        monkeypatch.setattr(Path, "home", lambda: profile)
+        calls: list[list[str]] = []
+        monkeypatch.setattr(
+            "app.cli.service.subprocess.run",
+            lambda argv, **kwargs: (
+                calls.append(argv)
+                or subprocess.CompletedProcess(argv, 0, "", "")
+            ),
+        )
+
+        with pytest.raises(RuntimeError, match="refusing to retarget"):
+            _install_linux("/venv/bin/pallium", 21987, (tmp_path / "other").resolve())
+
+        assert calls == [["systemctl", "--user", "show-environment"]]
+        assert unit.read_text(encoding="utf-8") == '# PalliumHome="/existing/home"\n'
+
+    def test_stop_uses_systemd_not_pid_shutdown(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        states = iter([
+            {"LoadState": "loaded", "ActiveState": "active", "MainPID": "123"},
+            {"LoadState": "loaded", "ActiveState": "inactive", "MainPID": "0", "TasksCurrent": ""},
+        ])
+        monkeypatch.setattr("app.cli.service._assert_linux_unit_home", lambda _home: None)
+        monkeypatch.setattr("app.cli.service._linux_unit_state", lambda: next(states))
+        stop_calls: list[bool] = []
+        monkeypatch.setattr("app.cli.service._stop_linux", lambda: stop_calls.append(True))
+        monkeypatch.setattr(
+            "app.cli.service._cmd_stop_impl",
+            lambda _home: pytest.fail("Linux stop must not use PID/HTTP/SIGKILL"),
+        )
+
+        assert _cmd_stop(argparse.Namespace(home=str(tmp_path))) == 0
+        assert stop_calls == [True]
+
+    def test_status_uses_systemd_main_pid_not_pid_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ):
+        monkeypatch.setattr("app.cli.service._assert_linux_unit_home", lambda _home: None)
+        monkeypatch.setattr(
+            "app.cli.service._linux_unit_state",
+            lambda: {
+                "LoadState": "loaded",
+                "ActiveState": "active",
+                "SubState": "running",
+                "MainPID": "321",
+            },
+        )
+        monkeypatch.setattr("app.cli.service._read_port", lambda _home: 21987)
+        monkeypatch.setattr("app.cli.service._check_health", lambda _port: {"status": "ok"})
+        monkeypatch.setattr("app.cli.service._service_ready", lambda _port: True)
+        monkeypatch.setattr(
+            "app.cli.service._read_pid",
+            lambda _home: pytest.fail("Linux status must not read the PID file"),
+        )
+        monkeypatch.setattr(
+            "app.cli.service._is_pid_alive",
+            lambda _pid: pytest.fail("Linux status must trust systemd"),
+        )
+
+        assert _cmd_status(argparse.Namespace(home=str(tmp_path))) == 0
+        assert "PID:     321" in capsys.readouterr().out
+
+    def test_restart_uses_systemd_not_pid_shutdown(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr("app.cli.service._assert_linux_unit_home", lambda _home: None)
+        restart_calls: list[bool] = []
+        monkeypatch.setattr("app.cli.service._restart_linux", lambda: restart_calls.append(True))
+        monkeypatch.setattr("app.cli.service._read_port", lambda _home: 21987)
+        monkeypatch.setattr("app.cli.service._wait_for_service", lambda _port: True)
+        monkeypatch.setattr(
+            "app.cli.service._cmd_stop_impl",
+            lambda _home: pytest.fail("Linux restart must not use PID/HTTP/SIGKILL"),
+        )
+
+        assert _cmd_restart(argparse.Namespace(home=str(tmp_path))) == 0
+        assert restart_calls == [True]
+
+    def test_remove_data_refuses_unmanaged_custom_home(self, tmp_path: Path):
+        home = (tmp_path / "unmanaged").resolve()
+        home.mkdir()
+        sentinel = home / "keep.txt"
+        sentinel.write_text("keep", encoding="utf-8")
+
+        with pytest.raises(RuntimeError, match="custom Pallium home"):
+            _remove_service_data(home)
+
+        assert sentinel.read_text(encoding="utf-8") == "keep"
+
+    @pytest.mark.parametrize(
+        ("script", "option"),
+        [
+            ("install-service.sh", "--port"),
+            ("install-service.sh", "--home"),
+            ("install-service.sh", "--python"),
+            ("restart-service.sh", "--home"),
+            ("restart-service.sh", "--python"),
+            ("uninstall-service.sh", "--home"),
+            ("uninstall-service.sh", "--python"),
+        ],
+    )
+    def test_wrappers_reject_missing_option_values(self, script: str, option: str):
+        repo = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [str(repo / "scripts" / script), option],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        output = result.stdout + result.stderr
+        assert result.returncode != 0
+        assert "Usage:" in output
+        assert "unbound variable" not in output
+
+    def test_remove_data_refuses_unmanaged_default_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        profile = (tmp_path / "profile").resolve()
+        home = profile / ".pallium"
+        home.mkdir(parents=True)
+        sentinel = home / "keep.txt"
+        sentinel.write_text("keep", encoding="utf-8")
+        monkeypatch.setattr(Path, "home", lambda: profile)
+
+        with pytest.raises(RuntimeError, match="unmanaged"):
+            _remove_service_data(home)
+        assert sentinel.read_text(encoding="utf-8") == "keep"
+
+    def test_remove_data_accepts_exact_managed_default_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        profile = (tmp_path / "profile").resolve()
+        home = profile / ".pallium"
+        home.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: profile)
+        (home / ".pallium-service-home").write_text(str(home) + "\n", encoding="utf-8")
+        (home / "data").mkdir()
+        (home / "data/record").write_text("test", encoding="utf-8")
+
+        _remove_service_data(home)
+
+        assert not home.exists()
+
+    @pytest.mark.parametrize("unsafe", ["/"])
+    def test_remove_data_refuses_filesystem_root(self, unsafe: str):
+        with pytest.raises(ValueError, match="unsafe"):
+            _remove_service_data(Path(unsafe).resolve())
