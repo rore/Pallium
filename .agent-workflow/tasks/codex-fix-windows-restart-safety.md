@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -59,6 +59,7 @@
 - Added a valid Hebrew-and-spaces WorkingDirectory caller-surface case; the wrapper passes the exact Unicode path to Start-Process.
 - Added the restart test module to the PR Windows smoke job, documented the preflight/readiness contract, aligned RW-010 for installed verification, and recorded the separate RW-016 custom-home/Unicode installer defect.
 - Architect attempts to apply the port and Unicode edits directly were guarded by exact replacements and refused when relaydev began the same shared-worktree edits concurrently; no developer work was overwritten.
+- Ran the installed legacy-task wrapper from a clean worktree. It resolved port 19836, stopped the full service tree, restarted through Task Scheduler, waited through cold start, exited 0, and printed the derived dashboard URL.
 
 ## Evidence
 
@@ -75,6 +76,7 @@
 - Missing, nonnumeric, zero, and 65536 ports fail before stop or process cleanup; boundary ports 1 and 65535 complete successfully.
 - Final focused verification before documentation alignment: PowerShell parser clean; test module compiled; 18 focused tests passed in 6.52s; git diff --check clean.
 - Clean-context result review approved canonical/legacy shape handling, optional and Unicode working directories, port parsing/boundaries, preflight ordering, survivor cleanup with MCP exclusion, readiness/error behavior, and non-Windows collection. Its sole blocker was adding the new test to Windows smoke; that workflow entry is now present.
+- Installed witness after the clean review: wrapper exit 0; `/health.status=ok`; `/status.embedding_provider_ok=true`; `/status.ingestion.status=ok`; `/debug/queue/health` HTTP 200.
 
 ## Plan review
 
@@ -82,4 +84,4 @@ The first clean-context Luna review required an explicit non-Windows skip, a fix
 
 ## Result review
 
-Pending.
+Clean-context review found no implementation blocker after the Windows smoke entry was added. The real installed restart then exited 0 and all required readiness signals passed. RW-010 is ready for PR review; the separate RW-016 custom-home/Unicode launcher defect remains explicitly open.
