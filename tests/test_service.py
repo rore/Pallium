@@ -488,7 +488,8 @@ class TestStartWindows:
 
         monkeypatch.setattr("app.supervisor.run_supervisor", fake_supervisor)
 
-        assert service_main(["run", "--port", "21987", "--home", str(home)]) == 0
+        with patch.dict(os.environ):
+            assert service_main(["run", "--port", "21987", "--home", str(home)]) == 0
         assert observed == {"log_file": home / "logs" / "pallium.log"}
         assert not (home / "run" / "pallium.pid").exists()
         assert not (home / "run" / "port").exists()
