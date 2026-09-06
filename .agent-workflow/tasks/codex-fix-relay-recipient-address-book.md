@@ -40,7 +40,7 @@ Target files or classes: `app/mcp/server.py`; `tests/test_relay_mcp_tools.py`; `
 Bounded deterministic address-book output and continuation → public MCP caller-surface E2E plus exact 2,000-character assertions. Canonical selector correctness and lifecycle → real register/name/transfer/close/send journey through HTTP/MCP surfaces. Isolation and filters → cross-container/actor, runtime, and include-inactive E2E. Regression floor → focused MCP/Relay suites, workflow/redline gates, and live installed tool witness after merge/reload.
 
 **Plan review:**
-Pending clean-context review.
+Clean-context Luna review approved the MCP-only slice with explicit compatibility, ordering, offset, maximum-entry, and public E2E requirements recorded below.
 
 **Approvals:**
 —
@@ -48,12 +48,13 @@ Pending clean-context review.
 **Exceptions:**
 —
 
-**State:** Draft
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-06: Reproduced RW-014 through the installed MCP tool and traced it to `_relay_text` falling through on oversized lists. Historical expansion proved RW-013 used a malformed alias selector; current live alias delivery/reply succeeded.
+- 2026-09-06: Clean-context review approved keeping HTTP/routing/storage unchanged. Required deterministic runtime ASC, last_seen DESC, session_ref ordering; negative-offset refusal; empty over-end pages; explicit list-to-envelope compatibility documentation; and maximum-Unicode-entry budget coverage.
 
 ## Evidence
 
