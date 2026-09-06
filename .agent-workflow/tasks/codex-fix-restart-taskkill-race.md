@@ -44,6 +44,7 @@
 - Focused real-script restart suite: 24 passed in 8.49s. Full Windows smoke plus service CLI floor: 328 passed, 6 skipped in 15.14s.
 - Corrected wrapper replayed the exact live orphan shape and exited 0; installed PID refreshed from stale 18496 to 9680, port remained 19836, launcher was UTF-16 exact-home, `/health` was ok, embedding and ingestion were healthy, and queue health returned 200.
 - Relay message `relay-msg-732471bf...` sent after restart auto-delivered once to `codex:@relaydev` in about nine seconds with durable expiry omitted.
+- PR #115 merged as `0aa3d590`; exact-main wrapper restart exited 0 with UTF-16 exact-home launcher metadata, supervisor PID 49436, a healthy server-child listener, `/health=ok`, healthy embedding and ingestion status, and queue HTTP 200.
 
 ## Plan review
 
