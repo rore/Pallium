@@ -1,5 +1,4 @@
 # Next · Session History
-- fix-agent-work-ref-injection
 - decouple-session-history-from-derived-packages
 - investigate-history-navigation-and-on-demand-compression
 
@@ -46,6 +45,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- fix-agent-work-ref-injection
 - add-distinct-work-and-broad-history-search-tools
 - add-structural-session-work-references
 - fix-relay-receive-mcp-lifecycle

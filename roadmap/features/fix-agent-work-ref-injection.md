@@ -1,7 +1,7 @@
 ---
 id: fix-agent-work-ref-injection
 title: Give agents one copyable current-work reference
-status: in-progress
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-session-history
@@ -50,6 +50,11 @@ Dogfooding found that a bare branch name returned no exact results while the
 stored `git-branch:<branch>` reference succeeded. Core normalization was already
 symmetric; the usability gap was that agents could not see the namespaced value
 the integrations had written.
+
+Implemented in PR #112. All required CI and review gates passed. After refreshing
+the installed integrations and restarting the service, a real Codex hook emitted
+`git-branch:codex/fix-windows-service-home-metadata`; copying that exact value
+into narrow search returned the source item ingested by the same hook turn.
 
 ## Dependencies
 
