@@ -89,10 +89,10 @@ budgets or changing SQLite's bounded-failure contract.
 
 2026-09-06 Relay load incident follow-up:
 
-- Current corrective work isolates Relay SQLite operations from the default sync-route
-  capacity, keeps health on the event loop, drains active Relay work before storage
-  shutdown, moves persistent SQLite PRAGMAs out of pooled connection creation, and
-  adds deterministic contention coverage plus an opt-in disposable load witness.
+- RW-019 shipped Relay isolation, shutdown draining, event-loop health, one-time
+  persistent PRAGMAs, deterministic contention coverage, and an opt-in load witness.
+- RW-020 follows with isolated status/queue diagnostics, bounded queue-health SQL,
+  and elapsed-budget restart readiness under background rebuild load.
 - The supported service remains one Uvicorn process serving concurrent users. A
   horizontally scaled multi-process deployment needs a durable cross-process wake
   attempt reservation; process-local coalescing is intentionally not claimed as that

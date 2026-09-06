@@ -21,18 +21,26 @@
 
 **Plan:** 1. Extend the existing sync-capacity caller-surface test so health, status, queue health, and Relay must all complete while the default worker is occupied. 2. Generalize the existing app-owned tracked operation runner to retain separate Relay and diagnostic limiters; route status and queue health through the diagnostic runner without changing payloads. 3. Replace queue-health all-source/all-thread materialization with aggregate counts and state-specific bounded selections while retaining existing classification helpers. 4. Replace Windows attempt budgeting with a 120-second elapsed deadline and raise the shared CLI lifecycle deadline to the same measured bound; keep endpoint validation and last-check diagnostics. 5. Add deterministic deadline/late-readiness tests with mocked sleeps, run focused and full verification, independent result review, installed restart, endpoint probes, PR/CI/review remediation, merge, and exact-main rollout.
 
-**Verification plan:** Existing queue-health edge suites plus new completed-history and default-worker saturation E2E; Windows real-script harness with a tiny injected test deadline and a late-ready mocked path; CLI readiness unit/lifecycle tests; focused health/service/storage/Relay suites; full pytest/import/workflow/diff checks; installed wrapper and direct `/health`, `/status`, `/debug/queue/health` measurements. Slow/load evidence stays opt-in.
+**Verification plan:** Queue-health parity -> focused public-route/storage tests cover empty, pending, processing, failed, lease, ordering, retention, and completed-history cases. Capacity and shutdown -> deterministic caller-surface tests saturate ordinary and diagnostic workers while Relay remains responsive and the shared barrier drains admitted work. Readiness -> injected-clock CLI tests plus the real PowerShell harness cover deadline exhaustion, last failure, and success beyond the former attempt ceiling. Release -> full pytest, import/workflow/diff gates, installed wrapper, direct endpoint timings, and Relay dogfood.
 
 **Plan review:** Clean-context Luna review `/root/restart_reliability_plan_review` found no boundary violation and requires the red-zone `api-review` checkpoint. The plan is accepted with an explicit separate diagnostic runner, shared shutdown drain, NULL/pending and ordering parity, monotonic remaining-budget probes, and concurrent Relay/diagnostic isolation coverage.
 
-**Approvals:** Standing user approval on 2026-09-06 to take managed work and PRs through done without repeated permission prompts; explicit instruction that service resilience bugs found while dogfooding must be fixed.
+**Approvals:** Approved by user 2026-09-06: "not sure what i should approve - i expect the work to be done so everything works correctly". Standing approval also covers managed PR completion.
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-06: The initial one-constant readiness patch was tested against the installed service and rejected after the 60-attempt run still failed. Live endpoint and direct-SQL timings expanded the root cause to diagnostic worker starvation, an unbounded queue-health scan, and non-time-based Windows readiness.
 - 2026-09-06: Clean-context plan/redline review found no boundary violation; `api/routes.py` triggers `api-review`. It tightened runner shutdown, SQL parity, and remaining-budget test requirements before implementation.
+- 2026-09-06: Queue health uses SQL aggregates for status totals and 24h completion counts, scanning only non-completed source rows.
+- 2026-09-06: Added separate 4-token Relay and 2-token diagnostic runners with shared shutdown draining; /status and queue health use diagnostic capacity while direct-router defaults remain unchanged. Focused capacity test passes.
+- 2026-09-06: Capacity regression now covers health, status, queue health, and Relay under default-worker saturation; shared _wait_for_operations is exposed with compatibility alias. Focused test passes.
+
+- 2026-09-06: Corrected queue health to aggregate completed history in SQL and select only pending, active leases, and bounded recent failures. Focused parity covers completion cutoff, active/expired source and thread leases, failure ordering/limit including null completion time, unclaimable reasons, expired-package precedence, retention, and no completed-history materialization.
+- 2026-09-06: Replaced attempt-count readiness with one 120-second monotonic budget on Windows and shared CLI paths; each probe is capped by remaining time and failures retain the last real endpoint result. Real-script tests use a tiny injected budget and no production-length sleep.
+- 2026-09-06: Clean-context API/runtime review found a queued-operation shutdown race. Tracking now begins before limiter admission; the E2E fills both diagnostic slots, queues a third request, keeps Relay responsive, and verifies the shared barrier drains all work. Public response schemas and status codes are unchanged.
+- 2026-09-06: Installed wrapper exited 0 during an active vector rebuild. Health was ok, embeddings were ready, ingestion had no issues, status measured about 0.8s, and queue health measured about 1.2-2.0s versus the pre-fix 2-3s and 5-7s.

@@ -370,6 +370,7 @@ def create_router(
     relay_turn_callback: Callable[[dict[str, Any]], None] | None = None,
     relay_ack_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
+    diagnostic_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
 ) -> APIRouter:
     router = APIRouter()
     wake_registry = claude_wake_registry or ClaudeWakeRegistry()
@@ -624,8 +625,15 @@ def create_router(
         return ProcessingStatusResponse(**result.as_dict())
 
     @router.get("/debug/queue/health", response_model=QueueHealthResponse)
-    def get_queue_health() -> QueueHealthResponse:
-        snapshot = service.get_queue_health()
+    async def get_queue_health() -> QueueHealthResponse:
+        if diagnostic_runner is None:
+            import anyio
+
+            snapshot = await anyio.to_thread.run_sync(
+                service.get_queue_health, abandon_on_cancel=False
+            )
+        else:
+            snapshot = await diagnostic_runner(service.get_queue_health)
         return QueueHealthResponse(
             status_counts=snapshot.status_counts,
             status_counts_24h=snapshot.status_counts_24h,

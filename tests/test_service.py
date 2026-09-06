@@ -28,6 +28,7 @@ from app.cli.service import (
     _install_linux,
     _remove_service_data,
     _systemctl,
+    _service_ready,
     _wait_for_service,
     service_main,
 )
@@ -444,7 +445,7 @@ class TestStartWindows:
         monkeypatch.setattr("app.cli.service._missing_declared_credentials", lambda _config: [])
         monkeypatch.setattr("app.config.AppConfig.from_env", lambda: object())
         monkeypatch.setattr("app.run._run_download_embedding_model", lambda: None)
-        monkeypatch.setattr("app.cli.service._service_ready", lambda _port: True)
+        monkeypatch.setattr("app.cli.service._service_ready", lambda _port, **_: True)
         monkeypatch.setattr("app.cli.service.time.sleep", lambda _seconds: None)
 
         task_xml: list[str] = []
@@ -529,6 +530,56 @@ class TestCmdRestart:
         mock_stop.assert_not_called()
 
 
+class TestServiceReadiness:
+    def test_service_ready_caps_each_probe_to_remaining_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        clock = [10.0]
+        observed: list[tuple[str, float]] = []
+
+        def health(_port: int, *, timeout: float):
+            observed.append(("health", timeout))
+            clock[0] += 1.0
+            return {
+                "status": "ok",
+                "vector_index_ready": True,
+                "embedding_provider_ok": True,
+            }
+
+        def endpoint(_port: int, path: str, *, timeout: float):
+            observed.append((path, timeout))
+            clock[0] += 1.0
+            return {}
+
+        monkeypatch.setattr("app.cli.service.time.monotonic", lambda: clock[0])
+        monkeypatch.setattr("app.cli.service._check_health", health)
+        monkeypatch.setattr("app.cli.service._read_endpoint_json", endpoint)
+
+        assert _service_ready(21987, timeout=3.0)
+        assert observed == [
+            ("health", 3.0),
+            ("/status", 2.0),
+            ("/debug/queue/health", 1.0),
+        ]
+
+    def test_wait_for_service_uses_monotonic_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        clock = [100.0]
+        monkeypatch.setattr("app.cli.service.time.monotonic", lambda: clock[0])
+        monkeypatch.setattr(
+            "app.cli.service.time.sleep",
+            lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        )
+        monkeypatch.setattr(
+            "app.cli.service._service_ready",
+            lambda _port, *, timeout: False,
+        )
+
+        assert not _wait_for_service(21987, timeout=3.0)
+        assert clock[0] == 103.0
+
+
 class TestLinuxServiceLifecycle:
     @pytest.fixture(autouse=True)
     def _linux_only(self):
@@ -542,16 +593,6 @@ class TestLinuxServiceLifecycle:
         )
         with pytest.raises(RuntimeError, match="user bus unavailable"):
             _systemctl("start", "pallium.service")
-
-    def test_wait_for_service_uses_monotonic_deadline(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        clock = iter([100.0, 100.0, 131.0])
-        monkeypatch.setattr("app.cli.service.time.monotonic", lambda: next(clock))
-        monkeypatch.setattr("app.cli.service.time.sleep", lambda _seconds: None)
-        monkeypatch.setattr("app.cli.service._service_ready", lambda _port: False)
-
-        assert not _wait_for_service(21987, timeout=30.0)
 
     def test_install_writes_safe_unit_and_starts_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -642,7 +683,7 @@ class TestLinuxServiceLifecycle:
         )
         monkeypatch.setattr("app.cli.service._read_port", lambda _home: 21987)
         monkeypatch.setattr("app.cli.service._check_health", lambda _port: {"status": "ok"})
-        monkeypatch.setattr("app.cli.service._service_ready", lambda _port: True)
+        monkeypatch.setattr("app.cli.service._service_ready", lambda _port, **_: True)
         monkeypatch.setattr(
             "app.cli.service._read_pid",
             lambda _home: pytest.fail("Linux status must not read the PID file"),
@@ -662,7 +703,7 @@ class TestLinuxServiceLifecycle:
         restart_calls: list[bool] = []
         monkeypatch.setattr("app.cli.service._restart_linux", lambda: restart_calls.append(True))
         monkeypatch.setattr("app.cli.service._read_port", lambda _home: 21987)
-        monkeypatch.setattr("app.cli.service._wait_for_service", lambda _port: True)
+        monkeypatch.setattr("app.cli.service._wait_for_service", lambda _port, **_: True)
         monkeypatch.setattr(
             "app.cli.service._cmd_stop_impl",
             lambda _home: pytest.fail("Linux restart must not use PID/HTTP/SIGKILL"),

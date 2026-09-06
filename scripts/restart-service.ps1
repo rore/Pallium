@@ -6,6 +6,10 @@
     .\restart-service.ps1
 #>
 
+param(
+    [double]$ReadinessTimeoutSeconds = 120
+)
+
 $ErrorActionPreference = "Stop"
 $TaskName = "Pallium"
 $ServiceHome = "$env:USERPROFILE\.pallium"
@@ -15,6 +19,25 @@ function Stop-WithError([string]$Message) {
     [Console]::Error.WriteLine("Error: $Message")
     [Console]::Error.WriteLine("Pallium log: $LogPath")
     exit 1
+}
+
+if (
+    $ReadinessTimeoutSeconds -lt 1 -or
+    [double]::IsNaN($ReadinessTimeoutSeconds) -or
+    [double]::IsInfinity($ReadinessTimeoutSeconds)
+) {
+    Stop-WithError "ReadinessTimeoutSeconds must be a finite value of at least 1."
+}
+
+function Get-ReadinessProbeTimeoutSeconds(
+    [Diagnostics.Stopwatch]$Timer,
+    [double]$BudgetSeconds
+) {
+    $remaining = [Math]::Floor($BudgetSeconds - $Timer.Elapsed.TotalSeconds)
+    if ($remaining -lt 1) {
+        throw "readiness deadline elapsed"
+    }
+    return [int][Math]::Min(2, $remaining)
 }
 
 function Stop-ProcessTree([int]$ProcessId) {
@@ -219,17 +242,23 @@ try {
 $BaseUrl = "http://127.0.0.1:$Port"
 $ready = $false
 $lastCheck = "service did not become ready"
-for ($attempt = 1; $attempt -le 20; $attempt++) {
+$lastFailure = $lastCheck
+$attempt = 0
+$readinessTimer = [Diagnostics.Stopwatch]::StartNew()
+while (($ReadinessTimeoutSeconds - $readinessTimer.Elapsed.TotalSeconds) -ge 1) {
+    $attempt++
     try {
+        $probeTimeout = Get-ReadinessProbeTimeoutSeconds $readinessTimer $ReadinessTimeoutSeconds
         $lastCheck = "/health request"
-        $health = Invoke-RestMethod -Uri "$BaseUrl/health" -TimeoutSec 2
+        $health = Invoke-RestMethod -Uri "$BaseUrl/health" -TimeoutSec $probeTimeout
         if ($health.status -ne "ok") {
             $lastCheck = "/health status=$($health.status)"
             throw $lastCheck
         }
 
+        $probeTimeout = Get-ReadinessProbeTimeoutSeconds $readinessTimer $ReadinessTimeoutSeconds
         $lastCheck = "/status request"
-        $status = Invoke-RestMethod -Uri "$BaseUrl/status" -TimeoutSec 2
+        $status = Invoke-RestMethod -Uri "$BaseUrl/status" -TimeoutSec $probeTimeout
         if ($status.embedding_provider_ok -ne $true) {
             $lastCheck = "/status embedding_provider_ok=$($status.embedding_provider_ok)"
             throw $lastCheck
@@ -239,8 +268,9 @@ for ($attempt = 1; $attempt -le 20; $attempt++) {
             throw $lastCheck
         }
 
+        $probeTimeout = Get-ReadinessProbeTimeoutSeconds $readinessTimer $ReadinessTimeoutSeconds
         $lastCheck = "/debug/queue/health request"
-        $queue = Invoke-WebRequest -Uri "$BaseUrl/debug/queue/health" -UseBasicParsing -TimeoutSec 2
+        $queue = Invoke-WebRequest -Uri "$BaseUrl/debug/queue/health" -UseBasicParsing -TimeoutSec $probeTimeout
         if ($queue.StatusCode -lt 200 -or $queue.StatusCode -ge 300) {
             $lastCheck = "/debug/queue/health HTTP $($queue.StatusCode)"
             throw $lastCheck
@@ -249,17 +279,25 @@ for ($attempt = 1; $attempt -le 20; $attempt++) {
         $ready = $true
         break
     } catch {
+        if ($_.Exception.Message -eq "readiness deadline elapsed") {
+            $lastCheck = $lastFailure
+            break
+        }
         if ($_.Exception.Message -ne $lastCheck) {
             $lastCheck = "{0}: {1}" -f $lastCheck, $_.Exception.Message
         }
-        if ($attempt -lt 20) {
-            Start-Sleep -Milliseconds 500
+        $lastFailure = $lastCheck
+        $remainingMilliseconds = [Math]::Floor(
+            ($ReadinessTimeoutSeconds - $readinessTimer.Elapsed.TotalSeconds) * 1000
+        )
+        if ($remainingMilliseconds -gt 0) {
+            Start-Sleep -Milliseconds ([int][Math]::Min(500, $remainingMilliseconds))
         }
     }
 }
 
 if (-not $ready) {
-    Stop-WithError "Pallium failed readiness after 20 attempts; last check: $lastCheck"
+    Stop-WithError "Pallium failed the $ReadinessTimeoutSeconds-second readiness budget after $attempt attempts; last check: $lastCheck"
 }
 
 Write-Host "Pallium restarted. Dashboard at $BaseUrl/dashboard"

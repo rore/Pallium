@@ -181,30 +181,35 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats, metrics_store=metrics_store)
     service = build_result.service
     relay_limiter = anyio.CapacityLimiter(4)
-    relay_operations = threading.Condition()
-    active_relay_operations = 0
+    diagnostic_limiter = anyio.CapacityLimiter(2)
+    operations = threading.Condition()
+    active_operations = 0
 
+    async def run_operation(operation, limiter):
+        nonlocal active_operations
+        with operations:
+            active_operations += 1
+        try:
+            return await anyio.to_thread.run_sync(
+                operation,
+                abandon_on_cancel=False,
+                limiter=limiter,
+            )
+        finally:
+            with operations:
+                active_operations -= 1
+                operations.notify_all()
     async def run_relay_operation(operation):
-        def tracked_operation():
-            nonlocal active_relay_operations
-            with relay_operations:
-                active_relay_operations += 1
-            try:
-                return operation()
-            finally:
-                with relay_operations:
-                    active_relay_operations -= 1
-                    relay_operations.notify_all()
+        return await run_operation(operation, relay_limiter)
 
-        return await anyio.to_thread.run_sync(
-            tracked_operation,
-            abandon_on_cancel=False,
-            limiter=relay_limiter,
-        )
+    async def run_diagnostic_operation(operation):
+        return await run_operation(operation, diagnostic_limiter)
 
-    def wait_for_relay_operations() -> None:
-        with relay_operations:
-            relay_operations.wait_for(lambda: active_relay_operations == 0)
+    def wait_for_operations() -> None:
+        with operations:
+            operations.wait_for(lambda: active_operations == 0)
+
+    wait_for_relay_operations = wait_for_operations
     # Record service_start lifecycle event (fire-and-forget)
     if metrics_store is not None:
         try:
@@ -299,7 +304,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             if stop is not None:
                 stop.set()
             _remove_launch_token(token_path)
-            wait_for_relay_operations()
+            wait_for_operations()
             for storage_provider in (service._storage, early_storage):
                 if isinstance(storage_provider, SQLiteStorageProvider):
                     storage_provider.close()
@@ -311,6 +316,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     app.state._reconcile_done = None
     app.state._rebuild_coordinator = None
     app.state._start_time = time.monotonic()
+    app.state._wait_for_operations = wait_for_operations
     app.state._wait_for_relay_operations = wait_for_relay_operations
 
     @app.get("/health")
@@ -363,8 +369,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         os.kill(os.getpid(), signal.SIGINT)
         return JSONResponse({"status": "shutting_down"})
 
-    @app.get("/status")
-    def status() -> JSONResponse:
+    def status_body() -> JSONResponse:
         storage = service._storage
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "status requires SQLite backend"}, status_code=501)
@@ -569,6 +574,10 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "historical_lookup_funnel": funnel_info,
         })
 
+    @app.get("/status")
+    async def status() -> JSONResponse:
+        return await run_diagnostic_operation(status_body)
+
     mount_dashboard(app)
     claude_wake_registry = build_claude_wake_registry()
     app.state.claude_wake_registry = claude_wake_registry
@@ -578,6 +587,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         relay_storage=build_result.storage,
         claude_wake_registry=claude_wake_registry,
         relay_runner=run_relay_operation,
+        diagnostic_runner=run_diagnostic_operation,
     ))
     if mcp_available and mcp_app is not None:
         app.mount("", mcp_app)

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from app.config import AppConfig, SemanticPackageConfig
 from app.main import create_app
@@ -170,6 +172,60 @@ def test_queue_health_endpoint_reports_unclaimable_pending_and_recent_failure(mo
     assert payload["recent_failures"][0]["processing_error"] == "provider failed"
 
 
+def test_queue_health_does_not_materialize_completed_history(test_db_url: str) -> None:
+    app = create_app(AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=test_db_url,
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+    service = app.state.pallium_service
+    storage = service._storage
+    pending = build_source_item(
+        source_type="chat_message",
+        source_id="queue-health-pending",
+        content_type="text/plain",
+        content="pending",
+        metadata=None,
+        use_case="demo_agent_memory",
+    )
+    completed = build_source_item(
+        source_type="chat_message",
+        source_id="queue-health-completed",
+        content_type="text/plain",
+        content="completed payload must not be materialized",
+        metadata=None,
+        use_case="demo_agent_memory",
+    )
+    storage.create_source_item(pending)
+    storage.create_source_item(completed)
+    with storage._engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE source_items SET processing_status='completed', "
+                "processing_completed_at=datetime('now') WHERE id=:item_id"
+            ),
+            {"item_id": completed.id},
+        )
+
+    statements: list[str] = []
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "from source_items" in statement.lower():
+            statements.append(" ".join(statement.lower().split()))
+
+    event.listen(storage._engine, "before_cursor_execute", capture)
+    try:
+        snapshot = service.get_queue_health()
+    finally:
+        event.remove(storage._engine, "before_cursor_execute", capture)
+
+    assert snapshot.status_counts == {"completed": 1, "pending": 1}
+    assert snapshot.status_counts_24h == {"completed": 1}
+    assert statements
+    assert all(" group by " in statement or " where " in statement for statement in statements)
+
 def test_retry_failed_processing_is_loopback_bounded_and_preserves_completed_packages(test_db_url: str) -> None:
     app = create_app(
         AppConfig(
@@ -314,3 +370,102 @@ def test_integration_debug_logging_is_opt_in(test_db_url: str, capsys) -> None:
     output = capsys.readouterr().out
     assert "source_item_processing_outcome" in output
     assert "memory_creation_provenance" in output
+
+def test_queue_health_preserves_lease_failure_and_cutoff_semantics(client) -> None:
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+
+    def add(source_id, status="pending", use_case="unknown", completed=None):
+        item = build_source_item(
+            source_type="test",
+            source_id=source_id,
+            content_type="text/plain",
+            content="x",
+            metadata=None,
+            use_case=use_case,
+            processing_status=status,
+            processing_completed_at=completed,
+        )
+        storage.create_source_item(item)
+        return item.id
+
+    add("pending-missing-use-case", use_case=None)
+    add("pending-unknown")
+    add("completed-old", "completed", completed=now - timedelta(hours=25))
+    add("completed-new", "completed", completed=now - timedelta(hours=1))
+    active_source_id = add("processing-active", "processing", use_case="known")
+    expired_source_id = add("processing-expired", "processing", use_case="known")
+    failed_old_id = add("failed-old", "failed", completed=now - timedelta(minutes=2))
+    failed_new_id = add("failed-new", "failed", completed=now - timedelta(minutes=1))
+    failed_null_id = add("failed-null", "failed")
+    with storage._engine.begin() as connection:
+
+        connection.execute(
+            text(
+                "UPDATE source_items SET processing_claimed_by='worker', "
+                "processing_claimed_at=:claimed, processing_lease_expires_at=:expires "
+                "WHERE id=:id"
+            ),
+            [
+                {
+                    "id": active_source_id,
+                    "claimed": now - timedelta(minutes=1),
+                    "expires": now + timedelta(minutes=1),
+                },
+                {
+                    "id": expired_source_id,
+                    "claimed": now - timedelta(minutes=2),
+                    "expires": now - timedelta(minutes=1),
+                },
+            ],
+        )
+        for scope_key, expires in (
+            ("active-scope", now + timedelta(minutes=1)),
+            ("expired-scope", now - timedelta(minutes=1)),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO thread_processing_leases "
+                    "(scope_key,use_case,container_ref,thread_ref,visibility,"
+                    "requested_at,processing_claimed_by,processing_claimed_at,"
+                    "processing_lease_expires_at,created_at,updated_at) "
+                    "VALUES (:scope,'known','git:test','thread:test','private',"
+                    ":now,'worker',:now,:expires,:now,:now)"
+                ),
+                {"scope": scope_key, "now": now, "expires": expires},
+            )
+
+    snapshot = storage.get_queue_health_snapshot(
+        now=now,
+        max_attempts=3,
+        known_use_cases=("known",),
+        scoped_use_cases=(),
+        retention_enabled=False,
+        recent_failure_limit=2,
+    )
+    assert snapshot.status_counts == {
+        "completed": 2, "failed": 3, "pending": 2, "processing": 2,
+    }
+    assert snapshot.status_counts_24h == {"completed": 1, "failed": 2}
+    assert {
+        item.reason: item.count for item in snapshot.unclaimable_pending_counts
+    } == {"missing_use_case": 1, "unknown_use_case": 1}
+    assert [item.source_item_id for item in snapshot.leased_source_items] == [
+        active_source_id
+    ]
+    assert [item.scope_key for item in snapshot.leased_thread_scopes] == [
+        "active-scope"
+    ]
+    assert [item.source_item_id for item in snapshot.recent_failures] == [
+        failed_new_id, failed_old_id,
+    ]
+
+    with_null_failure = storage.get_queue_health_snapshot(
+        now=now,
+        max_attempts=3,
+        known_use_cases=("known",),
+        scoped_use_cases=(),
+        retention_enabled=False,
+        recent_failure_limit=3,
+    )
+    assert with_null_failure.recent_failures[-1].source_item_id == failed_null_id

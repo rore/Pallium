@@ -150,6 +150,7 @@ function Invoke-RestMethod {
     $path = ([uri]$Uri).AbsolutePath
     Log-Call "URI:$Uri"
     Log-Call "GET $path"
+    Log-Call "Timeout:${path}:$TimeoutSec"
     if ($path -eq "/health") {
         $script:HealthCalls++
         if ($env:RW010_SCENARIO -eq "terminal_health" -or
@@ -186,16 +187,17 @@ function Invoke-WebRequest {
     $path = ([uri]$Uri).AbsolutePath
     Log-Call "URI:$Uri"
     Log-Call "GET $path"
+    Log-Call "Timeout:${path}:$TimeoutSec"
     $script:QueueCalls++
     if ($env:RW010_SCENARIO -eq "terminal_queue" -or
-        ($env:RW010_SCENARIO -eq "transient" -and $script:QueueCalls -eq 1)) {
+        ($env:RW010_SCENARIO -eq "transient" -and $script:QueueCalls -le 21)) {
         return [pscustomobject]@{ StatusCode = 503 }
     }
     [pscustomobject]@{ StatusCode = 204 }
 }
 
 $env:USERPROFILE = $env:RW010_HOME
-& $env:RW010_SCRIPT
+& $env:RW010_SCRIPT -ReadinessTimeoutSeconds ([double]$env:RW010_READINESS_TIMEOUT_SECONDS)
 exit $LASTEXITCODE
 '''
 
@@ -209,6 +211,7 @@ def _run_restart(
     working_directory: Path | None = None,
     service_home: Path | None = None,
     pid_file_value: int | None = None,
+    readiness_timeout_seconds: float = 2.0,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     shell = shutil.which("pwsh") or shutil.which("powershell")
     assert shell is not None, "PowerShell is required on Windows"
@@ -260,6 +263,7 @@ def _run_restart(
             else str(working_directory or tmp_path)
         ),
         RW016_PID="" if pid_file_value is None else str(pid_file_value),
+        RW010_READINESS_TIMEOUT_SECONDS=str(readiness_timeout_seconds),
     )
     result = subprocess.run(
         [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness)],
@@ -474,10 +478,15 @@ def test_transient_readiness_checks_all_contracts_before_success(tmp_path: Path)
 
     assert result.returncode == 0, _output(result)
     assert "Pallium restarted." in _output(result)
-    assert calls.count("GET /health") == 5
-    assert calls.count("GET /status") == 4
-    assert calls.count("GET /debug/queue/health") == 2
-    assert calls.count("Sleep:500") == 4
+    assert calls.count("GET /health") == 25
+    assert calls.count("GET /status") == 24
+    assert calls.count("GET /debug/queue/health") == 22
+    assert calls.count("Sleep:500") == 24
+    assert set(call for call in calls if call.startswith("Timeout:")) == {
+        "Timeout:/health:1",
+        "Timeout:/status:1",
+        "Timeout:/debug/queue/health:1",
+    }
 
 
 @pytest.mark.parametrize(
@@ -494,10 +503,11 @@ def test_terminal_readiness_exhausts_exact_budget_without_success(
     last_check: str,
     last_endpoint: str,
 ) -> None:
-    result, calls = _run_restart(tmp_path, scenario)
+    result, calls = _run_restart(
+        tmp_path, scenario, readiness_timeout_seconds=2.1,
+    )
 
     output = _assert_failure(result)
-    assert "failed readiness after 20 attempts" in output
+    assert "failed the 2.1-second readiness budget" in output
     assert last_check in output
-    assert calls.count(last_endpoint) == 20
-    assert calls.count("Sleep:500") == 19
+    assert calls.count(last_endpoint) >= 1
