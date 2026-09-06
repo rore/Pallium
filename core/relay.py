@@ -16,7 +16,7 @@ RELAY_MESSAGE_MAX_CHARS = 1500
 RELAY_TURN_MAX_CHARS = 2400
 RELAY_TURN_MAX_MESSAGES = 3
 RELAY_BROADCAST_MAX_RECIPIENTS = 25
-RELAY_DEFAULT_EXPIRY_SECONDS = 24 * 60 * 60
+RELAY_DEFAULT_EXPIRY_SECONDS: int | None = None
 RELAY_MIN_EXPIRY_SECONDS = 60
 RELAY_MAX_EXPIRY_SECONDS = 7 * 24 * 60 * 60
 RELAY_RECENT_SECONDS = 24 * 60 * 60
@@ -227,13 +227,15 @@ class RelayService:
         payload: str,
         container_ref: str,
         actor_ref: str,
-        expires_in_seconds: int = RELAY_DEFAULT_EXPIRY_SECONDS,
+        expires_in_seconds: int | None = RELAY_DEFAULT_EXPIRY_SECONDS,
         in_reply_to: str | None = None,
         message_id: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
-        if not RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS:
+        if expires_in_seconds is not None and not (
+            RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS
+        ):
             raise ValueError(
                 f"expires_in_seconds must be between {RELAY_MIN_EXPIRY_SECONDS} and {RELAY_MAX_EXPIRY_SECONDS}"
             )
@@ -267,11 +269,13 @@ class RelayService:
         payload: str,
         container_ref: str,
         actor_ref: str,
-        expires_in_seconds: int = RELAY_DEFAULT_EXPIRY_SECONDS,
+        expires_in_seconds: int | None = RELAY_DEFAULT_EXPIRY_SECONDS,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
-        if not RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS:
+        if expires_in_seconds is not None and not (
+            RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS
+        ):
             raise ValueError(
                 f"expires_in_seconds must be between {RELAY_MIN_EXPIRY_SECONDS} and {RELAY_MAX_EXPIRY_SECONDS}"
             )

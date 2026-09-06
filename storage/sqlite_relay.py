@@ -23,6 +23,25 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+# ponytail: NOT NULL sentinel avoids a SQLite table rebuild; migrate only if year-9999 storage stops being portable.
+_DURABLE_EXPIRY = datetime.max.replace(tzinfo=timezone.utc)
+
+
+def _expiry_at(current: datetime, expires_in_seconds: int | None) -> datetime:
+    return _DURABLE_EXPIRY if expires_in_seconds is None else current + timedelta(seconds=expires_in_seconds)
+
+
+def _expiry_matches(message: RelayMessageRecord, expires_in_seconds: int | None) -> bool:
+    expiry = _now(message.expires_at)
+    if expires_in_seconds is None:
+        return expiry == _DURABLE_EXPIRY
+    return expiry - _now(message.created_at) == timedelta(seconds=expires_in_seconds)
+
+
+def _expiry_iso(value: datetime) -> str | None:
+    return None if _now(value) == _DURABLE_EXPIRY else _iso(value)
+
+
 def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int) -> dict[str, Any]:
     if row.state == "closed":
         lifecycle = "closed"
@@ -77,7 +96,7 @@ def _delivery_view(
         "redacted": bool(message.redacted),
         "in_reply_to": message.in_reply_to,
         "created_at": _iso(message.created_at),
-        "expires_at": _iso(message.expires_at),
+        "expires_at": _expiry_iso(message.expires_at),
         "claimed_at": _iso(delivery.claimed_at),
         "lease_expires_at": _iso(delivery.lease_expires_at),
         "delivered_at": _iso(delivery.delivered_at),
@@ -386,7 +405,7 @@ class SQLiteRelayMixin:
         redacted: bool,
         container_ref: str,
         actor_ref: str,
-        expires_in_seconds: int,
+        expires_in_seconds: int | None,
         in_reply_to: str | None,
         broadcast_recent_seconds: int,
         broadcast_max_recipients: int,
@@ -425,8 +444,7 @@ class SQLiteRelayMixin:
                     and existing_message.payload == payload
                     and bool(existing_message.redacted) == bool(redacted)
                     and existing_message.in_reply_to == in_reply_to
-                    and _now(existing_message.expires_at) - _now(existing_message.created_at)
-                    == timedelta(seconds=expires_in_seconds)
+                    and _expiry_matches(existing_message, expires_in_seconds)
                 ):
                     return self._relay_status_in_session(db, existing_message, current)
                 raise RelayConflictError("message_id is already in use")
@@ -486,7 +504,7 @@ class SQLiteRelayMixin:
                 redacted=1 if redacted else 0,
                 in_reply_to=in_reply_to,
                 created_at=current,
-                expires_at=current + timedelta(seconds=expires_in_seconds),
+                expires_at=_expiry_at(current, expires_in_seconds),
             )
             db.add(message)
             db.flush()
@@ -514,7 +532,7 @@ class SQLiteRelayMixin:
         redacted: bool,
         container_ref: str,
         actor_ref: str,
-        expires_in_seconds: int,
+        expires_in_seconds: int | None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         """Validate, create reply, and optionally mark delivery delivered — all in one transaction.
@@ -568,8 +586,11 @@ class SQLiteRelayMixin:
             # idempotency: reply_message_id is deterministic so a second attempt returns the existing message
             existing = db.get(RelayMessageRecord, reply_message_id)
             if existing is not None:
-                existing_expiry_secs = round((existing.expires_at - existing.created_at).total_seconds())
-                if existing.payload != payload or bool(existing.redacted) != redacted or existing_expiry_secs != expires_in_seconds:
+                if (
+                    existing.payload != payload
+                    or bool(existing.redacted) != redacted
+                    or not _expiry_matches(existing, expires_in_seconds)
+                ):
                     raise RelayConflictError("reply already exists with different parameters")
                 return self._relay_status_in_session(db, existing, current)
 
@@ -596,7 +617,7 @@ class SQLiteRelayMixin:
                 redacted=1 if redacted else 0,
                 in_reply_to=message.id,
                 created_at=current,
-                expires_at=current + timedelta(seconds=expires_in_seconds),
+                expires_at=_expiry_at(current, expires_in_seconds),
             )
             db.add(reply_msg)
             db.flush()
@@ -646,7 +667,7 @@ class SQLiteRelayMixin:
             "redacted": bool(message.redacted),
             "in_reply_to": message.in_reply_to,
             "created_at": _iso(message.created_at),
-            "expires_at": _iso(message.expires_at),
+            "expires_at": _expiry_iso(message.expires_at),
             "deliveries": [
                 _delivery_view(
                     row,

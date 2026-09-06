@@ -164,6 +164,7 @@ class TestDashboardRelaySummary:
                 },
             ).json()
 
+            assert sent["expires_at"] is None
             pending = client.get("/dashboard/api/relay/summary").json()
             assert pending["status"] == "active"
             assert pending["deliveries"]["pending_now"] == 1
@@ -197,6 +198,7 @@ class TestDashboardRelaySummary:
                     **scope,
                 },
             ).json()
+            assert expiring["expires_at"] is not None
             storage = app.state.pallium_service._storage
             with storage._relay_session_factory() as session:
                 session.execute(

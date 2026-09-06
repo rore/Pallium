@@ -240,6 +240,102 @@ def test_message_id_idempotency_redaction_and_reply_scope(client):
     assert wrong_scope_parent.status_code == 404
 
 
+def test_durable_default_survives_file_restart_dormancy_and_backlog(client, test_db_url):
+    from app.config import AppConfig
+    from app.main import create_app
+    from storage.sqlite_relay import _DURABLE_EXPIRY, _now as relay_now
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    first = _send(
+        client, "claude-code", "sender", "codex:target", "durable → 你好",
+        message_id="durable-0",
+    )
+    assert first.status_code == 200
+    assert first.json()["expires_at"] is None
+    assert first.json()["deliveries"][0]["expires_at"] is None
+    assert _send(
+        client, "claude-code", "sender", "codex:target", "durable → 你好",
+        message_id="durable-0", expires_in_seconds=None,
+    ).status_code == 200
+    assert _send(
+        client, "claude-code", "sender", "codex:target", "durable → 你好",
+        message_id="durable-0", expires_in_seconds=60,
+    ).status_code == 409
+    for index in range(1, 4):
+        sent = _send(
+            client, "claude-code", "sender", "codex:target",
+            f"durable {index}", message_id=f"durable-{index}",
+        )
+        assert sent.status_code == 200
+        assert sent.json()["expires_at"] is None
+
+    storage = client.app.state.pallium_service._storage
+    old = datetime.now(timezone.utc) - timedelta(days=8)
+    with storage._relay_session_factory.begin() as db:
+        message = db.get(RelayMessageRecord, "durable-0")
+        assert relay_now(message.expires_at) == _DURABLE_EXPIRY
+        message.created_at = old
+        db.execute(
+            text("UPDATE relay_sessions SET last_seen_at=:old WHERE session_ref=:session_ref"),
+            {"old": old, "session_ref": "target"},
+        )
+    client.close()
+
+    config = AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=test_db_url,
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    )
+    with TestClient(create_app(config)) as restarted:
+        status = _status(restarted, "durable-0")
+        assert status.status_code == 200
+        assert status.json()["expires_at"] is None
+        assert status.json()["deliveries"][0]["state"] == "pending"
+        restarted_storage = restarted.app.state.pallium_service._storage
+        with restarted_storage._relay_session_factory() as db:
+            stored = db.get(RelayMessageRecord, "durable-0")
+            assert relay_now(stored.expires_at) == _DURABLE_EXPIRY
+            assert relay_now(stored.expires_at).tzinfo == timezone.utc
+
+        turn = _turn(restarted, "codex", "target")
+        assert len(turn["deliveries"]) == 3
+        assert turn["has_more"] is True
+        assert turn["remaining_count"] == 1
+        claimed = next(item for item in turn["deliveries"] if item["message_id"] == "durable-0")
+        reply = _reply(
+            restarted, claimed["delivery_id"], "durable reply",
+            receipt=claimed["receipt"], expires_in_seconds=None,
+        )
+        assert reply.status_code == 200
+        assert reply.json()["expires_at"] is None
+        assert _reply(
+            restarted, claimed["delivery_id"], "durable reply",
+            receipt=claimed["receipt"],
+        ).status_code == 200
+        assert _reply(
+            restarted, claimed["delivery_id"], "durable reply",
+            receipt=claimed["receipt"], expires_in_seconds=60,
+        ).status_code == 409
+        for delivery in turn["deliveries"]:
+            if delivery["delivery_id"] != claimed["delivery_id"]:
+                assert _ack(restarted, delivery).status_code == 200
+
+        final = _turn(restarted, "codex", "target")
+        assert len(final["deliveries"]) == 1
+        assert final["has_more"] is False
+        assert final["remaining_count"] == 0
+        assert _ack(restarted, final["deliveries"][0]).status_code == 200
+        reply_delivery = _turn(restarted, "claude-code", "sender")["deliveries"][0]
+        assert reply_delivery["expires_at"] is None
+        assert _ack(restarted, reply_delivery).status_code == 200
+        assert _status(restarted, "durable-0").json()["deliveries"][0]["state"] == "delivered"
+
+
 def test_delivery_derived_reply_is_attributed_scoped_and_idempotent(client):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "target")

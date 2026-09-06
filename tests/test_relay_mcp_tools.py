@@ -444,18 +444,19 @@ async def test_redacted_send_and_reply_summaries_are_safe_and_bounded(
     monkeypatch: pytest.MonkeyPatch, asgi_post,
 ):
     bind_asgi_post(monkeypatch, asgi_post)
-    sender = "summary-sender"
+    sender = "s" * 255
     for runtime, session in ((_RUNTIME, _SESSION), ("codex", sender)):
         await asgi_post("/relay/turn", {"runtime": runtime, "session_ref": session, **_SCOPE})
 
     server = create_server()
 
-    async def send(message: str, recipient: str = f"{_RUNTIME}:{_SESSION}"):
+    async def send(message: str, recipient: str = f"{_RUNTIME}:{_SESSION}", **extra):
         content, _ = await server.call_tool("pallium_relay_send", {
             "message": message,
             "recipient": recipient,
             "sender_runtime": "codex",
             "sender_session_ref": sender,
+            **extra,
         })
         return content[0].text, json.loads(content[0].text)
 
@@ -492,7 +493,9 @@ async def test_redacted_send_and_reply_summaries_are_safe_and_bounded(
         "runtime": _RUNTIME, "session_ref": long_session, **_SCOPE,
     })
     oversized = "Bearer " + ("A" * 20) + " " + ("z" * 1472)
-    oversized_text, oversized_result = await send(oversized, f"{_RUNTIME}:{long_session}")
+    oversized_text, oversized_result = await send(
+        oversized, f"{_RUNTIME}:{long_session}", expires_in_seconds=60,
+    )
     assert len(oversized_text) <= 2000
     assert oversized_result["redacted"] is True
     assert oversized_result["payload_truncated"] is True
