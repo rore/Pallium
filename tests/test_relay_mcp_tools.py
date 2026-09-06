@@ -499,3 +499,117 @@ async def test_redacted_send_and_reply_summaries_are_safe_and_bounded(
     assert "[truncated]" in oversized_result["payload"]
     assert oversized not in oversized_text
     assert "A" * 20 not in oversized_text
+
+@pytest.mark.asyncio
+async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, asgi_post, asgi_get,
+):
+    bind_asgi_post(monkeypatch, asgi_post)
+
+    async def get_from_app(_client, path, params):
+        return await asgi_get(path, params)
+
+    monkeypatch.setattr(PalliumMcpClient, "_get_or_error", get_from_app)
+    server = create_server()
+
+    async def page(**arguments):
+        content, _ = await server.call_tool("pallium_relay_recipients", arguments)
+        assert len(content[0].text) <= 2000
+        return json.loads(content[0].text)
+
+    assert await page() == {
+        "recipients": [], "offset": 0, "next_offset": None,
+        "has_more": False, "total_count": 0,
+    }
+
+    sender = "address-book-sender"
+    await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": sender, **_SCOPE})
+    targets = [f"target-{index:02d}" for index in range(14)]
+    for index, session in enumerate(targets):
+        await asgi_post("/relay/turn", {
+            "runtime": "codex", "session_ref": session,
+            "title": f"מפתח 日本語 {index}", **_SCOPE,
+        })
+    await asgi_post("/relay/turn", {
+        "runtime": "claude-code", "session_ref": "claude-target", **_SCOPE,
+    })
+    await asgi_post("/relay/sessions/name", {
+        "runtime": "codex", "session_ref": targets[0], "alias": "review", **_SCOPE,
+    })
+    await asgi_post("/relay/sessions/name", {
+        "runtime": "codex", "session_ref": targets[1], "alias": "review",
+        "replace_existing": True, **_SCOPE,
+    })
+    await asgi_post("/relay/sessions/close", {
+        "runtime": "codex", "session_ref": targets[2], **_SCOPE,
+    })
+
+    seen: list[dict] = []
+    offset = 0
+    total = None
+    while True:
+        current = await page(runtime="codex", offset=offset)
+        total = current["total_count"] if total is None else total
+        assert current["total_count"] == total
+        seen.extend(current["recipients"])
+        if not current["has_more"]:
+            assert current["next_offset"] is None
+            break
+        assert current["next_offset"] > offset
+        offset = current["next_offset"]
+
+    repeated: list[str] = []
+    offset = 0
+    while True:
+        current = await page(runtime="codex", offset=offset)
+        repeated.extend(item["session_ref"] for item in current["recipients"])
+        if not current["has_more"]:
+            break
+        offset = current["next_offset"]
+    refs = [item["session_ref"] for item in seen]
+    assert len(refs) == len(set(refs)) == len(targets)
+    assert repeated == refs
+    assert targets[2] not in refs
+    assert all(item["runtime"] == "codex" for item in seen)
+    assert all(item["exact_selector"] == f"codex:{item['session_ref']}" for item in seen)
+    holder = next(item for item in seen if item["session_ref"] == targets[1])
+    released = next(item for item in seen if item["session_ref"] == targets[0])
+    assert holder["alias_selector"] == "codex:@review"
+    assert "alias_selector" not in released
+    assert any(item["title"].startswith("מפתח 日本語") for item in seen)
+
+    all_sessions: list[dict] = []
+    offset = 0
+    while True:
+        current = await page(runtime="codex", include_inactive=True, offset=offset)
+        all_sessions.extend(current["recipients"])
+        if not current["has_more"]:
+            break
+        offset = current["next_offset"]
+    closed = next(item for item in all_sessions if item["session_ref"] == targets[2])
+    assert closed["state"] == "closed"
+    assert "alias_selector" not in closed
+    assert (await page(runtime="codex", offset=999))["recipients"] == []
+
+    sent, _ = await server.call_tool("pallium_relay_send", {
+        "message": "canonical alias works", "recipient": holder["alias_selector"],
+        "sender_runtime": "codex", "sender_session_ref": sender,
+    })
+    delivery = json.loads(sent[0].text)["deliveries"][0]
+    assert delivery["recipient_session_ref"] == targets[1]
+
+    exact, _ = await server.call_tool("pallium_relay_send", {
+        "message": "exact fallback works", "recipient": released["exact_selector"],
+        "sender_runtime": "codex", "sender_session_ref": sender,
+    })
+    exact_delivery = json.loads(exact[0].text)["deliveries"][0]
+    assert exact_delivery["recipient_session_ref"] == targets[0]
+
+    conflict, _ = await server.call_tool("pallium_relay_recipients", {
+        "container_ref": "git:example.test/other", "actor_ref": _SCOPE["actor_ref"],
+    })
+    assert json.loads(conflict[0].text)["recipients"] == []
+    other_actor, _ = await server.call_tool("pallium_relay_recipients", {
+        "container_ref": _SCOPE["container_ref"], "actor_ref": "other-actor",
+    })
+    assert json.loads(other_actor[0].text)["recipients"] == []
