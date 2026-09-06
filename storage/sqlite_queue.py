@@ -626,10 +626,41 @@ class SQLiteQueueMixin:
         recent_failure_limit: int = 10,
     ) -> QueueHealthSnapshot:
         normalized_now = self._normalize_datetime(now) or now
+        cutoff_24h = normalized_now - timedelta(hours=24)
         known_use_case_set = set(known_use_cases)
         scoped_use_case_set = set(scoped_use_cases)
+        status_expr = func.coalesce(SourceItemRecord.processing_status, "pending")
         with self._session_factory() as session:
-            source_records = session.scalars(select(SourceItemRecord)).all()
+            status_rows = session.execute(
+                select(status_expr, func.count()).group_by(status_expr)
+            ).all()
+            status_24h_rows = session.execute(
+                select(status_expr, func.count())
+                .where(
+                    SourceItemRecord.processing_completed_at.isnot(None),
+                    SourceItemRecord.processing_completed_at >= cutoff_24h,
+                )
+                .group_by(status_expr)
+            ).all()
+            pending_records = session.scalars(
+                select(SourceItemRecord).where(status_expr == "pending")
+            ).all()
+            leased_source_records = session.scalars(
+                select(SourceItemRecord).where(
+                    SourceItemRecord.processing_status == "processing",
+                    SourceItemRecord.processing_lease_expires_at.isnot(None),
+                    SourceItemRecord.processing_lease_expires_at > normalized_now,
+                )
+            ).all()
+            failed_records = session.scalars(
+                select(SourceItemRecord)
+                .where(SourceItemRecord.processing_status == "failed")
+                .order_by(
+                    SourceItemRecord.processing_completed_at.desc(),
+                    SourceItemRecord.id.desc(),
+                )
+                .limit(recent_failure_limit)
+            ).all()
             expired_package_lease_source_ids = set(session.scalars(
                 select(PackageProcessingStatusRecord.source_item_id).where(
                     PackageProcessingStatusRecord.status == "processing",
@@ -638,93 +669,125 @@ class SQLiteQueueMixin:
                     PackageProcessingStatusRecord.lease_expires_at <= normalized_now,
                 )
             ).all())
-            thread_records = session.scalars(select(ThreadProcessingLeaseRecord)).all()
-            maintenance_record = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
+            thread_records = session.scalars(
+                select(ThreadProcessingLeaseRecord).where(
+                    ThreadProcessingLeaseRecord.processing_claimed_by.isnot(None),
+                    ThreadProcessingLeaseRecord.processing_lease_expires_at.isnot(None),
+                    ThreadProcessingLeaseRecord.processing_lease_expires_at > normalized_now,
+                )
+            ).all()
+            maintenance_record = session.get(
+                MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY
+            )
 
-        status_counts: dict[str, int] = {}
-        status_counts_24h: dict[str, int] = {}
+        status_counts = {
+            str(status): int(count) for status, count in status_rows
+        }
+        status_counts_24h = {
+            str(status): int(count) for status, count in status_24h_rows
+        }
         pending_without_use_case_count = 0
         unclaimable_counts: dict[str, int] = {}
         oldest_pending_created_at: datetime | None = None
-        leased_source_items: list[LeasedSourceItemInfo] = []
-        recent_failures: list[RecentFailureInfo] = []
-        cutoff_24h = normalized_now - timedelta(hours=24)
-
-        for record in source_records:
-            status = record.processing_status or "pending"
-            status_counts[status] = status_counts.get(status, 0) + 1
-            completed_at = self._normalize_datetime(record.processing_completed_at)
-            if completed_at is not None and completed_at >= cutoff_24h:
-                status_counts_24h[status] = status_counts_24h.get(status, 0) + 1
+        for record in pending_records:
+            if not record.use_case:
+                pending_without_use_case_count += 1
             created_at = self._normalize_datetime(record.created_at)
-            if status == "pending":
-                if not record.use_case:
-                    pending_without_use_case_count += 1
-                if created_at is not None and (oldest_pending_created_at is None or created_at < oldest_pending_created_at):
-                    oldest_pending_created_at = created_at
-                reason = (
-                    "expired_package_lease_max_attempts"
-                    if record.id in expired_package_lease_source_ids
-                    else self._classify_unclaimable_pending_reason(
-                        record,
-                        now=normalized_now,
-                        max_attempts=max_attempts,
-                        known_use_cases=known_use_case_set,
-                        scoped_use_cases=scoped_use_case_set,
-                    )
+            if created_at is not None and (
+                oldest_pending_created_at is None
+                or created_at < oldest_pending_created_at
+            ):
+                oldest_pending_created_at = created_at
+            reason = (
+                "expired_package_lease_max_attempts"
+                if record.id in expired_package_lease_source_ids
+                else self._classify_unclaimable_pending_reason(
+                    record,
+                    now=normalized_now,
+                    max_attempts=max_attempts,
+                    known_use_cases=known_use_case_set,
+                    scoped_use_cases=scoped_use_case_set,
                 )
-                if reason is not None:
-                    unclaimable_counts[reason] = unclaimable_counts.get(reason, 0) + 1
-            lease_expires_at = self._normalize_datetime(record.processing_lease_expires_at)
-            if status == "processing" and lease_expires_at is not None and lease_expires_at > normalized_now:
-                leased_source_items.append(
+            )
+            if reason is not None:
+                unclaimable_counts[reason] = unclaimable_counts.get(reason, 0) + 1
+
+        leased_source_items = tuple(
+            sorted(
+                (
                     LeasedSourceItemInfo(
                         source_item_id=record.id,
                         use_case=record.use_case,
                         processing_claimed_by=record.processing_claimed_by,
-                        processing_claimed_at=self._normalize_datetime(record.processing_claimed_at),
-                        processing_lease_expires_at=lease_expires_at,
-                    )
-                )
-            if status == "failed":
-                observability_state = self._observability_state_from_metadata(record.metadata_json)
-                recent_failures.append(
-                    RecentFailureInfo(
-                        source_item_id=record.id,
-                        use_case=record.use_case,
-                        failure_category=(
-                            str(observability_state.get("failure_category"))
-                            if observability_state.get("failure_category") is not None
-                            else None
+                        processing_claimed_at=self._normalize_datetime(
+                            record.processing_claimed_at
                         ),
-                        processing_error=record.processing_error,
-                        processing_attempts=record.processing_attempts or 0,
-                        processing_completed_at=self._normalize_datetime(record.processing_completed_at),
+                        processing_lease_expires_at=self._normalize_datetime(
+                            record.processing_lease_expires_at
+                        ),
                     )
-                )
-
-        leased_thread_scopes = [
-            LeasedThreadScopeInfo(
-                scope_key=record.scope_key,
-                use_case=record.use_case,
-                container_ref=record.container_ref,
-                thread_ref=record.thread_ref,
-                visibility=record.visibility or "private",
-                processing_claimed_by=record.processing_claimed_by,
-                processing_claimed_at=self._normalize_datetime(record.processing_claimed_at),
-                processing_lease_expires_at=self._normalize_datetime(record.processing_lease_expires_at),
+                    for record in leased_source_records
+                ),
+                key=lambda item: (
+                    item.processing_claimed_at
+                    or datetime.min.replace(tzinfo=timezone.utc),
+                    item.source_item_id,
+                ),
             )
-            for record in thread_records
-            if record.processing_claimed_by is not None
-            and (self._normalize_datetime(record.processing_lease_expires_at) or normalized_now) > normalized_now
-        ]
-        recent_failures.sort(
-            key=lambda item: (item.processing_completed_at or datetime.min.replace(tzinfo=timezone.utc), item.source_item_id),
-            reverse=True,
+        )
+        leased_thread_scopes = tuple(
+            sorted(
+                (
+                    LeasedThreadScopeInfo(
+                        scope_key=record.scope_key,
+                        use_case=record.use_case,
+                        container_ref=record.container_ref,
+                        thread_ref=record.thread_ref,
+                        visibility=record.visibility or "private",
+                        processing_claimed_by=record.processing_claimed_by,
+                        processing_claimed_at=self._normalize_datetime(
+                            record.processing_claimed_at
+                        ),
+                        processing_lease_expires_at=self._normalize_datetime(
+                            record.processing_lease_expires_at
+                        ),
+                    )
+                    for record in thread_records
+                ),
+                key=lambda item: (
+                    item.processing_claimed_at
+                    or datetime.min.replace(tzinfo=timezone.utc),
+                    item.scope_key,
+                ),
+            )
+        )
+        recent_failures = tuple(
+            RecentFailureInfo(
+                source_item_id=record.id,
+                use_case=record.use_case,
+                failure_category=(
+                    str(observability_state.get("failure_category"))
+                    if (
+                        observability_state := self._observability_state_from_metadata(
+                            record.metadata_json
+                        )
+                    ).get("failure_category") is not None
+                    else None
+                ),
+                processing_error=record.processing_error,
+                processing_attempts=record.processing_attempts or 0,
+                processing_completed_at=self._normalize_datetime(
+                    record.processing_completed_at
+                ),
+            )
+            for record in failed_records
         )
         oldest_pending_age_seconds = None
         if oldest_pending_created_at is not None:
-            oldest_pending_age_seconds = max(0, int((normalized_now - oldest_pending_created_at).total_seconds()))
+            oldest_pending_age_seconds = max(
+                0,
+                int((normalized_now - oldest_pending_created_at).total_seconds()),
+            )
         return QueueHealthSnapshot(
             status_counts=dict(sorted(status_counts.items())),
             status_counts_24h=dict(sorted(status_counts_24h.items())),
@@ -734,28 +797,13 @@ class SQLiteQueueMixin:
                 QueueHealthReasonCount(reason=reason, count=count)
                 for reason, count in sorted(unclaimable_counts.items())
             ),
-            leased_source_items=tuple(
-                sorted(
-                    leased_source_items,
-                    key=lambda item: (
-                        item.processing_claimed_at or datetime.min.replace(tzinfo=timezone.utc),
-                        item.source_item_id,
-                    ),
-                )
+            leased_source_items=leased_source_items,
+            leased_thread_scopes=leased_thread_scopes,
+            recent_failures=recent_failures,
+            retention=self._retention_health_snapshot(
+                maintenance_record, enabled=retention_enabled
             ),
-            leased_thread_scopes=tuple(
-                sorted(
-                    leased_thread_scopes,
-                    key=lambda item: (
-                        item.processing_claimed_at or datetime.min.replace(tzinfo=timezone.utc),
-                        item.scope_key,
-                    ),
-                )
-            ),
-            recent_failures=tuple(recent_failures[:recent_failure_limit]),
-            retention=self._retention_health_snapshot(maintenance_record, enabled=retention_enabled),
         )
-
     def _persist_process_result_in_session(self, session: Session, result: ProcessResult) -> None:
         for memory_object in result.memory_objects:
             session.add(

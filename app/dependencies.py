@@ -647,6 +647,7 @@ def build_router(
     relay_storage=None,
     claude_wake_registry: ClaudeWakeRegistry | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
+    diagnostic_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
 ):
     relay_service = None
     if relay_storage is not None:
@@ -724,4 +725,5 @@ def build_router(
         relay_turn_callback=_relay_turn_admission,
         relay_ack_callback=(_relay_ack_rearm if relay_service is not None else None),
         relay_runner=relay_runner,
+        diagnostic_runner=diagnostic_runner,
     )

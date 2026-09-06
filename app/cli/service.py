@@ -25,6 +25,7 @@ from pathlib import Path
 _DEFAULT_PORT = 19836
 _SERVICE_NAME = "pallium.service"
 _SERVICE_HOME_MARKER = ".pallium-service-home"
+_SERVICE_READINESS_TIMEOUT_SECONDS = 120.0
 
 # Seeded into a fresh service config when the dev config has no [observability]
 # section, so `pallium service install` arms the historical-lookup reuse funnel
@@ -257,28 +258,44 @@ def _read_endpoint_json(port: int, path: str, timeout: float = 3.0) -> dict | No
         return None
 
 
-def _service_ready(port: int, timeout: float = 1.0) -> bool:
-    health = _check_health(port, timeout=timeout)
+def _service_ready(port: int, timeout: float = 3.0) -> bool:
+    deadline = time.monotonic() + timeout
+
+    def remaining() -> float:
+        return max(0.001, deadline - time.monotonic())
+
+    health = _check_health(port, timeout=remaining())
     if not health or health.get("status") != "ok":
         return False
     if health.get("vector_index_ready") is not True:
         return False
     if health.get("embedding_provider_ok") is not True:
         return False
-    return (
-        _read_endpoint_json(port, "/status", timeout=timeout) is not None
-        and _read_endpoint_json(port, "/debug/queue/health", timeout=timeout) is not None
+    if time.monotonic() >= deadline:
+        return False
+    if _read_endpoint_json(port, "/status", timeout=remaining()) is None:
+        return False
+    if time.monotonic() >= deadline:
+        return False
+    queue_health = _read_endpoint_json(
+        port, "/debug/queue/health", timeout=remaining()
     )
+    return queue_health is not None and time.monotonic() < deadline
 
 
-def _wait_for_service(port: int, timeout: float = 30.0) -> bool:
+def _wait_for_service(
+    port: int,
+    timeout: float = _SERVICE_READINESS_TIMEOUT_SECONDS,
+) -> bool:
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        time.sleep(1)
-        if _service_ready(port):
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        if _service_ready(port, timeout=min(3.0, remaining)):
             return True
         print(".", end="", flush=True)
-    return False
+        time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
 
 
 def _find_pallium_cmd() -> str:
@@ -618,7 +635,7 @@ def _cmd_install(args: argparse.Namespace) -> int:
         return 0
 
     print(" TIMEOUT", file=sys.stderr)
-    print("  Service did not become ready within 30s.", file=sys.stderr)
+    print("  Service did not become ready within 120s.", file=sys.stderr)
     print("  Check logs at:", home / "logs", file=sys.stderr)
     return 1
 
