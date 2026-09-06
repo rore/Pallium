@@ -131,6 +131,7 @@ V4 review: APPROVED by fresh clean-context architect `/root/decouple_plan_review
 - 2026-09-06: `C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest -q tests/test_vnext_perf_count_gate.py tests/test_vnext_perf_harness.py -n 0` — 2 passed, 1 deselected, 1 warning; explicit slow run `-m slow tests/test_vnext_perf_harness.py -n 0` — 1 passed, 1 warning. `git diff --check` passed.
 
 - 2026-09-06: Final focused release checks after the cancellation-boundary, transition, and performance-harness corrections: provider guards — 45 passed; async workers — 27 passed; package-free/derived-enabled lifecycle E2E — 3 passed; performance count gate — 2 passed; explicit slow performance E2E — 1 passed. The raw-only gate verifies zero provider calls, and the derived-enabled gate verifies generated memory through public retrieval.
+- 2026-09-06: Linux CI exposed that the base development dependency set intentionally omits the optional FastMCP package. Gate A now always exercises the MCP client-to-HTTP lifecycle and executes the concrete FastMCP tool adapter when that optional package is installed. The installed-adapter release gate remains green locally: 3 passed.
 ## Result review
 
 Fresh clean-context release architect /root/decouple_release_architect reviewed

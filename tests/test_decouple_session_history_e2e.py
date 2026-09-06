@@ -425,20 +425,23 @@ def test_gate_a_raw_history_has_no_semantic_activation(
             await mcp.search_history("MCP raw-only anchor")
             exact_mcp = await mcp.search_history_by_work_ref("feature:history-gate")
             assert exact_mcp["results"] == []  # MCP item has no work-ref metadata.
-            monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
-            tool_server = create_server()
-            content, _ = await tool_server.call_tool(
-                "pallium_search_history",
-                {
-                    "query": "MCP raw-only anchor",
-                    "container_ref": CONTAINER,
-                    "thread_ref": THREAD,
-                    "visibility": VISIBILITY,
-                },
-            )
-            tool_result = json.loads(content[0].text)
-            assert tool_result["results"]
-            assert tool_result["results"][0]["source_item_id"] == ingested["source_item_id"]
+            # The FastMCP adapter is an optional install; the MCP client contract
+            # above always runs, and the actual tool adapter runs when available.
+            if importlib.util.find_spec("mcp") is not None:
+                monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
+                tool_server = create_server()
+                content, _ = await tool_server.call_tool(
+                    "pallium_search_history",
+                    {
+                        "query": "MCP raw-only anchor",
+                        "container_ref": CONTAINER,
+                        "thread_ref": THREAD,
+                        "visibility": VISIBILITY,
+                    },
+                )
+                tool_result = json.loads(content[0].text)
+                assert tool_result["results"]
+                assert tool_result["results"][0]["source_item_id"] == ingested["source_item_id"]
 
         asyncio.run(exercise_mcp())
         assert provider_calls == []
