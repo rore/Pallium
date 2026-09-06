@@ -539,7 +539,7 @@ class TestServiceReadiness:
 
         def health(_port: int, *, timeout: float):
             observed.append(("health", timeout))
-            clock[0] += 1.0
+            clock[0] += 0.5
             return {
                 "status": "ok",
                 "vector_index_ready": True,
@@ -548,7 +548,7 @@ class TestServiceReadiness:
 
         def endpoint(_port: int, path: str, *, timeout: float):
             observed.append((path, timeout))
-            clock[0] += 1.0
+            clock[0] += 0.5
             return {}
 
         monkeypatch.setattr("app.cli.service.time.monotonic", lambda: clock[0])
@@ -558,10 +558,30 @@ class TestServiceReadiness:
         assert _service_ready(21987, timeout=3.0)
         assert observed == [
             ("health", 3.0),
-            ("/status", 2.0),
-            ("/debug/queue/health", 1.0),
+            ("/status", 2.5),
+            ("/debug/queue/health", 2.0),
         ]
 
+    def test_service_ready_rejects_final_probe_at_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        clock = [10.0]
+
+        def advance(_port, *args, **kwargs):
+            clock[0] += 1.0
+            if args:
+                return {}
+            return {
+                "status": "ok",
+                "vector_index_ready": True,
+                "embedding_provider_ok": True,
+            }
+
+        monkeypatch.setattr("app.cli.service.time.monotonic", lambda: clock[0])
+        monkeypatch.setattr("app.cli.service._check_health", advance)
+        monkeypatch.setattr("app.cli.service._read_endpoint_json", advance)
+
+        assert not _service_ready(21987, timeout=3.0)
     def test_wait_for_service_uses_monotonic_deadline(
         self, monkeypatch: pytest.MonkeyPatch
     ):

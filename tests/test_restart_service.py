@@ -474,7 +474,9 @@ def test_start_failure_is_nonzero_and_never_prints_success(tmp_path: Path) -> No
 
 
 def test_transient_readiness_checks_all_contracts_before_success(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "transient")
+    result, calls = _run_restart(
+        tmp_path, "transient", readiness_timeout_seconds=10.0,
+    )
 
     assert result.returncode == 0, _output(result)
     assert "Pallium restarted." in _output(result)
@@ -482,11 +484,13 @@ def test_transient_readiness_checks_all_contracts_before_success(tmp_path: Path)
     assert calls.count("GET /status") == 24
     assert calls.count("GET /debug/queue/health") == 22
     assert calls.count("Sleep:500") == 24
-    assert set(call for call in calls if call.startswith("Timeout:")) == {
-        "Timeout:/health:1",
-        "Timeout:/status:1",
-        "Timeout:/debug/queue/health:1",
+    timeouts = [call for call in calls if call.startswith("Timeout:")]
+    assert {call.rsplit(":", 1)[0] for call in timeouts} == {
+        "Timeout:/health",
+        "Timeout:/status",
+        "Timeout:/debug/queue/health",
     }
+    assert all(1 <= int(call.rsplit(":", 1)[1]) <= 2 for call in timeouts)
 
 
 @pytest.mark.parametrize(

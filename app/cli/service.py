@@ -277,9 +277,10 @@ def _service_ready(port: int, timeout: float = 3.0) -> bool:
         return False
     if time.monotonic() >= deadline:
         return False
-    return _read_endpoint_json(
+    queue_health = _read_endpoint_json(
         port, "/debug/queue/health", timeout=remaining()
-    ) is not None
+    )
+    return queue_health is not None and time.monotonic() < deadline
 
 
 def _wait_for_service(
