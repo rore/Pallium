@@ -297,7 +297,9 @@ def _compact_history(
             )
     budget = _MCP_SEARCH_EMPTY_MAX_CHARS if not hits else _MCP_SEARCH_MAX_CHARS
     if not hits and len(_json_text(payload)) > budget:
-        for key in ("empty_result_hint", "requested_container_ref", "container_ref_truncated"):
+        for key in ("requested_work_ref", "requested_container_ref", "container_ref_truncated", "empty_result_hint"):
+            if len(_json_text(payload)) <= budget:
+                break
             payload.pop(key, None)
     for hit in hits:
         for key in ("match_channel", "session_cue"):

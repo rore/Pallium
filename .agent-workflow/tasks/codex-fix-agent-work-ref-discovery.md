@@ -64,7 +64,8 @@ The first clean-context Luna review blocked implementation until the plan preser
 - OpenCode verification after the final duplicate-scope fix: 47 passed, 7 documented Windows skips.
 - Python compilation and `git diff --check` pass. Guidance remains within existing character ceilings.
 - Agent Workflow checker reports clean with no redline boundary or checkpoint violation.
+- PR review found that a maximum-length requested work ref could crowd out the exact-empty fallback hint. Empty compaction now drops the redundant echoed ref first and stops trimming as soon as the 300-character budget is met; focused MCP/contract verification: 74 passed.
 
 ## Result review
 
-Clean-context architecture review found two P1 gaps: duplicate OpenCode `work_ref` emission on no-delivery turns and missing Claude/OpenCode caller-to-exact-search E2E. Both were fixed. The reviewer re-read the result and returned APPROVE with no remaining P0–P2 findings.
+Clean-context architecture review found two P1 gaps: duplicate OpenCode `work_ref` emission on no-delivery turns and missing Claude/OpenCode caller-to-exact-search E2E. Both were fixed. The reviewer re-read the result and returned APPROVE with no remaining P0–P2 findings. A fresh clean-context review of the post-review response-budget fix also returned APPROVE.

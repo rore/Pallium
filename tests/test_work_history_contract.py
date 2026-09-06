@@ -320,6 +320,8 @@ async def test_exact_empty_deferred_result_reserves_final_lookup_uuid_budget(
         )
 
     payload = json.loads(content[0].text)
-    assert payload["requested_work_ref"] == "x" * 128
+    assert "requested_work_ref" not in payload
     assert payload["lookup_event_id"] == final_id
+    assert "use broad search" in payload["empty_result_hint"]
+    assert "never guess" in payload["empty_result_hint"]
     assert len(content[0].text) <= 300
