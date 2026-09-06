@@ -42,6 +42,11 @@
 - The first installed-preflight check exposed a VBScript quote-count mistake in the Python regex; corrected it to the observed triple-open/double-close launcher syntax before commit.
 - Implemented installed task/VBS/Python/working-directory validation and import preflight before the unchanged kill sweep, wrapped scheduled-task start failure, and added the fixed 20-attempt readiness gate.
 - Verification: PowerShell parser clean; exact installed pythonw import preflight passed; existing MCP-exclusion pytest passed (1 test); git diff --check clean.
+- Slice 2 changes only tests/test_restart_service.py plus this Work Record's Implementation and Evidence prose.
+- apply_patch again failed with local Windows error 1327; used deterministic writes limited to the new test and this Work Record.
+- The first two focused runs were 1 passed/5 failed while refining PowerShell script-scope exit handling; the final harness invokes the real script with the call operator and explicitly exits with `$LASTEXITCODE`, preserving mocks and caller-visible failure.
+- Added one Windows-only real-script harness covering preflight/no-stop, start failure, staged readiness success, and exact 20-attempt exhaustion for health, status, and queue.
+- Slice 2 verification: test module compiled; six new scenarios plus the existing MCP-exclusion regression passed (7 passed in 3.05s); git diff --check clean. Ruff was unavailable in the venv, so no dependency was installed.
 
 ## Evidence
 
@@ -50,6 +55,8 @@
 - `docs/context/operations.md` already requires `/health`, `/status`, `/debug/queue/health` plus embedding-provider and ingestion checks.
 - Existing `test_windows_service_restart_preserves_codex_mcp_bridge` covers only process signature exclusion.
 - `.github/workflows/ci.yml` runs an explicit Windows-sensitive test list and does not auto-collect new restart tests in the PR Windows job.
+- `tests/test_restart_service.py` launches the actual wrapper under mocked Windows commands and HTTP responses; `Start-Sleep` only records calls, making 20-attempt failures deterministic.
+- Focused verification: `python -m py_compile tests/test_restart_service.py`; pytest new module plus MCP-exclusion regression → 7 passed in 3.05s.
 
 ## Plan review
 
