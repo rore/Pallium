@@ -15,7 +15,7 @@
 
 **Reason:** Agent-redline classified the guarded `app/**` wake surfaces GRAY/watch with no boundary violation. Moderate complexity reflects a runtime race across persistence, native queue admission, hook claim/ACK, and in-memory ownership.
 
-**Discovery:** Live dogfood produced an exact generic wake at 2026-09-06 03:15:49 UTC and a duplicate follow-up although the Relay database had no delivery to this session after 03:09:12. RW-002 currently claims this class is fixed. Pallium coalesces scheduling until admission, but an already accepted native `codex queue` prompt cannot be cancelled when another turn consumes the delivery first. Codex CLI 0.149.1 explicitly supports UserPromptSubmit exit code 2 with a stderr blocking reason; existing tests do not cover an accepted wake overtaken by another real hook claim.
+**Discovery:** Live dogfood produced an exact generic wake at 2026-09-06 03:15:49 UTC and a duplicate follow-up although the Relay database had no delivery to this session after 03:09:12. RW-002 currently claims this class is fixed. Pallium coalesces scheduling until admission, but an already accepted native `codex queue` prompt cannot be cancelled when another turn consumes the delivery first. Codex CLI 0.149.1 exposes both an exit-2 diagnostic and structured UserPromptSubmit `decision`/`reason` output; installed testing disproved exit 2 as a model block, so the supported structured output is required. Existing tests did not cover an accepted wake overtaken by another real hook claim.
 
 **Material assumptions:** Codex consumes a queued UserPromptSubmit event whose successful hook output carries the supported JSON block decision, without retrying it or invoking the model. Disproof: an installed exact-session witness shows invalid hook JSON, requeue, model sampling, or another generic turn. Action if disproved: return to planning and retain durable delivery while qualifying another native admission mechanism.
 
@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 
 <!-- agent-workflow:end -->
 
@@ -37,7 +37,7 @@
 
 - Established task context and recorded the live mismatch before guarded edits.
 - Clean-context pre-edit redline review classified `app/codex_wake.py` and `app/dependencies.py` GRAY/watch, all test/docs paths blue, with no boundary violation or mandatory checkpoint.
-- Added the single Codex UserPromptSubmit boundary guard: only the exact internal wake plus a successful dict response containing exactly `deliveries == []` exits 2 before dedup, memory, or model work. Relay failure, malformed response, invalid scope, non-wake prompts, and attributed delivery retain their prior paths.
+- Added the single Codex UserPromptSubmit boundary guard: only the exact internal wake plus a successful dict response containing the complete canonical no-work state emits the native structured block decision before dedup, memory, or model work. Relay failure, malformed response, invalid scope, non-wake prompts, and attributed delivery retain their prior paths.
 - Added direct hook boundaries and a real caller-surface lifecycle that retains an accepted native prompt, lets a competing hook claim and ACK, and then executes the retained prompt.
 - Updated RW-002 to distinguish Pallium scheduling coalescing from the uncancellable native accepted-prompt race.
 
@@ -45,10 +45,12 @@
 
 - Read-only Relay DB trace: newest delivery to this exact session was `relay-reply-7d7e5fde...`, created 03:09:12 UTC and delivered once at 03:09:25; no delivery exists near the 03:15:49 empty wake.
 - Read-only source history: exact generic wake recorded at 03:15:49; the immediately repeated identical prompt was deduplicated by the hook and therefore absent from source storage.
-- Codex CLI 0.149.1 embedded hook contract: `UserPromptSubmit hook exited with code 2 but did not write a blocking reason to stderr`, confirming exit 2 plus stderr is the supported pre-model block path. Official OpenAI documentation search did not expose this contract.
+- Codex CLI 0.149.1 embedded strings exposed the exit-2 diagnostic plus `UserPromptSubmitCommandOutputWire` fields `decision` and `reason`. The first installed witness disproved exit 2 as a model block; official OpenAI documentation search did not expose this contract.
 - The new caller-surface regression failed before the guard because the retained wake reached `/item-and-query`; it passes after the guard.
 - Committed revision `454eeb6d` verification: focused hook/wake/lifecycle/contract/integration suite passed 143 tests in 15.40 seconds with four existing Pydantic forward-reference warnings; import boundaries and the local workflow gate were clean; no wall-clock wait was added.
 - Normal hook-path handling of the relaydev blocker report emitted the attributed payload and exact scope, then left its delivery `delivered` with one attempt. The report arrived during this already-running turn and was not evidence of a second missed injection.
+- Revision `3d03bd20` verification: 104 focused Codex hook/wake/contract/integration tests passed in 16.45 seconds with four existing Pydantic warnings; the CI import-boundary adapter reported zero violations; workflow and diff checks were clean.
+- Installed Windows witness: direct exact-hook preflight returned only `{"decision":"block","reason":"Pallium Relay wake superseded: no pending delivery."}` with exit 0. Native queue item `01a07506-e4be-7be3-afc7-766768889ef0` then produced turn `01a07506-ee58-7d33-ad7e-cb1841d5f29e`; the transcript contains hook additional context followed by `task_complete` with `last_agent_message=null`, no user item, no assistant response, and no requeue. The target returned idle with its prior historical turn still latest.
 
 ## Plan review
 
@@ -61,3 +63,5 @@ After the installed exit-2 disproof, a fresh clean-context Luna review found the
 Installed exact-session witness against empty relaydev inbox: native `codex queue --thread` accepted the exact sentinel, the hook skipped memory ingestion, but Codex still sampled a model turn and answered “No Relay delivery was injected this turn.” Direct hook execution confirmed stderr plus native exit code 2, so the installed runtime disproves the exit-2 blocking assumption. The binary exposes `UserPromptSubmitCommandOutputWire` with top-level `decision` and `reason`, motivating the revised structured-block plan.
 
 Clean-context review of `63f3a76a` found two related blockers: a valid bounded turn may return `deliveries=[]` with `has_more=true` for oversized pending work, and a partial dict such as `{"deliveries": []}` is not a confirmed canonical response. The guard now requires `deliveries=[]`, `has_more is false`, and integer `remaining_count == 0`; direct malformed-response and public-route oversized-pending regressions cover both. The reviewer also correctly rejected a completed roadmap claim before the required installed Windows witness, so RW-002 remains provisional until that witness passes.
+
+The revised structured-block candidate addresses both earlier blockers and the installed witness passes: the exact queued prompt completes with `last_agent_message=null`, no user or assistant transcript item, no memory ingestion, and no repeat. Final clean-context result review approved the implementation, boundaries, tests, and witness after identifying one stale RW-002 candidate label; the detailed ledger now records the same fixed, Windows-qualified state as the roadmap summary.
