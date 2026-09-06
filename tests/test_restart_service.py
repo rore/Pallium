@@ -86,7 +86,18 @@ function Get-Process {
 function Get-CimInstance {
     param($ClassName, $Filter, $ErrorAction)
     if ($env:RW010_SCENARIO -eq "canonical_survivor" -and $Filter -like "*app.run service run*") {
-        return [pscustomobject]@{ ProcessId = 4242; Name = "python.exe" }
+        return @(
+            [pscustomobject]@{
+                ProcessId = 4242
+                Name = "python.exe"
+                CommandLine = "python -m app.run service run --port 2198"
+            },
+            [pscustomobject]@{
+                ProcessId = 4343
+                Name = "python.exe"
+                CommandLine = "python -m app.run service run --port 21987"
+            }
+        )
     }
     if ($env:RW010_SCENARIO -eq "canonical_survivor" -and $Filter -like "*app.run mcp*") {
         return [pscustomobject]@{ ProcessId = 9999; Name = "python.exe" }
@@ -268,14 +279,15 @@ def test_invalid_installed_task_metadata_never_stops(
 
 
 def test_canonical_task_omits_working_directory_and_sweeps_survivor(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "canonical_survivor")
+    result, calls = _run_restart(tmp_path, "canonical_survivor", port=2198)
 
     assert result.returncode == 0, _output(result)
     assert f"Start-Process:{sys.executable}" in calls
     assert "PreflightWorkingDirectory:<omitted>" in calls
     assert any(call.endswith("/PID 4242") for call in calls)
+    assert not any("4343" in call for call in calls)
     assert not any("9999" in call for call in calls)
-    _assert_port(result, calls, 21987)
+    _assert_port(result, calls, 2198)
 
 
 def test_legacy_task_passes_exact_working_directory(tmp_path: Path) -> None:

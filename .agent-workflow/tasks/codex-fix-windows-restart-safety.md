@@ -60,6 +60,10 @@
 - Added the restart test module to the PR Windows smoke job, documented the preflight/readiness contract, aligned RW-010 for installed verification, and recorded the separate RW-016 custom-home/Unicode installer defect.
 - Architect attempts to apply the port and Unicode edits directly were guarded by exact replacements and refused when relaydev began the same shared-worktree edits concurrently; no developer work was overwritten.
 - Ran the installed legacy-task wrapper from a clean worktree. It resolved port 19836, stopped the full service tree, restarted through Task Scheduler, waited through cold start, exited 0, and printed the derived dashboard URL.
+- Slice 5 is limited to the wrapper, its existing real-script harness, and this Work Record's Implementation/Evidence.
+- Removed canonical `app.run service run` from the broad command-line sweep and filtered its candidates by the exact resolved `--port` token with a whitespace/end boundary; legacy service signatures and MCP exclusion remain unchanged.
+- apply_patch failed with local Windows error 1327; used deterministic exact replacements limited to the three assigned files.
+- Slice 5 verification: PowerShell parser and test-module compile passed; focused restart plus MCP-exclusion regressions passed (18 passed in 9.22s); workflow and diff checks clean.
 
 ## Evidence
 
@@ -77,6 +81,8 @@
 - Final focused verification before documentation alignment: PowerShell parser clean; test module compiled; 18 focused tests passed in 6.52s; git diff --check clean.
 - Clean-context result review approved canonical/legacy shape handling, optional and Unicode working directories, port parsing/boundaries, preflight ordering, survivor cleanup with MCP exclusion, readiness/error behavior, and non-Windows collection. Its sole blocker was adding the new test to Windows smoke; that workflow entry is now present.
 - Installed witness after the clean review: wrapper exit 0; `/health.status=ok`; `/status.embedding_provider_ok=true`; `/status.ingestion.status=ok`; `/debug/queue/health` HTTP 200.
+- Exact-port survivor evidence uses resolved port 2198: matching canonical PID 4242 is killed, same-signature PID 4343 on valid prefix port 21987 is preserved, and synthetic MCP PID 9999 remains untouched.
+- Final exact-port verification: PowerShell parser clean; test module compiled; 18 focused tests passed in 9.22s; git diff --check clean.
 
 ## Plan review
 

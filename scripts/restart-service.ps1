@@ -141,7 +141,6 @@ $signatures = @(
     "app.cleaner",
     "app.snapshot",
     "app.run serve",
-    "app.run service run",
     "app.run all"
 )
 foreach ($sig in $signatures) {
@@ -157,6 +156,19 @@ foreach ($sig in $signatures) {
         Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) $sig)..."
         taskkill /F /T /PID $p.ProcessId 2>$null | Out-Null
     }
+}
+
+$servicePattern = "%app.run service run%"
+$servicePortPattern = '(?i)(?:^|\s)--port\s+{0}(?=\s|$)' -f [regex]::Escape($Port.ToString())
+$serviceProcs = Get-CimInstance Win32_Process `
+    -Filter "(Name='python.exe' OR Name='pythonw.exe') AND CommandLine LIKE '$servicePattern'" `
+    -ErrorAction SilentlyContinue
+foreach ($p in $serviceProcs) {
+    if ($p.CommandLine -notmatch $servicePortPattern) {
+        continue
+    }
+    Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) app.run service run on port $Port)..."
+    taskkill /F /T /PID $p.ProcessId 2>$null | Out-Null
 }
 
 Start-Sleep -Seconds 2
