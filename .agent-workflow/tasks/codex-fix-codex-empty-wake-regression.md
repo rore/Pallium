@@ -23,13 +23,13 @@
 
 **Verification plan:** Redundant native wake after another turn consumes the delivery shall not create an empty follow-up → deterministic caller-surface E2E with injected process/hook ordering; close and cross-scope sends shall remain isolated → focused concurrency/scope regressions; ambiguous native writes shall not duplicate or lose pending work → existing plus targeted wake tests; installed Windows behavior shall show one attributed delivery and no later generic turn → bounded dogfood without manual receive; workflow/redline/CI checks shall pass.
 
-**Plan review:** Pending clean-context review after discovery.
+**Plan review:** Clean-context Luna review recorded under `## Plan review`; blocking clarifications resolved before implementation.
 
 **Approvals:** Not required at this risk level.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 
 <!-- agent-workflow:end -->
 
@@ -46,7 +46,7 @@
 
 ## Plan review
 
-Pending.
+Clean-context Luna review required two clarifications: confirmed-empty means a successful dict response with deliveries present and exactly [], never None or malformed; and the lifecycle regression must retain an independently accepted native prompt before the competing real hook claims and ACKs. Both are incorporated. A focused follow-up approved blocking a valid but changed current scope because the old-scope delivery remains durable and untouched; missing/invalid scope performs no turn call and remains fail-open. No prompt-carried scope or hash is needed.
 
 ## Result review
 
