@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 import uuid
@@ -126,8 +127,11 @@ def main() -> None:
             and type(relay_response.get("remaining_count")) is int
             and relay_response["remaining_count"] == 0
         ):
-            print("Pallium Relay wake superseded: no pending delivery.", file=sys.stderr)
-            sys.exit(2)
+            print(json.dumps({
+                "decision": "block",
+                "reason": "Pallium Relay wake superseded: no pending delivery.",
+            }, separators=(",", ":")))
+            sys.exit(0)
 
         if has_session and check_dedup(prompt, session_id):
             return

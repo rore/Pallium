@@ -895,11 +895,17 @@ def test_competing_hook_consumes_delivery_before_accepted_queue_blocks_empty_wak
     assert not codex_wake._scheduled_session_generations
 
     contexts.clear()
+    capsys.readouterr()
     with pytest.raises(SystemExit) as overtaken:
         hook.main()
-    assert overtaken.value.code == 2
+    assert overtaken.value.code == 0
     assert contexts == []
-    assert "Pallium Relay wake" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "decision": "block",
+        "reason": "Pallium Relay wake superseded: no pending delivery.",
+    }
+    assert captured.err == ""
     assert route.get(
         f"/relay/messages/{sent['message_id']}", params=scope
     ).json()["deliveries"][0] == delivered
@@ -969,7 +975,9 @@ def test_internal_wake_with_redaction_expanded_pending_delivery_fails_open(
     assert turns[-1]["deliveries"] == []
     assert turns[-1]["has_more"] is True
     assert turns[-1]["remaining_count"] == 1
-    assert "superseded" not in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert '"decision":"block"' not in captured.out
+    assert "superseded" not in captured.err
     delivery = client.get(
         f"/relay/messages/{sent.json()['message_id']}", params=scope,
     ).json()["deliveries"][0]

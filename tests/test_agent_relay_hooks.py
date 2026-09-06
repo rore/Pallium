@@ -200,10 +200,13 @@ def test_codex_confirmed_empty_internal_wake_blocks_before_model(monkeypatch, ca
     with pytest.raises(SystemExit) as exited:
         hook.main()
 
-    assert exited.value.code == 2
-    assert capsys.readouterr().err == (
-        "Pallium Relay wake superseded: no pending delivery.\n"
-    )
+    assert exited.value.code == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "decision": "block",
+        "reason": "Pallium Relay wake superseded: no pending delivery.",
+    }
+    assert captured.err == ""
 
 
 @pytest.mark.parametrize(
@@ -241,7 +244,9 @@ def test_codex_internal_wake_fails_open_without_confirmed_empty(
         hook.main()
 
     assert exited.value.code == 0
-    assert "superseded" not in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert '"decision":"block"' not in captured.out
+    assert "superseded" not in captured.err
 
 
 def test_codex_internal_wake_without_valid_scope_fails_open(monkeypatch, capsys):
@@ -265,7 +270,9 @@ def test_codex_internal_wake_without_valid_scope_fails_open(monkeypatch, capsys)
         hook.main()
 
     assert exited.value.code == 0
-    assert "superseded" not in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert '"decision":"block"' not in captured.out
+    assert "superseded" not in captured.err
 
 @pytest.mark.parametrize(
     ("relative", "runtime", "imported"),
