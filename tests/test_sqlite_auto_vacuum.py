@@ -98,6 +98,8 @@ def test_reclaim_reports_deferred_checkpoint_when_reader_holds_snapshot(test_db_
         result = provider.reclaim_free_pages()
         assert result["reclaimed_pages"] > 0, "freelist reduction is independent of the checkpoint"
         assert result["checkpoint_busy"] == 1, "reader snapshot should defer the TRUNCATE checkpoint"
+        with provider._engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar() == 15000
     finally:
         reader.rollback()
         reader.close()

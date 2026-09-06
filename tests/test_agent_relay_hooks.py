@@ -41,7 +41,7 @@ def _load(name: str, relative: str):
         ("codex_common", "integrations/codex/hooks/common.py"),
     ],
 )
-def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monkeypatch, name, relative):
+def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monkeypatch, capsys, name, relative):
     common = _load(name, relative)
     rendered, rendered_deliveries = common.format_relay([DELIVERY], budget_chars=2000)
     assert rendered.startswith("[Pallium Relay message from claude-code:sender-session]")
@@ -92,6 +92,10 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
     monkeypatch.setattr(common.urllib.request, "urlopen", timeout)
     assert common.relay_request("POST", "/relay/turn", {}, timeout=0.75) is None
     assert observed == [0.75]
+    error = capsys.readouterr().err
+    assert "pallium relay: POST /relay/turn failed" in error
+    assert "TimeoutError" in error
+    assert "container" not in error
 
     calls = []
     monkeypatch.setattr(
@@ -204,26 +208,26 @@ def test_codex_confirmed_empty_internal_wake_blocks_before_model(monkeypatch, ca
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {
         "decision": "block",
-        "reason": "Pallium Relay wake superseded: no pending delivery.",
+        "reason": "Pallium Relay wake suppressed: no verified pending delivery.",
     }
     assert captured.err == ""
 
 
 @pytest.mark.parametrize(
-    "relay_response",
+    ("relay_response", "expected_outcome"),
     [
-        None,
-        {},
-        {"deliveries": None},
-        {"deliveries": "invalid"},
-        ["invalid"],
-        {"deliveries": []},
-        {"deliveries": [], "has_more": True, "remaining_count": 1},
-        {"deliveries": [], "has_more": False, "remaining_count": False},
+        (None, "unavailable"),
+        ({}, "malformed"),
+        ({"deliveries": None}, "malformed"),
+        ({"deliveries": "invalid"}, "malformed"),
+        (["invalid"], "malformed"),
+        ({"deliveries": []}, "malformed"),
+        ({"deliveries": [], "has_more": True, "remaining_count": 1}, "malformed"),
+        ({"deliveries": [], "has_more": False, "remaining_count": False}, "malformed"),
     ],
 )
-def test_codex_internal_wake_fails_open_without_confirmed_empty(
-    monkeypatch, capsys, relay_response,
+def test_codex_internal_wake_blocks_without_confirmed_empty(
+    monkeypatch, capsys, relay_response, expected_outcome,
 ):
     from integrations.codex.hooks import user_prompt_submit as hook
 
@@ -245,11 +249,11 @@ def test_codex_internal_wake_fails_open_without_confirmed_empty(
 
     assert exited.value.code == 0
     captured = capsys.readouterr()
-    assert '"decision":"block"' not in captured.out
-    assert "superseded" not in captured.err
+    assert json.loads(captured.out)["decision"] == "block"
+    assert captured.err == f"pallium relay wake: outcome={expected_outcome}\n"
 
 
-def test_codex_internal_wake_without_valid_scope_fails_open(monkeypatch, capsys):
+def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):
     from integrations.codex.hooks import user_prompt_submit as hook
 
     monkeypatch.setattr(
@@ -271,8 +275,8 @@ def test_codex_internal_wake_without_valid_scope_fails_open(monkeypatch, capsys)
 
     assert exited.value.code == 0
     captured = capsys.readouterr()
-    assert '"decision":"block"' not in captured.out
-    assert "superseded" not in captured.err
+    assert json.loads(captured.out)["decision"] == "block"
+    assert captured.err == "pallium relay wake: outcome=invalid_scope\n"
 
 @pytest.mark.parametrize(
     ("relative", "runtime", "imported"),

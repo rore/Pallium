@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import anyio
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
@@ -179,7 +180,31 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     query_stats = QueryStats(metrics_store=metrics_store)
     build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats, metrics_store=metrics_store)
     service = build_result.service
+    relay_limiter = anyio.CapacityLimiter(4)
+    relay_operations = threading.Condition()
+    active_relay_operations = 0
 
+    async def run_relay_operation(operation):
+        def tracked_operation():
+            nonlocal active_relay_operations
+            with relay_operations:
+                active_relay_operations += 1
+            try:
+                return operation()
+            finally:
+                with relay_operations:
+                    active_relay_operations -= 1
+                    relay_operations.notify_all()
+
+        return await anyio.to_thread.run_sync(
+            tracked_operation,
+            abandon_on_cancel=False,
+            limiter=relay_limiter,
+        )
+
+    def wait_for_relay_operations() -> None:
+        with relay_operations:
+            relay_operations.wait_for(lambda: active_relay_operations == 0)
     # Record service_start lifecycle event (fire-and-forget)
     if metrics_store is not None:
         try:
@@ -274,6 +299,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             if stop is not None:
                 stop.set()
             _remove_launch_token(token_path)
+            wait_for_relay_operations()
             for storage_provider in (service._storage, early_storage):
                 if isinstance(storage_provider, SQLiteStorageProvider):
                     storage_provider.close()
@@ -285,9 +311,10 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     app.state._reconcile_done = None
     app.state._rebuild_coordinator = None
     app.state._start_time = time.monotonic()
+    app.state._wait_for_relay_operations = wait_for_relay_operations
 
     @app.get("/health")
-    def health() -> JSONResponse:
+    async def health() -> JSONResponse:
         lifespan_ok = getattr(app.state, "_lifespan_complete", False)
 
         vector_index_configured = service._vector_index is not None
@@ -550,6 +577,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         audit_log_enabled=resolved_config.observability.query_audit_log,
         relay_storage=build_result.storage,
         claude_wake_registry=claude_wake_registry,
+        relay_runner=run_relay_operation,
     ))
     if mcp_available and mcp_app is not None:
         app.mount("", mcp_app)

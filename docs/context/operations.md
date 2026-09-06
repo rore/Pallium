@@ -8,7 +8,7 @@ details (paths, keys, restart commands) live in operator notes, not here.
 Pallium runs as a long-lived local service, independent of any one repo or agent
 session. A supervisor process starts the HTTP **api**, the async **processor**
 (ingest → memory), the **cleaner** (retention), and the **MCP** endpoint. State is
-a single SQLite DB plus an on-disk vector index.
+a main SQLite DB, an isolated Relay SQLite DB, plus an on-disk vector index.
 
 The service is **trusted-local**: no auth layer. Identity fields (`container_ref`,
 `actor_ref`, `session_id`) are for attribution and visibility scoping, not
@@ -50,8 +50,32 @@ or for macOS.
 
 Both SQLite files use the same lifecycle: WAL, auto_vacuum=INCREMENTAL, and a bounded connection busy timeout. Relay writes use only the Relay file, so a long ingestion transaction in the main file does not hold the Relay writer lock. Each file must still be backed up, checked, and restored as a pair; never mix files from different snapshot generations.
 
+Persistent `auto_vacuum` and WAL modes are initialized once under the schema lock on an autocommit connection. Pooled connections set only their bounded busy timeout before ordinary work. Incremental-vacuum/checkpoint maintenance temporarily fails fast and restores the connection's prior timeout, so a live reader defers truncation instead of holding a worker for the full busy window.
+
 The first split upgrade is supported only while the previous service process tree is fully stopped. Use the platform service wrapper (on Windows, scripts/restart-service.ps1; on Unix, stop the service before starting the new version), then verify /health, /status, and /debug/queue/health. The migration copies legacy Relay sessions, messages, and deliveries transactionally and records a source/target marker. Re-running is safe before completion; after the marker, a missing or mismatched Relay file fails closed. Legacy Relay rows remain in the main file as rollback evidence, but rollback after new Relay writes is not automatic. Do not restart an old binary after the split: older code does not understand the marker and is outside the supported upgrade path; if it writes to the legacy tables, stop both versions and reconcile before continuing.
 
+## Relay control-plane resilience
+
+Relay storage calls use a four-operation AnyIO capacity limiter independent of the
+default synchronous route pool, and `/health` stays on the event loop. Client
+cancellation does not cancel an already-running SQLite operation; service shutdown
+waits for active Relay operations before closing either database. Slow and busy
+server operations log only the static operation name, outcome, and duration. Hook
+client failures log method, fixed path, duration, and exception type; no payload or
+scope identifiers are logged.
+
+The service reconciliation loop scans eligible never-claimed pending deliveries and
+expired claims at startup and every 30 seconds, then dispatches through the existing
+runtime adapter without claiming early. Codex queued or ambiguous admission retains
+the oldest per-session trigger and becomes retryable on that sweep until a real
+hook-time turn is admitted. An exact internal Codex wake that cannot render a
+verified delivery is blocked before deduplication, memory ingestion, or model work;
+ordinary user prompts remain fail-open.
+
+This protects concurrent users inside the supported single-Uvicorn-process service.
+Horizontal multi-process wake dispatch is not yet qualified because recovery
+coalescing is process-local; add durable cross-process wake-attempt reservation when
+a multi-process deployment is introduced.
 ## Developing integrations without leaving stale local installs
 
 Claude Code and Codex setup commands write absolute checkout and Python paths into the

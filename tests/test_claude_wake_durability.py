@@ -533,7 +533,6 @@ def test_recovery_clears_terminal_inflight_and_reschedules_exact_scope(
     client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal_state: str,
 ) -> None:
     from datetime import datetime, timedelta, timezone
-    import threading
 
     from app import claude_wake
     import core.relay as relay_module
@@ -600,15 +599,21 @@ def test_recovery_clears_terminal_inflight_and_reschedules_exact_scope(
         sender_runtime="codex", sender_session_ref="sender",
         recipient="claude-code:" + PAYLOAD["session_ref"], payload="fresh recovery", **scope,
     )
-    woke = threading.Event()
+    scheduled = []
     monkeypatch.setattr(
         claude_wake,
-        "claude_wake_transport",
-        lambda socket_path, token: transport_calls.append((socket_path, token)) or woke.set() or "accepted",
+        "schedule_claude_relay_wake",
+        lambda result, wake_scope, *, registry, **_kwargs: scheduled.append(
+            (result, wake_scope, registry)
+        ),
     )
     claude_wake.recover_claude_relay_wakes(restarted, relay)
-    assert woke.wait(timeout=1)
-    assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+    assert len(scheduled) == 1
+    result, wake_scope, scheduled_registry = scheduled[0]
+    assert result["deliveries"][0]["delivery_id"] == status(fresh["message_id"])["delivery_id"]
+    assert wake_scope == scope
+    assert scheduled_registry is restarted
+    assert transport_calls == []
     assert status(fresh["message_id"])["state"] == "pending"
 
 
@@ -849,7 +854,7 @@ def test_expired_claim_recovery_rechecks_and_isolates_candidate_errors(
     broken, stale, current = (candidate(name) for name in ("broken", "stale", "current"))
 
     class Relay:
-        def expired_claim_candidates(self, *, delivery_id=None):
+        def wake_candidates(self, *, delivery_id=None):
             if delivery_id is None:
                 return [broken, stale, current]
             if delivery_id == "broken":

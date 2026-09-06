@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 import logging
 import os
 from functools import partial
@@ -607,16 +608,17 @@ def recover_expired_relay_wakes(
     relay_service: RelayService,
     registry: ClaudeWakeRegistry,
 ) -> None:
-    """Recheck and dispatch expired claims without changing Relay state."""
-    for candidate in relay_service.expired_claim_candidates():
+    """Recheck and dispatch persisted pending work without changing Relay state."""
+    for candidate in relay_service.wake_candidates():
         try:
-            current = relay_service.expired_claim_candidates(
+            current = relay_service.wake_candidates(
                 delivery_id=candidate["delivery_id"]
             )
             if current != [candidate]:
                 continue
             runtime = candidate["recipient_runtime"]
             session_ref = candidate["recipient_session_ref"]
+            logger.info("relay wake_recovery runtime=%s source=persisted", runtime)
             dispatch_relay_wake(
                 {
                     "recipient": f"{runtime}:{session_ref}",
@@ -635,7 +637,7 @@ def recover_expired_relay_wakes(
                 registry=registry,
             )
         except Exception:
-            logger.exception("Relay expired-claim recovery failed")
+            logger.exception("Relay wake recovery failed")
 
 
 def build_router(
@@ -644,6 +646,7 @@ def build_router(
     audit_log_enabled: bool = False,
     relay_storage=None,
     claude_wake_registry: ClaudeWakeRegistry | None = None,
+    relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
 ):
     relay_service = None
     if relay_storage is not None:
@@ -720,4 +723,5 @@ def build_router(
         ),
         relay_turn_callback=_relay_turn_admission,
         relay_ack_callback=(_relay_ack_rearm if relay_service is not None else None),
+        relay_runner=relay_runner,
     )

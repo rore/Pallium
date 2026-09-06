@@ -739,13 +739,14 @@ class SQLiteRelayMixin:
             state = "expired" if _now(message.expires_at) <= current and delivery.state in {"pending", "claimed"} else ("pending" if delivery.state == "claimed" and delivery.lease_expires_at is not None and _now(delivery.lease_expires_at) <= current else delivery.state)
             return {"delivery_id": delivery.id, "state": state}
 
-    def relay_expired_claim_candidates(
+    def relay_wake_candidates(
         self,
         *,
         delivery_id: str | None = None,
         now: datetime | None = None,
+        include_pending: bool = True,
     ) -> list[dict[str, Any]]:
-        """Return one safe expired claim per active exact session without mutation."""
+        """Return one safe wake candidate per active exact session without mutation."""
         current = _now(now)
         with self._relay_session_factory() as db:
             statement = (
@@ -765,9 +766,18 @@ class SQLiteRelayMixin:
                 )
                 .where(
                     RelayDeliveryRecord.recipient_runtime.in_(("codex", "claude-code")),
-                    RelayDeliveryRecord.state == "claimed",
-                    RelayDeliveryRecord.lease_expires_at.is_not(None),
-                    RelayDeliveryRecord.lease_expires_at <= current,
+                    or_(
+                        RelayDeliveryRecord.state == "pending",
+                        and_(
+                            RelayDeliveryRecord.state == "claimed",
+                            RelayDeliveryRecord.lease_expires_at.is_not(None),
+                            RelayDeliveryRecord.lease_expires_at <= current,
+                        ),
+                    ) if include_pending else and_(
+                        RelayDeliveryRecord.state == "claimed",
+                        RelayDeliveryRecord.lease_expires_at.is_not(None),
+                        RelayDeliveryRecord.lease_expires_at <= current,
+                    ),
                     RelayMessageRecord.expires_at > current,
                     RelaySessionRecord.state == "active",
                 )
@@ -801,6 +811,19 @@ class SQLiteRelayMixin:
                     }
                 )
             return candidates
+
+    def relay_expired_claim_candidates(
+        self,
+        *,
+        delivery_id: str | None = None,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Compatibility query for strict expired-claim recovery."""
+        return self.relay_wake_candidates(
+            delivery_id=delivery_id,
+            now=now,
+            include_pending=False,
+        )
 
     def relay_message_status(
         self,
