@@ -36,10 +36,29 @@ pallium service install
 pallium service status
 ```
 
-The installed service uses port `19836` and starts at login. For local Pallium
-development, use the repository's `scripts/restart-service.ps1` wrapper when
-restarting it; the wrapper removes stale child processes before checking the
-service again.
+The installed service uses port `19836`. On Windows it starts at login; always
+use `scripts/restart-service.ps1` for local development restarts. On Linux it
+uses a systemd user unit and supports the full public lifecycle:
+
+```bash
+pallium service status
+pallium service stop
+pallium service start
+pallium service restart
+pallium service uninstall
+```
+
+The Linux `scripts/install-service.sh`, `restart-service.sh`, and
+`uninstall-service.sh` wrappers delegate to this same CLI. Pass the same
+`--home` to every command when using a custom home; one Linux user has one
+Pallium unit, so install refuses to silently switch it to another home. Data is
+preserved on uninstall. `--remove-data` deletes only the default managed home;
+custom homes must be removed manually after inspection.
+
+Ubuntu 24.04 under WSL2 is live-qualified. WSL stops the service when the distro
+is stopped; the enabled unit starts again when the Ubuntu user session starts.
+Other systemd Linux environments use the same unit path but have not received
+this WSL-specific live qualification.
 
 For foreground development instead:
 

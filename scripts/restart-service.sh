@@ -1,23 +1,47 @@
 #!/usr/bin/env bash
 #
-# Restart the Pallium systemd user service.
+# Restart Pallium through the canonical service CLI.
 #
 # Usage:
-#   ./restart-service.sh
+#   ./restart-service.sh [--home PATH] [--python PATH]
 #
 
 set -euo pipefail
 
-SERVICE_NAME="pallium.service"
+PYTHON_PATH=""
+HOME_PATH=""
 
-if ! systemctl --user is-enabled "$SERVICE_NAME" &>/dev/null; then
-    echo "Error: Pallium service not installed. Run install-service.sh first."
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --home)
+            HOME_PATH="$2"
+            shift 2
+            ;;
+        --python)
+            PYTHON_PATH="$2"
+            shift 2
+            ;;
+        *)
+            echo "Usage: $0 [--home PATH] [--python PATH]"
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "$PYTHON_PATH" ]]; then
+    PYTHON_PATH=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
+fi
+if [[ -z "$PYTHON_PATH" ]]; then
+    echo "Error: Python not found. Specify --python or ensure Python is on PATH."
     exit 1
 fi
 
-echo "Restarting Pallium..."
-systemctl --user restart "$SERVICE_NAME"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$REPO_ROOT"
 
-echo "Pallium restarted. Dashboard at http://localhost:19836/dashboard"
-echo "  Status: systemctl --user status pallium"
-echo "  Logs:   journalctl --user -u pallium -f"
+ARGS=(service restart)
+if [[ -n "$HOME_PATH" ]]; then
+    ARGS+=(--home "$HOME_PATH")
+fi
+exec "$PYTHON_PATH" -m app.run "${ARGS[@]}"

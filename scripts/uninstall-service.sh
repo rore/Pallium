@@ -1,31 +1,55 @@
 #!/usr/bin/env bash
 #
-# Remove the Pallium systemd user service.
+# Uninstall Pallium through the canonical service CLI.
 #
 # Usage:
-#   ./uninstall-service.sh
+#   ./uninstall-service.sh [--home PATH] [--python PATH] [--remove-data]
 #
 
 set -euo pipefail
 
-SERVICE_FILE="$HOME/.config/systemd/user/pallium.service"
+PYTHON_PATH=""
+HOME_PATH=""
+REMOVE_DATA=false
 
-if systemctl --user is-active pallium.service &>/dev/null; then
-    systemctl --user stop pallium.service
-    echo "Stopped Pallium service."
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --home)
+            HOME_PATH="$2"
+            shift 2
+            ;;
+        --python)
+            PYTHON_PATH="$2"
+            shift 2
+            ;;
+        --remove-data)
+            REMOVE_DATA=true
+            shift
+            ;;
+        *)
+            echo "Usage: $0 [--home PATH] [--python PATH] [--remove-data]"
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "$PYTHON_PATH" ]]; then
+    PYTHON_PATH=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
+fi
+if [[ -z "$PYTHON_PATH" ]]; then
+    echo "Error: Python not found. Specify --python or ensure Python is on PATH."
+    exit 1
 fi
 
-if systemctl --user is-enabled pallium.service &>/dev/null; then
-    systemctl --user disable pallium.service
-    echo "Disabled Pallium service."
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$REPO_ROOT"
 
-if [[ -f "$SERVICE_FILE" ]]; then
-    rm "$SERVICE_FILE"
-    systemctl --user daemon-reload
-    echo "Removed $SERVICE_FILE"
-else
-    echo "No Pallium service file found."
+ARGS=(service uninstall)
+if [[ -n "$HOME_PATH" ]]; then
+    ARGS+=(--home "$HOME_PATH")
 fi
-
-echo "Pallium service uninstalled."
+if [[ "$REMOVE_DATA" == true ]]; then
+    ARGS+=(--remove-data)
+fi
+exec "$PYTHON_PATH" -m app.run "${ARGS[@]}"
