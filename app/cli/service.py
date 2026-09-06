@@ -242,9 +242,9 @@ def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
     vbs_path = home / "run" / "pallium_launcher.vbs"
     vbs_content = (
         'Set WshShell = CreateObject("WScript.Shell")\n'
-        f'WshShell.Run """{python_exe}"" -m app.run service run --port {port}", 0, False\n'
+        f'WshShell.Run """{python_exe}"" -m app.run service run --port {port} --home ""{home}""", 0, False\n'
     )
-    vbs_path.write_text(vbs_content, encoding="ascii")
+    vbs_path.write_text(vbs_content, encoding="utf-16")
 
     xml_content = f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
