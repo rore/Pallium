@@ -118,8 +118,8 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev,vector]"
 
-      - name: Run restart-service tests serially
-        run: python -m pytest tests/test_restart_service.py -x -q -n 0
+      - name: Run process-sensitive tests serially
+        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py -x -q -n 0
 
       - name: Run remaining tests
-        run: python -m pytest tests/ -x -q --ignore=tests/test_restart_service.py
+        run: python -m pytest tests/ -x -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py
