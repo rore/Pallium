@@ -23,18 +23,18 @@
 
 **Verification plan:** Classifier contract → focused predicate tests; worker recovery lifecycle → existing real worker test proves two exact custom failures, deterministic 1s/2s injected backoff, third-call success, completed processing state, and transient log; regression surface → `tests/test_async_worker.py`, `tests/test_snapshot.py::test_begin_immediate_under_wal`, `tests/test_sqlite_write_retry.py`, workflow/redline/diff checks, then PR CI.
 
-**Plan review:** Pending clean-context Luna review under `## Plan review`.
+**Plan review:** Clean-context Luna review under `## Plan review`; approved the root-cause location and existing worker caller-surface regression.
 
 **Approvals:** Not required at this risk level.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Discovery and pre-edit redline classification complete. No code edit has started; implementation waits on the Elevated clean-context plan review.
+- Discovery, pre-edit redline classification, and Elevated clean-context plan review complete. Implementation is ready; no code edit has started.
 
 ## Evidence
 
