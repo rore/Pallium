@@ -30,7 +30,6 @@
 **Exceptions:** —
 
 **State:** Ready to implement
-<!-- Ready to implement | Blocked | Ready for review -->
 <!-- agent-workflow:end -->
 
 ## Implementation
