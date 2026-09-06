@@ -19,17 +19,17 @@
 
 **Material assumptions:** Codex consumes a queued UserPromptSubmit event whose successful hook output carries the supported JSON block decision, without retrying it or invoking the model. Disproof: an installed exact-session witness shows invalid hook JSON, requeue, model sampling, or another generic turn. Action if disproved: return to planning and retain durable delivery while qualifying another native admission mechanism.
 
-**Plan:** Add one exact internal wake sentinel to the Codex UserPromptSubmit hook. Preserve the raw `/relay/turn` result; only when that request returns the complete canonical no-work state (`deliveries=[]`, `has_more=false`, integer `remaining_count=0`) for the exact sentinel, emit the supported UserPromptSubmit JSON block decision with a bounded reason and exit normally before dedup or memory work. Preserve current behavior for Relay failure, partial/malformed response, invalid scope, non-wake prompts, redaction-expanded pending work, backlog continuation, and attributed delivery/ACK. Add direct hook boundary regressions plus a caller-surface lifecycle that drives public send → queued native wake → competing real hook claim/ACK → stale queued hook execution and proves it blocks without memory/output. Assert the adapter and hook sentinel stay identical; update RW-002 evidence. Target files: `integrations/codex/hooks/user_prompt_submit.py`, `tests/test_agent_relay_hooks.py`, `tests/test_codex_wake.py`, `roadmap/features/add-wake-first-relay-delivery.md`, and this record. Stop if the structured block behavior cannot be installed-proven or if Relay failure becomes indistinguishable from a confirmed empty turn.
+**Plan:** Add one exact internal wake sentinel to the Codex UserPromptSubmit hook. Preserve the raw `/relay/turn` result; only when that request returns the complete canonical no-work state (`deliveries=[]`, `has_more=false`, integer `remaining_count=0`) for the exact sentinel, write exactly one stdout JSON object `{"decision":"block","reason":"Pallium Relay wake superseded: no pending delivery."}` with no `hookSpecificOutput`, exit 0, and stop before dedup or memory work. Preserve current behavior for Relay failure, partial/malformed response, invalid scope, non-wake prompts, redaction-expanded pending work, backlog continuation, and attributed delivery/ACK. Add direct hook boundary regressions plus a caller-surface lifecycle that drives public send → queued native wake → competing real hook claim/ACK → stale queued hook execution and proves it blocks without memory/output. Assert the adapter and hook sentinel stay identical; update RW-002 evidence. Target files: `integrations/codex/hooks/user_prompt_submit.py`, `tests/test_agent_relay_hooks.py`, `tests/test_codex_wake.py`, `roadmap/features/add-wake-first-relay-delivery.md`, and this record. Stop if the structured block behavior cannot be installed-proven or if Relay failure becomes indistinguishable from a confirmed empty turn.
 
 **Verification plan:** Redundant native wake after another turn consumes the delivery shall not create an empty follow-up → deterministic caller-surface E2E with injected process/hook ordering; close and cross-scope sends shall remain isolated → focused concurrency/scope regressions; ambiguous native writes shall not duplicate or lose pending work → existing plus targeted wake tests; installed Windows behavior shall show one attributed delivery and no later generic turn → bounded dogfood without manual receive; workflow/redline/CI checks shall pass.
 
-**Plan review:** Initial clean-context Luna review is recorded under `## Plan review`. Installed exit-2 disproof returned the task to planning; revised structured-block review is pending.
+**Plan review:** Initial and revised clean-context Luna reviews are recorded under `## Plan review`. The revised review approved the structured block after requiring the exact one-object stdout wire shape, bounded non-empty reason, no `hookSpecificOutput`, and exit 0; these are now explicit in the Plan and Verification plan.
 
 **Approvals:** Not required at this risk level.
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 
 <!-- agent-workflow:end -->
 
@@ -53,6 +53,8 @@
 ## Plan review
 
 Clean-context Luna review required two clarifications: confirmed-empty means a successful dict response with deliveries present and exactly [], never None or malformed; and the lifecycle regression must retain an independently accepted native prompt before the competing real hook claims and ACKs. Both are incorporated. A focused follow-up approved blocking a valid but changed current scope because the old-scope delivery remains durable and untouched; missing/invalid scope performs no turn call and remains fail-open. No prompt-carried scope or hash is needed.
+
+After the installed exit-2 disproof, a fresh clean-context Luna review found the structured plan protocol-plausible and required one clarification: pin the exact top-level stdout object `{"decision":"block","reason":"..."}`, with a bounded non-empty reason, no `hookSpecificOutput`, and normal exit 0. The Plan now states that wire contract; no other blocker remained.
 
 ## Result review
 
