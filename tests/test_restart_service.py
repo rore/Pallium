@@ -165,6 +165,7 @@ def _run_restart(
     *,
     task_shape: str = "canonical",
     port: int | str | None = 21987,
+    working_directory: Path | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     shell = shutil.which("pwsh") or shutil.which("powershell")
     assert shell is not None, "PowerShell is required on Windows"
@@ -197,7 +198,11 @@ def _run_restart(
         RW010_SCRIPT=str(RESTART_SCRIPT),
         RW010_TASK_SHAPE=task_shape,
         RW010_VBS=str(vbs),
-        RW010_WORKDIR=str(tmp_path / "missing") if task_shape == "invalid_workdir" else str(tmp_path),
+        RW010_WORKDIR=(
+            str(tmp_path / "missing")
+            if task_shape == "invalid_workdir"
+            else str(working_directory or tmp_path)
+        ),
     )
     result = subprocess.run(
         [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness)],
@@ -280,6 +285,22 @@ def test_legacy_task_passes_exact_working_directory(tmp_path: Path) -> None:
     assert f"Start-Process:{Path(sys.executable).with_name('pythonw.exe')}" in calls
     assert f"PreflightWorkingDirectory:{tmp_path}" in calls
     _assert_port(result, calls, 21988)
+
+
+def test_legacy_task_passes_unicode_working_directory_exactly(tmp_path: Path) -> None:
+    working_directory = tmp_path / "תיקייה עם רווחים"
+    working_directory.mkdir()
+
+    result, calls = _run_restart(
+        tmp_path,
+        "ready",
+        task_shape="legacy",
+        port=21988,
+        working_directory=working_directory,
+    )
+
+    assert result.returncode == 0, _output(result)
+    assert f"PreflightWorkingDirectory:{working_directory}" in calls
 
 
 @pytest.mark.parametrize("port", [None, "abc", 0, 65536])
