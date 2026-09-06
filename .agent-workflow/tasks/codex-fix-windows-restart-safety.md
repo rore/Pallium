@@ -21,15 +21,15 @@
 
 **Plan:** In `scripts/restart-service.ps1`, add one small failure helper, resolve and validate the installed task action/VBS/Python/working directory, and run `import app.run, app.main` through `Start-Process` before the first stop. Do not inspect Git dirtiness. Preserve the existing kill sweep unchanged. Wrap scheduled-task start with actionable failure. Replace unconditional success with a bounded probe loop over the three documented endpoints: require `health.status == \"ok\"`, `status.embedding_provider_ok == true`, `status.ingestion.status == \"ok\"`, and successful queue response; retry transient/malformed states, then fail with the last named check and `~/.pallium/logs/pallium.log`. Add `tests/test_restart_service.py` that executes the real PS1 beneath mocked Windows commands and time, covering preflight failure/no stop, start failure, transient recovery/all three probes, and each terminal readiness failure; add only that test path to `.github/workflows/ci.yml`'s existing Windows smoke list. Update operations guidance and RW-010. Stop if real PowerShell command shadowing cannot exercise the script in CI without sleeps, or installed task/VBS shape differs from the recorded assumption.
 
-**Verification plan:** When replacement imports fail, the live process shall remain untouched → real PS1 subprocess test asserts no stop/kill and nonzero diagnostics; when start fails, the wrapper shall return nonzero → mocked scheduled-task caller test; when readiness is transient, the wrapper shall probe all three endpoints and print success only after all contracts pass → ordered real-script test; when any endpoint remains unavailable or malformed, the wrapper shall exhaust deterministically and name the last check/log → parameterized real-script tests with mocked sleep; when merged locally, the installed wrapper shall restart the real service and all three endpoints shall satisfy the same contracts → bounded Windows witness; workflow/redline/CI shall pass.
+**Verification plan:** When replacement imports fail, the live process shall remain untouched → real PS1 subprocess test asserts no stop/kill and nonzero diagnostics; when start fails, the wrapper shall return nonzero → mocked scheduled-task caller test; when readiness is transient, the wrapper shall probe all three endpoints and print success only after all contracts pass → ordered real-script test; when any endpoint remains unavailable or malformed, the wrapper shall exhaust deterministically and name the last check/log → parameterized Windows-only real-script tests with no-op mocked sleep and the fixed 20-attempt budget; when merged locally, the installed wrapper shall restart the real service and all three endpoints shall satisfy the same contracts → bounded Windows witness; workflow/redline/CI shall pass.
 
-**Plan review:** Pending clean-context review under `## Plan review`.
+**Plan review:** Clean-context Luna review under `## Plan review`; its Linux-collection, deterministic-budget, and queue-HTTP predicate findings are incorporated.
 
 **Approvals:** Not required at this risk level.
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -48,7 +48,7 @@
 
 ## Plan review
 
-Pending.
+Clean-context Luna review found three plan gaps: the new test needed an explicit non-Windows skip because Ubuntu collects all tests; the retry mechanism needed a fixed deterministic budget and mocked sleep; and queue readiness must mean HTTP 2xx rather than an invented response field. The Plan now specifies a Windows-only caller-surface test, exactly 20 attempts with 500 ms intervals and no-op test sleep, and HTTP 2xx for `/debug/queue/health`. No other correctness or over-engineering blocker remained.
 
 ## Result review
 
