@@ -12,7 +12,7 @@ Native exact-session Codex Relay wake coordination and failure feedback.
 Keep the native `codex exec resume` plus `codex queue --thread` path; never substitute App Server or a replacement session. Queue acceptance is not admission, and native queue idempotency is proven false, so no timer or service-restart path may blindly enqueue a second trigger. Delivery remains pending until the existing UserPromptSubmit hook claims and ACKs it. Preserve exact scope, Unicode, non-steering busy behavior, portability, and fast deterministic tests.
 
 **Completion criteria:**
-(1) A blocking `exec resume` exit is successful only if the exact session's existing Relay-turn callback cleared the matching scheduled generation. (2) A completed/no-hook launch, terminal exec failure, or queue failure releases in-memory ownership, marks only the still-current destination unreachable through the existing strict timestamp CAS, and never consumes the delivery. (3) A successful asynchronous queue write remains coalesced until actual hook admission, with no timeout-based duplicate. (4) A later exact-session turn claims the preserved delivery once and clears scheduling state. (5) Caller-surface E2E covers interrupted/no-hook, terminal failure, active-writer queue success/failure, stale feedback CAS, duplicate triggers, exact scope, Unicode, and eventual single ACK. (6) Roadmap/docs state the upstream ambiguity honestly; close RW-015 only if an installed no-manual-turn witness passes.
+(1) A blocking `exec resume` exit is successful only if the exact session and exact scope's existing Relay-turn callback cleared the matching scheduled generation before the child returned. (2) A completed/no-hook launch, terminal exec failure, or definite queue rejection releases in-memory ownership, marks only the still-current destination unreachable through the existing strict timestamp CAS, and never consumes the delivery. (3) A successful asynchronous queue write or queue timeout remains coalesced until actual hook admission, with no timeout-based duplicate. (4) A later exact-session, exact-scope turn claims the preserved delivery once and clears scheduling state; wrong-scope turns cannot clear it. (5) Caller-surface E2E covers callback-before-exit ordering, interrupted/no-hook, terminal failure, active-writer queue success/rejection/timeout, stale feedback CAS, duplicate triggers, exact scope, Unicode, and eventual single ACK. (6) Roadmap/docs state the upstream ambiguity honestly; close RW-015 only if an installed no-manual-turn witness passes.
 
 **Risk:**
 Elevated
@@ -30,7 +30,7 @@ Installed dogfood reproduced two false-active outcomes: an empty interrupted tur
 For blocking `codex exec resume`, a real UserPromptSubmit hook call completes its synchronous `/relay/turn` before the child exits, so the existing generation callback is authoritative after process completion. Disproof: a caller-surface or installed witness shows a valid hook admission can arrive only after the exec child exits; stop and re-plan rather than add a timeout. For accepted `codex queue`, absence of admission is ambiguous and must remain coalesced.
 
 **Plan:**
-Return a minimal launch outcome that distinguishes blocking exec completion, accepted asynchronous queue, and terminal failure. In the existing worker, compare that outcome with the exact scheduled generation: keep accepted queue ownership; if hook admission already cleared ownership, do nothing; otherwise release ownership and report unreachable through the same strict-CAS callback pattern used by Claude. Add focused caller-surface lifecycle coverage through HTTP and the real Codex hook, then align RW-015 without claiming that Pallium can safely retry an ambiguously accepted native queue.
+Return a minimal launch outcome that distinguishes blocking exec completion, accepted-or-ambiguous asynchronous queue, and terminal failure. In the existing worker, compare that outcome with the exact scheduled generation and scope: keep accepted or timed-out queue ownership; if matching hook admission already cleared ownership before blocking exec returns, do nothing; otherwise release ownership and report unreachable through the same strict-CAS callback pattern used by Claude. Add focused caller-surface lifecycle coverage through HTTP and the real Codex hook, then align RW-015 without claiming that Pallium can safely retry an ambiguously accepted native queue.
 
 Key conventions: reuse existing generation ownership, hook admission callback, and `RelayService.mark_unreachable`; add no persistence schema, event parser, watchdog, dependency, or wall-clock wait.
 
@@ -40,7 +40,7 @@ Target files or classes: `app/codex_wake.py`; `app/dependencies.py`; `tests/test
 Outcome classification and stale-generation protection → focused coordinator tests. Persistence, health, exact scope, Unicode, and eventual ACK → real `/relay/messages` → wake callback → installed-hook function → `/relay/turn`/ACK caller-surface E2E with injected subprocess outcomes and deterministic clocks. Regression floor → focused Relay/Codex integration suites, workflow/redline gates, clean-context review, and one installed Relay dogfood witness.
 
 **Plan review:**
-Pending clean-context review.
+2026-09-06 clean-context Luna review approved the ownership/CAS direction after requiring three corrections now incorporated: exact-scope callback correlation, callback-before-exec-exit proof, and indefinite coalescing for queue timeout/transport ambiguity because native queue deduplication is false. It confirmed no existing Codex event can safely rearm an ambiguously accepted queue.
 
 **Approvals:**
 Standing user approval to carry managed PRs through merge.
@@ -48,7 +48,7 @@ Standing user approval to carry managed PRs through merge.
 **Exceptions:**
 —
 
-**State:** Planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
