@@ -48,7 +48,7 @@
 
 ## Plan review
 
-Pending clean-context result review and PR CI.
+Clean-context result review approved the shared-root classifier fix, exact custom-exception worker recovery, bounded WAL-test tolerance, roadmap alignment, and cross-platform/API impact. Focused verification is green; ready for PR CI and review.
 
 ## Result review
 
