@@ -19,9 +19,9 @@
 
 **Material assumptions:** A nonzero tree-kill result can be ignored only provisionally because later exact signature sweeps plus a post-settle port check prove the observable shutdown condition; disprove if another required non-port process can survive without a matching signature, then add only its existing lifecycle signal. The existing two-second production settle is adequate for the final port check; disprove through installed restart and keep the same bounded loop rather than adding an unbounded wait.
 
-**Plan:** Introduce one tiny best-effort process-tree helper around native `taskkill` and route all three existing call sites through it so a child-exit race cannot skip later cleanup. Keep the existing settle sleep, then query the exact installed port; if a listener remains, report its PID and stop before scheduled-task start. Extend the real PowerShell harness so the first tree kill can throw once and a separate case can retain the listener; assert successful restart in the first case and fail-before-start in the second. Update the Relay roadmap with the dogfood incident and qualification status. Stop and return to planning if tolerating taskkill errors can bypass the final observable port gate or if a supported restart mode has no listener.
+**Plan:** Introduce one tiny best-effort process-tree helper around native `taskkill` and route all four existing call sites through it so a child-exit race cannot skip later cleanup. Keep the existing settle sleep, then query the exact installed port; if a listener remains, report its PID and stop before scheduled-task start. Extend the real PowerShell harness so the first tree kill can throw once and a separate case can retain the listener; assert successful restart in the first case and fail-before-start in the second. Update the Relay roadmap with the dogfood incident and qualification status. Stop and return to planning if tolerating taskkill errors can bypass the final observable port gate or if a supported restart mode has no listener.
 
-**Verification plan:** First native tree-kill throws after partial success -> real-script harness continues signatures, performs post-settle port check, starts the task, and passes health/status/queue readiness; installed port remains occupied after all sweeps -> wrapper returns nonzero with actionable PID, never calls `Start-ScheduledTask`, and never prints success; existing preflight/metadata/port/PID/Unicode/legacy/transient/terminal tests -> unchanged; installed witness -> exact merged-main wrapper completes, PID/port metadata refresh, `/health` is ok, `/status` has healthy embedding and ingestion, and `/debug/queue/health` is 2xx; gates -> focused suite, exact Windows smoke, workflow/redline, clean-context result review, PR CI, and merge.
+**Verification plan:** First native tree-kill throws or returns nonzero after partial success -> real-script harness continues signatures, performs post-settle port check, starts the task, and passes health/status/queue readiness; multiple initial listener rows -> every unique PID is killed once; installed port remains occupied after all sweeps -> wrapper returns nonzero with actionable PID, never calls `Start-ScheduledTask`, and never prints success; existing preflight/metadata/port/PID/Unicode/legacy/transient/terminal tests -> unchanged; installed witness -> exact merged-main wrapper completes, PID/port metadata refresh, `/health` is ok, `/status` has healthy embedding and ingestion, and `/debug/queue/health` is 2xx; gates -> focused suite, exact Windows smoke, workflow/redline, clean-context result review, PR CI, and merge.
 
 **Plan review:** Approved by clean-context Luna reviewer `/root/rw018_plan_review` on 2026-09-06. It confirmed the taskkill child-exit race and approved centralized best-effort kills plus an array-safe post-settle port gate. It required warning on both thrown/nonzero native results and regressions for one-time failure recovery and persistent-listener refusal.
 
@@ -36,19 +36,19 @@
 
 - Routed every native tree kill through one helper that reports thrown or nonzero partial failure and continues the existing exact cleanup sweeps.
 - Added a null- and array-safe post-settle port gate before scheduled-task start, plus explicit successful exit 0 so a tolerated native exit code cannot leak.
-- Extended the real PowerShell harness with a one-time taskkill exception and two persistent listener PIDs; no production wait or dependency was added.
+- Made initial listener cleanup array-safe and deduplicated, and extended the real PowerShell harness with thrown and non-throwing taskkill failures, multiple initial listeners, and persistent listener PIDs; no production wait or dependency was added.
 
 ## Evidence
 
 - Dogfood incident: wrapper aborted on a partial `taskkill /T` native error before its signature sweeps; exact old root/listener PIDs then disappeared while orphan `pythonw.exe -m app.run serve` survived and respawned the service.
-- Focused real-script restart suite: 22 passed in 7.82s. Full Windows smoke plus service CLI floor: 326 passed, 6 skipped in 15.40s.
+- Focused real-script restart suite: 24 passed in 8.49s. Full Windows smoke plus service CLI floor: 328 passed, 6 skipped in 15.14s.
 - Corrected wrapper replayed the exact live orphan shape and exited 0; installed PID refreshed from stale 18496 to 9680, port remained 19836, launcher was UTF-16 exact-home, `/health` was ok, embedding and ingestion were healthy, and queue health returned 200.
 - Relay message `relay-msg-732471bf...` sent after restart auto-delivered once to `codex:@relaydev` in about nine seconds with durable expiry omitted.
 
 ## Plan review
 
-- Pending.
+- Approved; see the recorded clean-context review above.
 
 ## Result review
 
-Clean-context Luna review approved the centralized kill handling, array-safe pre-start port gate, explicit success exit, MCP exclusion, deterministic regressions, roadmap state, and installed evidence with no actionable blocker.
+Clean-context Luna reviewer /root/rw018_result_review approved the original result and the CodeRabbit amendments on 2026-09-06. The follow-up found no remaining correctness, test, or state issue in unique initial-listener handling, thrown/nonzero taskkill recovery, final port gating, or aligned roadmap evidence.

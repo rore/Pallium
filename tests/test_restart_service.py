@@ -76,6 +76,10 @@ function taskkill {
         $global:LASTEXITCODE = 1
         throw "simulated child-exit race"
     }
+    if ($env:RW010_SCENARIO -eq "nonzero_taskkill" -and $script:TaskkillCalls -eq 1) {
+        $global:LASTEXITCODE = 1
+        return
+    }
     $global:LASTEXITCODE = 0
 }
 
@@ -84,6 +88,13 @@ function Get-NetTCPConnection {
     param($LocalPort, $State, $ErrorAction)
     $script:NetTcpCalls++
     Log-Call "Get-NetTCPConnection:$LocalPort"
+    if ($env:RW010_SCENARIO -eq "multiple_initial_listeners" -and $script:NetTcpCalls -eq 1) {
+        return @(
+            [pscustomobject]@{ OwningProcess = 6161 },
+            [pscustomobject]@{ OwningProcess = 6161 },
+            [pscustomobject]@{ OwningProcess = 6262 }
+        )
+    }
     if ($env:RW010_SCENARIO -eq "surviving_listener" -and $script:NetTcpCalls -gt 1) {
         return @(
             [pscustomobject]@{ OwningProcess = 6161 },
@@ -411,6 +422,30 @@ def test_partial_taskkill_error_continues_cleanup_and_restarts(tmp_path: Path) -
     assert result.returncode == 0, _output(result)
     assert "partial failure for PID 5151" in _output(result)
     assert len([call for call in calls if call.startswith("Get-CimInstance:")]) >= 2
+    assert calls.count("Start-ScheduledTask") == 1
+    _assert_port(result, calls, 21987)
+
+
+def test_nonzero_taskkill_error_continues_cleanup_and_restarts(tmp_path: Path) -> None:
+    result, calls = _run_restart(
+        tmp_path,
+        "nonzero_taskkill",
+        pid_file_value=5151,
+    )
+
+    assert result.returncode == 0, _output(result)
+    assert "partial failure for PID 5151" in _output(result)
+    assert calls.count("Start-ScheduledTask") == 1
+    assert calls.count("Get-NetTCPConnection:21987") >= 2
+    _assert_port(result, calls, 21987)
+
+
+def test_multiple_initial_listeners_are_killed_once_each(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "multiple_initial_listeners")
+
+    assert result.returncode == 0, _output(result)
+    assert calls.count("taskkill /F /T /PID 6161") == 1
+    assert calls.count("taskkill /F /T /PID 6262") == 1
     assert calls.count("Start-ScheduledTask") == 1
     _assert_port(result, calls, 21987)
 
