@@ -56,12 +56,14 @@ Standing user approval to carry managed PRs through merge.
 - 2026-09-06: Traced native CLI launch, HTTP callbacks, hook admission, storage health, historical Phase-0 evidence, and RW-015 dogfood. Rejected App Server substitution and timeout retry because they target the wrong runtime or duplicate native queued turns.
 - 2026-09-06: Corrected the incident after durable status and exact-task history proved both earlier sends eventually admitted. Implemented only the remaining root hardening: blocking-exec/no-hook detection, exact-scope admission, strict-CAS health feedback, and indefinite coalescing for accepted queue writes or timed-out exec/queue subprocesses.
 - 2026-09-06: CodeRabbit found that session-only ownership could suppress a valid second scope sharing the session reference. Qualified the existing ownership key by session, container, and actor; removed the now-redundant scope map; and added deterministic two-scope isolation coverage.
+- 2026-09-06: PR #108 merged as `028afd76`; exact main was installed into Claude Code and Codex, the stable OpenCode loader and suite were verified, and the service was restarted through `scripts/restart-service.ps1`.
 
 ## Evidence
 
 - `.venv\Scripts\python.exe -m pytest tests\test_codex_wake.py tests\test_agent_relay_e2e.py tests\test_relay_wake_contract.py tests\test_codex_integration.py -q` → 108 passed in 14.44s; four pre-existing Pydantic forward-reference warnings.
 - Caller-surface E2E drives HTTP persistence and dispatch through actual `_launch`; proves exact hook admission before exec return, completed/no-hook pending recovery, queue-timeout coalescing without duplicate launch, wrong-scope refusal, Unicode, and single ACK without wall-clock sleeps.
 - `scripts/agent-workflow-check.py --repo-root . --slug codex-fix-codex-unadmitted-wake` → clean. Redline → GRAY/watch-only for `app/codex_wake.py` and `app/dependencies.py`; no boundary, API, schema, security, runtime-config, or checkpoint findings. `git diff --check` → clean.
+- Installed witness: `relay-msg-cff1331ccacf49cdb5920ad61b5f3ec6` auto-claimed and ACKed once after 16 seconds; `relaydev` atomically returned `RW015-INSTALLED-PASS` without manual wake. `/health=ok`, `embedding_provider_ok=true`, `ingestion.status=ok`, and queue health showed no pending, unclaimable, or leased work.
 
 ## Result review
 

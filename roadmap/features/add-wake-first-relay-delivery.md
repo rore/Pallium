@@ -141,12 +141,8 @@ remains for that adapter.
 
 ### Next execution order (updated 2026-09-06)
 
-The current work is RW-015 Codex admission hardening, followed by RW-010 restart
-safety. RW-015's initial no-recovery diagnosis was corrected after durable status
-and exact-task history showed both sends eventually admitted; the branch now fixes
-only the genuine terminal-no-hook, exact-scope admission, and same-session
-cross-scope ownership gaps. Both slices precede additional runtime and platform
-expansion. Keep each numbered slice small
+The next work is RW-010 restart safety, followed by the remaining Codex lifecycle
+gates. RW-015 is merged and Windows-qualified. Keep each numbered slice small
 enough to implement, review, and report independently; use deterministic
 clocks/events rather than wall-clock sleeps in the normal suite.
 
@@ -180,16 +176,12 @@ clocks/events rather than wall-clock sleeps in the normal suite.
    duplicate-trigger loop prevention, and installed Codex plus Claude witnesses
    are complete. Keep the current three-message / 2,400-character limits until
    real burst measurement justifies a change.
-6. **S3 Codex admission hardening — in progress (RW-015).** Preserve the native
-   exact-session path with ownership qualified by container and actor scope, and
-   distinguish blocking `exec resume` completion from an accepted asynchronous
-   queue write or a timed-out exec/queue subprocess. A completed child without
-   the exact session+scope hook callback releases its generation, marks only the
-   still-current destination `unreachable` through strict CAS, and keeps delivery
-   pending for the next real hook turn. Accepted queue writes and timed-out
-   exec/queue subprocesses remain coalesced because native duplicate suppression
-   is proven false. Require fast
-   deterministic caller-surface E2E plus a post-merge no-manual-turn witness.
+6. **S3 Codex admission hardening — complete in PR #108; Windows-qualified
+   (RW-015).** Exact session+container+actor ownership, launch outcome
+   classification, strict-CAS unreachable feedback, deterministic caller-surface
+   E2E, and a post-merge no-manual-turn installed witness are complete. Native
+   accepted or timed-out queue writes remain coalesced because duplicate
+   suppression is false.
 7. **Windows restart safety — then RW-010.** Preflight the stable checkout before
    stopping the healthy service, poll bounded readiness, verify `/health`,
    `/status`, and `/debug/queue/health`, and fail with actionable diagnostics.
@@ -224,7 +216,7 @@ where the runtime exists locally, an installed witness close it.
 | `RW-012` | A normal hook-injected delivery reached an agent without the trusted container and actor scope needed by `pallium_relay_reply`; reply failed closed and encouraged an out-of-band fallback. | **Fixed in PR #105; Windows-qualified.** Codex and every Claude hook delivery surface now append independently bounded exact scope before ACK; unsafe scope never claims. Real Codex queue and Claude UserPromptSubmit/Stop journeys parse that hook output and complete receiptless atomic replies, with wrong-scope, Unicode, maximum-boundary, backlog, and idempotence coverage. An installed Claude witness auto-woke, parsed the hook scope, and completed the exact receiptless reply without a manual turn or MCP receive. |
 | `RW-013` | A Claude session reported its alias handle as `claude-code:claude_arch`, omitting the required `@`; the resulting exact-session selector returned 404 while the UUID worked. | **Fixed in PR #107; Windows-qualified.** Recipient pages now emit canonical `exact_selector` and `alias_selector` values. Existing routing was not rewritten: `codex:@relaydev` dogfood delivered and received `alias-ok`; caller-surface lifecycle coverage pins naming, transfer, close, exact fallback, alias send, filtering, and cross-scope isolation; Codex and Claude configs were reinstalled from clean main. |
 | `RW-014` | `pallium_relay_recipients` can exceed the MCP response budget and return only a generic error instead of a usable bounded recipient result. | **Fixed in PR #107; Windows-qualified.** The MCP tool returns stable bounded pages with offset continuation and total count while preserving the HTTP list contract. Deterministic E2E covers all recorded boundaries without wall-clock waits. After reinstall and service restart from exact main, a fresh installed stdio child returned a 1,730-character page with all envelope fields, 5 of 89 recipients, canonical selectors, `has_more=true`, and `next_offset=5`. |
-| `RW-015` | Two sends initially appeared stuck behind `destination_health=active`; later durable status and exact-task history proved both hook-delivered, including the vNext target after 57 seconds. The real latent gaps were boolean launch acceptance holding a generation after completed/no-hook exec, session-only admission, and session-only ownership suppressing another scope. | **In progress on `codex/fix-codex-unadmitted-wake`.** Wake ownership is keyed by session+container+actor, and blocking exec completion requires the matching hook callback; otherwise ownership releases, strict-CAS health becomes `unreachable`, and delivery stays pending. Accepted queue writes and timed-out exec/queue subprocesses stay coalesced because retry is unsafe without native idempotency. Deterministic HTTP→dispatch→real-hook E2E is green; close after PR review, merge, rollout, and a fresh installed no-manual-turn witness. |
+| `RW-015` | Two sends initially appeared stuck behind `destination_health=active`; later durable status and exact-task history proved both hook-delivered, including the vNext target after 57 seconds. The real latent gaps were boolean launch acceptance holding a generation after completed/no-hook exec, session-only admission, and session-only ownership suppressing another scope. | **Fixed in PR #108; Windows-qualified.** Wake ownership is keyed by session+container+actor; blocking exec completion requires the matching hook callback; definite no-hook failure reports strict-CAS `unreachable` without consuming delivery; accepted or timed-out writes stay coalesced. After exact-main reinstall and service restart, `relay-msg-cff1331...` auto-delivered once in 16 seconds and returned `RW015-INSTALLED-PASS` without a manual turn. |
 
 The Windows Claude regression floor remains: idle text and zero-tool turns, empty
 Stop rearm, busy delivery, ordered bursts, Unicode, recursive-Stop loop prevention,
