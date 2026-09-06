@@ -28,7 +28,7 @@ if (-not $action -or [IO.Path]::GetFileName($action.Execute) -ine "wscript.exe")
 
 $workingDir = [Environment]::ExpandEnvironmentVariables(([string]$action.WorkingDirectory).Trim())
 $vbsPath = [Environment]::ExpandEnvironmentVariables(([string]$action.Arguments).Trim().Trim('"'))
-if (-not $workingDir -or -not (Test-Path -LiteralPath $workingDir)) {
+if ($workingDir -and -not (Test-Path -LiteralPath $workingDir)) {
     Stop-WithError "Installed task working directory is missing or invalid: $workingDir"
 }
 if (-not $vbsPath -or -not (Test-Path -LiteralPath $vbsPath)) {
@@ -51,7 +51,17 @@ if (-not $pythonPath -or -not (Test-Path -LiteralPath $pythonPath)) {
 }
 
 try {
-    $preflight = Start-Process -FilePath $pythonPath -ArgumentList '-c "import app.run, app.main"' -WorkingDirectory $workingDir -WindowStyle Hidden -Wait -PassThru
+    $preflightArgs = @{
+        FilePath = $pythonPath
+        ArgumentList = '-c "import app.run, app.main"'
+        WindowStyle = "Hidden"
+        Wait = $true
+        PassThru = $true
+    }
+    if ($workingDir) {
+        $preflightArgs.WorkingDirectory = $workingDir
+    }
+    $preflight = Start-Process @preflightArgs
 } catch {
     Stop-WithError "Installed service import preflight could not run: $($_.Exception.Message)"
 }
@@ -100,6 +110,7 @@ $signatures = @(
     "app.cleaner",
     "app.snapshot",
     "app.run serve",
+    "app.run service run",
     "app.run all"
 )
 foreach ($sig in $signatures) {

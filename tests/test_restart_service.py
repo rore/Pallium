@@ -25,18 +25,28 @@ function Log-Call {
 
 function Get-ScheduledTask {
     param($TaskName, $ErrorAction)
+    $workingDirectory = if ($env:RW010_TASK_SHAPE -in @("canonical", "unparseable")) {
+        ""
+    } else {
+        $env:RW010_WORKDIR
+    }
     [pscustomobject]@{
         Actions = @([pscustomobject]@{
             Execute = "wscript.exe"
             Arguments = '"' + $env:RW010_VBS + '"'
-            WorkingDirectory = $env:RW010_WORKDIR
+            WorkingDirectory = $workingDirectory
         })
     }
 }
 
 function Start-Process {
     param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$Wait, [switch]$PassThru)
-    Log-Call "Start-Process"
+    Log-Call "Start-Process:$FilePath"
+    if ($PSBoundParameters.ContainsKey("WorkingDirectory")) {
+        Log-Call "PreflightWorkingDirectory:$WorkingDirectory"
+    } else {
+        Log-Call "PreflightWorkingDirectory:<omitted>"
+    }
     $exitCode = if ($env:RW010_SCENARIO -eq "preflight_failure") { 7 } else { 0 }
     [pscustomobject]@{ ExitCode = $exitCode }
 }
@@ -59,7 +69,7 @@ function Stop-Process {
 
 function taskkill {
     param([Parameter(ValueFromRemainingArguments = $true)]$Arguments)
-    Log-Call "taskkill"
+    Log-Call ("taskkill " + ($Arguments -join " "))
 }
 
 function Get-NetTCPConnection {
@@ -74,6 +84,12 @@ function Get-Process {
 
 function Get-CimInstance {
     param($ClassName, $Filter, $ErrorAction)
+    if ($env:RW010_SCENARIO -eq "canonical_survivor" -and $Filter -like "*app.run service run*") {
+        return [pscustomobject]@{ ProcessId = 4242; Name = "python.exe" }
+    }
+    if ($env:RW010_SCENARIO -eq "canonical_survivor" -and $Filter -like "*app.run mcp*") {
+        return [pscustomobject]@{ ProcessId = 9999; Name = "python.exe" }
+    }
     return @()
 }
 
@@ -140,7 +156,12 @@ exit $LASTEXITCODE
 '''
 
 
-def _run_restart(tmp_path: Path, scenario: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+def _run_restart(
+    tmp_path: Path,
+    scenario: str,
+    *,
+    task_shape: str = "canonical",
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     shell = shutil.which("pwsh") or shutil.which("powershell")
     assert shell is not None, "PowerShell is required on Windows"
 
@@ -148,11 +169,17 @@ def _run_restart(tmp_path: Path, scenario: str) -> tuple[subprocess.CompletedPro
     harness = tmp_path / "harness.ps1"
     vbs = tmp_path / "launcher.vbs"
     harness.write_text(HARNESS, encoding="utf-8")
-    vbs.write_text(
-        f'Set WshShell = CreateObject("WScript.Shell")\n'
-        f'WshShell.Run """{sys.executable}"" -m app.run service run --port 19836", 0, False\n',
-        encoding="ascii",
-    )
+    if task_shape == "legacy":
+        python = Path(sys.executable).with_name("pythonw.exe")
+        launcher = tmp_path / "service_launcher.py"
+        assert python.exists()
+        launcher.write_text("# stub\n", encoding="ascii")
+        command = f'WshShell.Run """{python}"" ""{launcher}""", 0, False\n'
+    elif task_shape == "unparseable":
+        command = 'WshShell.Run "not-python", 0, False\n'
+    else:
+        command = f'WshShell.Run """{sys.executable}"" -m app.run service run --port 19836", 0, False\n'
+    vbs.write_text('Set WshShell = CreateObject("WScript.Shell")\n' + command, encoding="ascii")
 
     env = os.environ.copy()
     env.update(
@@ -160,8 +187,9 @@ def _run_restart(tmp_path: Path, scenario: str) -> tuple[subprocess.CompletedPro
         RW010_HOME=str(tmp_path / "home"),
         RW010_SCENARIO=scenario,
         RW010_SCRIPT=str(RESTART_SCRIPT),
+        RW010_TASK_SHAPE=task_shape,
         RW010_VBS=str(vbs),
-        RW010_WORKDIR=str(tmp_path),
+        RW010_WORKDIR=str(tmp_path / "missing") if task_shape == "invalid_workdir" else str(tmp_path),
     )
     result = subprocess.run(
         [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness)],
@@ -195,7 +223,45 @@ def test_preflight_failure_never_stops_the_healthy_service(tmp_path: Path) -> No
     assert "import preflight failed with exit code 7" in output
     assert "Stop-ScheduledTask" not in calls
     assert "Stop-Process" not in calls
-    assert "taskkill" not in calls
+    assert not any(call.startswith("taskkill") for call in calls)
+
+
+@pytest.mark.parametrize(
+    ("task_shape", "message"),
+    [
+        ("invalid_workdir", "working directory is missing or invalid"),
+        ("unparseable", "Could not resolve the installed Python executable"),
+    ],
+)
+def test_invalid_installed_task_metadata_never_stops(
+    tmp_path: Path,
+    task_shape: str,
+    message: str,
+) -> None:
+    result, calls = _run_restart(tmp_path, "ready", task_shape=task_shape)
+
+    assert message in _assert_failure(result)
+    assert "Stop-ScheduledTask" not in calls
+    assert "Stop-Process" not in calls
+    assert not any(call.startswith("taskkill") for call in calls)
+
+
+def test_canonical_task_omits_working_directory_and_sweeps_survivor(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "canonical_survivor")
+
+    assert result.returncode == 0, _output(result)
+    assert f"Start-Process:{sys.executable}" in calls
+    assert "PreflightWorkingDirectory:<omitted>" in calls
+    assert any(call.endswith("/PID 4242") for call in calls)
+    assert not any("9999" in call for call in calls)
+
+
+def test_legacy_task_passes_exact_working_directory(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "ready", task_shape="legacy")
+
+    assert result.returncode == 0, _output(result)
+    assert f"Start-Process:{Path(sys.executable).with_name('pythonw.exe')}" in calls
+    assert f"PreflightWorkingDirectory:{tmp_path}" in calls
 
 
 def test_start_failure_is_nonzero_and_never_prints_success(tmp_path: Path) -> None:

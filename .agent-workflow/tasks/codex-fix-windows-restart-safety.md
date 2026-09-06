@@ -49,6 +49,9 @@
 - Slice 2 verification: test module compiled; six new scenarios plus the existing MCP-exclusion regression passed (7 passed in 3.05s); git diff --check clean. Ruff was unavailable in the venv, so no dependency was installed.
 - Slice 3 is limited to the wrapper, its existing real-script harness, and this Work Record's Implementation/Evidence; canonical empty-working-directory compatibility supersedes the legacy-only assumption.
 - apply_patch failed with local Windows error 1327; used deterministic exact replacements limited to the three assigned files.
+- Made task WorkingDirectory optional for canonical installs while still rejecting an invalid nonempty value; preflight splatting passes the exact legacy directory only when present.
+- Added the canonical app.run service run sweep signature and extended the real-script harness for canonical omission, legacy exact directory, invalid directory, unparseable VBS, service survivor kill, and MCP preservation.
+- Slice 3 verification: PowerShell parser and installed legacy import preflight passed; compatibility/readiness suite plus existing MCP-exclusion regression passed (11 passed in 5.26s); git diff --check clean.
 
 ## Evidence
 
@@ -59,6 +62,8 @@
 - `.github/workflows/ci.yml` runs an explicit Windows-sensitive test list and does not auto-collect new restart tests in the PR Windows job.
 - `tests/test_restart_service.py` launches the actual wrapper under mocked Windows commands and HTTP responses; `Start-Sleep` only records calls, making 20-attempt failures deterministic.
 - Focused verification: `python -m py_compile tests/test_restart_service.py`; pytest new module plus MCP-exclusion regression → 7 passed in 3.05s.
+- Revised caller-surface evidence proves canonical empty WorkingDirectory is omitted, legacy WorkingDirectory is passed exactly, invalid/unparseable metadata cannot stop the service, PID 4242 matching app.run service run is killed, and synthetic MCP PID 9999 is untouched.
+- Revised focused verification: test module compiled; PowerShell parser clean; installed legacy import-only preflight passed; 11 focused tests passed in 5.26s.
 
 ## Plan review
 
