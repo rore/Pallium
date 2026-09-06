@@ -8,14 +8,10 @@ Pallium has configuration for the local service and storage, Relay, Session
 History retrieval, optional embedding search, and optional derived-memory
 packages.
 
-Relay does not use an LLM. The intended baseline Session History setup is lexical
-and package-independent, with no LLM required. That Session History setup is
-queued work, not current behavior. Until it ships, the normal installation still
-needs a configured semantic package, model, and provider key. The examples below
-reflect that transitional implementation.
-
-Do not remove current provider configuration on the assumption that the future
-base setup is already available.
+Relay does not use an LLM. The baseline Session History setup is lexical and
+package-independent, with no LLM required. Semantic packages are disabled by
+default; derived processing requires explicit `enabled = true`, and
+provider-backed packages require `llm_provider` and `model`.
 
 **Contents:**
 [Quick Reference](#quick-reference) ·
@@ -40,7 +36,7 @@ base setup is already available.
 | What | Where | Key fields |
 |------|-------|------------|
 | LLM provider | `[llm_providers.<name>]` in TOML | `kind`, `base_url`, `api_key_env`, `api_key_file` |
-| Semantic package | `[semantic_packages.<name>]` in TOML | `llm_provider`, `model` |
+| Semantic package | `[semantic_packages.<name>]` in TOML | `enabled`, `llm_provider`, `model` |
 | Model roles | `[semantic_packages.<name>.model_roles]` | `write_extraction`, `thread_aggregation`, `consolidation`, `query_ambiguity_resolution` |
 | Secrets | `.env.local`, alternate env file, or provider key file | `ANTHROPIC_API_KEY`, `PALLIUM_OPENAI_API_KEY`, `api_key_file` |
 | Storage | `[storage]` in TOML | `backend`, `sqlite_url` |
@@ -48,8 +44,9 @@ base setup is already available.
 | Vector index | `[vector_index]` in TOML | `enabled`, `min_similarity` |
 | Debug logs | `[observability]` in TOML | `integration_debug = true` |
 
-Minimum to activate the live LLM path: set `llm_provider` and `model` on a
-semantic package, and provide the API key in `.env.local`.
+Minimum to activate a provider-backed package: set `enabled = true`,
+`llm_provider`, and `model` on the package, then provide the API key in
+`.env.local`.
 
 ---
 
@@ -98,13 +95,12 @@ This matches the shipped config model and avoids hiding meaningful package behav
 
 ## Minimal Local Setups
 
-### Demo Mode
+### Raw-only baseline
 
-Use this when you want to run Pallium without a live provider first.
+Use this when you want raw Session History without a live provider. Packages
+remain disabled unless explicitly enabled.
 
 ```toml
-default_use_case = "demo_agent_memory"
-
 [storage]
 backend = "sqlite"
 sqlite_url = "sqlite:///./pallium.db"
@@ -125,6 +121,7 @@ base_url = "https://api.anthropic.com/v1"
 api_key_env = "ANTHROPIC_API_KEY"
 
 [semantic_packages.agent_conversation_memory]
+enabled = true
 llm_provider = "anthropic"
 model = "claude-sonnet-4-6"
 ```
@@ -135,7 +132,7 @@ And in `.env.local`:
 ANTHROPIC_API_KEY=your-key
 ```
 
-That is enough to run the full semantic path. Prompt variants, model roles,
+That is enough to enable the full semantic path. Prompt variants, model roles,
 embedding, and vector retrieval all have working defaults — hybrid retrieval
 is enabled out of the box with a local ONNX embedding provider.
 
@@ -253,6 +250,7 @@ Example:
 ```toml
 [semantic_packages.agent_conversation_memory]
 implementation = "agent_conversation_memory"
+enabled = true
 llm_provider = "openai"
 model = "gpt-5-mini"
 prompt_variant = "strict_typed_memory_v8b_work_refs_separate"
@@ -263,6 +261,7 @@ resolver_timeout_ms = 800
 Supported package fields today:
 
 - `implementation`
+- `enabled`
 - `llm_provider`
 - `model`
 - `prompt_variant`
@@ -276,6 +275,7 @@ Package-scoped env overrides use:
 
 ```dotenv
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL=gpt-5-mini
+PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__ENABLED=true
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__PROMPT_VARIANT=strict_typed_memory_v8b_work_refs_separate
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__RESOLVER_ENABLED=true
 PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__RESOLVER_TIMEOUT_MS=800
@@ -544,7 +544,8 @@ Full spec: [`docs/specs/2026-06-27-injection-policy-abstention.md`](specs/2026-0
 
 The following defaults apply when fields are omitted:
 
-- `default_use_case = "demo_agent_memory"`
+- `default_use_case = "agent_conversation_memory"`
+- semantic packages are disabled by default (`enabled = false`)
 - `agent_conversation_memory.prompt_variant` defaults to
   `"strict_typed_memory_v8b_work_refs_separate"`
 - `agent_conversation_memory.resolver_enabled` defaults to `true`
@@ -556,8 +557,8 @@ The following defaults apply when fields are omitted:
 - `vector_index.index_path` defaults to `"./vector_index"`
 - `vector_index.min_similarity` defaults to `0.55`
 
-You only need to set `llm_provider` and `model` on a semantic package for the
-live LLM path to activate. Everything else has a working default.
+For a provider-backed semantic package, set `enabled = true`, `llm_provider`,
+and `model`. Everything else has a working default.
 
 ## Legacy Compatibility
 
@@ -579,11 +580,18 @@ Prefer the structured provider/package config instead.
 
 ## Common Recipes
 
-### Switch to demo mode
+### Enable demo mode
 
 ```toml
 default_use_case = "demo_agent_memory"
+
+[semantic_packages.demo_agent_memory]
+implementation = "demo_agent_memory"
+enabled = true
 ```
+
+The demo package is local and deterministic, so it does not need an LLM provider
+or model.
 
 ### Enable integration debug logs
 
@@ -641,7 +649,8 @@ For `llm_agent_memory` and `agent_conversation_memory`, both must be present:
 - `llm_provider`
 - `model`
 
-If either is missing, the plugin is not built as a live LLM-backed package.
+If `enabled` is false, the plugin is not built. If an enabled provider-backed
+package omits either provider field, startup fails with a configuration error.
 
 ## Provider Recipes
 
@@ -655,6 +664,7 @@ api_key_env = "ANTHROPIC_API_KEY"
 
 [semantic_packages.agent_conversation_memory]
 implementation = "agent_conversation_memory"
+enabled = true
 llm_provider = "anthropic"
 model = "claude-sonnet-4-6"
 
@@ -677,6 +687,7 @@ auth_style = "bearer"
 
 [semantic_packages.agent_conversation_memory]
 implementation = "agent_conversation_memory"
+enabled = true
 llm_provider = "anthropic_proxy"
 model = "claude-sonnet-4-6"
 ```
@@ -691,6 +702,7 @@ api_key_env = "OPENAI_API_KEY"
 
 [semantic_packages.agent_conversation_memory]
 implementation = "agent_conversation_memory"
+enabled = true
 llm_provider = "openai"
 model = "gpt-5-mini"
 ```

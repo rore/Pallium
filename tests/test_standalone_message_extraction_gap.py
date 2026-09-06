@@ -103,6 +103,7 @@ def _config(test_db_url: str) -> AppConfig:
             "conversational_knowledge": SemanticPackageConfig(
                 name="conversational_knowledge",
                 implementation="conversational_knowledge",
+                enabled=True,
                 llm_provider="test_provider",
                 model="fake-model",
             ),

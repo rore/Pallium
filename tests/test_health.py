@@ -265,6 +265,7 @@ class TestStatusIngestionProviderSignal:
             "memory": SemanticPackageConfig(
                 name="memory",
                 implementation="agent_conversation_memory",
+                enabled=True,
                 llm_provider="remote",
                 model="test-model",
             )

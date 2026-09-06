@@ -19,6 +19,7 @@ from core.thread_rebuild import (
     with_observability_metadata,
 )
 from core.vector_embed import VectorEmbedder
+from providers.llm.base import model_call_guard
 from semantic.base import SemanticPlugin
 from storage.base import StorageProvider, ThreadProcessingScope
 
@@ -229,16 +230,43 @@ class ItemProcessor:
         using_package_tracking = package_name is not None
         # Use package-specific attempt count when available, else source_item's
         current_attempts = package_attempts if package_attempts is not None else source_item.processing_attempts
+        legacy_claim = (
+            {"worker_id": worker_label, "attempts": current_attempts}
+            if worker_id is not None and not using_package_tracking
+            else {}
+        )
+
+        def claim_is_current() -> bool:
+            if using_package_tracking:
+                return self._storage.package_task_claim_is_current(
+                    source_item.id,
+                    plugin_name,
+                    worker_id=worker_label,
+                    attempts=current_attempts,
+                )
+            if not legacy_claim:
+                return True
+            try:
+                current = self._storage.get_source_item(source_item.id)
+            except KeyError:
+                return False
+            return bool(
+                current.processing_status == "processing"
+                and current.processing_claimed_by == worker_label
+                and current.processing_attempts == current_attempts
+            )
         if source_item.use_case is None and not self._default_use_case and not using_package_tracking:
             failure_category = FAILURE_CATEGORY_MISSING_USE_CASE
             error = "missing_use_case"
-            self._storage.fail_source_item_processing(
+            if not self._storage.fail_source_item_processing(
                 source_item.id,
                 error=error,
                 next_attempt_at=None,
                 final=True,
                 metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
-            )
+                **legacy_claim,
+            ):
+                return
             self._emit_processing_failure(source_item, worker_id=worker_label, failure_category=failure_category, error=error)
             return
 
@@ -247,18 +275,22 @@ class ItemProcessor:
             failure_category = FAILURE_CATEGORY_UNKNOWN_USE_CASE
             error = f"unknown_use_case:{plugin_name}"
             if using_package_tracking:
-                self._storage.fail_package_task(
+                if not self._storage.fail_package_task(
                     source_item.id, plugin_name,
                     error=error, next_attempt_at=None, final=True,
-                )
+                    worker_id=worker_label, attempts=current_attempts,
+                ):
+                    return
             else:
-                self._storage.fail_source_item_processing(
+                if not self._storage.fail_source_item_processing(
                     source_item.id,
                     error=error,
                     next_attempt_at=None,
                     final=True,
                     metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
-                )
+                    **legacy_claim,
+                ):
+                    return
             self._emit_processing_failure(source_item, worker_id=worker_label, failure_category=failure_category, error=error)
             return
 
@@ -266,34 +298,42 @@ class ItemProcessor:
             failure_category = FAILURE_CATEGORY_MISSING_VISIBILITY
             error = "visibility_context_required"
             if using_package_tracking:
-                self._storage.fail_package_task(
+                if not self._storage.fail_package_task(
                     source_item.id, plugin_name,
                     error=error, next_attempt_at=None, final=True,
-                )
+                    worker_id=worker_label, attempts=current_attempts,
+                ):
+                    return
             else:
-                self._storage.fail_source_item_processing(
+                if not self._storage.fail_source_item_processing(
                     source_item.id,
                     error=error,
                     next_attempt_at=None,
                     final=True,
                     metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
-                )
+                    **legacy_claim,
+                ):
+                    return
             self._emit_processing_failure(source_item, worker_id=worker_label, failure_category=failure_category, error=error)
             return
 
-        source_vector_entry = self._vector_embedder.build_source_item_vector_entry(plugin, source_item)
+        if not claim_is_current():
+            return
+
+        source_vector_entry = self._vector_embedder.build_source_item_vector_entry(source_item)
 
         memory_vectors_added = False
         try:
-            direct_result = plugin.process_item(source_item)
-            reconcile_process_result = getattr(plugin, "reconcile_process_result", None)
-            if callable(reconcile_process_result):
-                direct_result = reconcile_process_result(
-                    direct_result,
-                    storage=self._storage,
-                    container_ref=source_item.container_ref,
-                    visibility=source_item.visibility,
-                )
+            with model_call_guard(claim_is_current):
+                direct_result = plugin.process_item(source_item)
+                reconcile_process_result = getattr(plugin, "reconcile_process_result", None)
+                if callable(reconcile_process_result):
+                    direct_result = reconcile_process_result(
+                        direct_result,
+                        storage=self._storage,
+                        container_ref=source_item.container_ref,
+                        visibility=source_item.visibility,
+                    )
             thread_rebuild_scope = None
             container_rebuild_scope = None
             if direct_result.thread_rebuild_requested:
@@ -356,17 +396,24 @@ class ItemProcessor:
                 supersession_pairs = self._storage.commit_package_process_result(
                     source_item_id=source_item.id,
                     result=direct_result,
+                    package_name=plugin_name,
                     thread_rebuild_scope=thread_rebuild_scope,
                     container_rebuild_scope=container_rebuild_scope,
+                    worker_id=worker_label,
+                    attempts=current_attempts,
                 )
-                self._storage.complete_package_task(source_item.id, plugin_name)
+                if supersession_pairs is None:
+                    return
             else:
                 supersession_pairs = self._storage.commit_processed_source_item(
                     source_item_id=source_item.id,
                     result=direct_result,
                     thread_rebuild_scope=thread_rebuild_scope,
                     container_rebuild_scope=container_rebuild_scope,
+                    **legacy_claim,
                 )
+                if supersession_pairs is None:
+                    return
             memory_vectors_added = self._vector_embedder.embed_process_result(direct_result)
             memory_provenance = build_memory_provenance(
                 direct_result,
@@ -403,10 +450,12 @@ class ItemProcessor:
                 if not final_failure:
                     backoff_seconds = self._queue_backoff_seconds(current_attempts)
                     next_attempt_at = utc_now() + timedelta(seconds=backoff_seconds)
-                self._storage.fail_package_task(
+                if not self._storage.fail_package_task(
                     source_item.id, plugin_name,
                     error=error, next_attempt_at=next_attempt_at, final=final_failure,
-                )
+                    worker_id=worker_label, attempts=current_attempts,
+                ):
+                    return
                 # Update source_item metadata for observability
                 self._storage.update_source_item_metadata(
                     source_item.id,
@@ -418,13 +467,15 @@ class ItemProcessor:
                 if not final_failure and source_item.processing_claimed_at is not None:
                     backoff_seconds = self._queue_backoff_seconds(current_attempts)
                     next_attempt_at = source_item.processing_claimed_at + timedelta(seconds=backoff_seconds)
-                self._storage.fail_source_item_processing(
+                if not self._storage.fail_source_item_processing(
                     source_item.id,
                     error=error,
                     next_attempt_at=next_attempt_at,
                     final=final_failure,
                     metadata_updates={OBSERVABILITY_METADATA_KEY: {"failure_category": failure_category}},
-                )
+                    **legacy_claim,
+                ):
+                    return
             self._emit_processing_failure(
                 source_item,
                 worker_id=worker_label,

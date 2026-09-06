@@ -317,3 +317,40 @@ class TestAICoreAnthropicLLMProvider:
             )
 
         assert attempts["count"] == 1
+
+
+    def test_cancellation_after_token_blocks_inference_request(self) -> None:
+        from providers.llm.base import ModelCallCancelledError, model_call_guard
+
+        allowed = True
+        inference_calls = 0
+
+        class FlippingTokenProvider:
+            def get_valid_token(self) -> str:
+                nonlocal allowed
+                allowed = False
+                return "tok-abc-123"
+
+        token_provider = FlippingTokenProvider()
+        catalog = AICoreDeploymentCatalog(
+            base_url="https://aicore.test", resource_group="default",
+            token_provider=token_provider, timeout_seconds=5,
+            client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=DEPLOYMENT_LIST))),
+        )
+
+        def inference_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal inference_calls
+            inference_calls += 1
+            return _claude_success_response()
+
+        provider = AICoreAnthropicLLMProvider(
+            provider_name="aicore", model="anthropic--claude-sonnet-latest",
+            base_url="https://aicore.test", resource_group="default",
+            token_provider=token_provider, deployment_catalog=catalog, timeout_seconds=5,
+            client=httpx.Client(transport=httpx.MockTransport(inference_handler)),
+        )
+
+        with model_call_guard(lambda: allowed):
+            with pytest.raises(ModelCallCancelledError):
+                provider.generate_json(system_prompt="s", user_prompt="u", schema_description="d")
+        assert inference_calls == 0

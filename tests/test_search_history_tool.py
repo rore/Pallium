@@ -35,7 +35,7 @@ def asgi_app(test_db_url: str):
 
 @pytest.fixture()
 def client(asgi_app) -> PalliumMcpClient:
-    c = PalliumMcpClient(PalliumContext(base_url="http://testserver", visibility="public"))
+    c = PalliumMcpClient(PalliumContext(base_url="http://testserver", container_ref="test-container", visibility="public"))
 
     async def _asgi_post(path, payload):
         transport = httpx.ASGITransport(app=asgi_app)

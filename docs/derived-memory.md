@@ -4,9 +4,11 @@ Derived memory is an experimental layer over stored session evidence. It turns
 selected messages into smaller reusable objects such as decisions, findings,
 facts, constraints, and work checkpoints.
 
-It is not required for Relay and is not Pallium's product definition. The
-current Session History installation still runs with configured semantic
-packages; making baseline history package-independent is planned work.
+It is not required for Relay and is not Pallium's product definition. Raw
+Session History is package-independent and works with semantic packages
+disabled by default. Derived packages are opt-in: enable one explicitly with
+`enabled = true`; provider-backed packages also require a provider and model.
+Disabling a package preserves stored derived data but prevents new processing.
 
 Read [How Pallium Works](how-it-works.md) for the product-level architecture and
 [Configuration](configuration.md) for the current setup.
@@ -49,12 +51,13 @@ product-proven — grouping and candidate selection need further hardening.
 
 `note` is different from other types: it bypasses standard type-classification
 extraction entirely. When a user explicitly asks to "remember something," the
-integrating agent passes `artifact_kind="note"` on ingest. Pallium uses a
-dedicated title-extraction prompt (not the standard extraction) to generate a
-short heading for retrieval, and preserves the original content verbatim. Notes
-are durable (never garbage-collected) and excluded from consolidation. At
-injection time, long notes are truncated with a `[+expand]` pointer so agents
-can expand them on demand.
+integrating agent passes `artifact_kind="note"` on ingest. With a suitable
+derived package enabled, Pallium uses its dedicated title-extraction prompt to
+generate a short retrieval heading while preserving the original content
+verbatim. With packages disabled, the note remains only a faithful raw record
+and makes no model call. Derived notes are durable (never garbage-collected),
+excluded from consolidation, and truncated at injection time with a
+`[+expand]` pointer for on-demand expansion.
 
 Items that don't match any specific type produce no memory object — only
 items with clear typed signals (decisions, investigation outcomes, interests,
@@ -259,6 +262,10 @@ Pallium processes stored evidence through semantic packages — each package
 extracts different kinds of reusable memory from the same upstream events.
 Packages run in parallel: the same ingested item can be processed by multiple
 packages independently.
+
+Packages are disabled by default. A package must be explicitly enabled before
+it processes new evidence; provider-backed packages additionally require
+`llm_provider` and `model`.
 
 The two production packages serve complementary recall jobs:
 

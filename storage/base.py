@@ -247,7 +247,9 @@ class StorageProvider(ABC):
         next_attempt_at: datetime | None,
         final: bool,
         metadata_updates: dict[str, object] | None = None,
-    ) -> None:
+        worker_id: str | None = None,
+        attempts: int | None = None,
+    ) -> bool:
         raise NotImplementedError
 
     @abstractmethod
@@ -259,7 +261,9 @@ class StorageProvider(ABC):
         thread_rebuild_scope: ThreadProcessingScope | None = None,
         container_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
-    ) -> list[tuple[str, str]]:
+        worker_id: str | None = None,
+        attempts: int | None = None,
+    ) -> list[tuple[str, str]] | None:
         """Commit a processed source item result, resolving supersession hints atomically.
 
         Returns the resolved supersession pairs (for observability).
@@ -293,7 +297,7 @@ class StorageProvider(ABC):
         claimed_at: datetime,
         completed_at: datetime | None = None,
         collection_watermark_at: datetime | None = None,
-    ) -> bool:
+    ) -> bool | None:
         """Atomically commit a process result and complete the thread processing scope.
 
         Returns True if there are pending items after completion (new requests arrived
@@ -330,7 +334,7 @@ class StorageProvider(ABC):
         worker_id: str,
         claimed_at: datetime,
         completed_at: datetime | None = None,
-    ) -> bool:
+    ) -> bool | None:
         raise NotImplementedError
 
     @abstractmethod
@@ -404,7 +408,9 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_source_items_for_thread(self, container_ref: str, thread_ref: str) -> list[SourceItem]:
+    def list_source_items_for_thread(
+        self, container_ref: str, thread_ref: str, *, package_name: str | None = None
+    ) -> list[SourceItem]:
         raise NotImplementedError
 
     @abstractmethod
@@ -413,6 +419,8 @@ class StorageProvider(ABC):
         container_ref: str,
         after_created_at: datetime | None = None,
         max_items: int | None = None,
+        *,
+        package_name: str | None = None,
     ) -> list[SourceItem]:
         raise NotImplementedError
 
@@ -600,6 +608,13 @@ class StorageProvider(ABC):
         return entries
 
     @abstractmethod
+    def raw_source_vector_backfill_needed(
+        self, *, lexical_text_view_name: str, vector_text_view_name: str
+    ) -> bool:
+        """Return whether an eligible lexical source lacks its raw vector row."""
+        raise NotImplementedError
+
+    @abstractmethod
     def count_index_entries_by_type(self, index_type: str) -> int:
         """Count index entries of a given type."""
         raise NotImplementedError
@@ -783,7 +798,9 @@ class StorageProvider(ABC):
         error: str,
         next_attempt_at: datetime | None,
         final: bool,
-    ) -> None:
+        worker_id: str | None = None,
+        attempts: int | None = None,
+    ) -> bool:
         raise NotImplementedError
 
     @abstractmethod
@@ -792,14 +809,22 @@ class StorageProvider(ABC):
         *,
         source_item_id: str,
         result: ProcessResult,
+        package_name: str | None = None,
         thread_rebuild_scope: ThreadProcessingScope | None = None,
         container_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
-    ) -> list[tuple[str, str]]:
-        """Commit a process result from multi-package processing.
+        worker_id: str | None = None,
+        attempts: int | None = None,
+    ) -> list[tuple[str, str]] | None:
+        """Commit a package result, returning None when its claim is stale."""
+        raise NotImplementedError
 
-        Like commit_processed_source_item but does NOT mark the source_item
-        as completed — source_item state is managed separately when all
-        packages are done.
-        """
+    def package_task_claim_is_current(
+        self, source_item_id: str, package_name: str, *, worker_id: str, attempts: int
+    ) -> bool:
+        raise NotImplementedError
+
+    def cancel_disabled_package_work(
+        self, package_names: tuple[str, ...]
+    ) -> dict[str, int]:
         raise NotImplementedError

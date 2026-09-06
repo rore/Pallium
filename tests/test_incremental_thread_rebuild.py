@@ -103,6 +103,7 @@ def _test_config(test_db_url: str) -> AppConfig:
             "agent_conversation_memory": SemanticPackageConfig(
                 name="agent_conversation_memory",
                 implementation="agent_conversation_memory",
+                enabled=True,
                 llm_provider="test_provider",
                 model="fake-model",
                 prompt_variant="strict_typed_memory_v6_work_state_examples",
@@ -140,6 +141,7 @@ def _dual_package_config(test_db_url: str) -> AppConfig:
             "agent_conversation_memory": SemanticPackageConfig(
                 name="agent_conversation_memory",
                 implementation="agent_conversation_memory",
+                enabled=True,
                 llm_provider="test_provider",
                 model="fake-model",
                 prompt_variant="strict_typed_memory_v6_work_state_examples",
@@ -156,6 +158,7 @@ def _dual_package_config(test_db_url: str) -> AppConfig:
             "conversational_knowledge": SemanticPackageConfig(
                 name="conversational_knowledge",
                 implementation="conversational_knowledge",
+                enabled=True,
                 llm_provider="test_provider",
                 model="fake-model",
             ),

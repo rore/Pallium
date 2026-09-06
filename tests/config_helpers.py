@@ -23,7 +23,7 @@ DEFAULT_CONSOLIDATION_POLICY = ConsolidationPolicy(
 )
 
 DEMO_SEMANTIC_PACKAGES = {
-    "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
+    "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory", enabled=True),
 }
 
 
@@ -60,6 +60,7 @@ def build_llm_test_config(
             "llm_agent_memory": SemanticPackageConfig(
                 name="llm_agent_memory",
                 implementation="llm_agent_memory",
+                enabled=True,
                 llm_provider=provider_name,
                 model=model,
                 prompt_variant=llm_prompt,
@@ -67,6 +68,7 @@ def build_llm_test_config(
             "agent_conversation_memory": SemanticPackageConfig(
                 name="agent_conversation_memory",
                 implementation="agent_conversation_memory",
+                enabled=True,
                 llm_provider=provider_name,
                 model=model,
                 prompt_variant=agent_conversation_prompt,

@@ -9,6 +9,9 @@ MCP tools and installed integrations instead of calling these routes directly.
 
 - `POST /items` records governed turns and other source evidence.
 - `POST /query` with `source_only: true` searches raw historical sources.
+- Source-only queries work without an active semantic package. A normal derived
+  query without an active default package returns `decision_reason:
+  "semantic_package_unavailable"` and no results.
 - `GET /source/{source_item_id}/context` returns a bounded surrounding window.
 - `POST /historical-access/{attempt_id}/delivery` records which returned history
   was exposed to the requesting session.
@@ -316,6 +319,8 @@ Response fields:
   - `"low_value_query"` — the query is a greeting, acknowledgement, or meta-conversation that won't benefit from memory
   - `"lane_ambiguity"` — the query didn't clearly map to a retrieval strategy; Pallium chose silence over a guess
   - `"no_lane_eligible"` — no structural retrieval lane (work resumption, evidence trace, residual recall) matched the query shape
+  - `"semantic_package_unavailable"` — no active default semantic package is
+    available for a normal derived query
 - `injectable_blocks` — ready-to-use blocks for prompt injection, each with
   `block_type`, `title`, `text`, optional `memory_type`, optional
   `memory_object_id`, and `evidence` refs. `memory_object_id` can be used
@@ -663,8 +668,9 @@ Default: `"private"`.
 
 ## Practical Notes
 
-- the semantic package is selected by the server-side `default_use_case`
-  configuration; callers do not normally need to send `use_case`
+- the active semantic package is selected by the server-side `default_use_case`
+  configuration; packages must be explicitly enabled, and callers do not
+  normally need to send `use_case`
 - `agent_conversation_memory` is the main package described by the current docs
 - keep source content compact and explicit; the current semantic layer is
   text-oriented

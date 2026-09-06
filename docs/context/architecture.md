@@ -22,9 +22,10 @@ Relay and Session History share session identity, scope, storage, integration,
 and operational foundations. Relay delivery does not depend on history search,
 ranking, embeddings, or an LLM.
 
-Derived memory is optional in the product model. The current Session History
-installation still runs with configured semantic packages; package-independent
-baseline Session History is planned.
+Derived memory is optional in the product model. Raw Session History is
+package-independent and works with semantic packages disabled by default.
+Derived packages require explicit `enabled = true`; provider-backed packages
+also require a provider and model.
 
 Internal layers:
 
@@ -136,8 +137,10 @@ Language-agnostic derived-signal principle:
 
 Embedding write path:
 
-- embedding happens at background processing time, not at ingest
-- `SourceItem` embedding is plugin-owned: the semantic plugin boundary exposes a package method that controls which text views are embedded for source items
+- eligible raw `SourceItem` vector rows are created at ingest; embedding runs
+  immediately when no package worker is needed, or in background processing and
+  rebuild reconciliation otherwise
+- raw source vectors are core-owned; semantic packages may add their own vector views
 - all 6 promoted memory types are embedded
 - `OnnxEmbeddingProvider` and `FastEmbedProvider` are both available; fastembed requires Python 3.12/3.13
 

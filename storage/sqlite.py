@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, TypeVar
 
 from sqlalchemy import and_, create_engine, event, func, or_, select, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, aliased, sessionmaker
 from sqlalchemy.exc import IntegrityError
 
 from core.errors import SupersessionConflictError, is_transient_error
@@ -71,6 +71,34 @@ def _extract_display_text(payload: dict) -> str:
         if val:
             return str(val)
     return ""
+
+
+def _source_item_enabled_for_package(package_name: str):
+    any_package_row = select(PackageProcessingStatusRecord.source_item_id).where(
+        PackageProcessingStatusRecord.source_item_id == SourceItemRecord.id,
+        PackageProcessingStatusRecord.package_name == package_name,
+    ).exists()
+    eligible_package_row = select(PackageProcessingStatusRecord.source_item_id).where(
+        PackageProcessingStatusRecord.source_item_id == SourceItemRecord.id,
+        PackageProcessingStatusRecord.package_name == package_name,
+        or_(
+            PackageProcessingStatusRecord.status != "skipped",
+            PackageProcessingStatusRecord.error.is_(None),
+            PackageProcessingStatusRecord.error != "package_disabled",
+        ),
+    ).exists()
+    return or_(
+        eligible_package_row,
+        and_(
+            SourceItemRecord.use_case == package_name,
+            SourceItemRecord.processing_status == "completed",
+            or_(
+                SourceItemRecord.processing_error.is_(None),
+                SourceItemRecord.processing_error != "package_disabled",
+            ),
+            ~any_package_row,
+        ),
+    )
 
 
 class SQLiteStorageProvider(
@@ -451,15 +479,18 @@ class SQLiteStorageProvider(
             ).all()
             return {record.id: self._to_source_item(record) for record in records}
 
-    def list_source_items_for_thread(self, container_ref: str, thread_ref: str) -> list[SourceItem]:
+    def list_source_items_for_thread(
+        self, container_ref: str, thread_ref: str, *, package_name: str | None = None
+    ) -> list[SourceItem]:
         with self._session_factory() as session:
+            query = select(SourceItemRecord).where(
+                SourceItemRecord.container_ref == container_ref,
+                SourceItemRecord.thread_ref == thread_ref,
+            )
+            if package_name is not None:
+                query = query.where(_source_item_enabled_for_package(package_name))
             records = session.scalars(
-                select(SourceItemRecord)
-                .where(
-                    SourceItemRecord.container_ref == container_ref,
-                    SourceItemRecord.thread_ref == thread_ref,
-                )
-                .order_by(SourceItemRecord.created_at.asc(), SourceItemRecord.id.asc())
+                query.order_by(SourceItemRecord.created_at.asc(), SourceItemRecord.id.asc())
             ).all()
         return [self._to_source_item(record) for record in records]
 
@@ -528,6 +559,8 @@ class SQLiteStorageProvider(
         container_ref: str,
         after_created_at: datetime | None = None,
         max_items: int | None = None,
+        *,
+        package_name: str | None = None,
     ) -> list[SourceItem]:
         with self._session_factory() as session:
             query = (
@@ -537,6 +570,8 @@ class SQLiteStorageProvider(
                     SourceItemRecord.thread_position == 1,
                 )
             )
+            if package_name is not None:
+                query = query.where(_source_item_enabled_for_package(package_name))
             if after_created_at is not None:
                 query = query.where(SourceItemRecord.created_at > after_created_at)
             if max_items is not None:
@@ -1263,6 +1298,39 @@ class SQLiteStorageProvider(
             ).first()
             return self._to_index_entry(row) if row else None
 
+    def raw_source_vector_backfill_needed(
+        self, *, lexical_text_view_name: str, vector_text_view_name: str,
+    ) -> bool:
+        vector_entry = aliased(IndexEntryRecord)
+        statement = (
+            select(IndexEntryRecord.id)
+            .join(
+                SourceItemRecord,
+                and_(
+                    SourceItemRecord.id == IndexEntryRecord.target_id,
+                    IndexEntryRecord.target_kind == "source_item",
+                ),
+            )
+            .outerjoin(
+                vector_entry,
+                and_(
+                    vector_entry.target_kind == "source_item",
+                    vector_entry.target_id == IndexEntryRecord.target_id,
+                    vector_entry.index_type == "vector",
+                    vector_entry.text_view_name == vector_text_view_name,
+                ),
+            )
+            .where(
+                IndexEntryRecord.index_type == "lexical",
+                IndexEntryRecord.text_view_name == lexical_text_view_name,
+                SourceItemRecord.artifact_kind.in_(("message", "assistant_output")),
+                func.length(SourceItemRecord.content) >= 40,
+                vector_entry.id.is_(None),
+            )
+            .limit(1)
+        )
+        with self._session_factory() as session:
+            return session.scalar(statement) is not None
     def list_index_entries_by_type(self, index_type: str) -> list[IndexEntry]:
         with self._session_factory() as session:
             records = session.scalars(

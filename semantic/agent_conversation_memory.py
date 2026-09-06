@@ -13,6 +13,12 @@ from semantic.agent_conversation_memory_note import build_note_memory
 from semantic.agent_conversation_memory_routing import RoutingOverrides, route_query_results
 from semantic.agent_conversation_memory_threads import _supports_thread_aggregation, build_consolidated_memory, build_pattern_memory, build_thread_summary
 
+AGENT_CONVERSATION_MEMORY_RETENTION_POLICY = MemoryRetentionPolicy(
+    durable_types=frozenset({"decision", "investigation_outcome", "note"}),
+    working_types=frozenset({"thread_summary", "task_checkpoint", "continuity_memory", "pattern_memory"}),
+    orphan_delete_types=frozenset({"turn_summary"}),
+)
+
 
 class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, ConsolidationSemanticPlugin):
     name = 'agent_conversation_memory'
@@ -64,11 +70,7 @@ class AgentConversationMemoryPlugin(ThreadAggregationSemanticPlugin, Consolidati
 
     @property
     def memory_retention_policy(self) -> MemoryRetentionPolicy:
-        return MemoryRetentionPolicy(
-            durable_types=frozenset({"decision", "investigation_outcome", "note"}),
-            working_types=frozenset({"thread_summary", "task_checkpoint", "continuity_memory", "pattern_memory"}),
-            orphan_delete_types=frozenset({"turn_summary"}),
-        )
+        return AGENT_CONVERSATION_MEMORY_RETENTION_POLICY
 
     @property
     def pattern_memory_schema_id(self) -> str:

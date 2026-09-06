@@ -4,7 +4,7 @@ import pytest
 
 from fastapi.testclient import TestClient
 
-from app.config import AppConfig
+from app.config import AppConfig, SemanticPackageConfig
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import _vector_index_path_for_sqlite
 from app.main import create_app
@@ -163,6 +163,13 @@ def test_missing_required_visibility_creates_skipped_not_pending(monkeypatch, te
                 storage_backend="sqlite",
                 sqlite_url=test_db_url,
                 default_use_case="agent_conversation_memory",
+                semantic_packages={
+                    "agent_conversation_memory": SemanticPackageConfig(
+                        name="agent_conversation_memory",
+                        implementation="agent_conversation_memory",
+                        enabled=True,
+                    ),
+                },
                 llm_provider="openai_compatible",
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",
@@ -237,6 +244,13 @@ def test_llm_plugin_path_processes_after_worker_completion(monkeypatch, test_db_
                 storage_backend="sqlite",
                 sqlite_url=test_db_url,
                 default_use_case="llm_agent_memory",
+                semantic_packages={
+                    "llm_agent_memory": SemanticPackageConfig(
+                        name="llm_agent_memory",
+                        implementation="llm_agent_memory",
+                        enabled=True,
+                    ),
+                },
                 llm_provider="openai_compatible",
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",
@@ -276,6 +290,13 @@ def test_worker_failure_is_reported_via_processing_endpoint(monkeypatch, test_db
                 storage_backend="sqlite",
                 sqlite_url=test_db_url,
                 default_use_case="llm_agent_memory",
+                semantic_packages={
+                    "llm_agent_memory": SemanticPackageConfig(
+                        name="llm_agent_memory",
+                        implementation="llm_agent_memory",
+                        enabled=True,
+                    ),
+                },
                 llm_provider="openai_compatible",
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",

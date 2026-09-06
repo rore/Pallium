@@ -96,6 +96,7 @@ def test_source_vector_embedded_even_when_llm_fails(test_db_url: str, tmp_path: 
         content_type="text/plain",
         content="Decision: use item event time for reservation ordering to avoid duplicate holds.",
         metadata=None,
+        artifact_kind="message",
         use_case=plugin.name,
     )
     storage.create_source_item(source_item)
@@ -131,6 +132,12 @@ def test_vector_index_known_entry_ids(tmp_path: Path) -> None:
     vi.remove("entry-a")
     assert vi.known_entry_ids() == frozenset({"entry-b"})
 
+
+def test_vector_index_contains_uses_direct_membership():
+    vi = VectorIndex.__new__(VectorIndex)
+    vi._id_to_key = {"entry-a": 0}
+    assert vi.contains("entry-a") is True
+    assert vi.contains("missing") is False
 
 @requires_usearch
 def test_reconcile_forward_embeds_missing_entries(test_db_url: str, tmp_path: Path) -> None:

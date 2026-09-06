@@ -5,7 +5,10 @@ from typing import Any
 
 import httpx
 
-from providers.llm.base import LLMJsonResponse, LLMProviderError, LLMRetryPolicy, ResilientLLMProvider
+from providers.llm.base import (
+    LLMJsonResponse, LLMProviderError, LLMRetryPolicy, ResilientLLMProvider,
+    check_model_call_allowed,
+)
 
 
 class OpenAICompatibleLLMProvider(ResilientLLMProvider):
@@ -50,6 +53,7 @@ class OpenAICompatibleLLMProvider(ResilientLLMProvider):
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
+        check_model_call_allowed()
         return self._client.post(f"{self._base_url}/chat/completions", json=payload, headers=headers)
 
     def _extract_text(self, body: dict[str, Any]) -> str:

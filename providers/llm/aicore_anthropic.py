@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from providers.llm.aicore_auth import AICoreDeploymentCatalog, AICoreTokenProvider
-from providers.llm.base import LLMRetryPolicy, ResilientLLMProvider
+from providers.llm.base import LLMRetryPolicy, ResilientLLMProvider, check_model_call_allowed
 
 
 class AICoreAnthropicLLMProvider(ResilientLLMProvider):
@@ -73,6 +73,7 @@ class AICoreAnthropicLLMProvider(ResilientLLMProvider):
             "AI-Resource-Group": self._resource_group,
         }
         url = f"{self._base_url}/v2/inference/deployments/{deployment_id}/invoke"
+        check_model_call_allowed()
         return self._client.post(url, json=payload, headers=headers)
 
     def _extract_text(self, body: dict[str, Any]) -> str:

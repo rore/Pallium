@@ -58,23 +58,21 @@ under Paused).
 vNext is validation-first and experiment-gated: each phase must pass its live
 experiment before the next earns significant investment. The product has two
 primary capabilities: Agent Relay and **Session History**.
-The Session History target is a package-independent raw record of governed agent
-work. Generated memories become optional and disabled by default when the queued
-decoupling slice ships.
+The Session History target is now a package-independent raw record of governed
+agent work. Generated memories are optional and disabled by default.
 
-The Session History slice is ordered. The first item is shipped; the next two are
-vNext features, followed by a committed, time-boxed investigation:
+The Session History slice is ordered. The first three items are shipped; the next
+step is a committed, time-boxed investigation:
 
 1. `add-structural-session-work-references` — shipped: attach branch, exact Agent
    Workflow Work Record, and explicit issue/PR/ticket references without semantic
    inference.
-2. `add-distinct-work-and-broad-history-search-tools` — provide exact work-scoped
+2. `add-distinct-work-and-broad-history-search-tools` — shipped: provide exact work-scoped
    search and broad history search as separate agent operations over one retrieval
    and expansion implementation.
-3. `decouple-session-history-from-derived-packages` — make start, ingest, raw
+3. `decouple-session-history-from-derived-packages` — shipped: start, ingest, raw
    indexing, governance, search, and expansion work with zero semantic packages;
-   derived packages default off. There is no migration requirement for this
-   single-operator deployment, but existing code and stored outputs remain usable.
+   derived packages default off. Existing code and stored outputs remain usable.
 4. `investigate-history-navigation-and-on-demand-compression` — compare flat,
    grouped, and index-first access plus raw, temporary on-demand compression, and
    persistent-derived representations before committing to another structure.

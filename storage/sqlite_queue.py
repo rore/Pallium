@@ -256,13 +256,24 @@ class SQLiteQueueMixin:
         next_attempt_at: datetime | None,
         final: bool,
         metadata_updates: dict[str, object] | None = None,
-    ) -> None:
+        worker_id: str | None = None,
+        attempts: int | None = None,
+    ) -> bool:
         finished_at = utc_now()
 
-        def _do(session):
+        with self._begin_immediate() as session:
             record = session.get(SourceItemRecord, source_item_id)
             if record is None:
                 raise KeyError(source_item_id)
+            if worker_id is not None:
+                if attempts is None:
+                    raise ValueError("attempts is required with worker_id")
+                if (
+                    record.processing_status != "processing"
+                    or record.processing_claimed_by != worker_id
+                    or record.processing_attempts != attempts
+                ):
+                    return False
             if metadata_updates:
                 existing_metadata = self._loads(record.metadata_json)
                 existing_metadata.update(metadata_updates)
@@ -274,8 +285,7 @@ class SQLiteQueueMixin:
             record.processing_lease_expires_at = None
             record.processing_completed_at = finished_at if final else None
             record.processing_next_attempt_at = next_attempt_at
-
-        self._with_retry(_do)
+            return True
 
     def retry_failed_source_items(self, *, failure_category: str, limit: int) -> dict[str, int]:
         """Requeue terminal failures in one transaction without rerunning completed packages."""
@@ -341,26 +351,40 @@ class SQLiteQueueMixin:
         thread_rebuild_scope: ThreadProcessingScope | None = None,
         container_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
-    ) -> list[tuple[str, str]]:
+        worker_id: str | None = None,
+        attempts: int | None = None,
+    ) -> list[tuple[str, str]] | None:
         finished_at = completed_at or utc_now()
 
-        def _do(session):
+        with self._begin_immediate() as session:
+            record = session.get(SourceItemRecord, source_item_id)
+            if record is None:
+                raise KeyError(source_item_id)
+            if worker_id is not None:
+                if attempts is None:
+                    raise ValueError("attempts is required with worker_id")
+                if (
+                    record.processing_status != "processing"
+                    or record.processing_claimed_by != worker_id
+                    or record.processing_attempts != attempts
+                ):
+                    return None
             self._persist_process_result_in_session(session, result)
             supersession_pairs = self._resolve_supersession_pairs_in_session(session, result)
             self._apply_supersession_pairs_in_session(session, supersession_pairs)
-            self._apply_source_item_metadata_updates_in_session(session, result.source_item_metadata_updates)
-            self._refresh_memory_freshness_for_ids_in_session(session, [memory.id for memory in result.memory_objects])
+            self._apply_source_item_metadata_updates_in_session(
+                session, result.source_item_metadata_updates
+            )
+            self._refresh_memory_freshness_for_ids_in_session(
+                session, [memory.id for memory in result.memory_objects]
+            )
             if thread_rebuild_scope is not None:
                 self._upsert_thread_processing_scope_in_session(
-                    session,
-                    scope=thread_rebuild_scope,
-                    requested_at=finished_at,
+                    session, scope=thread_rebuild_scope, requested_at=finished_at
                 )
             if container_rebuild_scope is not None:
                 self._upsert_thread_processing_scope_in_session(
-                    session,
-                    scope=container_rebuild_scope,
-                    requested_at=finished_at,
+                    session, scope=container_rebuild_scope, requested_at=finished_at
                 )
             self._after_commit_processed_source_item_persist(
                 session,
@@ -368,9 +392,6 @@ class SQLiteQueueMixin:
                 result=result,
                 supersession_pairs=supersession_pairs,
             )
-            record = session.get(SourceItemRecord, source_item_id)
-            if record is None:
-                raise KeyError(source_item_id)
             record.processing_status = "completed"
             record.processing_completed_at = finished_at
             record.processing_error = None
@@ -379,8 +400,6 @@ class SQLiteQueueMixin:
             record.processing_lease_expires_at = None
             record.processing_next_attempt_at = None
             return supersession_pairs
-
-        return self._with_retry(_do)
 
     def commit_process_result(
         self,
@@ -409,24 +428,24 @@ class SQLiteQueueMixin:
         claimed_at: datetime,
         completed_at: datetime | None = None,
         collection_watermark_at: datetime | None = None,
-    ) -> bool:
+    ) -> bool | None:
         finished_at = completed_at or utc_now()
         normalized_claimed_at = self._normalize_datetime(claimed_at) or claimed_at
 
         def _do(session):
+            record = session.get(ThreadProcessingLeaseRecord, scope_key)
+            if record is None:
+                raise KeyError(scope_key)
+            record_claimed_at = self._normalize_datetime(record.processing_claimed_at)
+            if record.processing_claimed_by != worker_id or record_claimed_at != normalized_claimed_at:
+                return None
+
             self._persist_process_result_in_session(session, result)
             resolved_pairs = self._resolve_supersession_pairs_in_session(session, result)
             all_pairs = resolved_pairs + (supersession_pairs or [])
             self._apply_supersession_pairs_in_session(session, all_pairs)
             self._apply_source_item_metadata_updates_in_session(session, result.source_item_metadata_updates)
             self._refresh_memory_freshness_for_ids_in_session(session, [memory.id for memory in result.memory_objects])
-
-            record = session.get(ThreadProcessingLeaseRecord, scope_key)
-            if record is None:
-                raise KeyError(scope_key)
-            record_claimed_at = self._normalize_datetime(record.processing_claimed_at)
-            if record.processing_claimed_by != worker_id or record_claimed_at != normalized_claimed_at:
-                return record.requested_at is not None
             requested_at = self._normalize_datetime(record.requested_at)
             pending_after = requested_at is not None and requested_at > normalized_claimed_at
             if not pending_after:
@@ -440,7 +459,8 @@ class SQLiteQueueMixin:
             record.updated_at = finished_at
             return pending_after
 
-        return self._with_retry(_do)
+        with self._begin_immediate() as session:
+            return _do(session)
 
     def claim_thread_processing_scope(
         self,
@@ -532,7 +552,7 @@ class SQLiteQueueMixin:
         worker_id: str,
         claimed_at: datetime,
         completed_at: datetime | None = None,
-    ) -> bool:
+    ) -> bool | None:
         finished_at = completed_at or utc_now()
         normalized_claimed_at = self._normalize_datetime(claimed_at) or claimed_at
 
@@ -542,7 +562,7 @@ class SQLiteQueueMixin:
                 raise KeyError(scope_key)
             record_claimed_at = self._normalize_datetime(record.processing_claimed_at)
             if record.processing_claimed_by != worker_id or record_claimed_at != normalized_claimed_at:
-                return record.requested_at is not None
+                return None
             requested_at = self._normalize_datetime(record.requested_at)
             pending_after = requested_at is not None and requested_at > normalized_claimed_at
             if not pending_after:
@@ -554,7 +574,8 @@ class SQLiteQueueMixin:
             record.updated_at = finished_at
             return pending_after
 
-        return self._with_retry(_do)
+        with self._begin_immediate() as session:
+            return _do(session)
 
     def get_thread_processing_lease(self, scope_key: str) -> ThreadProcessingLease | None:
         with self._session_factory() as session:
@@ -1589,13 +1610,21 @@ class SQLiteQueueMixin:
         error: str,
         next_attempt_at: datetime | None,
         final: bool,
-    ) -> None:
+        worker_id: str | None = None,
+        attempts: int | None = None,
+    ) -> bool:
         finished_at = utc_now()
 
         def _do(session):
             record = self._find_package_task_record(session, source_item_id, package_name)
             if record is None:
                 raise KeyError(f"({source_item_id}, {package_name})")
+            if worker_id is not None and (
+                record.status != "processing"
+                or record.claimed_by != worker_id
+                or record.attempts != attempts
+            ):
+                return False
             record.status = "failed" if final else "pending"
             record.error = error
             record.claimed_by = None
@@ -1605,9 +1634,10 @@ class SQLiteQueueMixin:
             record.next_attempt_at = next_attempt_at
             if final:
                 self._sync_source_item_if_all_packages_terminal(session, source_item_id, finished_at)
+            return True
 
-        self._with_retry(_do)
-
+        with self._begin_immediate() as session:
+            return _do(session)
     def _sync_source_item_if_all_packages_terminal(
         self,
         session: Session,
@@ -1652,23 +1682,116 @@ class SQLiteQueueMixin:
             )
         ).first()
 
+    def package_task_claim_is_current(
+        self,
+        source_item_id: str,
+        package_name: str,
+        *,
+        worker_id: str,
+        attempts: int,
+    ) -> bool:
+        with self._session_factory() as session:
+            record = self._find_package_task_record(session, source_item_id, package_name)
+            return bool(
+                record is not None
+                and record.status == "processing"
+                and record.claimed_by == worker_id
+                and record.attempts == attempts
+            )
+
+    def cancel_disabled_package_work(
+        self, package_names: tuple[str, ...]
+    ) -> dict[str, int]:
+        if not package_names:
+            return {"package_tasks": 0, "legacy_source_items": 0, "rebuild_scopes": 0}
+        finished_at = utc_now()
+
+        def _do(session):
+            tasks = session.scalars(
+                select(PackageProcessingStatusRecord).where(
+                    PackageProcessingStatusRecord.package_name.in_(package_names),
+                    PackageProcessingStatusRecord.status.in_(("pending", "failed", "processing")),
+                )
+            ).all()
+            source_item_ids = {task.source_item_id for task in tasks}
+            for task in tasks:
+                task.status = "skipped"
+                task.error = "package_disabled"
+                task.claimed_by = None
+                task.claimed_at = None
+                task.lease_expires_at = None
+                task.completed_at = finished_at
+                task.next_attempt_at = None
+            for source_item_id in source_item_ids:
+                self._sync_source_item_if_all_packages_terminal(session, source_item_id, finished_at)
+
+            has_package_rows = select(PackageProcessingStatusRecord.source_item_id).where(
+                PackageProcessingStatusRecord.source_item_id == SourceItemRecord.id
+            ).exists()
+            legacy_items = session.scalars(
+                select(SourceItemRecord).where(
+                    SourceItemRecord.use_case.in_(package_names),
+                    SourceItemRecord.processing_status.in_(("pending", "failed", "processing")),
+                    ~has_package_rows,
+                )
+            ).all()
+            for source_item in legacy_items:
+                source_item.processing_status = "skipped"
+                source_item.processing_error = "package_disabled"
+                source_item.processing_claimed_by = None
+                source_item.processing_claimed_at = None
+                source_item.processing_lease_expires_at = None
+                source_item.processing_completed_at = finished_at
+                source_item.processing_next_attempt_at = None
+            scopes = session.scalars(
+                select(ThreadProcessingLeaseRecord).where(
+                    ThreadProcessingLeaseRecord.use_case.in_(package_names),
+                    (ThreadProcessingLeaseRecord.requested_at.isnot(None))
+                    | (ThreadProcessingLeaseRecord.processing_claimed_by.isnot(None)),
+                )
+            ).all()
+            for scope in scopes:
+                scope.requested_at = None
+                scope.processing_claimed_by = None
+                scope.processing_claimed_at = None
+                scope.processing_lease_expires_at = None
+                scope.processing_completed_at = finished_at
+                scope.updated_at = finished_at
+            return {
+                "package_tasks": len(tasks),
+                "legacy_source_items": len(legacy_items),
+                "rebuild_scopes": len(scopes),
+            }
+
+        with self._begin_immediate() as session:
+            return _do(session)
     def commit_package_process_result(
         self,
         *,
         source_item_id: str,
         result: ProcessResult,
+        package_name: str | None = None,
         thread_rebuild_scope: ThreadProcessingScope | None = None,
         container_rebuild_scope: ThreadProcessingScope | None = None,
         completed_at: datetime | None = None,
-    ) -> list[tuple[str, str]]:
-        """Commit a process result from multi-package processing.
-
-        Persists memory objects, relations, index entries, and handles supersession
-        and thread rebuild scope — but does NOT modify source_item processing state.
-        """
+        worker_id: str | None = None,
+        attempts: int | None = None,
+    ) -> list[tuple[str, str]] | None:
+        """Atomically persist a package result only while its claim is current."""
         finished_at = completed_at or utc_now()
 
         def _do(session):
+            task = None
+            if worker_id is not None:
+                if package_name is None or attempts is None:
+                    raise ValueError("package_name and attempts are required with worker_id")
+                task = self._find_package_task_record(session, source_item_id, package_name)
+                if task is None or (
+                    task.status != "processing"
+                    or task.claimed_by != worker_id
+                    or task.attempts != attempts
+                ):
+                    return None
             self._persist_process_result_in_session(session, result)
             supersession_pairs = self._resolve_supersession_pairs_in_session(session, result)
             self._apply_supersession_pairs_in_session(session, supersession_pairs)
@@ -1676,15 +1799,11 @@ class SQLiteQueueMixin:
             self._refresh_memory_freshness_for_ids_in_session(session, [memory.id for memory in result.memory_objects])
             if thread_rebuild_scope is not None:
                 self._upsert_thread_processing_scope_in_session(
-                    session,
-                    scope=thread_rebuild_scope,
-                    requested_at=finished_at,
+                    session, scope=thread_rebuild_scope, requested_at=finished_at,
                 )
             if container_rebuild_scope is not None:
                 self._upsert_thread_processing_scope_in_session(
-                    session,
-                    scope=container_rebuild_scope,
-                    requested_at=finished_at,
+                    session, scope=container_rebuild_scope, requested_at=finished_at,
                 )
             self._after_commit_processed_source_item_persist(
                 session,
@@ -1692,9 +1811,16 @@ class SQLiteQueueMixin:
                 result=result,
                 supersession_pairs=supersession_pairs,
             )
-            # NOTE: We intentionally do NOT touch source_item processing state here.
-            # Source_item completion is managed by the caller after all packages are done.
+            if task is not None:
+                task.status = "completed"
+                task.completed_at = finished_at
+                task.error = None
+                task.claimed_by = None
+                task.claimed_at = None
+                task.lease_expires_at = None
+                task.next_attempt_at = None
+                self._sync_source_item_if_all_packages_terminal(session, source_item_id, finished_at)
             return supersession_pairs
 
-        return self._with_retry(_do)
-
+        with self._begin_immediate() as session:
+            return _do(session)

@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from providers.llm.base import LLMRetryPolicy, ResilientLLMProvider
+from providers.llm.base import LLMRetryPolicy, ResilientLLMProvider, check_model_call_allowed
 
 
 ANTHROPIC_VERSION = "2023-06-01"
@@ -64,6 +64,7 @@ class AnthropicClaudeLLMProvider(ResilientLLMProvider):
                 headers["Authorization"] = f"Bearer {self._api_key}"
             else:
                 headers["x-api-key"] = self._api_key
+        check_model_call_allowed()
         return self._client.post(f"{self._base_url}/messages", json=payload, headers=headers)
 
     def _extract_text(self, body: dict[str, Any]) -> str:

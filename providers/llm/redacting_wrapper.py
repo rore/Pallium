@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from providers.llm.base import LLMJsonResponse, LLMProvider
+from providers.llm.base import LLMJsonResponse, LLMProvider, check_model_call_allowed
 from redaction import redact_sensitive
 
 
@@ -86,6 +86,7 @@ class RedactingLLMProviderWrapper(LLMProvider):
     def generate_json(
         self, *, system_prompt: str, user_prompt: str, schema_description: str,
     ) -> LLMJsonResponse:
+        check_model_call_allowed()
         response = self._inner.generate_json(
             system_prompt=system_prompt,
             user_prompt=user_prompt,

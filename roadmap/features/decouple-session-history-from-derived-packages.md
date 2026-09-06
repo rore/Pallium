@@ -1,7 +1,7 @@
 ---
 id: decouple-session-history-from-derived-packages
 title: Make raw Session History independent of derived packages
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-vnext-session-history
@@ -14,16 +14,14 @@ Pallium starts, records, governs, searches, and expands raw agent session histor
 without an LLM or enabled semantic package. Generated memories become optional
 consumers of the raw history substrate and are disabled by default.
 
-## Current coupling to remove
+## Coupling removed
 
-- `build_service()` rejects a `default_use_case` that is not an active plugin.
-- `ingest_item()` indexes the selected semantic plugin before storing a raw item.
-- Source vector text is selected through the semantic plugin and queued processing.
-- Source-only search reads visibility behavior from the default plugin.
-- Already queued work for a package that becomes unavailable currently fails as an
-  unknown use case.
-- Explicit notes/remember operations currently use the agent-conversation package;
-  their final ownership remains an explicit design decision for this feature.
+- Service startup no longer requires an active default semantic package.
+- Raw ingestion and lexical indexing happen before optional package processing.
+- Raw-source vector text and indexing are package-independent.
+- Source-only search enforces visibility without consulting a semantic package.
+- Disabling a package cancels its unfinished source and rebuild work.
+- Explicit notes and memory-write operations remain core capabilities.
 
 ## Required package-free behavior
 
@@ -44,20 +42,22 @@ Package-level `enabled` remains the control. Do not add a second
 `generation_enabled` flag. Derived packages are disabled by default, but their
 implementations and stored outputs are not deleted and may be re-enabled.
 
-## Decisions required during planning
+## Decisions made
 
-1. Which event kinds are searchable Session History: user, assistant, tool,
-   command, and hook-generated records.
-2. Whether queued package work is cancelled, retained, or drained when a package is
-   disabled.
-3. Whether stored derived memories remain queryable while their package is disabled.
-4. Whether explicit notes/remember operations belong to the raw core or an optional
-   package.
-5. Confirm that every raw governance operation is package-independent.
+1. Session History keeps the existing governed SourceItem selection made by each
+   integration; this feature adds no package-specific event allowlist.
+2. Disabling a package cancels its unfinished source and rebuild work. Completed
+   package output is preserved.
+3. Stored, completed derived memories are preserved when their package is disabled.
+   Direct expansion and governed mutations remain available; semantic querying
+   resumes when an active default package is enabled.
+4. Explicit note and memory-write operations remain governed core capabilities;
+   package-free note ingestion stores only the faithful raw record.
+5. Raw ingestion, lexical and optional vector indexing, search, expansion,
+   forgetting, deletion, visibility, and retention are package-independent.
 
-These decisions block code editing, not creation of this roadmap item. There is no
-migration requirement for changing defaults because Pallium currently has one
-operator.
+There is no migration requirement for changing defaults because Pallium currently
+has one operator.
 
 ## Done when
 

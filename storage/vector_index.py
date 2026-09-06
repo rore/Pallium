@@ -207,6 +207,10 @@ class VectorIndex:
         """Return the embedding schema version this index was built with."""
         return self._embedding_schema_version
 
+    def contains(self, entry_id: str) -> bool:
+        """Return whether a vector exists for entry_id."""
+        return entry_id in self._id_to_key
+
     def known_entry_ids(self) -> frozenset[str]:
         """Return the set of entry IDs currently in the index."""
         return frozenset(self._id_to_key.keys())
