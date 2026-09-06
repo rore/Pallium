@@ -39,7 +39,7 @@
 - Failing CI: GitHub Actions run 34040349249, job 101505844008.
 - Focused Windows regression: 4 passed in 0.55s.
 - Complete service module: 32 passed, 18 skipped in 0.87s.
-- Verification ran against the pending diff based on f2662666; the final commit SHA will be added after commit.
+- Verification ran against the test diff committed as 2596190e (base f2662666).
 
 ## Skill feedback (unsent)
 
