@@ -163,7 +163,7 @@ await hooks["chat.message"](
   {metadata:{pallium_work_refs:__EXPLICIT__}},
   {message:{sessionID:"oc-user"},parts:[{type:"text",text:"Continue this substantial task"}]}
 );
-await hooks.event({event:{type:"session.idle",properties:{sessionID:"oc-stop"}}});
+await hooks.event({event:{type:"session.idle",properties:{sessionID:"oc-user"}}});
 console.log(JSON.stringify(
   calls.filter(call=>call.url.includes("/item-and-query")||call.url.includes("/items")).map(call=>call.body)
 ));
