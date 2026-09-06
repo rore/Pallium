@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-import json
+import logging
 import os
 import re
 import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 
 _ACTIVE_WRITER = "already has an active writer"
@@ -17,16 +20,21 @@ _ACTIVE_WRITER_CODE = "(code -32600)"
 _DEBOUNCE_SECONDS = 1.0
 _TIMEOUT_SECONDS = 300
 _QUEUE_TIMEOUT_SECONDS = 30
+_LaunchOutcome = Literal["exec_completed", "queued", "ambiguous", "failed"]
+_WakeKey = tuple[str, str, str]
 _scheduled_delivery_ids: set[str] = set()
-_scheduled_session_generations: dict[str, int] = {}
+_scheduled_session_generations: dict[_WakeKey, int] = {}
 _generation_counter = 0
-_scheduled_session_delivery_ids: dict[str, str] = {}
+_scheduled_session_delivery_ids: dict[_WakeKey, str] = {}
 _scheduled_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def schedule_codex_relay_wake(
     result: object,
     scope: object,
+    *,
+    on_unreachable: Callable[[datetime], None] | None = None,
 ) -> None:
     """Start one hidden notification attempt for one exact Codex delivery."""
     if not isinstance(result, dict) or not isinstance(scope, dict):
@@ -66,70 +74,84 @@ def schedule_codex_relay_wake(
         or not valid_selector
     ):
         return
+    wake_key = (session_ref, container_ref, actor_ref)
     with _scheduled_lock:
-        if delivery_id in _scheduled_delivery_ids or session_ref in _scheduled_session_generations:
+        if (
+            delivery_id in _scheduled_delivery_ids
+            or wake_key in _scheduled_session_generations
+        ):
             return
         _scheduled_delivery_ids.add(delivery_id)
         global _generation_counter
         _generation_counter += 1
         generation = _generation_counter
-        _scheduled_session_generations[session_ref] = generation
-        _scheduled_session_delivery_ids[session_ref] = delivery_id
+        _scheduled_session_generations[wake_key] = generation
+        _scheduled_session_delivery_ids[wake_key] = delivery_id
     try:
         threading.Thread(
             target=_wake_after_debounce,
-            args=(
-                delivery_id,
-                session_ref,
-                generation,
-            ),
+            args=(delivery_id, wake_key, generation, on_unreachable),
             daemon=True,
         ).start()
     except RuntimeError:
         with _scheduled_lock:
-            _scheduled_delivery_ids.discard(delivery_id)
-            if _scheduled_session_generations.get(session_ref) == generation:
-                _scheduled_session_generations.pop(session_ref, None)
-                _scheduled_session_delivery_ids.pop(session_ref, None)
+            if _scheduled_session_generations.get(wake_key) == generation:
+                _clear_schedule_locked(wake_key)
+            else:
                 _scheduled_delivery_ids.discard(delivery_id)
+
+
+def _clear_schedule_locked(wake_key: _WakeKey) -> None:
+    _scheduled_session_generations.pop(wake_key, None)
+    delivery_id = _scheduled_session_delivery_ids.pop(wake_key, None)
+    if delivery_id is not None:
+        _scheduled_delivery_ids.discard(delivery_id)
 
 
 def _wake_after_debounce(
     delivery_id: str,
-    session_ref: str,
+    wake_key: _WakeKey,
     generation: int,
+    on_unreachable: Callable[[datetime], None] | None = None,
 ) -> None:
     time.sleep(_DEBOUNCE_SECONDS)
     with _scheduled_lock:
-        if _scheduled_session_generations.get(session_ref) != generation:
+        if _scheduled_session_generations.get(wake_key) != generation:
             _scheduled_delivery_ids.discard(delivery_id)
             return
+    attempt_started_at = datetime.now(timezone.utc)
     try:
-        if _wake(session_ref):
-            return
+        outcome = _wake(wake_key[0])
     except Exception:
-        pass
+        outcome = "failed"
+    if outcome in {"queued", "ambiguous"}:
+        return
     with _scheduled_lock:
-        if _scheduled_session_generations.get(session_ref) != generation:
+        if _scheduled_session_generations.get(wake_key) != generation:
             return
-        _scheduled_session_generations.pop(session_ref, None)
-        _scheduled_session_delivery_ids.pop(session_ref, None)
-        _scheduled_delivery_ids.discard(delivery_id)
+        _clear_schedule_locked(wake_key)
+    if on_unreachable is not None:
+        try:
+            on_unreachable(attempt_started_at)
+        except Exception:
+            logger.exception("codex_relay_wake unreachable callback failed")
 
 
-def _wake(session_ref: str) -> bool:
+def _wake(session_ref: str) -> _LaunchOutcome:
     # UserPromptSubmit claims persisted Relay only after this turn is admitted.
     return _launch(session_ref, _wake_prompt())
 
-def mark_codex_relay_wake_admitted(session_ref: str) -> None:
+
+def mark_codex_relay_wake_admitted(
+    session_ref: str,
+    container_ref: str,
+    actor_ref: str,
+) -> None:
     with _scheduled_lock:
-        _scheduled_session_generations.pop(session_ref, None)
-        delivery_id = _scheduled_session_delivery_ids.pop(session_ref, None)
-        if delivery_id is not None:
-            _scheduled_delivery_ids.discard(delivery_id)
+        _clear_schedule_locked((session_ref, container_ref, actor_ref))
 
 
-def _launch(session_ref: str, prompt: str) -> bool:
+def _launch(session_ref: str, prompt: str) -> _LaunchOutcome:
     codex_executable = _codex_executable()
     try:
         completed = subprocess.run(
@@ -151,12 +173,14 @@ def _launch(session_ref: str, prompt: str) -> bool:
             timeout=_TIMEOUT_SECONDS,
             **_hidden_process_kwargs(),
         )
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return False
+    except subprocess.TimeoutExpired:
+        return "ambiguous"
+    except (OSError, ValueError):
+        return "failed"
     if completed.returncode == 0:
-        return True
+        return "exec_completed"
     if not _is_active_writer(completed):
-        return False
+        return "failed"
     try:
         queued = subprocess.run(
             [
@@ -177,10 +201,13 @@ def _launch(session_ref: str, prompt: str) -> bool:
             timeout=_QUEUE_TIMEOUT_SECONDS,
             **_hidden_process_kwargs(),
         )
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return False
-    return queued.returncode == 0
-
+    except subprocess.TimeoutExpired:
+        # The queue write may already be durable. Native queue deduplication is false,
+        # so retain ownership until the target hook proves admission.
+        return "ambiguous"
+    except (OSError, ValueError):
+        return "failed"
+    return "queued" if queued.returncode == 0 else "failed"
 
 def _is_active_writer(completed: subprocess.CompletedProcess[str]) -> bool:
     stderr = completed.stderr or ""
