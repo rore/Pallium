@@ -1,5 +1,5 @@
 <!-- agent-workflow:start -->
-**Outcome:** Codex Relay wake never produces a later generic turn after another admitted turn has already consumed the persisted delivery.
+**Outcome:** After another admitted turn consumes the persisted delivery, Codex suppresses the redundant generic wake only when Relay confirms the complete canonical no-work state; Relay failures and malformed responses fail open to the normal model path.
 
 **Target:** Pallium Relay Codex wake delivery.
 
@@ -64,4 +64,4 @@ Installed exact-session witness against empty relaydev inbox: native `codex queu
 
 Clean-context review of `63f3a76a` found two related blockers: a valid bounded turn may return `deliveries=[]` with `has_more=true` for oversized pending work, and a partial dict such as `{"deliveries": []}` is not a confirmed canonical response. The guard now requires `deliveries=[]`, `has_more is false`, and integer `remaining_count == 0`; direct malformed-response and public-route oversized-pending regressions cover both. The reviewer also correctly rejected a completed roadmap claim before the required installed Windows witness, so RW-002 remains provisional until that witness passes.
 
-The revised structured-block candidate addresses both earlier blockers and the installed witness passes: the exact queued prompt completes with `last_agent_message=null`, no user or assistant transcript item, no memory ingestion, and no repeat. Final clean-context result review approved the implementation, boundaries, tests, and witness after identifying one stale RW-002 candidate label; the detailed ledger now records the same fixed, Windows-qualified state as the roadmap summary.
+The revised structured-block candidate addresses both earlier blockers and the installed witness passes: the exact queued prompt completes with `last_agent_message=null`, no user or assistant transcript item, no memory ingestion, and no repeat. Final clean-context result review approved the implementation, boundaries, tests, and witness after identifying one stale RW-002 candidate label; the detailed ledger now records the same fixed, Windows-qualified state as the roadmap summary. CodeRabbit then identified an overbroad Work Record Outcome; it now explicitly limits suppression to a successful canonical no-work response and preserves fail-open behavior.
