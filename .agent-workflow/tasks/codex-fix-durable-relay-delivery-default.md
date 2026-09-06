@@ -15,7 +15,7 @@
 
 **Reason:** Pre-edit redline classifies `api/schemas.py` as a red public-contract surface requiring `api-review`; core/storage are watch and tests/docs are blue, with no boundary violation. The change spans API, core, persistence representation, idempotency, dashboard accounting, and restart lifecycle.
 
-**Discovery:** HTTP request schemas currently replace omission with 86,400 seconds; core applies and validates that default; SQLite persists a non-null timestamp and all eligibility/expiry indexes assume it. MCP already forwards omission as `None`. A nullable SQLite column would require a table rebuild and coordinated null-safe changes to every expiry predicate. A migration-free UTC year-9999 sentinel round-trips through the existing SQLite DateTime column and remains eligible under current indexed comparisons; the public serializer can map only that internal value to `null`. Existing explicit rows remain unchanged. Existing E2E helpers cover exact scope, idempotency, backlog, explicit bounds, dormant sessions, Unicode, leases, and dashboard metrics; controllable-clock/reopen patterns avoid sleeps.
+**Discovery:** At discovery, HTTP request schemas replaced omission with 86,400 seconds and core applied and validated that default; SQLite persists a non-null timestamp and all eligibility/expiry indexes assume it. MCP already forwards omission as `None`. A nullable SQLite column would require a table rebuild and coordinated null-safe changes to every expiry predicate. A migration-free UTC year-9999 sentinel round-trips through the existing SQLite DateTime column and remains eligible under current indexed comparisons; the public serializer can map only that internal value to `null`. Existing explicit rows remain unchanged. Existing E2E helpers cover exact scope, idempotency, backlog, explicit bounds, dormant sessions, Unicode, leases, and dashboard metrics; controllable-clock/reopen patterns avoid sleeps.
 
 **Material assumptions:** SQLite and SQLAlchemy preserve the exact year-9999 UTC sentinel used for new durable rows; disproved by focused round-trip or CI failure, which returns persistence design to planning. No supported explicit expiry can equal the sentinel; enforced by the existing seven-day maximum. Current query predicates uniformly treat the sentinel as future; disproved by a caller that compares expiry outside the inspected storage/dashboard paths, which requires adding that path to scope before implementation. Public clients accept nullable `expires_at`; disproved by repository contract fixtures or API review, which returns schema design to planning.
 
@@ -45,6 +45,8 @@
 - MCP forwarding already preserves omission as `expires_in_seconds=None` in `tests/test_mcp_server.py::test_relay_send_uses_exact_scope_and_preserves_unicode`.
 - In-memory SQLAlchemy/SQLite probe round-tripped `9999-12-31T23:59:59.999999+00:00` through the existing non-null DateTime column and selected it with `expires_at > now`.
 - Revision `2fa3969d`: 383 Relay, wake, MCP, isolation, and dashboard tests passed in 27.50s; four existing Pydantic forward-reference warnings. The narrower 170-test surface passed in 16.22s and the new two-test slice in 4.66s. Workflow and diff checks are clean; no wall-clock sleep was added.
+- PR #113: Python 3.12, Python 3.13, Windows smoke, redline, and agent-workflow checks passed; `api-reviewed` is applied and there are no inline review findings. CodeRabbit was rate-limited, so the independent clean-context review is the substantive result-review gate.
+- Installed Windows witness after wrapper restart: service health, embeddings, ingestion, and queue health passed; omitted-expiry `relay-msg-50da81d3...` returned `expires_at:null`, auto-delivered once in about 12 seconds, and produced durable atomic reply `RW017-INSTALLED-PASS` without a manual target turn.
 
 ## Plan review
 
@@ -52,4 +54,4 @@ Clean-context Luna review found no fundamental blocker in the migration-free sen
 
 ## Result review
 
-Clean-context Luna review found no code, API, sentinel, idempotency, query/dashboard, restart, cross-platform, slow-test, or scope blocker. Three documentation-state findings were corrected. The implementation is otherwise approved with no technical blocker; PR CI and installed dogfood remain pending.
+Clean-context Luna review found no code, API, sentinel, idempotency, query/dashboard, restart, cross-platform, slow-test, or scope blocker. Three documentation-state findings were corrected. The implementation is approved with no technical blocker; PR CI and installed Windows dogfood passed.

@@ -141,9 +141,9 @@ remains for that adapter.
 
 ### Next execution order (updated 2026-09-06)
 
-The next work is RW-017 durable-by-default delivery, then RW-016 installed-service
-metadata repair, followed by the remaining Codex lifecycle gates. RW-010 and
-RW-015 are merged and Windows-qualified. Keep each slice small and use
+RW-017 durable-by-default delivery is complete in PR #113 and Windows-qualified.
+The next work is RW-016 installed-service metadata repair, followed by the
+remaining Codex lifecycle gates. RW-010 and RW-015 are merged and Windows-qualified. Keep each slice small and use
 deterministic clocks/events rather than wall-clock sleeps in the normal suite.
 
 1. **S2 contract gate — complete in PR #98.** Delivery lifecycle
@@ -188,10 +188,11 @@ deterministic clocks/events rather than wall-clock sleeps in the normal suite.
    E2E, and a post-merge no-manual-turn installed witness are complete. Native
    accepted or timed-out queue writes remain coalesced because duplicate
    suppression is false.
-7. **RW-017 durable-by-default Relay delivery.** Omitted expiry must leave pending
-   work durable until handled; retain bounded explicit expiry for genuinely
-   time-sensitive notices. Cover default/explicit expiry, dormant and busy targets,
-   restart recovery, backlog continuation, and retention without wall-clock waits.
+7. **RW-017 durable-by-default Relay delivery — complete in PR #113 and
+   Windows-qualified.** Omitted/null expiry now stays durable until terminal handling;
+   explicit 60-second through 7-day expiry remains opt-in. Fast file-backed restart,
+   dormancy, backlog, idempotency, dashboard, MCP, and installed automatic-wake
+   evidence pass without wall-clock waits.
 8. **RW-016 Windows installed-service metadata.** Carry the exact configured home
    into canonical service startup, emit Unicode-safe launcher metadata, and make
    restart PID/log paths follow that home. Prove default/custom/space/Unicode
@@ -228,7 +229,7 @@ where the runtime exists locally, an installed witness close it.
 | `RW-014` | `pallium_relay_recipients` can exceed the MCP response budget and return only a generic error instead of a usable bounded recipient result. | **Fixed in PR #107; Windows-qualified.** The MCP tool returns stable bounded pages with offset continuation and total count while preserving the HTTP list contract. Deterministic E2E covers all recorded boundaries without wall-clock waits. After reinstall and service restart from exact main, a fresh installed stdio child returned a 1,730-character page with all envelope fields, 5 of 89 recipients, canonical selectors, `has_more=true`, and `next_offset=5`. |
 | `RW-015` | Two sends initially appeared stuck behind `destination_health=active`; later durable status and exact-task history proved both hook-delivered, including the vNext target after 57 seconds. The real latent gaps were boolean launch acceptance holding a generation after completed/no-hook exec, session-only admission, and session-only ownership suppressing another scope. | **Fixed in PR #108; Windows-qualified.** Wake ownership is keyed by session+container+actor; blocking exec completion requires the matching hook callback; definite no-hook failure reports strict-CAS `unreachable` without consuming delivery; accepted or timed-out writes stay coalesced. After exact-main reinstall and service restart, `relay-msg-cff1331...` auto-delivered once in 16 seconds and returned `RW015-INSTALLED-PASS` without a manual turn. |
 | `RW-016` | Canonical Windows `pallium service install --home <custom>` writes its task/VBS under the requested home but does not propagate that home to `service run`, so the launched service silently falls back to the default home; the ASCII VBS writer also cannot represent non-ASCII interpreter/home paths. | **Open — next installed-service metadata fix after RW-017.** Carry the exact home into the Windows launcher using a Unicode-safe representation, make restart diagnostics/PID/log paths follow the installed home, and add default/custom/space/Unicode caller-surface lifecycle coverage without changing Linux behavior. |
-| `RW-017` | Relay messages still default to a 24-hour expiry, so unhandled work for a busy or dormant target can become terminal despite durable wake recovery. Dogfood reproduced the default when an omitted MCP expiry returned an `expires_at` exactly one day later. | **Implementation complete; PR qualification pending.** Omitted/null expiry is represented durably without a schema rebuild; explicit bounded expiry remains opt-in. Fast caller-surface restart/dormancy/backlog/idempotency and dashboard regressions pass; PR review, CI, and installed dogfood remain before the final fixed claim. |
+| `RW-017` | Relay messages still default to a 24-hour expiry, so unhandled work for a busy or dormant target can become terminal despite durable wake recovery. Dogfood reproduced the default when an omitted MCP expiry returned an `expires_at` exactly one day later. | **Fixed in PR #113; Windows-qualified.** Omitted/null expiry is represented durably without a schema rebuild; explicit 60-second through 7-day expiry remains opt-in. Fast file-backed restart/dormancy/backlog/idempotency/dashboard/MCP regressions pass. Installed dogfood returned `expires_at:null`, auto-delivered once, and produced durable atomic reply `RW017-INSTALLED-PASS` without a manual target turn. |
 
 The Windows Claude regression floor remains: idle text and zero-tool turns, empty
 Stop rearm, busy delivery, ordered bursts, Unicode, recursive-Stop loop prevention,
@@ -249,7 +250,7 @@ The following related work stays separate to keep ownership clear:
   synthetic source items are forgotten and 89 derived memories are soft-deleted
   under one audit reason; the default dashboard read path exposes none of them.
   This was operational data repair, not Relay routing behavior.
-- **Next correctness and operations follow-ups (separate from S2):** RW-017 makes
+- **Next correctness and operations follow-ups (separate from S2):** RW-017 now makes
   ordinary Relay work durable by default while preserving explicit expiry; RW-016 then
   repairs canonical Windows custom-home and Unicode launcher metadata. Prove both
   through deterministic caller-surface lifecycles without changing Linux behavior.
