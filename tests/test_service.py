@@ -677,10 +677,37 @@ class TestLinuxServiceLifecycle:
         sentinel = home / "keep.txt"
         sentinel.write_text("keep", encoding="utf-8")
 
-        with pytest.raises(RuntimeError, match="unmanaged"):
+        with pytest.raises(RuntimeError, match="custom Pallium home"):
             _remove_service_data(home)
 
         assert sentinel.read_text(encoding="utf-8") == "keep"
+
+    @pytest.mark.parametrize(
+        ("script", "option"),
+        [
+            ("install-service.sh", "--port"),
+            ("install-service.sh", "--home"),
+            ("install-service.sh", "--python"),
+            ("restart-service.sh", "--home"),
+            ("restart-service.sh", "--python"),
+            ("uninstall-service.sh", "--home"),
+            ("uninstall-service.sh", "--python"),
+        ],
+    )
+    def test_wrappers_reject_missing_option_values(self, script: str, option: str):
+        repo = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [str(repo / "scripts" / script), option],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        output = result.stdout + result.stderr
+        assert result.returncode != 0
+        assert "Usage:" in output
+        assert "unbound variable" not in output
 
     def test_remove_data_refuses_unmanaged_default_home(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

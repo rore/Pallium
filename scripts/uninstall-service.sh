@@ -12,13 +12,20 @@ PYTHON_PATH=""
 HOME_PATH=""
 REMOVE_DATA=false
 
+usage() {
+    echo "Usage: $0 [--home PATH] [--python PATH] [--remove-data]" >&2
+    exit 1
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --home)
+            [[ $# -ge 2 ]] || usage
             HOME_PATH="$2"
             shift 2
             ;;
         --python)
+            [[ $# -ge 2 ]] || usage
             PYTHON_PATH="$2"
             shift 2
             ;;
@@ -27,8 +34,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
-            echo "Usage: $0 [--home PATH] [--python PATH] [--remove-data]"
-            exit 1
+            usage
             ;;
     esac
 done

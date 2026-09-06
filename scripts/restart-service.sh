@@ -11,19 +11,25 @@ set -euo pipefail
 PYTHON_PATH=""
 HOME_PATH=""
 
+usage() {
+    echo "Usage: $0 [--home PATH] [--python PATH]" >&2
+    exit 1
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --home)
+            [[ $# -ge 2 ]] || usage
             HOME_PATH="$2"
             shift 2
             ;;
         --python)
+            [[ $# -ge 2 ]] || usage
             PYTHON_PATH="$2"
             shift 2
             ;;
         *)
-            echo "Usage: $0 [--home PATH] [--python PATH]"
-            exit 1
+            usage
             ;;
     esac
 done

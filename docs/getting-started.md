@@ -36,7 +36,9 @@ pallium service install
 pallium service status
 ```
 
-The installed service uses port `19836`. On Windows it starts at login; always
+The installed service uses port `19836` by default. Pass `--port PORT` to
+`pallium service install` to override it, then use that configured port for
+dashboard and endpoint checks. On Windows it starts at login; always
 use `scripts/restart-service.ps1` for local development restarts. On Linux it
 uses a systemd user unit and supports the full public lifecycle:
 

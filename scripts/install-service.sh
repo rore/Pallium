@@ -12,23 +12,30 @@ PORT=19836
 PYTHON_PATH=""
 HOME_PATH=""
 
+usage() {
+    echo "Usage: $0 [--port PORT] [--home PATH] [--python PATH]" >&2
+    exit 1
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --port)
+            [[ $# -ge 2 ]] || usage
             PORT="$2"
             shift 2
             ;;
         --home)
+            [[ $# -ge 2 ]] || usage
             HOME_PATH="$2"
             shift 2
             ;;
         --python)
+            [[ $# -ge 2 ]] || usage
             PYTHON_PATH="$2"
             shift 2
             ;;
         *)
-            echo "Usage: $0 [--port PORT] [--home PATH] [--python PATH]"
-            exit 1
+            usage
             ;;
     esac
 done
