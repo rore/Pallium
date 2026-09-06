@@ -17,6 +17,19 @@ function Stop-WithError([string]$Message) {
     exit 1
 }
 
+function Stop-ProcessTree([int]$ProcessId) {
+    $failed = $false
+    try {
+        taskkill /F /T /PID $ProcessId 2>$null | Out-Null
+        $failed = $LASTEXITCODE -ne 0
+    } catch {
+        $failed = $true
+    }
+    if ($failed) {
+        Write-Host "    taskkill reported a partial failure for PID $ProcessId; continuing cleanup verification..."
+    }
+}
+
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if (-not $task) {
     Stop-WithError "Pallium scheduled task not found. Run 'pallium service install' first."
@@ -120,7 +133,7 @@ $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Silentl
 if ($conn) {
     $procId = $conn.OwningProcess
     Write-Host "  Killing process tree (PID $procId) on port $Port..."
-    taskkill /F /T /PID $procId 2>$null | Out-Null
+    Stop-ProcessTree $procId
 }
 
 # Strategy 2: kill by PID file (handles WinError 64 stuck-socket where port is
@@ -132,7 +145,7 @@ if (Test-Path $PidFile) {
         $proc = Get-Process -Id $filePid -ErrorAction SilentlyContinue
         if ($proc) {
             Write-Host "  Killing stale process tree (PID $filePid) from PID file..."
-            taskkill /F /T /PID $filePid 2>$null | Out-Null
+            Stop-ProcessTree $filePid
         }
     }
 }
@@ -163,7 +176,7 @@ foreach ($sig in $signatures) {
         -ErrorAction SilentlyContinue
     foreach ($p in $procs) {
         Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) $sig)..."
-        taskkill /F /T /PID $p.ProcessId 2>$null | Out-Null
+        Stop-ProcessTree $p.ProcessId
     }
 }
 
@@ -177,10 +190,25 @@ foreach ($p in $serviceProcs) {
         continue
     }
     Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) app.run service run on port $Port)..."
-    taskkill /F /T /PID $p.ProcessId 2>$null | Out-Null
+    Stop-ProcessTree $p.ProcessId
 }
 
 Start-Sleep -Seconds 2
+
+$remainingConnections = @(
+    Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $null -ne $_ }
+)
+if ($remainingConnections.Count -gt 0) {
+    $remainingPids = @(
+        $remainingConnections |
+            ForEach-Object { $_.OwningProcess } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+    $pidDetail = if ($remainingPids.Count -gt 0) { "; listener PID(s): $($remainingPids -join ', ')" } else { "" }
+    Stop-WithError "Could not stop Pallium; port $Port is still listening$pidDetail"
+}
 
 Write-Host "Starting Pallium..."
 try {
@@ -236,3 +264,4 @@ if (-not $ready) {
 }
 
 Write-Host "Pallium restarted. Dashboard at $BaseUrl/dashboard"
+exit 0
