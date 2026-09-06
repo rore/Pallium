@@ -523,6 +523,23 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
         assert search_updates[0]["current_text_truncated"] is True
         assert len(search_updates[0]["current_text"]) == 240
 
+        missing_work_content, _ = await server.call_tool(
+            "pallium_search_history_by_work_ref",
+            {
+                "work_ref": "missing-work-item",
+                "query": "distinctive lookup anchor phrase",
+                "container_ref": "git:github.com/Rore/Pallium",
+                "thread_ref": active_thread,
+                "visibility": "private",
+            },
+        )
+        missing_work = json.loads(missing_work_content[0].text)
+        assert missing_work["results"] == []
+        assert missing_work["requested_work_ref"] == "missing-work-item"
+        assert "injected work_ref" in missing_work["empty_result_hint"]
+        assert "use broad search" in missing_work["empty_result_hint"]
+        assert len(missing_work_content[0].text) <= 2000
+
         wrong_scope_content, _ = await server.call_tool("pallium_search_history", {
             "query": "distinctive lookup anchor phrase",
             "container_ref": "github.com/rore/pallium",

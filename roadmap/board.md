@@ -1,4 +1,5 @@
 # Next · Session History
+- fix-agent-work-ref-injection
 - decouple-session-history-from-derived-packages
 - investigate-history-navigation-and-on-demand-compression
 

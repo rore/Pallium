@@ -1,6 +1,8 @@
 """Verify that Claude Code and Codex common.py stay in sync for work trace features."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import importlib.util
@@ -452,3 +454,72 @@ def test_work_refs_large_explicit_list_does_not_suppress_metadata(module):
     explicit = ["KEEP"] * 200_000
     result = module.build_work_refs_metadata("", explicit)
     assert result["pallium_work_refs"] == explicit
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_injected_work_ref_uses_first_safe_structural_ref_only(module):
+    discovery = module.WorkRefDiscovery(
+        ("git-branch:feature/任务", "agent-workflow:任务")
+    )
+    assert module.injected_work_ref(discovery) == "git-branch:feature/任务"
+    assert module.build_work_refs_metadata("", ["EXPLICIT-ONLY"], discovery) == {
+        "pallium_work_refs": [
+            "git-branch:feature/任务",
+            "agent-workflow:任务",
+            "EXPLICIT-ONLY",
+        ]
+    }
+    explicit_only = module.WorkRefDiscovery()
+    assert module.injected_work_ref(explicit_only) is None
+    assert module.build_work_refs_metadata("", ["EXPLICIT-ONLY"], explicit_only) == {
+        "pallium_work_refs": ["EXPLICIT-ONLY"]
+    }
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+@pytest.mark.parametrize(
+    "ref",
+    (
+        "",
+        "___---",
+        "x" * 129,
+        "unsafe\nref",
+        "[REDACTED]",
+        "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+        "xoxb-" + "1" * 10 + "-" + "2" * 10 + "-" + "a" * 24,
+        "AKIAABCDEFGHIJKLMNOP",
+        "eyJabcdefghijk.eyJabcdefghijk.abcdefghijk",
+    ),
+)
+def test_injected_work_ref_rejects_unsafe_structural_refs(module, ref):
+    assert module.injected_work_ref(module.WorkRefDiscovery((ref,))) is None
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_format_injection_includes_safe_work_ref(module):
+    rendered = module.format_injection(
+        [],
+        "git:example/repo",
+        2000,
+        thread_ref="session",
+        work_ref="git-branch:feature/任务",
+    )
+    scope = json.loads(rendered[rendered.index("{") : rendered.rindex("}") + 1])
+    assert scope["work_ref"] == "git-branch:feature/任务"
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+@pytest.mark.parametrize(
+    "work_ref",
+    (
+        "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+        "[REDACTED]",
+        "bad\nref",
+        "x" * 129,
+    ),
+)
+def test_format_injection_omits_only_unsafe_work_ref(module, work_ref):
+    rendered = module.format_injection(
+        [], "git:repo", 2000, thread_ref="session", work_ref=work_ref
+    )
+    scope = json.loads(rendered[rendered.index("{") : rendered.rindex("}") + 1])
+    assert scope == {"container_ref": "git:repo", "thread_ref": "session"}

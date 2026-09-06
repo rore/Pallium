@@ -185,6 +185,53 @@ console.log(JSON.stringify(
     return json.loads(result.stdout.strip())
 
 
+def _opencode_prompt_scope(cwd: Path, state_home: Path) -> dict:
+    plugin = Path("integrations/opencode/.opencode/plugins/pallium.mjs").resolve().as_uri()
+    script = r'''import pluginFactory from "__PLUGIN__";
+const calls = [];
+global.fetch = async (url, init) => {
+  const body = init?.body ? JSON.parse(init.body) : undefined;
+  calls.push({url:String(url), body});
+  return {ok:true, status:200, text:async()=>JSON.stringify(
+    String(url).includes("/relay/") ? {deliveries:[]} :
+    {source_item_id:"scope-source", injectable_blocks:[]}
+  )};
+};
+const client = {session:{messages:async()=>({data:[]})}, app:{log(){}}};
+const hooks = await pluginFactory({client, directory:__DIR__});
+const output = {
+  message:{sessionID:"oc-scope", role:"user"},
+  parts:[{type:"text", text:"Continue this substantial task"}],
+};
+await hooks["chat.message"]({metadata:{pallium_work_refs:["EXPLICIT-REF"]}}, output);
+const transformed = {messages:[{info:output.message, parts:output.parts}]};
+await hooks["experimental.chat.messages.transform"]({}, transformed);
+const system = {system:[]};
+await hooks["experimental.chat.system.transform"](
+  {message:{sessionID:"oc-scope"}}, system
+);
+const text = transformed.messages[0].parts[0].text + "\n" + system.system.join("\n");
+const refs = [...text.matchAll(/"work_ref":"([^"]+)"/g)].map((match)=>match[1]);
+console.log(JSON.stringify({
+  payload:calls.find((call)=>call.url.includes("/item-and-query")).body,
+  refs,
+}));
+'''
+    script = script.replace("__PLUGIN__", plugin).replace(
+        "__DIR__", json.dumps(cwd.as_posix())
+    )
+    environment = {**os.environ, "USERPROFILE": str(state_home), "HOME": str(state_home)}
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=environment,
+        timeout=20,
+    )
+    return json.loads(result.stdout.strip())
+
+
 def _ingest(client, payload: dict):
     if isinstance(payload, list):
         payload = payload[0]
@@ -292,3 +339,213 @@ def test_opencode_user_and_assistant_resolver_failure_still_ingest(
             ]
         else:
             assert "pallium_work_refs" not in item.metadata
+
+
+@pytest.mark.parametrize(
+    "host,relative",
+    (("codex", "codex/hooks"), ("claude", "claude-code/hooks")),
+)
+def test_python_caller_scope_work_ref_round_trips_into_exact_http_search(
+    host: str,
+    relative: str,
+    client,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo_metadata(tmp_path / "repo")
+    prompt = _load(
+        f"{host}_scope_e2e",
+        Path("integrations") / relative / "user_prompt_submit.py",
+        monkeypatch,
+    )
+    payload = {
+        "cwd": str(repo),
+        "session_id": "scope-user",
+        "prompt": "Continue this substantial task",
+        "pallium_work_refs": ["EXPLICIT-REF"],
+    }
+    original_discover = prompt.discover_work_refs
+    ingested: list[dict] = []
+    emitted: list[str] = []
+    discoveries = 0
+    monkeypatch.setattr(prompt, "read_hook_input", lambda: payload)
+
+    def discover(cwd):
+        nonlocal discoveries
+        discoveries += 1
+        return original_discover(cwd)
+
+    monkeypatch.setattr(prompt, "discover_work_refs", discover)
+    monkeypatch.setattr(
+        prompt, "resolve_container_ref", lambda *_a: "git:example.test/repo"
+    )
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_a: False)
+    monkeypatch.setattr(prompt, "get_pending_relay_closes", lambda *_a: [])
+    monkeypatch.setattr(prompt, "relay_request", lambda *_a, **_k: None)
+    monkeypatch.setattr(prompt, "pin_container", lambda *_a, **_k: None)
+    if hasattr(prompt, "emit_context"):
+        monkeypatch.setattr(
+            prompt, "emit_context", lambda text, _event: emitted.append(text)
+        )
+
+    def request(_method, path, body=None, **_kwargs):
+        if path == "/item-and-query":
+            ingested.append(body)
+            return {"source_item_id": "scope-source", "injectable_blocks": []}
+        return None
+
+    monkeypatch.setattr(prompt, "pallium_request", request)
+    with pytest.raises(SystemExit):
+        prompt.main()
+
+    assert discoveries == 1
+    assert len(ingested) == 1
+    output = "\n".join(emitted) if emitted else capsys.readouterr().out
+    scope_text = next(line for line in output.splitlines() if "Pallium scope" in line)
+    scope = json.loads(scope_text.split("— ", 1)[1].split("]", 1)[0])
+    assert scope["work_ref"] == "git-branch:fix/alpha"
+    assert ingested[0]["metadata"]["pallium_work_refs"] == [
+        "git-branch:fix/alpha",
+        "agent-workflow:alpha",
+        "EXPLICIT-REF",
+    ]
+
+    ingest = client.post(
+        "/item-and-query",
+        json={
+            **ingested[0],
+            "use_case": "demo_agent_memory",
+            "artifact_kind": "message",
+            "visibility": "private",
+        },
+    )
+    assert ingest.status_code == 200, ingest.text
+    exact = client.post(
+        "/query",
+        json={
+            "text": "Continue this substantial task",
+            "limit": 5,
+            "source_only": True,
+            "trigger_origin": "agent_pull_work",
+            "work_refs": [scope["work_ref"]],
+            "container_ref": "git:example.test/repo",
+            "thread_ref": "scope-user",
+            "visibility": "private",
+        },
+    )
+    assert exact.status_code == 200, exact.text
+    assert exact.json()["results"][0]["source_item_id"] == ingest.json()[
+        "source_item_id"
+    ]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="OpenCode structural discovery is unsupported on Windows")
+def test_opencode_scope_work_ref_round_trips_into_exact_http_search(
+    client,
+    tmp_path: Path,
+) -> None:
+    repo = _repo_metadata(tmp_path / "opencode-repo")
+    captured = _opencode_prompt_scope(repo, tmp_path / "opencode-home")
+    assert captured["refs"] == ["git-branch:fix/alpha"]
+    assert captured["payload"]["metadata"]["pallium_work_refs"] == [
+        "git-branch:fix/alpha",
+        "agent-workflow:alpha",
+        "EXPLICIT-REF",
+    ]
+
+    ingest = _ingest(client, captured["payload"])
+    assert ingest.status_code == 200, ingest.text
+    exact = client.post(
+        "/query",
+        json={
+            "text": "Continue this substantial task",
+            "limit": 5,
+            "source_only": True,
+            "trigger_origin": "agent_pull_work",
+            "work_refs": captured["refs"],
+            "container_ref": captured["payload"]["container_ref"],
+            "thread_ref": "oc-scope",
+            "visibility": "private",
+        },
+    )
+    assert exact.status_code == 200, exact.text
+    assert exact.json()["results"][0]["source_item_id"] == ingest.json()[
+        "source_item_id"
+    ]
+
+
+@pytest.mark.parametrize(
+    "host,relative",
+    (("codex", "codex/hooks"), ("claude", "claude-code/hooks")),
+)
+def test_python_relay_early_return_includes_structural_work_ref(
+    host: str,
+    relative: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _load(
+        f"{host}_relay_scope",
+        Path("integrations") / relative / "user_prompt_submit.py",
+        monkeypatch,
+    )
+    payload = {
+        "cwd": str(_repo_metadata(tmp_path / host)),
+        "session_id": f"{host}-relay",
+        "prompt": "Continue this substantial task",
+    }
+    original_discover = module.discover_work_refs
+    discoveries = 0
+    monkeypatch.setattr(module, "read_hook_input", lambda _stream=None: payload)
+
+    def discover(cwd):
+        nonlocal discoveries
+        discoveries += 1
+        return original_discover(cwd)
+
+    monkeypatch.setattr(module, "discover_work_refs", discover)
+    monkeypatch.setattr(
+        module, "resolve_container_ref", lambda *_a: "git:example.test/repo"
+    )
+    monkeypatch.setattr(module, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(module, "check_dedup", lambda *_a: False)
+    monkeypatch.setattr(module, "get_pending_relay_closes", lambda *_a: [])
+    if hasattr(module, "register_claude_wake"):
+        monkeypatch.setattr(
+            module, "register_claude_wake", lambda *_a, **_k: None
+        )
+    monkeypatch.setattr(module, "pin_container", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "acknowledge_relay", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        module,
+        "pallium_request",
+        lambda *_a, **_k: pytest.fail("Relay early return must not ingest"),
+    )
+    monkeypatch.setattr(
+        module,
+        "relay_request",
+        lambda *_a, **_k: {
+            "deliveries": [
+                {
+                    "delivery_id": "d-1",
+                    "claim_token": "c-1",
+                    "message_id": "m-1",
+                    "sender_runtime": "other",
+                    "sender_session_ref": "s-1",
+                    "payload": "handoff",
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        },
+    )
+    if hasattr(module, "emit_context"):
+        monkeypatch.setattr(module, "emit_context", lambda text, _event: print(text))
+
+    with pytest.raises(SystemExit):
+        module.main()
+
+    assert discoveries == 1
+    assert '"work_ref":"git-branch:fix/alpha"' in capsys.readouterr().out

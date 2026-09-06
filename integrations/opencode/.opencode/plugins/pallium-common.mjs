@@ -273,6 +273,7 @@ export const REDACTION_PATTERNS = [
   [/(mongodb|postgres|mysql|redis):\/\/\S+/gi, "$1://[REDACTED]"],
   [/(Authorization|Cookie):\s*.+/gi, "$1: [REDACTED]"],
 ];
+const WORK_REF_SECRET_RE = /(?:\bgh[pousr]_[A-Za-z0-9]{30,255}\b|\bxox(?:[abpr]-\d{6,20}-\d{6,20}-[A-Za-z0-9]{20,64}|[a-z]-[A-Za-z0-9-]{20,255})\b|\bsk-(?:(?:ant-api\d{2}|proj)-)?[A-Za-z0-9_-]{20,255}\b|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b)/i;
 
 export function redactSensitive(text) {
   let out = String(text);
@@ -292,13 +293,14 @@ function safeScopeValue(value) {
   }) ? null : value;
 }
 
-export function formatInjection(injectableBlocks, containerRef, budgetChars, threadRef = null, actorRef = null, agentRef = null, visibility = null, requestSourceItemId = null) {
+export function formatInjection(injectableBlocks, containerRef, budgetChars, threadRef = null, actorRef = null, agentRef = null, visibility = null, requestSourceItemId = null, workRef = null) {
   const safeContainer = safeScopeValue(containerRef);
   const safeThread = typeof threadRef === "string" && threadRef ? safeScopeValue(threadRef) : null;
   const safeActor = typeof actorRef === "string" && actorRef ? safeScopeValue(actorRef) : null;
   const safeAgent = typeof agentRef === "string" && agentRef ? safeScopeValue(agentRef) : null;
   const safeVisibility = typeof visibility === "string" && visibility ? safeScopeValue(visibility) : null;
   const safeRequestSourceItemId = typeof requestSourceItemId === "string" && requestSourceItemId ? safeScopeValue(requestSourceItemId) : null;
+  const safeWorkRef = injectedWorkRef({ structuralRefs: [workRef] });
   if (safeContainer === null || [[threadRef, safeThread], [actorRef, safeActor], [agentRef, safeAgent], [visibility, safeVisibility], [requestSourceItemId, safeRequestSourceItemId]].some(([supplied, safe]) => supplied && safe === null)) return "";
 
   const scopeFields = { container_ref: safeContainer };
@@ -307,6 +309,7 @@ export function formatInjection(injectableBlocks, containerRef, budgetChars, thr
   if (safeAgent) scopeFields.agent_ref = safeAgent;
   if (safeVisibility) scopeFields.visibility = safeVisibility;
   if (safeRequestSourceItemId) scopeFields.request_source_item_id = safeRequestSourceItemId;
+  if (safeWorkRef) scopeFields.work_ref = safeWorkRef;
   const scope = `[Pallium scope — ${JSON.stringify(scopeFields)}]`;
   if (!injectableBlocks || injectableBlocks.length === 0) return safeThread && scope.length <= budgetChars ? scope : "";
 
@@ -864,12 +867,26 @@ function workRefState(cwd) {
   return null;
 }
 
-export function buildWorkRefsMetadata(cwd, explicitRefs) {
+export function discoverWorkRefs(cwd) {
+  if (process.platform === "win32") return { structuralRefs: [] };
+  const metadata = buildWorkRefsMetadata(cwd);
+  return { structuralRefs: metadata.pallium_work_refs || [] };
+}
+
+export function injectedWorkRef(discovery) {
+  for (const ref of (discovery && discovery.structuralRefs) || []) {
+    if (typeof ref !== "string") continue;
+    if (ref && ref.length <= 128 && safeScopeValue(ref) !== null && !ref.includes("[REDACTED") && redactSensitive(ref) === ref && !WORK_REF_SECRET_RE.test(ref) && ref.toLowerCase().replace(/[\s_-]+/g, "-").replace(/^-+|-+$/g, "")) return ref;
+  }
+  return null;
+}
+
+export function buildWorkRefsMetadata(cwd, explicitRefs, discovery = null) {
   const explicit = Array.isArray(explicitRefs)
     ? explicitRefs.filter((value) => typeof value === "string")
     : [];
-  const refs = [];
-  const state = process.platform === "win32" ? null : workRefState(cwd);
+  const refs = discovery ? [...(discovery.structuralRefs || [])] : [];
+  const state = discovery ? null : (process.platform === "win32" ? null : workRefState(cwd));
   if (state && !BASE_BRANCHES.has(state.branch.toLowerCase())) {
     const { root, branch } = state;
     refs.push(`git-branch:${branch}`);

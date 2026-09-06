@@ -38,6 +38,19 @@ _GIT_PATH_ENV = (
     "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CEILING_DIRECTORIES",
 )
+_WORK_REF_SECRET_RE = re.compile(
+    r"(?:\bgh[pousr]_[A-Za-z0-9]{30,255}\b|"
+    r"\bxox(?:[abpr]-\d{6,20}-\d{6,20}-[A-Za-z0-9]{20,64}|[a-z]-[A-Za-z0-9-]{20,255})\b|"
+    r"\bsk-(?:(?:ant-api\d{2}|proj)-)?[A-Za-z0-9_-]{20,255}\b|"
+    r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|"
+    r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b)",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class WorkRefDiscovery:
+    structural_refs: tuple[str, ...] = ()
 
 
 def _explicit_work_refs(explicit_refs: object) -> list[str]:
@@ -238,14 +251,40 @@ def _structural_work_refs(cwd: object) -> list[str]:
         return []
     return refs
 
-
-def build_work_refs_metadata(cwd: str, explicit_refs: object = None) -> dict[str, object]:
-    refs = _explicit_work_refs(explicit_refs)
+def discover_work_refs(cwd: object) -> WorkRefDiscovery:
     try:
-        refs = _structural_work_refs(cwd) + refs
+        return WorkRefDiscovery(tuple(_structural_work_refs(cwd)))
     except Exception:
-        pass
+        return WorkRefDiscovery()
+
+
+def build_work_refs_metadata(
+    cwd: str,
+    explicit_refs: object = None,
+    discovery: WorkRefDiscovery | None = None,
+) -> dict[str, object]:
+    refs = _explicit_work_refs(explicit_refs)
+    found = discovery if discovery is not None else discover_work_refs(cwd)
+    refs = list(found.structural_refs) + refs
     return {"pallium_work_refs": refs} if refs else {}
+
+
+def _safe_injected_work_ref(ref: object) -> bool:
+    if not isinstance(ref, str) or not ref or len(ref) > 128:
+        return False
+    if any(unicodedata.category(c) in {"Cc", "Zl", "Zp"} for c in ref):
+        return False
+    if "[REDACTED" in ref or redact_sensitive(ref) != ref or _WORK_REF_SECRET_RE.search(ref):
+        return False
+    return bool(re.sub(r"[\s_\-]+", "-", ref.casefold()).strip("-"))
+
+
+def injected_work_ref(discovery: WorkRefDiscovery) -> str | None:
+    for ref in discovery.structural_refs:
+        if _safe_injected_work_ref(ref):
+            return ref
+    return None
+
 
 def read_hook_input() -> dict:
     """Read JSON payload from stdin. Returns empty dict on any failure."""
@@ -616,6 +655,7 @@ def format_injection(
     agent_ref: str | None = None,
     visibility: str | None = None,
     request_source_item_id: str | None = None,
+    work_ref: str | None = None,
 ) -> str:
     """Format bounded memory plus exact active-task telemetry scope."""
     safe_container = _safe_scope_value(container_ref)
@@ -624,6 +664,7 @@ def format_injection(
     safe_agent = _safe_scope_value(agent_ref) if isinstance(agent_ref, str) and agent_ref else None
     safe_visibility = _safe_scope_value(visibility) if isinstance(visibility, str) and visibility else None
     safe_request_source_item_id = _safe_scope_value(request_source_item_id) if isinstance(request_source_item_id, str) and request_source_item_id else None
+    safe_work_ref = work_ref if _safe_injected_work_ref(work_ref) else None
     if safe_container is None or any(value is None for supplied, value in ((thread_ref, safe_thread), (actor_ref, safe_actor), (agent_ref, safe_agent), (visibility, safe_visibility), (request_source_item_id, safe_request_source_item_id)) if supplied):
         return ""
 
@@ -638,6 +679,8 @@ def format_injection(
         scope_fields["visibility"] = safe_visibility
     if safe_request_source_item_id:
         scope_fields["request_source_item_id"] = safe_request_source_item_id
+    if safe_work_ref:
+        scope_fields["work_ref"] = safe_work_ref
     scope = "[Pallium scope — " + json.dumps(
         scope_fields, ensure_ascii=False, separators=(",", ":")
     ) + "]"

@@ -283,15 +283,23 @@ def _compact_history(
     if result.get("decision_reason") is not None:
         payload["decision_reason"] = result["decision_reason"]
     if not hits and result.get("decision_reason") == "source_only_search" and container_ref:
-        payload["requested_container_ref"] = container_ref[:64]
-        if len(container_ref) > 64:
-            payload["container_ref_truncated"] = True
-        payload["empty_result_hint"] = (
-            "Copy the injected container_ref exactly; never derive or guess it."
-        )
+        if requested_work_ref is not None:
+            payload["empty_result_hint"] = (
+                "Copy injected work_ref. If absent, use broad search; never guess. "
+                "Add query for a question."
+            )
+        else:
+            payload["requested_container_ref"] = container_ref[:64]
+            if len(container_ref) > 64:
+                payload["container_ref_truncated"] = True
+            payload["empty_result_hint"] = (
+                "Copy the injected container_ref exactly; never derive or guess it."
+            )
     budget = _MCP_SEARCH_EMPTY_MAX_CHARS if not hits else _MCP_SEARCH_MAX_CHARS
     if not hits and len(_json_text(payload)) > budget:
-        for key in ("empty_result_hint", "requested_container_ref", "container_ref_truncated"):
+        for key in ("requested_work_ref", "requested_container_ref", "container_ref_truncated", "empty_result_hint"):
+            if len(_json_text(payload)) <= budget:
+                break
             payload.pop(key, None)
     for hit in hits:
         for key in ("match_channel", "session_cue"):
@@ -448,7 +456,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         actor_ref: str | None = None, visibility: str | None = None,
         request_source_item_id: str | None = None,
     ) -> str:
-        """`pallium_search_history_by_work_ref` is a narrow exact-reference search. It returns only raw items tagged with that normalized identifier, so it can miss related work stored under another identifier or no identifier. Use `pallium_search_history` for broad topic-level search across eligible history and work items. Omit or use whitespace for `query` to return newest eligible exact-reference items."""
+        """A narrow exact-reference search for the current work item. Pass the injected `work_ref` unchanged. If no `work_ref` is injected, do not guess; use `pallium_search_history`. It can miss related work stored under another or no reference; use `pallium_search_history` for broad topic-level search. Omit `query` only to resume the newest state; use a nonblank query for a specific question."""
         from core.work_ref import work_refs_from_metadata
 
         requested_refs = work_refs_from_metadata({"pallium_work_refs": [work_ref]})
