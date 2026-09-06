@@ -1063,6 +1063,7 @@ def test_e2e_container_then_thread_scope_no_skip(monkeypatch, test_db_url: str):
             "conversational_knowledge": SemanticPackageConfig(
                 name="conversational_knowledge",
                 implementation="conversational_knowledge",
+                enabled=True,
                 llm_provider="test_provider",
                 model="fake-model",
             ),

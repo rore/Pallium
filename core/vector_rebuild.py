@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from core.indexing import source_item_embedding_text
 from core.models import IndexEntry, MemoryObject
 from storage.base import StorageProvider
 
@@ -34,7 +35,6 @@ def _recompute_embedding_text(storage: StorageProvider, entry: IndexEntry) -> st
         except KeyError:
             return None
 
-        from semantic.agent_conversation_memory_embedding import source_item_embedding_text
         return source_item_embedding_text(source_item)
 
     return None

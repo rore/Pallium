@@ -5,8 +5,8 @@ invariants that make it a usable measurement tool:
 
 - both counting seams are wired (request-path engine counts + raw-sqlite3
   loader counts are populated and NON-ZERO),
-- both N+1 shapes are visible (counts grow with the candidate window / with the
-  number of exposed ids),
+- source-only hydration stays bounded across candidate windows, while the
+  raw loader seam still exposes per-exposed-id growth,
 - the index check names the expected index for the neighbor-window query.
 
 Marked slow: it builds a TestClient + seeds a small corpus (polling-free, but a
@@ -28,6 +28,7 @@ def test_harness_small_mode_reports_both_seams_and_n1s():
     # Request-path seam (SQLAlchemy listener) produced non-zero counts.
     counts = report["counts"]
     assert counts["source_only_query"]["engine_queries"] > 0
+    assert counts["source_only_query"]["results"] > 0
     # The no-match source_only path still writes exactly the funnel event
     # (+ the FTS probe) -> a small, bounded, non-zero count.
     assert 0 < counts["source_only_query_no_match"]["engine_queries"] <= 5
@@ -41,10 +42,12 @@ def test_harness_small_mode_reports_both_seams_and_n1s():
     assert loader["load_events_loader_queries"] > 0
     assert loader["visibility_loader_queries"] > 0
 
-    # N+1 #1: DB round-trips grow with the candidate window (not O(1)).
+    # Source-only hydration is batch-prefetched: candidate windows grow while
+    # request-path round-trips remain bounded (the optimized no-N+1 contract).
     n1a = report["n1_double_get_source_item"]
     assert len(n1a) >= 2
-    assert n1a[-1]["engine_queries"] > n1a[0]["engine_queries"]
+    assert n1a[-1]["candidates"] > n1a[0]["candidates"]
+    assert n1a[-1]["engine_queries"] <= n1a[0]["engine_queries"] + 2
 
     # N+1 #2: loader per-exposed-id queries grow with the exposed-id count.
     n1b = report["n1_loader_per_exposed_id"]

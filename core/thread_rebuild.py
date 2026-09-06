@@ -18,7 +18,7 @@ from core.models import MemoryObject, SourceItem
 from core.observability import IntegrationDebugLogger, OBSERVABILITY_METADATA_KEY
 from core.vector_embed import VectorEmbedder
 from core.visibility import visibility_matches_exact, visibility_label
-from providers.llm.base import LLMProviderError
+from providers.llm.base import LLMProviderError, ModelCallCancelledError, model_call_guard
 from semantic.base import SemanticPlugin, ThreadAggregationSemanticPlugin
 from storage.base import StorageProvider, ThreadProcessingLease, ThreadProcessingScope
 from storage.sqlite_codec import extract_memory_subject
@@ -267,16 +267,28 @@ class ThreadRebuilder:
     ) -> None:
         current_lease = lease
         for _iteration in range(self._MAX_THREAD_REBUILD_ITERATIONS):
-            plugin = self._semantic_plugins[current_lease.use_case]
+            if not self._claim_is_current(current_lease, worker_id):
+                return
+            plugin = self._semantic_plugins.get(current_lease.use_case)
+            if plugin is None:
+                self._storage.complete_thread_processing_scope(
+                    scope_key=current_lease.scope_key,
+                    worker_id=worker_id,
+                    claimed_at=current_lease.processing_claimed_at,
+                )
+                return
             thread_items: list[SourceItem] = []
             thread_result: ProcessResult | None = None
             supersession_pairs: list[tuple[str, str]] = []
             try:
-                thread_result, supersede_plan, thread_items = self._maybe_rebuild_thread_summary(
-                    plugin=plugin,
-                    thread_scope=current_lease.as_scope(),
-                    collection_watermark_at=current_lease.collection_watermark_at,
-                )
+                with model_call_guard(
+                    lambda: self._claim_is_current(current_lease, worker_id)
+                ):
+                    thread_result, supersede_plan, thread_items = self._maybe_rebuild_thread_summary(
+                        plugin=plugin,
+                        thread_scope=current_lease.as_scope(),
+                        collection_watermark_at=current_lease.collection_watermark_at,
+                    )
                 if thread_result is not None:
                     supersession_pairs = [
                         (superseded_id, replacement_id)
@@ -298,12 +310,8 @@ class ThreadRebuilder:
                         supersession_hints=thread_result.supersession_hints,
                         promotion_hints=thread_result.promotion_hints,
                     )
-                self._emit_thread_rebuild_outcome(
-                    lease=current_lease,
-                    thread_items=thread_items,
-                    result=thread_result,
-                    supersession_pairs=supersession_pairs,
-                )
+            except ModelCallCancelledError:
+                return
             except Exception as exc:
                 self._observability.emit(
                     "thread_rebuild_outcome",
@@ -338,6 +346,14 @@ class ThreadRebuilder:
                         exc_info=True,
                     )
                     raise
+                if has_pending is None:
+                    return
+                self._emit_thread_rebuild_outcome(
+                    lease=current_lease,
+                    thread_items=thread_items,
+                    result=thread_result,
+                    supersession_pairs=supersession_pairs,
+                )
                 if self._vector_embedder.embed_process_result(thread_result):
                     self._vector_embedder.save_vector_index()
                 self._maybe_assign_workstreams(
@@ -367,6 +383,14 @@ class ThreadRebuilder:
                         exc_info=True,
                     )
                     raise
+                if has_pending is None:
+                    return
+                self._emit_thread_rebuild_outcome(
+                    lease=current_lease,
+                    thread_items=thread_items,
+                    result=None,
+                    supersession_pairs=[],
+                )
             if not has_pending:
                 return
             next_lease = self._storage.claim_thread_processing_scope(
@@ -381,6 +405,14 @@ class ThreadRebuilder:
             "thread_rebuild_iteration_limit",
             scope_key=current_lease.scope_key,
             thread_ref=current_lease.thread_ref,
+        )
+
+    def _claim_is_current(self, lease: ThreadProcessingLease, worker_id: str) -> bool:
+        current = self._storage.get_thread_processing_lease(lease.scope_key)
+        return bool(
+            current is not None
+            and current.processing_claimed_by == worker_id
+            and current.processing_claimed_at == lease.processing_claimed_at
         )
 
     def _maybe_assign_workstreams(
@@ -612,6 +644,7 @@ class ThreadRebuilder:
                     for item in self._storage.list_top_level_messages_for_container(
                         thread_scope.container_ref,
                         after_created_at=collection_watermark_at,
+                        package_name=thread_scope.use_case,
                     )
                     if plugin.supports_thread_aggregation(item)
                 ]
@@ -621,13 +654,18 @@ class ThreadRebuilder:
                     for item in self._storage.list_top_level_messages_for_container(
                         thread_scope.container_ref,
                         max_items=CONTAINER_SCOPE_RECENT_ITEMS,
+                        package_name=thread_scope.use_case,
                     )
                     if plugin.supports_thread_aggregation(item)
                 ]
         else:
             all_thread_items = [
                 item
-                for item in self._storage.list_source_items_for_thread(thread_scope.container_ref, thread_scope.thread_ref)
+                for item in self._storage.list_source_items_for_thread(
+                    thread_scope.container_ref,
+                    thread_scope.thread_ref,
+                    package_name=thread_scope.use_case,
+                )
                 if plugin.supports_thread_aggregation(item)
             ]
             all_content_size = sum(len(item.content.strip()) for item in all_thread_items)

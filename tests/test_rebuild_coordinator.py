@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.models import IndexEntry
-from core.rebuild_coordinator import RebuildCheckpoint, RebuildCoordinator
+from core.models import IndexEntry, SourceItem
+from core.rebuild_coordinator import RebuildCheckpoint, RebuildCoordinator, raw_source_vector_backfill_needed
 from core.vector_index_holder import VectorIndexHolder
 from storage.vector_index import VectorIndex
 
@@ -277,6 +277,156 @@ class TestRebuildCoordinator:
 
         assert holder.is_available
         assert holder.index.entry_count() == 6
+
+    def test_sqlite_backfill_check_is_bounded_and_handles_states(self, tmp_path: Path):
+        from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, SOURCE_ITEM_VECTOR_TEXT_VIEW, build_index_entry
+        from storage.sqlite import SQLiteStorageProvider
+
+        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'raw.db'}")
+        assert raw_source_vector_backfill_needed(storage) is False
+
+        ineligible = SourceItem(
+            source_type="chat_message", source_id="ineligible", content_type="text/plain",
+            content="too short", artifact_kind="tool_use_summary", id="ineligible",
+        )
+        storage.create_source_item(ineligible)
+        storage.create_index_entry(build_index_entry(
+            target_kind="source_item", target_id=ineligible.id, index_type="lexical",
+            text_view=ineligible.content, text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
+        ))
+        assert raw_source_vector_backfill_needed(storage) is False
+
+        eligible = SourceItem(
+            source_type="chat_message", source_id="eligible", content_type="text/plain",
+            content="Unicode café source content that is long enough to embed.",
+            artifact_kind="assistant_output", id="eligible",
+        )
+        storage.create_source_item(eligible)
+        storage.create_index_entry(build_index_entry(
+            target_kind="source_item", target_id=eligible.id, index_type="lexical",
+            text_view=eligible.content, text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
+        ))
+        storage.list_index_entries_by_type_page = MagicMock(
+            side_effect=AssertionError("optimized check must not page lexical entries"),
+        )
+        assert raw_source_vector_backfill_needed(storage) is True
+
+        storage.create_index_entry(build_index_entry(
+            target_kind="source_item", target_id=eligible.id, index_type="vector",
+            text_view=eligible.content, text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
+        ))
+        assert raw_source_vector_backfill_needed(storage) is False
+    def test_raw_source_backfill_needed_pages_and_handles_eligibility(self):
+        sources = [
+            SourceItem(
+                source_type="chat_message", source_id="short", content_type="text/plain",
+                content="short", artifact_kind="message", id="sourceshort",
+            ),
+            SourceItem(
+                source_type="chat_message", source_id="unicode", content_type="text/plain",
+                content="Unicode café source content that is long enough to embed.",
+                artifact_kind="assistant_output", id="sourceunicode",
+            ),
+        ]
+        lexical = [
+            IndexEntry(
+                id="lex-short", target_kind="source_item", target_id="sourceshort",
+                index_type="lexical", text_view="short", text_view_name="source_item.content",
+            ),
+            IndexEntry(
+                id="lex-unicode", target_kind="source_item", target_id="sourceunicode",
+                index_type="lexical", text_view=sources[1].content,
+                text_view_name="source_item.content",
+            ),
+        ]
+        storage = MagicMock()
+        calls = []
+        def page(index_type, *, after_id=None, limit=None):
+            calls.append((index_type, after_id, limit))
+            entries = lexical if index_type == "lexical" else []
+            if after_id is not None:
+                entries = [entry for entry in entries if entry.id > after_id]
+            return entries[:limit] if limit is not None else entries
+        storage.list_index_entries_by_type_page.side_effect = page
+        storage.get_source_item.side_effect = lambda source_id: next(
+            source for source in sources if source.id == source_id
+        )
+        storage.find_index_entry.return_value = None
+
+        assert raw_source_vector_backfill_needed(storage, batch_size=1) is True
+        assert [call[1] for call in calls[:2]] == [None, "lex-short"]
+
+        storage.find_index_entry.return_value = IndexEntry(
+            target_kind="source_item", target_id=sources[1].id, index_type="vector",
+            text_view=sources[1].content, text_view_name="source_content.embedding",
+        )
+        calls.clear()
+        assert raw_source_vector_backfill_needed(storage, batch_size=2) is False
+
+        storage.list_index_entries_by_type_page.side_effect = lambda *args, **kwargs: []
+        assert raw_source_vector_backfill_needed(storage) is False
+    def test_backfills_eligible_raw_vector_from_lexical_inventory(self, tmp_path: Path):
+        source = SourceItem(
+            source_type="chat_message",
+            source_id="raw-1",
+            content_type="text/plain",
+            content="Unicode café source content that is long enough to embed.",
+            artifact_kind="message",
+        )
+        lexical = IndexEntry(
+            id="lex-0",
+            target_kind="source_item",
+            target_id=source.id,
+            index_type="lexical",
+            text_view=source.content,
+            text_view_name="source_item.content",
+        )
+        vector_entries: list[IndexEntry] = []
+        page_calls: list[tuple[str, str | None, int | None]] = []
+
+        storage = MagicMock()
+        def page(index_type, *, after_id=None, limit=None):
+            page_calls.append((index_type, after_id, limit))
+            entries = [lexical] if index_type == "lexical" else vector_entries
+            if after_id is not None:
+                entries = [entry for entry in entries if entry.id > after_id]
+            return entries[:limit] if limit is not None else entries
+        storage.list_index_entries_by_type_page.side_effect = page
+        storage.get_source_item.return_value = source
+        storage.get_memory_object.side_effect = KeyError
+        storage.find_index_entry.side_effect = lambda **kwargs: next(
+            (
+                entry for entry in vector_entries
+                if entry.target_id == kwargs["target_id"]
+                and entry.index_type == kwargs["index_type"]
+                and entry.text_view_name == kwargs["text_view_name"]
+            ),
+            None,
+        )
+        storage.create_index_entry.side_effect = vector_entries.append
+        storage.count_index_entries_by_type.side_effect = lambda kind: sum(
+            entry.index_type == kind for entry in vector_entries
+        )
+
+        provider = _make_stub_provider()
+        coordinator = RebuildCoordinator(
+            storage=storage,
+            embedding_provider=provider,
+            index_holder=VectorIndexHolder(),
+            index_path=tmp_path / "live.usearch",
+            target_model_name="test-model",
+            target_dimensions=8,
+            target_schema_version=1,
+            reason="raw backfill",
+            batch_size=1,
+        )
+        assert coordinator._inventory_raw_source_vectors() == 1
+        assert coordinator._inventory_raw_source_vectors() == 0
+
+        assert len(vector_entries) == 1
+        assert vector_entries[0].text_view == source.content
+        assert page_calls[0][0] == "lexical"
+        assert page_calls[0][2] == 1
 
     def test_cancellation_via_stop_event(self, tmp_path: Path):
         """Setting stop_event before run prevents completion."""

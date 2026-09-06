@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from app.config import AppConfig
+from app.config import AppConfig, SemanticPackageConfig
 from app.main import create_app
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import _vector_index_path_for_sqlite
@@ -104,6 +104,7 @@ def test_queue_health_endpoint_reports_unclaimable_pending_and_recent_failure(mo
                 llm_model="fake-model",
                 llm_base_url="http://fake-provider.local",
                 llm_prompt_variant="strict_typed_memory_v4_evidence_guarded",
+                semantic_packages={"llm_agent_memory": SemanticPackageConfig(name="llm_agent_memory", implementation="llm_agent_memory", enabled=True)},
                 vector_index=VectorIndexConfig(index_path=_vector_index_path_for_sqlite(test_db_url)),
             )
         )

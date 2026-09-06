@@ -58,10 +58,11 @@ def _app_config_with_llm(db_url: str) -> AppConfig:
             ),
         },
         semantic_packages={
-            "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory"),
+            "demo_agent_memory": SemanticPackageConfig(name="demo_agent_memory", implementation="demo_agent_memory", enabled=True),
             "conversational_knowledge": SemanticPackageConfig(
                 name="conversational_knowledge",
                 implementation="conversational_knowledge",
+                enabled=True,
                 llm_provider="test_provider",
                 model="fake-model",
             ),

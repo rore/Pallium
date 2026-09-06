@@ -68,11 +68,18 @@ cross-user sharing or authorization system.
 - structural references from supported integrations, including a non-base Git
   branch, an exact Agent Workflow Work Record when safely resolved, and
   explicitly supplied references
+- package-independent raw history with semantic packages disabled by default
+- source-only queries without an active semantic package
 
-## Planned, not yet available
+## Package behavior
 
-- baseline Session History that runs with every semantic package disabled
-- additional navigation and temporary on-demand compression options
+Semantic packages are optional and disabled by default. A derived package needs
+explicit `enabled = true`; provider-backed packages also need `llm_provider` and
+`model`. Disabling a package preserves stored derived data but prevents new
+processing. Source-only queries continue to work without an active package;
+normal derived queries return `decision_reason: "semantic_package_unavailable"`.
+
+Additional navigation and temporary on-demand compression options remain planned.
 
 Agent Workflow is not required to use Session History. Its Work Record is one
 optional structural reference when an integration can resolve it safely.

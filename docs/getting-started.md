@@ -8,12 +8,12 @@ message, and searches earlier session work.
 - Python 3.12 or 3.13 recommended
 - Git
 - Claude Code or Codex for the shortest setup path
-- an OpenAI-compatible or Anthropic API key to enable history ingestion with
-  the current default configuration
+- an OpenAI-compatible or Anthropic API key only if you enable optional
+  derived memory
 
-Pallium can run Relay without an LLM provider. With the current default
-configuration, history ingestion stays paused until provider credentials are
-added. A provider-free Session History setup is planned work.
+Relay and raw Session History run without an LLM provider. Derived-memory
+packages are disabled by default and require explicit opt-in plus provider
+credentials.
 
 ## 1. Install from source and start Pallium
 
@@ -27,9 +27,8 @@ cp pallium.example.toml pallium.local.toml
 cp .env.example .env.local
 ```
 
-To enable history ingestion, set the provider key used by the default
-configuration in `.env.local`, then
-install the local service:
+Install the local service. No provider key is required for Relay or raw Session
+History:
 
 ```bash
 pallium service install
@@ -141,8 +140,10 @@ The current installation can also extract decisions, findings, facts,
 constraints, and work checkpoints from stored turns. Integrations may retrieve
 or inject those compact memory objects on later turns.
 
-This is an experimental optional subsystem in the product direction, although
-the current runtime has not yet been decoupled from its package configuration.
+This is an experimental optional subsystem. To use it, set `enabled = true` on
+the chosen semantic package and configure its `llm_provider`, `model`, and
+provider credential. Leaving every package disabled keeps history raw and makes
+no derived-memory model calls.
 
 ## Check the service
 

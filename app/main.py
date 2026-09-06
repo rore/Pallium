@@ -185,7 +185,13 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         try:
             metrics_store.record(
                 "system", "service_start",
-                payload={"packages_enabled": list(resolved_config.semantic_packages.keys())},
+                payload={
+                    "packages_enabled": [
+                        name
+                        for name, package in resolved_config.semantic_packages.items()
+                        if package.enabled
+                    ]
+                },
             )
         except Exception:
             pass

@@ -10,6 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from sqlalchemy.exc import IntegrityError
+
+from core.indexing import (
+    SOURCE_ITEM_CONTENT_TEXT_VIEW, SOURCE_ITEM_VECTOR_TEXT_VIEW,
+    VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION,
+    VECTOR_INDEX_TYPE, build_index_entry, source_item_embedding_text,
+)
 from core.vector_index_holder import VectorIndexHolder
 from core.vector_rebuild import _recompute_embedding_text
 from providers.embedding.base import EmbeddingProvider
@@ -17,6 +24,49 @@ from storage.base import StorageProvider
 from storage.vector_index import VectorIndex, _atomic_write_json, _replace_with_retry
 
 logger = logging.getLogger(__name__)
+
+
+def raw_source_vector_backfill_needed(
+    storage: StorageProvider, *, batch_size: int = 128,
+) -> bool:
+    """Return whether any eligible lexical source lacks its vector row."""
+    optimized = getattr(storage, "raw_source_vector_backfill_needed", None)
+    if callable(optimized):
+        result = optimized(
+            lexical_text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
+            vector_text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
+        )
+        if isinstance(result, bool):
+            return result
+    after_id: str | None = None
+    while True:
+        batch = storage.list_index_entries_by_type_page(
+            "lexical", after_id=after_id, limit=batch_size,
+        )
+        if not isinstance(batch, list):
+            return False
+        if not batch:
+            return False
+        for entry in batch:
+            if (
+                entry.target_kind != "source_item"
+                or entry.text_view_name != SOURCE_ITEM_CONTENT_TEXT_VIEW
+            ):
+                continue
+            try:
+                source_item = storage.get_source_item(entry.target_id)
+            except KeyError:
+                continue
+            if source_item_embedding_text(source_item) is None:
+                continue
+            if storage.find_index_entry(
+                target_kind="source_item",
+                target_id=source_item.id,
+                index_type=VECTOR_INDEX_TYPE,
+                text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
+            ) is None:
+                return True
+        after_id = batch[-1].id
 
 
 @dataclass
@@ -169,16 +219,23 @@ class RebuildCoordinator:
                 "Resuming rebuild from checkpoint: %d/%d entries processed",
                 existing.entry_count_processed, existing.entry_count_total,
             )
+            added = self._inventory_raw_source_vectors()
             self._checkpoint = existing
+            if added:
+                self._checkpoint.last_processed_entry_id = None
+                self._checkpoint.entry_count_processed = 0
+                self._checkpoint.entry_count_total = self._storage.count_index_entries_by_type(VECTOR_INDEX_TYPE)
+                self._create_shadow_index()
             shadow_index_path = self._shadow_dir / "index.usearch"
-            if shadow_index_path.exists() and Path(f"{shadow_index_path}.meta.json").exists():
+            if not added and shadow_index_path.exists() and Path(f"{shadow_index_path}.meta.json").exists():
                 self._shadow_index = VectorIndex.load(shadow_index_path)
-            else:
+            elif not added:
                 self._checkpoint.last_processed_entry_id = None
                 self._checkpoint.entry_count_processed = 0
                 self._create_shadow_index()
         else:
-            total = self._storage.count_index_entries_by_type("vector")
+            self._inventory_raw_source_vectors()
+            total = self._storage.count_index_entries_by_type(VECTOR_INDEX_TYPE)
             self._checkpoint = RebuildCheckpoint(
                 status="in_progress",
                 reason=self._reason,
@@ -196,6 +253,50 @@ class RebuildCoordinator:
             self._checkpoint.save(self._state_path)
             logger.info("Starting rebuild: %d entries, reason=%s", total, self._reason)
 
+    def _inventory_raw_source_vectors(self) -> int:
+        """Backfill missing eligible raw-source vector rows from lexical pages."""
+        after_id: str | None = None
+        created = 0
+        while True:
+            batch = self._storage.list_index_entries_by_type_page(
+                "lexical", after_id=after_id, limit=self._batch_size,
+            )
+            if not batch:
+                return created
+            for lexical_entry in batch:
+                if (
+                    lexical_entry.target_kind != "source_item"
+                    or lexical_entry.text_view_name != SOURCE_ITEM_CONTENT_TEXT_VIEW
+                ):
+                    continue
+                try:
+                    source_item = self._storage.get_source_item(lexical_entry.target_id)
+                except KeyError:
+                    continue
+                text = source_item_embedding_text(source_item)
+                if text is None or self._storage.find_index_entry(
+                    target_kind="source_item",
+                    target_id=source_item.id,
+                    index_type=VECTOR_INDEX_TYPE,
+                    text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
+                ) is not None:
+                    continue
+                entry = build_index_entry(
+                    target_kind="source_item",
+                    target_id=source_item.id,
+                    index_type=VECTOR_INDEX_TYPE,
+                    text_view=text,
+                    text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
+                    provider_name=VECTOR_EMBEDDING_PROVIDER_NAME,
+                    provider_version=VECTOR_EMBEDDING_PROVIDER_VERSION,
+                )
+                try:
+                    self._storage.create_index_entry(entry)
+                except IntegrityError:
+                    logger.debug("Raw source vector backfill raced", exc_info=True)
+                    continue
+                created += 1
+            after_id = batch[-1].id
     def _create_shadow_index(self) -> None:
         """Create a fresh shadow VectorIndex in the rebuild directory."""
         self._shadow_dir.mkdir(parents=True, exist_ok=True)

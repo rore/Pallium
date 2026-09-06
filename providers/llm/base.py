@@ -6,12 +6,38 @@ import re
 import threading
 import time
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Callable, Iterator
 
 import httpx
 
+
+
+class ModelCallCancelledError(RuntimeError):
+    pass
+
+
+_MODEL_CALL_GUARD: ContextVar[Callable[[], bool] | None] = ContextVar(
+    "pallium_model_call_guard", default=None
+)
+
+
+@contextmanager
+def model_call_guard(check: Callable[[], bool]) -> Iterator[None]:
+    token = _MODEL_CALL_GUARD.set(check)
+    try:
+        yield
+    finally:
+        _MODEL_CALL_GUARD.reset(token)
+
+
+def check_model_call_allowed() -> None:
+    check = _MODEL_CALL_GUARD.get()
+    if check is not None and not check():
+        raise ModelCallCancelledError("derived-memory claim is no longer current")
 
 FENCED_JSON_PATTERN = re.compile(r"^```(?:json)?\s*(?P<body>.*?)\s*```$", re.IGNORECASE | re.DOTALL)
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504, 529}
@@ -125,6 +151,7 @@ class ResilientLLMProvider(LLMProvider, ABC):
             last_error: LLMProviderError | None = None
             for attempt in range(1, self._retry_policy.max_attempts + 1):
                 try:
+                    check_model_call_allowed()
                     response = self._perform_request(
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,

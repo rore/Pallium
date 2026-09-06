@@ -234,3 +234,25 @@ class TestEmptyResponses:
         # No crash, no exception.
         assert response.raw_text == ""
         assert response.parsed_json == {}
+
+
+def test_model_call_guard_resets_after_exception() -> None:
+    from providers.llm.base import ModelCallCancelledError, check_model_call_allowed, model_call_guard
+    import pytest
+
+    with pytest.raises(ModelCallCancelledError):
+        with model_call_guard(lambda: False):
+            check_model_call_allowed()
+    check_model_call_allowed()
+
+
+def test_redacting_wrapper_blocks_stale_guard_before_delegate() -> None:
+    from providers.llm.base import model_call_guard
+    import pytest
+
+    inner = _EchoProvider(LLMJsonResponse(raw_text="{}", parsed_json={}))
+    wrapped = RedactingLLMProviderWrapper(inner)
+    with model_call_guard(lambda: False):
+        with pytest.raises(RuntimeError, match="no longer current"):
+            wrapped.generate_json(system_prompt="s", user_prompt="u", schema_description="d")
+    assert inner.calls == []

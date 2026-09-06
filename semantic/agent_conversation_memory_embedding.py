@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from core.models import MemoryObject, SourceItem
+from core.indexing import (
+    EMBEDDING_SCHEMA_VERSION, SOURCE_ITEM_VECTOR_TEXT_VIEW,
+    VECTOR_EMBEDDING_PROVIDER_NAME, VECTOR_EMBEDDING_PROVIDER_VERSION,
+    source_item_embedding_text,
+)
+from core.models import MemoryObject
 
 
 EMBEDDABLE_MEMORY_TYPES = {
@@ -14,12 +19,6 @@ EMBEDDABLE_MEMORY_TYPES = {
     "note",
 }
 
-# Bump when embedding text format changes (used by auto-rebuild infrastructure).
-EMBEDDING_SCHEMA_VERSION = 2
-
-# Placeholder constants — replaced with real provider values in Part 6.
-VECTOR_EMBEDDING_PROVIDER_NAME = "embedding"
-VECTOR_EMBEDDING_PROVIDER_VERSION = "pending"
 
 
 def build_embedding_text(memory_object: MemoryObject) -> str | None:
@@ -218,12 +217,3 @@ def _build_note_text(payload: dict) -> str:
     if content:
         parts.append(content[:1500])
     return " ".join(parts) if parts else ""
-
-
-def source_item_embedding_text(source_item: SourceItem) -> str | None:
-    """agent_conversation_memory policy: embed user messages and assistant outputs >= 40 chars."""
-    if source_item.artifact_kind not in ("message", "assistant_output"):
-        return None
-    if len(source_item.content) < 40:
-        return None
-    return source_item.content

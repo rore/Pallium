@@ -36,11 +36,15 @@ max_concurrency = 4
 # timeout_seconds = 30
 # auth_style = "native"  # use "bearer" for proxy endpoints
 
+# Derived packages are optional and disabled unless explicitly enabled.
+# Uncomment one enabled line to opt into its generated-memory processing.
 [semantic_packages.demo_agent_memory]
 implementation = "demo_agent_memory"
+# enabled = true
 
 [semantic_packages.agent_conversation_memory]
 implementation = "agent_conversation_memory"
+# enabled = true
 llm_provider = "openai"
 model = "gpt-5-mini"
 prompt_variant = "strict_typed_memory_v6_work_state_examples"

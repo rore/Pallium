@@ -1060,3 +1060,159 @@ def test_supervisor_does_not_spawn_snapshot_when_disabled(capsys, tmp_path, monk
     assert exit_code == 0
     snapshot_processes = [p for p in started if 'app.snapshot' in ' '.join(str(c) for c in p.command)]
     assert len(snapshot_processes) == 0
+
+
+def test_canceled_package_worker_stops_before_second_provider_call(test_db_url: str) -> None:
+    from providers.llm.base import LLMJsonResponse, LLMProvider
+    from providers.llm.redacting_wrapper import RedactingLLMProviderWrapper
+
+    storage = SQLiteStorageProvider(test_db_url)
+
+    class CancelOnFirstCall(LLMProvider):
+        calls = 0
+
+        def generate_json(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                storage.cancel_disabled_package_work(("cancel-package",))
+            return LLMJsonResponse(raw_text="{}", parsed_json={})
+
+    provider = CancelOnFirstCall()
+
+    class TwoCallPlugin(SemanticPlugin):
+        name = "cancel-package"
+
+        def process_item(self, source_item):
+            guarded = RedactingLLMProviderWrapper(provider)
+            for _ in range(2):
+                guarded.generate_json(system_prompt="s", user_prompt="u", schema_description="{}")
+            memory = MemoryObject(
+                type="decision", schema_id="test.decision", schema_version="1",
+                payload={"decision": "must not persist"},
+            )
+            return ProcessResult(memory_objects=[memory], relations=[], index_entries=[])
+
+    service = _build_service(
+        test_db_url, storage=storage,
+        plugins={"cancel-package": TwoCallPlugin()}, default_use_case="cancel-package",
+    )
+    result = service.ingest_item(
+        source_type="chat_message", source_id="cancel-package-item",
+        content_type="text/plain", content="Decision: cancel derived processing safely.",
+        artifact_kind="message", role="user", container_ref="container:cancel",
+        thread_ref="thread:cancel", visibility="public", metadata=None, use_case=None,
+    )
+    processor = service._processor
+    processor._vector_embedder.embed_process_result = MagicMock(
+        side_effect=AssertionError("stale result embedded")
+    )
+    processor._run_shadow_extraction_safely = MagicMock(
+        side_effect=AssertionError("stale result entered shadow extraction")
+    )
+    processor._emit_processing_outcome = MagicMock(
+        side_effect=AssertionError("stale result emitted success")
+    )
+    processor._emit_memory_creation_provenance = MagicMock(
+        side_effect=AssertionError("stale result emitted provenance")
+    )
+
+    assert service.process_next_source_item(worker_id="cancel-worker") is not None
+    assert provider.calls == 1
+    assert storage.list_memory_objects(include_candidates=True) == []
+    assert storage.get_source_item(result.source_item_id).processing_status == "completed"
+    processor._vector_embedder.embed_process_result.assert_not_called()
+    processor._run_shadow_extraction_safely.assert_not_called()
+
+
+def test_canceled_thread_worker_stops_before_second_provider_call(test_db_url: str) -> None:
+    from providers.llm.base import LLMJsonResponse, LLMProvider
+    from providers.llm.redacting_wrapper import RedactingLLMProviderWrapper
+
+    storage = SQLiteStorageProvider(test_db_url)
+
+    class CancelOnFirstCall(LLMProvider):
+        calls = 0
+
+        def generate_json(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                storage.cancel_disabled_package_work(("cancel-thread",))
+            return LLMJsonResponse(raw_text="{}", parsed_json={})
+
+    provider = CancelOnFirstCall()
+
+    class TwoCallThreadPlugin(ThreadAggregationSemanticPlugin):
+        name = "cancel-thread"
+
+        @property
+        def thread_summary_schema_id(self):
+            return "test.thread-summary"
+
+        @property
+        def requires_visibility_context(self):
+            return True
+
+        def supports_thread_aggregation(self, source_item):
+            return True
+
+        def process_item(self, source_item):
+            memory = MemoryObject(
+                type="decision", schema_id="test.decision", schema_version="1",
+                payload={"decision": source_item.content}, visibility=source_item.visibility,
+            )
+            return ProcessResult(
+                memory_objects=[memory],
+                relations=[Relation(
+                    from_kind="memory_object", from_id=memory.id,
+                    relation_type="supported_by", to_kind="source_item", to_id=source_item.id,
+                )],
+                index_entries=[], thread_rebuild_requested=True,
+            )
+
+        def build_thread_summary(self, aggregate, conclusions):
+            guarded = RedactingLLMProviderWrapper(provider)
+            for _ in range(2):
+                guarded.generate_json(system_prompt="s", user_prompt="u", schema_description="{}")
+            summary = MemoryObject(
+                type="thread_summary", schema_id=self.thread_summary_schema_id,
+                schema_version="1", payload={"summary": "must not persist"},
+                visibility=aggregate.visibility,
+            )
+            return ProcessResult(memory_objects=[summary], relations=[], index_entries=[]), {}
+
+    service = _build_service(
+        test_db_url, storage=storage,
+        plugins={"cancel-thread": TwoCallThreadPlugin()}, default_use_case="cancel-thread",
+    )
+    for index in range(2):
+        service.ingest_item(
+            source_type="chat_message", source_id=f"cancel-thread-{index}",
+            content_type="text/plain", content=f"Decision {index}: seed thread rebuild.",
+            artifact_kind="message", role="user", container_ref="container:cancel",
+            thread_ref="thread:cancel", visibility="public", metadata=None, use_case=None,
+        )
+        assert service.process_next_source_item(worker_id="seed-worker") is not None
+
+    rebuilder = service._thread_rebuilder
+    rebuilder._vector_embedder.embed_process_result = MagicMock(
+        side_effect=AssertionError("stale thread result embedded")
+    )
+    rebuilder._maybe_assign_workstreams = MagicMock(
+        side_effect=AssertionError("stale thread result assigned workstreams")
+    )
+    rebuilder._maybe_trigger_fact_consolidation = MagicMock(
+        side_effect=AssertionError("stale thread result consolidated")
+    )
+    rebuilder._emit_thread_rebuild_outcome = MagicMock(
+        side_effect=AssertionError("stale thread result emitted success")
+    )
+
+    assert service.process_next_thread_rebuild(worker_id="cancel-rebuilder") is not None
+    assert provider.calls == 1
+    assert not [
+        memory for memory in storage.list_memory_objects(include_candidates=True)
+        if memory.type == "thread_summary"
+    ]
+    rebuilder._vector_embedder.embed_process_result.assert_not_called()
+    rebuilder._maybe_assign_workstreams.assert_not_called()
+    rebuilder._maybe_trigger_fact_consolidation.assert_not_called()

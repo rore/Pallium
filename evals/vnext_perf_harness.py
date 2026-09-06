@@ -286,7 +286,14 @@ def _engine_db_path(engine) -> Path:
 
 
 def _query_payload(text: str, limit: int) -> dict[str, Any]:
-    return {"text": text, "limit": limit, "source_only": True, "trigger_origin": "agent_pull"}
+    return {
+        "text": text,
+        "limit": limit,
+        "source_only": True,
+        "trigger_origin": "agent_pull",
+        "container_ref": "container-0",
+        "visibility": "private",
+    }
 
 
 def measure_source_only(client, engine, *, text: str, limit: int) -> dict[str, Any]:

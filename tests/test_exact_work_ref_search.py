@@ -246,7 +246,7 @@ def test_exact_ref_dedup_refill_stops_at_candidate_ceiling() -> None:
     retrieval = MagicMock(query=query)
     plugin = MagicMock(requires_visibility_context=False)
     result = QueryExecutor(MagicMock(), retrieval, {"test": plugin}, "test").query(
-        "alpha", 3, source_only=True, work_refs=("proj-1",)
+        "alpha", 3, source_only=True, container_ref="test", visibility="private", work_refs=("proj-1",)
     )
 
     assert len(result.results) == 1

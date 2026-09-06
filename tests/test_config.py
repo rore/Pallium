@@ -564,11 +564,11 @@ def test_model_roles_env_override(monkeypatch, tmp_path: Path) -> None:
 # Package enabled flag
 # ---------------------------------------------------------------------------
 
-def test_package_enabled_defaults_to_true() -> None:
+def test_package_enabled_defaults_to_false() -> None:
     from app.config import SemanticPackageConfig
 
     package = SemanticPackageConfig(name="test", implementation="test")
-    assert package.enabled is True
+    assert package.enabled is False
 
 
 def test_package_enabled_false_from_toml(monkeypatch, tmp_path: Path) -> None:
@@ -591,11 +591,101 @@ def test_package_enabled_false_from_toml(monkeypatch, tmp_path: Path) -> None:
     config = AppConfig.from_env()
 
     acm = config.package_config("agent_conversation_memory")
-    assert acm.enabled is True
+    assert acm.enabled is False
 
     ck = config.package_config("conversational_knowledge")
     assert ck.enabled is False
 
+
+
+def test_package_enabled_only_explicit_true_activates_across_overrides(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text(
+        """
+        [semantic_packages.agent_conversation_memory]
+        model = "file-model"
+
+        [semantic_packages.conversational_knowledge]
+        enabled = true
+        """.strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_LLM_MODEL", "legacy-model")
+    monkeypatch.setenv("PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__MODEL", "env-model")
+    monkeypatch.setenv("PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__PROMPT_VARIANT", "env-prompt")
+    monkeypatch.setenv("PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__RESOLVER_TIMEOUT_MS", "901")
+
+    config = AppConfig.from_env()
+
+    assert config.package_config("agent_conversation_memory").enabled is False
+    assert config.package_config("conversational_knowledge").enabled is True
+
+
+def test_package_enabled_env_override_is_explicit(monkeypatch, tmp_path: Path) -> None:
+    config_file = tmp_path / "pallium.local.toml"
+    config_file.write_text("[semantic_packages.agent_conversation_memory]\n", encoding="utf-8")
+    monkeypatch.setenv("PALLIUM_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("PALLIUM_PACKAGE__AGENT_CONVERSATION_MEMORY__ENABLED", "true")
+
+    config = AppConfig.from_env()
+
+    assert config.package_config("agent_conversation_memory").enabled is True
+
+def test_disabled_builtin_keeps_retention_policy_without_provider(monkeypatch, tmp_path: Path) -> None:
+    from app.config import LLMProviderConfig, SemanticPackageConfig
+    from app.dependencies import build_service
+    from storage.vector_index import VectorIndexConfig
+
+    def fail_provider(*args, **kwargs):
+        raise AssertionError("disabled package provider must not be constructed")
+
+    monkeypatch.setattr("app.dependencies.build_llm_provider", fail_provider)
+    config = AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'retention.db'}",
+        default_use_case="agent_conversation_memory",
+        llm_providers={
+            "unused": LLMProviderConfig(name="unused", kind="test", base_url="http://unused")
+        },
+        semantic_packages={
+            "agent_conversation_memory": SemanticPackageConfig(
+                name="agent_conversation_memory",
+                implementation="agent_conversation_memory",
+                enabled=False,
+                llm_provider="unused",
+                model="fake-model",
+            )
+        },
+        vector_index=VectorIndexConfig(enabled=False),
+    )
+
+    service = build_service(config, enable_vector=False).service
+    policy = service._retention_policy
+    assert {"decision", "note"} <= policy.durable_types
+    assert "thread_summary" in policy.working_types
+    assert "turn_summary" in policy.orphan_delete_types
+def test_enabled_package_missing_provider_fails_clearly():
+    from app.config import SemanticPackageConfig
+    from app.dependencies import build_semantic_plugins
+    config = AppConfig(semantic_packages={
+        "agent_conversation_memory": SemanticPackageConfig(name="agent_conversation_memory", implementation="agent_conversation_memory", enabled=True, model="fake-model")
+    })
+    with pytest.raises(ValueError, match="agent_conversation_memory.*llm_provider"):
+        build_semantic_plugins(config)
+
+
+def test_enabled_package_missing_model_fails_clearly():
+    from app.config import LLMProviderConfig, SemanticPackageConfig
+    from app.dependencies import build_semantic_plugins
+    config = AppConfig(
+        llm_providers={"test": LLMProviderConfig(name="test", kind="test", base_url="http://test")},
+        semantic_packages={
+            "agent_conversation_memory": SemanticPackageConfig(name="agent_conversation_memory", implementation="agent_conversation_memory", enabled=True, llm_provider="test")
+        },
+    )
+    with pytest.raises(ValueError, match="agent_conversation_memory.*model"):
+        build_semantic_plugins(config)
 
 def test_build_semantic_plugins_skips_disabled_package(monkeypatch) -> None:
     from app.config import SemanticPackageConfig

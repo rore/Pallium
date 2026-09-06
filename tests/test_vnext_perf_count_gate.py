@@ -42,7 +42,10 @@ def test_compare_detects_a_seeded_regression() -> None:
     modified — the perturbation is an in-memory copy."""
     report = h.run_measurements(include_latency=False)
     baseline = json.loads(h.BASELINE_PATH.read_text(encoding="utf-8"))
-    # Drop the source_only_query expected count to 1 so the (larger) measured
+    assert report["counts"]["source_only_query"]["results"] > 0, (
+        "seeded source-only measurement must return a real corpus hit before count comparison"
+    )
+    # Drop the source_only_query expected count to 1 so the larger measured
     # count reads as a regression regardless of tolerance.
     baseline["counts"]["source_only_query"]["engine_queries"] = 1
     problems = h.compare_to_baseline(report, baseline)

@@ -13,7 +13,7 @@ def _config(db_url: str) -> AppConfig:
         vector_index=VectorIndexConfig(enabled=False),
     )
 
-def _make_item(source_id, content, *, thread_ref=None, container_ref="container-a"):
+def _make_item(source_id, content, *, thread_ref=None, container_ref="container-a", use_case=None):
     return SourceItem(
         source_type="chat_message",
         source_id=source_id,
@@ -24,6 +24,7 @@ def _make_item(source_id, content, *, thread_ref=None, container_ref="container-
         container_ref=container_ref,
         thread_ref=thread_ref,
         visibility="private",
+        use_case=use_case,
         processing_status="completed",
     )
 
@@ -86,6 +87,48 @@ class TestListTopLevelMessages:
         source_ids = [item.source_id for item in items]
         assert source_ids == ["msg-7", "msg-8", "msg-9"]
 
+    def test_package_filter_excludes_raw_only_and_cancelled_sources(self, test_db_url: str) -> None:
+        app = create_app(_config(test_db_url))
+        storage = app.state.pallium_service._storage
+
+        completed = _make_item("completed", "completed", thread_ref="completed-thread")
+        storage.create_source_item_with_packages(completed, ["demo_agent_memory"])
+        claimed = storage.claim_next_package_task(
+            worker_id="collector", lease_seconds=60, max_attempts=3
+        )
+        assert claimed is not None
+        storage.complete_package_task(completed.id, "demo_agent_memory")
+
+        cancelled = _make_item("cancelled", "cancelled", thread_ref="cancelled-thread")
+        storage.create_source_item_with_packages(cancelled, ["demo_agent_memory"])
+        storage.cancel_disabled_package_work(("demo_agent_memory",))
+
+        legacy = _make_item(
+            "legacy", "legacy", thread_ref="legacy-thread", use_case="demo_agent_memory"
+        )
+        raw_only = _make_item("raw-only", "raw-only", thread_ref="raw-thread")
+        storage.create_source_item(legacy)
+        storage.create_source_item(raw_only)
+
+        expected = {"completed", "legacy"}
+        assert {
+            item.source_id
+            for item in storage.list_top_level_messages_for_container(
+                "container-a", package_name="demo_agent_memory"
+            )
+        } == expected
+        assert storage.list_source_items_for_thread(
+            "container-a", "completed-thread", package_name="demo_agent_memory"
+        )[0].source_id == "completed"
+        assert storage.list_source_items_for_thread(
+            "container-a", "legacy-thread", package_name="demo_agent_memory"
+        )[0].source_id == "legacy"
+        assert storage.list_source_items_for_thread(
+            "container-a", "cancelled-thread", package_name="demo_agent_memory"
+        ) == []
+        assert storage.list_source_items_for_thread(
+            "container-a", "raw-thread", package_name="demo_agent_memory"
+        ) == []
     def test_different_container_excluded(self, test_db_url: str) -> None:
         app = create_app(_config(test_db_url))
         storage = app.state.pallium_service._storage

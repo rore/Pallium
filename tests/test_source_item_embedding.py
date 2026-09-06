@@ -5,10 +5,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.contracts import ProcessResult
-from core.indexing import VECTOR_INDEX_TYPE
+from core.indexing import VECTOR_INDEX_TYPE, source_item_embedding_text as core_source_item_embedding_text
 from core.models import IndexEntry, SourceItem
 from core.service import PalliumService
 from core.vector_index_holder import VectorIndexHolder
+from core.vector_embed import VectorEmbedder
 from providers.embedding.base import EmbeddingProvider
 from retrieval.lexical import LexicalRetrievalProvider
 from semantic.agent_conversation_memory_embedding import source_item_embedding_text
@@ -54,6 +55,16 @@ class FakeEmbeddingProvider(EmbeddingProvider):
         return "test-embed-model"
 
 
+class FlakyEmbeddingProvider(FakeEmbeddingProvider):
+    def __init__(self, dims: int = 4) -> None:
+        super().__init__(dims)
+        self.fail = True
+
+    def embed(self, texts: list[str], **kwargs) -> list[list[float]]:
+        if self.fail:
+            raise RuntimeError("temporary embedding outage")
+        return super().embed(texts, **kwargs)
+
 class FakeVectorIndex:
     """Minimal stand-in for VectorIndex."""
 
@@ -66,6 +77,12 @@ class FakeVectorIndex:
 
     def save(self) -> None:
         self.save_count += 1
+
+    def contains(self, entry_id: str) -> bool:
+        return entry_id in self.entries
+
+    def known_entry_ids(self) -> set[str]:
+        return set(self.entries)
 
 
 class SelectiveEmbeddingPlugin(SemanticPlugin):
@@ -90,7 +107,7 @@ class VectorProducingPlugin(SemanticPlugin):
         return source_item_embedding_text(source_item)
 
     def process_item(self, source_item: SourceItem) -> ProcessResult:
-        from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
+        from core.indexing import VECTOR_INDEX_TYPE, source_item_embedding_text as core_source_item_embedding_text, build_index_entry
         vector_entry = build_index_entry(
             target_kind="source_item",
             target_id=source_item.id,
@@ -195,6 +212,60 @@ class TestSourceItemEmbeddingTextFunction:
 # ---------------------------------------------------------------------------
 # Default SemanticPlugin.source_item_embedding_text() returns None
 # ---------------------------------------------------------------------------
+
+class TestCoreRawSourceEmbedding:
+    def test_core_rule_preserves_boundaries_and_unicode(self):
+        assert core_source_item_embedding_text(_make_source_item(content="x" * 39)) is None
+        assert core_source_item_embedding_text(_make_source_item(content="é" * 40)) == "é" * 40
+        assert core_source_item_embedding_text(
+            _make_source_item(artifact_kind="assistant_output", content="a" * 40)
+        ) == "a" * 40
+        assert core_source_item_embedding_text(
+            _make_source_item(artifact_kind="tool_use_summary", content="t" * 100)
+        ) is None
+
+    def test_vector_entry_persists_without_provider_or_index(self, test_db_url):
+        storage = SQLiteStorageProvider(test_db_url)
+        embedder = VectorEmbedder(storage, None, index_holder=VectorIndexHolder(), enabled=True)
+        item = _make_source_item()
+        entry = embedder.build_source_item_vector_entry(item)
+        assert entry is not None
+        assert entry.text_view_name == "source_content.embedding"
+        assert entry.provider_name == "embedding"
+        assert entry.provider_version == "pending"
+        assert storage.count_index_entries_by_type(VECTOR_INDEX_TYPE) == 1
+        assert embedder.build_source_item_vector_entry(item).id == entry.id
+        assert storage.count_index_entries_by_type(VECTOR_INDEX_TYPE) == 1
+
+    def test_disabled_vector_config_skips_eligible_raw_row(self, test_db_url):
+        storage = SQLiteStorageProvider(test_db_url)
+        embedder = VectorEmbedder(
+            storage,
+            FakeEmbeddingProvider(),
+            index_holder=VectorIndexHolder(FakeVectorIndex()),
+            enabled=False,
+        )
+        assert embedder.build_source_item_vector_entry(_make_source_item()) is None
+        assert storage.count_index_entries_by_type(VECTOR_INDEX_TYPE) == 0
+    def test_failed_embedding_recovers_without_duplicate_row(self, test_db_url):
+        storage = SQLiteStorageProvider(test_db_url)
+        provider = FlakyEmbeddingProvider()
+        vector_idx = FakeVectorIndex()
+        embedder = VectorEmbedder(
+            storage, provider, index_holder=VectorIndexHolder(vector_idx),
+        )
+        item = _make_source_item(source_id="recover-1")
+        entry = embedder.build_source_item_vector_entry(item)
+        assert entry is not None
+        assert embedder.embed_and_persist_vector_entry(entry) is False
+        assert storage.count_index_entries_by_type(VECTOR_INDEX_TYPE) == 1
+        provider.fail = False
+        assert embedder.embed_and_persist_vector_entry(entry) is True
+        assert len(vector_idx.entries) == 1
+        assert storage.count_index_entries_by_type(VECTOR_INDEX_TYPE) == 1
+    def test_semantic_function_remains_compatible(self):
+        item = _make_source_item(content="unicode café — " + "x" * 40)
+        assert source_item_embedding_text(item) == core_source_item_embedding_text(item)
 
 class TestDefaultPluginEmbeddingText:
     def test_default_returns_none(self):

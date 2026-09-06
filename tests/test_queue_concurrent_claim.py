@@ -619,3 +619,219 @@ def test_atomic_ingest_integrity_error_on_duplicate(storage):
     with pytest.raises(SAIntegrityError):
         storage.create_source_item_with_packages(item2, ["pkg_a"])
 
+
+# ── Commit/cancellation races across independent providers ────────────────
+
+
+def test_two_provider_package_commit_vs_disable_is_coherent(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'package-race.db'}"
+    writer = SQLiteStorageProvider(db_url)
+    canceller = SQLiteStorageProvider(db_url)
+    item = build_source_item(
+        source_type="test",
+        source_id="package-commit-race",
+        content_type="text/plain",
+        content="Package commit and disable must serialize without partial memory.",
+        metadata={"race": "package"},
+        use_case="race-package",
+        processing_status="pending",
+    )
+    writer.create_source_item_with_packages(item, ["race-package"])
+    claimed = writer.claim_next_package_task(
+        worker_id="package-worker", lease_seconds=60, max_attempts=3,
+    )
+    assert claimed is not None
+    _, package_name, attempts = claimed
+
+    from core.models import IndexEntry, MemoryObject
+
+    memory = MemoryObject(
+        type="decision",
+        schema_id="test.decision",
+        schema_version="1",
+        payload={"decision": "package winner persisted atomically"},
+    )
+    index = IndexEntry(
+        target_kind="memory_object",
+        target_id=memory.id,
+        index_type="lexical",
+        text_view="package race memory",
+    )
+    result = ProcessResult(
+        memory_objects=[memory],
+        relations=[],
+        index_entries=[index],
+        source_item_metadata_updates={item.id: {"race_result": {"committed": True}}},
+    )
+    start = threading.Barrier(2, timeout=5)
+    outcomes: dict[str, object] = {}
+    errors: list[BaseException] = []
+
+    def commit():
+        try:
+            start.wait()
+            outcomes["commit"] = writer.commit_package_process_result(
+                source_item_id=item.id,
+                result=result,
+                package_name=package_name,
+                worker_id="package-worker",
+                attempts=attempts,
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    def disable():
+        try:
+            start.wait()
+            outcomes["disable"] = canceller.cancel_disabled_package_work(
+                ("race-package",)
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=commit), threading.Thread(target=disable)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not errors
+    assert len(outcomes) == 2
+    final = SQLiteStorageProvider(db_url)
+    from sqlalchemy import text
+    with final._engine.connect() as connection:
+        package_status = connection.execute(
+            text(
+                "SELECT status FROM package_processing_status "
+                "WHERE source_item_id = :source_id AND package_name = :package_name"
+            ),
+            {"source_id": item.id, "package_name": package_name},
+        ).scalar_one()
+    assert package_status in {"completed", "skipped"}
+    assert final.get_source_item(item.id).processing_status == "completed"
+    try:
+        persisted = final.get_memory_object(memory.id)
+    except KeyError:
+        persisted = None
+    if package_status == "completed":
+        assert outcomes["commit"] == []
+        assert persisted is not None
+        assert persisted.payload == memory.payload
+        assert final.get_source_item(item.id).metadata["race_result"] == {"committed": True}
+    else:
+        assert outcomes["commit"] is None
+        assert persisted is None
+        assert final.list_index_entries_for_target("memory_object", memory.id) == []
+        assert final.get_source_item(item.id).metadata.get("race_result") is None
+    assert package_status == (
+        "completed" if persisted is not None else "skipped"
+    )
+
+def test_two_provider_thread_rebuild_commit_vs_disable_is_coherent(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'thread-race.db'}"
+    writer = SQLiteStorageProvider(db_url)
+    canceller = SQLiteStorageProvider(db_url)
+    seed = build_source_item(
+        source_type="test",
+        source_id="thread-commit-race",
+        content_type="text/plain",
+        content="Thread rebuild commit and disable must serialize coherently.",
+        metadata={"race": "thread"},
+        use_case="race-thread",
+        container_ref="container:race",
+        thread_ref="thread:race",
+        visibility="public",
+        processing_status="pending",
+    )
+    writer.create_source_item(seed)
+    scope = ThreadProcessingScope(
+        scope_key="thread-race-scope",
+        use_case="race-thread",
+        container_ref="container:race",
+        thread_ref="thread:race",
+        visibility="public",
+    )
+    assert writer.commit_processed_source_item(
+        source_item_id=seed.id,
+        result=ProcessResult(memory_objects=[], relations=[], index_entries=[]),
+        thread_rebuild_scope=scope,
+    ) == []
+    lease = writer.claim_thread_processing_scope(
+        scope=scope, worker_id="thread-worker", lease_seconds=60,
+    )
+    assert lease is not None
+    assert lease.processing_claimed_at is not None
+
+    from core.models import IndexEntry, MemoryObject
+
+    memory = MemoryObject(
+        type="thread_summary",
+        schema_id="test.thread_summary",
+        schema_version="1",
+        payload={"summary": "thread winner persisted atomically"},
+    )
+    index = IndexEntry(
+        target_kind="memory_object",
+        target_id=memory.id,
+        index_type="lexical",
+        text_view="thread race memory",
+    )
+    result = ProcessResult(
+        memory_objects=[memory],
+        relations=[],
+        index_entries=[index],
+        source_item_metadata_updates={seed.id: {"thread_race_result": {"committed": True}}},
+    )
+    start = threading.Barrier(2, timeout=5)
+    outcomes: dict[str, object] = {}
+    errors: list[BaseException] = []
+
+    def commit():
+        try:
+            start.wait()
+            outcomes["commit"] = writer.commit_process_result_and_complete_scope(
+                result=result,
+                scope_key=scope.scope_key,
+                worker_id="thread-worker",
+                claimed_at=lease.processing_claimed_at,
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    def disable():
+        try:
+            start.wait()
+            outcomes["disable"] = canceller.cancel_disabled_package_work(
+                ("race-thread",)
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=commit), threading.Thread(target=disable)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not errors
+    assert len(outcomes) == 2
+    final = SQLiteStorageProvider(db_url)
+    final_scope = final.get_thread_processing_lease(scope.scope_key)
+    assert final_scope is not None
+    assert final_scope.requested_at is None
+    assert final_scope.processing_claimed_by is None
+    try:
+        persisted = final.get_memory_object(memory.id)
+    except KeyError:
+        persisted = None
+    if outcomes["commit"] is None:
+        assert outcomes["disable"]["rebuild_scopes"] == 1
+        assert persisted is None
+        assert final.list_index_entries_for_target("memory_object", memory.id) == []
+        assert final.get_source_item(seed.id).metadata.get("thread_race_result") is None
+    else:
+        assert outcomes["commit"] is False
+        assert persisted is not None
+        assert persisted.payload == memory.payload
+        assert final.get_source_item(seed.id).metadata["thread_race_result"] == {"committed": True}
+    assert final_scope.processing_lease_expires_at is None

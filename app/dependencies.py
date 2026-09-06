@@ -12,6 +12,7 @@ from core.claude_wake import ClaudeWakeRegistry
 from app.codex_wake import mark_codex_relay_wake_admitted, schedule_codex_relay_wake
 from app.claude_wake import schedule_claude_relay_wake
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
+from core.contracts import MemoryRetentionPolicy
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.relay import RelayService, RelayUnavailableError
 from core.service import PalliumService
@@ -27,8 +28,11 @@ from retrieval.base import RetrievalProvider
 from retrieval.lexical import LexicalRetrievalProvider
 from retrieval.vector import VectorRetrievalProvider
 from semantic.base import SemanticPlugin
-from semantic.agent_conversation_memory import AgentConversationMemoryPlugin
-from semantic.agent_work_trace import AgentWorkTracePlugin
+from semantic.agent_conversation_memory import (
+    AGENT_CONVERSATION_MEMORY_RETENTION_POLICY,
+    AgentConversationMemoryPlugin,
+)
+from semantic.agent_work_trace import AGENT_WORK_TRACE_RETENTION_POLICY, AgentWorkTracePlugin
 from semantic.agent_conversation_memory_routing import RoutingOverrides
 from semantic.demo_agent_memory import DemoAgentMemoryPlugin
 from semantic.llm_agent_memory import LLMAgentMemoryPlugin
@@ -170,6 +174,13 @@ def build_semantic_plugins(config: AppConfig, routing_overrides: RoutingOverride
     for package_name, package_config in config.semantic_packages.items():
         if not package_config.enabled:
             continue
+        if package_config.implementation in {
+            "llm_agent_memory", "agent_conversation_memory", "agent_work_trace", "conversational_knowledge",
+        }:
+            missing = [field for field, value in (("llm_provider", package_config.llm_provider), ("model", package_config.model)) if not value]
+            if missing:
+                missing_fields = ", ".join(missing)
+                raise ValueError(f"Enabled semantic package {package_name!r} requires {missing_fields}")
         plugin = _build_plugin_for_package(config=config, package_config=package_config, routing_overrides=routing_overrides)
         if plugin is not None:
             plugins[package_name] = plugin
@@ -312,6 +323,23 @@ def _build_resolver_config(*, provider: LLMProvider, package_config: SemanticPac
 def build_retrieval_provider(storage: StorageProvider) -> RetrievalProvider:
     return LexicalRetrievalProvider(storage)
 
+def _configured_retention_policy(config: AppConfig) -> MemoryRetentionPolicy:
+    policies = {
+        "agent_conversation_memory": AGENT_CONVERSATION_MEMORY_RETENTION_POLICY,
+        "agent_work_trace": AGENT_WORK_TRACE_RETENTION_POLICY,
+    }
+    merged = MemoryRetentionPolicy()
+    for package in config.semantic_packages.values():
+        policy = policies.get(package.implementation)
+        if policy is None:
+            continue
+        merged = MemoryRetentionPolicy(
+            durable_types=merged.durable_types | policy.durable_types,
+            working_types=merged.working_types | policy.working_types,
+            orphan_delete_types=merged.orphan_delete_types | policy.orphan_delete_types,
+        )
+    return merged
+
 
 def build_service(
     config: AppConfig | None = None,
@@ -328,8 +356,6 @@ def build_service(
     active_names = list(plugins.keys())
     logger.info("Active semantic packages: %s", ", ".join(active_names) if active_names else "(none)")
 
-    if resolved_config.default_use_case not in plugins:
-        raise ValueError(f"Unsupported default use case: {resolved_config.default_use_case}")
     retrieval = build_retrieval_provider(storage)
 
     # Vector retrieval (enabled by default, can be disabled for processor subprocesses)
@@ -374,6 +400,16 @@ def build_service(
                 elif vector_index.embedding_schema_version != EMBEDDING_SCHEMA_VERSION:
                     rebuild_needed = True
                     rebuild_reason = f"schema version: {vector_index.embedding_schema_version} -> {EMBEDDING_SCHEMA_VERSION}"
+
+        if (
+            not rebuild_needed
+            and vector_index is not None
+            and embedding_provider is not None
+        ):
+            from core.rebuild_coordinator import raw_source_vector_backfill_needed
+            if raw_source_vector_backfill_needed(storage):
+                rebuild_needed = True
+                rebuild_reason = "eligible raw sources missing vector entries"
 
         # Check for pending rebuild from prior crash
         if not rebuild_needed and vector_config.enabled and enable_vector:
@@ -432,7 +468,7 @@ def build_service(
     obs = resolved_config.observability
     if obs.shadow_subtask_selector_enabled:
         pkg = resolved_config.semantic_packages.get(resolved_config.default_use_case)
-        if pkg is not None and pkg.llm_provider and pkg.model:
+        if pkg is not None and pkg.enabled and pkg.llm_provider and pkg.model:
             try:
                 from semantic.agent_conversation_memory_subtask_selector_shadow import (
                     SubtaskSelectorShadowRunner,
@@ -460,12 +496,15 @@ def build_service(
         retrieval=retrieval,
         semantic_plugins=plugins,
         default_use_case=resolved_config.default_use_case,
+        configured_use_cases=tuple(resolved_config.semantic_packages),
+        retention_policy=_configured_retention_policy(resolved_config),
         observability=IntegrationDebugLogger(enabled=resolved_config.observability.integration_debug),
         retention_enabled=resolved_config.retention.enabled,
         retention_lease_seconds=resolved_config.retention.lease_seconds,
         retention_batch_size=resolved_config.retention.batch_size,
         embedding_provider=embedding_provider,
         index_holder=index_holder,
+        vector_index_enabled=vector_config.enabled and enable_vector,
         type_registry=type_registry if len(type_registry) > 0 else None,
         routing_overrides=routing_overrides,
         query_stats=query_stats,

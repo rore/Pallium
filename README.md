@@ -59,8 +59,8 @@ next-turn delivery; some qualified paths can also start a new turn. See the
 [Relay support details](docs/agent-relay.md#delivery-and-wake-behavior).
 
 Session History supports broad topic search, exact work-reference search, and
-nearby-message lookup. A simpler setup that does not require configuring an LLM
-provider is planned next. See the
+nearby-message lookup. It works with semantic packages disabled by default and
+does not require an LLM provider. See the
 [Session History status](docs/session-history.md#available-now) and current
 [roadmap](roadmap/board.md).
 
@@ -79,9 +79,10 @@ pallium setup claude-code       # or: pallium setup codex
 The OpenCode integration currently uses a local plugin. See its
 [setup guide](integrations/opencode/README.md).
 
-Pallium can run Relay without an LLM provider. With the current default
-configuration, history ingestion stays paused until provider credentials are
-added. A provider-free Session History setup is planned work.
+Pallium can run Relay and raw Session History without an LLM provider. Derived
+memory is optional: enable a package explicitly with `enabled = true` and
+configure its provider and model. Disabling a package preserves stored derived
+data but prevents new processing.
 
 Continue with [Getting Started](docs/getting-started.md) to try Relay and Session
 History in real agent sessions.

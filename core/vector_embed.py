@@ -3,11 +3,14 @@ from __future__ import annotations
 import logging
 
 from core.contracts import ProcessResult
-from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
+from core.indexing import (
+    SOURCE_ITEM_VECTOR_TEXT_VIEW, VECTOR_EMBEDDING_PROVIDER_NAME,
+    VECTOR_EMBEDDING_PROVIDER_VERSION, VECTOR_INDEX_TYPE,
+    build_index_entry, source_item_embedding_text,
+)
 from core.models import IndexEntry, SourceItem
 from core.vector_index_holder import VectorIndexHolder
 from providers.embedding.base import EmbeddingProvider
-from semantic.base import SemanticPlugin
 from storage.base import StorageProvider
 from storage.vector_index import VectorIndex
 
@@ -30,10 +33,12 @@ class VectorEmbedder:
         embedding_provider: EmbeddingProvider | None = None,
         *,
         index_holder: VectorIndexHolder,
+        enabled: bool | None = None,
     ) -> None:
         self._storage = storage
         self._embedding_provider = embedding_provider
         self._holder = index_holder
+        self._enabled = bool(embedding_provider or index_holder.index) if enabled is None else enabled
         self._logger = logging.getLogger(__name__)
         self._reconcile_after_id: str | None = None
         self._reconcile_stale_after_id: str | None = None
@@ -47,7 +52,7 @@ class VectorEmbedder:
         self._reconcile_after_id = None
         self._reconcile_stale_after_id = None
 
-    def embed_process_result(self, process_result: ProcessResult, plugin: SemanticPlugin | None = None) -> bool:
+    def embed_process_result(self, process_result: ProcessResult) -> bool:
         """Add vector index entries to the in-memory index after SQLite commit.
 
         Filters committed index entries for index_type="vector", embeds them
@@ -81,37 +86,42 @@ class VectorEmbedder:
             self._logger.warning("Vector embedding failed after commit; reconciliation will catch gaps", exc_info=True)
             return False
 
-    def build_source_item_vector_entry(self, plugin: SemanticPlugin, source_item: SourceItem) -> IndexEntry | None:
-        """Create a vector IndexEntry for a source item using plugin embedding text.
+    def build_source_item_vector_entry(self, source_item: SourceItem) -> IndexEntry | None:
+        """Create and persist the eligible raw-source vector entry.
 
-        Returns the IndexEntry if created and persisted to storage, or None if:
-        - embedding_provider or vector_index is None
-        - the plugin returns no embedding text for the source item
-        - a vector entry already exists for this source item
-        - an error occurs during creation
+        The entry is persisted even when embedding is temporarily unavailable;
+        reconciliation can embed it later.
         """
-        if self._embedding_provider is None or self._vector_index is None:
+        if not self._enabled:
             return None
         try:
-            embedding_text = plugin.source_item_embedding_text(source_item)
+            embedding_text = source_item_embedding_text(source_item)
             if embedding_text is None:
                 return None
             existing = self._storage.find_index_entry(
                 target_kind="source_item",
                 target_id=source_item.id,
                 index_type=VECTOR_INDEX_TYPE,
-                text_view_name="source_content.embedding",
+                text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
             )
             if existing is not None:
-                return None
+                return existing
             source_vector_entry = build_index_entry(
                 target_kind="source_item",
                 target_id=source_item.id,
                 index_type=VECTOR_INDEX_TYPE,
                 text_view=embedding_text,
-                text_view_name="source_content.embedding",
-                provider_name=self._embedding_provider.model_name(),
-                provider_version=f"dim={self._embedding_provider.dimensions()}",
+                text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
+                provider_name=(
+                    self._embedding_provider.model_name()
+                    if self._embedding_provider is not None
+                    else VECTOR_EMBEDDING_PROVIDER_NAME
+                ),
+                provider_version=(
+                    f"dim={self._embedding_provider.dimensions()}"
+                    if self._embedding_provider is not None
+                    else VECTOR_EMBEDDING_PROVIDER_VERSION
+                ),
             )
             self._storage.create_index_entry(source_vector_entry)
             return source_vector_entry
@@ -130,9 +140,16 @@ class VectorEmbedder:
         """
         if self._embedding_provider is None or self._vector_index is None:
             return False
+        if self._vector_index.contains(index_entry.id):
+            return False
         try:
             vectors = self._embedding_provider.embed([index_entry.text_view], mode="passage")
             self._vector_index.add(index_entry.id, vectors[0])
+            self._storage.update_index_entry_provider(
+                index_entry.id,
+                provider_name=self._embedding_provider.model_name(),
+                provider_version=f"dim={self._embedding_provider.dimensions()}",
+            )
             return True
         except Exception:
             self._logger.warning("Source item vector embedding failed", exc_info=True)

@@ -31,6 +31,11 @@ TASK_TRACE_TYPE = "task_trace"
 TASK_TRACE_SCHEMA_ID = "agent_work_trace.task_trace"
 TASK_TRACE_SCHEMA_VERSION = "v1"
 
+AGENT_WORK_TRACE_RETENTION_POLICY = MemoryRetentionPolicy(
+    working_types=frozenset({TASK_TRACE_TYPE}),
+    durable_types=frozenset({OPERATIONAL_FACT_TYPE}),
+)
+
 LEXICAL_TEXT_VIEW_NAME = "memory_object.task_trace_lexical"
 
 # W4 PR 3: operational_fact derivation constants
@@ -144,10 +149,7 @@ class AgentWorkTracePlugin(ThreadAggregationSemanticPlugin):
 
     @property
     def memory_retention_policy(self) -> MemoryRetentionPolicy:
-        return MemoryRetentionPolicy(
-            working_types=frozenset({TASK_TRACE_TYPE}),
-            durable_types=frozenset({OPERATIONAL_FACT_TYPE}),
-        )
+        return AGENT_WORK_TRACE_RETENTION_POLICY
 
     def register_routing_types(self, registry: TypeRegistry) -> None:
         """Register operational_fact with the core type registry.

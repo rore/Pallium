@@ -1,5 +1,4 @@
 # Next · Session History
-- decouple-session-history-from-derived-packages
 - investigate-history-navigation-and-on-demand-compression
 
 # Parallel · Agent Relay
@@ -45,6 +44,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- decouple-session-history-from-derived-packages
 - fix-agent-work-ref-injection
 - add-distinct-work-and-broad-history-search-tools
 - add-structural-session-work-references

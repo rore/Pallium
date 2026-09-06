@@ -202,11 +202,14 @@ class PalliumService:
         default_use_case: str,
         observability: IntegrationDebugLogger | None = None,
         *,
+        configured_use_cases: tuple[str, ...] | None = None,
+        retention_policy: MemoryRetentionPolicy | None = None,
         retention_enabled: bool = False,
         retention_lease_seconds: int = 300,
         retention_batch_size: int = 200,
         embedding_provider: EmbeddingProvider | None = None,
         index_holder: VectorIndexHolder | None = None,
+        vector_index_enabled: bool | None = None,
         type_registry: TypeRegistry | None = None,
         routing_overrides=None,
         query_stats: QueryStats | None = None,
@@ -218,7 +221,14 @@ class PalliumService:
         self._storage = storage
         self._retrieval = retrieval
         self._semantic_plugins = semantic_plugins
+        self._configured_use_cases = frozenset(configured_use_cases or semantic_plugins)
         self._default_use_case = default_use_case
+        disabled_packages = tuple(sorted(self._configured_use_cases - semantic_plugins.keys()))
+        if disabled_packages:
+            try:
+                storage.cancel_disabled_package_work(disabled_packages)
+            except NotImplementedError:
+                pass
         self._observability = observability or IntegrationDebugLogger(enabled=False)
         self._retention_enabled = retention_enabled
         self._retention_lease_seconds = retention_lease_seconds
@@ -226,7 +236,10 @@ class PalliumService:
         self._embedding_provider = embedding_provider
         self._index_holder = index_holder or VectorIndexHolder()
         self._type_registry = type_registry
-        self._vector_embedder = VectorEmbedder(storage, embedding_provider, index_holder=self._index_holder)
+        self._vector_embedder = VectorEmbedder(
+            storage, embedding_provider, index_holder=self._index_holder,
+            enabled=vector_index_enabled,
+        )
         self._query_stats = query_stats
         self._workstream_capability = _build_workstream_capability(storage)
         self._query_executor = QueryExecutor(
@@ -274,7 +287,7 @@ class PalliumService:
         self._metrics_store = metrics_store
         self._metrics_retention_days = metrics_retention_days
 
-        merged_retention = MemoryRetentionPolicy()
+        merged_retention = retention_policy or MemoryRetentionPolicy()
         for plugin in self._semantic_plugins.values():
             plugin_policy = plugin.memory_retention_policy
             if plugin_policy is not None:
@@ -318,16 +331,34 @@ class PalliumService:
         container_ref = canonicalize_container_ref(container_ref)
         existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
         if existing_source_item is not None:
+            vector_entry = self._vector_embedder.build_source_item_vector_entry(existing_source_item)
+            if vector_entry is not None and existing_source_item.processing_status != "pending":
+                if self._vector_embedder.embed_and_persist_vector_entry(vector_entry):
+                    self._vector_embedder.save_vector_index()
             return self._build_ingest_result(existing_source_item)
 
-        # Resolve which package name to store on source_item for backward compat
-        plugin_name = use_case or self._default_use_case
-        plugin = self._semantic_plugins[plugin_name]
-        processing_status = "pending"
+        requested_package = use_case or self._default_use_case
+        if use_case is not None and requested_package not in self._configured_use_cases:
+            raise ValueError(f"Unsupported use case: {requested_package}")
+        plugin = self._semantic_plugins.get(requested_package)
+        active_packages: list[str] = []
+        if plugin is not None:
+            active_packages.append(requested_package)
+        for package_name, package_plugin in self._semantic_plugins.items():
+            if package_name != requested_package and package_plugin.parallel_processing:
+                active_packages.append(package_name)
+        skip_packages = [
+            package_name
+            for package_name in active_packages
+            if self._semantic_plugins[package_name].requires_visibility_context
+            and (container_ref is None or visibility is None)
+        ]
+        processing_status = "pending" if active_packages else "completed"
         processing_error = None
-        if plugin.requires_visibility_context and (container_ref is None or visibility is None):
+        if active_packages and len(skip_packages) == len(active_packages):
             processing_status = "skipped"
             processing_error = "visibility_context_required"
+        processing_completed_at = utc_now() if processing_status != "pending" else None
 
         # -----------------------------------------------------------------
         # PR 0 step 6: universal write barrier.
@@ -382,23 +413,11 @@ class PalliumService:
             source_ref=source_ref,
             artifact_kind=artifact_kind,
             visibility=visibility,
-            use_case=plugin_name,
+            use_case=requested_package if plugin is not None else None,
             processing_status=processing_status,
+            processing_completed_at=processing_completed_at,
             processing_error=processing_error,
         )
-        # Multi-package tracking: determine packages before creating the item.
-        active_packages = [plugin_name]
-        for pkg_name, pkg_plugin in self._semantic_plugins.items():
-            if pkg_name == plugin_name:
-                continue
-            if pkg_plugin.parallel_processing:
-                active_packages.append(pkg_name)
-        skip_packages: list[str] = []
-        for pkg_name in active_packages:
-            pkg_plugin = self._semantic_plugins.get(pkg_name)
-            if pkg_plugin and pkg_plugin.requires_visibility_context and (container_ref is None or visibility is None):
-                skip_packages.append(pkg_name)
-
         # Atomic creation: source item + PPS rows in one transaction to prevent
         # the processor from claiming via the legacy path before PPS rows exist.
         try:
@@ -421,6 +440,10 @@ class PalliumService:
                 text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
             )
         )
+        vector_entry = self._vector_embedder.build_source_item_vector_entry(source_item)
+        if vector_entry is not None and processing_status != "pending":
+            if self._vector_embedder.embed_and_persist_vector_entry(vector_entry):
+                self._vector_embedder.save_vector_index()
 
         return self._build_ingest_result(self._storage.get_source_item(source_item.id))
 

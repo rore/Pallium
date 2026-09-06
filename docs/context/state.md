@@ -42,15 +42,16 @@ wake remain open. There is no scheduled Relay feature.
 - safeguards for superseded historical guidance
 
 Supported integrations attach structural work references, and exact work-reference
-search is shipped. Running raw Session History with zero semantic packages remains
-ordered work, not shipped behavior.
+search is shipped. Raw Session History works with semantic packages disabled by
+default; source-only retrieval does not require an active package. Derived
+packages require explicit enablement and provider/model configuration, and
+disabling one preserves stored derived data while preventing new processing.
 
 ### Derived memory
 
 The existing packages support extraction, hybrid lexical/vector retrieval,
 routing, explicit memory writes, lifecycle, evidence expansion, multilingual
-text, and evaluation tooling. They still participate in the current runtime
-configuration while the package-independence work is pending.
+text, and evaluation tooling. They are optional and disabled by default.
 
 ## Runtime and operations
 

@@ -359,3 +359,28 @@ def test_anthropic_default_auth_style_is_native() -> None:
 
     assert captured_headers.get("x-api-key") == "my-key"
     assert "authorization" not in captured_headers
+
+
+def test_retry_checks_model_call_guard_before_next_request() -> None:
+    from providers.llm.base import ModelCallCancelledError, model_call_guard
+
+    calls = 0
+    allowed = True
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls, allowed
+        calls += 1
+        allowed = False
+        return httpx.Response(500, json={"error": "retryable"})
+
+    provider = OpenAICompatibleLLMProvider(
+        provider_name="openai", model="gpt-test", base_url="https://example.test/v1",
+        api_key="secret", timeout_seconds=5,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        retry_policy=LLMRetryPolicy(max_attempts=2, base_backoff_ms=0, max_backoff_ms=0, jitter_ratio=0),
+    )
+
+    with model_call_guard(lambda: allowed):
+        with pytest.raises(ModelCallCancelledError):
+            provider.generate_json(system_prompt="s", user_prompt="u", schema_description="d")
+    assert calls == 1

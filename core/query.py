@@ -124,8 +124,11 @@ class QueryExecutor:
         )
         requested_filters = filter_resolution.requested_filters
         effective_filters = filter_resolution.effective_filters
-        plugin = self._semantic_plugins[self._default_use_case]
-        if plugin.requires_visibility_context and (container_ref is None or visibility is None):
+        plugin = self._semantic_plugins.get(self._default_use_case)
+        requires_visibility = source_only or (
+            plugin is not None and plugin.requires_visibility_context
+        )
+        if requires_visibility and (container_ref is None or visibility is None):
             trace = None
             if include_trace:
                 trace = QueryTrace(
@@ -176,15 +179,11 @@ class QueryExecutor:
                     text=text,
                     limit=retrieval_limit,
                     filters=effective_filters,
-                    visibility=visibility if plugin.requires_visibility_context else None,
-                    query_container_ref=(
-                        container_ref if plugin.requires_visibility_context else None
-                    ),
+                    visibility=visibility,
+                    query_container_ref=container_ref,
                     include_trace=include_trace,
-                    require_visibility=plugin.requires_visibility_context,
-                    query_actor_ref=(
-                        actor_ref if plugin.requires_visibility_context else None
-                    ),
+                    require_visibility=True,
+                    query_actor_ref=actor_ref,
                     target_kind="source_item",
                 )
                 results = retrieval_result.results
@@ -224,6 +223,31 @@ class QueryExecutor:
                 trace=trace,
                 should_inject=False,
                 decision_reason="source_only_search",
+                injectable_blocks=[],
+            )
+            if self._query_stats is not None:
+                self._query_stats.record_query(result)
+            return result
+
+        if plugin is None:
+            trace = None
+            if include_trace:
+                trace = QueryTrace(
+                    query_text=text,
+                    query_tokens=tokenize_query(text),
+                    limit=limit,
+                    filters=effective_filters,
+                    requested_filters=requested_filters,
+                    filter_scope_relaxed=filter_resolution.filter_scope_relaxed,
+                    filter_scope_reason=filter_resolution.filter_scope_reason,
+                    stages=tuple(),
+                    result_summary=_build_query_result_summary([]),
+                )
+            result = QueryResult(
+                results=[],
+                trace=trace,
+                should_inject=False,
+                decision_reason="semantic_package_unavailable",
                 injectable_blocks=[],
             )
             if self._query_stats is not None:

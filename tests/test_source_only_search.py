@@ -457,17 +457,19 @@ def test_source_only_exclusion_filters_identity_before_limit_and_refills() -> No
     executor = QueryExecutor(MagicMock(), retrieval, {"test": plugin}, "test")
 
     result = executor.query(
-        "x", 1, source_only=True, exclude_source_identity=("chat", "same")
+        "x", 1, source_only=True, container_ref="test", visibility="private", exclude_source_identity=("chat", "same")
     )
     assert [item.source_item_id for item in result.results] == ["row-3"]
 
-    unchanged = executor.query("x", 2, source_only=True)
+    unchanged = executor.query("x", 2, source_only=True, container_ref="test", visibility="private")
     assert [item.source_item_id for item in unchanged.results] == ["row-1", "row-2"]
 
     unicode_result = executor.query(
         "x",
         3,
         source_only=True,
+        container_ref="test",
+        visibility="private",
         exclude_source_identity=("chat", "同じ-日本語"),
     )
     assert "row-4" not in [item.source_item_id for item in unicode_result.results]
@@ -500,7 +502,7 @@ def test_source_only_exclusion_filters_identity_before_limit_and_refills() -> No
         ]
     )
     max_page = executor.query(
-        "x", 50, source_only=True, exclude_source_identity=("chat", "same")
+        "x", 50, source_only=True, container_ref="test", visibility="private", exclude_source_identity=("chat", "same")
     )
     assert [item.source_item_id for item in max_page.results] == [
         f"eligible-{index}" for index in range(50)
@@ -509,7 +511,7 @@ def test_source_only_exclusion_filters_identity_before_limit_and_refills() -> No
     retrieval.query.return_value = RetrievalQueryResult(results=[])
     assert (
         executor.query(
-            "x", 50, source_only=True, exclude_source_identity=("chat", "same")
+            "x", 50, source_only=True, container_ref="test", visibility="private", exclude_source_identity=("chat", "same")
         ).results
         == []
     )

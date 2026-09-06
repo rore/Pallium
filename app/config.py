@@ -63,7 +63,7 @@ class EmbeddingProviderConfig:
 class SemanticPackageConfig:
     name: str
     implementation: str
-    enabled: bool = True
+    enabled: bool = False
     llm_provider: str | None = None
     model: str | None = None
     prompt_variant: str | None = None
@@ -267,6 +267,7 @@ class AppConfig:
                 packages[package_name] = SemanticPackageConfig(
                     name=current.name,
                     implementation=current.implementation,
+                    enabled=current.enabled,
                     llm_provider=LEGACY_PROVIDER_KEY,
                     model=self.llm_model or current.model,
                     prompt_variant=self.llm_prompt_variant or current.prompt_variant,
@@ -957,6 +958,7 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             updated = {
                 "name": current.name,
                 "implementation": current.implementation,
+                "enabled": current.enabled,
                 "llm_provider": current.llm_provider,
                 "model": current.model,
                 "prompt_variant": current.prompt_variant,
@@ -979,6 +981,7 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             updated = {
                 "name": current.name,
                 "implementation": current.implementation,
+                "enabled": current.enabled,
                 "llm_provider": current.llm_provider,
                 "model": current.model,
                 "prompt_variant": current.prompt_variant,
@@ -995,6 +998,7 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
         updated = {
             "name": current.name,
             "implementation": current.implementation,
+            "enabled": current.enabled,
             "llm_provider": current.llm_provider,
             "model": current.model,
             "prompt_variant": current.prompt_variant,
@@ -1012,6 +1016,8 @@ def _build_package_configs(config_data: dict[str, Any], env_values: dict[str, st
             updated["model"] = env_value
         elif field_name == "prompt_variant":
             updated["prompt_variant"] = env_value
+        elif field_name == "enabled":
+            updated["enabled"] = _parse_bool(env_value, current.enabled)
         elif field_name == "resolver_enabled":
             updated["resolver_enabled"] = _parse_bool(env_value, current.resolver_enabled)
         elif field_name == "resolver_timeout_ms":

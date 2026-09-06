@@ -169,6 +169,7 @@ def build_isolated_client_with_operational_fact_enabled(
             "agent_conversation_memory": SemanticPackageConfig(
                 name="agent_conversation_memory",
                 implementation="agent_conversation_memory",
+                enabled=True,
                 llm_provider="stub",
                 model="stub-model",
                 prompt_variant="strict_typed_memory_v6_work_state_examples",
@@ -176,6 +177,7 @@ def build_isolated_client_with_operational_fact_enabled(
             "agent_work_trace": SemanticPackageConfig(
                 name="agent_work_trace",
                 implementation="agent_work_trace",
+                enabled=True,
                 llm_provider="stub",
                 model="stub-model",
             ),
