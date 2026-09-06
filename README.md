@@ -26,10 +26,11 @@ named session.
 ### Session History
 
 Session History keeps selected user and agent messages from earlier sessions. A
-later session can search them and open nearby messages when it needs more
+later agent session can search them and open nearby messages when it needs more
 context.
 
-Scope, redaction, and forgetting rules control what is stored and returned.
+Pallium only returns history visible to the requesting session. It can redact
+sensitive text from results, and stored turns can be explicitly forgotten.
 Historical content is evidence about earlier work, not proof of current live
 state.
 
@@ -37,16 +38,16 @@ state.
 
 ## Use cases
 
-- **Dependency or decision.** A worker sends a newly discovered constraint or a
-  blocked question to the session that needs it. An architect session can use the
-  same channel to send decisions or review requests; Pallium delivers the
-  messages but does not coordinate the work.
-- **Independent review.** A builder sends a commit or diff reference and a review
-  request to a session using another supported coding tool; the reviewer returns
-  concrete findings through Relay.
-- **Returning to earlier work.** A later session searches Session History for a
-  previous decision or investigation and opens the surrounding messages before
-  continuing.
+- **Dependency or decision.** A worker agent sends a newly discovered constraint
+  or a blocked question to the agent session that needs it. An architect agent
+  can use the same channel to send decisions or review requests; Pallium delivers
+  the messages but does not coordinate the work.
+- **Independent review.** A builder agent sends a commit or diff reference and a
+  review request to an agent session using another supported coding tool; the
+  reviewer agent returns concrete findings through Relay.
+- **Returning to earlier work.** A later agent session searches Session History
+  for a previous decision or investigation and opens the surrounding messages
+  before continuing.
 
 Pallium is a personal open-source project under active development. It is useful
 in its current form, but setup and behavior still have rough edges.
