@@ -7,7 +7,7 @@
 
 **Constraints:** Preserve explicit expiry bounds of 60 seconds through 7 days, legacy rows and their stored 24-hour expiries, exact-scope isolation, receipt/lease/idempotency contracts, Unicode, delivery redaction, and existing SQLite indexes. Omitted expiry must be exposed honestly as `expires_at: null`. No schema migration, dependency, real sleep, or slow default test. Use the existing MCP omission forwarding path and the smallest persistence representation that keeps every current expiry predicate correct.
 
-**Completion criteria:** Newly omitted-expiry sends and atomic replies are durable and expose `expires_at: null`; an omitted-expiry idempotent retry succeeds while omitted-versus-explicit reuse conflicts; a durable message remains pending and claimable after deterministic time beyond seven days, dormant/busy delay, service-app restart, and bounded backlog turns; explicit minimum/maximum expiry and over-bound rejection remain unchanged; ACK and atomic reply work after delayed durable claim; dashboard pending/expired counts handle durable messages correctly; focused E2E, workflow, redline, API review, PR CI, and result review pass without adding wall-clock delay.
+**Completion criteria:** Newly omitted-expiry and explicit-JSON-null sends and atomic replies are durable and expose `expires_at: null`; omitted/null idempotent retries succeed while durable-versus-explicit reuse conflicts for both send and derived reply; legacy concrete-expiry rows remain compatible; a durable message remains pending and claimable after deterministic time beyond seven days, dormant/busy delay, a real file-backed SQLite app close/reopen, and bounded backlog turns; explicit minimum/maximum expiry and over-bound rejection remain unchanged; ACK and atomic reply work after delayed durable claim; dashboard pending/expired counts handle durable messages correctly; focused E2E, workflow, redline, API review, PR CI, and result review pass without adding wall-clock delay.
 
 **Risk:** High
 
@@ -19,23 +19,23 @@
 
 **Material assumptions:** SQLite and SQLAlchemy preserve the exact year-9999 UTC sentinel used for new durable rows; disproved by focused round-trip or CI failure, which returns persistence design to planning. No supported explicit expiry can equal the sentinel; enforced by the existing seven-day maximum. Current query predicates uniformly treat the sentinel as future; disproved by a caller that compares expiry outside the inspected storage/dashboard paths, which requires adding that path to scope before implementation. Public clients accept nullable `expires_at`; disproved by repository contract fixtures or API review, which returns schema design to planning.
 
-**Plan:** Keep the existing non-null SQLite column and indexed expiry predicates. Change request/core defaults to `None`; validate only supplied durations. In `storage/sqlite_relay.py`, map omission to one internal UTC year-9999 sentinel, centralize only the minimum encode/match/render logic needed by send, reply, idempotency, delivery, and status views, and mark the deliberate sentinel ceiling with a `ponytail:` comment. Map the sentinel to `expires_at: null` at the API-facing storage views; preserve explicit timestamp behavior and legacy rows. Reuse existing MCP omission forwarding rather than changing MCP code. Add a compact caller-surface E2E that proves omitted send/reply, idempotency conflict, deterministic >7-day delay, persisted app restart, dormant/backlog delivery, and terminal ACK/reply; extend the existing dashboard test only if it does not already exercise the new default. Update the public Relay document and canonical roadmap state. Stop and return to planning if sentinel round-trip, public contract review, or an uninspected expiry predicate invalidates an assumption.
+**Plan:** Keep the existing non-null SQLite column and indexed expiry predicates. Change request fields to `int | None`, response fields to `datetime | None`, core defaults to `None`, and validate only supplied durations. In `storage/sqlite_relay.py`, map omission/JSON null to one internal UTC year-9999 sentinel; centralize the minimum encode, durable-match, and public-render logic used by send, atomic reply, both idempotency paths, delivery views, and status views; mark the deliberate sentinel ceiling with a `ponytail:` comment. Audit every Relay/dashboard expiry predicate before editing and preserve explicit timestamp behavior and legacy rows. Reuse existing MCP omission forwarding rather than changing MCP code. Add a compact caller-surface E2E that proves omitted/null send/reply, both idempotency conflicts, deterministic >7-day delay, real file-backed app close/reopen with sentinel UTC round-trip, dormant/backlog delivery, and terminal ACK/reply; extend the existing dashboard test only if it does not already exercise the new default. Update the public Relay document and canonical roadmap state. Stop and return to planning if sentinel round-trip, public contract review, or an uninspected expiry predicate invalidates an assumption.
 
-**Verification plan:** Omitted HTTP send/reply → caller-surface E2E asserts `expires_at: null`, delayed delivery, ACK/reply, and terminal status; MCP omission → existing real tool test plus HTTP E2E prove `None` is omitted then interpreted durably; idempotency → same omitted request is idempotent and omitted-versus-explicit conflicts; persistence → deterministic clock beyond seven days plus app close/reopen retains pending delivery and fresh claim; lifecycle → dormant target and backlog continuation remain claimable without sleeps; explicit expiry → existing min/max/over-max and deterministic expiry regressions remain green; dashboard → pending includes durable while expired metrics exclude it; compatibility → focused exact-scope, receipt/lease, Unicode, redaction, and reply tests; gates → workflow, redline, API-review label, diff check, PR CI, clean-context result review.
+**Verification plan:** Omitted and explicit-null HTTP send/reply → caller-surface E2E asserts `expires_at: null`, schema validation, delayed delivery, ACK/reply, and terminal status; MCP omission → existing real tool test plus HTTP E2E prove `None` is omitted then interpreted durably; idempotency → same durable send and derived reply are idempotent while durable-versus-explicit reuse conflicts, with legacy explicit rows unchanged; persistence → deterministic clock beyond seven days plus real file-backed SQLite app close/reopen proves exact sentinel round-trip, UTC normalization, pending retention, and fresh claim; lifecycle → dormant target and backlog continuation remain claimable without sleeps; explicit expiry → existing min/max/over-max and deterministic expiry regressions remain green; predicate audit/dashboard → every `expires_at` comparison is sentinel-safe, pending includes durable, and expired metrics exclude it; compatibility → focused exact-scope, receipt/lease, Unicode, redaction, and reply tests; gates → workflow, redline, API-review label, diff check, PR CI, clean-context result review.
 
-**Plan review:** Pending clean-context agent review; implementation blocked until findings are resolved.
+**Plan review:** Clean-context Luna review under `## Plan review`; approved after five acceptance gaps were incorporated.
 
 **Approvals:** Approved by user 2026-09-06: "you have approval for all prs you manage"
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Discovery and pre-edit redline classification are complete. No code edit has started; implementation is blocked on the required clean-context High-risk plan review.
-- `apply_patch` was used for the initial Work Record; no machine fallback was needed.
+- Discovery, pre-edit redline classification, High-risk human approval, and clean-context plan review are complete. The reviewed implementation is ready; no code edit has started.
+- `apply_patch` created the initial Work Record. A later update hit Windows sandbox error 1327, so the required narrow deterministic replacement fallback was used for this file only.
 
 ## Evidence
 
@@ -45,7 +45,7 @@
 
 ## Plan review
 
-Pending.
+Clean-context Luna review found no fundamental blocker in the migration-free sentinel design. It required explicit nullable request/response types, shared send/reply sentinel and idempotency logic, a real file-backed close/reopen assertion, explicit JSON-null coverage, and an exhaustive expiry-predicate audit. All five are now explicit completion, plan, and verification requirements. The reviewer re-read the amended record and approved implementation with no remaining blocker.
 
 ## Result review
 
