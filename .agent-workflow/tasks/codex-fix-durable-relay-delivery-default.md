@@ -36,12 +36,15 @@
 
 - Discovery, pre-edit redline classification, High-risk human approval, and clean-context plan review are complete. The reviewed implementation is ready; no code edit has started.
 - `apply_patch` created the initial Work Record. A later update hit Windows sandbox error 1327, so the required narrow deterministic replacement fallback was used for this file only.
+- Implemented the reviewed migration-free sentinel at the shared storage boundary, nullable HTTP contract fields, optional core validation, and public null rendering without changing schema or expiry predicates.
+- Added the real file-backed restart/dormancy/backlog/send-reply idempotency E2E, strengthened dashboard durable/explicit assertions, and kept MCP response-budget coverage above its truncation boundary with an explicit expiry.
 
 ## Evidence
 
 - Current implementation defaults: `core/relay.py::RELAY_DEFAULT_EXPIRY_SECONDS`, `RelaySendRequest`, and `RelayReplyRequest` use 86,400 seconds.
 - MCP forwarding already preserves omission as `expires_in_seconds=None` in `tests/test_mcp_server.py::test_relay_send_uses_exact_scope_and_preserves_unicode`.
 - In-memory SQLAlchemy/SQLite probe round-tripped `9999-12-31T23:59:59.999999+00:00` through the existing non-null DateTime column and selected it with `expires_at > now`.
+- Focused HTTP, MCP, lifecycle, schema, and dashboard suite: 170 passed in 16.22s; four existing Pydantic forward-reference warnings. The new two-test slice passed in 4.66s. No wall-clock sleep was added.
 
 ## Plan review
 

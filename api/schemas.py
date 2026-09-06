@@ -830,7 +830,7 @@ class RelaySendRequest(BaseModel):
     payload: str = Field(min_length=1, max_length=1500)
     container_ref: str = Field(min_length=1, max_length=512)
     actor_ref: str = Field(min_length=1, max_length=255)
-    expires_in_seconds: int = Field(default=86400, ge=60, le=604800)
+    expires_in_seconds: int | None = Field(default=None, ge=60, le=604800)
     in_reply_to: str | None = Field(default=None, min_length=1, max_length=128)
     message_id: str | None = Field(default=None, min_length=1, max_length=128)
 
@@ -841,7 +841,7 @@ class RelayReplyRequest(BaseModel):
     payload: str = Field(min_length=1, max_length=1500)
     container_ref: str = Field(min_length=1, max_length=512)
     actor_ref: str = Field(min_length=1, max_length=255)
-    expires_in_seconds: int = Field(default=86400, ge=60, le=604800)
+    expires_in_seconds: int | None = Field(default=None, ge=60, le=604800)
 
 
 class RelayAckRequest(BaseModel):
@@ -879,7 +879,7 @@ class RelayDeliveryResponse(BaseModel):
     redacted: bool
     in_reply_to: str | None = None
     created_at: datetime
-    expires_at: datetime
+    expires_at: datetime | None
     claimed_at: datetime | None = None
     lease_expires_at: datetime | None = None
     delivered_at: datetime | None = None
@@ -902,7 +902,7 @@ class RelayMessageResponse(BaseModel):
     redacted: bool
     in_reply_to: str | None = None
     created_at: datetime
-    expires_at: datetime
+    expires_at: datetime | None
     deliveries: list[RelayDeliveryResponse]
 
 
