@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -90,4 +90,4 @@ The first clean-context Luna review required an explicit non-Windows skip, a fix
 
 ## Result review
 
-CodeRabbit found two post-review blockers: the roadmap follow-up still scheduled an already-complete RW-010 qualification, and the broad canonical `app.run service run` sweep could kill another local service on a different port. The roadmap now points directly to RW-016. RW-010 returns to implementation until the canonical survivor sweep is scoped to the exact resolved port, a different-port preservation regression passes, and review/CI are green again.
+CodeRabbit found two valid post-review blockers: stale roadmap ordering and a broad canonical `app.run service run` sweep that could kill another local service on a different port. The roadmap now points directly to RW-016, and canonical cleanup requires the exact resolved `--port` token. The real-script regression kills the matching PID while preserving a prefix/different-port service and MCP bridge. PowerShell parsing, 44 focused tests, workflow, and diff checks pass; final clean-context review found no code blocker and required only these state/order corrections. Ready for renewed PR review and CI.

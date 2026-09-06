@@ -141,10 +141,10 @@ remains for that adapter.
 
 ### Next execution order (updated 2026-09-06)
 
-The next work is RW-010 restart safety, followed by the remaining Codex lifecycle
-gates. RW-015 is merged and Windows-qualified. Keep each numbered slice small
-enough to implement, review, and report independently; use deterministic
-clocks/events rather than wall-clock sleeps in the normal suite.
+The next work is RW-016 installed-service metadata repair, followed by the remaining
+Codex lifecycle gates. RW-010 and RW-015 are merged and Windows-qualified. Keep
+each numbered slice small enough to implement, review, and report independently;
+use deterministic clocks/events rather than wall-clock sleeps in the normal suite.
 
 1. **S2 contract gate — complete in PR #98.** Delivery lifecycle
    (`pending`, `claimed`, `delivered`, `expired`; `failed` only on separate
@@ -188,10 +188,10 @@ clocks/events rather than wall-clock sleeps in the normal suite.
    E2E, and a post-merge no-manual-turn installed witness are complete. Native
    accepted or timed-out queue writes remain coalesced because duplicate
    suppression is false.
-7. **Windows restart safety — then RW-010.** Preflight the stable checkout before
-   stopping the healthy service, poll bounded readiness, verify `/health`,
-   `/status`, and `/debug/queue/health`, and fail with actionable diagnostics.
-   Tests inject process/HTTP outcomes and never sleep.
+7. **RW-016 Windows installed-service metadata.** Carry the exact configured home
+   into canonical service startup, emit Unicode-safe launcher metadata, and make
+   restart PID/log paths follow that home. Prove default/custom/space/Unicode
+   caller-surface lifecycles without changing Linux behavior.
 8. **S3 remaining Codex lifecycle gates.** After RW-015, qualify sender-side
    reply admission, correlation telemetry, and a sustained no-ping
    implementation/review/remediation journey.
