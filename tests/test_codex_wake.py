@@ -51,12 +51,13 @@ def setup_function() -> None:
     codex_wake._scheduled_delivery_ids.clear()
     codex_wake._scheduled_session_generations.clear()
     codex_wake._scheduled_session_delivery_ids.clear()
+    codex_wake._scheduled_session_scopes.clear()
 
 
 def test_successful_resume_does_not_queue_and_hides_process() -> None:
     completed = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
     with patch("app.codex_wake.subprocess.run", return_value=completed) as run:
-        assert codex_wake._launch("target-session", "wake prompt") is True
+        assert codex_wake._launch("target-session", "wake prompt") == "exec_completed"
     assert run.call_args.args[0] == [
         codex_wake._codex_executable(), "exec", "--profile", "pallium-relay",
         "resume", "target-session", "-", "--json"
@@ -75,7 +76,7 @@ def test_exact_active_writer_queues_generic_trigger_hidden() -> None:
     generic_prompt = codex_wake._wake_prompt()
     prompt = generic_prompt + " →"
     with patch("app.codex_wake.subprocess.run", side_effect=[active, queued]) as run:
-        assert codex_wake._launch("target-session", prompt) is True
+        assert codex_wake._launch("target-session", prompt) == "queued"
     assert run.call_count == 2
     assert run.call_args_list[0].kwargs["input"] == prompt
     assert run.call_args_list[0].kwargs["encoding"] == "utf-8"
@@ -92,21 +93,33 @@ def test_exact_active_writer_queues_generic_trigger_hidden() -> None:
     assert run.call_args_list[1].kwargs["stdin"] is subprocess.DEVNULL
     assert "shell" not in run.call_args_list[1].kwargs
 
-def test_ambiguous_failure_and_timeout_do_not_queue() -> None:
+def test_non_active_writer_failure_and_exec_timeout_do_not_queue() -> None:
     ambiguous = subprocess.CompletedProcess([], 1, stderr="already has an active writer")
     with patch("app.codex_wake.subprocess.run", return_value=ambiguous) as run:
-        assert codex_wake._launch("target-session", "wake") is False
+        assert codex_wake._launch("target-session", "wake") == "failed"
     run.assert_called_once()
     with patch(
         "app.codex_wake.subprocess.run",
         side_effect=subprocess.TimeoutExpired([], 15),
     ) as run:
-        assert codex_wake._launch("target-session", "wake") is False
+        assert codex_wake._launch("target-session", "wake") == "ambiguous"
     run.assert_called_once()
 
 
+def test_queue_timeout_remains_ambiguous_without_a_second_write() -> None:
+    active = subprocess.CompletedProcess(
+        [], 1, stderr="already has an active writer (code -32600)"
+    )
+    with patch(
+        "app.codex_wake.subprocess.run",
+        side_effect=[active, subprocess.TimeoutExpired([], 30)],
+    ) as run:
+        assert codex_wake._launch("target-session", "wake") == "ambiguous"
+    assert run.call_count == 2
+
+
 def test_wake_defers_claim_until_turn_execution() -> None:
-    with patch("app.codex_wake._launch", return_value=True) as launch:
+    with patch("app.codex_wake._launch", return_value="exec_completed") as launch:
         codex_wake._wake("target-session")
     launch.assert_called_once_with("target-session", codex_wake._wake_prompt())
 
@@ -158,10 +171,11 @@ def test_duplicate_and_non_codex_do_not_start_child() -> None:
     thread.assert_called_once()
 
 
-def test_busy_wakes_coalesce_until_admission_then_rearm(monkeypatch) -> None:
+@pytest.mark.parametrize("outcome", ["queued", "ambiguous"])
+def test_busy_wakes_coalesce_until_admission_then_rearm(monkeypatch, outcome: str) -> None:
     workers = []
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._wake", return_value=True) as wake:
+    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._wake", return_value=outcome) as wake:
         thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
         _schedule(_delivery())
         _schedule(_delivery("delivery-2"))
@@ -169,10 +183,55 @@ def test_busy_wakes_coalesce_until_admission_then_rearm(monkeypatch) -> None:
         codex_wake._wake_after_debounce(*workers[0])
         _schedule(_delivery("delivery-3"))
         assert len(workers) == 1
-        codex_wake.mark_codex_relay_wake_admitted("target-session")
+        codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
         _schedule(_delivery("delivery-4"))
     wake.assert_called_once_with("target-session")
     assert len(workers) == 2
+
+
+def test_exec_completion_requires_matching_admission_before_return(monkeypatch) -> None:
+    workers = []
+    unreachable = []
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake.threading.Thread") as thread:
+        thread.side_effect = lambda **kwargs: (
+            workers.append(kwargs["args"]),
+            type("Worker", (), {"start": lambda self: None})(),
+        )[1]
+        codex_wake.schedule_codex_relay_wake(
+            _delivery(), SCOPE, on_unreachable=unreachable.append
+        )
+
+    def admitted(_: str) -> str:
+        codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
+        return "exec_completed"
+
+    with patch("app.codex_wake._wake", side_effect=admitted):
+        codex_wake._wake_after_debounce(*workers[0])
+
+    assert unreachable == []
+    assert not codex_wake._scheduled_session_generations
+    assert not codex_wake._scheduled_delivery_ids
+
+
+def test_exec_completion_without_admission_releases_and_reports(monkeypatch) -> None:
+    workers = []
+    unreachable = []
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake.threading.Thread") as thread:
+        thread.side_effect = lambda **kwargs: (
+            workers.append(kwargs["args"]),
+            type("Worker", (), {"start": lambda self: None})(),
+        )[1]
+        codex_wake.schedule_codex_relay_wake(
+            _delivery(), SCOPE, on_unreachable=unreachable.append
+        )
+    with patch("app.codex_wake._wake", return_value="exec_completed"):
+        codex_wake._wake_after_debounce(*workers[0])
+
+    assert len(unreachable) == 1 and unreachable[0].tzinfo is not None
+    assert not codex_wake._scheduled_session_generations
+    assert not codex_wake._scheduled_delivery_ids
 
 
 def test_launch_failure_releases_owner_for_later_delivery(monkeypatch) -> None:
@@ -347,6 +406,183 @@ def test_create_app_keeps_real_wake_wiring(test_db_url: str) -> None:
         )
     assert sent.status_code == 200
     thread.assert_called_once()
+
+
+def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
+    client, monkeypatch, tmp_path,
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    scope = {
+        "container_ref": "git:example.test/no-hook",
+        "actor_ref": hook.derive_actor_ref(),
+    }
+    monkeypatch.setattr(
+        "app.dependencies.schedule_codex_relay_wake",
+        codex_wake.schedule_codex_relay_wake,
+    )
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+    ))
+    route = TestClient(app)
+    workers = []
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake.threading.Thread") as thread:
+        thread.side_effect = lambda **kwargs: (
+            workers.append(kwargs["args"]),
+            type("Worker", (), {"start": lambda self: None})(),
+        )[1]
+        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+            assert route.post("/relay/turn", json={
+                "runtime": runtime,
+                "session_ref": session,
+                **scope,
+            }).status_code == 200
+        sent = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": "codex:target",
+            "payload": "preserve until hook →",
+            **scope,
+        }).json()
+    assert len(workers) == 1
+
+    with patch("app.codex_wake._wake", return_value="exec_completed"):
+        codex_wake._wake_after_debounce(*workers[0])
+
+    status = route.get(
+        f"/relay/messages/{sent['message_id']}", params=scope
+    ).json()["deliveries"][0]
+    assert status["state"] == "pending"
+    assert status["destination_health"] == "unreachable"
+    assert status["attempts"] == 0
+
+    state_dir = tmp_path / "no-hook-state"
+    monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: scope["actor_ref"])
+    monkeypatch.setattr(
+        hook,
+        "pallium_request",
+        lambda *_args, **_kwargs: pytest.fail("Relay wake must not become memory"),
+    )
+    contexts = []
+    monkeypatch.setattr(hook, "emit_context", lambda output, _event: contexts.append(output))
+
+    def relay_request(method: str, path: str, payload: dict, *, timeout: float):
+        response = route.request(method, path, json=payload)
+        assert response.status_code == 200, response.text
+        return response.json() if response.content else None
+
+    monkeypatch.setattr(hook, "relay_request", relay_request)
+    monkeypatch.setattr(hook._common, "relay_request", relay_request)
+    hook._common.pin_container("target", scope["container_ref"])
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path),
+        "session_id": "target",
+        "prompt": codex_wake._wake_prompt(),
+    })
+
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+    assert len(contexts) == 1 and "preserve until hook →" in contexts[0]
+    delivered = route.get(
+        f"/relay/messages/{sent['message_id']}", params=scope
+    ).json()["deliveries"][0]
+    assert delivered["state"] == "delivered"
+    assert delivered["destination_health"] == "active"
+    assert delivered["attempts"] == 1
+    assert route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", **scope,
+    }).json()["deliveries"] == []
+
+    contexts.clear()
+    with patch("app.codex_wake.threading.Thread") as thread:
+        thread.side_effect = lambda **kwargs: (
+            workers.append(kwargs["args"]),
+            type("Worker", (), {"start": lambda self: None})(),
+        )[1]
+        admitted = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": "codex:target",
+            "payload": "admitted before child return →",
+            **scope,
+        }).json()
+    assert len(workers) == 2
+
+    original_run = subprocess.run
+
+    def run_admitted_hook(*args, **kwargs):
+        command = args[0]
+        if len(command) > 1 and command[1] == "exec":
+            with pytest.raises(SystemExit) as hook_exit:
+                hook.main()
+            assert hook_exit.value.code == 0
+            return subprocess.CompletedProcess(command, 0, stderr="")
+        return original_run(*args, **kwargs)
+
+    with patch(
+        "app.codex_wake.subprocess.run", side_effect=run_admitted_hook
+    ) as run:
+        codex_wake._wake_after_debounce(*workers[1])
+    assert sum(len(call.args[0]) > 1 and call.args[0][1] == "exec" for call in run.call_args_list) == 1
+    admitted_status = route.get(
+        f"/relay/messages/{admitted['message_id']}", params=scope
+    ).json()["deliveries"][0]
+    assert admitted_status["state"] == "delivered"
+    assert admitted_status["destination_health"] == "active"
+    assert admitted_status["attempts"] == 1
+    assert len(contexts) == 1 and "admitted before child return →" in contexts[0]
+    assert not codex_wake._scheduled_session_generations
+
+    contexts.clear()
+    with patch("app.codex_wake.threading.Thread") as thread:
+        thread.side_effect = lambda **kwargs: (
+            workers.append(kwargs["args"]),
+            type("Worker", (), {"start": lambda self: None})(),
+        )[1]
+        ambiguous = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": "codex:target",
+            "payload": "queue timeout stays pending →",
+            **scope,
+        }).json()
+    assert len(workers) == 3
+    active = subprocess.CompletedProcess(
+        [], 1, stderr="already has an active writer (code -32600)"
+    )
+    with patch(
+        "app.codex_wake.subprocess.run",
+        side_effect=[active, subprocess.TimeoutExpired([], 30)],
+    ) as run:
+        codex_wake._wake_after_debounce(*workers[2])
+    assert run.call_count == 2
+    ambiguous_status = route.get(
+        f"/relay/messages/{ambiguous['message_id']}", params=scope
+    ).json()["deliveries"][0]
+    assert ambiguous_status["state"] == "pending"
+    assert ambiguous_status["destination_health"] == "active"
+    assert ambiguous_status["attempts"] == 0
+    assert not contexts
+    assert codex_wake._scheduled_session_scopes["target"] == (
+        scope["container_ref"], scope["actor_ref"]
+    )
+    with patch("app.codex_wake.threading.Thread") as thread:
+        duplicate = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": "codex:target",
+            "payload": "coalesced behind ambiguous write",
+            **scope,
+        })
+    assert duplicate.status_code == 200
+    thread.assert_not_called()
 
 
 def test_profile_is_idempotent_and_narrow(monkeypatch, tmp_path) -> None:
@@ -557,7 +793,7 @@ def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
     scheduled = []
     monkeypatch.setattr(
         "app.dependencies.schedule_codex_relay_wake",
-        lambda result, scope: scheduled.append((result, scope)),
+        lambda result, scope, **_kwargs: scheduled.append((result, scope)),
     )
     for runtime, session in (("claude-code", "drain-sender"), ("codex", "drain-target")):
         assert client.post("/relay/turn", json={
@@ -884,6 +1120,13 @@ def test_build_router_turn_rearms_actual_codex_wake_state(client, monkeypatch) -
         route = TestClient(app)
         assert route.post("/relay/turn", json={"runtime": "bad", "session_ref": "target-session", **SCOPE}).status_code == 422
         assert codex_wake._scheduled_session_generations
+        assert route.post("/relay/turn", json={
+            "runtime": "codex",
+            "session_ref": "target-session",
+            "container_ref": "git:example.test/wrong",
+            "actor_ref": SCOPE["actor_ref"],
+        }).status_code == 200
+        assert codex_wake._scheduled_session_generations
         assert route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target-session", **SCOPE}).status_code == 200
         assert not codex_wake._scheduled_session_generations
         assert not codex_wake._scheduled_delivery_ids
@@ -894,7 +1137,7 @@ def test_failed_old_generation_cannot_clear_replacement(monkeypatch) -> None:
     codex_wake._scheduled_session_delivery_ids['target-session'] = 'delivery-new'
     codex_wake._scheduled_delivery_ids.add('delivery-new')
     monkeypatch.setattr(codex_wake.time, 'sleep', lambda _: None)
-    monkeypatch.setattr(codex_wake, '_wake', lambda _: False)
+    monkeypatch.setattr(codex_wake, '_wake', lambda _: "failed")
     codex_wake._wake_after_debounce('delivery-old', 'target-session', 1)
     assert codex_wake._scheduled_session_generations['target-session'] == 2
     assert codex_wake._scheduled_session_delivery_ids['target-session'] == 'delivery-new'
@@ -910,7 +1153,7 @@ def test_old_scheduled_worker_cannot_clear_new_schedule(monkeypatch) -> None:
     with patch("app.codex_wake.threading.Thread") as thread:
         _schedule(_delivery("delivery-old"))
         old_args = thread.call_args.kwargs["args"]
-        codex_wake.mark_codex_relay_wake_admitted("target-session")
+        codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
         _schedule(_delivery("delivery-new"))
         new_generation = codex_wake._scheduled_session_generations["target-session"]
 
@@ -978,7 +1221,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     scheduled: list[tuple[dict, dict]] = []
     monkeypatch.setattr(
         "app.dependencies.schedule_codex_relay_wake",
-        lambda result, scope: scheduled.append((result, scope)),
+        lambda result, scope, **_kwargs: scheduled.append((result, scope)),
     )
     relay = RelayService(client.app.state.pallium_service._storage)
     relay.turn(runtime="claude-code", session_ref="sender", **SCOPE)
@@ -1095,7 +1338,7 @@ def test_expired_codex_claim_rewakes_once_after_real_app_restart(
     scheduled = threading.Event()
     wake_calls: list[tuple[dict, dict]] = []
 
-    def schedule(result: dict, scope: dict) -> None:
+    def schedule(result: dict, scope: dict, **_kwargs) -> None:
         wake_calls.append((result, scope))
         scheduled.set()
 

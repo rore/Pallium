@@ -552,8 +552,17 @@ def dispatch_relay_wake(
             ),
         )
     elif runtime == "codex":
-        schedule_codex_relay_wake(result, scope)
-
+        schedule_codex_relay_wake(
+            result,
+            scope,
+            on_unreachable=lambda attempt_started_at: relay_service.mark_unreachable(
+                runtime="codex",
+                session_ref=deliveries[0]["recipient_session_ref"],
+                container_ref=scope["container_ref"],
+                actor_ref=scope["actor_ref"],
+                attempt_started_at=attempt_started_at,
+            ),
+        )
 
 def recover_expired_relay_wakes(
     relay_service: RelayService,
@@ -647,7 +656,11 @@ def build_router(
         if not isinstance(session_ref, str) or not session_ref:
             return
         if request.get("runtime") == "codex":
-            mark_codex_relay_wake_admitted(session_ref)
+            mark_codex_relay_wake_admitted(
+                session_ref,
+                request.get("container_ref", ""),
+                request.get("actor_ref", ""),
+            )
         elif request.get("runtime") == "claude-code":
             registry.mark_busy(
                 runtime="claude-code",
