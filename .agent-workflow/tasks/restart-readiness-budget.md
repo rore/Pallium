@@ -7,7 +7,7 @@
 
 **Constraints:** Preserve all response schemas and readiness requirements; preserve Relay's independent capacity and shutdown safety; no new dependency; no wall-clock wait or sustained load in the normal suite; retain Windows/Linux/macOS behavior; preserve unrelated `uv.lock` work.
 
-**Completion criteria:** (1) `/health`, `/status`, `/debug/queue/health`, and Relay remain prompt when ordinary AnyIO sync capacity is saturated. (2) Queue health returns the same results for empty, pending, processing, failed, expired-lease, unknown-use-case, retention, and completed-history cases without materializing every completed source row. (3) Service readiness is bounded by elapsed time, survives the measured cold-start class, and reports the last failed check. (4) Focused/full CI passes; the installed wrapper exits 0 and all three endpoints are healthy.
+**Completion criteria:** (1) `/health`, `/status`, `/debug/queue/health`, and Relay remain prompt when ordinary AnyIO sync capacity is saturated. (2) Queue health returns the same results for empty, pending, processing, failed, expired-lease, unknown-use-case, retention, and completed-history cases without materializing every completed source row. (3) Service readiness is bounded by elapsed time, survives the measured cold-start class, and reports the last failed check. (4) Cancellation/shutdown cannot let diagnostic work outlive storage. (5) Focused/full CI and the `api-review` checkpoint pass; the installed wrapper exits 0 and all three endpoints are healthy.
 
 **Risk:** High
 
@@ -23,7 +23,7 @@
 
 **Verification plan:** Existing queue-health edge suites plus new completed-history and default-worker saturation E2E; Windows real-script harness with a tiny injected test deadline and a late-ready mocked path; CLI readiness unit/lifecycle tests; focused health/service/storage/Relay suites; full pytest/import/workflow/diff checks; installed wrapper and direct `/health`, `/status`, `/debug/queue/health` measurements. Slow/load evidence stays opt-in.
 
-**Plan review:** Pending clean-context redline/architecture review of this Work Record and named paths.
+**Plan review:** Clean-context Luna review `/root/restart_reliability_plan_review` found no boundary violation and requires the red-zone `api-review` checkpoint. The plan is accepted with an explicit separate diagnostic runner, shared shutdown drain, NULL/pending and ordering parity, monotonic remaining-budget probes, and concurrent Relay/diagnostic isolation coverage.
 
 **Approvals:** Standing user approval on 2026-09-06 to take managed work and PRs through done without repeated permission prompts; explicit instruction that service resilience bugs found while dogfooding must be fixed.
 
@@ -35,3 +35,4 @@
 ## Implementation
 
 - 2026-09-06: The initial one-constant readiness patch was tested against the installed service and rejected after the 60-attempt run still failed. Live endpoint and direct-SQL timings expanded the root cause to diagnostic worker starvation, an unbounded queue-health scan, and non-time-based Windows readiness.
+- 2026-09-06: Clean-context plan/redline review found no boundary violation; `api/routes.py` triggers `api-review`. It tightened runner shutdown, SQL parity, and remaining-budget test requirements before implementation.
