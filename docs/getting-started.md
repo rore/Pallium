@@ -8,26 +8,27 @@ message, and searches earlier session work.
 - Python 3.12 or 3.13 recommended
 - Git
 - Claude Code or Codex for the shortest setup path
-- an OpenAI-compatible or Anthropic API key for the current installation
+- an OpenAI-compatible or Anthropic API key to enable history ingestion with
+  the current default configuration
 
-Relay does not use an LLM. Baseline Session History is intended to run without
-one, but that package-independent setup has not shipped yet. The current
-installation therefore still includes semantic-package and provider
-configuration.
+Pallium can run Relay without an LLM provider. With the current default
+configuration, history ingestion stays paused until provider credentials are
+added. A provider-free Session History setup is planned work.
 
-## 1. Install and start Pallium
+## 1. Install from source and start Pallium
 
 From the repository checkout:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -e ".[dev,vector,mcp]"
+pip install -e ".[vector,mcp]"
 cp pallium.example.toml pallium.local.toml
 cp .env.example .env.local
 ```
 
-Set the provider key required by your selected package in `.env.local`, then
+To enable history ingestion, set the provider key used by the default
+configuration in `.env.local`, then
 install the local service:
 
 ```bash

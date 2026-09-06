@@ -60,8 +60,10 @@ URL).
 
 ## Prerequisites
 
-- Python 3.12+ with Pallium installed (`pip install -e ".[dev,vector,mcp]"`)
-- An LLM provider API key configured in `.env.local` for the current package-coupled installation
+- Python 3.12+ with Pallium installed from source
+  (`pip install -e ".[vector,mcp]"`)
+- An LLM provider API key configured in `.env.local` to enable history ingestion
+  with the current default configuration
 - Git (for container derivation from repos)
 
 ## 1. Start Pallium

@@ -50,9 +50,10 @@ independent tools and own their execution, user interaction, and workflow.
 
 ## Current installation boundary
 
-Relay does not require an LLM or derived memory. The standard Session History
-installation still requires a configured semantic package, model, and provider.
-Package-independent baseline Session History is planned.
+Relay does not require an LLM or derived memory. With the current default
+configuration, history ingestion requires an LLM provider. Without credentials,
+ingestion stays paused while Relay and inspection remain available. A
+provider-free Session History setup is planned.
 
 See [Configuration](configuration.md) for the current setup.
 

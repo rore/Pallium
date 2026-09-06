@@ -25,16 +25,21 @@ main capabilities, then use the integration and reference guides as needed.
 | [Codex](codex-integration.md) | Hooks, MCP tools, Relay delivery, and history capture for Codex |
 | [OpenCode](../integrations/opencode/README.md) | Local OpenCode plugin setup and current limitations |
 
-## Reference and optional features
+## Reference
 
 | Document | What it covers |
 |---|---|
 | [How Pallium Works](how-it-works.md) | Product architecture and capability boundaries |
-| [Derived Memory](derived-memory.md) | The optional derived-memory subsystem, retrieval, lifecycle, and limitations |
 | [HTTP API](http-api.md) | Session History, Relay, derived-memory, and operational endpoints |
 | [Configuration](configuration.md) | Local service, storage, providers, packages, and tuning |
 | [Privacy and Visibility](privacy-and-visibility.md) | Scope rules across history, Relay, and derived memory |
 | [Dashboard](dashboard.md) | Service health, Relay activity, search activity, and memory inspection |
+
+## Optional and experimental
+
+| Document | What it covers |
+|---|---|
+| [Derived Memory](derived-memory.md) | The optional derived-memory subsystem, retrieval, lifecycle, and limitations |
 | [Agent Integration](agent-integration.md) | Building a custom integration; mostly advanced derived-memory behavior |
 | [Slack derived-memory example](integration-example.md) | A custom Slack integration using the derived-memory API |
 | [Derived-memory benchmarks](benchmarks.md) | Evaluation of the optional derived-memory subsystem |
