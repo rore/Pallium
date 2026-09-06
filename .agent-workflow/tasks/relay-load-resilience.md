@@ -47,7 +47,8 @@
 - Incident log: `%USERPROFILE%\.pallium\logs\pallium.log`, 2026-09-06 16:09–16:25 UTC.
 - Disposable nominal Relay-turn benchmark: p50 2.958 ms, p95 4.723 ms, p99 5.522 ms over 250 empty turns.
 - Focused reliability suite: 208 passed, 2 skipped, 4 pre-existing Pydantic warnings in 18.99 seconds.
-- Opt-in mixed memory/Relay load witness: 1 passed in 0.97 seconds with `-m slow -n0`.`r`n- Final normal suite: 4,532 passed, 33 skipped, 2 expected failures, 4 pre-existing Pydantic warnings in 167.97 seconds; marked slow tests excluded by default.
+- Opt-in mixed memory/Relay load witness: 1 passed in 0.97 seconds with `-m slow -n0`.
+- Final normal suite: 4,532 passed, 33 skipped, 2 expected failures, 4 pre-existing Pydantic warnings in 167.97 seconds; marked slow tests excluded by default.
 
 ## Plan review
 
@@ -55,6 +56,6 @@
 
 ## Result review
 
-Pending.
+Clean-context Luna review of the complete committed diff found no blockers. It verified autocommit SQLite initialization and timeout restoration, independent Relay capacity and shutdown draining, persisted retry ownership, exact-wake fail-closed behavior, bounded diagnostics, single-process deployment ceiling, caller-surface coverage, and roadmap/docs alignment. The full suite exposed and closed two stale test assumptions plus one timing-dependent recovery assertion; the corrected tests pass deterministically. CodeRabbit found two stale roadmap descriptions of the old canonical-empty-only behavior; both were aligned to the fail-closed contract before merge.
 - 2026-09-06 sentinel slice: exact Codex Relay wake now blocks on every unsuccessful Relay outcome before dedup/memory/context; focused hook suite passes (37 tests).
 - SQLite slice: persistent auto_vacuum/WAL bootstrap moved to one-time initialization; pooled connections set busy_timeout first.
