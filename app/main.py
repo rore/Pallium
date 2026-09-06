@@ -287,7 +287,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     app.state._start_time = time.monotonic()
 
     @app.get("/health")
-    def health() -> JSONResponse:
+    async def health() -> JSONResponse:
         lifespan_ok = getattr(app.state, "_lifespan_complete", False)
 
         vector_index_configured = service._vector_index is not None

@@ -118,6 +118,7 @@ class SQLiteStorageProvider(
         separate_relay = relay_database_url is not None and not self._same_sqlite_file(database_url, relay_database_url)
         self._engine = self._create_engine(database_url)
         self._session_factory = sessionmaker(self._engine, expire_on_commit=False, class_=Session)
+        self._initialize_sqlite_pragmas(self._engine)
         self._initialize_schema(include_relay=not separate_relay)
         self._relay_engine = self._engine
         self._relay_session_factory = self._session_factory
@@ -126,6 +127,7 @@ class SQLiteStorageProvider(
             self._relay_session_factory = sessionmaker(
                 self._relay_engine, expire_on_commit=False, class_=Session
             )
+            self._initialize_sqlite_pragmas(self._relay_engine)
             self._initialize_relay_schema(self._relay_engine)
             self._migrate_legacy_relay()
 
@@ -256,11 +258,8 @@ class SQLiteStorageProvider(
     def _register_sqlite_connect_hooks(engine) -> None:
         """Register connection-level hooks for SQLite engines.
 
-        Sets auto-vacuum mode, WAL journal mode and busy timeout on every new
-        connection so concurrent readers and writers (API server, processors,
-        cleaners) can operate without blocking each other.  The busy timeout lets
-        writers wait briefly instead of failing immediately when another writer
-        holds the lock.
+        Sets only the transient busy timeout on every new connection. Persistent
+        database modes are initialized once by `_initialize_sqlite_pragmas`.
         """
         if engine.url.get_backend_name() != "sqlite":
             return
@@ -268,16 +267,23 @@ class SQLiteStorageProvider(
         @event.listens_for(engine, "connect")
         def _set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
-            # auto_vacuum MUST be set before journal_mode=WAL: on a brand-new DB
-            # the first journal_mode=WAL write commits the header and locks in the
-            # current auto_vacuum value, so setting it afterward is silently
-            # ignored. Setting it first makes new DBs adopt INCREMENTAL before any
-            # table page is written. On an EXISTING DB this is a harmless no-op —
-            # the persisted mode only changes via a one-time VACUUM.
-            cursor.execute("PRAGMA auto_vacuum=INCREMENTAL")
-            cursor.execute("PRAGMA journal_mode=WAL")
+            # Set the transient connection policy before this handle does DB work.
             cursor.execute("PRAGMA busy_timeout=15000")
             cursor.close()
+
+    def _initialize_sqlite_pragmas(self, engine) -> None:
+        if engine.url.get_backend_name() != "sqlite":
+            return
+        with self._schema_initialization_lock(engine):
+            with engine.begin() as connection:
+                # Bootstrap must fail fast under a competing owner; pooled work keeps 15s.
+                connection.exec_driver_sql("PRAGMA busy_timeout=0")
+                try:
+                    # auto_vacuum must precede WAL on a new database.
+                    connection.exec_driver_sql("PRAGMA auto_vacuum=INCREMENTAL")
+                    connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+                finally:
+                    connection.exec_driver_sql("PRAGMA busy_timeout=15000")
 
     _LOCKED_MAX_RETRIES = 3
     _LOCKED_BACKOFF_BASE = 0.2
@@ -304,11 +310,15 @@ class SQLiteStorageProvider(
         if engine.url.get_backend_name() != "sqlite":
             return {"freelist_before": 0, "freelist_after": 0, "reclaimed_pages": 0, "checkpoint_busy": 0}
         with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-            before = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
-            conn.exec_driver_sql("PRAGMA incremental_vacuum")
-            after = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
-            row = conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-            checkpoint_busy = int(row[0]) if row is not None else 0
+            conn.exec_driver_sql("PRAGMA busy_timeout=0")
+            try:
+                before = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
+                conn.exec_driver_sql("PRAGMA incremental_vacuum")
+                after = int(conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0)
+                row = conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                checkpoint_busy = int(row[0]) if row is not None else 0
+            finally:
+                conn.exec_driver_sql("PRAGMA busy_timeout=15000")
         return {"freelist_before": before, "freelist_after": after, "reclaimed_pages": max(0, before - after), "checkpoint_busy": checkpoint_busy}
 
     def reclaim_free_pages(self) -> dict[str, int]:

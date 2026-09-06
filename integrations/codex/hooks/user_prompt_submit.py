@@ -81,6 +81,7 @@ def main() -> None:
         content = _strip_ide_context(prompt)
         if not content:
             return
+        internal_wake = prompt == RELAY_WAKE_PROMPT
 
         discovery = discover_work_refs(cwd)
         current_work_ref = injected_work_ref(discovery)
@@ -94,41 +95,31 @@ def main() -> None:
             agent_ref=AGENT_REF, visibility="private", work_ref=current_work_ref,
         ) if has_session else ""
         if relay_scope:
-            relay_response = relay_request(
-                "POST",
-                "/relay/turn",
-                {
-                    "runtime": "codex",
-                    "session_ref": session_id,
-                    "container_ref": container_ref,
-                    "actor_ref": actor_ref,
-                    "max_chars": RELAY_TURN_BUDGET,
-                },
-                timeout=0.75,
-            )
-            if isinstance(relay_response, dict):
-                deliveries = relay_response.get("deliveries") or []
-                relay_output, rendered_deliveries = format_relay(
-                    deliveries,
-                    budget_chars=RELAY_OUTPUT_BUDGET,
-                    remaining_count=(
-                        relay_response.get("remaining_count")
-                        if relay_response.get("has_more") is True else 0
-                    ),
+            try:
+                relay_response = relay_request(
+                    "POST", "/relay/turn",
+                    {"runtime": "codex", "session_ref": session_id,
+                     "container_ref": container_ref, "actor_ref": actor_ref,
+                     "max_chars": RELAY_TURN_BUDGET},
+                    timeout=0.75,
                 )
-            if rendered_deliveries:
-                emit_context("\n\n".join((relay_output, relay_scope)), "UserPromptSubmit")
-                acknowledge_relay(rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref)
-                sys.exit(0)
+                if isinstance(relay_response, dict):
+                    deliveries = relay_response.get("deliveries") or []
+                    relay_output, rendered_deliveries = format_relay(
+                        deliveries, budget_chars=RELAY_OUTPUT_BUDGET,
+                        remaining_count=(
+                            relay_response.get("remaining_count")
+                            if relay_response.get("has_more") is True else 0
+                        ),
+                    )
+            except Exception:
+                relay_response = None
+        if rendered_deliveries:
+            emit_context("\n\n".join((relay_output, relay_scope)), "UserPromptSubmit")
+            acknowledge_relay(rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref)
+            sys.exit(0)
 
-        if (
-            prompt == RELAY_WAKE_PROMPT
-            and isinstance(relay_response, dict)
-            and relay_response.get("deliveries", object()) == []
-            and relay_response.get("has_more") is False
-            and type(relay_response.get("remaining_count")) is int
-            and relay_response["remaining_count"] == 0
-        ):
+        if internal_wake:
             print(json.dumps({
                 "decision": "block",
                 "reason": "Pallium Relay wake superseded: no pending delivery.",

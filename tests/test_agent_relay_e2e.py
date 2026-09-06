@@ -382,12 +382,20 @@ def test_delivery_derived_reply_chain_and_boundaries(client):
     delivered = _turn(client, "codex", "target")["deliveries"][0]
     assert _ack(client, delivered).status_code == 200
 
-    assert _reply(client, delivered["delivery_id"], "x" * 1500, expires_in_seconds=60).status_code == 200
+    expanding = "pwd:a\n" * 250
+    redacted_reply = _reply(
+        client, delivered["delivery_id"], expanding, expires_in_seconds=60
+    )
+    assert redacted_reply.status_code == 200
+    assert redacted_reply.json()["redacted"] is True
+    assert "payload omitted because sanitization exceeded the Relay limit" in redacted_reply.json()["payload"]
     assert _reply(client, delivered["delivery_id"], "x" * 1501).status_code == 422
     assert _reply(client, delivered["delivery_id"], "x", expires_in_seconds=59).status_code == 422
     assert _reply(client, delivered["delivery_id"], "x", expires_in_seconds=604801).status_code == 422
 
     reply_delivery = _turn(client, "claude-code", "sender")["deliveries"][0]
+    assert "payload omitted because sanitization exceeded the Relay limit" in reply_delivery["payload"]
+    assert "pwd:a" not in reply_delivery["payload"]
     assert _ack(client, reply_delivery).status_code == 200
     second = _reply(client, reply_delivery["delivery_id"], "second reply")
     assert second.status_code == 200
@@ -794,6 +802,22 @@ def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage
         )["deliveries"][0]
         for message, item in pairs
     }
+    wake_candidates = relay.wake_candidates()
+    assert [item["delivery_id"] for item in wake_candidates] == [
+        first_claim["delivery_id"],
+        claude_claim["delivery_id"],
+        pending["deliveries"][0]["delivery_id"],
+    ]
+    assert relay.wake_candidates(
+        delivery_id=pending["deliveries"][0]["delivery_id"]
+    ) == [{
+        "delivery_id": pending["deliveries"][0]["delivery_id"],
+        "state": "pending",
+        "recipient_runtime": "codex",
+        "recipient_session_ref": "recover-pending",
+        **scope,
+    }]
+
     candidates = relay.expired_claim_candidates()
     assert [item["delivery_id"] for item in candidates] == [
         first_claim["delivery_id"],
@@ -867,7 +891,7 @@ def test_turn_reports_backlog_and_only_claims_rendered_deliveries(client):
     assert delivered == ["backlog-0", "backlog-1", "backlog-2"]
 
 
-def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, relay_storage, monkeypatch):
+def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, relay_storage, monkeypatch, caplog):
     def busy_transaction():
         raise ImmediateTransactionBusyError("database is locked")
 
@@ -876,8 +900,11 @@ def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, rela
     assert response.status_code == 503
     assert response.headers["retry-after"] == "1"
     assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
+    assert "relay operation=turn outcome=busy" in caplog.text
+    assert SCOPE["container_ref"] not in caplog.text
+    assert SCOPE["actor_ref"] not in caplog.text
 
-def test_atomic_reply_busy_uses_retryable_contract(client, relay_storage, monkeypatch):
+def test_atomic_reply_busy_uses_retryable_contract(client, relay_storage, monkeypatch, caplog):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "target")
     sent = _send(client, "claude-code", "sender", "codex:target").json()
@@ -897,6 +924,9 @@ def test_atomic_reply_busy_uses_retryable_contract(client, relay_storage, monkey
     assert response.status_code == 503
     assert response.headers["retry-after"] == "1"
     assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
+    assert "relay operation=reply outcome=busy" in caplog.text
+    assert SCOPE["container_ref"] not in caplog.text
+    assert SCOPE["actor_ref"] not in caplog.text
     monkeypatch.undo()
     status = client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE)
     assert status.status_code == 200, status.text

@@ -674,10 +674,16 @@ def relay_request(
         method=method,
         headers={"Content-Type": "application/json"},
     )
+    started = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except Exception:
+    except Exception as exc:
+        print(
+            f"pallium relay: {method} {path} failed "
+            f"after {int((time.monotonic() - started) * 1000)}ms: {type(exc).__name__}",
+            file=sys.stderr,
+        )
         return None
 
 

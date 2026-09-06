@@ -251,7 +251,7 @@ class ClaudeWakeReconciler:
             try:
                 self._claim_recovery()
             except Exception:
-                logger.exception("Relay expired-claim sweep failed")
+                logger.exception("Relay wake recovery sweep failed")
 
 
 def start_claude_wake_reconciler(

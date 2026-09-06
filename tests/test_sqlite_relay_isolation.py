@@ -194,7 +194,7 @@ def test_split_rejects_competing_legacy_writer_within_bound(tmp_path: Path) -> N
         started = time.perf_counter()
         with pytest.raises(Exception, match="locked|busy"):
             SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-        assert time.perf_counter() - started < 10.0
+        assert time.perf_counter() - started < 5.0
     finally:
         blocker.rollback()
         blocker.close()

@@ -3,6 +3,8 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import time
+from collections.abc import Awaitable
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -367,6 +369,7 @@ def create_router(
     relay_send_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
     relay_turn_callback: Callable[[dict[str, Any]], None] | None = None,
     relay_ack_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
+    relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
 ) -> APIRouter:
     router = APIRouter()
     wake_registry = claude_wake_registry or ClaudeWakeRegistry()
@@ -376,9 +379,19 @@ def create_router(
             raise HTTPException(status_code=501, detail="relay is not supported by the configured storage")
         return relay_service
 
-    def _relay_call(operation):
+    async def _relay_call(operation_name: str, operation):
+        started = time.monotonic()
         try:
-            return operation()
+            if relay_runner is None:
+                import anyio
+
+                result = await anyio.to_thread.run_sync(operation)
+            else:
+                result = await relay_runner(operation)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            if elapsed_ms >= 100:
+                logger.warning("relay operation=%s outcome=slow duration_ms=%d", operation_name, elapsed_ms)
+            return result
         except RelayNotFoundError as exc:
             raise HTTPException(status_code=404, detail="relay entity not found in the requested scope") from exc
         except RelayConflictError as exc:
@@ -386,6 +399,11 @@ def create_router(
         except RelayUnavailableError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
         except ImmediateTransactionBusyError as exc:
+            logger.warning(
+                "relay operation=%s outcome=busy duration_ms=%d",
+                operation_name,
+                int((time.monotonic() - started) * 1000),
+            )
             raise HTTPException(
                 status_code=503,
                 detail={"code": "relay_busy", "retryable": True},
@@ -395,8 +413,8 @@ def create_router(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.post("/relay/turn", response_model=RelayTurnResponse)
-    def relay_turn(request: RelayTurnRequest):
-        result = _relay_call(lambda: _relay().turn(**request.model_dump()))
+    async def relay_turn(request: RelayTurnRequest):
+        result = await _relay_call("turn", lambda: _relay().turn(**request.model_dump()))
         if relay_turn_callback is not None:
             try:
                 relay_turn_callback(request.model_dump())
@@ -405,17 +423,18 @@ def create_router(
         return result
 
     @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
-    def relay_close_session(request: RelaySessionMutationRequest):
-        return _relay_call(lambda: _relay().close_session(**request.model_dump()))
+    async def relay_close_session(request: RelaySessionMutationRequest):
+        return await _relay_call("close_session", lambda: _relay().close_session(**request.model_dump()))
 
     @router.get("/relay/sessions", response_model=list[RelaySessionResponse])
-    def relay_sessions(
+    async def relay_sessions(
         container_ref: str = Query(min_length=1, max_length=512),
         actor_ref: str = Query(min_length=1, max_length=255),
         runtime: str | None = Query(default=None, max_length=32),
         include_inactive: bool = False,
     ):
-        return _relay_call(
+        return await _relay_call(
+            "list_sessions",
             lambda: _relay().list_sessions(
                 container_ref=container_ref,
                 actor_ref=actor_ref,
@@ -425,12 +444,12 @@ def create_router(
         )
 
     @router.post("/relay/sessions/name", response_model=RelaySessionResponse)
-    def relay_name_session(request: RelaySessionNameRequest):
-        return _relay_call(lambda: _relay().name_session(**request.model_dump()))
+    async def relay_name_session(request: RelaySessionNameRequest):
+        return await _relay_call("name_session", lambda: _relay().name_session(**request.model_dump()))
 
     @router.post("/relay/messages", response_model=RelayMessageResponse)
-    def relay_send(request: RelaySendRequest):
-        result = _relay_call(lambda: _relay().send(**request.model_dump()))
+    async def relay_send(request: RelaySendRequest):
+        result = await _relay_call("send", lambda: _relay().send(**request.model_dump()))
         if relay_send_callback is not None:
             try:
                 relay_send_callback(result, {
@@ -442,8 +461,8 @@ def create_router(
         return result
 
     @router.post("/relay/replies", response_model=RelayMessageResponse)
-    def relay_reply(request: RelayReplyRequest):
-        result = _relay_call(lambda: _relay().reply(**request.model_dump()))
+    async def relay_reply(request: RelayReplyRequest):
+        result = await _relay_call("reply", lambda: _relay().reply(**request.model_dump()))
         if relay_send_callback is not None:
             try:
                 relay_send_callback(result, {
@@ -455,12 +474,13 @@ def create_router(
         return result
 
     @router.get("/relay/messages/{message_id}", response_model=RelayMessageResponse)
-    def relay_message_status(
+    async def relay_message_status(
         message_id: str,
         container_ref: str = Query(min_length=1, max_length=512),
         actor_ref: str = Query(min_length=1, max_length=255),
     ):
-        return _relay_call(
+        return await _relay_call(
+            "message_status",
             lambda: _relay().message_status(
                 message_id=message_id,
                 container_ref=container_ref,
@@ -469,8 +489,8 @@ def create_router(
         )
 
     @router.post("/relay/deliveries/ack", response_model=RelayAckResponse)
-    def relay_ack(request: RelayAckRequest):
-        result = _relay_call(lambda: _relay().acknowledge(**request.model_dump()))
+    async def relay_ack(request: RelayAckRequest):
+        result = await _relay_call("ack", lambda: _relay().acknowledge(**request.model_dump()))
         if relay_ack_callback is not None and not result.get("already_delivered", False):
             try:
                 relay_ack_callback(result, {
@@ -482,8 +502,8 @@ def create_router(
         return result
 
     @router.post("/relay/deliveries/mcp-ack", response_model=RelayAckResponse)
-    def relay_mcp_ack(request: RelayMcpAckRequest):
-        return _relay_call(lambda: _relay().ack_by_receipt(**request.model_dump()))
+    async def relay_mcp_ack(request: RelayMcpAckRequest):
+        return await _relay_call("mcp_ack", lambda: _relay().ack_by_receipt(**request.model_dump()))
 
     @router.post("/internal/claude-wake/register", status_code=204)
     async def register_claude_wake(http_request: Request) -> Response:

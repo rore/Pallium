@@ -51,6 +51,7 @@ def setup_function() -> None:
     codex_wake._scheduled_delivery_ids.clear()
     codex_wake._scheduled_session_generations.clear()
     codex_wake._scheduled_session_delivery_ids.clear()
+    codex_wake._scheduled_session_retry_at.clear()
 
 
 def test_successful_resume_does_not_queue_and_hides_process() -> None:
@@ -210,6 +211,33 @@ def test_busy_wakes_coalesce_until_admission_then_rearm(monkeypatch, outcome: st
         _schedule(_delivery("delivery-4"))
     wake.assert_called_once_with("target-session")
     assert len(workers) == 2
+
+
+@pytest.mark.parametrize("outcome", ["queued", "ambiguous"])
+def test_busy_wake_retries_after_bounded_coalescing_window(monkeypatch, caplog, outcome: str) -> None:
+    workers = []
+    clock = [10.0]
+    caplog.set_level("INFO", logger="app.codex_wake")
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    monkeypatch.setattr(codex_wake.time, "monotonic", lambda: clock[0])
+    with patch("app.codex_wake.threading.Thread") as thread, patch(
+        "app.codex_wake._wake", return_value=outcome
+    ):
+        thread.side_effect = lambda **kwargs: (
+            workers.append(kwargs["args"]),
+            type("Worker", (), {"start": lambda self: None})(),
+        )[1]
+        _schedule(_delivery())
+        codex_wake._wake_after_debounce(*workers[0])
+        _schedule(_delivery("delivery-before-retry"))
+        assert len(workers) == 1
+        clock[0] += codex_wake._RETRY_SECONDS
+        _schedule(_delivery("delivery-after-retry"))
+
+    assert len(workers) == 2
+    assert codex_wake._scheduled_delivery_ids == {"delivery-after-retry"}
+    assert "outcome=retry_scheduled delay_seconds=30" in caplog.text
+    assert SCOPE["container_ref"] not in caplog.text
 
 
 def test_exec_completion_requires_matching_admission_before_return(monkeypatch) -> None:
@@ -914,7 +942,7 @@ def test_competing_hook_consumes_delivery_before_accepted_queue_blocks_empty_wak
     }).json()["deliveries"] == []
 
 
-def test_internal_wake_with_redaction_expanded_pending_delivery_fails_open(
+def test_redaction_expansion_is_compacted_and_internal_wake_delivers_once(
     client, monkeypatch, tmp_path, capsys,
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
@@ -955,8 +983,13 @@ def test_internal_wake_with_redaction_expanded_pending_delivery_fails_open(
         "cwd": str(tmp_path), "session_id": target, "prompt": hook.RELAY_WAKE_PROMPT,
     })
     monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
-    monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: None)
-    monkeypatch.setattr(hook, "emit_context", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        hook,
+        "pallium_request",
+        lambda *_a, **_k: pytest.fail("Relay wake must not query memory"),
+    )
+    contexts: list[str] = []
+    monkeypatch.setattr(hook, "emit_context", lambda output, _event: contexts.append(output))
     turns = []
 
     def relay_request(method: str, path: str, payload: dict, *, timeout: float):
@@ -968,20 +1001,23 @@ def test_internal_wake_with_redaction_expanded_pending_delivery_fails_open(
         return body
 
     monkeypatch.setattr(hook, "relay_request", relay_request)
+    monkeypatch.setattr(hook._common, "relay_request", relay_request)
     with pytest.raises(SystemExit) as exited:
         hook.main()
 
     assert exited.value.code == 0
-    assert turns[-1]["deliveries"] == []
-    assert turns[-1]["has_more"] is True
-    assert turns[-1]["remaining_count"] == 1
+    assert len(turns[-1]["deliveries"]) == 1
+    assert turns[-1]["has_more"] is False
+    assert turns[-1]["remaining_count"] == 0
     captured = capsys.readouterr()
-    assert '"decision":"block"' not in captured.out
-    assert "superseded" not in captured.err
+    assert captured.out == captured.err == ""
+    assert len(contexts) == 1
+    assert "payload omitted because sanitization exceeded the Relay limit" in contexts[0]
+    assert "pwd:a" not in contexts[0]
     delivery = client.get(
         f"/relay/messages/{sent.json()['message_id']}", params=scope,
     ).json()["deliveries"][0]
-    assert delivery["state"] == "pending" and delivery["attempts"] == 0
+    assert delivery["state"] == "delivered" and delivery["attempts"] == 1
 
 
 def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
@@ -1412,7 +1448,7 @@ def test_idempotent_send_schedules_one_codex_wake(client, monkeypatch) -> None:
 
 
 def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
-    client, monkeypatch: pytest.MonkeyPatch, tmp_path,
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path, capsys,
 ) -> None:
     import storage.sqlite_relay as sqlite_relay
     from app.dependencies import recover_expired_relay_wakes
@@ -1443,9 +1479,47 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     )
     scheduled.clear()
 
-    claimed = relay.turn(
-        runtime="codex", session_ref="crash-target", max_messages=1, **SCOPE
-    )["deliveries"][0]
+    state_dir = tmp_path / "timeout-hook-state"
+    monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: SCOPE["actor_ref"])
+    monkeypatch.setattr(
+        hook,
+        "pallium_request",
+        lambda *_args, **_kwargs: pytest.fail("timed-out Relay wake must not query memory"),
+    )
+    timeout_contexts: list[str] = []
+    monkeypatch.setattr(
+        hook, "emit_context", lambda output, _event: timeout_contexts.append(output)
+    )
+    timed_out_turn: dict = {}
+
+    def timeout_after_server_claim(
+        method: str, path: str, payload: dict, *, timeout: float
+    ):
+        response = client.request(method, path, json=payload)
+        assert response.status_code == 200, response.text
+        body = response.json() if response.content else None
+        if path == "/relay/turn":
+            timed_out_turn.update(body)
+            return None
+        return body
+
+    monkeypatch.setattr(hook, "relay_request", timeout_after_server_claim)
+    monkeypatch.setattr(hook._common, "relay_request", timeout_after_server_claim)
+    hook._common.pin_container("crash-target", SCOPE["container_ref"])
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path),
+        "session_id": "crash-target",
+        "prompt": codex_wake._wake_prompt(),
+    })
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    assert json.loads(capsys.readouterr().out)["decision"] == "block"
+    assert timeout_contexts == []
+    claimed = timed_out_turn["deliveries"][0]
     assert claimed["delivery_id"] == sent["deliveries"][0]["delivery_id"]
     assert relay.message_status(message_id=sent["message_id"], **SCOPE)["deliveries"][0]["state"] == "claimed"
 
@@ -1500,7 +1574,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     assert scheduled == []
     assert relay.turn(runtime="codex", session_ref="crash-target", **SCOPE)["deliveries"] == []
 
-def test_expired_codex_claim_rewakes_once_after_real_app_restart(
+def test_pending_and_expired_codex_work_rewakes_after_real_app_restart(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     import app.main as main
@@ -1541,6 +1615,14 @@ def test_expired_codex_claim_rewakes_once_after_real_app_restart(
             runtime="codex", session_ref="restart-target", **SCOPE
         )["deliveries"][0]
         assert claimed["delivery_id"] == sent["deliveries"][0]["delivery_id"]
+        relay.turn(runtime="codex", session_ref="pending-target", **SCOPE)
+        pending = relay.send(
+            sender_runtime="claude-code",
+            sender_session_ref="sender",
+            recipient="codex:pending-target",
+            payload="persisted pending Codex wake ✓",
+            **SCOPE,
+        )
 
     clock[0] += timedelta(seconds=61)
     scheduled = threading.Event()
@@ -1548,16 +1630,22 @@ def test_expired_codex_claim_rewakes_once_after_real_app_restart(
 
     def schedule(result: dict, scope: dict, **_kwargs) -> None:
         wake_calls.append((result, scope))
-        scheduled.set()
+        if len(wake_calls) == 2:
+            scheduled.set()
 
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", schedule)
     monkeypatch.setattr(main, "start_claude_wake_reconciler", original_start)
     app_b = create_app(config)
     with TestClient(app_b, client=("127.0.0.1", 50000)) as http_b:
         assert scheduled.wait(timeout=1)
-        assert len(wake_calls) == 1
-        assert wake_calls[0][0]["deliveries"][0]["delivery_id"] == claimed["delivery_id"]
-        assert wake_calls[0][1] == SCOPE
+        assert len(wake_calls) == 2
+        assert {
+            call[0]["deliveries"][0]["delivery_id"] for call in wake_calls
+        } == {
+            claimed["delivery_id"],
+            pending["deliveries"][0]["delivery_id"],
+        }
+        assert all(call[1] == SCOPE for call in wake_calls)
 
         from integrations.codex.hooks import user_prompt_submit as hook
 
@@ -1589,11 +1677,26 @@ def test_expired_codex_claim_rewakes_once_after_real_app_restart(
         })
         with pytest.raises(SystemExit):
             hook.main()
+        hook._common.pin_container("pending-target", SCOPE["container_ref"])
+        monkeypatch.setattr(hook, "read_hook_input", lambda: {
+            "cwd": str(tmp_path),
+            "session_id": "pending-target",
+            "prompt": codex_wake._wake_prompt(),
+        })
+        with pytest.raises(SystemExit):
+            hook.main()
 
         relay = RelayService(http_b.app.state.pallium_service._storage)
-        assert len(contexts) == 1 and "persisted Codex crash ✓" in contexts[0]
+        assert len(contexts) == 2
+        assert any("persisted Codex crash ✓" in context for context in contexts)
+        assert any("persisted pending Codex wake ✓" in context for context in contexts)
         delivered = relay.message_status(message_id=sent["message_id"], **SCOPE)["deliveries"][0]
         assert delivered["state"] == "delivered" and delivered["attempts"] == 2
+        pending_delivered = relay.message_status(
+            message_id=pending["message_id"], **SCOPE
+        )["deliveries"][0]
+        assert pending_delivered["state"] == "delivered"
+        assert pending_delivered["attempts"] == 1
         wake_calls.clear()
         assert relay.turn(
             runtime="codex", session_ref="restart-target", **SCOPE

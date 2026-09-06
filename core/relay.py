@@ -21,6 +21,7 @@ RELAY_MIN_EXPIRY_SECONDS = 60
 RELAY_MAX_EXPIRY_SECONDS = 7 * 24 * 60 * 60
 RELAY_RECENT_SECONDS = 24 * 60 * 60
 RELAY_CLAIM_LEASE_SECONDS = 60
+_REDACTED_OVERFLOW = "[REDACTED: payload omitted because sanitization exceeded the Relay limit]"
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
@@ -77,6 +78,14 @@ def validate_payload(value: str) -> str:
     ):
         raise ValueError("payload contains unsafe control characters")
     return value
+
+
+def _stored_payload(value: str) -> tuple[str, str]:
+    raw = validate_payload(value)
+    stored = redact_sensitive(raw)
+    if len(stored) > RELAY_MESSAGE_MAX_CHARS:
+        stored = _REDACTED_OVERFLOW
+    return raw, stored
 
 
 def parse_selector(value: str) -> tuple[str, str, str | None]:
@@ -240,8 +249,7 @@ class RelayService:
                 f"expires_in_seconds must be between {RELAY_MIN_EXPIRY_SECONDS} and {RELAY_MAX_EXPIRY_SECONDS}"
             )
         recipient_runtime, recipient_kind, recipient_value = parse_selector(recipient)
-        raw_payload = validate_payload(payload)
-        stored_payload = redact_sensitive(raw_payload)
+        raw_payload, stored_payload = _stored_payload(payload)
         return self._store.relay_send(
             message_id=_opaque(message_id, "message_id", maximum=128) if message_id else f"relay-msg-{uuid.uuid4().hex}",
             sender_runtime=validate_runtime(sender_runtime),
@@ -280,8 +288,7 @@ class RelayService:
                 f"expires_in_seconds must be between {RELAY_MIN_EXPIRY_SECONDS} and {RELAY_MAX_EXPIRY_SECONDS}"
             )
         delivery = _opaque(delivery_id, "delivery_id", maximum=128)
-        raw_payload = validate_payload(payload)
-        stored_payload = redact_sensitive(raw_payload)
+        raw_payload, stored_payload = _stored_payload(payload)
         reply_id = "relay-reply-" + hashlib.sha256(delivery.encode("utf-8")).hexdigest()
         return self._store.relay_reply_atomic(
             delivery_id=delivery,
@@ -315,6 +322,21 @@ class RelayService:
             container_ref=container,
             actor_ref=actor,
             delivery_id=None if delivery_id is None else _opaque(delivery_id, "delivery_id", maximum=128),
+        )
+
+    def wake_candidates(
+        self, *, delivery_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Read pending or expired-claimed wake candidates without mutation."""
+        query = getattr(self._store, "relay_wake_candidates", None)
+        if not callable(query):
+            raise RelayUnavailableError(
+                "relay wake recovery is not supported by the configured storage"
+            )
+        return query(
+            delivery_id=None
+            if delivery_id is None
+            else _opaque(delivery_id, "delivery_id", maximum=128)
         )
 
     def expired_claim_candidates(

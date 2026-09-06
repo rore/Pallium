@@ -29,13 +29,15 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Implementing
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-06 discovery and high-risk planning recorded before code changes.
 - Clean-context redline review classified `api/routes.py` as RED/API_CHANGE with API review required, found no proposed boundary violation, and constrained executor ownership to `app`. Plan review found no blocker after requiring fail-closed sentinel handling, exact-session bounded retry ownership, low-cardinality telemetry, and real caller-surface lifecycle coverage.
+
+- Root slice: Relay HTTP storage calls now use app-owned independent AnyIO capacity; /health stays on the event loop; a deterministic caller-surface test proves both respond while ordinary sync capacity is saturated (1 passed in 0.34s). Hook Relay timeout failures now emit bounded operation/type/latency diagnostics without scope or payload.
 
 ## Evidence
 
@@ -49,3 +51,5 @@
 ## Result review
 
 Pending.
+- 2026-09-06 sentinel slice: exact Codex Relay wake now blocks on every unsuccessful Relay outcome before dedup/memory/context; focused hook suite passes (37 tests).
+- SQLite slice: persistent auto_vacuum/WAL bootstrap moved to one-time initialization; pooled connections set busy_timeout first.

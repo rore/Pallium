@@ -20,12 +20,14 @@ _ACTIVE_WRITER_CODE = "(code -32600)"
 _DEBOUNCE_SECONDS = 1.0
 _TIMEOUT_SECONDS = 300
 _QUEUE_TIMEOUT_SECONDS = 30
+_RETRY_SECONDS = 30.0
 _LaunchOutcome = Literal["exec_completed", "queued", "ambiguous", "failed"]
 _WakeKey = tuple[str, str, str]
 _scheduled_delivery_ids: set[str] = set()
 _scheduled_session_generations: dict[_WakeKey, int] = {}
 _generation_counter = 0
 _scheduled_session_delivery_ids: dict[_WakeKey, str] = {}
+_scheduled_session_retry_at: dict[_WakeKey, float] = {}
 _scheduled_lock = threading.Lock()
 logger = logging.getLogger(__name__)
 
@@ -76,11 +78,11 @@ def schedule_codex_relay_wake(
         return
     wake_key = (session_ref, container_ref, actor_ref)
     with _scheduled_lock:
-        if (
-            delivery_id in _scheduled_delivery_ids
-            or wake_key in _scheduled_session_generations
-        ):
-            return
+        if delivery_id in _scheduled_delivery_ids or wake_key in _scheduled_session_generations:
+            retry_at = _scheduled_session_retry_at.get(wake_key)
+            if retry_at is None or time.monotonic() < retry_at:
+                return
+            _clear_schedule_locked(wake_key)
         _scheduled_delivery_ids.add(delivery_id)
         global _generation_counter
         _generation_counter += 1
@@ -104,6 +106,7 @@ def schedule_codex_relay_wake(
 def _clear_schedule_locked(wake_key: _WakeKey) -> None:
     _scheduled_session_generations.pop(wake_key, None)
     delivery_id = _scheduled_session_delivery_ids.pop(wake_key, None)
+    _scheduled_session_retry_at.pop(wake_key, None)
     if delivery_id is not None:
         _scheduled_delivery_ids.discard(delivery_id)
 
@@ -120,11 +123,24 @@ def _wake_after_debounce(
             _scheduled_delivery_ids.discard(delivery_id)
             return
     attempt_started_at = datetime.now(timezone.utc)
+    started = time.monotonic()
     try:
         outcome = _wake(wake_key[0])
     except Exception:
         outcome = "failed"
+    logger.info(
+        "codex_relay_wake outcome=%s latency_ms=%d",
+        outcome,
+        int((time.monotonic() - started) * 1000),
+    )
     if outcome in {"queued", "ambiguous"}:
+        with _scheduled_lock:
+            if _scheduled_session_generations.get(wake_key) == generation:
+                _scheduled_session_retry_at[wake_key] = time.monotonic() + _RETRY_SECONDS
+        logger.info(
+            "codex_relay_wake outcome=retry_scheduled delay_seconds=%d",
+            int(_RETRY_SECONDS),
+        )
         return
     with _scheduled_lock:
         if _scheduled_session_generations.get(wake_key) != generation:

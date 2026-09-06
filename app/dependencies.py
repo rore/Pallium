@@ -607,16 +607,17 @@ def recover_expired_relay_wakes(
     relay_service: RelayService,
     registry: ClaudeWakeRegistry,
 ) -> None:
-    """Recheck and dispatch expired claims without changing Relay state."""
-    for candidate in relay_service.expired_claim_candidates():
+    """Recheck and dispatch persisted pending work without changing Relay state."""
+    for candidate in relay_service.wake_candidates():
         try:
-            current = relay_service.expired_claim_candidates(
+            current = relay_service.wake_candidates(
                 delivery_id=candidate["delivery_id"]
             )
             if current != [candidate]:
                 continue
             runtime = candidate["recipient_runtime"]
             session_ref = candidate["recipient_session_ref"]
+            logger.info("relay wake_recovery runtime=%s source=persisted", runtime)
             dispatch_relay_wake(
                 {
                     "recipient": f"{runtime}:{session_ref}",
@@ -635,7 +636,7 @@ def recover_expired_relay_wakes(
                 registry=registry,
             )
         except Exception:
-            logger.exception("Relay expired-claim recovery failed")
+            logger.exception("Relay wake recovery failed")
 
 
 def build_router(
@@ -652,6 +653,14 @@ def build_router(
         except RelayUnavailableError:
             pass
     registry = claude_wake_registry or build_claude_wake_registry()
+
+    # Relay gets its own small AnyIO capacity pool so saturated memory routes cannot starve it.
+    import anyio
+
+    relay_limiter = anyio.CapacityLimiter(4)
+
+    async def _relay_runner(operation):
+        return await anyio.to_thread.run_sync(operation, limiter=relay_limiter)
 
     _relay_wake_dispatch = partial(
         dispatch_relay_wake, relay_service=relay_service, registry=registry
@@ -720,4 +729,5 @@ def build_router(
         ),
         relay_turn_callback=_relay_turn_admission,
         relay_ack_callback=(_relay_ack_rearm if relay_service is not None else None),
+        relay_runner=_relay_runner,
     )
