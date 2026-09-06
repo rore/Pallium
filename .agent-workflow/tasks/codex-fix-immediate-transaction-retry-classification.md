@@ -29,21 +29,23 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Discovery, pre-edit redline classification, and Elevated clean-context plan review complete. Implementation is ready; no code edit has started.
+- Added one explicit custom-busy classification branch, reused the existing real worker recovery lifecycle for the exact exception, and recorded the incident without changing retry budgets or transaction semantics.
 
 ## Evidence
 
 - Failed Windows CI run 34016782311 job 101441823518: one `ImmediateTransactionBusyError('database is locked (immediate transaction retry exhausted)')`; retry passed in job 101442373283.
 - Production trace: `storage/sqlite_queue.py::_begin_immediate_for` raises the custom exception; `app/worker.py::run_worker` delegates retryability to `core.errors.is_transient_error`; the classifier currently rejects the wrapper because it is a `RuntimeError`.
+- Focused verification: 37 passed in 7.75s across worker lifecycle, real WAL contention, and bounded SQLite retry coverage; diff check clean.
 
 ## Plan review
 
-Pending.
+Pending clean-context result review and PR CI.
 
 ## Result review
 

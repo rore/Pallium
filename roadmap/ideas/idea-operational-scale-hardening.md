@@ -81,6 +81,12 @@ core evidence-backed memory model:
 The remaining value of this idea is now in later follow-on work and remeasurement,
 not in proving these first-line optimizations are still hypothetical.
 
+2026-09-06 reliability correction: Windows CI exposed that exhausted bounded
+`BEGIN IMMEDIATE` acquisition was wrapped as `ImmediateTransactionBusyError` but
+not recognized by the worker's transient classifier. The shared classifier and real
+worker recovery lifecycle now cover that exact exception without increasing retry
+budgets or changing SQLite's bounded-failure contract.
+
 The highest-value likely future levers are:
 
 1. selective/debounced thread rebuilds
