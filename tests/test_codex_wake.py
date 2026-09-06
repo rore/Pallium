@@ -907,6 +907,75 @@ def test_competing_hook_consumes_delivery_before_accepted_queue_blocks_empty_wak
         "runtime": "codex", "session_ref": "target", **scope,
     }).json()["deliveries"] == []
 
+
+def test_internal_wake_with_redaction_expanded_pending_delivery_fails_open(
+    client, monkeypatch, tmp_path, capsys,
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    scope = {
+        "container_ref": "git:example.test/oversized-wake",
+        "actor_ref": hook.derive_actor_ref(),
+    }
+    sender = "s" * 255
+    target = "oversized-target"
+    state_dir = tmp_path / "oversized-hook-state"
+    monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(
+        "app.dependencies.schedule_codex_relay_wake",
+        lambda *_args, **_kwargs: None,
+    )
+    for runtime, session in (("claude-code", sender), ("codex", target)):
+        assert client.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": session, **scope,
+        }).status_code == 200
+
+    payload = "pwd:a\n" * 250
+    assert len(payload) == 1500
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code",
+        "sender_session_ref": sender,
+        "recipient": f"codex:{target}",
+        "message_id": "m" * 128,
+        "payload": payload,
+        **scope,
+    })
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["redacted"] is True
+    hook._common.pin_container(target, scope["container_ref"])
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path), "session_id": target, "prompt": hook.RELAY_WAKE_PROMPT,
+    })
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "emit_context", lambda *_a, **_k: None)
+    turns = []
+
+    def relay_request(method: str, path: str, payload: dict, *, timeout: float):
+        response = client.request(method, path, json=payload)
+        assert response.status_code == 200, response.text
+        body = response.json() if response.content else None
+        if path == "/relay/turn":
+            turns.append(body)
+        return body
+
+    monkeypatch.setattr(hook, "relay_request", relay_request)
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+
+    assert exited.value.code == 0
+    assert turns[-1]["deliveries"] == []
+    assert turns[-1]["has_more"] is True
+    assert turns[-1]["remaining_count"] == 1
+    assert "superseded" not in capsys.readouterr().err
+    delivery = client.get(
+        f"/relay/messages/{sent.json()['message_id']}", params=scope,
+    ).json()["deliveries"][0]
+    assert delivery["state"] == "pending" and delivery["attempts"] == 0
+
+
 def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
     client, monkeypatch, tmp_path,
 ) -> None:

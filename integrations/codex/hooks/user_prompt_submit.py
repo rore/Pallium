@@ -122,6 +122,9 @@ def main() -> None:
             prompt == RELAY_WAKE_PROMPT
             and isinstance(relay_response, dict)
             and relay_response.get("deliveries", object()) == []
+            and relay_response.get("has_more") is False
+            and type(relay_response.get("remaining_count")) is int
+            and relay_response["remaining_count"] == 0
         ):
             print("Pallium Relay wake superseded: no pending delivery.", file=sys.stderr)
             sys.exit(2)

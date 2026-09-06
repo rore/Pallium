@@ -180,7 +180,13 @@ def test_codex_confirmed_empty_internal_wake_blocks_before_model(monkeypatch, ca
     monkeypatch.setattr(hook, "get_pending_relay_closes", lambda *_: [])
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
-    monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: {"deliveries": []})
+    monkeypatch.setattr(
+        hook,
+        "relay_request",
+        lambda *_a, **_k: {
+            "deliveries": [], "has_more": False, "remaining_count": 0,
+        },
+    )
     monkeypatch.setattr(
         hook, "check_dedup", lambda *_: pytest.fail("empty wake must block before dedup"),
     )
@@ -202,7 +208,16 @@ def test_codex_confirmed_empty_internal_wake_blocks_before_model(monkeypatch, ca
 
 @pytest.mark.parametrize(
     "relay_response",
-    [None, {}, {"deliveries": None}, {"deliveries": "invalid"}, ["invalid"]],
+    [
+        None,
+        {},
+        {"deliveries": None},
+        {"deliveries": "invalid"},
+        ["invalid"],
+        {"deliveries": []},
+        {"deliveries": [], "has_more": True, "remaining_count": 1},
+        {"deliveries": [], "has_more": False, "remaining_count": False},
+    ],
 )
 def test_codex_internal_wake_fails_open_without_confirmed_empty(
     monkeypatch, capsys, relay_response,
