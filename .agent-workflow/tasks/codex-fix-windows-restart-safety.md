@@ -56,10 +56,13 @@
 - Resolved the installed port before any stop from canonical VBS `--port N` or the VBS-referenced legacy launcher, rejected missing/nonnumeric/out-of-range values, and reused the validated port for listener cleanup, readiness, and success output.
 - apply_patch failed with local Windows error 1327; the Git patch fallback did not parse, so deterministic marker/exact replacements were used only for the three assigned files.
 - Slice 4 verification: PowerShell parser and test-module compile passed; custom-port, boundary, failure-safety, readiness, and MCP-exclusion regressions passed (17 passed in 8.26s); git diff --check clean.
+- Added a valid Hebrew-and-spaces WorkingDirectory caller-surface case; the wrapper passes the exact Unicode path to Start-Process.
+- Added the restart test module to the PR Windows smoke job, documented the preflight/readiness contract, aligned RW-010 for installed verification, and recorded the separate RW-016 custom-home/Unicode installer defect.
+- Architect attempts to apply the port and Unicode edits directly were guarded by exact replacements and refused when relaydev began the same shared-worktree edits concurrently; no developer work was overwritten.
 
 ## Evidence
 
-- Current `scripts/restart-service.ps1` stops before any code validation and prints success immediately after `Start-ScheduledTask`.
+- The initial `scripts/restart-service.ps1` stopped before code validation and printed success immediately after `Start-ScheduledTask`; the branch now preflights before stop and gates success on all required endpoints.
 - Installed task action uses `wscript.exe`, a quoted `~/.pallium/service_launcher.vbs` argument, and `C:\Dev\rore\Pallium` as working directory; the VBS quotes the installed venv `pythonw.exe` and launcher path.
 - `docs/context/operations.md` already requires `/health`, `/status`, `/debug/queue/health` plus embedding-provider and ingestion checks.
 - Existing `test_windows_service_restart_preserves_codex_mcp_bridge` covers only process signature exclusion.
@@ -70,7 +73,8 @@
 - Revised focused verification: test module compiled; PowerShell parser clean; installed legacy import-only preflight passed; 11 focused tests passed in 5.26s.
 - Port evidence: canonical VBS uses 21987 and legacy launcher metadata uses 21988; both drive `Get-NetTCPConnection`, all three readiness URIs, and the printed dashboard URL.
 - Missing, nonnumeric, zero, and 65536 ports fail before stop or process cleanup; boundary ports 1 and 65535 complete successfully.
-- Final focused verification: PowerShell parser clean; test module compiled; 17 focused tests passed in 8.26s; git diff --check clean.
+- Final focused verification before documentation alignment: PowerShell parser clean; test module compiled; 18 focused tests passed in 6.52s; git diff --check clean.
+- Clean-context result review approved canonical/legacy shape handling, optional and Unicode working directories, port parsing/boundaries, preflight ordering, survivor cleanup with MCP exclusion, readiness/error behavior, and non-Windows collection. Its sole blocker was adding the new test to Windows smoke; that workflow entry is now present.
 
 ## Plan review
 
