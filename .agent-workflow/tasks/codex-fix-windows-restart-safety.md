@@ -37,6 +37,11 @@
 - Established RW-010 from the canonical Relay ledger and preserved the developer's read-only lifecycle trace.
 - Pre-edit redline classified the operational paths blue and the Windows smoke workflow gray with no checkpoint; operational process-kill risk keeps the task Elevated.
 - Rejected a blanket dirty-checkout gate in favor of validating the exact installed interpreter and code import before stop.
+- Slice 1 changes only scripts/restart-service.ps1 and this Implementation log; tests, docs, workflow, and roadmap remain for later slices.
+- apply_patch failed with local Windows error 1327; used deterministic exact-block replacement for the two named files.
+- The first installed-preflight check exposed a VBScript quote-count mistake in the Python regex; corrected it to the observed triple-open/double-close launcher syntax before commit.
+- Implemented installed task/VBS/Python/working-directory validation and import preflight before the unchanged kill sweep, wrapped scheduled-task start failure, and added the fixed 20-attempt readiness gate.
+- Verification: PowerShell parser clean; exact installed pythonw import preflight passed; existing MCP-exclusion pytest passed (1 test); git diff --check clean.
 
 ## Evidence
 
