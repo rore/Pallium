@@ -37,12 +37,18 @@
 
 - Established task context and recorded the live mismatch before guarded edits.
 - Clean-context pre-edit redline review classified `app/codex_wake.py` and `app/dependencies.py` GRAY/watch, all test/docs paths blue, with no boundary violation or mandatory checkpoint.
+- Added the single Codex UserPromptSubmit boundary guard: only the exact internal wake plus a successful dict response containing exactly `deliveries == []` exits 2 before dedup, memory, or model work. Relay failure, malformed response, invalid scope, non-wake prompts, and attributed delivery retain their prior paths.
+- Added direct hook boundaries and a real caller-surface lifecycle that retains an accepted native prompt, lets a competing hook claim and ACK, and then executes the retained prompt.
+- Updated RW-002 to distinguish Pallium scheduling coalescing from the uncancellable native accepted-prompt race.
 
 ## Evidence
 
 - Read-only Relay DB trace: newest delivery to this exact session was `relay-reply-7d7e5fde...`, created 03:09:12 UTC and delivered once at 03:09:25; no delivery exists near the 03:15:49 empty wake.
 - Read-only source history: exact generic wake recorded at 03:15:49; the immediately repeated identical prompt was deduplicated by the hook and therefore absent from source storage.
 - Codex CLI 0.149.1 embedded hook contract: `UserPromptSubmit hook exited with code 2 but did not write a blocking reason to stderr`, confirming exit 2 plus stderr is the supported pre-model block path. Official OpenAI documentation search did not expose this contract.
+- The new caller-surface regression failed before the guard because the retained wake reached `/item-and-query`; it passes after the guard.
+- Focused hook/wake/lifecycle/contract/integration verification: 143 passed in 14.93 seconds with four existing Pydantic forward-reference warnings; no wall-clock wait was added.
+- Normal hook-path handling of the relaydev blocker report emitted the attributed payload and exact scope, then left its delivery `delivered` with one attempt. The report arrived during this already-running turn and was not evidence of a second missed injection.
 
 ## Plan review
 

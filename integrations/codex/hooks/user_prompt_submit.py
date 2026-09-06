@@ -37,6 +37,11 @@ _IDE_TAG_RE = re.compile(
     re.DOTALL,
 )
 
+RELAY_WAKE_PROMPT = (
+    "Pallium Relay wake: a persisted delivery may be pending. "
+    "The installed UserPromptSubmit hook will claim and inject it for this turn."
+)
+
 
 def _strip_ide_context(text: str) -> str:
     return _IDE_TAG_RE.sub("", text).strip()
@@ -79,6 +84,7 @@ def main() -> None:
         deliveries = []
         rendered_deliveries = []
         relay_output = ""
+        relay_response = None
         relay_scope = format_injection(
             [], container_ref, budget_chars=RELAY_OUTPUT_BUDGET,
             thread_ref=session_id, actor_ref=actor_ref,
@@ -97,20 +103,28 @@ def main() -> None:
                 },
                 timeout=0.75,
             )
-            relay_response = relay_response or {}
-            deliveries = relay_response.get("deliveries") or []
-            relay_output, rendered_deliveries = format_relay(
-                deliveries,
-                budget_chars=RELAY_OUTPUT_BUDGET,
-                remaining_count=(
-                    relay_response.get("remaining_count")
-                    if relay_response.get("has_more") is True else 0
-                ),
-            )
+            if isinstance(relay_response, dict):
+                deliveries = relay_response.get("deliveries") or []
+                relay_output, rendered_deliveries = format_relay(
+                    deliveries,
+                    budget_chars=RELAY_OUTPUT_BUDGET,
+                    remaining_count=(
+                        relay_response.get("remaining_count")
+                        if relay_response.get("has_more") is True else 0
+                    ),
+                )
             if rendered_deliveries:
                 emit_context("\n\n".join((relay_output, relay_scope)), "UserPromptSubmit")
                 acknowledge_relay(rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref)
                 sys.exit(0)
+
+        if (
+            prompt == RELAY_WAKE_PROMPT
+            and isinstance(relay_response, dict)
+            and relay_response.get("deliveries", object()) == []
+        ):
+            print("Pallium Relay wake superseded: no pending delivery.", file=sys.stderr)
+            sys.exit(2)
 
         if has_session and check_dedup(prompt, session_id):
             return

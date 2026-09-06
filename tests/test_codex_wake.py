@@ -803,6 +803,110 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     ).json()["deliveries"][0]["state"] == "delivered"
 
 
+def test_competing_hook_consumes_delivery_before_accepted_queue_blocks_empty_wake(
+    client, monkeypatch, tmp_path, capsys,
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    scope = {
+        "container_ref": "git:example.test/overtaken-wake",
+        "actor_ref": hook.derive_actor_ref(),
+    }
+    state_dir = tmp_path / "overtaken-hook-state"
+    monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
+    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(
+        "app.dependencies.schedule_codex_relay_wake",
+        codex_wake.schedule_codex_relay_wake,
+    )
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+    ))
+    route = TestClient(app)
+    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+        assert route.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": session, **scope,
+        }).status_code == 200
+
+    workers = []
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake.threading.Thread") as thread:
+        thread.side_effect = lambda **kwargs: (
+            workers.append(kwargs["args"]),
+            type("Worker", (), {"start": lambda self: None})(),
+        )[1]
+        sent = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": "codex:target",
+            "payload": "consume before queued wake executes →",
+            **scope,
+        }).json()
+    assert len(workers) == 1
+
+    active = subprocess.CompletedProcess(
+        [], 1, stderr="already has an active writer (code -32600)"
+    )
+    queued = subprocess.CompletedProcess([], 0, stderr="")
+    with patch(
+        "app.codex_wake.subprocess.run", side_effect=[active, queued],
+    ) as run:
+        codex_wake._wake_after_debounce(*workers[0])
+    queue_command = run.call_args_list[1].args[0]
+    queued_prompt = queue_command[queue_command.index("--message") + 1]
+    assert queued_prompt == codex_wake._wake_prompt()
+    assert route.get(
+        f"/relay/messages/{sent['message_id']}", params=scope
+    ).json()["deliveries"][0]["state"] == "pending"
+
+    hook._common.pin_container("target", scope["container_ref"])
+    prompts = iter(("a competing natural turn", queued_prompt))
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path), "session_id": "target", "prompt": next(prompts),
+    })
+    contexts = []
+    monkeypatch.setattr(hook, "emit_context", lambda text, _event: contexts.append(text))
+    monkeypatch.setattr(
+        hook,
+        "pallium_request",
+        lambda *_args, **_kwargs: pytest.fail("empty wake must not query memory"),
+    )
+
+    def relay_request(method: str, path: str, payload: dict, *, timeout: float):
+        response = route.request(method, path, json=payload)
+        assert response.status_code == 200, response.text
+        return response.json() if response.content else None
+
+    monkeypatch.setattr(hook, "relay_request", relay_request)
+    monkeypatch.setattr(hook._common, "relay_request", relay_request)
+
+    with pytest.raises(SystemExit) as competing:
+        hook.main()
+    assert competing.value.code == 0
+    assert len(contexts) == 1
+    assert "consume before queued wake executes →" in contexts[0]
+    delivered = route.get(
+        f"/relay/messages/{sent['message_id']}", params=scope
+    ).json()["deliveries"][0]
+    assert delivered["state"] == "delivered" and delivered["attempts"] == 1
+    assert not codex_wake._scheduled_session_generations
+
+    contexts.clear()
+    with pytest.raises(SystemExit) as overtaken:
+        hook.main()
+    assert overtaken.value.code == 2
+    assert contexts == []
+    assert "Pallium Relay wake" in capsys.readouterr().err
+    assert route.get(
+        f"/relay/messages/{sent['message_id']}", params=scope
+    ).json()["deliveries"][0] == delivered
+    assert route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", **scope,
+    }).json()["deliveries"] == []
+
 def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
     client, monkeypatch, tmp_path,
 ) -> None:
