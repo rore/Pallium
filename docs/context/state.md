@@ -23,11 +23,12 @@ evaluated layer over history rather than the product definition.
 - replies and delivery status
 - automatic hook delivery plus MCP recovery receive/ack tools
 - durable next-natural-turn fallback for Claude Code, Codex, and OpenCode
-- Windows Claude Code wake qualified
+- Windows and Linux Claude Code wake qualified (Linux via installed UDS on Ubuntu 24.04 / Claude Code 2.1.250)
 - Windows Codex loaded and unloaded exact-session wake proven
 
-Codex lifecycle/dogfood gates, non-Windows qualification, and OpenCode active
-wake remain open. There is no scheduled Relay feature.
+Codex lifecycle/dogfood and first-run hook-trust setup gates, macOS Claude
+qualification, non-Windows Codex qualification, and OpenCode active wake remain
+open. There is no scheduled Relay feature.
 
 ### Session History
 
