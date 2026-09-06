@@ -244,13 +244,11 @@ The following related work stays separate to keep ownership clear:
   synthetic source items are forgotten and 89 derived memories are soft-deleted
   under one audit reason; the default dashboard read path exposes none of them.
   This was operational data repair, not Relay routing behavior.
-- **Near-term operations follow-up (separate from S2):** qualify the hardened
-  Windows restart wrapper through its installed witness: both observed task
-  shapes, configured port, pre-stop import validation, canonical survivor sweep,
-  MCP preservation, and bounded `/health`, `/status`, and
-  `/debug/queue/health` readiness. Coordinate before restarting a checkout that
-  another agent is mutating. RW-016 then owns custom-home/Unicode launcher
-  metadata; do not fold that installer change back into RW-010.
+- **Next near-term operations follow-up (separate from S2):** RW-016 repairs
+  canonical Windows custom-home and Unicode launcher metadata, then proves the
+  default/custom/space/Unicode installed lifecycle without changing Linux
+  behavior. RW-010 is already fixed and Windows-qualified; retain its restart
+  regressions and installed witness as the operations floor.
 
 The remaining S2 qualification is done only with caller-surface E2E for fresh
 versus stale MCP hosts, bounded backlog, memory routing, Unicode, scope isolation,
