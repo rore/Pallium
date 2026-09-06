@@ -493,3 +493,27 @@ test("chat.message does not suppress ingestion for an oversized explicit-ref lis
   assert.ok(request, "oversized explicit refs must not suppress ordinary ingestion");
   assert.equal(request.body.metadata.pallium_work_refs.length, refs.length);
 });
+
+test("Relay scope carries the first structural OpenCode work_ref when supported", async (t) => {
+  if (process.platform === "win32") return t.skip("structural discovery is intentionally disabled on Windows");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-relay-work-ref-"));
+  try {
+    fs.mkdirSync(path.join(dir, ".git"));
+    fs.writeFileSync(path.join(dir, ".git", "HEAD"), "ref: refs/heads/fix/relay\n");
+    const tasks = path.join(dir, ".agent-workflow", "tasks"); fs.mkdirSync(tasks, { recursive: true });
+    fs.writeFileSync(path.join(tasks, "relay.md"), "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->");
+    installFetch({
+      "/item-and-query": oneBlock,
+      "/relay/turn": { deliveries: [{
+        delivery_id: "d-r", claim_token: "c-r", message_id: "m-r", sender_runtime: "claude-code",
+        sender_session_ref: "sender", payload: "handoff", created_at: "2026-01-01T00:00:00Z",
+      }] },
+      "/relay/deliveries/ack": { delivery_id: "d-r", state: "delivered" },
+    });
+    const hooks = await loadPlugin({ client: makeClient([]), directory: dir });
+    const output = { message: { sessionID: "sesRelayRef", role: "user" }, parts: [{ type: "text", text: "inspect this substantial migration carefully" }] };
+    await hooks["chat.message"]({}, output);
+    const modelMessage = await messagesTransform(hooks, output.message, output.parts);
+    assert.match(modelMessage.parts[0].text, /"work_ref":"git-branch:fix\/relay"/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

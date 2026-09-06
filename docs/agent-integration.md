@@ -169,6 +169,8 @@ session) from its own data. Agents do not need to classify turns.
 
 Structural integration helpers add raw, ordered work references to this list: `git-branch:<branch>` for the current non-base Git branch, `agent-workflow:<slug>` when the exact `.agent-workflow/tasks/<slug>.md` Work Record resolves safely and contains a complete workflow marker block, then any explicitly supplied list-valued refs. The resolver launches no process and reads only bounded local `.git/HEAD` and exact Work Record metadata. Relative, device, Windows UNC/mapped-network, symlink/junction, detached, base-branch, bare-repository, active Git-path-indirection, missing, malformed, oversized, or changing metadata contributes nothing; explicit refs and normal ingestion continue. On Windows, OpenCode deliberately skips structural filesystem discovery and preserves only explicit refs because Node's standard library cannot reliably identify every Windows reparse type without risking a synchronous cloud-placeholder stall. Python-based Claude Code and Codex reject Windows reparse attributes directly. Integrations do not redact or normalize candidates.
 
+Injected scope may also contain one optional `work_ref` scalar. Copy it exactly into exact search; if absent, use broad search. This scalar is selected only from safe structural references and is omitted without affecting normal scope or ingestion when unavailable.
+
 The integrating agent can provide `pallium_work_refs` in item `metadata` to
 supplement LLM extraction. When present, these refs are merged with any
 work references the semantic layer extracts from content. This is useful

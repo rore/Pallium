@@ -22,7 +22,7 @@ It also has optional derived memory:
 Picking up prior work? Choose the narrow or broad search below.
 
 `pallium_search_history_by_work_ref`
-Narrow exact-ref continuity. Pass a valid structural ref; Pallium normalizes it. It can miss related work under another/no ref. Omit `query` for newest eligible items.
+Current-work search. Copy injected `work_ref`; if absent, use broad search—never guess. Blank `query` resumes newest state; otherwise ask the question.
 
 `pallium_search_history`
 Broad topic search across eligible history/work items. Its `work_refs` filter is compatibility-only.

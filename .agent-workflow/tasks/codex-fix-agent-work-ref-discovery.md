@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -48,6 +48,23 @@
 
 The first clean-context Luna review blocked implementation until the plan preserved structural-ref provenance, enforced length/redaction/control safety, covered the early Relay-return path without a second discovery pass, wired an exact-empty MCP hint, and extended the caller E2E through emitted scope and exact retrieval. The revised plan incorporates all four findings. The same clean-context reviewer re-read the record and returned APPROVE.
 
+## Implementation update
+
+- Codex, Claude Code, and supported OpenCode prompt hooks resolve structural refs once, select the first safe value for `work_ref`, and reuse the same discovery for ingestion metadata.
+- Arbitrary explicit refs are never promoted into the scalar. Missing, invalid, control-bearing, overlong, redacted, or high-confidence secret-shaped candidates omit only the optional field.
+- Normal and Relay-first paths carry the scalar. OpenCode emits it exactly once when Relay scope and normal memory scope both participate; Windows retains the documented no-filesystem-discovery behavior.
+- Exact-search tool and bundled guidance say to copy the injected value unchanged, never guess, use broad search when absent, and reserve a blank query for newest-state resumption. Exact and broad empty-result hints remain distinct and bounded.
+- Added the committed vNext roadmap item and board entry. No API, schema, storage, authorization, Git subprocess, dependency, or generic retrieval change was introduced.
+- `apply_patch` failed with the documented Windows process error 1327; subsequent edits used narrowly scoped deterministic replacements limited to the named files.
+
+## Evidence update
+
+- Post-rebase focused Python verification: 280 passed, 1 documented OpenCode-on-Windows skip.
+- Full Python suite before the final wording/test correction: 4455 passed, 14 skipped, 2 expected failures, and one stale tool-description assertion failed. That assertion and the affected all-caller/budget contract tests were rerun successfully; no Python runtime logic changed afterward.
+- OpenCode verification after the final duplicate-scope fix: 47 passed, 7 documented Windows skips.
+- Python compilation and `git diff --check` pass. Guidance remains within existing character ceilings.
+- Agent Workflow checker reports clean with no redline boundary or checkpoint violation.
+
 ## Result review
 
-Pending.
+Clean-context architecture review found two P1 gaps: duplicate OpenCode `work_ref` emission on no-delivery turns and missing Claude/OpenCode caller-to-exact-search E2E. Both were fixed. The reviewer re-read the result and returned APPROVE with no remaining P0–P2 findings.

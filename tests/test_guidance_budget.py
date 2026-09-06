@@ -85,9 +85,10 @@ def test_history_guidance_distinguishes_modes_without_dropping_safety() -> None:
         lines = rendered.splitlines()
         exact_line = lines.index("- `pallium_search_history_by_work_ref`")
         broad_line = lines.index("- `pallium_search_history`")
-        assert lines[exact_line + 1].startswith("  Narrow exact-ref")
+        assert lines[exact_line + 1].startswith("  Current-work search")
         assert lines[broad_line + 1].startswith("  Broad topic search")
-        assert "can miss another/no ref" in rendered
+        assert "Copy injected `work_ref`" in rendered
+        assert "never guess" in rendered
         assert "compatibility-only" in rendered
         assert "only to either history search" in rendered
         assert "Flag bad cards with `pallium_flag_memory`" in rendered

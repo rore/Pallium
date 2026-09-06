@@ -24,6 +24,8 @@ from common import (
     relay_request,
     resolve_container_ref,
     build_work_refs_metadata,
+    discover_work_refs,
+    injected_work_ref,
     register_claude_wake,
 )
 
@@ -32,10 +34,8 @@ _IDE_TAG_RE = re.compile(
     re.DOTALL,
 )
 
-
 def _strip_ide_context(text: str) -> str:
     return _IDE_TAG_RE.sub("", text).strip()
-
 
 def main() -> None:
     try:
@@ -75,13 +75,15 @@ def main() -> None:
         if not content:
             return
 
+        discovery = discover_work_refs(cwd)
+        current_work_ref = injected_work_ref(discovery)
         deliveries = []
         rendered_deliveries = []
         relay_output = ""
         relay_scope = format_injection(
             [], container_ref, budget_chars=RELAY_OUTPUT_BUDGET,
             thread_ref=session_id, actor_ref=actor_ref,
-            agent_ref="claude-code", visibility="private",
+            agent_ref="claude-code", visibility="private", work_ref=current_work_ref,
         ) if has_session else ""
         if relay_scope:
             relay_response = relay_request(
@@ -121,7 +123,7 @@ def main() -> None:
         memory_output = format_injection(
             [], container_ref, budget_chars=memory_budget,
             thread_ref=session_id, actor_ref=actor_ref,
-            agent_ref="claude-code", visibility="private",
+            agent_ref="claude-code", visibility="private", work_ref=current_work_ref,
         ) if has_session else ""
         if len(content) >= 20:
             query_text = content[:500]
@@ -141,7 +143,7 @@ def main() -> None:
                 "query_limit": 5,
                 "query_actor_ref": actor_ref,
                 "query_trigger_origin": "user_prompt_submit",
-                "metadata": build_work_refs_metadata(cwd, payload.get("pallium_work_refs")),
+                "metadata": build_work_refs_metadata(cwd, payload.get("pallium_work_refs"), discovery),
             })
             if response:
                 memory_output = format_injection(
@@ -152,6 +154,7 @@ def main() -> None:
                     actor_ref=actor_ref,
                     agent_ref="claude-code",
                     visibility="private",
+                    work_ref=current_work_ref,
                     request_source_item_id=response.get("source_item_id"),
                 )
 
@@ -166,7 +169,6 @@ def main() -> None:
         print(f"pallium user_prompt_submit hook error: {exc}", file=sys.stderr)
 
     sys.exit(0)
-
 
 if __name__ == "__main__":
     main()

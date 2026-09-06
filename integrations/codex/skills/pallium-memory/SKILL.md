@@ -16,7 +16,7 @@ description: Use Pallium Relay, Session History, or optional derived memory.
 ## Session History
 
 - `pallium_search_history_by_work_ref`
-  Narrow exact-ref continuity; Pallium normalizes a valid structural ref. It can miss another/no ref. Blank `query` returns newest eligible items.
+  Current-work search. Copy injected `work_ref`; if absent, use broad search—never guess. Blank `query` resumes newest state; otherwise ask the question.
 - `pallium_search_history`
   Broad topic search across eligible history/work items. `work_refs` is compatibility-only.
 - `pallium_expand_source`

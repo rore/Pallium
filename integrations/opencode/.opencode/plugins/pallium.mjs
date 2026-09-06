@@ -370,6 +370,8 @@ export default async ({ client, directory, worktree } = {}) => {
         const containerRef = pallium.resolveContainerRef(cwd, sessionId);
         pallium.pinContainer(sessionId, containerRef, undefined);
         const actorRef = pallium.resolveActorRef(cwd, sessionId);
+        const discovery = pallium.discoverWorkRefs(cwd);
+        const currentWorkRef = pallium.injectedWorkRef(discovery);
 
         // Claim on the user turn, but acknowledge only after messages.transform
         // has attached the context to the actual model-bound history.
@@ -383,7 +385,7 @@ export default async ({ client, directory, worktree } = {}) => {
           const deliveries = (relayResponse && relayResponse.deliveries) || [];
           const { text: relayText, deliveries: renderedDeliveries } = pallium.formatRelay(deliveries);
           const scopeText = pallium.formatInjection(
-            [], containerRef, 2400, sessionId, actorRef, pallium.AGENT_REF, "private",
+            [], containerRef, 2400, sessionId, actorRef, pallium.AGENT_REF, "private", null, currentWorkRef,
           );
           pendingRelay.set(sessionId, {
             text: [relayText, scopeText].filter(Boolean).join("\n\n"),
@@ -419,10 +421,10 @@ export default async ({ client, directory, worktree } = {}) => {
           query_limit: 5,
           query_actor_ref: actorRef,
           query_trigger_origin: "user_prompt_submit",
-          metadata: pallium.buildWorkRefsMetadata(cwd, input && input.metadata && input.metadata.pallium_work_refs),
+          metadata: pallium.buildWorkRefsMetadata(cwd, input && input.metadata && input.metadata.pallium_work_refs, discovery),
         });
         if (!resp) return;
-        const output_text = pallium.formatInjection(resp.injectable_blocks || [], containerRef, USER_PROMPT_BUDGET, sessionId, actorRef, pallium.AGENT_REF, "private", resp.source_item_id);
+        const output_text = pallium.formatInjection(resp.injectable_blocks || [], containerRef, USER_PROMPT_BUDGET, sessionId, actorRef, pallium.AGENT_REF, "private", resp.source_item_id, pendingRelay.has(sessionId) ? null : currentWorkRef);
         if (output_text) enqueueInjection(sessionId, output_text);
       } catch (e) {
         log("error", `chat.message failed: ${e && e.message}`);

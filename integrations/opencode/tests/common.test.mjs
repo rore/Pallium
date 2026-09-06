@@ -471,6 +471,7 @@ test("buildWorkRefsMetadata performs no structural filesystem access on Windows"
   try {
     assert.deepEqual(P.buildWorkRefsMetadata("C:\\repo", ["KEEP"]), { pallium_work_refs: ["KEEP"] });
     assert.deepEqual(P.buildWorkRefsMetadata("C:\\repo"), {});
+    assert.deepEqual(P.discoverWorkRefs("C:\\repo"), { structuralRefs: [] });
   } finally {
     fs.lstatSync = original;
   }
@@ -519,4 +520,27 @@ test("buildWorkRefsMetadata rejects BOM, dot branches, Git overrides, and HEAD r
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("formatInjection omits only unsafe work_ref and preserves scope", () => {
+  for (const workRef of [
+    "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+    `xoxb-${"1".repeat(10)}-${"2".repeat(10)}-${"a".repeat(24)}`,
+    "AKIAABCDEFGHIJKLMNOP",
+    "eyJabcdefghijk.eyJabcdefghijk.abcdefghijk",
+    "[REDACTED]",
+    "bad\nref",
+    "x".repeat(129),
+  ]) {
+    const out = P.formatInjection([], "git:repo", 2400, "thread", null, null, null, null, workRef);
+    const scope = JSON.parse(out.slice(out.indexOf("{"), out.lastIndexOf("}") + 1));
+    assert.deepEqual(scope, { container_ref: "git:repo", thread_ref: "thread" });
+  }
+});
+
+test("injectedWorkRef selects first safe structural ref and ignores explicit-only refs", () => {
+  assert.equal(P.injectedWorkRef({ structuralRefs: ["bad\nref", "git-branch:feature/任务"] }), "git-branch:feature/任务");
+  assert.equal(P.injectedWorkRef({ structuralRefs: [] }), null);
+  assert.deepEqual(P.buildWorkRefsMetadata("", ["EXPLICIT-REF"], { structuralRefs: [] }), { pallium_work_refs: ["EXPLICIT-REF"] });
+  assert.equal(P.injectedWorkRef({ structuralRefs: ["[REDACTED]", "x".repeat(129)] }), null);
 });
