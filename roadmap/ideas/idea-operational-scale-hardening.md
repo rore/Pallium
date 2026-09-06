@@ -91,8 +91,8 @@ budgets or changing SQLite's bounded-failure contract.
 
 - RW-019 shipped Relay isolation, shutdown draining, event-loop health, one-time
   persistent PRAGMAs, deterministic contention coverage, and an opt-in load witness.
-- RW-020 follows with isolated status/queue diagnostics, bounded queue-health SQL,
-  and elapsed-budget restart readiness under background rebuild load.
+- RW-020 shipped isolated status/queue diagnostics, bounded queue-health SQL,
+  elapsed-budget restart readiness, and installed cold-start qualification.
 - The supported service remains one Uvicorn process serving concurrent users. A
   horizontally scaled multi-process deployment needs a durable cross-process wake
   attempt reservation; process-local coalescing is intentionally not claimed as that

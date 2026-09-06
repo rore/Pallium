@@ -139,16 +139,15 @@ remains for that adapter.
    and unqualified on Codex Desktop until a runtime-owned session handoff reaches
    the MCP child; hook-delivery wake does not depend on this recovery path.
 
-### Next execution order (updated 2026-09-06)
+### Next execution order (updated 2026-09-07)
 
 RW-017 durable-by-default delivery, RW-016 installed-service metadata repair,
-RW-018 taskkill race recovery, and RW-019 Relay load resilience are merged and
-Windows-qualified. The immediate item is **RW-020 diagnostic and restart
-readiness under background load**: isolate status/queue diagnostics from ordinary
-worker starvation, replace queue-health completed-history materialization with
-equivalent SQL aggregation, and make Windows/shared CLI readiness use one elapsed
-budget. Qualify it with fast deterministic capacity, shutdown, parity, and
-deadline tests plus an installed cold-start witness; keep sustained load opt-in.
+RW-018 taskkill race recovery, RW-019 Relay load resilience, and RW-020
+diagnostic/restart readiness are merged and Windows-qualified. No confirmed
+dogfood defect remains open. The next execution item is **S3 remaining Codex
+lifecycle gates**: sender-side reply admission, correlation telemetry, and one
+sustained no-ping implementation/review/remediation journey. Keep sustained
+witnesses opt-in and deterministic coverage in the normal suite.
 
 1. **S2 contract gate — complete in PR #98.** Delivery lifecycle
    (`pending`, `claimed`, `delivered`, `expired`; `failed` only on separate
@@ -245,7 +244,7 @@ where the runtime exists locally, an installed witness close it.
 | `RW-017` | Relay messages still default to a 24-hour expiry, so unhandled work for a busy or dormant target can become terminal despite durable wake recovery. Dogfood reproduced the default when an omitted MCP expiry returned an `expires_at` exactly one day later. | **Fixed in PR #113; Windows-qualified.** Omitted/null expiry is represented durably without a schema rebuild; explicit 60-second through 7-day expiry remains opt-in. Fast file-backed restart/dormancy/backlog/idempotency/dashboard/MCP regressions pass. Installed dogfood returned `expires_at:null`, auto-delivered once, and produced durable atomic reply `RW017-INSTALLED-PASS` without a manual target turn. |
 | `RW-018` | The Windows restart wrapper inherited `$ErrorActionPreference = "Stop"` at native `taskkill /T` calls, so a partial child-exit error aborted before later signature sweeps and task start; an orphan supervisor could then respawn the server while the wrapper failed and PID metadata stayed stale. | **Fixed in PR #115; Windows-qualified.** All tree kills share a best-effort helper with diagnostics, every unique initial listener is handled, later exact sweeps always run, an array-safe post-settle port gate blocks surviving listeners before start, and success exits 0 explicitly. Deterministic thrown/nonzero-kill and initial/persistent multi-listener regressions pass; the original installed orphan-respawn shape restarted cleanly, refreshed PID/port, kept all endpoints healthy, and auto-delivered one Relay wake. |
 | `RW-019` | Under concurrent work, sync-route worker starvation made the DB-free health endpoint time out; hook cancellation could leave a late server-side claim; startup recovery ignored never-claimed pending work; pooled SQLite connections repeated lock-taking persistent PRAGMAs; valid raw Relay text could exceed the rendered budget after redaction expansion. | **Fixed in PR #123; Windows-qualified.** Relay has independent capacity and shutdown drain, health stays async, startup recovery covers pending plus expired claims, Codex admission fails closed without a verified delivery, persistent PRAGMAs initialize once, and redaction overflow is bounded safely. Deterministic caller-surface/contention coverage, the opt-in mixed-load witness, full CI, exact-main restart, and installed Relay dogfood passed. Durable cross-process wake reservation remains future scale work. |
-| `RW-020` | During an active vector rebuild, the installed restart wrapper exhausted attempt-based readiness even though the service later became healthy; /status exceeded its two-second probe and queue health took 5-7 seconds while materializing all 10,506 source rows. | **Implementing.** The current slice gives status/queue diagnostics separate tracked capacity, aggregates completed-history queue health in SQL, preserves state/lease/failure semantics, drains queued diagnostics before storage close, and uses a 120-second monotonic readiness budget with remaining-time probe caps. Fast tests and an installed branch restart pass; full CI, PR review, merge, and exact-main witness remain. |
+| `RW-020` | During an active vector rebuild, the installed restart wrapper exhausted attempt-based readiness even though the service later became healthy; /status exceeded its two-second probe and queue health took 5-7 seconds while materializing all 10,506 source rows. | **Fixed in PR #124; Windows-qualified.** Status and queue diagnostics have separate tracked capacity from ordinary work and Relay; queue health aggregates completed history in SQL while preserving state, lease, failure, and retention semantics; shutdown drains queued diagnostics; Windows/shared CLI readiness uses one 120-second monotonic budget. Local full verification passed 4,536 tests; cross-platform CI and Windows smoke passed; two valid CodeRabbit deadline-test findings were fixed. Exact-main wrapper restart exited 0 with healthy endpoints, stable-checkout integrations verified, and Relay dogfood auto-woke the exact developer session in one attempt without a manual turn. |
 
 The Windows Claude regression floor remains: idle text and zero-tool turns, empty
 Stop rearm, busy delivery, ordered bursts, Unicode, recursive-Stop loop prevention,
