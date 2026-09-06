@@ -444,7 +444,7 @@ class TestStartWindows:
         monkeypatch.setattr("app.cli.service._missing_declared_credentials", lambda _config: [])
         monkeypatch.setattr("app.config.AppConfig.from_env", lambda: object())
         monkeypatch.setattr("app.run._run_download_embedding_model", lambda: None)
-        monkeypatch.setattr("app.cli.service._check_health", lambda _port: {"status": "ok"})
+        monkeypatch.setattr("app.cli.service._service_ready", lambda _port: True)
         monkeypatch.setattr("app.cli.service.time.sleep", lambda _seconds: None)
 
         task_xml: list[str] = []
