@@ -51,12 +51,16 @@ When moving an installation from a worktree back to the primary checkout:
 
 Changing integration or service code normally requires updating the stable
 checkout and restarting the installed service, not reinstalling its scheduled
-task. On Windows, always use `scripts/restart-service.ps1`. The installed
-launcher must use a dependency-complete Python and the supported
+task. On Windows, always use `scripts/restart-service.ps1`. It validates the
+registered VBS, interpreter, optional working directory, configured port, and
+`app.run` imports before stopping a healthy process tree. After launch it reports
+success only when `/health`, `/status`, and `/debug/queue/health` satisfy their
+documented readiness contracts; failures name the last check and Pallium log.
+The installed launcher must use a dependency-complete Python and the supported
 `python -m app.run service run --port <port>` path: `service run` applies the
 managed `~/.pallium/config/.env` and service configuration. Do not use the
-`scripts/install-service.ps1` merely to repoint development code or run a
-service from a temporary worktree.
+deprecated `scripts/install-service.ps1` merely to repoint development code or
+run a service from a temporary worktree.
 
 After any migration, verify the actual installed state rather than trusting
 setup output:

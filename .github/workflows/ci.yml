@@ -70,6 +70,7 @@ jobs:
           tests/test_supervisor.py
           tests/test_supervisor_kill_tree.py
           tests/test_codex_integration.py
+          tests/test_restart_service.py
           tests/test_codex_stop_match_text.py
           tests/test_asyncio_windows_accept.py
           tests/test_claude_code_hooks

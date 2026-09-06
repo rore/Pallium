@@ -8,11 +8,97 @@
 
 $ErrorActionPreference = "Stop"
 $TaskName = "Pallium"
+$LogPath = "$env:USERPROFILE\.pallium\logs\pallium.log"
+
+function Stop-WithError([string]$Message) {
+    [Console]::Error.WriteLine("Error: $Message")
+    [Console]::Error.WriteLine("Pallium log: $LogPath")
+    exit 1
+}
 
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if (-not $task) {
-    Write-Error "Pallium scheduled task not found. Run install-service.ps1 first."
-    exit 1
+    Stop-WithError "Pallium scheduled task not found. Run 'pallium service install' first."
+}
+
+$action = @($task.Actions)[0]
+if (-not $action -or [IO.Path]::GetFileName($action.Execute) -ine "wscript.exe") {
+    Stop-WithError "Installed Pallium task does not contain the expected wscript.exe action."
+}
+
+$workingDir = [Environment]::ExpandEnvironmentVariables(([string]$action.WorkingDirectory).Trim())
+$vbsPath = [Environment]::ExpandEnvironmentVariables(([string]$action.Arguments).Trim().Trim('"'))
+if ($workingDir -and -not (Test-Path -LiteralPath $workingDir)) {
+    Stop-WithError "Installed task working directory is missing or invalid: $workingDir"
+}
+if (-not $vbsPath -or -not (Test-Path -LiteralPath $vbsPath)) {
+    Stop-WithError "Installed task launcher is missing or invalid: $vbsPath"
+}
+
+$vbs = Get-Content -Raw -LiteralPath $vbsPath
+$pythonMatch = [regex]::Match(
+    $vbs,
+    'WshShell\.Run\s+"""([^"\r\n]+pythonw?\.exe)""',
+    [Text.RegularExpressions.RegexOptions]::IgnoreCase
+)
+$pythonPath = if ($pythonMatch.Success) {
+    [Environment]::ExpandEnvironmentVariables($pythonMatch.Groups[1].Value)
+} else {
+    ""
+}
+if (-not $pythonPath -or -not (Test-Path -LiteralPath $pythonPath)) {
+    Stop-WithError "Could not resolve the installed Python executable from $vbsPath"
+}
+
+$portMatch = [regex]::Match(
+    $vbs,
+    'WshShell\.Run\s+"""[^"\r\n]+pythonw?\.exe""\s+-m\s+app\.run\s+service\s+run\b[^"\r\n]*?--port\s+([^\s",]+)',
+    [Text.RegularExpressions.RegexOptions]::IgnoreCase
+)
+$portText = if ($portMatch.Success) { $portMatch.Groups[1].Value } else { "" }
+if (-not $portText) {
+    $launcherMatch = [regex]::Match(
+        $vbs,
+        'WshShell\.Run\s+"""[^"\r\n]+pythonw?\.exe""\s+""([^"\r\n]+\.py)""',
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase
+    )
+    if ($launcherMatch.Success) {
+        $launcherPath = [Environment]::ExpandEnvironmentVariables($launcherMatch.Groups[1].Value)
+        if (Test-Path -LiteralPath $launcherPath) {
+            $launcher = Get-Content -Raw -LiteralPath $launcherPath
+            $portMatch = [regex]::Match(
+                $launcher,
+                '["'']--port["'']\s*,\s*["'']([^"'']+)["'']',
+                [Text.RegularExpressions.RegexOptions]::IgnoreCase
+            )
+            if ($portMatch.Success) {
+                $portText = $portMatch.Groups[1].Value
+            }
+        }
+    }
+}
+
+[int]$Port = 0
+if (-not [int]::TryParse($portText, [ref]$Port) -or $Port -lt 1 -or $Port -gt 65535) {
+    Stop-WithError "Could not resolve a valid installed service port (1..65535) from $vbsPath"
+}
+try {
+    $preflightArgs = @{
+        FilePath = $pythonPath
+        ArgumentList = '-c "import app.run, app.main"'
+        WindowStyle = "Hidden"
+        Wait = $true
+        PassThru = $true
+    }
+    if ($workingDir) {
+        $preflightArgs.WorkingDirectory = $workingDir
+    }
+    $preflight = Start-Process @preflightArgs
+} catch {
+    Stop-WithError "Installed service import preflight could not run: $($_.Exception.Message)"
+}
+if ($preflight.ExitCode -ne 0) {
+    Stop-WithError "Installed service import preflight failed with exit code $($preflight.ExitCode); the running service was not stopped."
 }
 
 Write-Host "Stopping Pallium..."
@@ -21,7 +107,6 @@ Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 # Kill the process tree — Stop-ScheduledTask only marks the task stopped,
 # it doesn't kill the VBS → pythonw → supervisor → server process chain.
 # Strategy 1: kill by listening port (normal case)
-$Port = 19836
 $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($conn) {
     $procId = $conn.OwningProcess
@@ -73,9 +158,72 @@ foreach ($sig in $signatures) {
     }
 }
 
+$servicePattern = "%app.run service run%"
+$servicePortPattern = '(?i)(?:^|\s)--port\s+{0}(?=\s|$)' -f [regex]::Escape($Port.ToString())
+$serviceProcs = Get-CimInstance Win32_Process `
+    -Filter "(Name='python.exe' OR Name='pythonw.exe') AND CommandLine LIKE '$servicePattern'" `
+    -ErrorAction SilentlyContinue
+foreach ($p in $serviceProcs) {
+    if ($p.CommandLine -notmatch $servicePortPattern) {
+        continue
+    }
+    Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) app.run service run on port $Port)..."
+    taskkill /F /T /PID $p.ProcessId 2>$null | Out-Null
+}
+
 Start-Sleep -Seconds 2
 
 Write-Host "Starting Pallium..."
-Start-ScheduledTask -TaskName $TaskName
+try {
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+} catch {
+    Stop-WithError "Failed to start the Pallium scheduled task: $($_.Exception.Message)"
+}
 
-Write-Host "Pallium restarted. Dashboard at http://localhost:19836/dashboard"
+$BaseUrl = "http://127.0.0.1:$Port"
+$ready = $false
+$lastCheck = "service did not become ready"
+for ($attempt = 1; $attempt -le 20; $attempt++) {
+    try {
+        $lastCheck = "/health request"
+        $health = Invoke-RestMethod -Uri "$BaseUrl/health" -TimeoutSec 2
+        if ($health.status -ne "ok") {
+            $lastCheck = "/health status=$($health.status)"
+            throw $lastCheck
+        }
+
+        $lastCheck = "/status request"
+        $status = Invoke-RestMethod -Uri "$BaseUrl/status" -TimeoutSec 2
+        if ($status.embedding_provider_ok -ne $true) {
+            $lastCheck = "/status embedding_provider_ok=$($status.embedding_provider_ok)"
+            throw $lastCheck
+        }
+        if ($status.ingestion.status -ne "ok") {
+            $lastCheck = "/status ingestion.status=$($status.ingestion.status)"
+            throw $lastCheck
+        }
+
+        $lastCheck = "/debug/queue/health request"
+        $queue = Invoke-WebRequest -Uri "$BaseUrl/debug/queue/health" -UseBasicParsing -TimeoutSec 2
+        if ($queue.StatusCode -lt 200 -or $queue.StatusCode -ge 300) {
+            $lastCheck = "/debug/queue/health HTTP $($queue.StatusCode)"
+            throw $lastCheck
+        }
+
+        $ready = $true
+        break
+    } catch {
+        if ($_.Exception.Message -ne $lastCheck) {
+            $lastCheck = "{0}: {1}" -f $lastCheck, $_.Exception.Message
+        }
+        if ($attempt -lt 20) {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+}
+
+if (-not $ready) {
+    Stop-WithError "Pallium failed readiness after 20 attempts; last check: $lastCheck"
+}
+
+Write-Host "Pallium restarted. Dashboard at $BaseUrl/dashboard"
