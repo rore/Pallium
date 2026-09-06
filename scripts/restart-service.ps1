@@ -50,6 +50,38 @@ if (-not $pythonPath -or -not (Test-Path -LiteralPath $pythonPath)) {
     Stop-WithError "Could not resolve the installed Python executable from $vbsPath"
 }
 
+$portMatch = [regex]::Match(
+    $vbs,
+    'WshShell\.Run\s+"""[^"\r\n]+pythonw?\.exe""\s+-m\s+app\.run\s+service\s+run\b[^"\r\n]*?--port\s+([^\s",]+)',
+    [Text.RegularExpressions.RegexOptions]::IgnoreCase
+)
+$portText = if ($portMatch.Success) { $portMatch.Groups[1].Value } else { "" }
+if (-not $portText) {
+    $launcherMatch = [regex]::Match(
+        $vbs,
+        'WshShell\.Run\s+"""[^"\r\n]+pythonw?\.exe""\s+""([^"\r\n]+\.py)""',
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase
+    )
+    if ($launcherMatch.Success) {
+        $launcherPath = [Environment]::ExpandEnvironmentVariables($launcherMatch.Groups[1].Value)
+        if (Test-Path -LiteralPath $launcherPath) {
+            $launcher = Get-Content -Raw -LiteralPath $launcherPath
+            $portMatch = [regex]::Match(
+                $launcher,
+                '["'']--port["'']\s*,\s*["'']([^"'']+)["'']',
+                [Text.RegularExpressions.RegexOptions]::IgnoreCase
+            )
+            if ($portMatch.Success) {
+                $portText = $portMatch.Groups[1].Value
+            }
+        }
+    }
+}
+
+[int]$Port = 0
+if (-not [int]::TryParse($portText, [ref]$Port) -or $Port -lt 1 -or $Port -gt 65535) {
+    Stop-WithError "Could not resolve a valid installed service port (1..65535) from $vbsPath"
+}
 try {
     $preflightArgs = @{
         FilePath = $pythonPath
@@ -75,7 +107,6 @@ Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 # Kill the process tree — Stop-ScheduledTask only marks the task stopped,
 # it doesn't kill the VBS → pythonw → supervisor → server process chain.
 # Strategy 1: kill by listening port (normal case)
-$Port = 19836
 $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($conn) {
     $procId = $conn.OwningProcess
@@ -183,4 +214,4 @@ if (-not $ready) {
     Stop-WithError "Pallium failed readiness after 20 attempts; last check: $lastCheck"
 }
 
-Write-Host "Pallium restarted. Dashboard at http://localhost:19836/dashboard"
+Write-Host "Pallium restarted. Dashboard at $BaseUrl/dashboard"

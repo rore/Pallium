@@ -52,6 +52,10 @@
 - Made task WorkingDirectory optional for canonical installs while still rejecting an invalid nonempty value; preflight splatting passes the exact legacy directory only when present.
 - Added the canonical app.run service run sweep signature and extended the real-script harness for canonical omission, legacy exact directory, invalid directory, unparseable VBS, service survivor kill, and MCP preservation.
 - Slice 3 verification: PowerShell parser and installed legacy import preflight passed; compatibility/readiness suite plus existing MCP-exclusion regression passed (11 passed in 5.26s); git diff --check clean.
+- Slice 4 is limited to the wrapper, its existing real-script harness, and this Work Record's Implementation/Evidence; docs, workflow, and roadmap are unchanged.
+- Resolved the installed port before any stop from canonical VBS `--port N` or the VBS-referenced legacy launcher, rejected missing/nonnumeric/out-of-range values, and reused the validated port for listener cleanup, readiness, and success output.
+- apply_patch failed with local Windows error 1327; the Git patch fallback did not parse, so deterministic marker/exact replacements were used only for the three assigned files.
+- Slice 4 verification: PowerShell parser and test-module compile passed; custom-port, boundary, failure-safety, readiness, and MCP-exclusion regressions passed (17 passed in 8.26s); git diff --check clean.
 
 ## Evidence
 
@@ -64,6 +68,9 @@
 - Focused verification: `python -m py_compile tests/test_restart_service.py`; pytest new module plus MCP-exclusion regression → 7 passed in 3.05s.
 - Revised caller-surface evidence proves canonical empty WorkingDirectory is omitted, legacy WorkingDirectory is passed exactly, invalid/unparseable metadata cannot stop the service, PID 4242 matching app.run service run is killed, and synthetic MCP PID 9999 is untouched.
 - Revised focused verification: test module compiled; PowerShell parser clean; installed legacy import-only preflight passed; 11 focused tests passed in 5.26s.
+- Port evidence: canonical VBS uses 21987 and legacy launcher metadata uses 21988; both drive `Get-NetTCPConnection`, all three readiness URIs, and the printed dashboard URL.
+- Missing, nonnumeric, zero, and 65536 ports fail before stop or process cleanup; boundary ports 1 and 65535 complete successfully.
+- Final focused verification: PowerShell parser clean; test module compiled; 17 focused tests passed in 8.26s; git diff --check clean.
 
 ## Plan review
 

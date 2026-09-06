@@ -74,6 +74,7 @@ function taskkill {
 
 function Get-NetTCPConnection {
     param($LocalPort, $State, $ErrorAction)
+    Log-Call "Get-NetTCPConnection:$LocalPort"
     return $null
 }
 
@@ -106,6 +107,7 @@ $script:QueueCalls = 0
 function Invoke-RestMethod {
     param($Uri, $TimeoutSec)
     $path = ([uri]$Uri).AbsolutePath
+    Log-Call "URI:$Uri"
     Log-Call "GET $path"
     if ($path -eq "/health") {
         $script:HealthCalls++
@@ -141,6 +143,7 @@ function Invoke-RestMethod {
 function Invoke-WebRequest {
     param($Uri, [switch]$UseBasicParsing, $TimeoutSec)
     $path = ([uri]$Uri).AbsolutePath
+    Log-Call "URI:$Uri"
     Log-Call "GET $path"
     $script:QueueCalls++
     if ($env:RW010_SCENARIO -eq "terminal_queue" -or
@@ -161,6 +164,7 @@ def _run_restart(
     scenario: str,
     *,
     task_shape: str = "canonical",
+    port: int | str | None = 21987,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     shell = shutil.which("pwsh") or shutil.which("powershell")
     assert shell is not None, "PowerShell is required on Windows"
@@ -173,12 +177,16 @@ def _run_restart(
         python = Path(sys.executable).with_name("pythonw.exe")
         launcher = tmp_path / "service_launcher.py"
         assert python.exists()
-        launcher.write_text("# stub\n", encoding="ascii")
+        launcher.write_text(
+            f'from app.run import run\nraise SystemExit(run(["service", "run", "--port", "{port}"]))\n',
+            encoding="ascii",
+        )
         command = f'WshShell.Run """{python}"" ""{launcher}""", 0, False\n'
     elif task_shape == "unparseable":
         command = 'WshShell.Run "not-python", 0, False\n'
     else:
-        command = f'WshShell.Run """{sys.executable}"" -m app.run service run --port 19836", 0, False\n'
+        port_arg = "" if port is None else f" --port {port}"
+        command = f'WshShell.Run """{sys.executable}"" -m app.run service run{port_arg}", 0, False\n'
     vbs.write_text('Set WshShell = CreateObject("WScript.Shell")\n' + command, encoding="ascii")
 
     env = os.environ.copy()
@@ -214,6 +222,14 @@ def _assert_failure(result: subprocess.CompletedProcess[str]) -> str:
     assert "Pallium restarted." not in output
     assert ".pallium\\logs\\pallium.log" in output
     return output
+
+
+def _assert_port(result: subprocess.CompletedProcess[str], calls: list[str], port: int) -> None:
+    assert f"Get-NetTCPConnection:{port}" in calls
+    assert f"URI:http://127.0.0.1:{port}/health" in calls
+    assert f"URI:http://127.0.0.1:{port}/status" in calls
+    assert f"URI:http://127.0.0.1:{port}/debug/queue/health" in calls
+    assert f"http://127.0.0.1:{port}/dashboard" in _output(result)
 
 
 def test_preflight_failure_never_stops_the_healthy_service(tmp_path: Path) -> None:
@@ -254,14 +270,35 @@ def test_canonical_task_omits_working_directory_and_sweeps_survivor(tmp_path: Pa
     assert "PreflightWorkingDirectory:<omitted>" in calls
     assert any(call.endswith("/PID 4242") for call in calls)
     assert not any("9999" in call for call in calls)
+    _assert_port(result, calls, 21987)
 
 
 def test_legacy_task_passes_exact_working_directory(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "ready", task_shape="legacy")
+    result, calls = _run_restart(tmp_path, "ready", task_shape="legacy", port=21988)
 
     assert result.returncode == 0, _output(result)
     assert f"Start-Process:{Path(sys.executable).with_name('pythonw.exe')}" in calls
     assert f"PreflightWorkingDirectory:{tmp_path}" in calls
+    _assert_port(result, calls, 21988)
+
+
+@pytest.mark.parametrize("port", [None, "abc", 0, 65536])
+def test_missing_or_invalid_port_never_stops(tmp_path: Path, port: int | str | None) -> None:
+    result, calls = _run_restart(tmp_path, "ready", port=port)
+
+    assert "valid installed service port (1..65535)" in _assert_failure(result)
+    assert "Stop-ScheduledTask" not in calls
+    assert "Stop-Process" not in calls
+    assert not any(call.startswith("taskkill") for call in calls)
+    assert not any(call.startswith("Get-NetTCPConnection:") for call in calls)
+
+
+@pytest.mark.parametrize("port", [1, 65535])
+def test_boundary_ports_are_valid(tmp_path: Path, port: int) -> None:
+    result, calls = _run_restart(tmp_path, "ready", port=port)
+
+    assert result.returncode == 0, _output(result)
+    _assert_port(result, calls, port)
 
 
 def test_start_failure_is_nonzero_and_never_prints_success(tmp_path: Path) -> None:
