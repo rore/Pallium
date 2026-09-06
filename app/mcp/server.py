@@ -174,6 +174,47 @@ def _relay_text(result: object) -> str:
     return _json_text({"error": "relay response exceeds the response budget"})
 
 
+def _relay_recipients_text(result: object, offset: int = 0) -> str:
+    """Serialize one deterministic recipient page within the MCP Relay budget."""
+    if offset < 0:
+        return _json_text({"error": "offset must be non-negative"})
+    if isinstance(result, dict) and "error" in result:
+        return _relay_text(result)
+    if not isinstance(result, list) or not all(isinstance(row, dict) for row in result):
+        return _json_text({"error": "invalid relay recipients response"})
+
+    rows = [dict(row) for row in result]
+    rows.sort(key=lambda row: str(row.get("session_ref", "")))
+    rows.sort(key=lambda row: str(row.get("last_seen_at", "")), reverse=True)
+    rows.sort(key=lambda row: str(row.get("runtime", "")))
+    for row in rows:
+        runtime = str(row.get("runtime", ""))
+        row["exact_selector"] = f"{runtime}:{row.get('session_ref', '')}"
+        if row.get("alias"):
+            row["alias_selector"] = f"{runtime}:@{row['alias']}"
+
+    total = len(rows)
+
+    def envelope(page: list[dict]) -> dict:
+        next_offset = offset + len(page)
+        return {
+            "recipients": page,
+            "offset": offset,
+            "next_offset": next_offset if next_offset < total else None,
+            "has_more": next_offset < total,
+            "total_count": total,
+        }
+
+    page: list[dict] = []
+    for row in rows[offset:]:
+        if len(_json_text(envelope([*page, row]))) > _MCP_RELAY_MAX_CHARS:
+            break
+        page.append(row)
+    payload = envelope(page)
+    if not page and offset < total:
+        payload = {"error": "relay recipient entry exceeds the response budget", "offset": offset}
+    return _json_text(payload)
+
 def _compact_history(
     result: dict,
     query: str,
@@ -683,15 +724,18 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         include_inactive: bool = False,
         container_ref: str | None = None,
         actor_ref: str | None = None,
+        offset: int = 0,
     ) -> str:
-        """Address book of Relay sessions visible in the scoped container. Not an inbox — use pallium_relay_receive to claim pending deliveries."""
+        """Return a bounded Relay address-book page. Each item includes exact_selector and optional alias_selector (`runtime:@alias`). Continue with next_offset; use pallium_relay_receive for inbox delivery."""
+        if offset < 0:
+            return _relay_recipients_text([], offset)
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_recipients(
             runtime=runtime, include_inactive=include_inactive,
         )
-        return _relay_text(result)
+        return _relay_recipients_text(result, offset)
 
     @server.tool()
     async def pallium_relay_name(

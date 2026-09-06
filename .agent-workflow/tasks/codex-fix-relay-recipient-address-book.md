@@ -18,7 +18,7 @@ Keep the existing HTTP `/relay/sessions` list contract and Relay routing/storage
 Elevated
 
 **Complexity:**
-Standard
+Moderate
 
 **Reason:**
 This changes a public MCP tool response shape and tool schema on the watch-listed MCP server surface, but does not change persistence, routing, HTTP schemas, or authorization. Multiple output-boundary and lifecycle cases require one coherent serializer plus caller-surface coverage.
@@ -48,17 +48,21 @@ Clean-context Luna review approved the MCP-only slice with explicit compatibilit
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-06: Reproduced RW-014 through the installed MCP tool and traced it to `_relay_text` falling through on oversized lists. Historical expansion proved RW-013 used a malformed alias selector; current live alias delivery/reply succeeded.
 - 2026-09-06: Clean-context review approved keeping HTTP/routing/storage unchanged. Required deterministic runtime ASC, last_seen DESC, session_ref ordering; negative-offset refusal; empty over-end pages; explicit list-to-envelope compatibility documentation; and maximum-Unicode-entry budget coverage.
+- 2026-09-06: A cheap delegated formatter chunk returned without its requested tests and contained an over-budget fallback bug; review rejected that path. Replaced it with the minimal MCP-only serializer, added focused boundaries plus one real HTTP-to-MCP lifecycle E2E, and left client/API/routing/storage unchanged. The worker reported the documented Windows apply_patch fallback.
 
 ## Evidence
 
-Pending.
+- `.venv\Scripts\python.exe -m pytest tests/test_mcp_server.py tests/test_relay_mcp_tools.py tests/test_mcp_client.py tests/test_mcp_integration.py` → 120 passed in 10.03s; 4 pre-existing Pydantic warnings.
+- `scripts/agent-redline-report.py` → Gray/watch on `app/mcp/server.py`, boundary passed, no API or checkpoint finding.
+- `scripts/agent-workflow-check.py --repo-root . --slug codex-fix-relay-recipient-address-book` → clean after correcting the Work Record complexity vocabulary.
+- `git diff --cached --check` → clean. No wall-clock waits were added.
 
 ## Result review
 

@@ -10,7 +10,14 @@ import pytest
 pytest.importorskip("mcp", reason="mcp[cli] not installed")
 
 from app.mcp import server as mcp_server
-from app.mcp.server import _bounded_expansion, _compact_history, _json_text, _trim_update_details, create_server
+from app.mcp.server import (
+    _bounded_expansion,
+    _compact_history,
+    _json_text,
+    _relay_recipients_text,
+    _trim_update_details,
+    create_server,
+)
 
 
 class TestSelfGating:
@@ -722,6 +729,61 @@ async def test_explicit_creation_tools_resolve_complete_provenance_context(
         "visibility": context.visibility,
     } == scope
 
+def test_relay_recipient_pages_are_bounded_complete_and_canonical() -> None:
+    assert json.loads(_relay_recipients_text([], 0)) == {
+        "recipients": [], "offset": 0, "next_offset": None,
+        "has_more": False, "total_count": 0,
+    }
+    assert json.loads(_relay_recipients_text([], -1))["error"] == "offset must be non-negative"
+
+    maximum = [{
+        "runtime": "codex", "session_ref": "界" * 255, "title": "界" * 255,
+        "alias": "a" * 32, "state": "recent", "destination_health": "active",
+        "first_seen_at": "2026-09-06T00:00:00Z", "last_seen_at": "2026-09-06T00:00:00Z",
+        "closed_at": None,
+    }]
+    maximum_text = _relay_recipients_text(maximum)
+    maximum_page = json.loads(maximum_text)
+    assert len(maximum_text) <= 2000
+    assert maximum_page["recipients"][0]["exact_selector"] == f"codex:{'界' * 255}"
+    assert maximum_page["recipients"][0]["alias_selector"] == f"codex:@{'a' * 32}"
+
+    rows = [
+        {
+            "runtime": "codex" if index % 2 else "claude-code",
+            "session_ref": f"session-{index:02d}", "title": "日本語" * 70,
+            "alias": f"worker-{index}" if index % 3 == 0 else None,
+            "state": "recent", "destination_health": "active",
+            "first_seen_at": "2026-09-06T00:00:00Z",
+            "last_seen_at": f"2026-09-06T00:{index:02d}:00Z", "closed_at": None,
+        }
+        for index in range(12)
+    ]
+    seen: list[str] = []
+    offset = 0
+    while True:
+        text = _relay_recipients_text(rows, offset)
+        page = json.loads(text)
+        assert len(text) <= 2000
+        seen.extend(item["session_ref"] for item in page["recipients"])
+        if not page["has_more"]:
+            assert page["next_offset"] is None
+            break
+        assert page["next_offset"] > offset
+        offset = page["next_offset"]
+    assert len(seen) == len(set(seen)) == len(rows)
+    assert json.loads(_relay_recipients_text(rows, 99))["recipients"] == []
+
+
+@pytest.mark.asyncio
+async def test_relay_recipients_negative_offset_skips_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    relay_recipients = AsyncMock(return_value=[])
+    with patch("app.mcp.client.PalliumMcpClient.relay_recipients", new=relay_recipients):
+        content, _ = await create_server().call_tool("pallium_relay_recipients", {"offset": -1})
+    assert json.loads(content[0].text)["error"] == "offset must be non-negative"
+    relay_recipients.assert_not_awaited()
+
 @pytest.mark.asyncio
 async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
@@ -736,6 +798,8 @@ async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> No
     } <= names
 
     tools = {tool.name: tool for tool in await server.list_tools()}
+    assert "next_offset" in tools["pallium_relay_recipients"].description
+    assert "alias_selector" in tools["pallium_relay_recipients"].description
     assert "replace_existing=true" in tools["pallium_relay_name"].description
     assert "codex:@review" in tools["pallium_relay_send"].description
     assert "1,500" in tools["pallium_relay_send"].description

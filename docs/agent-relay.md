@@ -42,7 +42,7 @@ does not claim or acknowledge Relay work; the persisted delivery remains recover
 
 ## Select a recipient
 
-`pallium_relay_recipients` lists recent sessions and their optional aliases.
+`pallium_relay_recipients` returns a bounded envelope of recent sessions. Each item includes a canonical `exact_selector` and, when named, `alias_selector`; when `has_more` is true, call it again with `next_offset`. The HTTP session-list response remains unchanged.
 Selectors have three forms:
 
 - `codex` — every currently recent Codex session in scope
