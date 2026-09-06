@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 
 <!-- agent-workflow:end -->
 
@@ -47,7 +47,7 @@
 - Read-only source history: exact generic wake recorded at 03:15:49; the immediately repeated identical prompt was deduplicated by the hook and therefore absent from source storage.
 - Codex CLI 0.149.1 embedded hook contract: `UserPromptSubmit hook exited with code 2 but did not write a blocking reason to stderr`, confirming exit 2 plus stderr is the supported pre-model block path. Official OpenAI documentation search did not expose this contract.
 - The new caller-surface regression failed before the guard because the retained wake reached `/item-and-query`; it passes after the guard.
-- Focused hook/wake/lifecycle/contract/integration verification: 143 passed in 14.93 seconds with four existing Pydantic forward-reference warnings; no wall-clock wait was added.
+- Committed revision `454eeb6d` verification: focused hook/wake/lifecycle/contract/integration suite passed 143 tests in 15.40 seconds with four existing Pydantic forward-reference warnings; import boundaries and the local workflow gate were clean; no wall-clock wait was added.
 - Normal hook-path handling of the relaydev blocker report emitted the attributed payload and exact scope, then left its delivery `delivered` with one attempt. The report arrived during this already-running turn and was not evidence of a second missed injection.
 
 ## Plan review
