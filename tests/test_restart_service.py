@@ -67,14 +67,40 @@ function Stop-Process {
     Log-Call "Stop-Process"
 }
 
+$script:TaskkillCalls = 0
 function taskkill {
     param([Parameter(ValueFromRemainingArguments = $true)]$Arguments)
+    $script:TaskkillCalls++
     Log-Call ("taskkill " + ($Arguments -join " "))
+    if ($env:RW010_SCENARIO -eq "partial_taskkill" -and $script:TaskkillCalls -eq 1) {
+        $global:LASTEXITCODE = 1
+        throw "simulated child-exit race"
+    }
+    if ($env:RW010_SCENARIO -eq "nonzero_taskkill" -and $script:TaskkillCalls -eq 1) {
+        $global:LASTEXITCODE = 1
+        return
+    }
+    $global:LASTEXITCODE = 0
 }
 
+$script:NetTcpCalls = 0
 function Get-NetTCPConnection {
     param($LocalPort, $State, $ErrorAction)
+    $script:NetTcpCalls++
     Log-Call "Get-NetTCPConnection:$LocalPort"
+    if ($env:RW010_SCENARIO -eq "multiple_initial_listeners" -and $script:NetTcpCalls -eq 1) {
+        return @(
+            [pscustomobject]@{ OwningProcess = 6161 },
+            [pscustomobject]@{ OwningProcess = 6161 },
+            [pscustomobject]@{ OwningProcess = 6262 }
+        )
+    }
+    if ($env:RW010_SCENARIO -eq "surviving_listener" -and $script:NetTcpCalls -gt 1) {
+        return @(
+            [pscustomobject]@{ OwningProcess = 6161 },
+            [pscustomobject]@{ OwningProcess = 6262 }
+        )
+    }
     return $null
 }
 
@@ -88,6 +114,7 @@ function Get-Process {
 
 function Get-CimInstance {
     param($ClassName, $Filter, $ErrorAction)
+    Log-Call "Get-CimInstance:$Filter"
     if ($env:RW010_SCENARIO -eq "canonical_survivor" -and $Filter -like "*app.run service run*") {
         return @(
             [pscustomobject]@{
@@ -383,6 +410,54 @@ def test_boundary_ports_are_valid(tmp_path: Path, port: int) -> None:
 
     assert result.returncode == 0, _output(result)
     _assert_port(result, calls, port)
+
+
+def test_partial_taskkill_error_continues_cleanup_and_restarts(tmp_path: Path) -> None:
+    result, calls = _run_restart(
+        tmp_path,
+        "partial_taskkill",
+        pid_file_value=5151,
+    )
+
+    assert result.returncode == 0, _output(result)
+    assert "partial failure for PID 5151" in _output(result)
+    assert len([call for call in calls if call.startswith("Get-CimInstance:")]) >= 2
+    assert calls.count("Start-ScheduledTask") == 1
+    _assert_port(result, calls, 21987)
+
+
+def test_nonzero_taskkill_error_continues_cleanup_and_restarts(tmp_path: Path) -> None:
+    result, calls = _run_restart(
+        tmp_path,
+        "nonzero_taskkill",
+        pid_file_value=5151,
+    )
+
+    assert result.returncode == 0, _output(result)
+    assert "partial failure for PID 5151" in _output(result)
+    assert calls.count("Start-ScheduledTask") == 1
+    assert calls.count("Get-NetTCPConnection:21987") >= 2
+    _assert_port(result, calls, 21987)
+
+
+def test_multiple_initial_listeners_are_killed_once_each(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "multiple_initial_listeners")
+
+    assert result.returncode == 0, _output(result)
+    assert calls.count("taskkill /F /T /PID 6161") == 1
+    assert calls.count("taskkill /F /T /PID 6262") == 1
+    assert calls.count("Start-ScheduledTask") == 1
+    _assert_port(result, calls, 21987)
+
+
+def test_surviving_listener_fails_before_task_start(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "surviving_listener")
+
+    output = _assert_failure(result)
+    assert "port 21987 is still listening" in output
+    assert "listener PID(s): 6161, 6262" in output
+    assert "Start-ScheduledTask" not in calls
+    assert not any(call.startswith("URI:") for call in calls)
 
 
 def test_start_failure_is_nonzero_and_never_prints_success(tmp_path: Path) -> None:

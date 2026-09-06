@@ -17,6 +17,28 @@ function Stop-WithError([string]$Message) {
     exit 1
 }
 
+function Stop-ProcessTree([int]$ProcessId) {
+    $failed = $false
+    try {
+        taskkill /F /T /PID $ProcessId 2>$null | Out-Null
+        $failed = $LASTEXITCODE -ne 0
+    } catch {
+        $failed = $true
+    }
+    if ($failed) {
+        Write-Host "    taskkill reported a partial failure for PID $ProcessId; continuing cleanup verification..."
+    }
+}
+
+function Get-ListenerPids([int]$Port) {
+    @(
+        Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.OwningProcess } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+}
+
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if (-not $task) {
     Stop-WithError "Pallium scheduled task not found. Run 'pallium service install' first."
@@ -116,11 +138,10 @@ Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 # Kill the process tree — Stop-ScheduledTask only marks the task stopped,
 # it doesn't kill the VBS → pythonw → supervisor → server process chain.
 # Strategy 1: kill by listening port (normal case)
-$conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-if ($conn) {
-    $procId = $conn.OwningProcess
+$listenerPids = @(Get-ListenerPids $Port)
+foreach ($procId in $listenerPids) {
     Write-Host "  Killing process tree (PID $procId) on port $Port..."
-    taskkill /F /T /PID $procId 2>$null | Out-Null
+    Stop-ProcessTree ([int]$procId)
 }
 
 # Strategy 2: kill by PID file (handles WinError 64 stuck-socket where port is
@@ -128,11 +149,11 @@ if ($conn) {
 $PidFile = "$ServiceHome\run\pallium.pid"
 if (Test-Path $PidFile) {
     $filePid = [int](Get-Content $PidFile -ErrorAction SilentlyContinue)
-    if ($filePid -and ($filePid -ne $conn.OwningProcess)) {
+    if ($filePid -and ($filePid -notin $listenerPids)) {
         $proc = Get-Process -Id $filePid -ErrorAction SilentlyContinue
         if ($proc) {
             Write-Host "  Killing stale process tree (PID $filePid) from PID file..."
-            taskkill /F /T /PID $filePid 2>$null | Out-Null
+            Stop-ProcessTree $filePid
         }
     }
 }
@@ -163,7 +184,7 @@ foreach ($sig in $signatures) {
         -ErrorAction SilentlyContinue
     foreach ($p in $procs) {
         Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) $sig)..."
-        taskkill /F /T /PID $p.ProcessId 2>$null | Out-Null
+        Stop-ProcessTree $p.ProcessId
     }
 }
 
@@ -177,10 +198,16 @@ foreach ($p in $serviceProcs) {
         continue
     }
     Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) app.run service run on port $Port)..."
-    taskkill /F /T /PID $p.ProcessId 2>$null | Out-Null
+    Stop-ProcessTree $p.ProcessId
 }
 
 Start-Sleep -Seconds 2
+
+$remainingPids = @(Get-ListenerPids $Port)
+if ($remainingPids.Count -gt 0) {
+    $pidDetail = "; listener PID(s): $($remainingPids -join ', ')"
+    Stop-WithError "Could not stop Pallium; port $Port is still listening$pidDetail"
+}
 
 Write-Host "Starting Pallium..."
 try {
@@ -236,3 +263,4 @@ if (-not $ready) {
 }
 
 Write-Host "Pallium restarted. Dashboard at $BaseUrl/dashboard"
+exit 0

@@ -141,10 +141,10 @@ remains for that adapter.
 
 ### Next execution order (updated 2026-09-06)
 
-RW-017 durable-by-default delivery is complete in PR #113 and Windows-qualified.
-RW-016 installed-service metadata repair is code-complete with deterministic
-Windows coverage; merge and installed qualification are pending before the remaining
-Codex lifecycle gates. RW-010 and RW-015 are merged and Windows-qualified. Keep each slice small and use
+RW-017 durable-by-default delivery and RW-016 installed-service metadata repair are
+merged and Windows-qualified. RW-018 taskkill race recovery is code-complete with an
+installed witness; review, merge, and exact-main restart remain before the remaining
+Codex lifecycle gates. Keep each slice small and use
 deterministic clocks/events rather than wall-clock sleeps in the normal suite.
 
 1. **S2 contract gate — complete in PR #98.** Delivery lifecycle
@@ -194,19 +194,25 @@ deterministic clocks/events rather than wall-clock sleeps in the normal suite.
    explicit 60-second through 7-day expiry remains opt-in. Fast file-backed restart,
    dormancy, backlog, idempotency, dashboard, MCP, and installed automatic-wake
    evidence pass without wall-clock waits.
-8. **RW-016 Windows installed-service metadata — code complete; installed
-   qualification pending.** Canonical startup now carries the exact quoted home in
-   BOM-marked UTF-16 launcher metadata; restart PID/log paths follow that home,
-   malformed canonical metadata fails before stop, and legacy default-home launchers
-   remain compatible. Fast default/custom/space/Unicode/literal-percent caller-surface
-   coverage and the Windows smoke suite pass without changing Linux behavior.
-9. **S3 remaining Codex lifecycle gates.** After RW-015, qualify sender-side
+8. **RW-016 Windows installed-service metadata — merged and Windows-qualified.**
+   Canonical startup carries the exact quoted home in BOM-marked UTF-16 launcher
+   metadata; restart PID/log paths follow that home, malformed canonical metadata
+   fails before stop, and legacy default-home launchers remain compatible. PR #114,
+   deterministic default/custom/space/Unicode/literal-percent coverage, and an
+   installed exact-home restart with healthy endpoints are complete.
+9. **RW-018 Windows taskkill race recovery — code complete; review/merge pending.**
+   A partial child-exit failure no longer skips later exact sweeps. The wrapper warns,
+   kills every unique initial listener, verifies array-safe post-settle port quiescence,
+   blocks a surviving listener before
+   task start, and returns explicit success. The original orphan-respawn incident now
+   restarts cleanly; Relay auto-wake delivered once after restart.
+10. **S3 remaining Codex lifecycle gates.** After RW-015, qualify sender-side
    reply admission, correlation telemetry, and a sustained no-ping
    implementation/review/remediation journey.
-10. **S4 additional platforms.** Qualify installed Claude UDS wake on Linux and
+11. **S4 additional platforms.** Qualify installed Claude UDS wake on Linux and
    macOS, then Codex wake on those platforms. Windows Claude S1A+S1B remains
    complete and must not be reopened without contrary evidence.
-11. **OpenCode active wake.** Implement only after the Claude/Codex contract above
+12. **OpenCode active wake.** Implement only after the Claude/Codex contract above
     is stable; retain its current passive next-turn delivery meanwhile.
 
 ### Wake dogfood defect ledger
@@ -231,8 +237,9 @@ where the runtime exists locally, an installed witness close it.
 | `RW-013` | A Claude session reported its alias handle as `claude-code:claude_arch`, omitting the required `@`; the resulting exact-session selector returned 404 while the UUID worked. | **Fixed in PR #107; Windows-qualified.** Recipient pages now emit canonical `exact_selector` and `alias_selector` values. Existing routing was not rewritten: `codex:@relaydev` dogfood delivered and received `alias-ok`; caller-surface lifecycle coverage pins naming, transfer, close, exact fallback, alias send, filtering, and cross-scope isolation; Codex and Claude configs were reinstalled from clean main. |
 | `RW-014` | `pallium_relay_recipients` can exceed the MCP response budget and return only a generic error instead of a usable bounded recipient result. | **Fixed in PR #107; Windows-qualified.** The MCP tool returns stable bounded pages with offset continuation and total count while preserving the HTTP list contract. Deterministic E2E covers all recorded boundaries without wall-clock waits. After reinstall and service restart from exact main, a fresh installed stdio child returned a 1,730-character page with all envelope fields, 5 of 89 recipients, canonical selectors, `has_more=true`, and `next_offset=5`. |
 | `RW-015` | Two sends initially appeared stuck behind `destination_health=active`; later durable status and exact-task history proved both hook-delivered, including the vNext target after 57 seconds. The real latent gaps were boolean launch acceptance holding a generation after completed/no-hook exec, session-only admission, and session-only ownership suppressing another scope. | **Fixed in PR #108; Windows-qualified.** Wake ownership is keyed by session+container+actor; blocking exec completion requires the matching hook callback; definite no-hook failure reports strict-CAS `unreachable` without consuming delivery; accepted or timed-out writes stay coalesced. After exact-main reinstall and service restart, `relay-msg-cff1331...` auto-delivered once in 16 seconds and returned `RW015-INSTALLED-PASS` without a manual turn. |
-| `RW-016` | Canonical Windows `pallium service install --home <custom>` wrote its task/VBS under the requested home but did not propagate that home to `service run`, so the launched service silently fell back to the default home; the ASCII VBS writer also could not represent non-ASCII interpreter/home paths. | **Code complete; merge and installed Windows qualification pending.** Canonical VBS now carries the exact quoted home in BOM-marked UTF-16; restart uses that metadata for PID/log paths, missing canonical home fails before stop, and legacy default-home launchers remain compatible. Deterministic CLI plus real-PowerShell coverage passes for default/custom/space/Unicode/literal-percent paths with no Linux code change or wall-clock sleep. |
+| `RW-016` | Canonical Windows `pallium service install --home <custom>` wrote its task/VBS under the requested home but did not propagate that home to `service run`, so the launched service silently fell back to the default home; the ASCII VBS writer also could not represent non-ASCII interpreter/home paths. | **Fixed in PR #114; Windows-qualified.** Canonical VBS carries the exact quoted home in BOM-marked UTF-16; restart uses that metadata for PID/log paths, missing canonical home fails before stop, and legacy default-home launchers remain compatible. Deterministic CLI plus real-PowerShell coverage passes for default/custom/space/Unicode/literal-percent paths with no Linux code change or wall-clock sleep. The installed task launched the exact-home UTF-16 command and refreshed PID/port with all endpoints healthy. |
 | `RW-017` | Relay messages still default to a 24-hour expiry, so unhandled work for a busy or dormant target can become terminal despite durable wake recovery. Dogfood reproduced the default when an omitted MCP expiry returned an `expires_at` exactly one day later. | **Fixed in PR #113; Windows-qualified.** Omitted/null expiry is represented durably without a schema rebuild; explicit 60-second through 7-day expiry remains opt-in. Fast file-backed restart/dormancy/backlog/idempotency/dashboard/MCP regressions pass. Installed dogfood returned `expires_at:null`, auto-delivered once, and produced durable atomic reply `RW017-INSTALLED-PASS` without a manual target turn. |
+| `RW-018` | The Windows restart wrapper inherited `$ErrorActionPreference = "Stop"` at native `taskkill /T` calls, so a partial child-exit error aborted before later signature sweeps and task start; an orphan supervisor could then respawn the server while the wrapper failed and PID metadata stayed stale. | **Code complete; review/merge pending.** All tree kills share a best-effort helper with diagnostics, every unique initial listener is handled, later exact sweeps always run, an array-safe post-settle port gate blocks surviving listeners before start, and success exits 0 explicitly. Deterministic thrown/nonzero-kill and initial/persistent multi-listener regressions pass; the original installed orphan-respawn shape restarted cleanly, refreshed PID/port, kept all endpoints healthy, and auto-delivered one Relay wake. |
 
 The Windows Claude regression floor remains: idle text and zero-tool turns, empty
 Stop rearm, busy delivery, ordered bursts, Unicode, recursive-Stop loop prevention,
@@ -255,9 +262,9 @@ The following related work stays separate to keep ownership clear:
   This was operational data repair, not Relay routing behavior.
 - **Next correctness and operations follow-ups (separate from S2):** RW-017 makes
   ordinary Relay work durable by default while preserving explicit expiry. RW-016's
-  canonical Windows custom-home and Unicode launcher repair is code-complete; merge,
-  reinstall, wrapper restart, and installed health/status/queue qualification remain.
-  Retain RW-010's regressions and installed witness as the operations floor.
+  canonical Windows custom-home/Unicode launcher repair is merged and qualified.
+  RW-018's taskkill-race recovery is the current review/merge gate; retain RW-010's
+  regressions and installed witness as the operations floor.
 
 The remaining S2 qualification is done only with caller-surface E2E for fresh
 versus stale MCP hosts, bounded backlog, memory routing, Unicode, scope isolation,
