@@ -164,9 +164,9 @@ await hooks["chat.message"](
   {message:{sessionID:"oc-user"},parts:[{type:"text",text:"Continue this substantial task"}]}
 );
 await hooks.event({event:{type:"session.idle",properties:{sessionID:"oc-user"}}});
-console.log(JSON.stringify(
+process.stdout.write(JSON.stringify(
   calls.filter(call=>call.url.includes("/item-and-query")||call.url.includes("/items")).map(call=>call.body)
-));
+), () => process.exit(0));
 '''
     script = (
         script.replace("__PLUGIN__", plugin)
@@ -212,10 +212,10 @@ await hooks["experimental.chat.system.transform"](
 );
 const text = transformed.messages[0].parts[0].text + "\n" + system.system.join("\n");
 const refs = [...text.matchAll(/"work_ref":"([^"]+)"/g)].map((match)=>match[1]);
-console.log(JSON.stringify({
+process.stdout.write(JSON.stringify({
   payload:calls.find((call)=>call.url.includes("/item-and-query")).body,
   refs,
-}));
+}), () => process.exit(0));
 '''
     script = script.replace("__PLUGIN__", plugin).replace(
         "__DIR__", json.dumps(cwd.as_posix())

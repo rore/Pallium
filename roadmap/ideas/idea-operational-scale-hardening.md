@@ -100,6 +100,14 @@ budgets or changing SQLite's bounded-failure contract.
 - Backend replacement remains evidence-driven. Re-measure main-DB writer hold times,
   queue depth, Relay latency, and processing amplification before selecting a larger
   storage or worker architecture.
+
+2026-09-07 Windows CI contention correction:
+
+- Ordinary queue claims now tolerate a one-second SQLite lock wait per bounded
+  acquisition attempt; Relay keeps its separate 100 ms latency budget.
+- One-shot OpenCode E2E subprocesses explicitly exit after flushing their result,
+  without weakening the real hook calls or assertions.
+
 The highest-value likely future levers are:
 
 1. selective/debounced thread rebuilds
