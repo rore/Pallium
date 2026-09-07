@@ -121,3 +121,13 @@ it lands in `api/routes.py`; prefer a `/dashboard/api/*` route to stay on the da
 surface), and `tests/`. No persistence change, no retrieval-behavior change. A
 change-classification at Work-Record time confirms; a read-only report-file endpoint on
 the dashboard router stays Elevated.
+
+## Superseded product framing (2026-09-07)
+
+This feature remains complete. Its implementation, metrics, report readers, tests,
+and visual foundation are reusable, but its top-level Operational | How memory
+helps framing reflects the earlier memory-centric product definition. The queued
+add-dashboard-operations-and-relay-workspace feature supersedes that information
+architecture with Operations | Relay, makes Session History first-class, and moves
+derived-memory effectiveness under the optional capability. Do not reopen this
+completed item to implement the new redesign.

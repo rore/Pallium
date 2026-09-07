@@ -1,5 +1,6 @@
 # Next · Agent Relay
 - investigate-cross-repository-relay-coordination
+- add-dashboard-operations-and-relay-workspace
 
 # Parallel · Session History
 - investigate-history-navigation-and-on-demand-compression
