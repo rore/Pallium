@@ -63,4 +63,4 @@ Clean-context review (2026-09-07):
 
 ## Result review
 
-Independent clean-context review initially found three cache lifecycle issues: stale close completion, long-session resume sweeping, and incomplete actor-cache reuse. Re-review then found pre-lock predecessor loss and payload-cwd actor drift. Commit a7490ad9 fixes all findings with locked transition union, generation-guarded completion, TTL refresh, fail-closed scope retention, exact context validation, and payload-cwd actor refresh. The final reviewer reported no remaining blockers; API review and architecture review both pass.
+Independent clean-context review initially found three cache lifecycle issues: stale close completion, long-session resume sweeping, and incomplete actor-cache reuse. Re-review then found pre-lock predecessor loss and payload-cwd actor drift. Commit ac8e9e39 fixes all findings with locked transition union, generation-guarded completion, TTL refresh, fail-closed scope retention, exact context validation, and payload-cwd actor refresh. The final reviewer reported no remaining blockers; API review and architecture review both pass.

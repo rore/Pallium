@@ -770,7 +770,7 @@ def test_claude_stop_does_not_ack_when_emission_fails(monkeypatch):
     acknowledgements = []
     monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "target"})
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(
         hook, "register_claude_wake",
         lambda *_args, **kwargs: registrations.append(kwargs["idle"]),
