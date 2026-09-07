@@ -93,6 +93,9 @@ class QueryExecutor:
         self._injection_policy = injection_policy
         self._shadow_subtask_selector = shadow_subtask_selector
 
+    def default_semantic_plugin_available(self) -> bool:
+        return self._semantic_plugins.get(self._default_use_case) is not None
+
     def query(
         self,
         text: str,

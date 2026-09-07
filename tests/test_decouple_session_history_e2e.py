@@ -205,11 +205,21 @@ def test_gate_a_raw_history_has_no_semantic_activation(
         }
 
         retrieval_calls: list[object] = []
-        original_retrieval_query = client.app.state.pallium_service._retrieval.query
+        context_calls: list[object] = []
+        service = client.app.state.pallium_service
+        original_retrieval_query = service._retrieval.query
+        original_get_thread_stats = service._storage.get_thread_stats
+
         def forbidden_retrieval(*_args, **_kwargs):
             retrieval_calls.append(True)
             raise AssertionError("disabled package unexpectedly queried retrieval")
-        client.app.state.pallium_service._retrieval.query = forbidden_retrieval
+
+        def forbidden_context(*_args, **_kwargs):
+            context_calls.append(True)
+            raise AssertionError("disabled package unexpectedly resolved thread context")
+
+        service._retrieval.query = forbidden_retrieval
+        service._storage.get_thread_stats = forbidden_context
         item_and_query = client.post(
             "/item-and-query",
             json=_item("raw-audit", "Unicode audit anchor: החלטה حفظ", work_ref="feature:audit"),
@@ -217,12 +227,14 @@ def test_gate_a_raw_history_has_no_semantic_activation(
         derived_query = client.post(
             "/query", json=_query_payload("Unicode audit anchor", source_only=False)
         )
-        client.app.state.pallium_service._retrieval.query = original_retrieval_query
+        service._retrieval.query = original_retrieval_query
+        service._storage.get_thread_stats = original_get_thread_stats
         assert item_and_query.status_code == 200, item_and_query.text
         assert item_and_query.json()["decision_reason"] == "semantic_package_unavailable"
         assert derived_query.status_code == 200, derived_query.text
         assert derived_query.json()["decision_reason"] == "semantic_package_unavailable"
         assert retrieval_calls == []
+        assert context_calls == []
         assert client.app.state.pallium_service._query_stats.snapshot()["total_queries"] == 0
         assert client.app.state.metrics_store.query(category="query") == []
         with client.app.state.pallium_service._storage._engine.connect() as conn:
@@ -380,9 +392,9 @@ def test_gate_a_raw_history_has_no_semantic_activation(
             "prompt": "Hook Unicode turn: حفظ raw history and keep feature gate evidence.",
         }
         hook.resolve_container_ref = lambda *_args: CONTAINER
-        hook.derive_actor_ref = lambda: "hook-actor"
-        hook.get_pending_relay_closes = lambda *_args: []
-        hook.pin_container = lambda *_args, **_kwargs: None
+        hook.derive_actor_ref = lambda *_: "hook-actor"
+        hook.get_pending_relay_close_batch = lambda *_args: ([], 0)
+        hook.complete_relay_closes = lambda *_args, **_kwargs: True
         hook.discover_work_refs = lambda *_args: hook._common.WorkRefDiscovery(
             ("feature:hook-gate",)
         )
