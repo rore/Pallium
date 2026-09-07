@@ -24,7 +24,7 @@ Moderate
 `storage/sqlite_queue.py` is a gray persistence-layer path under agent-redline. Two independent but small Windows reliability failures require product and E2E-harness changes.
 
 **Discovery:**
-Run 34083835988 failed `test_concurrent_claim_next_source_item_two_items_two_winners`: one worker exhausted three 100 ms immediate-lock attempts. Run 34083904007 failed when a one-shot Node process importing the long-lived OpenCode plugin remained alive past the harness's 20 s timeout. The next main run passed both, confirming nondeterministic scheduling/lifecycle flakes rather than commit-specific regressions.
+Run 34083835988 failed `test_concurrent_claim_next_source_item_two_items_two_winners`: one worker exhausted three 100 ms immediate-lock attempts. Run 34083904007 failed when a one-shot Node process importing the long-lived OpenCode plugin remained alive past the harness's 20 s timeout. The next main run passed both, supporting a nondeterministic scheduling/lifecycle hypothesis without excluding commit-specific behavior on that evidence alone.
 
 **Material assumptions:**
 - Ordinary ingestion claims may wait longer than Relay transactions; disproved if callers require Relay-like subsecond failure, in which case separate the budgets instead of widening the shared ordinary constant.
