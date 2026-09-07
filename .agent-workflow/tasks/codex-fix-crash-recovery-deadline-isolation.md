@@ -15,7 +15,7 @@
 
 **Reason:** Redline classified both intended paths BLUE with no boundaries or surface flags; this is one test-state reset.
 
-**Approach:** Clear the retained Codex hook deadline in the module's existing per-test setup, so every wake test starts isolated; remove the now-redundant one-off reset from PR #135.
+**Approach:** Clear the deadline on `user_prompt_submit._common`, the actual dynamically loaded hook module, in the existing per-test setup; remove the now-redundant one-off reset from PR #135.
 
 **Verification:** Run the failing test alone, both recovery tests together under xdist, the affected Codex wake module, workflow/redline checks, PR CI, and post-merge full Windows CI.
 
@@ -28,11 +28,14 @@
 - Risk: clean-context redline review classified the two intended paths BLUE with no boundary or surface findings.
 - Implementation: the existing module setup now clears the retained hook deadline for every wake test; the one-off neighboring reset is removed as redundant.
 - Editing fallback: apply_patch failed with Windows error 1327, so the two explicitly scoped files were updated with exact deterministic replacements.
+- Result review found a P1 module-identity bug before push; implementation returned to Ready to implement for correction and re-verification.
+- Correction: setup now resets `user_prompt_submit._common`, the actual dynamic module; high-effort re-review signed off with no remaining findings or roadmap drift.
 
 ## Evidence
 
-- Seeded-expired-deadline crash-recovery test: 1 passed.
-- Both deadline-sensitive recovery tests under xdist (-n 2): 2 passed.
-- Full 	ests/test_codex_wake.py under xdist (-n 4): 41 passed.
+- Actual-hook seeded-expired crash-recovery test: 1 passed.
+- Both recovery tests from an actual expired hook deadline, serially: 2 passed.
+- Both deadline-sensitive recovery tests under xdist (`-n 2`): 2 passed.
+- Full `tests/test_codex_wake.py` under xdist (`-n 4`): 41 passed.
 - Import boundary report, redline verdict, and agent-workflow checker: clean.
-- Verified implementation revision: `3bd117bd`.
+- Corrected implementation revision: pending commit.

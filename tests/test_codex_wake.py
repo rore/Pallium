@@ -19,7 +19,7 @@ from app import codex_wake
 from app.config import AppConfig
 from app.main import create_app
 from core.relay import RelayService
-from integrations.codex.hooks import common as hook_common
+from integrations.codex.hooks import user_prompt_submit as hook_module
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
@@ -49,7 +49,7 @@ def _schedule(result: dict) -> None:
 
 
 def setup_function() -> None:
-    hook_common._HOOK_DEADLINE = None
+    hook_module._common._HOOK_DEADLINE = None
     codex_wake._scheduled_delivery_ids.clear()
     codex_wake._scheduled_session_generations.clear()
     codex_wake._scheduled_session_delivery_ids.clear()
