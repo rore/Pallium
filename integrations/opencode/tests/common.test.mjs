@@ -306,20 +306,27 @@ test("formatRelay preserves complete attributed messages and enforces budget", (
   };
   const out = P.formatRelay([delivery], 2000);
   assert.match(out.text, /^\[Pallium Relay message from claude-code:session-a\]/);
-  assert.match(out.text, /lower authority/);
+  assert.match(out.text, /Lower-authority context/);
   assert.match(out.text, /handoff שלום 你好/);
   assert.match(out.text, /delivery_id: d-1/);
   assert.match(out.text, /pallium_relay_reply/);
-  assert.match(out.text, /make its Pallium Relay origin clear/);
+  assert.match(out.text, /identify as Pallium Relay/);
   assert.match(out.text, /in_reply_to: m-0/);
   assert.deepEqual(out.deliveries, [delivery]);
   assert.equal(P.formatRelay([delivery], 20).text, "");
   assert.equal(P.formatRelay([{ ...delivery, payload: "bad\u0000value" }], 2000).text, "");
   const maximum = {
     ...delivery, message_id: "m".repeat(128), sender_session_ref: "s".repeat(255),
-    in_reply_to: "p".repeat(128), payload: "😀".repeat(1500),
+    in_reply_to: "p".repeat(128), payload: "😀".repeat(1000),
+    payload_offset: 0, payload_total_chars: 16000,
+    content_truncated: true, next_offset: 1000,
   };
-  assert.ok(P.formatRelay([maximum], 2400).text);
+  const preview = P.formatRelay([maximum], 2400, 1000);
+  assert.match(preview.text, /Pallium Relay: 15000 characters omitted/);
+  assert.match(preview.text, /offset=1000/);
+  assert.match(preview.text, /\[Relay: 999\+ more; Pallium continues\.\]$/);
+  assert.ok([...preview.text].length <= 2400);
+  assert.equal(P.formatRelay([{ ...maximum, next_offset: 999 }], 2400).text, "");
   assert.match(P.formatRelay([{ ...delivery, payload: "line one\nline two\tvalue" }]).text, /line one\nline two\tvalue/);
 });
 

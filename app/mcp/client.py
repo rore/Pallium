@@ -324,16 +324,25 @@ class PalliumMcpClient:
             payload["expires_in_seconds"] = expires_in_seconds
         return await self._post_or_error("/relay/replies", payload, retry_relay_busy=True)
 
-    async def relay_status(self, message_id: str) -> dict[str, Any]:
+    async def relay_status(
+        self, message_id: str, *, offset: int | None = None, page_size: int | None = None
+    ) -> dict[str, Any]:
         params = self._relay_scope_params()
+        if offset is not None:
+            params["offset"] = offset
+        if page_size is not None:
+            params["page_size"] = page_size
         return await self._get_or_error(f"/relay/messages/{message_id}", params)
 
-    async def relay_receive(self, runtime: str, session_ref: str, max_chars: int = 0) -> Any:
+    async def relay_receive(
+        self, runtime: str, session_ref: str, max_response_chars: int
+    ) -> Any:
         payload: dict[str, Any] = {
             "runtime": runtime,
             "session_ref": session_ref,
-            "max_chars": max_chars,
-            "max_messages": 0,
+            "max_chars": 0,
+            "max_response_chars": max_response_chars,
+            "max_messages": 1,
             **self._relay_scope_params(),
         }
         return await self._post_or_error("/relay/turn", payload)

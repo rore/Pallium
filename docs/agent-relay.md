@@ -28,19 +28,31 @@ informed. A delivered message can start a paid model turn on supported targets.
 
 ## Limits
 
-Messages contain at most 1,500 Unicode code points. Omitted expiry is durable until
-delivery; callers can opt into an explicit expiry from 60 seconds through 7 days.
-HTTP and hook turns claim three messages by default; a positive
+Messages contain at most 16,000 Unicode code points. Omitted expiry is durable
+until delivery; callers can opt into an explicit expiry from 60 seconds through
+7 days. HTTP and hook turns claim three messages by default; a positive
 `max_messages` sets an explicit cap, while `0` means unlimited. MCP receive
-explicitly uses the drain-all value.
+claims one delivery per call and keeps its compact JSON response within 2,000
+characters.
 
-Codex and Claude hooks claim within 2,360 characters, reserving 40 characters
-for a compact backlog notice inside their 2,400-character output budget.
-`has_more` and `remaining_count` report omitted eligible work, and integrations
-acknowledge only blocks actually added to model context.
+Codex, Claude, and OpenCode hooks claim within 2,360 characters, reserving 40
+characters for a compact backlog notice inside their 2,400-character output budget.
+A long message is injected as an attributed prefix with the exact omitted count
+and a `pallium_relay_status` continuation call. Status pages use Unicode
+code-point offsets and reconstruct the complete stored redacted body; continue
+with `next_offset` until it is null. The unpaged HTTP status response remains a
+full-body compatibility view. `has_more` and `remaining_count` report all
+unclaimed work, and integrations acknowledge only blocks actually added to model
+context.
 Hook delivery appends a separately bounded exact-scope block so the same turn
 can reply without a receipt. If trusted scope cannot be rendered safely, the hook
 does not claim or acknowledge Relay work; the persisted delivery remains recoverable.
+
+The HTTP turn request's `max_response_chars` is a pre-claim selection guard:
+prospective delivery JSON must fit it before any claim is committed. It is not a
+transport-size promise for an empty turn envelope. MCP receive removes session
+metadata after that conservative check and separately guarantees its final tool
+response budget.
 
 ## Select a recipient
 
@@ -65,7 +77,7 @@ A received message includes a `delivery_id`. `pallium_relay_reply` uses that ID
 to address a reply to the original sender.
 
 One delivery permits one idempotent reply. Repeating the same reply is safe;
-changing its text conflicts. Use a new `pallium_relay_send` message for a longer
+changing its text conflicts. Use a new `pallium_relay_send` message for a separate
 follow-up rather than treating Relay as a continuous conversation.
 
 Delivery means that the message entered the recipient session's context. It
@@ -105,10 +117,13 @@ session ID.
 
 ## Limits and scope
 
-- message and reply text: at most 1,500 Unicode code points
+- message and reply text: at most 16,000 Unicode code points
 - omitted expiry: durable until delivery; explicit expiry range: 60 seconds to 7 days
-- per-turn delivery: three complete messages by default; positive `max_messages`
-  sets a cap and `0` means unlimited
+- per-turn delivery: three messages by default; positive `max_messages` sets a
+  cap and `0` means unlimited; the first oversized body may be a bounded preview
+- MCP receive: one delivery and at most 2,000 serialized characters per call;
+  `max_chars=0` selects that default, larger values clamp to it, and values from
+  1 through 255 are rejected before claim
 - storage: local persistent SQLite state
 - security boundary: local single-user coordination
 
@@ -127,8 +142,9 @@ Normal use:
 
 Normal hook delivery is automatic. `pallium_relay_receive` and
 `pallium_relay_ack` are recovery or non-hook integration tools. A runtime that
-claims with `receive` must acknowledge with `ack`, or use `reply` with the
-receipt to acknowledge and reply atomically.
+claims with `receive` follows any `next_offset` through `status`, then must
+acknowledge with `ack`, or use `reply` with the receipt to acknowledge and reply
+atomically.
 
 Do not mix automatic hook delivery and MCP receive in the same session; they
 compete for the same pending delivery.

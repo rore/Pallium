@@ -802,9 +802,9 @@ async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> No
     assert "alias_selector" in tools["pallium_relay_recipients"].description
     assert "replace_existing=true" in tools["pallium_relay_name"].description
     assert "codex:@review" in tools["pallium_relay_send"].description
-    assert "1,500" in tools["pallium_relay_send"].description
-    assert "1,500" in tools["pallium_relay_reply"].description
-    assert "multipart continuations" in tools["pallium_relay_reply"].description
+    assert "16,000 Unicode code points" in tools["pallium_relay_send"].description
+    assert "16,000 Unicode code points" in tools["pallium_relay_reply"].description
+    assert "next_offset" in tools["pallium_relay_status"].description
     assert "one idempotent reply" in tools["pallium_relay_reply"].description
 
 
@@ -888,14 +888,99 @@ async def test_relay_broadcast_response_keeps_success_summary(monkeypatch: pytes
     }
 
 @pytest.mark.asyncio
-async def test_relay_response_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_relay_status_preserves_a_short_response_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
-    huge = {"message_id": "m-1", "payload": "x" * 5000}
-    with patch("app.mcp.client.PalliumMcpClient.relay_status", new=AsyncMock(return_value=huge)):
-        server = create_server()
-        content, _ = await server.call_tool("pallium_relay_status", {"message_id": "m-1"})
+    result = {
+        "message_id": "m-short",
+        "sender_runtime": "codex",
+        "sender_session_ref": "sender",
+        "recipient": "claude-code:target",
+        "payload": "short",
+        "payload_offset": 0,
+        "payload_total_chars": 5,
+        "content_truncated": False,
+        "next_offset": None,
+        "redacted": False,
+        "in_reply_to": None,
+        "created_at": "2026-09-07T00:00:00Z",
+        "expires_at": None,
+        "deliveries": [{
+            "delivery_id": "d-short",
+            "state": "claimed",
+            "claim_token": "never-expose",
+            "receipt": "safe-receipt",
+            "payload": "short",
+            "payload_offset": 0,
+            "payload_total_chars": 5,
+            "content_truncated": False,
+            "next_offset": None,
+        }],
+    }
+    with patch(
+        "app.mcp.client.PalliumMcpClient.relay_status",
+        new=AsyncMock(return_value=result),
+    ):
+        content, _ = await create_server().call_tool(
+            "pallium_relay_status", {"message_id": "m-short"},
+        )
+    expected = {
+        **result,
+        "deliveries": [{
+            key: value
+            for key, value in result["deliveries"][0].items()
+            if key != "claim_token"
+        }],
+    }
+    assert json.loads(content[0].text) == expected
+    assert "never-expose" not in content[0].text
+    assert expected["deliveries"][0]["receipt"] == "safe-receipt"
+
+
+@pytest.mark.asyncio
+async def test_relay_status_page_is_bounded_escape_safe_and_advancing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    payload = ('"\\\n😀' * 500)[:2000]
+    page = {
+        "message_id": "m-1",
+        "sender_runtime": "codex",
+        "sender_session_ref": "sender",
+        "payload": payload,
+        "payload_offset": 0,
+        "payload_total_chars": 5000,
+        "content_truncated": True,
+        "next_offset": len(payload),
+        "redacted": False,
+        "in_reply_to": None,
+        "created_at": "2026-09-07T00:00:00Z",
+        "expires_at": "2026-09-08T00:00:00Z",
+        "deliveries": [{"state": "claimed"}, {"state": "delivered"}],
+    }
+    status = AsyncMock(return_value=page)
+    with patch("app.mcp.client.PalliumMcpClient.relay_status", new=status):
+        content, _ = await create_server().call_tool("pallium_relay_status", {"message_id": "m-1"})
+    result = json.loads(content[0].text)
     assert len(content[0].text) <= 2000
-    assert json.loads(content[0].text)["error"] == "relay response exceeds the response budget"
+    assert result["payload_offset"] == 0
+    assert 0 < result["next_offset"] <= len(payload)
+    assert result["delivery_states"] == {"claimed": 1, "delivered": 1}
+    status.assert_awaited_once_with("m-1", offset=0, page_size=2000)
+
+
+@pytest.mark.asyncio
+async def test_relay_status_rejects_nonadvancing_metadata_without_second_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    malformed = {
+        "message_id": "m-1", "payload": "page", "payload_offset": 4,
+        "payload_total_chars": 10, "content_truncated": True, "next_offset": 4,
+        "deliveries": [],
+    }
+    status = AsyncMock(return_value=malformed)
+    with patch("app.mcp.client.PalliumMcpClient.relay_status", new=status):
+        content, _ = await create_server().call_tool(
+            "pallium_relay_status", {"message_id": "m-1", "offset": 4},
+        )
+    assert json.loads(content[0].text)["error"] == "invalid relay status pagination metadata"
+    status.assert_awaited_once_with("m-1", offset=4, page_size=2000)
 
 def test_main_reads_stdio_transport_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     runner = MagicMock()

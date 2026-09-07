@@ -3,7 +3,7 @@
 Tests the FastMCP tool wrapper behaviors that HTTP-layer tests cannot reach:
 - Identity guard (PALLIUM_AGENT_REF / PALLIUM_THREAD_REF env var checks)
 - claim_token secrecy (stripped before the model sees the result)
-- RF-008 drain-all (no max_chars cap at tool invocation)
+- One-delivery bounded receive and continuation paging
 - Stale receipt rejection at tool level
 - hook/MCP race (delivery claimed by hook is not reclaimed by MCP receive)
 """
@@ -182,10 +182,9 @@ class TestClaimTokenSecrecy:
         assert d["delivery_id"]
 
 
-class TestDrainAll:
+class TestBoundedReceive:
     @pytest.mark.asyncio
-    async def test_rf008_returns_all_deliveries_beyond_legacy_limit(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
-        """RF-008: all pending deliveries returned in one tool call, no 2400-char cap."""
+    async def test_receive_returns_one_delivery_per_bounded_call(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
         bind_asgi_post(monkeypatch, asgi_post)
 
         await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
@@ -200,10 +199,57 @@ class TestDrainAll:
             })
 
         server = create_server()
-        content, _ = await server.call_tool("pallium_relay_receive", {})
-        data = json.loads(content[0].text)
-        assert len(data["deliveries"]) == 4
-        assert data["has_more"] is False
+        results = []
+        for _ in range(4):
+            content, _ = await server.call_tool("pallium_relay_receive", {})
+            assert len(content[0].text) <= 2000
+            results.append(json.loads(content[0].text))
+        assert all(len(result["deliveries"]) == 1 for result in results)
+        assert [result["has_more"] for result in results] == [True, True, True, False]
+        assert [result["remaining_count"] for result in results] == [3, 2, 1, 0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("requested", "effective"), [(0, 2000), (256, 256), (9999, 2000)])
+    async def test_receive_defaults_and_clamps_budget(self, requested, effective):
+        receive = AsyncMock(return_value={"deliveries": [], "has_more": False, "remaining_count": 0})
+        with patch.object(PalliumMcpClient, "relay_receive", new=receive):
+            content, _ = await create_server().call_tool("pallium_relay_receive", {"max_chars": requested})
+        assert len(content[0].text) <= effective
+        receive.assert_awaited_once_with(
+            runtime=_RUNTIME, session_ref=_SESSION, max_response_chars=effective,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("requested", [-1, 1, 255])
+    async def test_receive_rejects_too_small_budget_before_claim(self, requested):
+        receive = AsyncMock()
+        with patch.object(PalliumMcpClient, "relay_receive", new=receive):
+            content, _ = await create_server().call_tool("pallium_relay_receive", {"max_chars": requested})
+        assert json.loads(content[0].text)["min_max_chars"] == 256
+        receive.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_minimum_budget_keeps_max_identity_delivery_pending(
+        self, monkeypatch: pytest.MonkeyPatch, asgi_post, asgi_get,
+    ):
+        bind_asgi_post(monkeypatch, asgi_post)
+        session = '"' * 255
+        monkeypatch.setenv("PALLIUM_THREAD_REF", session)
+        await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": session, "title": '"' * 255, **_SCOPE})
+        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "min-sender", **_SCOPE})
+        sent = await asgi_post("/relay/messages", {
+            "sender_runtime": "codex", "sender_session_ref": "min-sender",
+            "recipient": f"{_RUNTIME}:{session}", "payload": "still visible in queue", **_SCOPE,
+        })
+
+        content, _ = await create_server().call_tool("pallium_relay_receive", {"max_chars": 256})
+        assert len(content[0].text) <= 256
+        result = json.loads(content[0].text)
+        assert result["deliveries"] == []
+        assert result["has_more"] is True
+        assert result["remaining_count"] == 1
+        status = await asgi_get(f"/relay/messages/{sent['message_id']}", _SCOPE)
+        assert status["deliveries"][0]["state"] == "pending"
 
 
 class TestAck:
@@ -364,7 +410,69 @@ def asgi_get(relay_app):
     return _get
 
 
+@pytest.mark.asyncio
+async def test_long_mcp_preview_status_pages_and_ack_reconstruct_stored_body(
+    monkeypatch: pytest.MonkeyPatch, asgi_post, asgi_get,
+):
+    bind_asgi_post(monkeypatch, asgi_post)
+
+    async def get_from_app(_client, path, params):
+        return await asgi_get(path, params)
+
+    monkeypatch.setattr(PalliumMcpClient, "_get_or_error", get_from_app)
+    await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+    await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "long-sender", **_SCOPE})
+    pattern = '😀"\\\nאב'
+    raw = ("Authorization: Bearer super-secret\n" + pattern * 4000)[:16000]
+    assert len(raw) == 16000
+    sent = await asgi_post("/relay/messages", {
+        "sender_runtime": "codex", "sender_session_ref": "long-sender",
+        "recipient": f"{_RUNTIME}:{_SESSION}", "payload": raw, **_SCOPE,
+    })
+    assert sent["redacted"] is True
+    assert "super-secret" not in sent["payload"]
+
+    server = create_server()
+    content, _ = await server.call_tool("pallium_relay_receive", {})
+    assert len(content[0].text) <= 2000
+    delivery = json.loads(content[0].text)["deliveries"][0]
+    assert delivery["message_id"] == sent["message_id"]
+    assert delivery["payload_offset"] == 0
+    assert delivery["content_truncated"] is True
+    assert delivery["next_offset"] == len(delivery["payload"])
+    assert delivery["payload_total_chars"] == len(sent["payload"])
+
+    rebuilt = delivery["payload"]
+    offset = delivery["next_offset"]
+    while offset is not None:
+        page_content, _ = await server.call_tool(
+            "pallium_relay_status", {"message_id": sent["message_id"], "offset": offset},
+        )
+        assert len(page_content[0].text) <= 2000
+        page = json.loads(page_content[0].text)
+        assert page["payload_offset"] == offset
+        rebuilt += page["payload"]
+        if page["next_offset"] is not None:
+            assert page["next_offset"] > offset
+        offset = page["next_offset"]
+    assert rebuilt == sent["payload"]
+
+    final_content, _ = await server.call_tool(
+        "pallium_relay_status",
+        {"message_id": sent["message_id"], "offset": len(sent["payload"])},
+    )
+    final_page = json.loads(final_content[0].text)
+    assert final_page["payload"] == ""
+    assert final_page["next_offset"] is None
+
+    ack, _ = await server.call_tool("pallium_relay_ack", {
+        "delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"],
+    })
+    assert json.loads(ack[0].text)["state"] == "delivered"
+
+
 _RELAY_SCOPE_TOOL_METHODS = {
+    "pallium_relay_status": ("relay_status", {"message_id": "message"}),
     "pallium_relay_receive": ("relay_receive", {}),
     "pallium_relay_ack": ("relay_mcp_ack", {"delivery_id": "delivery", "receipt": "receipt"}),
     "pallium_relay_reply": ("relay_reply", {"delivery_id": "delivery", "message": "reply"}),

@@ -1020,8 +1020,8 @@ def test_redaction_expansion_is_compacted_and_internal_wake_delivers_once(
             "runtime": runtime, "session_ref": session, **scope,
         }).status_code == 200
 
-    payload = "pwd:a\n" * 250
-    assert len(payload) == 1500
+    payload = "pwd:a\n" * 2600
+    assert len(payload) == 15600
     sent = client.post("/relay/messages", json={
         "sender_runtime": "claude-code",
         "sender_session_ref": sender,

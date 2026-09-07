@@ -274,12 +274,32 @@ class TestRelay:
         }
 
     @pytest.mark.asyncio
-    async def test_status_gets_scoped_message(self, ctx: PalliumContext) -> None:
+    async def test_status_gets_scoped_message_page(self, ctx: PalliumContext) -> None:
         response = _mock_response(json_data={"message_id": "m-1", "state": "delivered"})
         with patch("httpx.AsyncClient.get", return_value=response) as mock_get:
-            result = await PalliumMcpClient(ctx).relay_status("m-1")
+            result = await PalliumMcpClient(ctx).relay_status("m-1", offset=7, page_size=99)
         assert result["state"] == "delivered"
         assert mock_get.call_args.kwargs["params"] == {
+            "container_ref": "test-container",
+            "actor_ref": "test-actor",
+            "offset": 7,
+            "page_size": 99,
+        }
+
+    @pytest.mark.asyncio
+    async def test_receive_requests_one_json_budgeted_delivery(self, ctx: PalliumContext) -> None:
+        response = _mock_response(json_data={"deliveries": []})
+        with patch("httpx.AsyncClient.post", return_value=response) as mock_post:
+            result = await PalliumMcpClient(ctx).relay_receive(
+                runtime="codex", session_ref="session-1", max_response_chars=2000,
+            )
+        assert result == {"deliveries": []}
+        assert mock_post.call_args.kwargs["json"] == {
+            "runtime": "codex",
+            "session_ref": "session-1",
+            "max_chars": 0,
+            "max_response_chars": 2000,
+            "max_messages": 1,
             "container_ref": "test-container",
             "actor_ref": "test-actor",
         }

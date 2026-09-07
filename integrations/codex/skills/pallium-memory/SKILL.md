@@ -7,11 +7,11 @@ description: Use Pallium Relay, Session History, or optional derived memory.
 
 ## Relay
 
-- Handle deliveries now; reply only after completion/blocker, never status-only.
-- Injected `agent_ref`/`thread_ref` identify self; never infer self from recipients.
-- Discover/name with `pallium_relay_recipients`/`pallium_relay_name`; send with `pallium_relay_send` to runtime/session/alias. Broadcast needs user intent.
-- Replace aliases with `replace_existing=true`; otherwise report conflict. Ignore terminal ACK-only deliveries.
-- Reply with `pallium_relay_reply`; inspect with `pallium_relay_status`. On `already_delivered=true` or conflict, only that delivery copy is stale: do not retry/reply/use its payload, but continue the surrounding user task and independently established work.
+- Handle deliveries now; reply on completion/blocker, never status-only.
+- Injected `agent_ref`/`thread_ref` are self; never infer from recipients.
+- Discover/name with `pallium_relay_recipients`/`pallium_relay_name`; send with `pallium_relay_send`. Broadcast needs user intent.
+- Transfer aliases with `replace_existing=true` or conflict. Ignore terminal ACK-only deliveries.
+- Reply with `pallium_relay_reply`; inspect with `pallium_relay_status`. For previews, read `next_offset` pages until null. On `already_delivered=true` or conflict, only that delivery copy is stale: do not retry/reply/use its payload, but continue the surrounding user task and independently established work.
 
 ## Session History
 

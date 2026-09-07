@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from core.relay import RELAY_MESSAGE_MAX_CHARS
 from core.visibility import Visibility
 
 
@@ -808,6 +809,11 @@ class RelayTurnRequest(BaseModel):
     actor_ref: str = Field(min_length=1, max_length=255)
     title: str | None = Field(default=None, min_length=1, max_length=255)
     max_chars: int = Field(default=0, ge=0)
+    max_response_chars: int = Field(
+        default=0,
+        ge=0,
+        description="Pre-claim compact-JSON candidate budget; not a transport response-size limit.",
+    )
     max_messages: int = Field(default=3, ge=0)
 
 
@@ -827,7 +833,7 @@ class RelaySendRequest(BaseModel):
     sender_runtime: RelayRuntime
     sender_session_ref: str = Field(min_length=1, max_length=255)
     recipient: str = Field(min_length=1, max_length=320)
-    payload: str = Field(min_length=1, max_length=1500)
+    payload: str = Field(min_length=1, max_length=RELAY_MESSAGE_MAX_CHARS)
     container_ref: str = Field(min_length=1, max_length=512)
     actor_ref: str = Field(min_length=1, max_length=255)
     expires_in_seconds: int | None = Field(default=None, ge=60, le=604800)
@@ -838,7 +844,7 @@ class RelaySendRequest(BaseModel):
 class RelayReplyRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)
     receipt: str | None = Field(default=None, max_length=64)
-    payload: str = Field(min_length=1, max_length=1500)
+    payload: str = Field(min_length=1, max_length=RELAY_MESSAGE_MAX_CHARS)
     container_ref: str = Field(min_length=1, max_length=512)
     actor_ref: str = Field(min_length=1, max_length=255)
     expires_in_seconds: int | None = Field(default=None, ge=60, le=604800)
@@ -876,6 +882,10 @@ class RelayDeliveryResponse(BaseModel):
     sender_session_ref: str
     recipient: str
     payload: str
+    payload_offset: int = Field(ge=0)
+    payload_total_chars: int = Field(ge=0)
+    content_truncated: bool
+    next_offset: int | None = Field(default=None, ge=1)
     redacted: bool
     in_reply_to: str | None = None
     created_at: datetime
@@ -899,6 +909,10 @@ class RelayMessageResponse(BaseModel):
     sender_session_ref: str
     recipient: str
     payload: str
+    payload_offset: int = Field(ge=0)
+    payload_total_chars: int = Field(ge=0)
+    content_truncated: bool
+    next_offset: int | None = Field(default=None, ge=1)
     redacted: bool
     in_reply_to: str | None = None
     created_at: datetime

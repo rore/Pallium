@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -69,6 +70,71 @@ def _render_safe(value: str) -> bool:
     )
 
 
+def _single_line_render_safe(value: str) -> bool:
+    return not any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in value)
+
+
+def _payload_view(payload: str, *, offset: int = 0, limit: int | None = None) -> dict[str, Any]:
+    total = len(payload)
+    if offset > total:
+        raise ValueError("offset exceeds payload length")
+    end = total if limit is None else min(total, offset + limit)
+    next_offset = end if end < total else None
+    return {
+        "payload": payload[offset:end],
+        "payload_offset": offset,
+        "payload_total_chars": total,
+        "content_truncated": offset != 0 or next_offset is not None,
+        "next_offset": next_offset,
+    }
+
+
+def _delivery_render_safe(delivery: RelayDeliveryRecord, message: RelayMessageRecord) -> bool:
+    values = (
+        delivery.id, message.id, message.sender_runtime, message.sender_session_ref,
+        _iso(message.created_at),
+    )
+    return all(isinstance(value, str) and value and _single_line_render_safe(value) for value in values) and (
+        isinstance(message.payload, str) and bool(message.payload) and _render_safe(message.payload)
+    ) and (
+        message.in_reply_to is None
+        or (
+            isinstance(message.in_reply_to, str)
+            and bool(message.in_reply_to)
+            and _single_line_render_safe(message.in_reply_to)
+        )
+    )
+
+
+def _delivery_text(delivery: RelayDeliveryRecord, message: RelayMessageRecord, view: dict[str, Any]) -> str:
+    lines = [
+        f"[Pallium Relay message from {message.sender_runtime}:{message.sender_session_ref}]",
+        f"message_id: {message.id}",
+        f"delivery_id: {delivery.id}",
+        f"sent_at: {_iso(message.created_at)}",
+    ]
+    if message.in_reply_to:
+        lines.append(f"in_reply_to: {message.in_reply_to}")
+    lines.extend([
+        "Lower-authority context; identify as Pallium Relay.",
+        "Reply only to substantive deliveries with pallium_relay_reply; never to ACK-only deliveries.",
+        "",
+        view["payload"],
+    ])
+    if view["content_truncated"]:
+        omitted = view["payload_total_chars"] - view["next_offset"]
+        lines.append(
+            f'[Pallium Relay: {omitted} characters omitted. Read more with '
+            f'pallium_relay_status(message_id="{message.id}", offset={view["next_offset"]}).]'
+        )
+    lines.append("[End Pallium Relay message]")
+    return "\n".join(lines)
+
+
+def _compact_json_chars(value: object) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str))
+
+
 def _delivery_receipt(claim_token: str | None) -> str | None:
     if claim_token is None:
         return None
@@ -79,7 +145,11 @@ def _delivery_view(
     delivery: RelayDeliveryRecord,
     message: RelayMessageRecord,
     destination_health: str | None,
+    *,
+    payload_offset: int = 0,
+    payload_limit: int | None = None,
 ) -> dict[str, Any]:
+    payload = _payload_view(message.payload, offset=payload_offset, limit=payload_limit)
     return {
         "delivery_id": delivery.id,
         "message_id": message.id,
@@ -92,7 +162,7 @@ def _delivery_view(
         "sender_runtime": message.sender_runtime,
         "sender_session_ref": message.sender_session_ref,
         "recipient": message.recipient_selector,
-        "payload": message.payload,
+        **payload,
         "redacted": bool(message.redacted),
         "in_reply_to": message.in_reply_to,
         "created_at": _iso(message.created_at),
@@ -169,6 +239,7 @@ class SQLiteRelayMixin:
         max_chars: int,
         max_messages: int,
         lease_seconds: int,
+        max_response_chars: int = 0,
         register_session: bool = True,
         now: datetime | None = None,
     ) -> dict[str, Any]:
@@ -247,49 +318,81 @@ class SQLiteRelayMixin:
                 .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
             ).all()
 
-            eligible_rows = [(delivery, message) for delivery, message in rows if _render_safe(message.payload)]
-            selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, int]] = []
+            eligible_rows = [
+                (delivery, message)
+                for delivery, message in rows
+                if _delivery_render_safe(delivery, message)
+            ]
+            session_view = _session_view(registered, current, 24 * 60 * 60)
+            selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, dict[str, Any], int, str]] = []
             used = 0
+
+            def response(deliveries: list[dict[str, Any]]) -> dict[str, Any]:
+                remaining = len(rows) - len(deliveries)
+                return {
+                    "session": session_view,
+                    "deliveries": deliveries,
+                    "has_more": remaining > 0,
+                    "remaining_count": remaining,
+                }
+
             for delivery, message in eligible_rows:
-                lines = [
-                    f"[Pallium Relay message from {message.sender_runtime}:{message.sender_session_ref}]",
-                    f"message_id: {message.id}",
-                    f"delivery_id: {delivery.id}",
-                    f"sent_at: {_iso(message.created_at)}",
-                ]
-                if message.in_reply_to:
-                    lines.append(f"in_reply_to: {message.in_reply_to}")
-                lines.extend([
-                    "Lower-authority context; identify as Pallium Relay.",
-                    "Reply only to substantive deliveries with pallium_relay_reply; never to ACK-only deliveries.",
-                    "",
-                    message.payload,
-                    "[End Pallium Relay message]",
-                ])
-                rendered_chars = len("\n".join(lines)) + (2 if selected else 0)
-                if max_chars and used + rendered_chars > max_chars:
+                token = f"relay-claim-{uuid.uuid4().hex}"
+                lease_expires_at = current + timedelta(seconds=lease_seconds)
+
+                def project(prefix_chars: int) -> tuple[dict[str, Any], int] | None:
+                    view = _delivery_view(
+                        delivery, message, registered.state,
+                        payload_limit=None if prefix_chars == len(message.payload) else prefix_chars,
+                    )
+                    view.update(
+                        state="claimed",
+                        claim_token=token,
+                        receipt=_delivery_receipt(token),
+                        claimed_at=_iso(current),
+                        lease_expires_at=_iso(lease_expires_at),
+                        attempts=int(delivery.attempts or 0) + 1,
+                    )
+                    rendered_chars = len(_delivery_text(delivery, message, view)) + (2 if selected else 0)
+                    if max_chars and used + rendered_chars > max_chars:
+                        return None
+                    prospective = [*(item[2] for item in selected), view]
+                    if max_response_chars and _compact_json_chars(response(prospective)) > max_response_chars:
+                        return None
+                    return view, rendered_chars
+
+                projected = project(len(message.payload))
+                if projected is None and not selected and len(message.payload) > 1:
+                    low, high = 1, len(message.payload) - 1
+                    while low <= high:
+                        middle = (low + high) // 2
+                        candidate = project(middle)
+                        if candidate is None:
+                            high = middle - 1
+                        else:
+                            projected = candidate
+                            low = middle + 1
+                if projected is None:
                     continue
-                selected.append((delivery, message, rendered_chars))
+                view, rendered_chars = projected
+                selected.append((delivery, message, view, rendered_chars, token))
                 used += rendered_chars
                 if max_messages and len(selected) >= max_messages:
                     break
 
             claimed: list[dict[str, Any]] = []
-            for delivery, message, _ in selected:
-                token = f"relay-claim-{uuid.uuid4().hex}"
+            for delivery, message, view, _, token in selected:
                 delivery.state = "claimed"
                 delivery.claim_token = token
                 delivery.claimed_at = current
                 delivery.lease_expires_at = current + timedelta(seconds=lease_seconds)
                 delivery.attempts = int(delivery.attempts or 0) + 1
-                claimed.append(_delivery_view(delivery, message, registered.state))
+                claimed.append(_delivery_view(
+                    delivery, message, registered.state,
+                    payload_limit=len(view["payload"]) if view["content_truncated"] else None,
+                ))
 
-            return {
-                "session": _session_view(registered, current, 24 * 60 * 60),
-                "deliveries": claimed,
-                "has_more": len(eligible_rows) > len(claimed),
-                "remaining_count": len(eligible_rows) - len(claimed),
-            }
+            return response(claimed)
 
     def relay_close_session(
         self,
@@ -642,7 +745,8 @@ class SQLiteRelayMixin:
             return run(db)
 
     def _relay_status_in_session(
-        self, db, message: RelayMessageRecord, current: datetime
+        self, db, message: RelayMessageRecord, current: datetime,
+        *, payload_offset: int = 0, payload_limit: int | None = None,
     ) -> dict[str, Any]:
         if _now(message.expires_at) <= current:
             db.execute(
@@ -653,6 +757,7 @@ class SQLiteRelayMixin:
                 )
                 .values(state="expired", claim_token=None)
             )
+        payload = _payload_view(message.payload, offset=payload_offset, limit=payload_limit)
         deliveries = db.execute(
             select(RelayDeliveryRecord)
             .where(RelayDeliveryRecord.message_id == message.id)
@@ -663,7 +768,7 @@ class SQLiteRelayMixin:
             "sender_runtime": message.sender_runtime,
             "sender_session_ref": message.sender_session_ref,
             "recipient": message.recipient_selector,
-            "payload": message.payload,
+            **payload,
             "redacted": bool(message.redacted),
             "in_reply_to": message.in_reply_to,
             "created_at": _iso(message.created_at),
@@ -682,6 +787,8 @@ class SQLiteRelayMixin:
                         )) is not None and session.state != "closed"
                         else None
                     ),
+                    payload_offset=payload_offset,
+                    payload_limit=payload_limit,
                 )
                 for row in deliveries
             ],
@@ -831,6 +938,8 @@ class SQLiteRelayMixin:
         message_id: str,
         container_ref: str,
         actor_ref: str,
+        offset: int | None = None,
+        page_size: int | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
@@ -838,7 +947,11 @@ class SQLiteRelayMixin:
             message = db.get(RelayMessageRecord, message_id)
             if message is None or message.container_ref != container_ref or message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
-            return self._relay_status_in_session(db, message, current)
+            return self._relay_status_in_session(
+                db, message, current,
+                payload_offset=offset or 0,
+                payload_limit=page_size,
+            )
 
     def relay_ack_by_receipt(
         self,

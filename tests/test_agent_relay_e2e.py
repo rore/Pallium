@@ -155,10 +155,7 @@ def test_aliases_are_actor_scoped_and_replacement_cannot_clear_another_actor(cli
     [
         ("", 422),
         ("   ", 422),
-        ("x" * 1500, 200),
-        ("x" * 1501, 422),
-        ("😀" * 1500, 200),
-        ("😀" * 1501, 422),
+
         ("line one\nline two\tvalue", 200),
         ("unsafe\x00value", 422),
         ("unsafe\x1fvalue", 422),
@@ -170,6 +167,112 @@ def test_payload_boundaries_unicode_and_controls(client, payload, expected):
     _turn(client, "codex", "target")
     response = _send(client, "claude-code", "sender", "codex:target", payload)
     assert response.status_code == expected, response.text
+
+def test_payload_exact_and_over_limit_codepoint_boundaries(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    for payload, expected in (
+        ("x" * 16000, 200),
+        ("x" * 16001, 422),
+        ("😀" * 16000, 200),
+        ("😀" * 16001, 422),
+    ):
+        response = _send(client, "claude-code", "sender", "codex:target", payload)
+        assert response.status_code == expected, response.text
+
+
+def test_reply_payload_boundaries_and_long_preview(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    parent = _send(client, "claude-code", "sender", "codex:target", "parent").json()
+    claim = _turn(client, "codex", "target")["deliveries"][0]
+
+    accepted = _reply(client, claim["delivery_id"], "界" * 16000, receipt=claim["receipt"])
+    assert accepted.status_code == 200
+    assert accepted.json()["payload"] == "界" * 16000
+    assert accepted.json()["content_truncated"] is False
+
+    second = _send(client, "claude-code", "sender", "codex:target", "parent two").json()
+    second_claim = _turn(client, "codex", "target")["deliveries"][0]
+    rejected = _reply(
+        client, second_claim["delivery_id"], "界" * 16001, receipt=second_claim["receipt"],
+    )
+    assert rejected.status_code == 422
+    assert _status(client, second["message_id"]).json()["deliveries"][0]["state"] == "claimed"
+
+    preview = _turn(client, "claude-code", "sender", max_chars=2360)["deliveries"][0]
+    assert preview["message_id"] == accepted.json()["message_id"]
+    assert preview["payload_offset"] == 0
+    assert preview["payload_total_chars"] == 16000
+    assert preview["content_truncated"] is True
+    assert preview["next_offset"] == len(preview["payload"])
+    assert 0 < preview["next_offset"] < 16000
+
+
+def test_scoped_codepoint_pages_reconstruct_redacted_broadcast_body(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target-a")
+    _turn(client, "codex", "target-b")
+    pattern = '😀"\\\nאב'
+    raw = ("Authorization: Bearer super-secret\n" + pattern * 4000)[:16000]
+    assert len(raw) == 16000
+    sent = _send(client, "claude-code", "sender", "codex", raw).json()
+    stored = sent["payload"]
+    assert sent["redacted"] is True
+    assert "super-secret" not in stored
+    assert sent["content_truncated"] is False
+    assert sent["next_offset"] is None
+    assert all(delivery["payload"] == stored for delivery in sent["deliveries"])
+
+    rebuilt = ""
+    offset = 0
+    while True:
+        page_response = _status(
+            client, sent["message_id"], offset=offset, page_size=997,
+        )
+        assert page_response.status_code == 200
+        page = page_response.json()
+        assert page["payload_offset"] == offset
+        assert page["payload_total_chars"] == len(stored)
+        assert all(
+            delivery["payload"] == page["payload"]
+            and delivery["payload_offset"] == offset
+            and delivery["payload_total_chars"] == len(stored)
+            and delivery["content_truncated"] == page["content_truncated"]
+            and delivery["next_offset"] == page["next_offset"]
+            for delivery in page["deliveries"]
+        )
+        rebuilt += page["payload"]
+        if page["next_offset"] is None:
+            break
+        assert page["next_offset"] > offset
+        offset = page["next_offset"]
+    assert rebuilt == stored
+
+    exact = _status(
+        client, sent["message_id"], offset=0, page_size=len(stored),
+    ).json()
+    assert exact["payload"] == stored
+    assert exact["content_truncated"] is False
+    assert exact["next_offset"] is None
+
+    empty = _status(
+        client, sent["message_id"], offset=len(stored), page_size=997,
+    ).json()
+    assert empty["payload"] == ""
+    assert empty["payload_offset"] == len(stored)
+    assert empty["content_truncated"] is True
+    assert empty["next_offset"] is None
+    assert all(delivery["payload"] == "" for delivery in empty["deliveries"])
+
+    assert _status(client, sent["message_id"], offset=len(stored) + 1, page_size=1).status_code == 422
+    assert _status(client, sent["message_id"], offset=0, page_size=0).status_code == 422
+    assert _status(client, sent["message_id"], offset=0, page_size=16001).status_code == 422
+    assert _status(client, sent["message_id"], actor_ref="other", offset=0, page_size=1).status_code == 404
+    assert _status(
+        client, sent["message_id"], container_ref="git:other", offset=0, page_size=1,
+    ).status_code == 404
+
 
 
 def test_identity_selector_scope_and_state_errors_are_visible(client):
@@ -382,14 +485,14 @@ def test_delivery_derived_reply_chain_and_boundaries(client):
     delivered = _turn(client, "codex", "target")["deliveries"][0]
     assert _ack(client, delivered).status_code == 200
 
-    expanding = "pwd:a\n" * 250
+    expanding = "pwd:a\n" * 2600
     redacted_reply = _reply(
         client, delivered["delivery_id"], expanding, expires_in_seconds=60
     )
     assert redacted_reply.status_code == 200
     assert redacted_reply.json()["redacted"] is True
     assert "payload omitted because sanitization exceeded the Relay limit" in redacted_reply.json()["payload"]
-    assert _reply(client, delivered["delivery_id"], "x" * 1501).status_code == 422
+    assert _reply(client, delivered["delivery_id"], "x" * 16001).status_code == 422
     assert _reply(client, delivered["delivery_id"], "x", expires_in_seconds=59).status_code == 422
     assert _reply(client, delivered["delivery_id"], "x", expires_in_seconds=604801).status_code == 422
 
@@ -531,7 +634,7 @@ def test_maximum_message_and_identity_envelope_is_claimable(client):
         "claude-code",
         sender,
         "codex:target",
-        "😀" * 1500,
+        "😀" * 16000,
         message_id=message_id,
         in_reply_to=parent_id,
     )
@@ -543,6 +646,11 @@ def test_maximum_message_and_identity_envelope_is_claimable(client):
     assert turn.status_code == 200
     claimed = turn.json()["deliveries"]
     assert [delivery["message_id"] for delivery in claimed] == [message_id]
+    assert claimed[0]["payload_offset"] == 0
+    assert claimed[0]["payload_total_chars"] == 16000
+    assert claimed[0]["content_truncated"] is True
+    assert claimed[0]["next_offset"] == len(claimed[0]["payload"])
+    assert 0 < claimed[0]["next_offset"] < 16000
     assert _ack(client, claimed[0]).status_code == 200
 
 def test_expiry_boundaries_and_complete_message_turn_budget(client):
@@ -652,6 +760,7 @@ def test_turn_budget_rejects_negative_values(client, max_chars):
         json={"runtime": "codex", "session_ref": "target", "max_chars": max_chars, **SCOPE},
     )
     assert response.status_code == 422
+
 
 
 @pytest.mark.parametrize("max_chars", [0, 2401, 100_000])
@@ -968,17 +1077,42 @@ def test_retrying_busy_send_with_same_id_creates_one_delivery(client, relay_stor
     assert len(second.json()["deliveries"]) == 1
     assert second.json()["deliveries"][0]["delivery_id"] == repeated.json()["deliveries"][0]["delivery_id"]
 
-def test_turn_does_not_claim_a_legacy_payload_that_the_formatter_rejects(client, relay_storage):
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("payload", "unsafe\u2028legacy"),
+        ("sender_session_ref", "sender\nspoof"),
+        ("in_reply_to", "message\tspoof"),
+    ],
+)
+def test_turn_does_not_claim_legacy_content_a_formatter_rejects(
+    client, relay_storage, field, value,
+):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "legacy-target")
     sent = _send(client, "claude-code", "sender", "codex:legacy-target", "safe").json()
     with relay_storage._relay_session_factory.begin() as db:
-        db.get(RelayMessageRecord, sent["message_id"]).payload = "unsafe\u2028legacy"
+        setattr(db.get(RelayMessageRecord, sent["message_id"]), field, value)
 
     turn = _turn(client, "codex", "legacy-target")
     assert turn["deliveries"] == []
-    assert turn["has_more"] is False
-    assert turn["remaining_count"] == 0
+    assert turn["has_more"] is True
+    assert turn["remaining_count"] == 1
+
+def test_turn_response_budget_is_a_preclaim_guard_not_an_envelope_limit(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "budget-target", title='"' * 255)
+    sent = _send(client, "claude-code", "sender", "codex:budget-target", "safe").json()
+
+    guarded = _turn(client, "codex", "budget-target", max_response_chars=1)
+    assert guarded["deliveries"] == []
+    assert guarded["has_more"] is True
+    assert guarded["remaining_count"] == 1
+    assert len(str(guarded)) > 1
+
+    claimed = _turn(client, "codex", "budget-target")["deliveries"]
+    assert [delivery["message_id"] for delivery in claimed] == [sent["message_id"]]
+
 
 def test_turn_skips_legacy_unsafe_rows_and_drains_later_safe_delivery(client, relay_storage):
     _turn(client, "claude-code", "sender")
@@ -990,10 +1124,13 @@ def test_turn_skips_legacy_unsafe_rows_and_drains_later_safe_delivery(client, re
 
     turn = _turn(client, "codex", "mixed-legacy-target")
     assert [delivery["message_id"] for delivery in turn["deliveries"]] == [safe["message_id"]]
-    assert turn["has_more"] is False
-    assert turn["remaining_count"] == 0
+    assert turn["has_more"] is True
+    assert turn["remaining_count"] == 1
     assert _ack(client, turn["deliveries"][0]).status_code == 200
-    assert _turn(client, "codex", "mixed-legacy-target")["deliveries"] == []
+    blocked = _turn(client, "codex", "mixed-legacy-target")
+    assert blocked["deliveries"] == []
+    assert blocked["has_more"] is True
+    assert blocked["remaining_count"] == 1
 
 
 def test_relay_destination_health_strict_cas_and_scope(client, relay_storage):

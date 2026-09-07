@@ -1,7 +1,7 @@
 ---
 id: add-budgeted-long-relay-messages
 title: Support long Relay messages with budgeted injection
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-relay
