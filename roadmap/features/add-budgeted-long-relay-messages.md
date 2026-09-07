@@ -48,10 +48,18 @@ separate concern if measurements show it is needed.
 recipient-bound authorization cannot be expressed safely through the existing
 message read.
 
-The MCP status renderer currently rejects responses above its 2,000-character
-budget, so the existing tool is not yet a usable full-body path for a 16,000-
-character message. Prefer the smallest explicit read/expand behavior that reuses
-the existing message endpoint and makes the deliberate context cost visible.
+The MCP Relay response budget is 2,000 characters. Current message status
+compaction omits a normal over-budget payload, other unsupported Relay response
+shapes can collapse to a generic over-budget error, and MCP receive can serialize
+an over-budget claimed delivery without first proving the result is model-visible.
+Therefore a bounded read/expand path is a hard requirement, not optional polish.
+Reuse the existing message read plus the established binary-search truncation and
+offset-pagination patterns; expose `content_truncated` and a continuation offset
+so the complete body can be reconstructed deliberately without a dropped page.
+
+`pallium_relay_recipients` already has a dedicated bounded page on current main.
+Do not reopen that solved path unless the current implementation reproduces an
+entry-level overflow; keep this slice on Relay message bodies.
 
 ## In Scope
 
@@ -67,9 +75,13 @@ the existing message endpoint and makes the deliberate context cost visible.
 - preserve the complete redacted payload in storage; previewing must not mutate it
 - ensure Codex, Claude Code, OpenCode, and MCP receive cannot claim a long message
   and then lose it because their formatter or tool response exceeds its budget
-- provide a scoped, read-only on-demand path for the recipient to retrieve the
-  complete stored body; reuse the existing message read and add only the minimum
-  MCP exposure required
+- provide a scoped, read-only, paginated on-demand path for the recipient to
+  retrieve the complete stored body; reuse the existing message read, return an
+  explicit truncation flag and continuation offset, and add only the minimum MCP
+  exposure required
+- prove a Relay body is safely serializable before committing its claim, or return
+  a bounded preview that remains actionable; never replace a claimed delivery
+  with a payload-free generic response-budget error
 - update Relay tool descriptions and docs to remove the 1,500-character and
   multipart-continuation guidance
 - keep `has_more`, `remaining_count`, lease recovery, ACK, reply, idempotency,
@@ -107,8 +119,10 @@ rather than independently truncating in each integration.
 2. One message between 1,501 and 16,000 code points is stored completely, appears
    once as an attributed preview within the caller surface's output budget, and
    exposes an exact omitted-character count.
-3. The recipient can deliberately retrieve the complete redacted body through a
-   scoped read path; another container or actor cannot read it.
+3. The recipient can deliberately reconstruct the complete redacted body through
+   bounded pages with truthful truncation/continuation metadata; empty, exact-page,
+   final-page, invalid-offset, and over-max requests are covered, and another
+   container or actor cannot read it.
 4. Codex, Claude Code, OpenCode, and MCP receive cover preview → full read → reply
    or ACK through their real caller surfaces, with no invisible claim or duplicate
    delivery after lease recovery.
