@@ -223,9 +223,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     async def run_diagnostic_operation(operation):
         return await run_operation(operation, diagnostic_limiter)
 
-    def wait_for_operations() -> None:
+    def wait_for_operations(timeout: float | None = None) -> bool:
         with operations:
-            operations.wait_for(lambda: active_operations == 0)
+            return operations.wait_for(lambda: active_operations == 0, timeout=timeout)
 
     wait_for_relay_operations = wait_for_operations
     # Record service_start lifecycle event (fire-and-forget)

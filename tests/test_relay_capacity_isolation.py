@@ -16,9 +16,9 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 async def _start_operation_barrier(app):
     entered = threading.Event()
 
-    def wait_for_operations() -> None:
+    def wait_for_operations() -> bool:
         entered.set()
-        app.state._wait_for_operations()
+        return app.state._wait_for_operations(2)
 
     barrier = asyncio.create_task(asyncio.to_thread(wait_for_operations))
     assert await asyncio.to_thread(entered.wait, 1)
@@ -126,7 +126,7 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
             await _assert_barrier_waiting(shutdown_barrier)
             relay_release.set()
             assert await asyncio.to_thread(relay_finished.wait, 0.5)
-            await asyncio.wait_for(shutdown_barrier, 0.5)
+            assert await asyncio.wait_for(shutdown_barrier, 1)
 
             monkeypatch.setattr(storage, "relay_turn", original_relay_turn)
             diagnostic_slots_full = threading.Event()
@@ -178,7 +178,7 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
             responses = await asyncio.wait_for(asyncio.gather(*diagnostics), 1.0)
             assert all(response.status_code == 200 for response in responses)
             assert await asyncio.to_thread(diagnostic_finished.wait, 0.5)
-            await asyncio.wait_for(diagnostic_barrier, 0.5)
+            assert await asyncio.wait_for(diagnostic_barrier, 1)
     try:
         asyncio.run(exercise())
     finally:
@@ -238,9 +238,7 @@ def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path,
             assert len(captured) == 1
             assert captured[0]() is None
             assert storage_calls == 0
-            await asyncio.wait_for(
-                asyncio.to_thread(app.state._wait_for_operations), 1,
-            )
+            assert await asyncio.to_thread(app.state._wait_for_operations, 1)
 
             async def fail_dispatch(*_args, **_kwargs):
                 raise RuntimeError("dispatch failed")
@@ -248,9 +246,7 @@ def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path,
             monkeypatch.setattr("app.main.anyio.to_thread.run_sync", fail_dispatch)
             with pytest.raises(RuntimeError, match="dispatch failed"):
                 await client.post("/relay/turn", json=payload("dispatch-failure"))
-            await asyncio.wait_for(
-                asyncio.to_thread(app.state._wait_for_operations), 1,
-            )
+            assert await asyncio.to_thread(app.state._wait_for_operations, 1)
 
             monkeypatch.setattr("app.main.anyio.to_thread.run_sync", original_dispatch)
             relay_release = threading.Event()
@@ -285,7 +281,7 @@ def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path,
             relay_release.set()
             responses = await asyncio.wait_for(asyncio.gather(*active), 3)
             assert all(response.status_code == 200 for response in responses)
-            await asyncio.wait_for(queued_barrier, 1)
+            assert await asyncio.wait_for(queued_barrier, 1)
             assert started_count == 4
 
             def fail_worker(**_kwargs):
@@ -294,18 +290,14 @@ def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path,
             monkeypatch.setattr(storage, "relay_turn", fail_worker)
             with pytest.raises(RuntimeError, match="worker failed"):
                 await client.post("/relay/turn", json=payload("worker-failure"))
-            await asyncio.wait_for(
-                asyncio.to_thread(app.state._wait_for_operations), 1,
-            )
+            assert await asyncio.to_thread(app.state._wait_for_operations, 1)
 
             monkeypatch.setattr(storage, "relay_turn", original_relay_turn)
             response = await client.post(
                 "/relay/turn", json=payload("success-after-failures"),
             )
             assert response.status_code == 200
-            await asyncio.wait_for(
-                asyncio.to_thread(app.state._wait_for_operations), 1,
-            )
+            assert await asyncio.to_thread(app.state._wait_for_operations, 1)
 
     try:
         asyncio.run(exercise())

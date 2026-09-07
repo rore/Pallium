@@ -43,6 +43,7 @@
 - 2026-09-07 Expanded plan review: senior review reproduced the queued-cancel leak in a worker-only design, approved the atomic ownership handoff, and required a controlled late-worker skip regression. The revised high-risk plan is signed off with no remaining blockers.
 - 2026-09-07 Implement: added the focused edit/subsystem/full test ladder; consolidated the vNext count gate into one measurement; replaced cancellation-sensitive operation accounting with a condition-locked async/worker ownership handoff shared by Relay and diagnostics; added HTTP regressions for active, queued, after-dispatch, worker-error, dispatch-error, barrier, and subsequent-success paths; raised only the diagnostic-isolation guard to one second. CI and pytest configuration are unchanged. The local patch helper failed with Windows error 1327, so edits used deterministic replacements limited to named files.
 - 2026-09-07 Verify: focused tests passed 3/3 in 4.34s; Relay operation E2Es passed 40/40 serially in 16.03s and 40/40 with four workers in 8.66s; affected app/observability tests passed 45 with 17 Windows skips in 9.45s; the full non-slow suite passed 4,578 with 32 skips and 2 expected xfails in 218.95s.
+- 2026-09-07 Result review: independent high-risk review found two P2 issues, both fixed: bounded private drain waits now make counter-leak regressions fail rather than hang, and roadmap scope now includes the runtime cancellation fix. Follow-up review found no remaining implementation findings; focused tests passed 3/3 after remediation, and an in-memory missing-decrement mutation failed promptly in 1.68s.
 
 ## Plan review
 
@@ -50,8 +51,8 @@ Senior clean-context review confirmed the Relay guard is test synchronization ra
 
 ## Evidence
 
-Focused serial: `3 passed in 4.34s`, with the consolidated count gate at 3.38s versus the earlier roughly 8-10s two-item module run. Stress: duplicate collection ran both Relay operation-accounting E2Es 20 times each, yielding `40 passed in 16.03s` serial and `40 passed in 8.66s` with four workers; before the tracker fix, the same method exposed 4 failures in 20 runs. Affected subsystem: `45 passed, 17 skipped in 9.45s`. Full default: `4578 passed, 32 skipped, 2 xfailed in 218.95s`. CI configuration and required lane coverage were not changed.
+Focused serial: `3 passed in 4.34s`, with the consolidated count gate at 3.38s versus the earlier roughly 8-10s two-item module run. Stress: duplicate collection ran both Relay operation-accounting E2Es 20 times each, yielding `40 passed in 16.03s` serial and `40 passed in 8.66s` with four workers; before the tracker fix, the same method exposed 4 failures in 20 runs. Affected subsystem: `45 passed, 17 skipped in 9.45s`. Full default: `4578 passed, 32 skipped, 2 xfailed in 218.95s`. CI configuration and required lane coverage were not changed. Post-review focused verification passed `3 tests in 4.54s`; the reviewer's missing-decrement mutation failed in `1.68s` without hanging.
 
 ## Result review
 
-Pending implementation.
+Independent high-capability clean-context review signed off the implementation with no remaining findings. It verified lock-protected exactly-once ownership across started and pre-start cancellation, late-worker skipping, active/queued work, worker/dispatch exceptions, and xdist-safe count-gate consolidation. Two P2 findings were resolved before sign-off: every test waiter is bounded and asserts the predicate result, while production shutdown remains unbounded; and the roadmap now accurately includes the runtime operation-tracking fix.
