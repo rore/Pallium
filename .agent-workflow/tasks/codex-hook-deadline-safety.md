@@ -68,6 +68,7 @@ Not required at this risk level.
 - 2026-09-07: Discovery disproved reuse of the semantic source-item worker for all audit work because no-package assistant items are never claimed. Revised the plan to a bounded post-ingest executor with explicit lifecycle and pending-row retry semantics.
 - 2026-09-07: Implemented the correction pass: queueing carries only the durable source-item ID; the worker loads the persisted assistant item and skips missing, non-assistant, or empty rows; the hook compatibility import resolves the checkout root temporarily. Focused tests cover source-ID dispatch and saturation.
 - 2026-09-07: The original server-owned slice remains in commit 22521477: core matcher relocation, bounded executor, per-row population, assistant `/items` enqueue, and shutdown drain.
+- 2026-09-07: Added the shared monotonic deadline primitive to both standalone hook common modules; Pallium/Relay HTTP and aggregate ACK calls clamp to the same remaining budget and skip network work when exhausted. A cheaper delegated attempt was interrupted after correctness review found undefined deadline variables and an unbounded timeout=None path; the parent repaired the minimal slice.
 
 ## Evidence
 
@@ -75,6 +76,7 @@ Not required at this risk level.
 - Pre-edit clean-context redline review /root/pr2_redline.
 - Focused verification: 31 matcher/canonical-text tests and 2 deterministic audit-dispatch lifecycle tests passed.
 - Final server-slice verification: 46 focused tests passed, including exact POST /items semantic-unavailable persistence, enqueue false/exception isolation, durable-ID dispatch, per-row failure isolation, and matcher regressions; matcher now indexes fixed-width response windows.
+- Deadline primitive verification: tests/test_agent_relay_hooks.py - 42 passed; fake clocks prove clamping, exhaustion skips urlopen, and multi-delivery ACK stops on the shared budget.
 - Clean-context plan review /root/pr2_plan_review.
 
 ## Plan review

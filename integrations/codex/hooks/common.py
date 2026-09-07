@@ -21,6 +21,57 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+@dataclass(frozen=True)
+class HookDeadline:
+    """One monotonic budget shared by all work in a hook process."""
+
+    deadline: float
+    reserve: float = 0.0
+    clock: Callable[[], float] = time.monotonic
+
+    def remaining(self) -> float:
+        return max(0.0, self.deadline - self.clock() - self.reserve)
+
+    def timeout(self, cap: float) -> float | None:
+        remaining = self.remaining()
+        return min(max(0.0, cap), remaining) if remaining > 0 else None
+
+
+_HOOK_DEADLINE: HookDeadline | None = None
+
+
+def start_hook_deadline(
+    budget: float,
+    *,
+    host_reserve: float = 0.0,
+    clock: Callable[[], float] = time.monotonic,
+) -> HookDeadline:
+    global _HOOK_DEADLINE
+    _HOOK_DEADLINE = HookDeadline(
+        clock() + max(0.0, budget),
+        max(0.0, host_reserve),
+        clock,
+    )
+    return _HOOK_DEADLINE
+
+
+def hook_deadline() -> HookDeadline | None:
+    return _HOOK_DEADLINE
+
+
+def remaining_safe_time(deadline: HookDeadline | None = None) -> float:
+    current = deadline or _HOOK_DEADLINE
+    return current.remaining() if current is not None else float("inf")
+
+
+def _bounded_timeout(
+    cap: float,
+    deadline: HookDeadline | None = None,
+) -> float | None:
+    current = deadline or _HOOK_DEADLINE
+    return current.timeout(cap) if current is not None else cap
+
+
 AGENT_REF = "codex"
 SOURCE_TYPE = "codex"
 PALLIUM_PORT = int(os.environ.get("PALLIUM_PORT", "19836"))
@@ -791,7 +842,12 @@ def derive_actor_ref(
 
 
 def pallium_request(
-    method: str, path: str, payload: Any | None = None, *, quiet: bool = False
+    method: str,
+    path: str,
+    payload: Any | None = None,
+    *,
+    quiet: bool = False,
+    deadline: HookDeadline | None = None,
 ) -> dict | None:
     """Make HTTP request to Pallium. Returns parsed JSON or None on failure."""
     url = f"{PALLIUM_BASE_URL}{path}"
@@ -803,8 +859,11 @@ def pallium_request(
         url, data=body, method=method,
         headers={"Content-Type": "application/json"} if body else {},
     )
+    request_timeout = _bounded_timeout(HTTP_TIMEOUT, deadline)
+    if request_timeout is None:
+        return None
     try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=request_timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
         if not quiet:
@@ -813,7 +872,7 @@ def pallium_request(
 
 
 def relay_request(
-    method: str, path: str, payload: Any, *, timeout: float
+    method: str, path: str, payload: Any, *, timeout: float, deadline: HookDeadline | None = None
 ) -> dict | None:
     """Short-deadline Relay request; failures never block a host turn."""
     url = f"{PALLIUM_BASE_URL}{path}"
@@ -824,9 +883,12 @@ def relay_request(
         method=method,
         headers={"Content-Type": "application/json"},
     )
+    request_timeout = _bounded_timeout(timeout, deadline)
+    if request_timeout is None:
+        return None
     started = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=request_timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
         print(
