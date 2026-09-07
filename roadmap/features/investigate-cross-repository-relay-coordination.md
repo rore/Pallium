@@ -59,6 +59,18 @@ Caller-surface E2E must drive the same public HTTP/MCP and hook/plugin paths use
 10. Migration from the current schema preserves session, alias, message, delivery, reply, receipt, expiry, and lifecycle state exactly once, including duplicate native IDs and aliases that were previously legal only because containers or runtimes differed.
 11. Full register → optionally name → send → claim/receive → ACK or reply → status → close/unreachable → reactivate journeys pass on supported runtime/OS combinations without a second delivery engine.
 
+The name lifecycle E2E matrix must drive the public naming, send, receive/list, and status surfaces and verify:
+
+- first assignment, same-owner idempotency, rename, removal, close, and reactivation;
+- occupied-name conflicts across containers and runtimes leave ownership and both endpoints unchanged;
+- explicit takeover is atomic, immediately routes new alias sends to the new owner, leaves existing queued or claimed deliveries with their original endpoint, and preserves exact-address communication for both endpoints;
+- denied takeover causes no retry or state change, approved takeover retries with `replace_existing=true`, and an initial explicit “take over `X`” instruction may use that flag immediately;
+- repeated and concurrent takeover attempts produce one deterministic owner with no duplicate alias or half-transferred state, including across service restart;
+- stale, dormant, unreachable, and closed owners follow the written lifecycle contract;
+- separate actors may use the same name, while neither can observe or take over the other's name or endpoint;
+- empty, whitespace, Unicode, case-equivalent, maximum-length, and over-limit names follow one documented normalization and validation contract; and
+- legacy duplicate aliases migrate without a silent winner and require an explicit deterministic takeover before the global name becomes usable.
+
 ## Out of scope
 
 - Cross-user or remote-network trust, invitations, ACL administration, multi-tenant policy, or network exposure.
