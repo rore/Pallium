@@ -134,6 +134,35 @@ and metadata. Open surrounding context reuses the existing bounded
 /source/{id}/context behavior; do not build transcript replay or bypass visibility,
 retention, redaction, or forgetting.
 
+#### Session History usefulness
+
+Under Session History, add a collapsible **Is Session History helping?** panel.
+Separate live facts (lookups, results exposed, expansions) from retrospective
+judgments (incorporation or plausible influence) and confirmed benefit. Retrieval
+is not use; observed reuse does not establish better outcomes or time saved.
+
+Consume last-generated bounded evaluation reports; never run paid judging or full
+database scans during page refresh. Show evaluated window, generation time, sample
+selection, eligible-session denominator, sample/rated counts, failed/missing ratings,
+uncertainty, and judge/reference-check version. Stale, missing, incomplete, or
+unvalidated evidence is explicit, not a zero-benefit result. Reference-set stability
+is separate from actual real-world reuse.
+
+Allow drill-down: task/question → actually exposed history → subsequent work →
+supporting evidence and classification. Include no-reuse and insufficient-evidence
+cases. Distinguish user-directed and agent-decided lookups. Preserve caller visibility,
+redaction, retention, and forgetting when opening report evidence; old reports must
+not re-expose inaccessible content. Confirmed benefit requires linked user
+confirmation or controlled evaluation, not an LLM inference.
+
+Reuse the existing judge/rollup where valid. Before trusting fresh results, audit
+event-time versus ingestion-time ordering, exact exposed excerpts versus full stored
+sources, current-session/self matches, and rater completeness. Document gaps rather
+than turning them into a helpfulness percentage. Acceptance checks cover report
+states and evidence navigation, and prevent labeling usage or judge calibration as
+downstream benefit. This extends the UX mock's navigation: the panel is required
+even where the mock omits its full report contents.
+
 #### Relay operations
 
 Keep the existing Relay health summary as an operational subsystem: messages,
