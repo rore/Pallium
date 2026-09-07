@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -39,6 +39,8 @@
 - 2026-09-07 Assess Risk: clean-context redline review classified the intended diff GRAY because `.github/workflows/ci.yml` is unclassified/operational; tests, docs, roadmap, and Work Record are blue; no checkpoint or boundary risk.
 - 2026-09-07 Plan discovery: the full slow marker is not schedulable as-is (32 failed / 135 passed / 1 skipped / 1 xfailed / 1 xpassed in 87.36s). Source inspection excluded the opt-in Linux service and vector/download-capable live runner; an explicit 12-test snapshot/storage/concurrency/Relay slow-smoke candidate passed serially in 34.67s.
 - 2026-09-07 Plan review: senior clean-context review found and resolved marker/red-zone scope, cancellation-group isolation, slow-inventory safety, path-filter precision, MCP import proof, and timing-documentation gaps; follow-up sign-off granted after the exact scheduled command was recorded.
+- 2026-09-07 Implement: committed revision `c93c7078`; four Relay status tests now provide paired configured scope, required Linux CI installs and proves MCP, all pytest jobs report durations, same-event/ref runs cancel, docs/roadmap-only pushes are ignored, and a bounded serial nightly slow smoke is scheduled. The machine-local `apply_patch` failure path was already established, so edits used narrowly scoped deterministic PowerShell replacements as permitted by local instructions.
+- 2026-09-07 Verify: focused MCP regressions `4 passed`; full MCP module `47 passed`; CI structural contracts `5 passed`; exact nightly slow smoke `12 passed, 80 deselected in 32.88s`; full default suite `4563 passed, 32 skipped, 2 xfailed in 161.82s`; workflow YAML parsed; `git diff --check`, redline, and Agent Workflow gates passed.
 
 ## Plan review
 
@@ -52,6 +54,8 @@ The review also narrowed push ignores to Markdown under `docs/` and `roadmap/`, 
 ## Evidence
 
 Pre-edit baseline: 4,592 selected / 170 slow-deselected tests; local MCP-enabled default profile `4 failed, 4554 passed, 32 skipped, 2 xfailed in 217.17s`. Recent successful main-job medians: Linux 3.0 minutes, Windows smoke 2.0 minutes, Windows full 19.9 minutes per version; observed full-Windows maximum 53.0 minutes.
+
+Verified revision `c93c7078`: `tests/test_mcp_server.py` passed 47/47; the full non-slow suite passed 4,563 tests with 32 skips and 2 expected xfails in 161.82 seconds; the exact six-file slow smoke passed 12 tests with 80 deselected in 32.88 seconds; five CI structural tests, YAML parsing, diff checks, redline classification, and the Agent Workflow checker passed.
 
 ## Result review
 
