@@ -22,6 +22,7 @@ _MCP_SEARCH_EMPTY_MAX_CHARS = 300
 _MCP_EXPANSION_MAX_CHARS = 4000
 _MCP_EXPANSION_MIN_CHARS = 256
 _MCP_RELAY_MAX_CHARS = 2000
+_MCP_RELAY_MIN_CHARS = 256
 
 
 def _mask_invalid_work_ref(value: object) -> object:
@@ -172,6 +173,82 @@ def _relay_text(result: object) -> str:
                 summary["payload"] = payload[:low] + marker
         return _json_text(summary)
     return _json_text({"error": "relay response exceeds the response budget"})
+
+
+def _relay_status_text(result: object, offset: int) -> str:
+    if isinstance(result, dict) and "error" in result:
+        return _json_text(_bounded_error(result, _MCP_RELAY_MAX_CHARS))
+    if not isinstance(result, dict) or not isinstance(result.get("payload"), str):
+        return _json_text({"error": "invalid relay status response"})
+
+    payload = result["payload"]
+    payload_offset = result.get("payload_offset")
+    total = result.get("payload_total_chars")
+    truncated = result.get("content_truncated")
+    next_offset = result.get("next_offset")
+    valid = (
+        type(payload_offset) is int
+        and payload_offset == offset
+        and type(total) is int
+        and total >= payload_offset + len(payload)
+        and type(truncated) is bool
+        and (next_offset is None or (type(next_offset) is int and next_offset > payload_offset))
+        and next_offset == (payload_offset + len(payload) if payload_offset + len(payload) < total else None)
+        and truncated == (payload_offset != 0 or next_offset is not None)
+    )
+    if not valid:
+        return _json_text({"error": "invalid relay status pagination metadata", "offset": offset})
+
+    deliveries = result.get("deliveries")
+    if not isinstance(deliveries, list):
+        return _json_text({"error": "invalid relay status response"})
+    states: dict[str, int] = {}
+    safe_deliveries = []
+    for delivery in deliveries:
+        if not isinstance(delivery, dict):
+            return _json_text({"error": "invalid relay status response"})
+        safe_delivery = {key: value for key, value in delivery.items() if key != "claim_token"}
+        safe_deliveries.append(safe_delivery)
+        state = str(safe_delivery.get("state", "unknown"))
+        states[state] = states.get(state, 0) + 1
+    deliveries = safe_deliveries
+    result = {**result, "deliveries": deliveries}
+
+    full_text = _json_text(result)
+    if len(full_text) <= _MCP_RELAY_MAX_CHARS:
+        return full_text
+
+    def page(chars: int) -> dict[str, object]:
+        body = payload[:chars]
+        continued = payload_offset + chars < total
+        return {
+            **{
+                key: result[key]
+                for key in (
+                    "message_id", "sender_runtime", "sender_session_ref", "redacted",
+                    "in_reply_to", "created_at", "expires_at",
+                )
+                if key in result
+            },
+            "payload": body,
+            "payload_offset": payload_offset,
+            "payload_total_chars": total,
+            "content_truncated": payload_offset != 0 or continued,
+            "next_offset": payload_offset + chars if continued else None,
+            "delivery_count": len(deliveries),
+            "delivery_states": states,
+        }
+
+    low, high = 0, len(payload)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(_json_text(page(middle))) <= _MCP_RELAY_MAX_CHARS:
+            low = middle
+        else:
+            high = middle - 1
+    if low == 0 and total > payload_offset:
+        return _json_text({"error": "relay status metadata exceeds the response budget", "offset": offset})
+    return _json_text(page(low))
 
 
 def _relay_recipients_text(result: object, offset: int = 0) -> str:
@@ -776,7 +853,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Send new text of at most 1,500 characters to runtime, exact-session, or alias selector: codex, codex:<session_ref>, or codex:@review (and equivalent supported runtimes). Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery; send multipart continuations with this tool."""
+        """Send new text of at most 16,000 Unicode code points to a runtime, exact-session, or alias selector: codex, codex:<session_ref>, or codex:@review (and equivalent supported runtimes). Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
@@ -798,7 +875,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery with at most 1,500 characters. A delivery permits one idempotent reply; send multipart continuations with pallium_relay_send, not repeated replies. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt."""
+        """Reply once to a received Relay delivery with at most 16,000 Unicode code points. A delivery permits one idempotent reply. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
         if scope_error:
             return scope_error
@@ -814,15 +891,20 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     @server.tool()
     async def pallium_relay_status(
         message_id: str,
+        offset: int = 0,
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Get compact delivery status for one Relay message."""
+        """Read a bounded Relay body page and compact delivery status. Continue with next_offset until null."""
+        if offset < 0:
+            return _json_text({"error": "offset must be non-negative"})
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
-        result = await PalliumMcpClient(ctx).relay_status(message_id)
-        return _relay_text(result)
+        result = await PalliumMcpClient(ctx).relay_status(
+            message_id, offset=offset, page_size=_MCP_RELAY_MAX_CHARS,
+        )
+        return _relay_status_text(result, offset)
 
     async def pallium_relay_receive(
         max_chars: int = 0,
@@ -830,7 +912,13 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         actor_ref: str | None = None,
         request_ctx: object | None = None,
     ) -> str:
-        """Claim pending Relay deliveries for this runtime session. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. Uses only integration-owned runtime/session identity. Call pallium_relay_ack(delivery_id, receipt), or pallium_relay_reply to reply and ACK atomically."""
+        """Claim one bounded Relay delivery for this runtime session. max_chars=0 uses 2,000; larger values clamp to 2,000. Continue truncated bodies with pallium_relay_status(message_id, next_offset). If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. Call pallium_relay_ack(delivery_id, receipt), or pallium_relay_reply to reply and ACK atomically."""
+        if max_chars < 0 or 0 < max_chars < _MCP_RELAY_MIN_CHARS:
+            return _json_text({
+                "error": f"max_chars must be 0 or at least {_MCP_RELAY_MIN_CHARS}",
+                "min_max_chars": _MCP_RELAY_MIN_CHARS,
+            })
+        effective_max_chars = _MCP_RELAY_MAX_CHARS if max_chars == 0 else min(max_chars, _MCP_RELAY_MAX_CHARS)
         ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
         if scope_error:
             return (
@@ -855,11 +943,25 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
                 return f"Error: {metadata_error}; upgrade or reload Codex, then retry. Relay receive remains fail-closed."
         if not session_ref:
             return "Error: PALLIUM_THREAD_REF is not set. Relay receive requires integration-injected session identity."
-        result = await PalliumMcpClient(ctx).relay_receive(runtime=runtime, session_ref=session_ref, max_chars=max_chars)
-        if isinstance(result, dict) and "deliveries" in result:
-            for d in result["deliveries"]:
-                d.pop("claim_token", None)  # receipt stays; claim_token is never exposed
-        return _json_text(result)
+        result = await PalliumMcpClient(ctx).relay_receive(
+            runtime=runtime, session_ref=session_ref, max_response_chars=effective_max_chars,
+        )
+        if not isinstance(result, dict):
+            return _json_text({"error": "invalid relay receive response"})
+        if "error" in result:
+            return _json_text(_bounded_error(result, effective_max_chars))
+        deliveries = result.get("deliveries")
+        if not isinstance(deliveries, list):
+            return _json_text({"error": "invalid relay receive response"})
+        result.pop("session", None)  # storage sizes this larger superset; MCP does not expose session metadata
+        for delivery in deliveries:
+            if not isinstance(delivery, dict):
+                return _json_text({"error": "invalid relay receive response"})
+            delivery.pop("claim_token", None)  # receipt stays; claim_token is never exposed
+        rendered = _json_text(result)
+        # The storage transaction sizes a superset before claim. If that invariant ever
+        # regresses, returning the claimed body is safer than hiding it behind an error.
+        return rendered
 
     pallium_relay_receive.__annotations__["request_ctx"] = Context | None
     server.tool()(pallium_relay_receive)

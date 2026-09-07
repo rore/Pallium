@@ -64,15 +64,22 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
         "message_id": "m" * 128,
         "sender_session_ref": "s" * 255,
         "in_reply_to": "p" * 128,
-        "payload": "😀" * 1500,
+        "payload": "😀" * 1000,
+        "payload_offset": 0,
+        "payload_total_chars": 16000,
+        "content_truncated": True,
+        "next_offset": 1000,
         "created_at": "2026-09-05T12:34:56.123456+00:00",
     }
     maximum_output, maximum_rendered = common.format_relay(
         [maximum], budget_chars=2400, remaining_count=1000,
     )
     assert maximum_rendered == [maximum]
+    assert 'Pallium Relay: 15000 characters omitted' in maximum_output
+    assert f'pallium_relay_status(message_id="{maximum["message_id"]}", offset=1000)' in maximum_output
     assert maximum_output.endswith("[Relay: 999+ more; Pallium continues.]")
     assert len(maximum_output) <= 2400
+    assert common.format_relay([{**maximum, "next_offset": 1499}])[0] == ""
 
     quote = '"'
     maximum_scope = common.format_injection(
@@ -645,7 +652,7 @@ def test_unsafe_only_relay_backlog_does_not_skip_memory(monkeypatch, name, relat
     assert "[Pallium Relay message" not in emitted[0][0]
 
 
-def test_claude_stop_claims_only_nonrecursive_turns_and_emits_acknowledged_subset(monkeypatch, capsys):
+def test_claude_stop_emits_rendered_subset_before_ack(monkeypatch):
     hook = _load("claude_stop_relay", "integrations/claude-code/hooks/stop.py")
     deliveries = [{**DELIVERY, "payload": "first ✓"}, {**DELIVERY, "delivery_id": "relay-delivery-2", "payload": "second"}]
     calls = []
@@ -659,7 +666,12 @@ def test_claude_stop_claims_only_nonrecursive_turns_and_emits_acknowledged_subse
             "deliveries": deliveries, "has_more": True, "remaining_count": 1,
         },
     )
-    monkeypatch.setattr(hook, "acknowledge_relay", lambda claimed, **_scope: claimed[:1])
+    events = []
+    monkeypatch.setattr(hook, "_emit_relay", lambda text: events.append(("emit", text)))
+    monkeypatch.setattr(
+        hook, "acknowledge_relay",
+        lambda claimed, **_scope: events.append(("ack", list(claimed))) or claimed[:1],
+    )
     original_format = hook.format_relay
     formatted = []
     monkeypatch.setattr(
@@ -676,8 +688,10 @@ def test_claude_stop_claims_only_nonrecursive_turns_and_emits_acknowledged_subse
         "runtime": "claude-code", "session_ref": "target", "container_ref": "git:example/repo",
         "actor_ref": "actor", "max_chars": 2360,
     }, 0.75)]
-    output = capsys.readouterr().err
-    assert "first ✓" in output and "second" not in output
+    assert [event[0] for event in events] == ["emit", "ack"]
+    output = events[0][1]
+    assert "first ✓" in output and "second" in output
+    assert events[1][1] == deliveries
     relay_text, scope_line = output.rstrip().rsplit("\n\n", 1)
     assert relay_text.endswith("[Relay: 1 more; Pallium continues.]")
     assert json.loads(
@@ -688,7 +702,6 @@ def test_claude_stop_claims_only_nonrecursive_turns_and_emits_acknowledged_subse
     }
     assert formatted == [
         (deliveries, {"budget_chars": 2400, "remaining_count": 1}),
-        (deliveries[:1], {"budget_chars": 2400, "remaining_count": 1}),
     ]
 
 
@@ -735,7 +748,7 @@ def test_acknowledge_relay_returns_only_successful_acknowledgments(monkeypatch):
 
     assert common.acknowledge_relay([DELIVERY, second], container_ref="container", actor_ref="actor") == [DELIVERY]
 
-def test_claude_stop_continues_normally_when_all_acknowledgments_fail(monkeypatch, capsys):
+def test_claude_stop_emits_and_leaves_lease_when_acknowledgment_fails(monkeypatch, capsys):
     hook = _load("claude_stop_ack_failure", "integrations/claude-code/hooks/stop.py")
     monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "target"})
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
@@ -744,8 +757,34 @@ def test_claude_stop_continues_normally_when_all_acknowledgments_fail(monkeypatc
     monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: {"deliveries": [DELIVERY]})
     monkeypatch.setattr(hook, "acknowledge_relay", lambda *_args, **_kwargs: [])
 
+    with pytest.raises(SystemExit) as stopped:
+        hook.main()
+    assert stopped.value.code == 2
+    assert "Review the migration" in capsys.readouterr().err
+
+
+def test_claude_stop_does_not_ack_when_emission_fails(monkeypatch):
+    hook = _load("claude_stop_emit_failure", "integrations/claude-code/hooks/stop.py")
+    registrations = []
+    acknowledgements = []
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "target"})
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(
+        hook, "register_claude_wake",
+        lambda *_args, **kwargs: registrations.append(kwargs["idle"]),
+    )
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: {"deliveries": [DELIVERY]})
+    monkeypatch.setattr(hook, "_emit_relay", lambda _text: (_ for _ in ()).throw(OSError("closed")))
+    monkeypatch.setattr(
+        hook, "acknowledge_relay",
+        lambda deliveries, **_kwargs: acknowledgements.append(deliveries),
+    )
+
     hook.main()
-    assert "Review the migration" not in capsys.readouterr().err
+
+    assert acknowledgements == []
+    assert registrations == [True, True]
 
 
 @pytest.mark.parametrize("broken_format", [False, True])

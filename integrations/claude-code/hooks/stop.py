@@ -174,17 +174,14 @@ def main() -> None:
                 remaining_count = (
                     turn.get("remaining_count") if turn.get("has_more") is True else 0
                 )
-                _, claimed = format_relay(
+                rendered, claimed = format_relay(
                     deliveries or [], budget_chars=RELAY_OUTPUT_BUDGET, remaining_count=remaining_count,
-                )
-                acknowledged = acknowledge_relay(
-                    claimed, container_ref=container_ref, actor_ref=actor_ref,
-                )
-                rendered, _ = format_relay(
-                    acknowledged, budget_chars=RELAY_OUTPUT_BUDGET, remaining_count=remaining_count,
                 )
                 if rendered:
                     _emit_relay("\n\n".join((rendered, relay_scope)))
+                    acknowledge_relay(
+                        claimed, container_ref=container_ref, actor_ref=actor_ref,
+                    )
                     raise SystemExit(2)
             except Exception:
                 pass

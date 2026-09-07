@@ -20,9 +20,12 @@ delete process.env.PALLIUM_POSTTOOL_TRIGGERS;
 const nonGitDir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-cwd-"));
 
 let loadPlugin;
+let formatRelay;
 test.before(async () => {
   const url = pathToFileURL(path.join(process.cwd(), ".opencode", "plugins", "pallium.mjs"));
   loadPlugin = (await import(url)).default;
+  const commonUrl = pathToFileURL(path.join(process.cwd(), ".opencode", "plugins", "pallium-common.mjs"));
+  formatRelay = (await import(commonUrl)).formatRelay;
 });
 
 test.after(() => {
@@ -340,7 +343,26 @@ test("hooks never throw even when the daemon is unreachable", async () => {
   assert.ok(Array.isArray(system), "system.transform still returns cleanly");
 });
 
-test("chat.message injects Relay as system context and acknowledges after mutation", async () => {
+test("chat.message injects a near-budget Relay preview and acknowledges after mutation", async () => {
+  const basePreview = {
+    delivery_id: "d-1", claim_token: "claim-1", message_id: "m-1",
+    sender_runtime: "claude-code", sender_session_ref: "sender-a",
+    recipient: "opencode:sesRelay", redacted: false, in_reply_to: null,
+    created_at: "2026-08-25T10:00:00+00:00",
+    expires_at: "2026-08-26T10:00:00+00:00",
+    payload_offset: 0, payload_total_chars: 16000, content_truncated: true,
+  };
+  let low = 1;
+  let high = 15999;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidate = { ...basePreview, payload: "😀".repeat(middle), next_offset: middle };
+    if ([...formatRelay([candidate]).text].length <= 2360) low = middle;
+    else high = middle - 1;
+  }
+  const preview = { ...basePreview, payload: "😀".repeat(low), next_offset: low };
+  assert.ok([...formatRelay([preview]).text].length > 2350);
+
   const relay = {
     deliveries: [{
       delivery_id: "d-skipped", claim_token: "claim-skipped", message_id: "m-skipped",
@@ -348,14 +370,9 @@ test("chat.message injects Relay as system context and acknowledges after mutati
       recipient: "opencode:sesRelay", payload: "bad\u0000value",
       redacted: false, in_reply_to: null,
       created_at: "2026-08-25T10:00:00+00:00", expires_at: "2026-08-26T10:00:00+00:00",
-    }, {
-      delivery_id: "d-1", claim_token: "claim-1", message_id: "m-1",
-      sender_runtime: "claude-code", sender_session_ref: "sender-a",
-      recipient: "opencode:sesRelay", payload: "😀".repeat(1500),
-      redacted: false, in_reply_to: null,
-      created_at: "2026-08-25T10:00:00+00:00",
-      expires_at: "2026-08-26T10:00:00+00:00",
-    }],
+    }, preview],
+    has_more: true,
+    remaining_count: 1,
   };
   installFetch({
     "/item-and-query": oneBlock,
@@ -372,12 +389,19 @@ test("chat.message injects Relay as system context and acknowledges after mutati
   const modelMessage = await messagesTransform(hooks, output.message, output.parts);
   const modelText = modelMessage.parts[0].text;
   assert.ok(modelText.startsWith("please inspect this migration approach carefully\n\n<system-reminder>\n[Pallium Relay"));
-  assert.ok(modelText.indexOf("[Pallium Relay") < modelText.indexOf("[Pallium scope"));
-  assert.match(modelText, /lower authority/);
+  const relayStart = modelText.indexOf("[Pallium Relay");
+  const scopeStart = modelText.indexOf("\n\n[Pallium scope", relayStart);
+  const relayText = modelText.slice(relayStart, scopeStart);
+  assert.ok(relayStart >= 0 && scopeStart > relayStart);
+  assert.ok([...relayText].length <= 2400);
+  assert.match(relayText, /Lower-authority context/);
+  assert.match(relayText, /Pallium Relay: \d+ characters omitted/);
+  assert.match(relayText, /pallium_relay_status\(message_id="m-1", offset=\d+\)/);
   const turn = fetchCalls.find((call) => call.url.includes("/relay/turn"));
   assert.equal(turn.body.runtime, "opencode");
   assert.equal(turn.body.session_ref, "sesRelay");
-  assert.equal(turn.body.max_chars, undefined);
+  assert.equal(turn.body.max_chars, 2360);
+  assert.match(modelText, /\[Relay: 1 more; Pallium continues\.\]/);
   const ack = fetchCalls.find((call) => call.url.includes("/relay/deliveries/ack"));
   assert.equal(fetchCalls.filter((call) => call.url.includes("/relay/deliveries/ack")).length, 1);
   assert.deepEqual(

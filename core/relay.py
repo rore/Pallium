@@ -12,7 +12,8 @@ from redaction import redact_sensitive
 
 
 RELAY_RUNTIMES = frozenset({"claude-code", "codex", "opencode"})
-RELAY_MESSAGE_MAX_CHARS = 1500
+RELAY_MESSAGE_MAX_CHARS = 16000
+RELAY_MESSAGE_PAGE_DEFAULT_CHARS = 2000
 RELAY_TURN_MAX_CHARS = 2400
 RELAY_TURN_MAX_MESSAGES = 3
 RELAY_BROADCAST_MAX_RECIPIENTS = 25
@@ -136,6 +137,7 @@ class RelayService:
         actor_ref: str,
         title: str | None = None,
         max_chars: int = 0,
+        max_response_chars: int = 0,
         max_messages: int = RELAY_TURN_MAX_MESSAGES,
         register_session: bool = True,
         now: datetime | None = None,
@@ -143,6 +145,8 @@ class RelayService:
         container, actor = self._scope(container_ref, actor_ref)
         if max_chars < 0:
             raise ValueError("max_chars must be >= 0 (0 = no limit)")
+        if max_response_chars < 0:
+            raise ValueError("max_response_chars must be >= 0 (0 = no limit)")
         if max_messages < 0:
             raise ValueError("max_messages must be >= 0 (0 = no limit)")
         return self._store.relay_turn(
@@ -152,6 +156,7 @@ class RelayService:
             actor_ref=actor,
             title=None if title is None else _opaque(title, "title", maximum=255),
             max_chars=max_chars,
+            max_response_chars=max_response_chars,
             max_messages=max_messages,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
             register_session=register_session,
@@ -354,12 +359,27 @@ class RelayService:
             else _opaque(delivery_id, "delivery_id", maximum=128)
         )
 
-    def message_status(self, *, message_id: str, container_ref: str, actor_ref: str) -> dict[str, Any]:
+    def message_status(
+        self,
+        *,
+        message_id: str,
+        container_ref: str,
+        actor_ref: str,
+        offset: int | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, Any]:
         container, actor = self._scope(container_ref, actor_ref)
+        if offset is not None and offset < 0:
+            raise ValueError("offset must be >= 0")
+        if page_size is not None and not 1 <= page_size <= RELAY_MESSAGE_MAX_CHARS:
+            raise ValueError(f"page_size must be between 1 and {RELAY_MESSAGE_MAX_CHARS}")
+        paged = offset is not None or page_size is not None
         return self._store.relay_message_status(
             message_id=_opaque(message_id, "message_id", maximum=128),
             container_ref=container,
             actor_ref=actor,
+            offset=(offset or 0) if paged else None,
+            page_size=(page_size or RELAY_MESSAGE_PAGE_DEFAULT_CHARS) if paged else None,
             now=datetime.now(timezone.utc),
         )
 

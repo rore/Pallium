@@ -66,7 +66,7 @@ from api.schemas import (
 )
 from core.claude_wake import ClaudeWakeRegistry
 from core.errors import ImmediateTransactionBusyError, LookupRequestLinkError, SupersessionConflictError
-from core.relay import RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError
+from core.relay import RELAY_MESSAGE_MAX_CHARS, RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
 from core.turn_inference import resolve_runtime_context
@@ -481,6 +481,8 @@ def create_router(
         message_id: str,
         container_ref: str = Query(min_length=1, max_length=512),
         actor_ref: str = Query(min_length=1, max_length=255),
+        offset: int | None = Query(default=None, ge=0),
+        page_size: int | None = Query(default=None, ge=1, le=RELAY_MESSAGE_MAX_CHARS),
     ):
         return await _relay_call(
             "message_status",
@@ -488,6 +490,8 @@ def create_router(
                 message_id=message_id,
                 container_ref=container_ref,
                 actor_ref=actor_ref,
+                offset=offset,
+                page_size=page_size,
             )
         )
 

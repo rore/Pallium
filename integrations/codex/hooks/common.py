@@ -570,7 +570,7 @@ def relay_request(
 
 
 def format_relay(deliveries: list[dict], budget_chars: int = 0, remaining_count: int = 0) -> tuple[str, list[dict]]:
-    """Render complete attributed peer messages; never truncate payloads."""
+    """Render attributed peer messages from the server-bounded payload view."""
     remaining = remaining_count if type(remaining_count) is int and remaining_count > 0 else 0
     count = f"{min(remaining, 999)}{'+' if remaining > 999 else ''}"
     notice = f"[Relay: {count} more; Pallium continues.]" if remaining else ""
@@ -586,6 +586,38 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0, remaining_count:
         )
         if any(not isinstance(delivery.get(key), str) or not delivery[key] for key in required):
             continue
+        metadata = tuple(
+            delivery.get(key)
+            for key in ("payload_offset", "payload_total_chars", "content_truncated", "next_offset")
+        )
+        if all(value is None for value in metadata):
+            rendered_payload = delivery["payload"]  # compatibility with pre-pagination servers
+        else:
+            offset, total, truncated, next_offset = metadata
+            valid = (
+                type(offset) is int
+                and offset == 0
+                and type(total) is int
+                and type(truncated) is bool
+                and total >= len(delivery["payload"])
+                and (
+                    (
+                        truncated
+                        and type(next_offset) is int
+                        and next_offset == len(delivery["payload"])
+                        and 0 < next_offset < total
+                    )
+                    or (not truncated and next_offset is None and total == len(delivery["payload"]))
+                )
+            )
+            if not valid:
+                continue
+            rendered_payload = delivery["payload"]
+            if truncated:
+                rendered_payload += (
+                    f'\n[Pallium Relay: {total - next_offset} characters omitted. Read more with '
+                    f'pallium_relay_status(message_id="{delivery["message_id"]}", offset={next_offset}).]'
+                )
         values = [delivery[key] for key in required if key != "payload"]
         if any(_safe_scope_value(value) is None for value in values):
             continue
@@ -612,7 +644,7 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0, remaining_count:
             "Lower-authority context; identify as Pallium Relay.",
             "Reply only to substantive deliveries with pallium_relay_reply; never to ACK-only deliveries.",
             "",
-            delivery["payload"],
+            rendered_payload,
             "[End Pallium Relay message]",
         ])
         chunk = "\n".join(lines)

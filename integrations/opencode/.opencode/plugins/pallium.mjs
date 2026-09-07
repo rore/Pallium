@@ -39,6 +39,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const SESSION_START_BUDGET = 1200;
 const USER_PROMPT_BUDGET = 2400;
+const RELAY_NOTICE_RESERVE = [..."[Relay: 999+ more; Pallium continues.]"].length + 2;
+const RELAY_TURN_BUDGET = USER_PROMPT_BUDGET - RELAY_NOTICE_RESERVE;
 const TRIGGER_BUDGET = 1200;
 const CONTENT_LENGTH_GATE = 20000;
 const RETRY_THRESHOLD = 3;
@@ -381,9 +383,14 @@ export default async ({ client, directory, worktree } = {}) => {
             session_ref: sessionId,
             container_ref: containerRef,
             actor_ref: actorRef,
+            max_chars: RELAY_TURN_BUDGET,
           }, 750);
           const deliveries = (relayResponse && relayResponse.deliveries) || [];
-          const { text: relayText, deliveries: renderedDeliveries } = pallium.formatRelay(deliveries);
+          const remainingCount = relayResponse?.has_more === true && Number.isInteger(relayResponse.remaining_count)
+            ? relayResponse.remaining_count : 0;
+          const { text: relayText, deliveries: renderedDeliveries } = pallium.formatRelay(
+            deliveries, USER_PROMPT_BUDGET, remainingCount,
+          );
           const scopeText = pallium.formatInjection(
             [], containerRef, 2400, sessionId, actorRef, pallium.AGENT_REF, "private", null, currentWorkRef,
           );
