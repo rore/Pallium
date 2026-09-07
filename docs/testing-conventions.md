@@ -1,5 +1,15 @@
 # Testing Conventions
 
+## Development loop
+
+Keep normal edit feedback targeted and serial so pytest does not pay four spawned-worker startups for one file:
+
+```powershell
+python -m pytest tests/test_example.py::test_case -q -n 0
+```
+
+After a coherent change, run the affected subsystem files. Rerun only recorded failures with `python -m pytest --lf --lfnf=none -q -n 0`. A focused slow-marked target needs `-m slow`. Run the full non-slow suite, `python -m pytest tests/ -x -q`, once before review or PR rather than after every edit.
+
 ## Test marking
 
 Any new test file that falls into one of these categories MUST be marked `pytestmark = pytest.mark.slow` at module level:
