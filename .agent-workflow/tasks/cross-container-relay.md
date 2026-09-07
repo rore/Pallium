@@ -108,12 +108,13 @@ Approved: the revised plan resolves all five blocking findings. It explicitly pr
 
 ## Result review
 
-Implemented and reviewed. Persistence/security review found and verified fixes for permanent orphan adoption during same-DB-to-split migration, mutable target alias removal on restart, and alias resurrection during interrupted split recovery. API/wake review found and verified fixes for duplicate native Claude session IDs across containers plus scoped wake-intent upgrade, corruption, persistence-failure, repeated-recovery, and restart safety. Both smart-model re-reviews report no remaining concrete findings.
+Implemented and reviewed. Persistence/security review found and verified fixes for permanent orphan adoption during same-DB-to-split migration, mutable target alias removal on restart, and alias resurrection during interrupted split recovery. API/wake review found and verified fixes for duplicate native Claude session IDs across containers plus scoped wake-intent upgrade, corruption, persistence-failure, repeated-recovery, and restart safety. Both smart-model re-reviews report no remaining concrete findings. Independent Claude architect review of PR #133 at `fbd4b374` likewise found no blockers; its alias-authority observation is clarified in the schema, while migration-only orphan observability is deliberately deferred because permanent orphan behavior is already explicit and covered.
 
 Verification:
 - Focused cross-container, migration, FastMCP, Claude wake, and Codex wake matrix: 241 passed, 2 skipped.
 - Complete Claude wake regression matrix after final intent-precedence hardening: 140 passed, 2 skipped.
-- Full repository suite on rebased latest main after all review fixes: 4598 passed, 32 skipped, 2 expected failures.
+- Full repository suite on the prior rebased main after all review fixes: 4598 passed, 32 skipped, 2 expected failures.
+- After rebasing onto `origin/main` at `80cf4312`: complete dev+vector suite 4478 passed, 48 skipped, 2 expected failures; affected all-extras Relay/FastMCP/hook/capacity suite 125 passed.
 - Diff hygiene and Python syntax compilation: clean.
 - Import-linter report: zero violations.
 

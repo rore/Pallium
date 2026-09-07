@@ -529,6 +529,8 @@ class RelaySessionRecord(Base):
 
     __table_args__ = (
         UniqueConstraint("container_ref", "runtime", "session_ref", name="uq_relay_session_scope"),
+        # Legacy per-container guard for the denormalized session mirror only;
+        # RelayAliasRecord is authoritative for actor-global alias ownership.
         UniqueConstraint(
             "container_ref", "actor_ref", "runtime", "alias", name="uq_relay_session_alias"
         ),
