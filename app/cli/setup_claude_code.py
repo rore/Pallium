@@ -159,7 +159,7 @@ def _reconcile_posttool_hook(settings: dict) -> None:
     event = "PostToolUse"
     command = _hook_command("post_tool_use.py")
     hooks = settings.setdefault("hooks", {})
-    existing = hooks.get(event, [])
+    existing = hooks.setdefault(event, [])
     if not isinstance(existing, list):
         return
     def managed(value: object) -> bool:

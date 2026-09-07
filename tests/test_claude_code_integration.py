@@ -326,6 +326,24 @@ def test_claude_setup_registers_session_end_once_and_uninstall_removes_it(monkey
     assert "SessionEnd" not in json.loads(settings.read_text(encoding="utf-8")).get("hooks", {})
 
 
+def test_posttool_hook_enabled_on_fresh_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(setup_claude_code, "_pallium_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("PALLIUM_POSTTOOL_TRIGGERS", "1")
+    settings = {}
+
+    setup_claude_code._register_hooks(settings)
+    setup_claude_code._register_hooks(settings)
+
+    managed = [
+        hook
+        for entry in settings["hooks"]["PostToolUse"]
+        for hook in entry["hooks"]
+        if hook["command"].endswith("post_tool_use.py")
+    ]
+    assert len(managed) == 1
+
 def test_posttool_hook_is_opt_in_and_preserves_unrelated_entries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(setup_claude_code, "_pallium_repo_root", lambda: tmp_path)
     unrelated = {"matcher": "Bash", "hooks": [{"type": "command", "command": "other-tool"}]}

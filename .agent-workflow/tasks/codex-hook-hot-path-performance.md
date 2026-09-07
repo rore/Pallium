@@ -53,7 +53,7 @@ Clean-context review (2026-09-07):
 
 ## Evidence
 
-- Managed PostToolUse setup regressions: 17 passed.
+- Managed PostToolUse setup regressions: 18 passed.
 - Semantic-unavailable route/service regressions: 28 passed (4 existing Pydantic warnings).
 - Cache, context transition, wake, and real caller-surface regressions: 115 passed, 1 skipped; independent result review reran 152 passed, 1 skipped.
 - Full parallel-safe CI-equivalent suite: 4,519 passed, 31 skipped, 2 xfailed, 4 existing Pydantic warnings in 154.94 s.
@@ -63,4 +63,4 @@ Clean-context review (2026-09-07):
 
 ## Result review
 
-Independent clean-context review initially found three cache lifecycle issues: stale close completion, long-session resume sweeping, and incomplete actor-cache reuse. Re-review then found pre-lock predecessor loss and payload-cwd actor drift. Commit ac8e9e39 fixes all findings with locked transition union, generation-guarded completion, TTL refresh, fail-closed scope retention, exact context validation, and payload-cwd actor refresh. The final reviewer reported no remaining blockers; API review and architecture review both pass.
+Independent clean-context review initially found three cache lifecycle issues: stale close completion, long-session resume sweeping, and incomplete actor-cache reuse. Re-review then found pre-lock predecessor loss and payload-cwd actor drift. Commit ac8e9e39 fixes all findings with locked transition union, generation-guarded completion, TTL refresh, fail-closed scope retention, exact context validation, and payload-cwd actor refresh. The final reviewer reported no remaining blockers; API review and architecture review both pass. CodeRabbit then found and the branch fixed a fresh-config PostToolUse persistence bug. Its stale-lock deletion suggestion was not applied because unlinking a lock path can split POSIX processes across different inodes and invalidate mutual exclusion.
