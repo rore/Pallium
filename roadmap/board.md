@@ -1,6 +1,3 @@
-# Active · Engineering Health
-- optimize-developer-test-loop
-
 # Next · Agent Relay
 - investigate-cross-repository-relay-coordination
 - add-dashboard-operations-and-relay-workspace
@@ -52,6 +49,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- optimize-developer-test-loop
 - stabilize-test-health-and-ci-cost
 - add-budgeted-long-relay-messages
 - fix-disabled-derived-memory-injection-observability

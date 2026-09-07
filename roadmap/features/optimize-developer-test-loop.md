@@ -1,7 +1,7 @@
 ---
 id: optimize-developer-test-loop
 title: Optimize the developer test loop
-status: in_progress
+status: done
 priority: high
 commitment: committed
 milestone: engineering-health
