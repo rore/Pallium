@@ -113,7 +113,7 @@ Implemented and reviewed. Persistence/security review found and verified fixes f
 Verification:
 - Focused cross-container, migration, FastMCP, Claude wake, and Codex wake matrix: 241 passed, 2 skipped.
 - Complete Claude wake regression matrix after final intent-precedence hardening: 140 passed, 2 skipped.
-- Full repository suite after all review fixes: 4578 passed, 32 skipped, 2 expected failures.
+- Full repository suite on rebased latest main after all review fixes: 4598 passed, 32 skipped, 2 expected failures.
 - Diff hygiene and Python syntax compilation: clean.
 - Import-linter report: zero violations.
 
