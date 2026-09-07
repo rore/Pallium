@@ -215,7 +215,7 @@ def main() -> None:
         cwd = payload.get("cwd", ".")
         session_id = payload.get("session_id") or ""
         container_ref = resolve_container_ref(cwd, session_id)
-        actor_ref = derive_actor_ref()
+        actor_ref = derive_actor_ref(cwd, session_id)
 
         tool_name = (payload.get("tool_name") or "").strip()
         tool_input = payload.get("tool_input") or {}

@@ -119,6 +119,51 @@ def test_codex_build_work_trace_metadata_captures_files_modified():
     assert result is not None
     assert result["files_modified"] == ["src/b.py"]
 
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_configured_actor_precedes_git_and_deadline_but_not_valid_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, module,
+) -> None:
+    """The integration-owned override is fresh-session only and never needs Git."""
+    monkeypatch.setattr(module, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", "  מפעיל 統一  ")
+    monkeypatch.setattr(
+        module.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("configured actor must bypass Git"),
+    )
+    assert module.derive_actor_ref(str(tmp_path), "configured") == "מפעיל 統一"
+    monkeypatch.setattr(module, "_HOOK_DEADLINE", None)
+
+    module.start_hook_deadline(0, clock=lambda: 1.0)
+    assert module.derive_actor_ref(str(tmp_path), "expired") == "מפעיל 統一"
+
+    context = module._identity_context(str(tmp_path))
+    assert context is not None
+    monkeypatch.setattr(module, "_read_session_state", lambda _sid: {**context, "actor_ref": "cached actor"})
+    assert module.derive_actor_ref(str(tmp_path), "resumed") == "cached actor"
+
+    monkeypatch.setattr(module, "_read_session_state", lambda _sid: None)
+    monkeypatch.setattr(module, "_cache_identity_context", lambda *_args, **_kwargs: False)
+    assert module.derive_actor_ref(str(tmp_path), "cache-write-failure") == "מפעיל 統一"
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+@pytest.mark.parametrize("configured", (None, "   "))
+def test_blank_or_unset_configured_actor_keeps_git_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, module, configured: str | None,
+) -> None:
+    if configured is None:
+        monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
+    else:
+        monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", configured)
+    monkeypatch.setattr(module, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(module, "_bounded_timeout", lambda _timeout: 1.0)
+
+    class Result:
+        returncode = 0
+        stdout = "Git Fallback\n"
+
+    monkeypatch.setattr(module.subprocess, "run", lambda *_args, **_kwargs: Result())
+    assert module.derive_actor_ref(str(tmp_path), "fallback") == "Git Fallback"
 def _make_repo(root: Path, branch: str = "feature/item", *, record: bool = True) -> None:
     git_dir = root / ".git"
     git_dir.mkdir(parents=True)

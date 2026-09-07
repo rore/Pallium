@@ -10,6 +10,16 @@ applies only within the same actor; Session History and derived-memory scoping
 are unchanged. Routing uses explicit session identity; it does not use search,
 embeddings, ranking, or an LLM.
 
+## Stable hook actor identity
+
+Set the same nonblank, trimmed `PALLIUM_HOOK_ACTOR_REF` in the process environment
+of every participating Claude Code, Codex, and OpenCode host before starting fresh
+sessions. It controls hook attribution, Session History, and derived-memory
+attribution across repositories; existing valid Python session-cache pins and
+OpenCode session pins remain authoritative until reset/invalidation. This
+variable is not authentication and is separate from the paired MCP trusted-scope
+variables `PALLIUM_ACTOR_REF` and `PALLIUM_CONTAINER_REF`.
+
 ## Send a message
 
 Tell an agent what to send and which session should receive it:

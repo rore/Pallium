@@ -67,16 +67,34 @@ test("deriveContainerRef derives a stable ref for this repo checkout", () => {
 });
 
 test("deriveActorRef uses the repository identity when the plugin cwd differs", () => {
+  const prior = process.env.PALLIUM_HOOK_ACTOR_REF;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pallium-oc-actor-"));
   try {
+    delete process.env.PALLIUM_HOOK_ACTOR_REF;
     execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
     execFileSync("git", ["config", "user.name", "Relay Operator"], { cwd: dir });
     assert.equal(P.deriveActorRef(dir), "Relay Operator");
   } finally {
+    if (prior === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = prior;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
+test("deriveActorRef trims the configured actor, while a pinned actor remains authoritative", () => {
+  const prior = process.env.PALLIUM_HOOK_ACTOR_REF;
+  try {
+    process.env.PALLIUM_HOOK_ACTOR_REF = "  מפעיל 統一  ";
+    assert.equal(P.deriveActorRef(process.cwd()), "מפעיל 統一");
+    P.pinContainer("configured-pin", "path:configured", undefined, "Pinned Actor");
+    process.env.PALLIUM_HOOK_ACTOR_REF = "Different Actor";
+    assert.equal(P.resolveActorRef(process.cwd(), "configured-pin"), "Pinned Actor");
+  } finally {
+    if (prior === undefined) delete process.env.PALLIUM_HOOK_ACTOR_REF;
+    else process.env.PALLIUM_HOOK_ACTOR_REF = prior;
+    P.removeSessionPin("configured-pin");
+  }
+});
 // --- redaction --------------------------------------------------------------
 
 test("redactSensitive matches the Python behavioral-parity cases exactly", () => {

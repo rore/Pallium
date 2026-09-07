@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -966,3 +967,81 @@ def test_relay_ack_batch_stops_at_shared_deadline(
         assert result == [DELIVERY]
     else:
         assert result is None
+
+
+@pytest.mark.parametrize(
+    ("runtime", "relative", "codex"),
+    [
+        ("claude-code", "integrations/claude-code/hooks/user_prompt_submit.py", False),
+        ("codex", "integrations/codex/hooks/user_prompt_submit.py", True),
+    ],
+)
+def test_configured_actor_hook_registers_and_delivers_across_git_containers(
+    client, monkeypatch, tmp_path: Path, runtime: str, relative: str, codex: bool,
+):
+    """Real Relay reads see one configured identity despite distinct local Git names."""
+    hook = _load(f"stable_actor_{runtime}", relative)
+    repos = []
+    for name, git_name in (("source", "Source Git Name"), ("target", "Target Git Name")):
+        repo = tmp_path / name
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", git_name], cwd=repo, check=True, capture_output=True)
+        repos.append(repo)
+    source, target = repos
+    actor = "מפעיל 統一"
+    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", f"  {actor}  ")
+    monkeypatch.setitem(hook.derive_actor_ref.__globals__, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_args: ([], 0))
+    monkeypatch.setattr(hook, "check_dedup", lambda *_args: False)
+    monkeypatch.setattr(hook, "pallium_request", lambda *_args, **_kwargs: None)
+
+    def relay(method, path, body, *, timeout):
+        response = client.request(method, path, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def acknowledge(deliveries, *, container_ref, actor_ref):
+        for delivery in deliveries:
+            response = client.post("/relay/deliveries/ack", json={
+                "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"],
+                "container_ref": container_ref, "actor_ref": actor_ref,
+            })
+            assert response.status_code == 200, response.text
+        return deliveries if runtime == "claude-code" else None
+
+    monkeypatch.setattr(hook, "relay_request", relay)
+    monkeypatch.setattr(hook, "acknowledge_relay", acknowledge)
+    emitted: list[str] = []
+    if codex:
+        monkeypatch.setattr(hook, "emit_context", lambda text, _event: emitted.append(text))
+    else:
+        monkeypatch.setattr(hook, "emit_utf8", lambda text, **_kwargs: emitted.append(text) or True)
+        monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
+
+    payload = {"cwd": str(source), "session_id": "source-session", "prompt": "hi"}
+    monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
+    with pytest.raises(SystemExit):
+        hook.main()
+    payload = {"cwd": str(target), "session_id": "target-session", "prompt": "hi"}
+    monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    target_container = hook.resolve_container_ref(str(target), "target-session")
+    sessions = client.get("/relay/sessions", params={"container_ref": target_container, "actor_ref": actor}).json()
+    assert [(row["runtime"], row["session_ref"]) for row in sessions] == [(runtime, "target-session")]
+    target_endpoint = sessions[0]["endpoint_id"]
+    source_container = hook.resolve_container_ref(str(source), "source-session")
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": runtime, "sender_session_ref": "source-session",
+        "recipient": target_endpoint, "payload": "cross-container delivery",
+        "container_ref": source_container, "actor_ref": actor,
+    })
+    assert sent.status_code == 200, sent.text
+    payload = {"cwd": str(target), "session_id": "target-session", "prompt": "deliver this"}
+    monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert any("cross-container delivery" in text for text in emitted)
+    assert client.get(f"/relay/messages/{sent.json()['message_id']}", params={"container_ref": target_container, "actor_ref": actor}).json()["deliveries"][0]["state"] == "delivered"

@@ -883,6 +883,11 @@ def derive_actor_ref(
         ):
             return cached
 
+    actor_ref = os.environ.get("PALLIUM_HOOK_ACTOR_REF", "").strip()
+    if actor_ref:
+        _cache_identity_context(session_id, context, actor_ref=actor_ref)
+        return actor_ref
+
     actor_ref = "local"
     timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
     if timeout <= 0:
