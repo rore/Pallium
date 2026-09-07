@@ -62,7 +62,8 @@ The Session History target is now a package-independent raw record of governed
 agent work. Generated memories are optional and disabled by default.
 
 The Session History slice is ordered. The first three items are shipped; the next
-step is a committed, time-boxed investigation:
+step is improving search and agent search behavior from existing usage evidence,
+followed by the broader access/representation investigation:
 
 1. `add-structural-session-work-references` — shipped: attach branch, exact Agent
    Workflow Work Record, and explicit issue/PR/ticket references without semantic
@@ -76,7 +77,12 @@ step is a committed, time-boxed investigation:
    `fix-disabled-derived-memory-injection-observability` slice makes disabled
    automatic queries telemetry-silent and exposes the real injection mode.
    Existing code and stored outputs remain usable.
-4. `investigate-history-navigation-and-on-demand-compression` — compare flat,
+4. `improve-session-history-search-quality` — widen the real-data diagnostic and
+   implement the smallest supported retrieval, presentation, or guidance fixes.
+   Exact-work search stays exact; missing old references do not justify default
+   scope expansion. The immediate question is how to recover the right evidence,
+   not whether history can help in principle.
+5. `investigate-history-navigation-and-on-demand-compression` — compare flat,
    grouped, and index-first access plus raw, temporary on-demand compression, and
    persistent-derived representations before committing to another structure.
 

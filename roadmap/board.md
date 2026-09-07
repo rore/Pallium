@@ -3,6 +3,7 @@
 - add-dashboard-operations-and-relay-workspace
 
 # Parallel · Session History
+- improve-session-history-search-quality
 - investigate-history-navigation-and-on-demand-compression
 
 # Parallel · Agent Relay
