@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
-from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
-import uuid
 import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
@@ -1734,20 +1734,25 @@ class PalliumService:
             except Exception:
                 self._logger.warning("memory_usage_audit row population failed", exc_info=True)
 
-    def enqueue_memory_usage_audit(self, thread_ref: str | None, response_text: str | None) -> bool:
-        if not thread_ref or not response_text or not self._audit_slots.acquire(blocking=False):
+    def enqueue_memory_usage_audit(self, source_item_id: str | None) -> bool:
+        if not source_item_id or not self._audit_slots.acquire(blocking=False):
             return False
         try:
-            self._audit_executor.submit(self._run_audit_job, thread_ref, response_text)
+            self._audit_executor.submit(self._run_audit_job, source_item_id)
             return True
         except Exception:
             self._audit_slots.release()
             self._logger.warning("memory_usage_audit enqueue failed", exc_info=True)
             return False
 
-    def _run_audit_job(self, thread_ref: str, response_text: str) -> None:
+    def _run_audit_job(self, source_item_id: str) -> None:
         try:
-            self.populate_memory_usage_audit(thread_ref, response_text)
+            item = self._storage.get_source_item(source_item_id)
+            if item.role != "assistant" or not item.thread_ref or not item.content:
+                return
+            self.populate_memory_usage_audit(item.thread_ref, item.content)
+        except KeyError:
+            return
         except Exception:
             self._logger.warning("memory_usage_audit job failed", exc_info=True)
         finally:
@@ -1755,6 +1760,7 @@ class PalliumService:
 
     def close(self) -> None:
         self._audit_executor.shutdown(wait=True, cancel_futures=True)
+
     def list_memory_usage_audit(self, query_audit_log_id: str) -> list[dict]:
         """Phase 5: list usage-audit rows for a given query.
 

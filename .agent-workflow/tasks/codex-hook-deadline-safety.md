@@ -66,7 +66,8 @@ Not required at this risk level.
 - 2026-09-07: Established scope from the user-approved two-PR performance plan and recovered the prior Claude architecture review. PR #129 is merged; this branch starts from main 9ccdcccd.
 - 2026-09-07: Pre-edit redline review reported a red-zone orchestrator touch (core/service.py), no boundary violation, and minimum Elevated risk.
 - 2026-09-07: Discovery disproved reuse of the semantic source-item worker for all audit work because no-package assistant items are never claimed. Revised the plan to a bounded post-ingest executor with explicit lifecycle and pending-row retry semantics.
-- 2026-09-07: Implemented the server-owned slice: moved the pure matcher to `core/usage_audit_matcher.py` with an integration compatibility re-export; added a one-worker, one-queued-slot audit executor and per-row population method to `PalliumService`; assistant `/items` ingestion enqueues best-effort work; shutdown drains audit work before SQLite close. Used the documented deterministic file-write fallback after Windows patch helper error 1327.
+- 2026-09-07: Implemented the correction pass: queueing carries only the durable source-item ID; the worker loads the persisted assistant item and skips missing, non-assistant, or empty rows; the hook compatibility import resolves the checkout root temporarily. Focused tests cover source-ID dispatch and saturation.
+- 2026-09-07: The original server-owned slice remains in commit 22521477: core matcher relocation, bounded executor, per-row population, assistant `/items` enqueue, and shutdown drain.
 
 ## Evidence
 

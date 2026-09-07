@@ -10,6 +10,7 @@ def _service(monkeypatch):
     service._audit_executor = ThreadPoolExecutor(max_workers=1)
     service._audit_slots = __import__("threading").BoundedSemaphore(2)
     service._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
+    service._storage = SimpleNamespace()
     return service
 
 
@@ -34,10 +35,11 @@ def test_audit_queue_saturation_and_shutdown_are_deterministic(monkeypatch):
     def work(*_args):
         started.set(); release.wait(); finished.set()
     service.populate_memory_usage_audit = work
-    assert service.enqueue_memory_usage_audit("t", "r")
+    service._storage.get_source_item = lambda _id: SimpleNamespace(role="assistant", thread_ref="thread", content="persisted redacted")
+    assert service.enqueue_memory_usage_audit("source-2")
     assert started.wait(1)
-    assert service.enqueue_memory_usage_audit("t", "r")
-    assert not service.enqueue_memory_usage_audit("t", "r")
+    assert service.enqueue_memory_usage_audit("source-2")
+    assert not service.enqueue_memory_usage_audit("source-3")
     release.set()
     service.close()
     assert finished.is_set()
