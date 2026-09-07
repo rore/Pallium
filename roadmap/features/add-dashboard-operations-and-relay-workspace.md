@@ -67,6 +67,33 @@ artifact:
 2. every proposed datum classified as reusable now, new dashboard API, dependent on
    cross-container Relay, or dependent on runtime-specific native discovery.
 
+## UX reference and implementation handoff
+
+Open [the interactive UX mock](../../docs/designs/dashboard-operations-relay-ux.html)
+in a browser. This standalone repo-local reference illustrates navigation,
+progressive disclosure, selection, and drill-down—not graphic design. Preserve the
+production design system. Synthetic data, IDs, health values, and simplified alias
+behavior are not API contracts; this feature and canonical backend semantics take
+precedence over mock simplifications.
+The older [two-view design](../../docs/designs/dashboard-two-view-ux.md) documents
+the previous Operational / How memory helps implementation; its top-level
+information architecture is superseded by this feature, not a competing target.
+
+Everyday journeys:
+
+- Operations: scan health → expand a capability → select a stored item → inspect
+  content, provenance, and bounded context.
+- Relay alert: open the workspace with the relevant state/item selected, with a
+  clear way back to general browsing.
+- Relay: find a session by name, runtime, or container → select a session or graph
+  connection → read messages → inspect delivery or follow a parent reply.
+- Derived Memory: expand the capability → browse preserved objects → inspect a
+  memory and its existing diagnostics, including with new derivation disabled.
+
+Before coding, reconcile the current-state audit and API/dependency matrices with
+the checkout. Cross-container Relay is in active development; do not assume either
+the old contract or its planned replacement is the shipped contract.
+
 ## Information architecture
 
 ### Operations
@@ -74,6 +101,14 @@ artifact:
 Operations answers: **Is Pallium working correctly, and what is happening inside
 each enabled capability?** Keep one compact service-health summary first, followed
 by capability-oriented collapsible sections.
+
+Use full-width capability sections rather than explorers inside small summary
+cards. Keep service health, alerts, and each capability's health/enabled summary
+visible when collapsed. Nest explorers under their owning capability. Start them
+collapsed and remember expansion preferences locally. Alert navigation opens the
+relevant section and selects its item. Collapsing preserves selection and filters.
+Use keyboard-operable expanders with accurate expanded state. Relay links to its
+dedicated workspace rather than duplicating its explorer here.
 
 #### Session History / source ingestion
 
@@ -108,11 +143,15 @@ not duplicate the Relay workspace.
 
 #### Derived Memory
 
-Treat Derived Memory as optional. When disabled, show one compact Disabled state
-and, if useful, a count of preserved historical derived objects—not empty zero-valued
-panels. When enabled, place the existing package/extraction queue, memory counts,
-Memory Browser, derived query/injection/skip/feedback/flag diagnostics, Query Debug,
-and extraction failures here.
+Treat Derived Memory as optional, not deprecated. Preserve Memory Browser and
+Query Debug under its collapsible section. Disabled means new processing is off:
+show that compact state and a count of preserved objects, while keeping stored
+memories browsable and inspectable under the same governance. Do not hide the
+explorer or erase data when derivation is disabled. Show an honest empty state
+when no memories exist and distinguish historical diagnostics from unavailable
+live processing. When enabled, show the existing package/extraction queue, memory
+counts, derived query/injection/skip/feedback/flag diagnostics, and extraction
+failures here. Disabled processing is not a failure or a wall of zero metrics.
 
 Move existing historical lookup/reuse measurements under Session History evaluation.
 Move RAW/DERIVED/HYBRID and derivation-fidelity reports under Derived Memory. Preserve
@@ -133,6 +172,14 @@ session reference/title, container/repository/worktree metadata, last seen,
 lifecycle, and persisted destination health. Show wake capability/status only from
 observable evidence.
 
+Show the container on every session surface: list, graph node, and detail. Use a
+readable container name and expose the canonical full reference in details;
+distinguish repository/worktree metadata when available. Include containers in
+session search and filtering. Duplicate readable names remain distinguishable
+through canonical endpoint/container references. Missing metadata is explicitly
+unknown, never inferred from the dashboard checkout. Cross-container edges are
+visible within the authorized actor domain without widening History/Memory access.
+
 Allow assign, transfer, and remove alias through the existing canonical naming
 semantics. Provide copy actions for canonical exact selectors and alias selectors.
 Naming is optional addressing metadata, not registration, permission, or Relay
@@ -150,9 +197,12 @@ Render an observational graph:
 - node click opens session detail; edge click opens pairwise message history.
 
 An edge never means permission, dependency, workflow transition, or an executable
-rule. Start by deriving graph edges client-side from the same bounded message page
-used by the explorer. Add a separate aggregate endpoint only if real volume or
-latency proves that projection inadequate.
+rule. Derive the initial graph from a complete, explicitly bounded message window
+using the shared message projection. One paginated page is not the whole window:
+either exhaust its bounded pages or visibly label coverage as partial/truncated
+and offer a way to load more. Never present first-page counts as complete activity.
+Pair selection and the explorer must agree on window and filters. Add a separate
+aggregate endpoint only if real volume or latency warrants it.
 
 #### Message explorer
 
@@ -263,7 +313,10 @@ not widen Session History or Derived Memory visibility.
    and graph interaction cannot create messages or workflow state.
 8. Run the real dashboard in a browser at desktop and narrow widths, with empty,
    realistic, and high-cardinality fixtures. Iterate visually and keep screenshots;
-   HTML substring tests alone do not validate the UX.
+   HTML substring tests alone do not validate the UX. Cover capability collapse and
+   preference restore, alert-to-item navigation, preserved-memory exploration while
+   derivation is disabled, container labels on every session surface, duplicate and
+   missing container names, and graph coverage across pagination.
 9. Update docs/dashboard.md and screenshots so public documentation describes
    Operations + Relay and the package-free primary configuration. Keep Relay and
    Session History docs aligned with the accepted cross-container contract.
