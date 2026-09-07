@@ -49,8 +49,8 @@
 
 ## Evidence
 
-- Rebased cleanly onto `origin/main` at `77524aa9` with no conflicts.
-- Post-rebase focused Python verification: 297 passed, 1 existing warning, 0 failures.
+- Rebased cleanly onto current `origin/main` at `fb39d3a5` with no conflicts; the final upstream change touched only an unrelated Codex wake test and Work Record.
+- Full focused Python verification before the final non-overlapping upstream update: 297 passed; final-base stable-actor/lifecycle verification: 216 passed, 1 existing warning, 0 failures.
 - OpenCode integration verification: 48 passed, 7 Windows-specific skips, 0 failures.
 - Review-fix verification: `tests/test_claude_wake_registration.py` 55 passed, 1 existing warning.
 - `git diff --check origin/main...HEAD` passed; only expected Windows line-ending notices appeared.
