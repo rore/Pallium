@@ -1,12 +1,14 @@
 # Relay wake Phase 0 decision record
 
-**Status:** Active — supersedes per-runtime verdict in 016
+**Status:** Historical Phase 0 decision — superseded for current qualification by `roadmap/features/add-wake-first-relay-delivery.md`
 **Scope:** Installed Claude Code 2.1.250, Codex CLI 0.149.1, OpenCode 1.18.19, native Windows
 **Gate:** Every runtime adapter in PR 3–5 must reference this record and pass all seven Phase 0 cases before merging.
 
+**Current qualification (2026-09-07):** Codex exact-session automatic wake is qualified on Windows and Linux; Claude Code is qualified on Windows and Linux. macOS, the remaining Codex lifecycle/setup gates, and OpenCode active wake remain. The Linux Codex witness used Ubuntu 24.04 under WSL2 with Codex 0.153.4, explicit repository and exact-hook hash trust, and no trust-bypass flag. First-run hook trust remains a setup prerequisite, not an unproven transport path or product defect. See the current runtime matrix in the wake-first roadmap item.
+
 ## Per-runtime verdict
 
-Verdicts are based on official documentation, integration tests, and installed-runtime probes. All three runtimes remain **passive-only** for production. Codex has proven exact-session `codex queue --thread` admission while idle and at a safe busy boundary. Claude Code has now proven exact-session idle wake through its native authenticated Windows inbox, but direct busy ingress is unsafe for Relay semantics and native duplicate suppression failed. OpenCode has partial transport evidence. No active wake adapter PR may merge until its runtime section is fully evidenced and coordinator-owned dedupe, admission, and fallback are implemented.
+The following verdicts record the Phase 0 state at the time of these probes; they are not the current production matrix. At that time, all three runtimes remained **passive-only** for production. Codex has proven exact-session `codex queue --thread` admission while idle and at a safe busy boundary. Claude Code has now proven exact-session idle wake through its native authenticated Windows inbox, but direct busy ingress is unsafe for Relay semantics and native duplicate suppression failed. OpenCode has partial transport evidence. No active wake adapter PR may merge until its runtime section is fully evidenced and coordinator-owned dedupe, admission, and fallback are implemented.
 
 | Runtime | Verdict | Implementation order |
 |---|---|---|
@@ -250,7 +252,7 @@ Working values for adapter development. None have been measured against an insta
 | Capability heartbeat interval | 15 s | Unconfirmed | Gate: measure against each runtime before PR 3–5 |
 | Capability lease | 45 s | 3× heartbeat; provisional | Gate: same as heartbeat |
 
-## Remaining production gates (must resolve before adapter PRs)
+## Historical production gates (recorded before adapter PRs)
 
 1. Claude Code is `idle_wake` only: coordinator-owned idle gating, dedupe, exact admission, restart/error fallback, and macOS/Linux UDS E2E remain.
 2. Channels is unavailable in the qualified environment; keep it deferred until the documented hidden flag is accepted by a future runtime/account combination.

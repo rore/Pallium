@@ -157,9 +157,9 @@ Relay has two design invariants:
   restart, or continuously coordinate agents
 
 R1 explicit runtime/session Relay is shipped. Wake-first delivery with deterministic
-next-turn fallback is qualified for Claude Code on Windows/Linux and Codex on
-Windows. The active wake-first item owns the remaining Codex lifecycle and
-first-run setup gates, macOS Claude and non-Windows Codex qualification, and
+next-turn fallback is qualified for Claude Code and Codex on Windows/Linux.
+The active wake-first item owns the remaining Codex lifecycle and
+first-run setup gates, macOS Claude/Codex qualification, and
 OpenCode activation. Three dependency-workflow E2E scenarios follow and drive
 public positioning and usage guidance. Add only further extensions repeatedly
 demanded by real use. See `roadmap/ideas/idea-agent-relay.md`.
