@@ -29,15 +29,17 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Reconciled Claude PostToolUse setup conditionally on PALLIUM_POSTTOOL_TRIGGERS=1, preserving unrelated and malformed entries across idempotent enable-disable cycles.
-- Established context and completed focused discovery from the live timeout incident, source paths, tests, Claude architect review, and pre-edit redline classification.
-- Resolved the clean-context review blocker in the plan with portable per-session locking, fail-open cache reads, and a single executor-owned semantic availability path; re-review accepted the revision and implementation is ready to begin.
+- Made Claude PostToolUse installation opt-in with PALLIUM_POSTTOOL_TRIGGERS=1; disabled setup removes only Pallium's exact managed entry and preserves unrelated or malformed configuration.
+- Added a dependency-free, bounded, cross-platform per-session state lock and atomic merge/replace for stable container/actor identity. Repository/configuration changes invalidate identity; branch, Work Record, and explicit work refs remain live.
+- Made project transitions generation-safe: predecessor close obligations are unioned inside the lock, stale completions cannot overwrite newer state, lock failure retains the pinned scope, and resume/clear refreshes live state before TTL sweeping.
+- Added executor-owned semantic-package availability detection so unavailable /item-and-query calls ingest once and preserve the existing abstention response/stat contract without runtime-context, retrieval, or audit work.
+- apply_patch failed under the documented Windows sandbox limitation; subsequent edits used narrowly scoped deterministic replacements and Git-native patches.
 
 ## Plan review
 
@@ -51,8 +53,14 @@ Clean-context review (2026-09-07):
 
 ## Evidence
 
-Pending implementation.
+- Managed PostToolUse setup regressions: 17 passed.
+- Semantic-unavailable route/service regressions: 28 passed (4 existing Pydantic warnings).
+- Cache, context transition, wake, and real caller-surface regressions: 115 passed, 1 skipped; independent result review reran 152 passed, 1 skipped.
+- Full parallel-safe CI-equivalent suite: 4,519 passed, 31 skipped, 2 xfailed, 4 existing Pydantic warnings in 154.94 s.
+- CI-serial service-wrapper and structural-work suite: 36 passed, 1 skipped, 1 existing warning in 82.69 s.
+- Focused identity timing: uncached median 198.40 ms; cached median 2.17 ms; cached maximum 30.86 ms.
+- git diff --check, Python compilation, and agent-workflow-check are clean.
 
 ## Result review
 
-Pending implementation.
+Independent clean-context review initially found three cache lifecycle issues: stale close completion, long-session resume sweeping, and incomplete actor-cache reuse. Re-review then found pre-lock predecessor loss and payload-cwd actor drift. Commit a7490ad9 fixes all findings with locked transition union, generation-guarded completion, TTL refresh, fail-closed scope retention, exact context validation, and payload-cwd actor refresh. The final reviewer reported no remaining blockers; API review and architecture review both pass.
