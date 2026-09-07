@@ -69,7 +69,6 @@ from core.errors import ImmediateTransactionBusyError, LookupRequestLinkError, S
 from core.relay import RELAY_MESSAGE_MAX_CHARS, RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
 from core.service import PalliumService
-from core.turn_inference import resolve_runtime_context
 from core.visibility import QueryVisibilityTrace, Visibility, VisibilityExclusion
 
 
@@ -867,12 +866,6 @@ def create_router(
             visibility=request.visibility_kind(),
         )
         query_text = request.query_text or request.content
-        runtime_context = resolve_runtime_context(
-            service._storage,
-            request.thread_ref,
-            _deserialize_runtime_context(request.runtime_context),
-            exclude_item_id=ingest_result.source_item_id,
-        )
         _trigger_origin = _validate_trigger_origin(
             getattr(request, "query_trigger_origin", None)
         )
@@ -884,7 +877,8 @@ def create_router(
             actor_ref=request.query_actor_ref,
             work_refs=_normalize_query_work_refs(request.work_refs),
             visibility=request.visibility_kind(),
-            runtime_context=runtime_context,
+            runtime_context=_deserialize_runtime_context(request.runtime_context),
+            exclude_item_id=ingest_result.source_item_id,
             trigger_origin=_trigger_origin,
         )
         lookup_event_id = _maybe_write_query_audit(
@@ -920,12 +914,6 @@ def create_router(
             visibility=request.visibility_kind(),
         )
         query_text = request.query_text or request.content
-        runtime_context = resolve_runtime_context(
-            service._storage,
-            request.thread_ref,
-            _deserialize_runtime_context(request.runtime_context),
-            exclude_item_id=ingest_result.source_item_id,
-        )
         _trigger_origin = _validate_trigger_origin(
             getattr(request, "query_trigger_origin", None)
         )
@@ -937,7 +925,8 @@ def create_router(
             actor_ref=request.query_actor_ref,
             work_refs=_normalize_query_work_refs(request.work_refs),
             visibility=request.visibility_kind(),
-            runtime_context=runtime_context,
+            runtime_context=_deserialize_runtime_context(request.runtime_context),
+            exclude_item_id=ingest_result.source_item_id,
             include_trace=True,
             trigger_origin=_trigger_origin,
         )
