@@ -20,6 +20,9 @@ consumers of the raw history substrate and are disabled by default.
 - Raw ingestion and lexical indexing happen before optional package processing.
 - Raw-source vector text and indexing are package-independent.
 - Source-only search enforces visibility without consulting a semantic package.
+- Disabled automatic queries exit before derived retrieval and do not create
+  injection/skip or generic query-audit telemetry; source-only search keeps only
+  its dedicated historical-lookup event.
 - Disabling a package cancels its unfinished source and rebuild work.
 - Explicit notes and memory-write operations remain core capabilities.
 
@@ -36,7 +39,9 @@ With all semantic packages disabled, Pallium must:
 - support broad and exact work-scoped history search plus bounded expansion;
 - enforce visibility, redaction, forgetting, deletion, and retention;
 - make no extraction, summary, thread-rebuild, consolidation, routing-prompt, or
-  other derived-memory LLM call.
+  other derived-memory LLM call;
+- report automatic injection as off without recording disabled or source-only
+  requests as skipped injections.
 
 Package-level `enabled` remains the control. Do not add a second
 `generation_enabled` flag. Derived packages are disabled by default, but their

@@ -135,6 +135,11 @@ class TestLookupEventIdAuditEnabled:
             "audit enabled: lookup_event_id must be a non-null string on /query"
         )
 
+        stats = client.app.state.pallium_service._query_stats.snapshot()
+        assert stats["total_queries"] == 1
+        assert stats["total_skips"] == 1
+        assert _audit_row_count(client) == 1
+
     def test_query_lookup_event_id_matches_persisted_row(self, test_db_url):
         client = _make_client(test_db_url, audit_log_enabled=True)
         resp = client.post("/query", json=_query_payload())
@@ -261,9 +266,19 @@ class TestSourceOnlyLookupEventId:
         )
         assert row[1] == "test:thread:lookup"  # session_id == thread_ref
 
+    def test_source_only_fail_closed_has_no_stats_or_audit(self, test_db_url):
+        client = _make_client(test_db_url, audit_log_enabled=True)
+        payload = _query_payload(source_only=True)
+        payload.pop("visibility")
+        resp = client.post("/query", json=payload)
+        assert resp.status_code == 200
+        assert resp.json()["decision_reason"] == "visibility_context_required"
+        assert client.app.state.pallium_service._query_stats.snapshot()["total_queries"] == 0
+        assert _audit_row_count(client) == 0
+
     def test_source_only_audit_on_response_id_is_minted_not_audit(self, test_db_url):
-        # Audit ON: an audit row is still written, but the source_only response
-        # id must be the minted historical id — NOT the audit row id.
+        # Audit ON: source-only searches keep only their dedicated historical
+        # lookup event; no generic query-audit row is written.
         client = _make_client(test_db_url, audit_log_enabled=True)
         resp = client.post("/query", json=_query_payload(source_only=True))
         assert resp.status_code == 200
@@ -276,8 +291,8 @@ class TestSourceOnlyLookupEventId:
         assert _audit_row_id_by_event_id(client, event_id) is None, (
             "source_only response id must be the minted historical id, not the audit row id"
         )
-        # An audit row was nonetheless written for the query (audit is on).
-        assert _audit_row_count(client) == 1
+        # Source-only searches intentionally do not create a generic audit row.
+        assert _audit_row_count(client) == 0
 
 
 # ---------------------------------------------------------------------------

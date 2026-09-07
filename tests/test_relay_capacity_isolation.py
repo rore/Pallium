@@ -62,6 +62,7 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
                     "vector_index_ready", "embedding_provider_ok", "ingestion",
                     "vector_expected", "vector_rebuild", "uptime_seconds",
                     "query", "metrics_summary", "historical_lookup_funnel",
+                    "derived_memory",
                 }
                 assert set(queue.json()) == {
                     "status_counts", "status_counts_24h",

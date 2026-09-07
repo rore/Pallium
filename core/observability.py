@@ -42,10 +42,12 @@ class QueryStats:
         self._last_query_at: str | None = None
         self._stats_since = datetime.now(timezone.utc).isoformat()
 
-    def record_query(self, result: object) -> None:
+    def record_query(self, result: object, *, source_only: bool = False) -> None:
         try:
             should_inject = getattr(result, "should_inject", False)
             decision_reason = getattr(result, "decision_reason", "unknown")
+            if source_only or decision_reason in {"semantic_package_unavailable", "source_only_search"}:
+                return
             injectable_blocks = getattr(result, "injectable_blocks", [])
             container_ref = getattr(result, "container_ref", None)
             thread_ref = getattr(result, "thread_ref", None)

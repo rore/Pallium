@@ -159,7 +159,7 @@ class QueryExecutor:
                 injectable_blocks=[],
             )
             if self._query_stats is not None:
-                self._query_stats.record_query(result)
+                self._query_stats.record_query(result, source_only=source_only)
             return result
 
         # Source-only search (vNext P1): rank raw source_hits on their own so
@@ -226,7 +226,7 @@ class QueryExecutor:
                 injectable_blocks=[],
             )
             if self._query_stats is not None:
-                self._query_stats.record_query(result)
+                self._query_stats.record_query(result, source_only=source_only)
             return result
 
         if plugin is None:
@@ -251,7 +251,7 @@ class QueryExecutor:
                 injectable_blocks=[],
             )
             if self._query_stats is not None:
-                self._query_stats.record_query(result)
+                self._query_stats.record_query(result, source_only=source_only)
             return result
 
         # Routing is a core responsibility. Call it directly when a
@@ -335,7 +335,7 @@ class QueryExecutor:
                 except Exception:
                     logger.warning("shadow subtask selector observe failed", exc_info=True)
             if self._query_stats is not None:
-                self._query_stats.record_query(result)
+                self._query_stats.record_query(result, source_only=source_only)
             return result
         trace = retrieval_result.trace
         if trace is not None:
@@ -348,7 +348,7 @@ class QueryExecutor:
             injectable_blocks=[],
         )
         if self._query_stats is not None:
-            self._query_stats.record_query(result)
+            self._query_stats.record_query(result, source_only=source_only)
         return result
 
     def _make_debug_candidate_loader(

@@ -43,6 +43,15 @@ class TestQueryStatsBasicCounting:
         assert snap["total_skips"] == 1
         assert snap["total_blocks_injected"] == 0
 
+    def test_disabled_and_source_only_queries_are_not_recorded(self):
+        stats = QueryStats()
+        for reason in ("semantic_package_unavailable", "source_only_search"):
+            stats.record_query(_make_result(should_inject=False, decision_reason=reason))
+        stats.record_query(_make_result(should_inject=False, decision_reason="visibility_context_required"), source_only=True)
+        snap = stats.snapshot()
+        assert snap["total_queries"] == 0
+        assert snap["total_skips"] == 0
+
     def test_mixed_queries_accumulate(self):
         stats = QueryStats()
         stats.record_query(_make_result(should_inject=True, decision_reason="inject", block_count=2))
@@ -322,3 +331,16 @@ class TestStatusEndpointQueryStats:
         assert query["skip_reasons"] == {}
         assert query["last_query_at"] is None
         assert "stats_since" in query
+        assert data["derived_memory"]["enabled"] is True
+        assert data['derived_memory'] == {
+            'enabled': True,
+            'packages': ['demo_agent_memory'],
+            'injection_enabled': True,
+        }
+        off_config = AppConfig(sqlite_url=f"sqlite:///{tmp_path / 'status-off.db'}", default_use_case="not-the-enabled-package", semantic_packages=DEMO_SEMANTIC_PACKAGES)
+        off_app = create_app(off_config)
+        with TestClient(off_app) as off_client:
+            off_status = off_client.get("/status").json()["derived_memory"]
+        assert off_status["enabled"] is True
+        assert off_status["packages"] == ["demo_agent_memory"]
+        assert off_status["injection_enabled"] is False

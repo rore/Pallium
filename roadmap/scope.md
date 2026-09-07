@@ -72,7 +72,10 @@ step is a committed, time-boxed investigation:
    and expansion implementation.
 3. `decouple-session-history-from-derived-packages` — shipped: start, ingest, raw
    indexing, governance, search, and expansion work with zero semantic packages;
-   derived packages default off. Existing code and stored outputs remain usable.
+   derived packages default off. The corrective
+   `fix-disabled-derived-memory-injection-observability` slice makes disabled
+   automatic queries telemetry-silent and exposes the real injection mode.
+   Existing code and stored outputs remain usable.
 4. `investigate-history-navigation-and-on-demand-compression` — compare flat,
    grouped, and index-first access plus raw, temporary on-demand compression, and
    persistent-derived representations before committing to another structure.

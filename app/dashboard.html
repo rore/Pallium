@@ -794,7 +794,7 @@
   </div>
 
   <!-- Query Activity (dual-time tiles + hourly stacked bar) -->
-  <div class="section-title">Query Activity <span id="qa-since" class="scope-tag">last 24h <span style="color:var(--text)">prominent</span> · all-time <span style="color:var(--muted)">muted</span></span></div>
+  <div class="section-title">Query Activity <span id="qa-derived-mode" class="scope-tag">automatic injection: —</span> <span id="qa-since" class="scope-tag">last 24h <span style="color:var(--text)">prominent</span> · all-time <span style="color:var(--muted)">muted</span></span></div>
   <div class="qa-row">
     <div class="card">
       <div class="query-grid">
@@ -1695,6 +1695,16 @@ async function fetchRelaySummary() {
 // Render: status (Overview row + Storage card)
 // ──────────────────────────────────────────────────
 function renderStatus(data) {
+  const derived = data.derived_memory || {};
+  const derivedMode = document.getElementById('qa-derived-mode');
+  if (derivedMode) {
+    const injectionEnabled = derived.injection_enabled === true;
+    derivedMode.textContent = injectionEnabled
+      ? 'automatic injection: ON · Pallium searches derived memory'
+      : 'automatic injection: OFF · Pallium does not search derived memory automatically';
+    derivedMode.style.color = injectionEnabled ? 'var(--green)' : 'var(--muted)';
+  }
+
   document.getElementById('header-uptime').textContent =
     'uptime: ' + formatUptime(data.uptime_seconds);
 

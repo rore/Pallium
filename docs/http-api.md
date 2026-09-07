@@ -38,11 +38,15 @@ shape.
 
 ### Optional derived memory
 
-- `POST /query` and `POST /query/debug` retrieve memory.
+- `POST /query` and `POST /query/debug` retrieve memory. When the active default
+  package is unavailable, they exit before retrieval and do not create injection
+  counters, skip metrics, or generic query-audit rows.
 - `POST /item-and-query` and its debug form combine source ingest and memory
   query.
 - `/memory/...` routes expand, flag, rate, correct, supersede, forget, or record
   outcomes for derived memory.
+- Source-only Session History searches retain their dedicated historical-lookup
+  event and are not counted as derived-memory injection activity.
 
 The examples below mainly cover this derived-memory API because its request and
 response shapes require the most integration detail.
@@ -50,7 +54,8 @@ response shapes require the most integration detail.
 ### Operations
 
 - `GET /health` reports process reachability.
-- `GET /status` reports configured subsystem status.
+- `GET /status` reports configured subsystem status, including separate
+  derived-memory processing and automatic-injection availability.
 - `GET /debug/queue/health` reports ingestion queue health.
 - dashboard and retry routes support local operation and debugging.
 
@@ -650,6 +655,28 @@ requests.
 
 Returns HTTP 200 when ready, 503 when still initializing. Use this for
 container health probes and startup checks.
+
+## GET /status
+
+The response includes the current derived-memory runtime state:
+
+```json
+{
+  "derived_memory": {
+    "enabled": true,
+    "packages": ["agent_conversation_memory"],
+    "injection_enabled": true
+  }
+}
+```
+
+- `enabled` means at least one derived-memory package is processing source items.
+- `packages` lists the packages that actually started.
+- `injection_enabled` means the configured default package is active, so automatic
+  derived-memory search and injection can run.
+
+These flags can differ when only a non-default parallel package is active. Raw
+Session History and Relay remain available when both flags are false.
 
 ## Common Shapes
 
