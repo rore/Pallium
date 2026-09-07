@@ -15,6 +15,7 @@ hook that observes the agent's next turns and POSTs to update rows.
 from __future__ import annotations
 
 import uuid
+from threading import Event
 
 import pytest
 from fastapi import FastAPI
@@ -22,6 +23,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from api.routes import create_router
+from core.contracts import QueryResult
 from core.models import InjectableBlock
 from core.service import PalliumService
 from retrieval.lexical import LexicalRetrievalProvider
@@ -48,11 +50,128 @@ def service_and_client(tmp_path):
     return service, client, tmp_path
 
 
+def test_items_enqueue_durable_assistant_id_without_semantic_package(service_and_client, monkeypatch):
+    service, client, _ = service_and_client
+    service._semantic_plugins.clear()
+    service._configured_use_cases = frozenset()
+    enqueued = []
+    monkeypatch.setattr(service, "enqueue_memory_usage_audit", enqueued.append)
+    response = client.post("/items", json=[{
+        "source_type": "hook", "source_id": "assistant-1", "content_type": "text",
+        "content": "persist this assistant response", "role": "assistant", "thread_ref": "thread-1",
+    }])
+    assert response.status_code == 200
+    source_id = response.json()[0]["source_item_id"]
+    assert enqueued == [source_id]
+    assert service._storage.get_source_item(source_id).content == "persist this assistant response"
+    service.close()
+
+
+def test_combined_assistant_query_defers_current_usage_audit_until_later_turn(
+    service_and_client, monkeypatch,
+):
+    service, client, _ = service_and_client
+    memory_text = "Use stable event time for reservation ordering across delayed synchronization."
+    query_result = QueryResult(
+        results=[],
+        should_inject=True,
+        decision_reason="carry_forward_available",
+        injectable_blocks=[InjectableBlock(
+            result_id="memory_object:memory-current-query",
+            memory_object_id="memory-current-query",
+            block_type="memory",
+            title="Ordering decision",
+            text=memory_text,
+            evidence=[],
+            memory_type="decision",
+        )],
+    )
+    monkeypatch.setattr(service, "query", lambda *_args, **_kwargs: query_result)
+    monkeypatch.setattr(
+        service,
+        "get_memory_expand",
+        lambda _memory_id: (None, [], memory_text),
+    )
+    original_populate = service.populate_memory_usage_audit
+    completions = [Event(), Event()]
+    calls = []
+
+    def tracked_populate(*args, **kwargs):
+        index = len(calls)
+        calls.append((args, kwargs))
+        try:
+            original_populate(*args, **kwargs)
+        finally:
+            completions[index].set()
+
+    monkeypatch.setattr(service, "populate_memory_usage_audit", tracked_populate)
+
+    try:
+        combined = client.post("/item-and-query", json={
+            "source_type": "hook",
+            "source_id": "assistant-before-current-query",
+            "content_type": "text/plain",
+            "content": "This assistant response predates the query below.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "git:temporal-audit",
+            "thread_ref": "thread-temporal-audit",
+            "visibility": "private",
+        })
+        assert combined.status_code == 200
+        assert completions[0].wait(1)
+        audit_id = combined.json()["lookup_event_id"]
+        current_rows = client.get(
+            "/memory-usage-audit", params={"query_audit_log_id": audit_id},
+        ).json()["rows"]
+        assert len(current_rows) == 1
+        assert current_rows[0]["referenced_in_next_turn"] is None
+
+        later = client.post("/items", json=[{
+            "source_type": "hook",
+            "source_id": "assistant-after-current-query",
+            "content_type": "text/plain",
+            "content": memory_text,
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "git:temporal-audit",
+            "thread_ref": "thread-temporal-audit",
+            "visibility": "private",
+        }])
+        assert later.status_code == 200
+        assert completions[1].wait(1)
+        populated_rows = client.get(
+            "/memory-usage-audit", params={"query_audit_log_id": audit_id},
+        ).json()["rows"]
+        assert populated_rows[0]["referenced_in_next_turn"] is True
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("enqueue_result", [False, RuntimeError("full")])
+def test_items_succeeds_when_audit_enqueue_is_unavailable(service_and_client, monkeypatch, enqueue_result):
+    service, client, _ = service_and_client
+    service._semantic_plugins.clear()
+    service._configured_use_cases = frozenset()
+    if isinstance(enqueue_result, Exception):
+        def enqueue(_source_id):
+            raise enqueue_result
+    else:
+        enqueue = lambda _source_id: enqueue_result
+    monkeypatch.setattr(service, "enqueue_memory_usage_audit", enqueue)
+    response = client.post("/items", json=[{
+        "source_type": "hook", "source_id": "assistant-2", "content_type": "text",
+        "content": "still durable", "role": "assistant", "thread_ref": "thread-2",
+    }])
+    assert response.status_code == 200
+    assert service._storage.get_source_item(response.json()[0]["source_item_id"]).content == "still durable"
+    service.close()
+
 def _write_query_with_blocks(
     service,
     *,
     audit_id: str | None = None,
-    container_ref: str = "git:test",
+    container_ref: str | None = "git:test",
     thread_ref: str | None = "thread-1",
     trigger_origin: str | None = None,
     blocks: list[dict] | None = None,
@@ -256,6 +375,42 @@ def test_list_memory_usage_audit_rows_returns_oldest_first(service_and_client):
 def test_list_memory_usage_audit_rows_empty_for_unknown_query(service_and_client):
     service, _client, _db_path = service_and_client
     assert service.list_memory_usage_audit("no-such-id") == []
+
+
+def test_pending_usage_audit_scope_distinguishes_same_thread_by_container(
+    service_and_client,
+):
+    service, _client, _db_path = service_and_client
+    for container_ref, memory_id in (
+        ("git:a", "m-a"),
+        ("git:b", "m-b"),
+        (None, "m-none"),
+    ):
+        _write_query_with_blocks(
+            service,
+            container_ref=container_ref,
+            thread_ref="shared-thread",
+            blocks=[{
+                "memory_object_id": memory_id,
+                "memory_type": "decision",
+                "block_type": "memory",
+                "title_preview": "x",
+                "score": 20,
+                "retrieval_source": "vector",
+            }],
+        )
+
+    broad = service.list_pending_memory_usage_audit_by_thread("shared-thread")
+    scoped = service.list_pending_memory_usage_audit_by_thread(
+        "shared-thread", container_ref="git:b",
+    )
+    null_scoped = service.list_pending_memory_usage_audit_by_thread(
+        "shared-thread", container_ref=None,
+    )
+
+    assert {row["memory_object_id"] for row in broad} == {"m-a", "m-b", "m-none"}
+    assert [row["memory_object_id"] for row in scoped] == ["m-b"]
+    assert [row["memory_object_id"] for row in null_scoped] == ["m-none"]
 
 
 def test_update_memory_usage_audit_row_happy_path(service_and_client):

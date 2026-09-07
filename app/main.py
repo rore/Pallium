@@ -323,6 +323,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                 stop.set()
             _remove_launch_token(token_path)
             wait_for_operations()
+            service.close()
             for storage_provider in (service._storage, early_storage):
                 if isinstance(storage_provider, SQLiteStorageProvider):
                     storage_provider.close()

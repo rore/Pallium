@@ -363,6 +363,19 @@ def _maybe_write_query_audit(
         return None
 
 
+def _enqueue_assistant_usage_audit(
+    service: PalliumService,
+    role: str | None,
+    source_item_id: str,
+) -> None:
+    if role != "assistant":
+        return
+    try:
+        service.enqueue_memory_usage_audit(source_item_id)
+    except Exception:
+        logger.warning("memory_usage_audit enqueue failed", exc_info=True)
+
+
 def create_router(
     service: PalliumService,
     *,
@@ -613,6 +626,8 @@ def create_router(
             artifact_kind=request.artifact_kind,
             visibility=request.visibility_kind(),
         )
+        _enqueue_assistant_usage_audit(service, request.role, result.source_item_id)
+
         return ItemCreateResponse(**result.as_dict())
 
     MAX_ITEMS_PER_REQUEST = 50
@@ -885,6 +900,8 @@ def create_router(
             service, audit_log_enabled, ingest_result, request, query_text, query_result,
             trigger_origin=_trigger_origin,
         )
+        _enqueue_assistant_usage_audit(service, request.role, ingest_result.source_item_id)
+
         return ItemAndQueryResponse(
             source_item_id=ingest_result.source_item_id,
             results=[_serialize_result(item) for item in query_result.results],
@@ -934,6 +951,8 @@ def create_router(
             service, audit_log_enabled, ingest_result, request, query_text, query_result,
             trigger_origin=_trigger_origin,
         )
+        _enqueue_assistant_usage_audit(service, request.role, ingest_result.source_item_id)
+
         if query_result.trace is None:
             raise ValueError("debug query must include retrieval trace")
         return ItemAndQueryDebugResponse(

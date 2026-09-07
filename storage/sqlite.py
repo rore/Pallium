@@ -51,6 +51,7 @@ from storage.sqlite_search import SQLiteSearchMixin
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+_ANY_CONTAINER = object()
 
 _DISPLAY_TEXT_KEYS = ("summary", "statement", "decision", "investigation_outcome", "interest_text", "constraint_text", "carry_forward_answer", "outcome", "content", "title", "investigation_subject", "subject")
 
@@ -1758,15 +1759,16 @@ class SQLiteStorageProvider(
         self,
         thread_ref: str,
         *,
+        container_ref=_ANY_CONTAINER,
+        before_created_at: datetime | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """List usage-audit rows for a thread that are still pending
         (`populated_at IS NULL`), newest first.
 
-        Phase 5b populator path: the Stop hook calls this to find which
-        rows from recent injections still need a usage verdict. The
-        hard cap protects against a runaway thread with thousands of
-        unresolved rows.
+        The server-owned Phase 5b worker passes container_ref to isolate
+        reused thread ids. Omitting it preserves the thread-wide compatibility
+        API. The hard cap protects against runaway unresolved rows.
         """
         # Hard cap to bound matcher cost in the hook.
         if limit < 1:
@@ -1778,9 +1780,17 @@ class SQLiteStorageProvider(
                 select(MemoryUsageAuditRecord)
                 .where(MemoryUsageAuditRecord.thread_ref == thread_ref)
                 .where(MemoryUsageAuditRecord.populated_at.is_(None))
-                .order_by(MemoryUsageAuditRecord.created_at.desc())
-                .limit(limit)
             )
+            if container_ref is not _ANY_CONTAINER:
+                predicate = (
+                    MemoryUsageAuditRecord.container_ref.is_(None)
+                    if container_ref is None
+                    else MemoryUsageAuditRecord.container_ref == container_ref
+                )
+                stmt = stmt.where(predicate)
+            if before_created_at is not None:
+                stmt = stmt.where(MemoryUsageAuditRecord.created_at < before_created_at)
+            stmt = stmt.order_by(MemoryUsageAuditRecord.created_at.desc()).limit(limit)
             out: list[dict[str, Any]] = []
             for r in session.execute(stmt).scalars().all():
                 out.append({

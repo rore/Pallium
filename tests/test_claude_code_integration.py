@@ -275,10 +275,10 @@ def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monk
     )
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
-    monkeypatch.setattr(stop, "_populate_usage_audit_rows", lambda _session, _text: None)
     monkeypatch.setattr(stop, "pallium_request", lambda _method, _path, body: calls.append(body))
     with pytest.raises(SystemExit):
         stop.main()
+    assert len(calls) == 1
     assert calls[0][0]["thread_ref"] is None
     assert calls[0][0]["metadata"]["pallium_work_refs"] == [
         "git-branch:feature/demo"

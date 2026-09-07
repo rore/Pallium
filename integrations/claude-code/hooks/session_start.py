@@ -31,12 +31,15 @@ from common import (
     SUBPROCESS_TIMEOUT,
     derive_actor_ref,
     derive_container_ref,
+    emit_utf8,
     format_injection,
     pallium_request,
     pin_container,
     read_hook_input,
     redact_sensitive,
     register_claude_wake,
+    remaining_safe_time,
+    start_hook_deadline,
     relay_request,
     format_relay,
     acknowledge_relay,
@@ -63,10 +66,13 @@ def _git(cwd: str, *args: str, strip: bool = True) -> str:
     2-column prefix whose first column can be a space, and a global strip
     would corrupt the first line's path offset.
     """
+    timeout = min(SUBPROCESS_TIMEOUT, remaining_safe_time())
+    if timeout <= 0:
+        return ""
     try:
         result = subprocess.run(
             ["git", *args],
-            capture_output=True, text=True, cwd=cwd, timeout=SUBPROCESS_TIMEOUT,
+            capture_output=True, text=True, cwd=cwd, timeout=timeout,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return ""
@@ -156,6 +162,7 @@ def _fetch_orientation(query_text: str, container_ref: str, actor_ref: str) -> l
 
 def main() -> None:
     try:
+        start_hook_deadline(8, host_reserve=1)
         payload = read_hook_input()
         cwd = payload.get("cwd", ".")
         session_id = payload.get("session_id")
@@ -186,7 +193,8 @@ def main() -> None:
             ),
         )
         if rendered:
-            print("\n\n".join((relay_output, relay_scope)))
+            if not emit_utf8("\n\n".join((relay_output, relay_scope))):
+                return
             acknowledge_relay(rendered, container_ref=container_ref, actor_ref=actor_ref)
             sys.exit(0)
 
@@ -195,7 +203,7 @@ def main() -> None:
 
         output = format_injection(blocks, container_ref, budget_chars=1200, thread_ref=session_id, actor_ref=actor_ref, agent_ref="claude-code", visibility="private")
         if output:
-            print(output)
+            emit_utf8(output)
 
     except Exception:
         print("pallium session_start hook error", file=sys.stderr)

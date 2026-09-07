@@ -249,11 +249,9 @@ def test_codex_stop_hook_ingests_quietly(monkeypatch: pytest.MonkeyPatch) -> Non
         stop.main()
 
     assert exc.value.code == 0
-    # Phase 5b: stop hook now also issues a populator GET after ingest.
-    # The fake returns None so the populator no-ops. Verify the ingest
-    # call is present.
+    # Stop only performs the durable ingest; audit population is server-owned.
     ingest_calls = [c for c in calls if c["path"] == "/items"]
-    assert len(ingest_calls) == 1
+    assert len(calls) == len(ingest_calls) == 1
     call = ingest_calls[0]
     assert call["method"] == "POST"
     assert call["path"] == "/items"
@@ -673,7 +671,6 @@ def test_codex_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monke
     )
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
-    monkeypatch.setattr(stop, "_populate_usage_audit_rows", lambda _session, _text: None)
     monkeypatch.setattr(stop, "pallium_request", lambda _method, _path, body, **_kwargs: calls.append(body))
     with pytest.raises(SystemExit):
         stop.main()

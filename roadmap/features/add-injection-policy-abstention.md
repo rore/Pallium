@@ -56,10 +56,9 @@ right next move is delivery-policy abstention, not another mechanism.
       commented-out block in `pallium.example.toml`. Default behavior
       unchanged.
 - [x] Phase 5a — `memory_usage_audit` table + populator API surface
-- [x] Phase 5b — populator hook in claude-code/codex stop hooks +
-      Phase 5b match-text source-of-truth follow-up
-      (2026-06-28: shared `build_memory_match_text` via
-      `MemoryExpandResponse.match_text` to fix per-type undercount)
+- [x] Phase 5b — bounded server-owned populator after durable assistant
+      ingestion (moved from Claude/Codex Stop hooks on 2026-09-07), with
+      shared `build_memory_match_text` fixing per-type undercount
 - [ ] Phase 6 — 4-week measurement window (infrastructure shipped at
       `evals/injection_policy_2026_06/phase6_measurement.py`; awaits
       live-data accumulation)

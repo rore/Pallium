@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-27
 **Status:** Shipped (Phases 0, 0.5, 1, 2a, 3a, 3b, 4, 5a, 5b) — Phase 2b and Phase 6 pending fresh-data accumulation
-**Last updated:** 2026-06-28 (Phase 5b match-text source-of-truth follow-up)
+**Last updated:** 2026-09-07 (Phase 5b server-owned dispatch hardening)
 **Owner:** Rotem Hermon
 **Roadmap:** [`roadmap/features/add-injection-policy-abstention.md`](../../roadmap/features/add-injection-policy-abstention.md)
 **Supersedes / gates:** `add-operational-fact-memory`, `investigate-thread-level-interest-and-threadless-aggregation` (paused pending this experiment)
@@ -447,7 +447,18 @@ the staging discipline used in Phases 3a/3b and 4.
   - Idempotent: POSTing to an already-populated row returns
     `updated: false`. Phase 5b populator can safely retry.
 
-**Phase 5b — populator hook (deferred):**
+**Phase 5b — server-owned population (current):**
+
+Operational hardening on 2026-09-07 removed population from the synchronous
+Claude Code and Codex Stop hooks. After `/items` durably ingests an assistant
+turn, Pallium submits its source-item ID to a dedicated one-worker, one-queued
+best-effort executor. The worker re-reads the persisted/redacted item, scans at
+most 20 pending rows, uses the canonical match-text builder, and performs the
+existing idempotent update. Saturation or failure never fails ingestion; rows
+remain pending and a later assistant ingest retries the thread. Shutdown drains
+the active job and cancels queued work before storage closes.
+
+**Phase 5b — original hook design (historical):**
 - Lives in `integrations/claude-code/hooks/stop.py`. After ingesting
   the assistant response, observe recent queries in the thread, run
   a heuristic matcher against the transcript, and POST results.
@@ -485,8 +496,8 @@ Fix landed: server-side single source of truth.
 - `PalliumService.get_memory_expand` returns `(payload, items,
   match_text)` (3-tuple) and surfaces `match_text` via
   `MemoryExpandResponse.match_text`.
-- Both hooks (`claude-code`/`codex`) prefer `match_text` when present
-  and fall back to the legacy 7-key coalesce for older Pallium servers.
+- The server-owned worker consumes `build_memory_match_text` directly; the
+  former hook-local expand/fallback code was deleted.
 
 Tests: `tests/test_phase5b_match_text.py`,
 `tests/test_claude_code_hooks/test_stop_match_text.py`,

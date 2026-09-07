@@ -3,7 +3,9 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
@@ -23,6 +25,7 @@ from core.processing import (
 )
 from core.query import QueryExecutor
 from core.thread_rebuild import ThreadRebuilder, truncate_processing_error
+from core.usage_audit_matcher import classify_memory_reference
 from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
@@ -41,6 +44,7 @@ from core.text import normalize_for_index as _normalize_for_index
 from core.work_ref import _normalize_work_refs
 
 _WORK_REFS_METADATA_KEY = "pallium_work_refs"
+_ANY_CONTAINER = object()
 
 def _sanitize_work_ref_metadata(metadata: dict | None) -> dict | None:
     """Keep only safe, list-valued structural work references."""
@@ -284,6 +288,8 @@ class PalliumService:
             metrics_store=metrics_store,
         )
         self._logger = logging.getLogger(__name__)
+        self._audit_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="usage-audit")
+        self._audit_slots = threading.BoundedSemaphore(2)
         self._metrics_store = metrics_store
         self._metrics_retention_days = metrics_retention_days
 
@@ -1695,7 +1701,7 @@ class PalliumService:
         }
         self._storage.write_query_audit_row(row)
         # Phase 5: write one memory_usage_audit row per injected block
-        # alongside the audit-log row. The populator (Phase 5b) fills in
+        # alongside the audit-log row. The bounded server worker (Phase 5b) fills in
         # referenced_in_next_turn / reference_kind asynchronously. See
         # docs/specs/2026-06-27-injection-policy-abstention.md.
         try:
@@ -1714,11 +1720,69 @@ class PalliumService:
         # the API can surface it on the response (additive; never gates behavior).
         return row["id"]
 
+    def populate_memory_usage_audit(
+        self,
+        container_ref: str | None,
+        thread_ref: str,
+        response_text: str,
+        *,
+        before_created_at: datetime | None = None,
+    ) -> None:
+        for row in self.list_pending_memory_usage_audit_by_thread(
+            thread_ref,
+            container_ref=container_ref,
+            before_created_at=before_created_at,
+            limit=20,
+        ):
+            try:
+                _, _, match_text = self.get_memory_expand(row["memory_object_id"])
+                referenced, reference_kind = classify_memory_reference(
+                    memory_object_id=row["memory_object_id"], memory_text=match_text or "",
+                    response_text=response_text,
+                )
+                self.update_memory_usage_audit(
+                    audit_row_id=row["id"], referenced_in_next_turn=referenced,
+                    reference_kind=reference_kind, observation_window_turns=1,
+                )
+            except Exception:
+                self._logger.warning("memory_usage_audit row population failed", exc_info=True)
+
+    def enqueue_memory_usage_audit(self, source_item_id: str | None) -> bool:
+        if not source_item_id or not self._audit_slots.acquire(blocking=False):
+            return False
+        try:
+            self._audit_executor.submit(self._run_audit_job, source_item_id)
+            return True
+        except Exception:
+            self._audit_slots.release()
+            self._logger.warning("memory_usage_audit enqueue failed", exc_info=True)
+            return False
+
+    def _run_audit_job(self, source_item_id: str) -> None:
+        try:
+            item = self._storage.get_source_item(source_item_id)
+            if item.role != "assistant" or not item.thread_ref or not item.content:
+                return
+            self.populate_memory_usage_audit(
+                item.container_ref,
+                item.thread_ref,
+                item.content,
+                before_created_at=item.created_at,
+            )
+        except KeyError:
+            return
+        except Exception:
+            self._logger.warning("memory_usage_audit job failed", exc_info=True)
+        finally:
+            self._audit_slots.release()
+
+    def close(self) -> None:
+        self._audit_executor.shutdown(wait=True, cancel_futures=True)
+
     def list_memory_usage_audit(self, query_audit_log_id: str) -> list[dict]:
         """Phase 5: list usage-audit rows for a given query.
 
-        Used by the integration-side populator (Phase 5b) to discover
-        the rows it must update after observing the agent's next turns.
+        Used by the server-owned Phase 5b worker and compatibility API.
         """
         return self._storage.list_memory_usage_audit_rows(query_audit_log_id)
 
@@ -1726,18 +1790,26 @@ class PalliumService:
         self,
         thread_ref: str,
         *,
+        container_ref=_ANY_CONTAINER,
+        before_created_at: datetime | None = None,
         limit: int = 20,
     ) -> list[dict]:
         """Phase 5b: list pending (populated_at IS NULL) usage-audit rows
         for a thread, newest first. Hard-capped at 100 rows server-side.
 
-        Used by the Stop-hook populator which doesn't know individual
-        query_audit_log_ids — it only knows which thread it's running
-        in. See docs/specs/2026-06-27-injection-policy-abstention.md
+        Used by the bounded server worker, which scans by the durable
+        assistant item's thread rather than individual query IDs. See docs/specs/2026-06-27-injection-policy-abstention.md
         (Phase 5b).
         """
+        if container_ref is _ANY_CONTAINER:
+            return self._storage.list_pending_memory_usage_audit_rows_by_thread(
+                thread_ref, before_created_at=before_created_at, limit=limit,
+            )
         return self._storage.list_pending_memory_usage_audit_rows_by_thread(
-            thread_ref, limit=limit,
+            thread_ref,
+            container_ref=container_ref,
+            before_created_at=before_created_at,
+            limit=limit,
         )
 
     def update_memory_usage_audit(
@@ -1788,7 +1860,7 @@ class PalliumService:
         """Return structured payload, source items, and a Phase-5b match-text view.
 
         The ``match_text`` (3rd tuple element) is the per-type text the
-        usage-audit populator should compare against the assistant's
+        usage-audit worker compares against the assistant's
         response. It uses the same per-type field map as the embedding
         text view but without the 40-char floor or ``[type]`` prefix
         (see ``semantic.agent_conversation_memory_embedding``

@@ -147,7 +147,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     if codex:
         monkeypatch.setattr(hook, "emit_context", lambda text, event: output.append((text, event)))
     else:
-        monkeypatch.setattr("builtins.print", lambda text, **_kwargs: output.append((text, None)))
+        monkeypatch.setattr(hook, "emit_utf8", lambda text, **_kwargs: output.append((text, None)) or True)
 
     with pytest.raises(SystemExit):
         hook.main()
@@ -316,7 +316,7 @@ def test_short_turn_without_delivery_still_exposes_current_relay_identity(
     if imported:
         monkeypatch.setattr(hook, "emit_context", lambda text, _event: outputs.append(text))
     else:
-        monkeypatch.setattr("builtins.print", lambda text, **_kwargs: outputs.append(text))
+        monkeypatch.setattr(hook, "emit_utf8", lambda text, **_kwargs: outputs.append(text) or True)
     with pytest.raises(SystemExit):
         hook.main()
     assert len(outputs) == 1
@@ -641,7 +641,7 @@ def test_unsafe_only_relay_backlog_does_not_skip_memory(monkeypatch, name, relat
     if runtime == "codex":
         monkeypatch.setattr(hook, "emit_context", lambda *args: emitted.append(args))
     else:
-        monkeypatch.setattr("builtins.print", lambda *args, **kwargs: emitted.append(args))
+        monkeypatch.setattr(hook, "emit_utf8", lambda *args, **kwargs: emitted.append(args) or True)
 
     with pytest.raises(SystemExit):
         hook.main()
@@ -879,3 +879,90 @@ def test_storage_budget_reserves_notice_without_dropping_claim(client):
     assert len(rendered) <= common.RELAY_OUTPUT_BUDGET
     assert fits_id != near_id
     assert turn["has_more"] is True and turn["remaining_count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "relative"),
+    [
+        ("claude_deadline", "integrations/claude-code/hooks/common.py"),
+        ("codex_deadline", "integrations/codex/hooks/common.py"),
+    ],
+)
+def test_hook_deadline_clamps_requests_and_skips_when_exhausted(
+    monkeypatch, name, relative
+):
+    common = _load(name, relative)
+    now = [100.0]
+    common.start_hook_deadline(
+        2.0, host_reserve=0.5, clock=lambda: now[0]
+    )
+    observed = []
+
+    def timeout(_request, timeout):
+        observed.append(timeout)
+        raise TimeoutError
+
+    monkeypatch.setattr(common.urllib.request, "urlopen", timeout)
+    assert common.relay_request("POST", "/relay/turn", {}, timeout=3.0) is None
+    assert observed == [1.5]
+
+    now[0] = 101.75
+    assert common.pallium_request("GET", "/health") is None
+    assert observed == [1.5]
+
+
+@pytest.mark.parametrize(
+    ("name", "relative", "returns_acknowledged"),
+    [
+        (
+            "claude_ack_deadline",
+            "integrations/claude-code/hooks/common.py",
+            True,
+        ),
+        (
+            "codex_ack_deadline",
+            "integrations/codex/hooks/common.py",
+            False,
+        ),
+    ],
+)
+def test_relay_ack_batch_stops_at_shared_deadline(
+    monkeypatch, name, relative, returns_acknowledged
+):
+    common = _load(name, relative)
+    now = [0.0]
+    common.start_hook_deadline(
+        0.8, host_reserve=0.1, clock=lambda: now[0]
+    )
+    observed = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    def respond(_request, timeout):
+        observed.append(timeout)
+        now[0] = 0.71
+        return Response()
+
+    monkeypatch.setattr(common.urllib.request, "urlopen", respond)
+    second = {
+        **DELIVERY,
+        "delivery_id": "relay-delivery-2",
+        "claim_token": "relay-claim-2",
+    }
+    result = common.acknowledge_relay(
+        [DELIVERY, second], container_ref="container", actor_ref="actor"
+    )
+
+    assert observed == [0.5]
+    if returns_acknowledged:
+        assert result == [DELIVERY]
+    else:
+        assert result is None

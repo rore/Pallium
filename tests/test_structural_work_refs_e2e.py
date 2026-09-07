@@ -127,7 +127,6 @@ def _python_payloads(
             ),
         )
         monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _turn: None)
-        monkeypatch.setattr(stop, "_populate_usage_audit_rows", lambda *_: None)
         _quiet_common_side_effects(stop, monkeypatch)
 
         def stop_request(_method, path, body=None, **_kwargs):

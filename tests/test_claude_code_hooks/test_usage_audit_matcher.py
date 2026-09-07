@@ -5,17 +5,9 @@ See: docs/specs/2026-06-27-injection-policy-abstention.md (Phase 5b).
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 
-sys.path.insert(
-    0,
-    str(Path(__file__).resolve().parent.parent.parent / "integrations" / "claude-code" / "hooks"),
-)
-
-from usage_audit_matcher import (
+from core.usage_audit_matcher import (
     VERBATIM_SNIPPET_MIN_CHARS,
     WORD_TOKEN_MIN_ALPHA,
     classify_memory_reference,

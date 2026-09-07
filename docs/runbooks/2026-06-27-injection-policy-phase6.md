@@ -26,7 +26,7 @@ Before running the measurement:
       `event`).
 - [ ] Phase 4 hook scripts deployed and registered:
       `python -m app.run setup claude-code`.
-- [ ] Phase 5b populator hook is running and filling
+- [ ] Phase 5b server worker is running and filling
       `memory_usage_audit.referenced_in_next_turn`. If not, the
       `usage_rate` numbers will be `None`; only `rating_precision`
       from `memory_feedback` will be meaningful.
@@ -84,7 +84,7 @@ the full window is a candidate for permanent deletion.
 | Proactive `usage_rate` regressed vs Phase 1 baseline rating_precision | Review the 5b matcher heuristic — possibly false negatives. |
 | On-demand type has zero triggered retrievals in the window | Delete the type from extraction (separate spec). |
 | Trigger has 0% usage_rate | Disable the trigger in the hook (`post_tool_use.py`, `session_start.py`) or raise its threshold (e.g. retry count ≥ 5 instead of 3). |
-| `usage_rate` is consistently `None` (no populated rows) | Phase 5b populator is broken or not running — debug the Stop hook first. |
+| `usage_rate` is consistently `None` (no populated rows) | Phase 5b population is broken or not running — debug the server audit dispatcher first. |
 
 ## Sample-size guardrails
 

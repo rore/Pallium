@@ -24,6 +24,7 @@ check_dedup = _common.check_dedup
 complete_relay_closes = _common.complete_relay_closes
 derive_actor_ref = _common.derive_actor_ref
 emit_context = _common.emit_context
+emit_utf8 = _common.emit_utf8
 format_injection = _common.format_injection
 format_relay = _common.format_relay
 get_pending_relay_close_batch = _common.get_pending_relay_close_batch
@@ -34,6 +35,7 @@ resolve_container_ref = _common.resolve_container_ref
 build_work_refs_metadata = _common.build_work_refs_metadata
 discover_work_refs = _common.discover_work_refs
 injected_work_ref = _common.injected_work_ref
+start_hook_deadline = _common.start_hook_deadline
 
 _IDE_TAG_RE = re.compile(
     r"<ide_(?:opened_file|selection)>.*?</ide_(?:opened_file|selection)>",
@@ -50,6 +52,7 @@ def _strip_ide_context(text: str) -> str:
 
 def main() -> None:
     try:
+        start_hook_deadline(8, host_reserve=1)
         payload = read_hook_input()
         session_id = payload.get("session_id")
         cwd = payload.get("cwd", ".")
@@ -146,7 +149,7 @@ def main() -> None:
         if internal_wake:
             if relay_outcome != "empty":
                 print(f"pallium relay wake: outcome={relay_outcome}", file=sys.stderr)
-            print(json.dumps({
+            emit_utf8(json.dumps({
                 "decision": "block",
                 "reason": "Pallium Relay wake suppressed: no verified pending delivery.",
             }, separators=(",", ":")))

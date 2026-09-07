@@ -597,18 +597,6 @@ def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest
     assert calls == [(('session-1', 'git:example/repo', 'local'), {'idle': True})] * 2
 
 
-def test_usage_audit_failure_is_generic_and_later_rows_continue(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    stop = _load_claude_hook("stop", monkeypatch)
-    secret = "audit-secret"
-    posts: list[str] = []
-    monkeypatch.setattr(stop, "pallium_request", lambda method, path, body: {"rows": [{"id": "bad", "memory_object_id": "bad"}, {"id": "good", "memory_object_id": "good"}]} if method == "GET" else posts.append(path))
-    monkeypatch.setattr(stop, "_fetch_memory_match_text", lambda memory_id: (_ for _ in ()).throw(RuntimeError(secret)) if memory_id == "bad" else "good")
-    monkeypatch.setattr(stop, "classify_memory_reference", lambda **_kwargs: (False, None))
-    stop._populate_usage_audit_rows("session", "assistant text")
-    assert posts == ["/memory-usage-audit/good"]
-    captured = capsys.readouterr()
-    assert secret not in captured.err
-    assert "RuntimeError" in captured.err
 
 @pytest.mark.parametrize(
     "field,maximum",

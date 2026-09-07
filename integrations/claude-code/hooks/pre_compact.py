@@ -9,15 +9,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (
     derive_actor_ref,
+    emit_utf8,
     format_injection,
     pallium_request,
     read_hook_input,
     resolve_container_ref,
+    start_hook_deadline,
 )
 
 
 def main() -> None:
     try:
+        start_hook_deadline(8, host_reserve=1)
         payload = read_hook_input()
         cwd = payload.get("cwd", ".")
         session_id = payload.get("session_id")
@@ -62,7 +65,7 @@ def main() -> None:
 
         output = format_injection(blocks, container_ref, budget_chars=2400, thread_ref=session_id, actor_ref=actor_ref, agent_ref="claude-code", visibility="private")
         if output:
-            print(output)
+            emit_utf8(output)
 
     except Exception as exc:
         print(f"pallium pre_compact hook error: {exc}", file=sys.stderr)
