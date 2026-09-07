@@ -180,6 +180,55 @@ def test_slow_response_body_cannot_outlive_deadline(
     release.set()
     workers[0].join(1)
 
+
+@pytest.mark.parametrize("operation", ("register", "close"))
+def test_claude_wake_control_request_cannot_outlive_deadline(operation, monkeypatch):
+    common = _load(f"deadline_claude_wake_{operation}", "integrations/claude-code/hooks/common.py")
+    common.start_hook_deadline(2.0, host_reserve=0.5, clock=lambda: 10.0)
+    started = threading.Event()
+    release = threading.Event()
+    joined = []
+    workers = []
+    real_thread = threading.Thread
+
+    class BlockingOpener:
+        def open(self, *_args, **_kwargs):
+            started.set()
+            release.wait(1)
+            return None
+
+    class DeadlineThread:
+        def __init__(self, *, target, daemon):
+            self.thread = real_thread(target=target, daemon=daemon)
+            workers.append(self.thread)
+
+        def start(self):
+            self.thread.start()
+
+        def join(self, timeout):
+            joined.append(timeout)
+            assert started.wait(1)
+
+        def is_alive(self):
+            return self.thread.is_alive()
+
+    monkeypatch.setattr(common.threading, "Thread", DeadlineThread)
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_args: BlockingOpener())
+    monkeypatch.setattr(common, "_write_wake_intent", lambda _payload: True)
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
+
+    if operation == "register":
+        result = common.register_claude_wake("session", "container", "actor")
+    else:
+        result = common.close_claude_wake("session", "container", "actor")
+
+    assert not result
+    assert joined == [1.5]
+    release.set()
+    workers[0].join(1)
+
+
 @pytest.mark.parametrize("relative", HOOKS)
 def test_each_hook_starts_one_budget_before_reading_input(relative, monkeypatch):
     hook = _load("deadline_entry_" + relative.replace("/", "_"), relative)

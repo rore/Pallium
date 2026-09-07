@@ -2,7 +2,13 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Thread
 from types import SimpleNamespace
 
+from fastapi.testclient import TestClient
+
+from app.config import AppConfig
+from app.main import create_app
 from core.service import PalliumService
+from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
 def _service(monkeypatch):
@@ -102,29 +108,63 @@ def test_source_miss_retries_on_later_assistant_ingest_idempotently(monkeypatch)
     assert attempts == ["source-retry", "source-retry"]
 
 
-def test_close_drains_active_audit_before_storage_close(monkeypatch):
-    service = _service(monkeypatch)
+def test_app_shutdown_drains_http_audit_before_storage_close(monkeypatch, tmp_path):
+    app = create_app(AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'shutdown.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+    service = app.state.pallium_service
+    storage = service._storage
     started, release, finished = Event(), Event(), Event()
-    storage_closed = Event()
-    service._storage.get_source_item = lambda _id: SimpleNamespace(
-        role="assistant", container_ref="container", thread_ref="thread",
-        content="persisted",
-    )
+    close_started, storage_closed = Event(), Event()
 
     def work(*_args):
         started.set()
         release.wait()
         finished.set()
 
+    original_service_close = service.close
+    original_storage_close = storage.close
+
+    def close_service():
+        close_started.set()
+        original_service_close()
+
+    def close_storage():
+        assert finished.is_set()
+        storage_closed.set()
+        original_storage_close()
+
     service.populate_memory_usage_audit = work
-    assert service.enqueue_memory_usage_audit("source-close")
-    assert started.wait(1)
-    closer = Thread(target=service.close)
-    closer.start()
-    assert not finished.wait(0.05)
-    assert not storage_closed.is_set()
-    release.set()
-    closer.join(1)
-    storage_closed.set()
+    monkeypatch.setattr(service, "close", close_service)
+    monkeypatch.setattr(storage, "close", close_storage)
+
+    def release_during_shutdown():
+        assert close_started.wait(2)
+        assert not storage_closed.is_set()
+        release.set()
+
+    releaser = Thread(target=release_during_shutdown)
+    with TestClient(app) as client:
+        response = client.post("/items", json=[{
+            "source_type": "chat_message",
+            "source_id": "shutdown-audit",
+            "content_type": "text/plain",
+            "content": "The migration is complete.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "room:shutdown",
+            "thread_ref": "thread-shutdown",
+            "visibility": "private",
+        }])
+        assert response.status_code == 200
+        assert started.wait(2)
+        releaser.start()
+
+    releaser.join(2)
+    assert not releaser.is_alive()
     assert finished.is_set()
-    assert not closer.is_alive()
+    assert storage_closed.is_set()

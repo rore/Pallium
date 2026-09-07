@@ -1024,8 +1024,11 @@ def register_claude_wake(
             urllib.request.ProxyHandler({}),
             _RejectCredentialRedirects(),
         )
-        with opener.open(request, timeout=request_timeout):
-            return True
+        def send_request():
+            with opener.open(request, timeout=request_timeout):
+                return True
+
+        return _run_before_deadline(send_request)
     except Exception:
         return False
 
@@ -1047,8 +1050,11 @@ def close_claude_wake(session_ref: object, container_ref: object, actor_ref: obj
         return False
     try:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectCredentialRedirects())
-        with opener.open(request, timeout=request_timeout):
-            return True
+        def send_request():
+            with opener.open(request, timeout=request_timeout):
+                return True
+
+        return _run_before_deadline(send_request)
     except Exception:
         return False
 

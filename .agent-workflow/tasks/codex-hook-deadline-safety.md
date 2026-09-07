@@ -73,6 +73,8 @@ Approved by user 2026-09-07: "you have approval for all prs you manage"
 - 2026-09-07: `apply_patch` was attempted once and failed with the machine-local CreateProcessWithLogonW restriction. Subsequent edits used exact, named-file deterministic replacements. A delegated test edit corrupted one test file without committing; the parent restored that file from HEAD, reapplied the three known local assertions, and verified the full focused suite.
 - 2026-09-07: CodeRabbit review identified cross-container audit classification plus partial-stdin and slow-response deadline gaps. The worker now scopes by container and thread while the existing thread-wide compatibility endpoint remains unchanged; both standalone hook runtimes bound blocking stdin and complete HTTP operations with one portable daemon-worker helper. Deterministic event tests cover timeout without wall-clock sleeps.
 
+- 2026-09-07: High-risk result review found three lifecycle gaps. Claude wake register/close now use the shared absolute deadline; both combined ingest/query routes dispatch assistant usage audits after query-audit creation; and shutdown coverage drives the real HTTP route plus TestClient lifespan through actual storage close. All regressions use events/fake clocks rather than sleeps.
+
 ## Evidence
 
 - Historical plan lookup 6e66a3a4-25ba-596f-bd07-12cd33cd0f09.
@@ -87,6 +89,9 @@ Approved by user 2026-09-07: "you have approval for all prs you manage"
 - Post-review focused verification: 138 hook, Relay, audit isolation, Claude, and Codex tests passed in 7.02s; the expanded High-risk workflow check is clean.
 - Clean-context plan review /root/pr2_plan_review.
 
+- High-risk remediation verification: 28 new/focused tests passed in 5.06s; the full affected hook/integration/audit surface passed 192 tests in 10.10s; the previously failing Codex wake lifecycle passed under four-worker execution; workflow and diff checks are clean.
+- Final clean-context re-review `/root/pr131_high_risk_review` verified all three remediation areas and found no blockers.
+
 ## Plan review
 
 The reviewer found four blocking gaps: semantic processing cannot cover the no-package path; core must not import the integration-owned matcher; in-memory dispatch must state its recovery ceiling; and audit capacity/shutdown must be isolated. The revised plan moves the matcher into core, submits after durable HTTP ingestion regardless of package availability, bounds a dedicated one-worker executor and backlog, cancels queued work and drains active work before storage close, and defines pending-row retry on a later assistant ingest. It also expands deadline coverage to input/file/lock/output boundaries, clamps all HTTP/subprocess/ACK work to one monotonic budget, and requires flush before ACK. No public API, schema, or new dependency is introduced.
@@ -100,3 +105,5 @@ exhausted timeout helpers return `0.0` with callers skipping non-positive values
 The reported CI/roadmap rollback was a two-dot comparison artifact caused by main
 advancing with PR #130; merging main into this branch preserved that work. The
 reviewer found no blocker in audit shutdown or Relay flush-before-ACK ordering.
+
+A subsequent High-risk clean-context result review found and then re-verified three additional lifecycle gaps: bounded Claude wake registration/close, assistant audit dispatch from both combined ingest/query routes after query-audit creation, and real application-lifespan drain before storage close. The final re-review found no blockers.

@@ -871,6 +871,42 @@ def test_item_and_query_returns_source_item_id_and_query_result(client) -> None:
     assert "injectable_blocks" in data
 
 
+@pytest.mark.parametrize("path", ("/item-and-query", "/item-and-query/debug"))
+def test_assistant_item_and_query_enqueues_usage_audit_after_query_audit(client, monkeypatch, path) -> None:
+    import api.routes as api_routes
+
+    service = client.app.state.pallium_service
+    events = []
+    monkeypatch.setattr(
+        api_routes,
+        "_maybe_write_query_audit",
+        lambda _service, _enabled, ingest_result, *_args, **_kwargs: (
+            events.append(("query-audit", ingest_result.source_item_id)) or "lookup-event"
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "enqueue_memory_usage_audit",
+        lambda source_item_id: events.append(("usage-audit", source_item_id)) or True,
+    )
+
+    response = client.post(path, json={
+        "source_type": "chat_message",
+        "source_id": "assistant-audit-" + path.rsplit("/", 1)[-1],
+        "content_type": "text/plain",
+        "content": "The migration is complete.",
+        "artifact_kind": "message",
+        "role": "assistant",
+        "container_ref": "room:audit",
+        "thread_ref": "thread-audit",
+        "visibility": "private",
+    })
+
+    assert response.status_code == 200
+    source_item_id = response.json()["source_item_id"]
+    assert events == [("query-audit", source_item_id), ("usage-audit", source_item_id)]
+
+
 def test_item_and_query_uses_content_as_default_query_text(client) -> None:
     response = client.post("/item-and-query", json={
         "source_type": "chat_message",
