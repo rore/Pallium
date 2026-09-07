@@ -35,4 +35,4 @@
 - Both deadline-sensitive recovery tests under xdist (-n 2): 2 passed.
 - Full 	ests/test_codex_wake.py under xdist (-n 4): 41 passed.
 - Import boundary report, redline verdict, and agent-workflow checker: clean.
-- Revision: pending implementation commit.
+- Verified implementation revision: `3bd117bd`.
