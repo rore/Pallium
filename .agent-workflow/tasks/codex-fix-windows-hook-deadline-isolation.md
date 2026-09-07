@@ -19,10 +19,14 @@
 
 **Verification:** Run both failed targets serially and with their contaminating test modules under xdist, run the affected files, pass redline/agent-workflow checks, independent review, PR CI, and post-merge full Windows CI.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Discovery: the wake test calls pin_container before main resets an expired process-global deadline; the container tests patch sys.modules["common"] after another loader can replace that alias, while their imported function still points at the original module.
 - Implemented: renew the public hook deadline immediately before pre-hook pin setup; patch the retained Claude common module object across all 16 subprocess-mock tests.
+
+## Evidence
+
+- Revision cf83ec26: explicit expired-deadline recovery passed; dynamic-loader plus container suite passed 40/40; affected hook/deadline files passed 102/102 under xdist; committed failed targets passed 2/2; redline and workflow gates are clean.
