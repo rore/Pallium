@@ -55,18 +55,25 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Discovery, Elevated/Moderate classification, and clean-context plan review complete.
+- Ordinary queue claims now pass a one-second busy timeout without changing the shared 100 ms default or Relay override.
+- Both one-shot OpenCode helpers flush JSON through process.stdout.write and exit only on successful completion.
+- The existing operational-scale roadmap item records both Windows CI corrections.
 
 ## Evidence
 
 - GitHub Actions runs 34083835988 and 34083904007.
-- Clean-context plan review: `codex:@relaydev`, 2026-09-07.
+- Clean-context plan review: codex:@relaydev, 2026-09-07.
+- Focused affected suites: 43 passed, 1 skipped in 11.45 s.
+- Exact SQLite two-winner regression: 20/20 repeated passes.
+- Exact OpenCode timeout regression: 10/10 repeated passes; the second helper also executed directly and exited successfully.
+- git diff --check clean.
 
 ## Result review
 

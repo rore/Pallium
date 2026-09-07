@@ -88,12 +88,16 @@ _MERGE_HISTORY_KEEP_LAST = 16
 class SQLiteQueueMixin:
     _IMMEDIATE_ATTEMPTS = 3
     _IMMEDIATE_BUSY_TIMEOUT_MS = 100
+    _QUEUE_IMMEDIATE_BUSY_TIMEOUT_MS = 1_000
     _DEFAULT_BUSY_TIMEOUT_MS = 15_000
     _IMMEDIATE_BACKOFF_SECONDS = 0.05
 
     @contextmanager
     def _begin_immediate(self):
-        with self._begin_immediate_for(self._session_factory) as session:
+        with self._begin_immediate_for(
+            self._session_factory,
+            busy_timeout_ms=self._QUEUE_IMMEDIATE_BUSY_TIMEOUT_MS,
+        ) as session:
             yield session
 
     @contextmanager

@@ -215,6 +215,25 @@ class TestImmediateTransactionRetry:
         assert sleep.call_count == 2
         assert sessions[0].close.called and sessions[1].close.called
         assert sessions[-1].flush.call_count == 1
+        for session in sessions:
+            statements = [
+                str(call.args[0])
+                for call in session.connection.return_value.execute.call_args_list
+            ]
+            assert "PRAGMA busy_timeout=1000" in statements
+
+    def test_relay_transaction_retains_short_busy_timeout(self, storage):
+        session = MagicMock()
+        connection = MagicMock()
+        session.connection.return_value = connection
+        storage._relay_session_factory = lambda: session
+
+        with storage._begin_relay_immediate() as active:
+            assert active is session
+
+        statements = [str(call.args[0]) for call in connection.execute.call_args_list]
+        assert "PRAGMA busy_timeout=100" in statements
+        assert "PRAGMA busy_timeout=1000" not in statements
 
     def test_immediate_transaction_restores_the_pooled_busy_timeout(self, storage):
         def timeout() -> int:
@@ -225,6 +244,7 @@ class TestImmediateTransactionRetry:
         with storage._begin_immediate():
             pass
         assert timeout() == before == 15_000
+
     def test_immediate_transaction_busy_rolls_back_without_partial_commit(self, storage):
         session = MagicMock()
         connection = MagicMock()
