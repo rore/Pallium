@@ -48,9 +48,11 @@ documented workflows, official runtime guidance, and individual community report
 It establishes credible use cases, not market size or product-market fit.
 
 Wake-first delivery raises the cost of poor message selection: an irrelevant
-message can start a paid model turn. Runtime-wide fan-out remains supported when
-explicitly intended, but agent guidance must prefer exact recipients and must not
-encourage autonomous broadcast.
+message can start a paid model turn. Runtime-wide fan-out is a shipped R1 behavior,
+not the target product surface. Do not add new broadcast scenarios or promote it
+in public guidance: `investigate-cross-repository-relay-coordination` owns
+removing bare-runtime sends, and any future broadcast requires the separate
+`idea-explicit-relay-broadcast` contract.
 
 ## Why These Three Scenarios
 

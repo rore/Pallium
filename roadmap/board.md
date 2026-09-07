@@ -1,4 +1,7 @@
-# Next · Session History
+# Next · Agent Relay
+- investigate-cross-repository-relay-coordination
+
+# Parallel · Session History
 - investigate-history-navigation-and-on-demand-compression
 
 # Parallel · Agent Relay
@@ -6,7 +9,7 @@
 - idea-agent-relay
 - add-relay-retention-and-lifecycle-hardening
 - validate-relay-dependency-workflows
-- investigate-cross-repository-relay-coordination
+- idea-explicit-relay-broadcast
 - idea-deferred-relay
 - add-copilot-relay-integration
 
