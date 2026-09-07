@@ -147,7 +147,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     if codex:
         monkeypatch.setattr(hook, "emit_context", lambda text, event: output.append((text, event)))
     else:
-        monkeypatch.setattr("builtins.print", lambda text, **_kwargs: output.append((text, None)))
+        monkeypatch.setattr(hook, "emit_utf8", lambda text, **_kwargs: output.append((text, None)) or True)
 
     with pytest.raises(SystemExit):
         hook.main()
@@ -316,7 +316,7 @@ def test_short_turn_without_delivery_still_exposes_current_relay_identity(
     if imported:
         monkeypatch.setattr(hook, "emit_context", lambda text, _event: outputs.append(text))
     else:
-        monkeypatch.setattr("builtins.print", lambda text, **_kwargs: outputs.append(text))
+        monkeypatch.setattr(hook, "emit_utf8", lambda text, **_kwargs: outputs.append(text) or True)
     with pytest.raises(SystemExit):
         hook.main()
     assert len(outputs) == 1
@@ -641,7 +641,7 @@ def test_unsafe_only_relay_backlog_does_not_skip_memory(monkeypatch, name, relat
     if runtime == "codex":
         monkeypatch.setattr(hook, "emit_context", lambda *args: emitted.append(args))
     else:
-        monkeypatch.setattr("builtins.print", lambda *args, **kwargs: emitted.append(args))
+        monkeypatch.setattr(hook, "emit_utf8", lambda *args, **kwargs: emitted.append(args) or True)
 
     with pytest.raises(SystemExit):
         hook.main()

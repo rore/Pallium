@@ -24,6 +24,7 @@ format_injection = _common.format_injection
 pallium_request = _common.pallium_request
 pin_container = _common.pin_container
 read_hook_input = _common.read_hook_input
+start_hook_deadline = _common.start_hook_deadline
 
 RETRIEVAL_FALLBACK_QUERY = "recent decisions, progress, and open tasks"
 
@@ -45,6 +46,7 @@ def _fetch_retrieval_fallback(container_ref: str, actor_ref: str) -> list[dict]:
 
 def main() -> None:
     try:
+        start_hook_deadline(8, host_reserve=1)
         payload = read_hook_input()
         source = payload.get("source", "")
         if source == "clear":

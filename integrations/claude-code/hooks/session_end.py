@@ -1,11 +1,12 @@
 """SessionEnd hook — closes the trusted-local Claude wake capability."""
 from __future__ import annotations
 
-from common import close_claude_wake, derive_actor_ref, read_hook_input, resolve_container_ref
+from common import close_claude_wake, derive_actor_ref, read_hook_input, resolve_container_ref, start_hook_deadline
 
 
 def main() -> None:
     try:
+        start_hook_deadline(8, host_reserve=1)
         payload = read_hook_input()
         session_id = payload.get("session_id")
         if not isinstance(session_id, str) or not session_id:

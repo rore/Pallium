@@ -48,11 +48,13 @@ from common import (
     _classify_bash_failure,
     _infer_exit_code,
     derive_actor_ref,
+    emit_utf8,
     format_injection,
     pallium_request,
     read_hook_input,
     redact_sensitive,
     resolve_container_ref,
+    start_hook_deadline,
 )
 
 
@@ -204,6 +206,7 @@ def _maybe_fire_retry_query(
 
 def main() -> None:
     try:
+        start_hook_deadline(8, host_reserve=1)
         # Deterministic triggers are opt-in; stay inert unless enabled.
         if not _TRIGGERS_ENABLED:
             sys.exit(0)
@@ -270,7 +273,7 @@ def main() -> None:
             visibility="private",
         )
         if output_text:
-            print(output_text)
+            emit_utf8(output_text)
 
     except Exception as exc:
         print(f"pallium post_tool_use hook error: {exc}", file=sys.stderr)

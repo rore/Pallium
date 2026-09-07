@@ -343,14 +343,32 @@ def injected_work_ref(discovery: WorkRefDiscovery) -> str | None:
 
 
 def read_hook_input() -> dict:
-    """Read JSON payload from stdin. Returns empty dict on any failure."""
+    """Read one bounded JSON payload from stdin; fail closed on bad input."""
     try:
-        data = sys.stdin.read()
-        if not data.strip():
+        data = sys.stdin.read(4 * 1024 * 1024 + 1)
+        if len(data) > 4 * 1024 * 1024 or not data.strip():
             return {}
         return json.loads(data)
     except Exception:
         return {}
+
+
+def emit_utf8(text: str, *, stream=None) -> bool:
+    """Write and flush one UTF-8 line before callers perform side effects."""
+    if remaining_safe_time() <= 0:
+        return False
+    target = stream or sys.stdout
+    try:
+        buffer = getattr(target, "buffer", None)
+        if buffer is not None:
+            buffer.write((text + "\n").encode("utf-8"))
+            buffer.flush()
+        else:
+            target.write(text + "\n")
+            target.flush()
+        return True
+    except (OSError, UnicodeError, ValueError):
+        return False
 
 
 def derive_container_ref(cwd: str) -> str:
@@ -361,20 +379,26 @@ def derive_container_ref(cwd: str) -> str:
     2. Git repo, no remote -> "repo:<root-commit-hash-prefix>"
     3. Not a git repo -> "path:<sanitized-dirname>:<hash-of-cwd>" (or "path:<hash>" if dirname is empty)
     """
+    timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
+    if timeout is None:
+        return _path_container(cwd)
     try:
         result = subprocess.run(
             ["git", "remote", "get-url", "origin"],
-            capture_output=True, text=True, cwd=cwd, timeout=SUBPROCESS_TIMEOUT,
+            capture_output=True, text=True, cwd=cwd, timeout=timeout,
         )
         if result.returncode == 0 and result.stdout.strip():
             return "git:" + _normalize_remote_url(result.stdout.strip())
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return _path_container(cwd)
 
+    timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
+    if timeout is None:
+        return _path_container(cwd)
     try:
         result = subprocess.run(
             ["git", "rev-list", "--max-parents=0", "HEAD"],
-            capture_output=True, text=True, cwd=cwd, timeout=SUBPROCESS_TIMEOUT,
+            capture_output=True, text=True, cwd=cwd, timeout=timeout,
         )
         if result.returncode == 0 and result.stdout.strip():
             root_hash = result.stdout.strip().splitlines()[0][:12]
@@ -480,7 +504,11 @@ def _acquire_session_lock(session_id: str):
         if lock_file.tell() == 0:
             lock_file.write(b"0")
             lock_file.flush()
-        deadline = time.monotonic() + 0.1
+        wait_budget = min(0.1, remaining_safe_time())
+        if wait_budget <= 0:
+            lock_file.close()
+            return None
+        deadline = time.monotonic() + wait_budget
         while True:
             try:
                 lock_file.seek(0)
@@ -497,7 +525,7 @@ def _acquire_session_lock(session_id: str):
                 if time.monotonic() >= deadline:
                     lock_file.close()
                     return None
-                time.sleep(0.01)
+                time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
     except OSError:
         return None
 
@@ -822,13 +850,17 @@ def derive_actor_ref(
             return cached
 
     actor_ref = "local"
+    timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
+    if timeout is None:
+        _cache_identity_context(session_id, context, actor_ref=actor_ref)
+        return actor_ref
     try:
         result = subprocess.run(
             ["git", "config", "user.name"],
             capture_output=True,
             text=True,
             cwd=cwd if _is_local_absolute_path(cwd) else None,
-            timeout=SUBPROCESS_TIMEOUT,
+            timeout=timeout,
         )
         if result.returncode == 0 and result.stdout.strip():
             actor_ref = result.stdout.strip()
@@ -951,12 +983,15 @@ def register_claude_wake(
         method="POST",
         headers={"Content-Type": "application/json"},
     )
+    request_timeout = _bounded_timeout(_CREDENTIAL_HTTP_TIMEOUT)
+    if request_timeout is None:
+        return False
     try:
         opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
             _RejectCredentialRedirects(),
         )
-        with opener.open(request, timeout=_CREDENTIAL_HTTP_TIMEOUT):
+        with opener.open(request, timeout=request_timeout):
             return True
     except Exception:
         return False
@@ -974,9 +1009,12 @@ def close_claude_wake(session_ref: object, container_ref: object, actor_ref: obj
     request = urllib.request.Request(
         f"{PALLIUM_BASE_URL}/internal/claude-wake/close", data=json.dumps({key: payload[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")}).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"},
     )
+    request_timeout = _bounded_timeout(_CREDENTIAL_HTTP_TIMEOUT)
+    if request_timeout is None:
+        return False
     try:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectCredentialRedirects())
-        with opener.open(request, timeout=_CREDENTIAL_HTTP_TIMEOUT):
+        with opener.open(request, timeout=request_timeout):
             return True
     except Exception:
         return False
@@ -1204,6 +1242,8 @@ def read_last_assistant_turn(transcript_path: str) -> str | None:
     - tool_result blocks truncated to 500 chars
     - Files >10MB: reads only last 2MB
     """
+    if remaining_safe_time() <= 0:
+        return None
     try:
         file_size = os.path.getsize(transcript_path)
     except OSError:
@@ -1638,6 +1678,8 @@ def read_turn(transcript_path: str) -> TurnData | None:
       2. Decode to _Line records and find the turn-start boundary.
       3. Walk turn forward, aggregate tool_use/tool_result via tool_use_id table.
     """
+    if remaining_safe_time() <= 0:
+        return None
     try:
         file_size = os.path.getsize(transcript_path)
     except OSError:
@@ -1660,7 +1702,9 @@ def read_turn(transcript_path: str) -> TurnData | None:
         return None
 
     lines: list[_Line] = []
-    for raw_line in raw_lines:
+    for index, raw_line in enumerate(raw_lines):
+        if index % 128 == 0 and remaining_safe_time() <= 0:
+            return None
         raw_line = raw_line.strip()
         if not raw_line:
             continue

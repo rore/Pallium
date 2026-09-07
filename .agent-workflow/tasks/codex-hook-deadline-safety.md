@@ -58,7 +58,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -69,6 +69,8 @@ Not required at this risk level.
 - 2026-09-07: Implemented the correction pass: queueing carries only the durable source-item ID; the worker loads the persisted assistant item and skips missing, non-assistant, or empty rows; the hook compatibility import resolves the checkout root temporarily. Focused tests cover source-ID dispatch and saturation.
 - 2026-09-07: The original server-owned slice remains in commit 22521477: core matcher relocation, bounded executor, per-row population, assistant `/items` enqueue, and shutdown drain.
 - 2026-09-07: Added the shared monotonic deadline primitive to both standalone hook common modules; Pallium/Relay HTTP and aggregate ACK calls clamp to the same remaining budget and skip network work when exhausted. A cheaper delegated attempt was interrupted after correctness review found undefined deadline variables and an unbounded timeout=None path; the parent repaired the minimal slice.
+- 2026-09-07: Completed whole-hook budgets across all nine installed Python entry points, bounded stdin/transcript parsing, Git, state-lock, credential, Pallium, Relay, and ACK work, and added exact UTF-8 flush-before-ACK behavior. Removed both synchronous Stop audit loops and their compatibility wrapper; Stop now performs Relay plus one durable assistant ingest only.
+- 2026-09-07: `apply_patch` was attempted once and failed with the machine-local CreateProcessWithLogonW restriction. Subsequent edits used exact, named-file deterministic replacements. A delegated test edit corrupted one test file without committing; the parent restored that file from HEAD, reapplied the three known local assertions, and verified the full focused suite.
 
 ## Evidence
 
@@ -77,6 +79,9 @@ Not required at this risk level.
 - Focused verification: 31 matcher/canonical-text tests and 2 deterministic audit-dispatch lifecycle tests passed.
 - Final server-slice verification: 46 focused tests passed, including exact POST /items semantic-unavailable persistence, enqueue false/exception isolation, durable-ID dispatch, per-row failure isolation, and matcher regressions; matcher now indexes fixed-width response windows.
 - Deadline primitive verification: tests/test_agent_relay_hooks.py - 42 passed; fake clocks prove clamping, exhaustion skips urlopen, and multi-delivery ACK stops on the shared budget.
+- Final focused PR2 verification: 200 passed, 1 skipped in 9.87s across deadline/flush, Relay hooks, audit dispatch, Claude/Codex integration, structural work refs, wake registration, canonical matcher, and Phase 5b match-text coverage; no real sleeps were added.
+- Hook parity verification: 110 passed. Opt-in PostToolUse verification: 19 passed. Dedicated deadline-safety file: 14 passed in 4.06s.
+- Server lifecycle regressions verify source-miss retry on later assistant ingest and active audit drain before storage-close progression using events rather than wall-clock sleeps.
 - Clean-context plan review /root/pr2_plan_review.
 
 ## Plan review

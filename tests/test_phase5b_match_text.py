@@ -1,14 +1,13 @@
 """Phase 5b match-text plumbing (2026-06-28).
 
 Verifies the chain that surfaces a per-type memory text view to the
-usage-audit populator:
+server-owned usage-audit worker:
 
   semantic.agent_conversation_memory_embedding.build_memory_match_text
     -> core.service.PalliumService.get_memory_expand (3rd tuple element)
-    -> api MemoryExpandResponse.match_text
-    -> integrations/{claude-code,codex}/hooks/stop.py _fetch_memory_match_text
+    -> core.service.PalliumService.populate_memory_usage_audit
 
-The fix addresses a code-review finding that the hook's hardcoded
+The fix addresses a code-review finding that the former hooks' hardcoded
 7-key scalar coalesce undercounted real memory usage for task_checkpoint,
 continuity_memory, thread_summary, and pattern_memory. See
 docs/specs/2026-06-27-injection-policy-abstention.md Phase 5b.

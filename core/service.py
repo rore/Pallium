@@ -1700,7 +1700,7 @@ class PalliumService:
         }
         self._storage.write_query_audit_row(row)
         # Phase 5: write one memory_usage_audit row per injected block
-        # alongside the audit-log row. The populator (Phase 5b) fills in
+        # alongside the audit-log row. The bounded server worker (Phase 5b) fills in
         # referenced_in_next_turn / reference_kind asynchronously. See
         # docs/specs/2026-06-27-injection-policy-abstention.md.
         try:
@@ -1764,8 +1764,7 @@ class PalliumService:
     def list_memory_usage_audit(self, query_audit_log_id: str) -> list[dict]:
         """Phase 5: list usage-audit rows for a given query.
 
-        Used by the integration-side populator (Phase 5b) to discover
-        the rows it must update after observing the agent's next turns.
+        Used by the server-owned Phase 5b worker and compatibility API.
         """
         return self._storage.list_memory_usage_audit_rows(query_audit_log_id)
 
@@ -1778,9 +1777,8 @@ class PalliumService:
         """Phase 5b: list pending (populated_at IS NULL) usage-audit rows
         for a thread, newest first. Hard-capped at 100 rows server-side.
 
-        Used by the Stop-hook populator which doesn't know individual
-        query_audit_log_ids — it only knows which thread it's running
-        in. See docs/specs/2026-06-27-injection-policy-abstention.md
+        Used by the bounded server worker, which scans by the durable
+        assistant item's thread rather than individual query IDs. See docs/specs/2026-06-27-injection-policy-abstention.md
         (Phase 5b).
         """
         return self._storage.list_pending_memory_usage_audit_rows_by_thread(
@@ -1835,7 +1833,7 @@ class PalliumService:
         """Return structured payload, source items, and a Phase-5b match-text view.
 
         The ``match_text`` (3rd tuple element) is the per-type text the
-        usage-audit populator should compare against the assistant's
+        usage-audit worker compares against the assistant's
         response. It uses the same per-type field map as the embedding
         text view but without the 40-char floor or ``[type]`` prefix
         (see ``semantic.agent_conversation_memory_embedding``

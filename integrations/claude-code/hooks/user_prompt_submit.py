@@ -16,6 +16,7 @@ from common import (
     check_dedup,
     complete_relay_closes,
     derive_actor_ref,
+    emit_utf8,
     format_injection,
     format_relay,
     get_pending_relay_close_batch,
@@ -27,6 +28,7 @@ from common import (
     discover_work_refs,
     injected_work_ref,
     register_claude_wake,
+    start_hook_deadline,
 )
 
 _IDE_TAG_RE = re.compile(
@@ -39,6 +41,7 @@ def _strip_ide_context(text: str) -> str:
 
 def main() -> None:
     try:
+        start_hook_deadline(8, host_reserve=1)
         payload = read_hook_input()
         session_id = payload.get("session_id")
         cwd = payload.get("cwd", ".")
@@ -111,12 +114,8 @@ def main() -> None:
                 ),
             )
             if rendered_deliveries:
-                if (sys.stdout.encoding or "").lower().replace("-", "") == "utf8":
-                    print("\n\n".join((relay_output, relay_scope)))
-                else:
-                    sys.stdout.buffer.write(
-                        ("\n\n".join((relay_output, relay_scope)) + "\n").encode("utf-8")
-                    )
+                if not emit_utf8("\n\n".join((relay_output, relay_scope))):
+                    return
                 acknowledge_relay(rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref)
                 sys.exit(0)
 
@@ -161,8 +160,7 @@ def main() -> None:
                 )
 
         output = "\n\n".join(part for part in (relay_output, memory_output) if part)
-        if output:
-            print(output)
+        if output and emit_utf8(output):
             if relay_output:
                 acknowledge_relay(
                     rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref

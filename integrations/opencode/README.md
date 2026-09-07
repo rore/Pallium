@@ -179,7 +179,7 @@ operation when Pallium is unavailable.
 
 - Active OpenCode wake is not implemented; Relay uses durable next-turn
   delivery.
-- The usage-audit populator available in Python Stop hooks is not implemented.
+- Usage-audit population is server-owned after durable assistant ingestion.
 - Compaction records the latest assistant turn but does not run a pre-compaction
   query.
 - Session orientation runs on `session.created`, not on every resumed session.
