@@ -1,6 +1,6 @@
 # Session History vNext Strategy
 
-> Status: adopted direction (2026-08-12), refined 2026-09-05. This is the
+> Status: adopted direction (2026-08-12), refined 2026-09-07. This is the
 > Session History strategy within the two-capability product model in
 > [vision.md](vision.md). Derived memory is one continuously evaluated
 > representation of accumulated agent-work history, not the product itself.
@@ -31,9 +31,9 @@ Pallium has two primary capabilities:
   structural work references supplied by supported integrations.
 - **Agent Relay** explicitly transfers context between supported agent runtimes.
 
-Session History currently runs alongside configured generated-memory packages.
-Removing that dependency is planned work; derived memory remains an optional
-representation rather than the product identity.
+Session History works with generated-memory packages disabled. Derived-memory
+packages are optional and disabled by default; enabling one requires explicit
+provider and model configuration.
 
 ## Why change direction
 
@@ -77,7 +77,11 @@ Make it easy to continue work from another agent context:
 - same agent, new session
 - parallel sessions
 - Claude ↔ Codex or other agents
-- different containers/projects where appropriate
+- different repositories only after explicit authorization and value validation
+
+Current integration workflows are scoped to the same repository/container.
+Cross-repository continuity remains a future authorization-dependent
+investigation, not a shipped capability.
 
 Do not assume cross-agent frequency from the local corpus. The corpus strongly validates
 cross-session continuity; cross-agent frequency is workflow-dependent and needs broader/live
@@ -234,10 +238,11 @@ materially benefits another.
    issue/PR/ticket references to raw turns without semantic inference.
 2. **Shipped:** expose separate exact work-scoped and broad Session History search tools,
    backed by the same raw retrieval and expansion paths.
-3. **Next:** decouple raw Session History from derived packages and disable those
-   packages by default.
-4. Run a time-boxed comparison of flat, grouped, and index-first navigation and of
-   raw, on-demand-compressed, and persistent-derived representations.
+3. **Shipped:** decouple raw Session History from derived packages and disable
+   those packages by default.
+4. **Next:** run a time-boxed comparison of flat, grouped, and index-first
+   navigation and of raw, on-demand-compressed, and persistent-derived
+   representations.
 5. Accumulate diverse post-change activity, then run the real-corpus value gate.
 6. Support explicit work/session continuation only after that evidence warrants it.
 7. Improve derivation only in response to measured failure modes.

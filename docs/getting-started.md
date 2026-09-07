@@ -11,9 +11,8 @@ message, and searches earlier session work.
 - an OpenAI-compatible or Anthropic API key only if you enable optional
   derived memory
 
-Relay and raw Session History run without an LLM provider. Derived-memory
-packages are disabled by default and require explicit opt-in plus provider
-credentials.
+Relay and Session History run without an LLM provider. Derived memory is
+disabled by default and requires explicit opt-in plus provider credentials.
 
 ## 1. Install from source and start Pallium
 
@@ -106,10 +105,9 @@ than a runtime-wide send when several sessions are open:
 > Use Pallium Relay to send `codex:@review`: "Please check whether the API change
 > preserves the old response field."
 
-On qualified Windows Claude Code targets, Pallium can start a new turn in the
-existing session. Windows Codex wake is proven but still completing broader
-lifecycle qualification. OpenCode and unqualified platforms keep the message
-pending until the next normal recipient turn.
+On qualified Windows and Linux paths for Claude Code and Codex, Pallium can
+start a new turn in the existing session. OpenCode, macOS, and other unqualified
+paths keep the message pending until the next normal recipient turn.
 
 The recipient can reply using the received delivery. Pallium derives the return
 address; the recipient does not need to look up the sender again.

@@ -27,6 +27,10 @@ the newest eligible items carrying that exact normalized reference. This search 
 deliberately narrow and can miss related work stored under another reference or no
 reference; use the broad topic search in that case.
 
+Current integrations may provide one ready-to-copy current work reference in the
+agent's Pallium context. Pass it unchanged to exact-reference search. If no current
+work reference is provided, use broad search rather than guessing one.
+
 Search returns concise matches with source identifiers. When a match looks
 relevant, the agent uses `pallium_expand_source` to open a bounded number of
 turns around it.
@@ -68,8 +72,7 @@ cross-user sharing or authorization system.
 - structural references from supported integrations, including a non-base Git
   branch, an exact Agent Workflow Work Record when safely resolved, and
   explicitly supplied references
-- package-independent raw history with semantic packages disabled by default
-- source-only queries without an active semantic package
+- Session History recording and search without an LLM provider
 
 ## Package behavior
 

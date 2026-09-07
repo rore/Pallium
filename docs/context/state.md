@@ -1,6 +1,6 @@
 # Current State
 
-> Updated 2026-09-05. Keep queue and sequencing in [roadmap/](../../roadmap/);
+> Updated 2026-09-07. Keep queue and sequencing in [roadmap/](../../roadmap/);
 > this file is only a short implementation snapshot.
 
 ## Product shape

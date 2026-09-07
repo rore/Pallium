@@ -11,7 +11,7 @@ Relay messages, and supports Pallium's optional derived-memory behavior.
 - send messages to another connected session; current integrations are Claude
   Code, Codex, and OpenCode
 - receive attributed messages and reply to the sender
-- wake an existing Claude Code session on qualified Windows installations
+- wake an existing Claude Code session on qualified Windows and Linux paths
 - keep undelivered messages for the next normal turn
 
 ### Session History
@@ -27,8 +27,9 @@ Relay messages, and supports Pallium's optional derived-memory behavior.
 - retrieve or inject selected memory on later turns
 - inspect, flag, and write memory through MCP tools
 
-Claude Code wake is qualified on Windows. Linux and macOS wake remain
-qualification work; those installations retain next-turn delivery.
+Claude Code wake is qualified on Windows and on the installed Linux UDS path
+tested on Ubuntu 24.04 with Claude Code 2.1.250. macOS wake remains
+qualification work and retains next-turn delivery.
 
 ## Architecture
 
@@ -62,8 +63,8 @@ URL).
 
 - Python 3.12+ with Pallium installed from source
   (`pip install -e ".[vector,mcp]"`)
-- An LLM provider API key configured in `.env.local` to enable history ingestion
-  with the current default configuration
+- An LLM provider API key in `.env.local` only if you enable optional derived
+  memory
 - Git (for container derivation from repos)
 
 ## 1. Start Pallium
@@ -89,7 +90,8 @@ To manage the service:
 | Command | Effect |
 |---------|--------|
 | `pallium service stop` | Stop the running service |
-| `scripts/restart-service.ps1` | Restart the installed development service and clear stale child processes |
+| `pallium service restart` | Restart the installed service on Linux |
+| `scripts/restart-service.ps1` | Restart the installed service for local Windows development and clear stale child processes |
 | `pallium service uninstall` | Remove OS registration (data preserved) |
 | `pallium service uninstall --remove-data` | Remove registration and all data |
 
@@ -166,7 +168,7 @@ sessions; configured derived memory follows the same scope.
 
 ### Optional derived-memory capture
 
-Pallium extracts structured memory from ingested conversation turns:
+When enabled, Pallium can extract structured memory from ingested conversation turns:
 
 - **Decisions** — "We chose X because Y"
 - **Investigation outcomes** — "Root cause: stale cache after deploy"
@@ -202,9 +204,9 @@ After setup, open two Claude Code sessions in the same Git repository.
    to `claude-code:@review`.
 3. Confirm that the second session receives the attributed message and can reply.
 
-Qualified Windows installations can start a new Claude Code turn. On other
-paths, make a normal turn in the recipient session to collect the pending
-message.
+Qualified Windows and Linux installations can start a new Claude Code turn. On
+macOS and other unqualified paths, make a normal turn in the recipient session
+to collect the pending message.
 
 ### Verify Session History
 
@@ -255,21 +257,6 @@ See [Configuration — Injection Policy](configuration.md#injection-policy-abste
 | Injection budget (other hooks) | 2400 chars (~600 tokens) | Hardcoded |
 | Prompt min length | 20 chars | Hardcoded |
 | Content-length gate (Stop) | 20K chars | Hardcoded |
-
-### Recommended Package Configuration
-
-For the Claude Code integration, disable the `conversational_knowledge` (fact
-extraction) package. Its atomic facts are redundant with the decisions and
-investigation outcomes that `agent_conversation_memory` already extracts, and
-they cannot compete for injection slots. Disabling it saves LLM tokens on every
-ingested turn.
-
-In `~/.pallium/config/pallium.toml`:
-
-```toml
-[semantic_packages.conversational_knowledge]
-enabled = false
-```
 
 ## Concurrent Sessions
 

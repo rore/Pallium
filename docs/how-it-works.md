@@ -48,14 +48,13 @@ Pallium uses the session and repository identity to:
 Claude Code, Codex, and OpenCode are the current integrations. They remain
 independent tools and own their execution, user interaction, and workflow.
 
-## Current installation boundary
+## Current default
 
-Relay does not require an LLM or derived memory. With the current default
-configuration, history ingestion requires an LLM provider. Without credentials,
-ingestion stays paused while Relay and inspection remain available. A
-provider-free Session History setup is planned.
+Relay and Session History do not require an LLM or derived memory. Derived
+memory is disabled by default. Enabling it requires a configured provider and
+model.
 
-See [Configuration](configuration.md) for the current setup.
+See [Configuration](configuration.md) for the optional setup.
 
 ## Go deeper
 

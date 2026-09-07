@@ -11,7 +11,7 @@ messages, and supports Pallium's optional derived-memory behavior.
 - send messages to another connected session; current integrations are Codex,
   Claude Code, and OpenCode
 - receive attributed messages and reply to the sender
-- wake loaded or unloaded exact Codex tasks on proven Windows paths
+- wake exact Codex tasks on qualified Windows and Linux paths
 - keep undelivered messages for the next normal turn
 
 ### Session History
@@ -27,9 +27,10 @@ messages, and supports Pallium's optional derived-memory behavior.
 - retrieve or inject selected memory on later turns
 - inspect, flag, and write memory through MCP tools
 
-Windows exact-session wake is proven, but busy, interrupted, restart, telemetry,
-and sustained-use qualification is still in progress. Other platforms retain
-next-turn delivery.
+Windows and Linux exact-session wake are qualified. Windows also proves loaded
+and unloaded tasks plus overtaken-wake suppression. Remaining lifecycle,
+telemetry, sustained-use, and macOS qualification work retains next-turn
+delivery where active wake is not qualified.
 
 ## Architecture
 
@@ -62,8 +63,8 @@ isolated by `container_ref` (derived from the git remote URL).
 
 - Python 3.12+ with Pallium installed from source
   (`pip install -e ".[vector,mcp]"`)
-- An LLM provider API key configured in `.env.local` to enable history ingestion
-  with the current default configuration
+- An LLM provider API key in `.env.local` only if you enable optional derived
+  memory
 - Git (for container derivation from repos)
 
 ## 1. Start Pallium
@@ -173,7 +174,7 @@ came from; it does not change retrieval.
 
 ### Optional derived-memory capture
 
-Pallium extracts structured memory from ingested conversation turns:
+When enabled, Pallium can extract structured memory from ingested conversation turns:
 
 - **Decisions** — "We chose X because Y"
 - **Investigation outcomes** — "Root cause: stale cache after deploy"
@@ -196,9 +197,9 @@ After setup, open two Codex tasks in the same Git repository.
    to `codex:@review`.
 3. Confirm that the second task receives the attributed message and can reply.
 
-Windows exact-session wake is proven but still completing broader lifecycle
-qualification. On other paths, make a normal turn in the recipient task to
-collect the pending message.
+Qualified Windows and Linux paths can start a new turn in the exact Codex task.
+On macOS and other unqualified paths, make a normal turn in the recipient task
+to collect the pending message.
 
 ### Verify Session History
 

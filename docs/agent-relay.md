@@ -5,8 +5,9 @@ another. Pallium stores the message before attempting delivery, so a busy or
 unavailable recipient can receive it later.
 
 Pallium currently ships Relay integrations for Claude Code, Codex, and OpenCode.
-Sessions must connect to the same local Pallium service. Routing uses explicit
-session identity; it does not use search, embeddings, ranking, or an LLM.
+Sessions must connect to the same local Pallium service and currently belong to
+the same repository. Routing uses explicit session identity; it does not use
+search, embeddings, ranking, or an LLM.
 
 ## Send a message
 
@@ -78,10 +79,10 @@ the same message remains pending for the recipient's next natural turn.
 
 | Runtime | Current behavior |
 |---|---|
-| Claude Code on Windows | Existing-session wake is qualified. |
-| Codex on Windows | Loaded and unloaded exact-session wake is proven; more lifecycle, telemetry, and sustained-use checks remain. |
+| Claude Code on Windows and Linux | Exact-session wake is qualified. Linux qualification used the installed UDS path on Ubuntu 24.04. |
+| Codex on Windows and Linux | Exact-session wake is qualified. Windows also proves loaded and unloaded tasks plus overtaken-wake suppression; Linux requires the installed hook to be trusted. |
 | OpenCode | Durable next-turn delivery; active wake is deferred. |
-| Other operating systems | Use next-turn delivery until that runtime/OS combination is qualified. |
+| Claude Code and Codex on macOS | Durable next-turn delivery; active wake is not yet qualified. |
 
 This table follows the current
 [wake roadmap](../roadmap/features/add-wake-first-relay-delivery.md). Recheck it
