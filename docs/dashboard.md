@@ -1,161 +1,45 @@
 # Dashboard
 
-The dashboard shows local service health, Relay activity, ingestion and search activity, and the optional derived-memory subsystem. It does not yet provide a Session History browser.
+The local dashboard presents Pallium as two top-level views: **Operations** (the default) answers whether the service and each capability are healthy; **Relay** is an observational workspace for recorded sessions and exchanges. It is localhost-only and read-only: it does not create agents, send messages, assign work, or define workflows.
 
 ![Dashboard](../assets/dashboard_screenshot.png)
 
 ## Access
 
-Open in your browser:
+- Service mode: http://localhost:19836/dashboard
+- Dev mode: http://localhost:8000/dashboard
 
-- **Service mode:** http://localhost:19836/dashboard
-- **Dev mode:** http://localhost:8000/dashboard
+No authentication is required because the dashboard is localhost-only, like the local API. Scope fields still apply to every history read; they are not an authentication boundary.
 
-No authentication required — the dashboard is localhost-only, same as the API.
+## Operations
 
-## Features
+Operations leads with service, storage, raw recording, queue, search, and Relay health, followed by collapsible capability sections. Pending Relay delivery is neutral; expired delivery and impaired dependencies are called out with actionable links. Existing metrics, activity, feedback, and diagnostics remain available under their owning capability.
 
-### Operational status
+### Session History
 
-The first panel answers whether Pallium is operating before showing counters. It
-combines service, ingestion, search, queue, and Relay signals into:
+Session History remains useful with semantic packages disabled. The governed SourceItem explorer supports explicitly scoped list/search/filter/detail reads using `container_ref`, `actor_ref`, and typed `query_visibility`; omitted or invalid scope is rejected. Visibility, shared-item actor rules, retention/forgotten state, filters, and pagination are applied before counts and ordering, with per-record defense and redaction afterward. Detail is read-only and telemetry-free. An explicit surrounding-context action reuses `/source/{id}/context` with the same scope; refresh does not manufacture lookup events. Inaccessible, forgotten, or deleted evidence is shown as unavailable, never from a cached excerpt.
 
-- an overall state: operating normally, warning, or needs attention
-- one status chip per subsystem
-- actionable problems such as a missing declared provider credential, terminal
-  ingestion failures, a stale pending item, unavailable semantic search, or a
-  Relay delivery that expired in the last 24 hours
+The usefulness panel separates live lookup/exposure/expansion facts from retrospective judge or benefit claims. Last-written aggregate reports show their generation time, evaluated window, denominators, sample/rated/failed/missing counts, completeness, versions, and uncertainty when present. Missing, stale, incomplete, or unvalidated reports are not rendered as zero benefit. A separately bounded reuse-event view exposes only redacted query/linkage/label metadata and resolves source evidence live; it is operational evidence, not assumed to be the exact aggregate sample.
 
-`/health` remaining reachable does not make this panel green when a functional
-subsystem is impaired.
+### Derived Memory
 
-### Overview
+Derived Memory is optional and disabled by default. Existing Memory Browser, query activity, injection/skip/feedback/flag diagnostics, Query Debug, and extraction reports remain here. Disabled processing means no new derivation, not data loss: preserved memories remain browsable and historical/offline diagnostics retain honest labels. Empty, unavailable, and stale states are explicit.
 
-Four dual-time metric cards. Every important number shows the **last 24h**
-(prominent, bright) alongside the **all-time** total (small, muted) so trends
-are visible without needing to compare to memory.
+## Relay
 
-- **Memory Objects** — `active / total` counts with a 24h creation sparkline
-  and `+N created in 24h`
-- **Source Items** — `processed 24h · total ingested` with a 24h sparkline
-  and live pending / processing counters
-- **Queries** — `24h · all-time` query count, hourly sparkline, and inject
-  rate for both windows
-- **Failed** — `24h · all-time` extraction failures, sparkline, plus
-  current pending detail
+Relay shows actor-domain named and unnamed sessions across containers, with endpoint ID, alias, runtime/native reference, container/repository metadata, lifecycle, last-seen, and persisted destination health when available. Container is provenance/filter metadata, not a hidden communication boundary. Runtime discovery and wake outcome are shown only when recorded; otherwise they are unavailable.
 
-The 24h sparkline anchors each card in the recent-window context so the
-prominent number isn't read in isolation.
+The workspace offers session/pair/all message views and an observational graph. Nodes are persisted endpoint IDs; edges are persisted communications. Legacy null endpoint IDs remain unknown and duplicate native IDs are never rebound. The graph and message list use the same bounded, redacted projection, filters, fixed `until` boundary, and deterministic `(created_at, id)` ordering. A graph is labelled partial until its bounded pages are fully loaded. Delivery state, lifecycle, effective expiry, reply links, selector-at-send, and timing are inspectable without claim tokens or receipts. Durable year-9999 expiry renders as no practical expiry; delivery admission never implies recipient action.
 
-### System Health
+Aliases are optional addressing metadata. Save, transfer, or remove is an explicit action through canonical naming semantics. A conflict is a visible 409 requiring a separate confirmation/retry against the selected endpoint identity; no silent rebinding occurs.
 
-Three cards aligned to the same row height:
+## Read behavior and states
 
-- **Storage** — SQLite database and vector index sizes. Bars are normalized
-  against absolute thresholds (200 MB / 50 MB) so the smaller index is no
-  longer dwarfed by SQLite's larger footprint.
-- **Ingestion Queue** — Pending · Done 24h+total · Failed 24h+total ·
-  Skipped 24h+total. Every tile follows the dual-time pattern; retention
-  state is the footer.
-- **Extraction Health** - recent failures grouped into operator-readable causes,
-  with sample count and maximum attempts, sourced from
-  `/debug/queue/health.recent_failures`.
+Dashboard projections are bounded app-local reads over existing records and allowlisted report files; they do not alter storage, claim deliveries, expand context, or expose pre-redaction content. Every panel has honest loading, empty, error, stale, and partial states with retry or next-page affordances. Narrow layouts stack capability cards and Relay panes without page overflow; keyboard users can reach tabs, collapsibles, filters, list/detail controls, graph nodes/edges, aliases, and linear graph alternatives with visible focus and status/error announcements.
 
-### Agent Relay
+## When to use it
 
-Relay is shown as a separate operational subsystem, not as memory processing.
-The panel reports messages and deliveries for the last 24 hours and all time,
-deliveries currently waiting for a recipient turn, effective expiry (including
-rows not yet materialized as expired), delivery-latency percentiles, and
-recent/dormant/closed sessions for Claude Code, Codex, and OpenCode. Waiting is neutral;
-expiry in the last 24 hours raises an operational warning. Payloads and session
-identifiers are never returned by the summary endpoint.
-
-### Query Activity
-
-The heading shows whether automatic injection can run now. When it is OFF,
-Pallium still records and can explicitly search raw Session History, but it does not
-search derived memory automatically. Raw-history lookups are measured separately and
-do not appear as skipped injections.
-
-Two cards. The left card has four dual-time tiles plus an hourly stacked bar.
-
-- **Injections** — 24h count with `blocks · avg blocks` plus all-time count
-  and all-time average; revealing that recent quality differs from history.
-- **Skips** — 24h · all-time, and `% of 24h queries` for context.
-- **Flags / Suppressions** — 24h · all-time for flags; suppressions still
-  fall back to the since-restart counter pending metrics-table wiring.
-- **Feedback** — 24h count + all-time count, with a not-relevant rate for
-  each window. Click `▸ review` to jump to the Memory Browser sorted by
-  most negative.
-- **Last 24h hourly** stacked bar — green = injections, yellow = skips —
-  shows when query traffic actually happens.
-
-The right card is the **Skip Reasons** trend table:
-
-| Skip Reason | 24h | 7d | Δ vs prior 6d | 24h hourly |
-|---|---|---|---|---|
-
-Each row has a delta chip (`+47%`, `-12%`, `≈`, `new`) for today vs the
-average of the prior 6 days, plus a per-row 24h hourly sparkline. The
-footer totals 24h / 7d / all-time skips. This is how regressions like
-`no_relevant_memory` jumping today first become visible.
-
-### Memory Browser
-
-The main view lists all stored memory objects with:
-
-- **Search** — server-side text search across memory payloads
-- **Filtering** by memory type, lifecycle state, and container
-- **Sorting** by creation date or negative feedback count
-- **Pagination** for large memory stores
-- **Absolute timestamps** (e.g., `Apr 16 17:57`)
-
-Each row shows the memory type, lifecycle, confidence level, container,
-creation timestamp, and summary text.
-
-### Memory Detail
-
-Click any memory to see:
-
-- **ID** with copy-to-clipboard button (for use with `pallium_flag_memory`)
-- **Content fields** — decision, rationale, summary, interest_text, etc.
-  displayed as structured key-value pairs
-- **Technical metadata** — semantic provenance, source info (collapsed)
-- **Feedback history** — relevant/not_relevant ratings with reasons
-- **Evidence** — source conversation items grouped by thread, ordered
-  chronologically
-
-### Query Debug
-
-Collapsible panel at the bottom for testing queries interactively:
-
-- Enter query text and optionally select a container
-- Calls `POST /query/debug` and shows:
-  - Whether injection would occur (INJECT/SKIP)
-  - Decision reason
-  - Injectable memory blocks
-  - Retrieval stage trace (candidates and selections per stage)
-
-### Feedback
-
-The dashboard shows aggregated feedback counts (relevant vs. not_relevant)
-per memory. Feedback is submitted by agents via the `pallium_rate_memory`
-MCP tool during normal operation — the dashboard surfaces it for inspection.
-
-## When to Use
-
-- **Monitoring health** — confirm the service is up, memories are being
-  created, and processing is active
-- **Debugging retrieval** — use Query Debug to test what memories would be
-  injected for a given query
-- **Verifying extraction** — inspect the content fields Pallium derived from
-  conversation turns
-- **Reviewing feedback** — sort by "Most negatively rated" to surface
-  memories that agents consistently find irrelevant
-- **Investigating skips** — check skip reasons to understand why queries
-  aren't producing injections
-
-## Dark Theme
-
-The dashboard uses a dark theme by default with no toggle needed.
+- Scan Operations for service and capability health.
+- Browse governed Session History and deliberately open bounded context.
+- Use Relay to follow a session, pair, reply chain, or expired delivery.
+- Use Derived Memory diagnostics only as optional historical/experimental evidence, never as proof of downstream benefit.

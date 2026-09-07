@@ -67,8 +67,7 @@ Not required at this risk level
 **Exceptions:**
 —
 
-**State:** Ready to implement
-<!-- Ready to implement | Blocked | Ready for review -->
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -76,15 +75,31 @@ Not required at this risk level
 - Context/discovery complete on isolated branch `feat/dashboard-operations-relay-workspace` from `ca9c864b58f1afc1661b34d077a297d0e2892f8e`.
 - Read-only backend, UX, and redline audits completed. No production or test code edited.
 - Smart-model review findings were resolved: SourceItem scope, Session History aggregate/evidence separation, and merged Relay read semantics are explicit. Final re-review approved; ready to implement.
+- Material design checkpoint complete: added docs/designs/dashboard-operations-relay-ux.md covering panel/data classification, production journeys and states, governed SourceItem evidence, Relay semantics, consistency, accessibility, responsive behavior, and the dependency-free single-HTML decision.
+
+- Implemented the dependency-free Operations + Relay dashboard shell: persisted capability disclosure, governed SourceItem and reuse-event inspection, and bounded observational Relay sessions/messages/map/alias flow.
+
+- Aligned the dashboard UI to finalized projection contracts: nested source detail/evidence, context-only scope, actor-required Relay pagination, and the canonical alias route.
+
+- Removed superseded dashboard function definitions; finalized source and Relay contracts now have one implementation each.
 
 ## Evidence
 
 - Live current dashboard and repository UX mock rendered with Playwright at desktop and mobile widths before implementation.
 - Redline pre-edit verdict: blue for app/tests/docs, gray for public screenshot asset, no boundary violation; minimum Risk Elevated.
+- `uv run python -m pytest tests/test_dashboard.py -q` -> 40 passed, including effective expiry, naive UTC bounds, fixed-window concurrent insert, governed free-text suppression, and expansion-role projection.
+- `node tests/dashboard_plain_language_renderer.mjs app/dashboard.html` -> all renderer cases passed, including producer-shaped multi-rater completeness, Wilson/kappa/calibration objects, and Relay pair-selection contracts.
+- `uv run python -m pytest tests/test_cross_container_relay_e2e.py -q` -> 6 passed.
+- `uv run python -m pytest tests/test_source_context_visibility.py tests/test_global_visibility.py tests/test_visibility_scope.py -q` -> 49 passed.
+- Relevant raw-history lifecycle and Relay split-store matrix -> 20 passed. The optional derived-vector gate could not activate because `usearch` is not installed; its failure is environment-specific and the dashboard does not add or depend on that package.
+- `python -m py_compile app/dashboard.py` and `git diff --check` passed.
+- Playwright visual QA against the live isolated service passed at 1440px and 430px: zero page/console errors, no body overflow, persisted disclosure state, scroll reset, SourceItem search/detail/provenance/context, Relay graph/list/detail consistency, actual graph-edge click with endpoint-pair preservation, keyboard graph navigation, clear/reset selection, bounded session coverage, out-of-window parent messaging, alias assign/remove, delivery/reply fields, and producer-shaped missing/incomplete/calibrated report states. A 30-node graph fixture retained internal scrolling without page overflow.
+- Public dashboard screenshot refreshed from the visually accepted Operations state.
+- Skill-feedback audit: all seven triggers were No.
 
 ## Result review
 
-Pending implementation and verification.
+Initial clean-context Astra result review required nine changes. All findings were addressed with focused regressions: governed evidence free text; edge pair encoding; producer report schema; effective expiry; UTC bounds; session pagination; scope/selection reset; bounded parent messaging; and classified, independently paged evidence navigation. Astra re-review found three remaining boundary semantics; all are now covered: offset-aware timestamps canonicalize to UTC, default empty measurement calibration yields to populated judge-vs-gold calibration, and persisted null-rung labels render as explicit no genuine reuse. Final clean-context Astra re-review: APPROVED. All prior findings are resolved; bounded history, explicit out-of-window parent states, and observational/non-causal usefulness evidence remain intentional documented limits.
 
 ## Plan review
 
@@ -111,3 +126,6 @@ Finding 2 remains blocked on a false artifact assumption: `JudgeReport.to_dict()
 **Verdict: APPROVED. Remaining planning blockers: none.** The separate bounded, scoped reuse-event/label projection supplies a concrete evidence path using existing persistence, while aggregate artifacts remain aggregate-only and are not presented as exact sample membership. Live SourceItem resolution and explicit unavailable-link/excerpt states resolve the last blocker without expanding beyond the recorded dashboard read-model scope or requiring producer/core/storage changes. The prior SourceItem and Relay revisions remain sufficient at plan level.
 
 During implementation, apply the no-cached-content requirement to every event response field, including query text and label rationale; legacy/free-text telemetry must not become a route around current source governance. Include that assertion in the already planned forgotten/inaccessible evidence E2E checks. Final approval of the result still requires the recorded API/browser coverage, visual QA, and docs/roadmap alignment.
+- Backend read projections implemented and focused dashboard caller tests added; verification pending.
+- Review follow-up complete: activity no longer exposes SourceItem content; Relay list/message filters, lifecycle/health, fixed-window `as_of`, and pagination metadata are covered by focused tests.
+- Finalized aggregate usefulness rendering for measurement/judge reports with explicit denominators, completeness, uncertainty, calibration, version, and non-causal language; missing reports fall back to clearly labelled operational reuse evidence.

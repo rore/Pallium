@@ -29,10 +29,11 @@ const dependencies = `
 function escapeHtml(str) { return str == null ? '' : String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function fmtNum(n) { return n == null ? '—' : n.toLocaleString(); }
 function _hhStamp() { return ''; }
+function formatDateWithRelative(value) { return String(value); }
 `;
 const source = dependencies + html.slice(helperStart, helperEnd) + html.slice(renderStart, renderEnd) +
-  'return { renderReuseCalibration, renderRawDerivedHybrid, renderDerivationFidelity };';
-const { renderReuseCalibration, renderRawDerivedHybrid, renderDerivationFidelity } = new Function('document', source)(document);
+  'return { renderHistoricalLookupUsefulness, renderReuseCalibration, renderRawDerivedHybrid, renderDerivationFidelity };';
+const { renderHistoricalLookupUsefulness, renderReuseCalibration, renderRawDerivedHybrid, renderDerivationFidelity } = new Function('document', source)(document);
 
 renderReuseCalibration({
   available: true,
@@ -48,6 +49,27 @@ renderReuseCalibration({
 });
 assert.equal(elements['hh-reuse-kpi'].querySelector('details').open, true);
 
+renderHistoricalLookupUsefulness(
+  { available: true, last_modified: '2026-02-02', report: {
+    window: { since: '2026-01-01', until: '2026-01-31' }, eligibility_n: 12,
+    n_eligible_sessions: 9, n_reuse_events: 4, calibration: { kappa: null, n: 0, threshold: null, calibrated: null },
+    rungs: { influence: { numerator: 2, denominator: 9, wilson_95: { low: 0.08, high: 0.49 } } },
+  } },
+  { available: true, last_modified: '2026-02-03', report: {
+    n_lookups: 10, n_sampled: 4, n_abandoned: 3, n_labels_written: 6, n_judge_failures: 1,
+    seeds: ['rater-a', 'rater-b'], direction_split: { user_directed: 2, agent_decided: 1 },
+    cohens_kappa: { kappa: 0.72, rater_pair: 'rater-a/rater-b', n_double_rated: 3 },
+    judge_vs_gold: { kappa: 0.81, n: 3, threshold: 0.6, calibrated: true },
+  } },
+);
+assert.match(elements['hh-reuse-kpi'].innerHTML, /eligible sessions[^]*9/);
+assert.match(elements['hh-reuse-kpi'].innerHTML, /eligibility threshold[^]*12/);
+assert.match(elements['hh-reuse-kpi'].innerHTML, /missing rating slots[^]*1/);
+assert.match(elements['hh-reuse-kpi'].innerHTML, /Wilson 95% 0.08–0.49/);
+assert.match(elements['hh-reuse-kpi'].innerHTML, /rater-a\/rater-b[^]*3 double-rated/);
+assert.match(elements['hh-reuse-kpi'].innerHTML, /reference-set agreement[^]*0.81[^]*3 examples[^]*threshold 0.6/);
+assert.match(elements['hh-reuse-kpi'].innerHTML, /validated for cautious interpretation/);
+assert.match(elements['hh-reuse-kpi'].innerHTML, /incomplete/i);
 renderReuseCalibration({ available: false });
 assert.match(elements['hh-reuse-kpi'].innerHTML, /That check has not been run yet/);
 renderReuseCalibration({
@@ -199,4 +221,29 @@ assert.equal(operationalElements['operational-summary'].hidden, false);
 assert.equal(operationalElements['operational-summary'].open, false);
 assert.equal(operationalElements['ops-title'].textContent, 'Pallium needs attention');
 
+
+const reuseClassStart = html.indexOf('function reuseClassification(');
+const reuseClassEnd = html.indexOf('function reuseEventParams(', reuseClassStart);
+assert.ok(reuseClassStart >= 0 && reuseClassEnd > reuseClassStart);
+const reuseClassification = new Function(`${html.slice(reuseClassStart, reuseClassEnd)}; return reuseClassification;`)();
+assert.equal(reuseClassification({ rung: null }), 'no genuine reuse');
+assert.equal(reuseClassification({ rung: 'downstream' }), 'downstream');
+assert.equal(reuseClassification({}), 'unlabelled');
+
+const relaySelectionStart = html.indexOf('function selectRelayNode(');
+const relaySelectionEnd = html.indexOf('function renderMap(', relaySelectionStart);
+assert.ok(relaySelectionStart >= 0 && relaySelectionEnd > relaySelectionStart);
+const relaySelection = new Function(`
+  let _relay = { selected: 'old', pair: ['old', 'pair'], message: 'old-message', mode: 'map' };
+  function setRelayMode(mode) { _relay.mode = mode; }
+  ${html.slice(relaySelectionStart, relaySelectionEnd)}
+  return { selectRelayPair, state: () => _relay };
+`)();
+relaySelection.selectRelayPair('sender\u0000literal', 'recipient"quoted');
+assert.deepEqual(relaySelection.state().pair, ['sender\u0000literal', 'recipient"quoted']);
+assert.equal(relaySelection.state().selected, null);
+assert.equal(relaySelection.state().message, null);
+assert.equal(relaySelection.state().mode, 'messages');
+assert.doesNotMatch(html, /data-rpair=/);
+assert.match(html, /data-rfrom=.*data-rto=/);
 console.log('plain-language dashboard renderers: all cases passed');

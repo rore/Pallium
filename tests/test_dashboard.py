@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -9,8 +10,8 @@ from sqlalchemy import text
 
 from app.config import AppConfig
 from app.main import create_app
-from core.models import MemoryObject
-from storage.sqlite_schema import MemoryFlagRecord
+from core.models import MemoryObject, SourceItem
+from storage.sqlite_schema import HistoricalLookupReuseEventRecord, HistoricalLookupReuseLabelRecord, MemoryFlagRecord, RelayDeliveryRecord, RelaySessionRecord
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
@@ -392,7 +393,7 @@ class TestDashboardIntegration:
         app = create_app(_test_config(tmp_path))
         with TestClient(app) as client:
             service = app.state.pallium_service
-            from core.models import MemoryObject
+            from core.models import MemoryObject, SourceItem
             mo1 = MemoryObject(
                 type="decision", schema_id="test", schema_version="1.0",
                 payload={"summary": "Use PostgreSQL for the database"},
@@ -415,7 +416,7 @@ class TestDashboardIntegration:
 
 class TestDashboardTwoViewShell:
     """The dashboard HTML must ship the two-view shell markers so the
-    Operational / How-memory-helps switch is covered by the substring guard."""
+    Operations / Relay switch is covered by the substring guard."""
 
     def test_html_contains_two_view_switch(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
@@ -424,7 +425,7 @@ class TestDashboardTwoViewShell:
         html = resp.text
         # Tab buttons + switch function
         assert 'id="tab-operational"' in html
-        assert 'id="tab-how-it-helps"' in html
+        assert 'id="tab-relay"' in html
         assert "switchView(" in html
         # Both view containers present (CSS display toggle, both in DOM)
         assert 'id="view-operational"' in html
@@ -483,7 +484,7 @@ class TestDashboardEffectivenessReports:
             resp = client.get("/dashboard/api/effectiveness/reports")
         assert resp.status_code == 200
         body = resp.json()
-        assert set(body["reports"].keys()) == {"raw_derived_hybrid", "derivation_fidelity", "reuse_judge_calibration"}
+        assert set(body["reports"].keys()) == {"raw_derived_hybrid", "derivation_fidelity", "reuse_judge_calibration", "historical_lookup_measurement", "historical_lookup_judge"}
         for entry in body["reports"].values():
             assert entry["available"] is False
             assert entry["last_modified"] is None
@@ -545,7 +546,7 @@ class TestDashboardEffectivenessReports:
             )
         assert resp.status_code == 200
         body = resp.json()
-        assert set(body["reports"].keys()) == {"raw_derived_hybrid", "derivation_fidelity", "reuse_judge_calibration"}
+        assert set(body["reports"].keys()) == {"raw_derived_hybrid", "derivation_fidelity", "reuse_judge_calibration", "historical_lookup_measurement", "historical_lookup_judge"}
 
     def test_reports_endpoint_does_not_require_sqlite(self, tmp_path: Path, monkeypatch) -> None:
         """Unlike other /dashboard/api/* routes, the file-backed report
@@ -623,3 +624,233 @@ class TestDashboardFlagsEndpoint:
             resp = client.get(f"/dashboard/api/memories/{mo.id}/flags")
         assert resp.status_code == 200
         assert resp.json()["items"] == []
+
+class TestDashboardSourceAndRelayProjections:
+    def test_sources_require_scope_and_enforce_actor_visibility_forget_and_redaction(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        now = datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc)
+        visible = SourceItem(source_type="turn", source_id="visible", content_type="text/plain",
+            content="api_key=AKIA1234567890ABCDEF", metadata={"secret": "AKIA1234567890ABCDEF"},
+            container_ref="c1", actor_ref="a1", agent_ref="α-agent", visibility="private", created_at=now)
+        other_actor = SourceItem(source_type="turn", source_id="other", content_type="text/plain", content="nope",
+            container_ref="c1", actor_ref="a2", visibility="private", created_at=now + timedelta(seconds=1))
+        forgotten = SourceItem(source_type="turn", source_id="forgotten", content_type="text/plain", content="gone",
+            container_ref="c1", actor_ref="a1", visibility="private", forgotten_at=now, created_at=now + timedelta(seconds=2))
+        note = SourceItem(source_type="turn", source_id="note", content_type="text/plain", content="AKIA1234567890ABCDEF",
+            artifact_kind="note", container_ref="c1", actor_ref="a1", agent_ref="α-agent", visibility="private", created_at=now + timedelta(seconds=3))
+        app.state.pallium_service._storage.create_source_item(visible)
+        app.state.pallium_service._storage.create_source_item(other_actor)
+        app.state.pallium_service._storage.create_source_item(forgotten)
+        app.state.pallium_service._storage.create_source_item(note)
+        with app.state.pallium_service._storage._session_factory() as session:
+            session.execute(text("UPDATE source_items SET forgotten_at=:now WHERE id=:id"), {"now": now, "id": forgotten.id})
+            session.commit()
+        with TestClient(app) as client:
+            assert client.get("/dashboard/api/sources").status_code == 422
+            assert client.get("/dashboard/api/sources?container_ref=c1&actor_ref=a1&query_visibility=nope").status_code == 422
+            response = client.get("/dashboard/api/sources?container_ref=c1&actor_ref=a1&query_visibility=private&agent_ref=%CE%B1-agent")
+            assert response.status_code == 200
+            body = response.json()
+            assert [item["id"] for item in body["sources"]] == [note.id, visible.id]
+            assert "AKIA1234567890ABCDEF" not in body["sources"][1]["content"]
+            assert "AKIA1234567890ABCDEF" not in str(body["sources"][1]["metadata"])
+            assert body["sources"][0]["content"] == "AKIA1234567890ABCDEF"  # intentional note carve-out
+            assert client.get(f"/dashboard/api/sources/{other_actor.id}?container_ref=c1&actor_ref=a1&query_visibility=private").status_code == 404
+            assert client.get(f"/dashboard/api/sources/{forgotten.id}?container_ref=c1&actor_ref=a1&query_visibility=private").status_code == 404
+            assert "AKIA1234567890ABCDEF" not in str(client.get("/dashboard/api/activity").json())
+
+    def test_history_projection_never_returns_cached_source_text(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        storage = app.state.pallium_service._storage
+        source = SourceItem(source_type="turn", source_id="s", content_type="text/plain", content="private body",
+            container_ref="c1", actor_ref="a1", visibility="private")
+        storage.create_source_item(source)
+        with storage._session_factory() as session:
+            session.add(HistoricalLookupReuseEventRecord(id="event", created_at=datetime.now(timezone.utc), event_type="lookup",
+                container_ref="c1", actor_ref="a1", visibility="private", query_text="AKIA1234567890ABCDEF",
+                request_source_item_id=source.id, exposed_json='[{"source_item_id":"%s","role":"anchor","raw_rank":1,"score":0.9}]' % source.id))
+            session.add(HistoricalLookupReuseLabelRecord(id="label", lookup_event_id="event", rater_seed="r", rung="influence",
+                rationale="AKIA1234567890ABCDEF", created_at=datetime.now(timezone.utc)))
+            session.commit()
+        with TestClient(app) as client:
+            response = client.get("/dashboard/api/history/reuse-events?container_ref=c1&actor_ref=a1&query_visibility=private")
+        assert response.status_code == 200
+        item = response.json()["events"][0]
+        assert item["request_source_item"] == {"id": source.id, "available": True}
+        assert item["exposed"][0]["source_item_id"] == source.id
+        assert item["exposed"][0]["role"] == "anchor"
+        assert "private body" not in str(item)
+        assert "AKIA1234567890ABCDEF" not in str(item)
+
+    def test_relay_actor_projection_is_paginated_read_only_and_secret_free(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        scope = {"container_ref": "c1", "actor_ref": "a1"}
+        with TestClient(app) as client:
+            for runtime, session_ref in (("codex", "one"), ("claude-code", "two")):
+                assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, **scope}).status_code == 200
+            sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "one",
+                "recipient": "claude-code:two", "payload": "AKIA1234567890ABCDEF", **scope}).json()
+            sessions = client.get("/dashboard/api/relay/sessions?actor_ref=a1").json()["sessions"]
+            assert {session["session_ref"] for session in sessions} == {"one", "two"}
+            page = client.get("/dashboard/api/relay/messages?actor_ref=a1&limit=1").json()
+            assert page["total"] == 1 and page["messages"][0]["id"] == sent["message_id"]
+            assert "claim_token" not in str(page) and "receipt" not in str(page)
+            assert "AKIA1234567890ABCDEF" not in str(page)
+            assert page["messages"][0]["expires_at"] is None
+            assert client.get("/dashboard/api/relay/messages?actor_ref=other").json()["messages"] == []
+
+    def test_relay_session_filters_and_message_window_filters(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            for runtime, session_ref, container_ref in (("codex", "sender", "c1"), ("claude-code", "peer", "c2"), ("codex", "dormant", "c2")):
+                assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref,
+                    "container_ref": container_ref, "actor_ref": "a1"}).status_code == 200
+            sessions = client.get("/dashboard/api/relay/sessions?actor_ref=a1").json()
+            assert sessions["total"] == 3
+            endpoints = {item["session_ref"]: item["id"] for item in sessions["sessions"]}
+            storage = app.state.pallium_service._storage
+            with storage._relay_session_factory() as session:
+                session.execute(text("UPDATE relay_sessions SET state='unreachable', last_seen_at=:old WHERE session_ref='dormant'"),
+                    {"old": datetime.now(timezone.utc) - timedelta(days=2)})
+                session.commit()
+            filtered = client.get("/dashboard/api/relay/sessions?actor_ref=a1&container_ref=c2&runtime=codex&lifecycle=dormant&destination_health=unreachable").json()
+            assert filtered["total"] == 1
+            assert filtered["sessions"][0]["lifecycle"] == "dormant"
+            assert filtered["sessions"][0]["destination_health"] == "unreachable"
+            assert client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender",
+                "recipient": "claude-code:peer", "container_ref": "c1", "actor_ref": "a1", "payload": "one"}).status_code == 200
+            assert client.post("/relay/messages", json={"sender_runtime": "claude-code", "sender_session_ref": "peer",
+                "recipient": "codex:sender", "container_ref": "c2", "actor_ref": "a1", "payload": "two"}).status_code == 200
+            query = f"/dashboard/api/relay/messages?actor_ref=a1&endpoint_id={endpoints['sender']}&peer_endpoint_id={endpoints['peer']}&delivery_state=pending&limit=1"
+            first = client.get(query).json()
+            assert first["total"] == 2 and first["has_more"] is True and first["as_of"] == first["until"]
+            assert all("claim_token" not in str(item) and "receipt" not in str(item) for item in first["messages"])
+            assert all(endpoints["sender"] in {item["sender_endpoint_id"], *[d["recipient_endpoint_id"] for d in item["deliveries"]]} for item in first["messages"])
+            second = client.get(query + f"&until={first['until'].replace('+', '%2B')}&before_created_at={first['next_before_created_at'].replace('+', '%2B')}&before_id={first['next_before_id']}").json()
+            assert second["has_more"] is False and len(second["messages"]) == 1
+            assert client.get("/dashboard/api/relay/messages?actor_ref=a1&peer_endpoint_id=x").status_code == 422
+            assert client.get("/dashboard/api/relay/messages?actor_ref=a1&runtime=codex&container_ref=c1").json()["total"] == 1
+
+    def test_source_scope_pagination_unicode_filters_and_reads_are_telemetry_free(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        storage = app.state.pallium_service._storage
+        at = datetime(2026, 9, 7, 13, tzinfo=timezone.utc)
+        rows = [
+            SourceItem(id="page-a", source_type="chat", source_id="a", content_type="text", content="東京", role="user", artifact_kind="message", thread_ref="t", agent_ref="agent", container_ref="c1", actor_ref="a1", visibility="private", occurred_at=at, created_at=at),
+            SourceItem(id="page-b", source_type="chat", source_id="b", content_type="text", content="東京", role="user", artifact_kind="message", thread_ref="t", agent_ref="agent", container_ref="c1", actor_ref="a1", visibility="private", occurred_at=at, created_at=at),
+            SourceItem(id="container", source_type="chat", source_id="c", content_type="text", content="container", container_ref="c1", actor_ref="a1", visibility="container", created_at=at),
+            SourceItem(id="public", source_type="chat", source_id="p", content_type="text", content="public", container_ref="c2", visibility="public", created_at=at),
+            SourceItem(id="global", source_type="chat", source_id="g", content_type="text", content="global", container_ref="c2", actor_ref="a1", visibility="global", created_at=at),
+        ]
+        for row in rows:
+            storage.create_source_item(row)
+        with storage._session_factory() as session:
+            before = session.query(HistoricalLookupReuseEventRecord).count()
+        params = {"container_ref": "c1", "actor_ref": "a1", "query_visibility": "private", "source_type": "chat", "role": "user", "artifact_kind": "message", "thread_ref": "t", "agent_ref": "agent", "search": "東京", "limit": 1}
+        with TestClient(app) as client:
+            first = client.get("/dashboard/api/sources", params=params).json()
+            second = client.get("/dashboard/api/sources", params={**params, "offset": 1}).json()
+            assert first["total"] == 2 and [item["id"] for item in first["sources"]] == ["page-b"]
+            assert [item["id"] for item in second["sources"]] == ["page-a"]
+            assert client.get("/dashboard/api/sources/public", params={"container_ref": "c1", "actor_ref": "a1", "query_visibility": "public"}).status_code == 200
+            assert client.get("/dashboard/api/sources/global", params={"container_ref": "c1", "actor_ref": "a1", "query_visibility": "public"}).status_code == 200
+            assert client.get("/dashboard/api/sources/page-a", params={"container_ref": "c1", "actor_ref": "a1", "query_visibility": "public"}).status_code == 404
+            container = client.get("/dashboard/api/sources", params={"container_ref": "c1", "actor_ref": "a1", "query_visibility": "container"}).json()
+            assert "container" in {item["id"] for item in container["sources"]} and "page-a" not in {item["id"] for item in container["sources"]}
+        with storage._session_factory() as session:
+            assert session.query(HistoricalLookupReuseEventRecord).count() == before
+
+    def test_reuse_events_hide_forgotten_and_missing_ids_and_tolerate_bad_json(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        storage = app.state.pallium_service._storage
+        source = SourceItem(id="forgotten", source_type="chat", source_id="f", content_type="text", content="gone", container_ref="c", actor_ref="a", visibility="private")
+        storage.create_source_item(source)
+        with storage._session_factory() as session:
+            session.execute(text("UPDATE source_items SET forgotten_at=:now WHERE id='forgotten'"), {"now": datetime.now(timezone.utc)})
+            session.add(HistoricalLookupReuseEventRecord(id="bad", created_at=datetime.now(timezone.utc), event_type="lookup", container_ref="c", actor_ref="a", visibility="private", request_source_item_id="missing", exposed_json="not-json"))
+            session.add(HistoricalLookupReuseEventRecord(id="hidden", created_at=datetime.now(timezone.utc), event_type="lookup", container_ref="c", actor_ref="a", visibility="private", request_source_item_id="forgotten", exposed_json='[{"source_item_id":"forgotten"},{"source_item_id":"missing"}]'))
+            session.commit()
+        with TestClient(app) as client:
+            items = client.get("/dashboard/api/history/reuse-events?container_ref=c&actor_ref=a&query_visibility=private").json()["events"]
+        hidden = next(item for item in items if item["id"] == "hidden")
+        assert hidden["request_source_item"] == {"id": None, "available": False}
+        assert all(entry["source_item_id"] is None and entry["available"] is False for entry in hidden["exposed"])
+        assert next(item for item in items if item["id"] == "bad")["exposed"] == []
+
+    def test_relay_split_store_and_multi_delivery_projection_boundaries(self, tmp_path: Path) -> None:
+        config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
+        app = create_app(config)
+        with TestClient(app) as client:
+            for runtime, session_ref, container, actor in (("codex", "sender", "c1", "a"), ("claude-code", "first", "c2", "a"), ("codex", "second", "c2", "a"), ("codex", "other", "c3", "b")):
+                assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, "container_ref": container, "actor_ref": actor}).status_code == 200
+            sessions = client.get("/dashboard/api/relay/sessions?actor_ref=a").json()
+            assert {item["container_ref"] for item in sessions["sessions"]} == {"c1", "c2"}
+            assert client.get("/dashboard/api/relay/sessions?actor_ref=b").json()["total"] == 1
+            assert client.get("/dashboard/api/relay/messages?actor_ref=a").json()["messages"] == []
+            sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:first", "container_ref": "c1", "actor_ref": "a", "payload": "fanout"}).json()
+            ids = {item["session_ref"]: item["id"] for item in sessions["sessions"]}
+            storage = app.state.pallium_service._storage
+            with storage._relay_session_factory() as session:
+                session.add(RelayDeliveryRecord(id="second-delivery", message_id=sent["message_id"], recipient_runtime="codex", recipient_session_ref="second", recipient_endpoint_id=ids["second"], recipient_container_ref="c2", state="pending", attempts=0))
+                session.execute(text("UPDATE relay_sessions SET state='closed' WHERE id=:id"), {"id": ids["second"]})
+                session.commit()
+            page = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "endpoint_id": ids["sender"], "peer_endpoint_id": ids["second"], "delivery_state": "pending"}).json()
+            assert page["total"] == 1 and len(page["messages"][0]["deliveries"]) == 2
+            assert client.get("/dashboard/api/relay/messages?actor_ref=a&limit=201").status_code == 422
+            assert client.get("/dashboard/api/relay/messages?actor_ref=a&delivery_state=nope").status_code == 422
+            assert client.get("/dashboard/api/relay/sessions?actor_ref=a&destination_health=nope").status_code == 422
+            assert client.get("/dashboard/api/relay/messages?actor_ref=a&before_id=only").status_code == 422
+            closed = client.get("/dashboard/api/relay/sessions?actor_ref=a&lifecycle=closed").json()["sessions"]
+            assert closed[0]["session_ref"] == "second" and closed[0]["destination_health"] is None
+
+    def test_reuse_event_free_text_is_suppressed_when_source_is_forgotten(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        storage = app.state.pallium_service._storage
+        source = SourceItem(id="forgotten-text", source_type="chat", source_id="f", content_type="text", content="private source content", container_ref="c", actor_ref="a", visibility="private")
+        storage.create_source_item(source)
+        with storage._session_factory() as session:
+            session.execute(text("UPDATE source_items SET forgotten_at=:now WHERE id=:id"), {"now": datetime.now(timezone.utc), "id": source.id})
+            session.add(HistoricalLookupReuseEventRecord(id="hidden-text", created_at=datetime.now(timezone.utc), event_type="lookup", container_ref="c", actor_ref="a", visibility="private", query_text="private source content", request_source_item_id=source.id, exposed_json='[{"source_item_id":"forgotten-text"}]'))
+            session.add(HistoricalLookupReuseLabelRecord(id="hidden-text-label", lookup_event_id="hidden-text", rater_seed="r", rung="influence", rationale="private source content", created_at=datetime.now(timezone.utc)))
+            session.commit()
+        with TestClient(app) as client:
+            event = next(item for item in client.get("/dashboard/api/history/reuse-events?container_ref=c&actor_ref=a&query_visibility=private").json()["events"] if item["id"] == "hidden-text")
+        assert event["text_available"] is False and event["query_text"] is None and event["labels"][0]["rationale"] is None
+
+    def test_relay_effective_delivery_state_and_naive_times_are_read_only(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            for runtime, session_ref in (("codex", "sender"), ("claude-code", "target")):
+                assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, "container_ref": "c", "actor_ref": "a"}).status_code == 200
+            sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "actor_ref": "a", "payload": "expiring", "expires_in_seconds": 60}).json()
+            storage = app.state.pallium_service._storage
+            with storage._relay_session_factory() as session:
+                session.execute(text("UPDATE relay_messages SET expires_at=:past WHERE id=:id"), {"past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": sent["message_id"]})
+                session.commit()
+            expired = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "delivery_state": "expired"}).json()
+            assert expired["total"] == 1 and expired["messages"][0]["deliveries"][0]["state"] == "expired"
+            assert client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "delivery_state": "pending"}).json()["total"] == 0
+            with storage._relay_session_factory() as session:
+                assert session.scalar(text("SELECT state FROM relay_deliveries WHERE message_id=:id"), {"id": sent["message_id"]}) == "pending"
+            assert client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "until": "2026-09-07T12:00:00", "since": "2026-09-07T11:00:00"}).status_code == 200
+            future_utc = datetime.now(timezone.utc) + timedelta(minutes=5)
+            future_offset = future_utc.astimezone(timezone(timedelta(hours=2)))
+            utc_bound = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "until": future_utc.isoformat()}).json()
+            offset_bound = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "until": future_offset.isoformat()}).json()
+            assert [item["id"] for item in utc_bound["messages"]] == [sent["message_id"]]
+            assert [item["id"] for item in offset_bound["messages"]] == [sent["message_id"]]
+            assert client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "before_created_at": "2026-09-07T12:00:00", "before_id": "x"}).status_code == 200
+
+    def test_relay_fixed_window_excludes_concurrent_insert(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            for runtime, session_ref in (("codex", "sender"), ("claude-code", "target")):
+                client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, "container_ref": "c", "actor_ref": "a"})
+            first_id = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "actor_ref": "a", "payload": "first"}).json()["message_id"]
+            second_id = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "actor_ref": "a", "payload": "second"}).json()["message_id"]
+            first = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "limit": 1}).json()
+            inserted_id = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "actor_ref": "a", "payload": "new"}).json()["message_id"]
+            second = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "limit": 1, "until": first["until"], "before_created_at": first["next_before_created_at"], "before_id": first["next_before_id"]}).json()
+        assert first["messages"][0]["id"] == second_id
+        assert second["messages"][0]["id"] == first_id
+        assert inserted_id not in {first["messages"][0]["id"], second["messages"][0]["id"]}

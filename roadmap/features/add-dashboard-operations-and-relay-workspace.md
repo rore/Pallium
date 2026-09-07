@@ -1,7 +1,7 @@
 ---
 id: add-dashboard-operations-and-relay-workspace
 title: Redesign the dashboard around Operations and Relay
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -47,20 +47,18 @@ still represents the earlier memory-centric product:
 - Relay already has container-scoped session list/name/close, targeted send/reply,
   message-status, delivery/ACK, lifecycle, and wake-candidate behavior. The current
   session view omits the persisted RelaySessionRecord.id and container metadata;
-  there is no global/cross-container session list or paginated message-history read
-  surface.
+  dashboard-oriented actor-domain session and paginated message-history projections are now
+  implemented as bounded reads.
 - persisted Relay messages contain the post-redaction payload, sender runtime/native
   session, recipient selector, reply link, actor/container, creation, and expiry.
   Deliveries contain recipient runtime/native session, state, claim/delivery times,
   and attempts. Wake attempt/success telemetry is not persisted and must not be
   invented by the UI.
-- current Relay identity, alias uniqueness, delivery lookup, reply, status, and wake
-  paths remain container-coupled. The dashboard must consume—not pre-empt—the
-  canonical actor-scoped endpoint and routing contract from
-  investigate-cross-repository-relay-coordination.
+- Relay identity, alias uniqueness, delivery lookup, reply, status, and wake paths use the
+  merged actor-scoped endpoint and routing contract; the dashboard consumes those semantics
+  through bounded read projections and the canonical naming route.
 
-Before implementation, turn this audit into two explicit matrices in the UX/design
-artifact:
+The UX/design artifact records two implementation matrices:
 
 1. every current panel classified as core/service, Session History, Relay
    operations, Derived Memory, experimental/evaluation, or obsolete;
@@ -90,9 +88,8 @@ Everyday journeys:
 - Derived Memory: expand the capability → browse preserved objects → inspect a
   memory and its existing diagnostics, including with new derivation disabled.
 
-Before coding, reconcile the current-state audit and API/dependency matrices with
-the checkout. Cross-container Relay is in active development; do not assume either
-the old contract or its planned replacement is the shipped contract.
+The implementation is aligned with the merged cross-container Relay contract; the UX mock
+remains interaction guidance, while shipped API semantics take precedence.
 
 ## Information architecture
 
@@ -273,8 +270,8 @@ separate work.
   storage internals directly;
 - replace memory-backed container/actor/activity projections with capability-neutral
   or SourceItem-backed equivalents so Operations works with zero semantic packages;
-- after the cross-container contract lands, add a bounded actor-domain Relay session
-  projection that exposes canonical endpoint identity and location metadata;
+- use the merged actor-domain Relay contract for a bounded session projection exposing
+  canonical endpoint identity and location metadata;
 - add one paginated Relay message/delivery history projection with time, session,
   pair, runtime, container, state, and reply filters. Derive the first graph from
   this response instead of adding a second graph backend;
@@ -290,9 +287,8 @@ claim tokens, receipts, secrets, or other delivery-control material to the brows
 - UX/IA, Operations, package-free health, SourceItem exploration, and relocation of
   existing panels can be designed and implemented against shipped behavior.
 - canonical endpoint identity, actor-domain alias namespace, cross-container session
-  listing, cross-container graph edges, and final Relay workspace E2E depend on
-  investigate-cross-repository-relay-coordination and its accepted implementation.
-  Do not hardcode today's container-scoped selectors as the new UI contract.
+  listing, and graph edges are shipped Relay semantics; do not hardcode container-scoped
+  selectors as the dashboard contract.
 - recent native Claude Code/Codex/OpenCode session discovery is an investigation or
   integration-owned follow-up unless a runtime already exposes a safe bounded
   discovery API. Distinguish Relay-known endpoints from merely discovered native
@@ -362,7 +358,7 @@ not widen Session History or Derived Memory visibility.
    managed without changing communication authority.
 4. No dashboard composer, workflow control, invented wake telemetry, unbounded list,
    governance bypass, or heavy frontend stack is introduced.
-5. Required public-surface E2E, cross-container E2E after its dependency lands, live
-   browser verification, docs, and screenshots pass. The completed
+5. Required public-surface E2E, cross-container E2E, live browser verification, docs,
+   and screenshots are the final verification gate. The completed
    add-dashboard-operational-and-value-rework item remains done; only its obsolete
    product framing is superseded.
