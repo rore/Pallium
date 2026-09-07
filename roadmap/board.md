@@ -7,7 +7,6 @@
 
 # Parallel · Agent Relay
 - add-wake-first-relay-delivery
-- add-budgeted-long-relay-messages
 - idea-agent-relay
 - add-relay-retention-and-lifecycle-hardening
 - validate-relay-dependency-workflows
@@ -49,6 +48,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-budgeted-long-relay-messages
 - decouple-session-history-from-derived-packages
 - fix-agent-work-ref-injection
 - add-distinct-work-and-broad-history-search-tools

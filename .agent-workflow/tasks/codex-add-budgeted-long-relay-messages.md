@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -45,6 +45,7 @@
 - 2026-09-07 Verify progress: Python syntax checks pass; focused Relay/HTTP/hook/MCP/wake checks pass (including 147 feature-selected checks, 66 MCP/wake checks, and focused minimum/exact-page cases); OpenCode passes 47 with 7 Windows structural-discovery skips; the guidance budget and stale-delivery wording gates pass; import-linter reports zero violations. Redline correctly reports the API files as red and leaves the structurally separate PR-time `api-review` checkpoint unsatisfied pending CODEOWNER approval or `api-reviewed` label.
 - 2026-09-07 Result review: senior review found and drove closure of OpenCode notice-reserve claim safety, strict legacy metadata validation, HTTP selection-budget wording, short MCP status compatibility, MCP claim-token sanitization, dependent wake-roadmap drift, and near-boundary OpenCode preview lifecycle coverage. Final senior verdict: no blocking correctness, security, compatibility, scope, roadmap, or documentation findings.
 - 2026-09-07 Full-suite gate: three exact configured `pytest -q -n0 .` attempts each completed 4,551 passing tests but one different untouched timing/order-sensitive failure. The failing nodes were `test_expired_claim_rewakes_once_after_real_app_restart`, `test_unreachable_transport_retains_capability_but_preserves_newer_intent`, and `test_relay_and_diagnostics_survive_saturated_memory_worker_capacity`; every node passed immediately in isolation on both this branch and untouched main. A clean full CI run remains required, so State is Blocked and the roadmap item remains queued.
+- 2026-09-07 PR gate: GitHub CI passed cleanly at `310f0524` on Python 3.12/3.13, Windows smoke, Agent Workflow, and redline. CodeRabbit's only actionable finding was fixed, regression-tested (37 Relay MCP tests pass), acknowledged, and resolved. State advances to Ready for review and the roadmap item to done.
 
 ## Checkpoint: api-review
 
@@ -107,13 +108,13 @@ The stronger review supersedes the initial readiness sign-off and identified two
 
 ## Evidence
 
-Candidate revision: `2b042840`.
+Candidate implementation revision: `310f0524`.
 
 - Feature-focused Python verification passed, including the 16,000/16,001 boundaries, code-point paging/reconstruction and isolation, pre-claim response selection, malformed legacy metadata, MCP receive/status lifecycle, and Claude/Codex hook ordering.
 - OpenCode verification passed 47 runnable tests with 7 expected Windows structural-discovery skips; its lifecycle case uses a largest-fit truncated preview and proves the 2,360 claim budget, 2,400 rendered ceiling, continuation marker, mutation-before-ACK, and ACK identity.
 - Python compilation, `git diff --check`, guidance budget/wording gates, and the import linter passed with zero import violations.
-- Three final configured full-suite attempts each reported 4,551 passed, 51 skipped, 170 repository-configured slow deselections, 2 expected failures, and one different non-reproducing wake/capacity failure. Each failing node passed in isolation on both candidate and untouched main. Required action: obtain one clean configured CI/full-suite result before advancing to Ready for review.
+- Three local configured full-suite attempts each reported 4,551 passed with one different non-reproducing wake/capacity failure; each failing node passed in isolation on both candidate and untouched main. GitHub CI then passed cleanly on Python 3.12 and 3.13, Windows smoke, Agent Workflow, and redline at `310f0524`; the repository-configured Windows full job was intentionally skipped.
 
 ## Result review
 
-Senior high-reasoning review completed on the final diff. Its P1/P2 findings were fixed and covered; the final verdict reports no blocking correctness, security, compatibility, scope, roadmap, or documentation findings and judges focused verification adequate. Risk remains High because the public API red zone is unchanged. The structurally separate PR-time `api-review` checkpoint still requires CODEOWNER approval or the `api-reviewed` label. Skill-feedback audit: all seven triggers N.
+Senior high-reasoning review completed on the final diff. Its P1/P2 findings were fixed and covered; the final verdict reports no blocking correctness, security, compatibility, scope, roadmap, or documentation findings and judges focused verification adequate. Risk remains High because the public API red zone is unchanged. The structurally separate PR-time `api-review` checkpoint still requires CODEOWNER approval or the `api-reviewed` label. CodeRabbit found one valid scope-conflict gap in MCP status. Revision `310f0524` routes status through the shared trusted Relay scope resolver and extends the parameterized regression suite; CodeRabbit acknowledged the fix and GitHub reports the thread resolved. The generic docstring-coverage advisory was reviewed and declined because adding boilerplate to existing/self-evident hook code would not improve the public contract or behavioral coverage. Skill-feedback audit: all seven triggers N.
