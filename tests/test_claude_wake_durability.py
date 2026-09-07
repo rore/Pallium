@@ -656,7 +656,7 @@ def test_session_end_outage_preserves_newer_registration_intent(tmp_path: Path, 
     common = sys.modules["common"]
     monkeypatch.setattr(session_end, "read_hook_input", lambda: {"session_id": PAYLOAD["session_ref"], "cwd": str(tmp_path)})
     monkeypatch.setattr(session_end, "resolve_container_ref", lambda *_: PAYLOAD["container_ref"])
-    monkeypatch.setattr(session_end, "derive_actor_ref", lambda: PAYLOAD["actor_ref"])
+    monkeypatch.setattr(session_end, "derive_actor_ref", lambda *_: PAYLOAD["actor_ref"])
     monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())))
     session_end.main()
     closed_path = _intent_path(state_dir, PAYLOAD["session_ref"])

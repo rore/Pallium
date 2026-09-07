@@ -146,7 +146,7 @@ def main() -> None:
         cwd = payload.get("cwd", ".")
         transcript_path = payload.get("transcript_path", "")
         container_ref = resolve_container_ref(cwd, session_id)
-        actor_ref = derive_actor_ref()
+        actor_ref = derive_actor_ref(cwd, session_id)
         register_claude_wake(session_id, container_ref, actor_ref, idle=True)
 
         if payload.get("stop_hook_active") is not True and isinstance(session_id, str) and session_id:

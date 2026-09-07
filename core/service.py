@@ -908,6 +908,7 @@ class PalliumService:
         trigger_origin: str | None = None,
         source_only: bool = False,
         defer_delivery: bool = False,
+        exclude_item_id: str | None = None,
     ) -> QueryResult:
         container_ref = canonicalize_container_ref(container_ref)
         exclude_source_identity: tuple[str, str] | None = None
@@ -937,11 +938,13 @@ class PalliumService:
                     "request_source_item_id must reference a live user request in the same scope"
                 )
             exclude_source_identity = (linked_source.source_type, linked_source.source_id)
-        runtime_context = resolve_runtime_context(
-            self._storage,
-            thread_ref,
-            runtime_context,
-        )
+        if source_only or self._query_executor.default_semantic_plugin_available():
+            runtime_context = resolve_runtime_context(
+                self._storage,
+                thread_ref,
+                runtime_context,
+                exclude_item_id=exclude_item_id,
+            )
         result = self._query_executor.query(
             text,
             limit,

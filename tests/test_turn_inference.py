@@ -275,6 +275,39 @@ def test_item_and_query_excludes_just_ingested_item(client) -> None:
     assert rc2.thread_item_count == 1
 
 
+def test_item_and_query_route_excludes_just_ingested_item(
+    client, monkeypatch,
+) -> None:
+    service = client.app.state.pallium_service
+    observed = []
+    original_query = service._query_executor.query
+
+    def capture_context(*args, **kwargs):
+        observed.append(kwargs.get("runtime_context"))
+        return original_query(*args, **kwargs)
+
+    monkeypatch.setattr(service._query_executor, "query", capture_context)
+    response = client.post(
+        "/item-and-query",
+        json={
+            "source_type": "chat_thread",
+            "source_id": "ti-route-excl-1",
+            "content_type": "text/plain",
+            "content": "first and only route message",
+            "thread_ref": "ti-route-thread-excl",
+            "container_ref": "workspace-1",
+            "visibility": "container",
+            "role": "user",
+            "artifact_kind": "message",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(observed) == 1
+    assert observed[0].turn_kind == "new_thread"
+    assert observed[0].thread_item_count == 0
+    assert observed[0].session_has_sufficient_local_context is False
+
 def test_resolve_runtime_context_fills_thread_item_count_when_turn_kind_provided(client) -> None:
     """When turn_kind and local_context are pre-set, thread_item_count is still populated."""
     service = client.app.state.pallium_service

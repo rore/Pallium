@@ -14,11 +14,12 @@ import subprocess
 import sys
 import time
 import unicodedata
+import uuid
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 AGENT_REF = "codex"
 SOURCE_TYPE = "codex"
@@ -398,11 +399,12 @@ def _safe_session_id(session_id: str | None) -> str | None:
 
 
 def _sweep_old_session_pins() -> None:
+    """Best-effort cleanup of pin files older than SESSION_PIN_TTL_SECONDS."""
     try:
         if not SESSIONS_DIR.exists():
             return
         cutoff = time.time() - SESSION_PIN_TTL_SECONDS
-        for entry in SESSIONS_DIR.iterdir():
+        for entry in SESSIONS_DIR.glob("*.json"):
             try:
                 if entry.is_file() and entry.stat().st_mtime < cutoff:
                     entry.unlink()
@@ -412,63 +414,243 @@ def _sweep_old_session_pins() -> None:
         pass
 
 
+def _read_session_state(session_id: str) -> dict[str, Any] | None:
+    try:
+        data = json.loads(
+            (SESSIONS_DIR / f"{session_id}.json").read_text(encoding="utf-8")
+        )
+    except (json.JSONDecodeError, OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _acquire_session_lock(session_id: str):
+    try:
+        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        lock_file = open(SESSIONS_DIR / f"{session_id}.lock", "a+b")
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"0")
+            lock_file.flush()
+        deadline = time.monotonic() + 0.1
+        while True:
+            try:
+                lock_file.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(
+                        lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+                    )
+                return lock_file
+            except OSError:
+                if time.monotonic() >= deadline:
+                    lock_file.close()
+                    return None
+                time.sleep(0.01)
+    except OSError:
+        return None
+
+
+def _release_session_lock(lock_file) -> None:
+    try:
+        lock_file.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    finally:
+        lock_file.close()
+
+
+def _update_session_state(
+    session_id: str,
+    update: Callable[[dict[str, Any]], dict[str, Any] | None],
+) -> bool:
+    lock_file = _acquire_session_lock(session_id)
+    if lock_file is None:
+        return False
+    temporary: Path | None = None
+    try:
+        current = _read_session_state(session_id) or {}
+        updated = update(dict(current))
+        if updated is None:
+            return True
+        temporary = SESSIONS_DIR / (
+            f".{session_id}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        )
+        temporary.write_text(json.dumps(updated), encoding="utf-8")
+        os.replace(temporary, SESSIONS_DIR / f"{session_id}.json")
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+        _release_session_lock(lock_file)
+
+
+def _identity_context(cwd: object) -> dict[str, str] | None:
+    repo = _find_repo(cwd)
+    if repo is None:
+        if not _is_local_absolute_path(cwd):
+            return None
+        return {
+            "identity_cwd": os.path.normcase(os.path.normpath(str(cwd))),
+            "repo_config_fingerprint": "",
+        }
+
+    root, git_dir = repo
+    common_dir = git_dir
+    try:
+        common_dir_text = _single_line(
+            _bounded_text(git_dir / "commondir", 4096)
+        )
+        if common_dir_text:
+            common_dir = Path(common_dir_text)
+            if not common_dir.is_absolute():
+                common_dir = git_dir / common_dir
+            common_dir = Path(
+                os.path.abspath(os.path.normpath(common_dir))
+            )
+            _safe_directory_chain(common_dir)
+    except FileNotFoundError:
+        pass
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+    digest = hashlib.sha256()
+    config_paths = tuple(dict.fromkeys((
+        common_dir / "config",
+        git_dir / "config",
+        git_dir / "config.worktree",
+    )))
+    for config_path in config_paths:
+        digest.update(str(config_path).encode("utf-8"))
+        try:
+            config_text = _bounded_text(config_path, 256 * 1024)
+        except FileNotFoundError:
+            config_text = ""
+        except (OSError, UnicodeError, ValueError):
+            return None
+        digest.update(config_text.encode("utf-8"))
+    return {
+        "identity_cwd": os.path.normcase(os.path.normpath(str(root))),
+        "repo_config_fingerprint": digest.hexdigest(),
+    }
+
+
+def _identity_context_matches(
+    state: dict[str, Any],
+    context: dict[str, str],
+) -> bool:
+    return all(state.get(key) == value for key, value in context.items())
+
+
+def _cache_identity_context(
+    session_id: str | None,
+    context: dict[str, str] | None,
+    *,
+    actor_ref: str | None = None,
+) -> bool:
+    sid = _safe_session_id(session_id)
+    if sid is None or context is None:
+        return False
+
+    def update(state: dict[str, Any]) -> dict[str, Any]:
+        if not _identity_context_matches(state, context):
+            state.pop("actor_ref", None)
+        state.update(context)
+        if actor_ref:
+            state["actor_ref"] = actor_ref
+        return state
+
+    return _update_session_state(sid, update)
+
+
 def pin_container(
     session_id: str | None,
     container_ref: str,
     source: str | None = None,
     pending_relay_closes: list[str] | None = None,
-) -> None:
-    """Pin (session_id -> container_ref). Sticky on resume/clear. Atomic write."""
+) -> bool:
+    """Merge a session container pin without losing concurrent hook state."""
     sid = _safe_session_id(session_id)
     if sid is None or not container_ref or not isinstance(container_ref, str):
-        return
-    try:
-        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        return
+        return False
 
-    fp = SESSIONS_DIR / f"{sid}.json"
-    if source in _RESUME_SOURCES and fp.exists():
-        return
-
-    tmp = SESSIONS_DIR / f"{sid}.json.tmp"
     pending = list(dict.fromkeys(
         ref for ref in (pending_relay_closes or [])
         if isinstance(ref, str) and ref and ref != container_ref
     ))
-    payload_data: dict[str, Any] = {"container_ref": container_ref, "ts": time.time()}
-    if pending:
-        payload_data["pending_relay_closes"] = pending
-    payload = json.dumps(payload_data)
-    try:
-        tmp.write_text(payload, encoding="utf-8")
-        os.replace(tmp, fp)
-    except OSError:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
 
+    def update(state: dict[str, Any]) -> dict[str, Any] | None:
+        if (
+            source in _RESUME_SOURCES
+            and isinstance(state.get("container_ref"), str)
+            and state["container_ref"]
+        ):
+            state["ts"] = time.time()
+            return state
+        previous_container = state.get("container_ref")
+        container_changed = previous_container != container_ref
+        existing = state.get("pending_relay_closes")
+        if container_changed:
+            candidates = [
+                *(existing if isinstance(existing, list) else []),
+                *pending,
+                previous_container,
+            ]
+        elif pending_relay_closes is not None:
+            candidates = pending
+        else:
+            candidates = existing if isinstance(existing, list) else []
+        merged_pending = list(dict.fromkeys(
+            ref for ref in candidates
+            if isinstance(ref, str) and ref and ref != container_ref
+        ))
+        if container_changed:
+            generation = state.get("container_generation", 0)
+            state["container_generation"] = (
+                generation + 1 if isinstance(generation, int) else 1
+            )
+        state["container_ref"] = container_ref
+        state["ts"] = time.time()
+        if container_changed or pending_relay_closes is not None:
+            if merged_pending:
+                state["pending_relay_closes"] = merged_pending
+            else:
+                state.pop("pending_relay_closes", None)
+        if container_changed or (
+            source is not None and source not in _RESUME_SOURCES
+        ):
+            state.pop("identity_cwd", None)
+            state.pop("repo_config_fingerprint", None)
+            state.pop("actor_ref", None)
+        return state
+
+    updated = _update_session_state(sid, update)
     _sweep_old_session_pins()
+    return updated
 
 
 def get_pinned_container(session_id: str | None) -> str | None:
+    """Return the pinned container_ref for session_id, or None if absent/invalid."""
     sid = _safe_session_id(session_id)
     if sid is None:
         return None
-    fp = SESSIONS_DIR / f"{sid}.json"
-    try:
-        if not fp.exists():
-            return None
-        data = json.loads(fp.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, ValueError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    ref = data.get("container_ref")
-    if isinstance(ref, str) and ref:
-        return ref
-    return None
+    data = _read_session_state(sid)
+    ref = data.get("container_ref") if data is not None else None
+    return ref if isinstance(ref, str) and ref else None
 
 
 def get_pending_relay_closes(session_id: str | None) -> list[str]:
@@ -476,14 +658,64 @@ def get_pending_relay_closes(session_id: str | None) -> list[str]:
     sid = _safe_session_id(session_id)
     if sid is None:
         return []
-    try:
-        data = json.loads((SESSIONS_DIR / f"{sid}.json").read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, ValueError):
-        return []
-    refs = data.get("pending_relay_closes") if isinstance(data, dict) else None
+    data = _read_session_state(sid)
+    refs = data.get("pending_relay_closes") if data is not None else None
     if not isinstance(refs, list):
         return []
     return list(dict.fromkeys(ref for ref in refs if isinstance(ref, str) and ref))
+
+
+def get_pending_relay_close_batch(
+    session_id: str | None,
+) -> tuple[list[str], int]:
+    """Read pending closes and their project-transition generation together."""
+    sid = _safe_session_id(session_id)
+    if sid is None:
+        return [], 0
+    state = _read_session_state(sid)
+    if state is None:
+        return [], 0
+    refs = state.get("pending_relay_closes")
+    pending = (
+        list(dict.fromkeys(ref for ref in refs if isinstance(ref, str) and ref))
+        if isinstance(refs, list)
+        else []
+    )
+    generation = state.get("container_generation", 0)
+    return pending, generation if isinstance(generation, int) else 0
+
+
+def complete_relay_closes(
+    session_id: str | None,
+    completed_refs: list[str],
+    expected_generation: int,
+) -> bool:
+    """Remove completed closes only if no newer project switch occurred."""
+    sid = _safe_session_id(session_id)
+    completed = {
+        ref for ref in completed_refs if isinstance(ref, str) and ref
+    }
+    if sid is None or not completed:
+        return False
+
+    def update(state: dict[str, Any]) -> dict[str, Any] | None:
+        generation = state.get("container_generation", 0)
+        if not isinstance(generation, int) or generation != expected_generation:
+            return None
+        refs = state.get("pending_relay_closes")
+        if not isinstance(refs, list):
+            return None
+        remaining = [
+            ref for ref in refs
+            if not (isinstance(ref, str) and ref in completed)
+        ]
+        if remaining:
+            state["pending_relay_closes"] = remaining
+        else:
+            state.pop("pending_relay_closes", None)
+        return state
+
+    return _update_session_state(sid, update)
 
 
 def resolve_container_ref(
@@ -496,30 +728,66 @@ def resolve_container_ref(
     if not allow_project_switch:
         return pinned or derive_container_ref(cwd)
 
+    context = _identity_context(cwd)
+    sid = _safe_session_id(session_id)
+    state = _read_session_state(sid) if sid is not None else None
+    if (
+        pinned
+        and context is not None
+        and state is not None
+        and _identity_context_matches(state, context)
+    ):
+        return pinned
+    if (
+        pinned
+        and context is not None
+        and not context["repo_config_fingerprint"]
+    ):
+        return pinned
+
     current = derive_container_ref(cwd)
     if current.startswith(("git:", "repo:")) and current != pinned:
-        pending = get_pending_relay_closes(session_id)
-        pin_container(
-            session_id,
-            current,
-            pending_relay_closes=[*pending, *([pinned] if pinned else [])],
-        )
-        return current
+        updated = pin_container(session_id, current)
+        if not updated:
+            return pinned or current
+        pinned = current
+    _cache_identity_context(session_id, context)
     return pinned or current
 
 
-def derive_actor_ref() -> str:
-    """Get actor_ref from git config user.name, fallback to 'local'."""
+def derive_actor_ref(
+    cwd: str | None = None,
+    session_id: str | None = None,
+) -> str:
+    """Get actor_ref from the session cache or Git, falling back to 'local'."""
+    context = _identity_context(cwd) if cwd is not None else None
+    sid = _safe_session_id(session_id)
+    state = _read_session_state(sid) if sid is not None else None
+    if state is not None:
+        cached = state.get("actor_ref")
+        if (
+            isinstance(cached, str)
+            and cached
+            and context is not None
+            and _identity_context_matches(state, context)
+        ):
+            return cached
+
+    actor_ref = "local"
     try:
         result = subprocess.run(
             ["git", "config", "user.name"],
-            capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
+            capture_output=True,
+            text=True,
+            cwd=cwd if _is_local_absolute_path(cwd) else None,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+            actor_ref = result.stdout.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
-    return "local"
+    _cache_identity_context(session_id, context, actor_ref=actor_ref)
+    return actor_ref
 
 
 def pallium_request(

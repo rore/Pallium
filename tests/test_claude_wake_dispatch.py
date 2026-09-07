@@ -791,7 +791,7 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
             lambda *_: scope["container_ref"], raising=False,
         )
         monkeypatch.setattr(
-            hook, "derive_actor_ref", lambda: scope["actor_ref"], raising=False,
+            hook, "derive_actor_ref", lambda *_: scope["actor_ref"], raising=False,
         )
 
     def relay(method, path, body, timeout=0.75):
@@ -1030,7 +1030,7 @@ def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
 
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
-    monkeypatch.setattr(prompt, "derive_actor_ref", lambda: scope["actor_ref"])
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: scope["actor_ref"])
     monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
     monkeypatch.setattr(prompt, "pallium_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(prompt, "read_hook_input", lambda: {
@@ -1104,7 +1104,7 @@ def test_empty_stop_rearms_claude_wake_after_turn_admission(client, monkeypatch,
     scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
     stop = _load_claude_hook("stop", monkeypatch)
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda: scope["actor_ref"])
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: scope["actor_ref"])
 
     def register(session, container, actor, **kwargs):
         response = http.post("/internal/claude-wake/register", json={
@@ -1277,7 +1277,7 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         registry.set_reconcile_signal(None)
         stop = _load_claude_hook("stop", monkeypatch)
         monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
-        monkeypatch.setattr(stop, "derive_actor_ref", lambda: scope["actor_ref"])
+        monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: scope["actor_ref"])
         monkeypatch.setattr(stop, "read_hook_input", lambda: {
             "session_id": "restart-target", "cwd": str(tmp_path), "transcript_path": "",
         })
@@ -1505,7 +1505,7 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
         return deliveries
 
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda: scope["actor_ref"])
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: scope["actor_ref"])
     monkeypatch.setattr(stop, "register_claude_wake", register)
     monkeypatch.setattr(stop, "relay_request", request)
     monkeypatch.setattr(stop, "acknowledge_relay", acknowledge)
@@ -1668,7 +1668,7 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
 
     stop = _load_claude_hook("stop", monkeypatch)
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda: scope["actor_ref"])
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: scope["actor_ref"])
     monkeypatch.setattr(stop, "register_claude_wake", register)
     monkeypatch.setattr(stop, "relay_request", relay_request)
     monkeypatch.setattr(stop, "acknowledge_relay", acknowledge)
@@ -1693,7 +1693,7 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
 
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
-    monkeypatch.setattr(prompt, "derive_actor_ref", lambda: scope["actor_ref"])
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: scope["actor_ref"])
     monkeypatch.setattr(prompt, "register_claude_wake", register)
     monkeypatch.setattr(prompt, "relay_request", relay_request)
     monkeypatch.setattr(prompt, "acknowledge_relay", acknowledge)

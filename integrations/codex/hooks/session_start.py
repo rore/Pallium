@@ -54,7 +54,7 @@ def main() -> None:
         session_id = payload.get("session_id")
         container_ref = derive_container_ref(cwd)
         pin_container(session_id, container_ref, source=source)
-        actor_ref = derive_actor_ref()
+        actor_ref = derive_actor_ref(cwd, session_id)
 
         blocks = _fetch_retrieval_fallback(container_ref, actor_ref)
 

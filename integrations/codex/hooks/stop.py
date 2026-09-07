@@ -151,7 +151,7 @@ def main() -> None:
             sys.exit(0)
 
         container_ref = resolve_container_ref(cwd, session_id)
-        actor_ref = derive_actor_ref()
+        actor_ref = derive_actor_ref(cwd, session_id)
 
         metadata = build_work_refs_metadata(cwd, payload.get("pallium_work_refs"))
         work_trace_meta = build_work_trace_metadata(turn_data)
