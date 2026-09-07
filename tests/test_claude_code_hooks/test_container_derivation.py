@@ -12,7 +12,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "integrations" / "claude-code" / "hooks"))
 
+import common as hook_common
 from common import derive_container_ref, _normalize_remote_url
+
+
+@pytest.fixture(autouse=True)
+def _clear_hook_deadline(monkeypatch):
+    monkeypatch.setattr(hook_common, "_HOOK_DEADLINE", None)
 
 
 class TestNormalizeRemoteUrl:

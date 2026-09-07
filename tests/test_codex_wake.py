@@ -585,6 +585,7 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
 
     monkeypatch.setattr(hook, "relay_request", relay_request)
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
+    hook.start_hook_deadline(8, host_reserve=1)
     hook._common.pin_container("target", scope["container_ref"])
     monkeypatch.setattr(hook, "read_hook_input", lambda: {
         "cwd": str(tmp_path),
