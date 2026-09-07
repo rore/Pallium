@@ -25,3 +25,4 @@
 ## Implementation
 
 - Discovery: Windows CI failed because `join(timeout=5)` is shorter than SQLite's configured 15-second busy timeout; workers only observe the stop event between claims.
+- Implemented: replaced the two independent 5-second joins with one shared 20-second deadline, preserving immediate return and a bounded hang assertion.
