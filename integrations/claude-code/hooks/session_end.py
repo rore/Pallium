@@ -11,8 +11,9 @@ def main() -> None:
         session_id = payload.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             return
-        container_ref = resolve_container_ref(payload.get("cwd", "."), session_id)
-        close_claude_wake(session_id, container_ref, derive_actor_ref())
+        cwd = payload.get("cwd", ".")
+        container_ref = resolve_container_ref(cwd, session_id)
+        close_claude_wake(session_id, container_ref, derive_actor_ref(cwd, session_id))
     except Exception:
         return
 

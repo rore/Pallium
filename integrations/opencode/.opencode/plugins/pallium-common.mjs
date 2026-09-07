@@ -120,6 +120,8 @@ export function deriveContainerRef(cwd) {
 }
 
 export function deriveActorRef(cwd) {
+  const configured = typeof process.env.PALLIUM_HOOK_ACTOR_REF === "string" ? process.env.PALLIUM_HOOK_ACTOR_REF.trim() : "";
+  if (configured) return configured;
   const r = _runGit(["config", "user.name"], cwd);
   if (r.ok && r.stdout.trim()) return r.stdout.trim();
   return "local";

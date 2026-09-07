@@ -754,3 +754,92 @@ def test_claude_reconciler_is_lifespan_owned_and_stops_on_repeated_apps(tmp_path
             reconciler = app.state._claude_wake_reconciler
             assert reconciler is not None and reconciler._thread is not None and reconciler._thread.is_alive()
         assert not reconciler._thread.is_alive()
+
+def _seed_cached_actor(hook, monkeypatch: pytest.MonkeyPatch, cwd: Path, session_id: str) -> object:
+    common = sys.modules[hook.derive_actor_ref.__module__]
+    monkeypatch.setattr(common, "SESSIONS_DIR", cwd / "hook-state" / "sessions")
+    monkeypatch.setattr(common, "_HOOK_DEADLINE", None)
+    context = common._identity_context(str(cwd))
+    assert context is not None
+    assert common._cache_identity_context(session_id, context, actor_ref="old-pinned-actor")
+    return common
+
+
+@pytest.mark.parametrize(
+    ("hook_name", "payload"),
+    [
+        ("pre_compact", {"session_id": "stable-pre", "cwd": "", "trigger": "manual"}),
+        (
+            "post_tool_use",
+            {
+                "session_id": "stable-post",
+                "cwd": "",
+                "tool_name": "Bash",
+                "tool_input": {"command": "false"},
+                "tool_response": {"stdout": "command failed", "stderr": ""},
+            },
+        ),
+    ],
+)
+def test_lifecycle_queries_keep_cached_actor_over_new_configuration(
+    hook_name: str, payload: dict[str, object], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hook = _load_claude_hook(hook_name, monkeypatch)
+    session_id = str(payload["session_id"])
+    common = _seed_cached_actor(hook, monkeypatch, tmp_path, session_id)
+    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", "new-stable-actor")
+    captured: list[dict[str, object]] = []
+    payload["cwd"] = str(tmp_path)
+    monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
+    monkeypatch.setattr(hook, "pallium_request", lambda _method, _path, body: captured.append(body) or {"injectable_blocks": []})
+    monkeypatch.setattr(hook, "emit_utf8", lambda *_args, **_kwargs: True)
+    if hook_name == "post_tool_use":
+        monkeypatch.setattr(hook, "_TRIGGERS_ENABLED", True)
+        monkeypatch.setattr(hook, "RETRY_COUNTERS_DIR", tmp_path / "retry-counters")
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert captured and {body["actor_ref"] for body in captured} == {"old-pinned-actor"}
+    assert common.derive_actor_ref(str(tmp_path), session_id) == "old-pinned-actor"
+
+
+def test_session_end_closes_old_cached_actor_capability_over_new_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hook = _load_claude_hook("session_end", monkeypatch)
+    session_id = "stable-end"
+    common = _seed_cached_actor(hook, monkeypatch, tmp_path, session_id)
+    wake_dir = tmp_path / "wake"
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
+    container_ref = common.resolve_container_ref(str(tmp_path), session_id)
+    registry = ClaudeWakeRegistry(state_dir=wake_dir)
+    registry.register(**{
+        **PAYLOAD,
+        "session_ref": session_id,
+        "container_ref": container_ref,
+        "actor_ref": "old-pinned-actor",
+        "intent_id": "stable-end-register",
+    })
+    http = _client(registry)
+
+    def open_request(request, **_kwargs):
+        response = http.request(
+            request.get_method(), urlsplit(request.full_url).path, content=request.data,
+        )
+        assert response.status_code == 204
+        return nullcontext(response)
+
+    monkeypatch.setattr(
+        common.urllib.request,
+        "build_opener",
+        lambda *_args: SimpleNamespace(open=open_request),
+    )
+    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", "new-stable-actor")
+    monkeypatch.setattr(
+        hook,
+        "read_hook_input",
+        lambda: {"cwd": str(tmp_path), "session_id": session_id},
+    )
+    hook.main()
+    assert common.derive_actor_ref(str(tmp_path), session_id) == "old-pinned-actor"
+    assert ClaudeWakeRegistry(state_dir=wake_dir).recovery_candidates() == []
