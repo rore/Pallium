@@ -330,14 +330,19 @@ def test_posttool_hook_is_opt_in_and_preserves_unrelated_entries(monkeypatch: py
     monkeypatch.setattr(setup_claude_code, "_pallium_repo_root", lambda: tmp_path)
     unrelated = {"matcher": "Bash", "hooks": [{"type": "command", "command": "other-tool"}]}
     malformed = "keep me"
-    settings = {"hooks": {"PostToolUse": [unrelated, malformed]}}
+    managed_command = setup_claude_code._hook_command("post_tool_use.py")
+    mixed = {"matcher": "Bash", "hooks": [{"type": "command", "command": managed_command}, {"type": "command", "command": "other-in-same-entry"}]}
+    settings = {"hooks": {"PostToolUse": [mixed, unrelated, malformed]}}
     monkeypatch.delenv("PALLIUM_POSTTOOL_TRIGGERS", raising=False)
     setup_claude_code._register_hooks(settings)
-    assert settings["hooks"]["PostToolUse"][:2] == [unrelated, malformed]
+    assert settings["hooks"]["PostToolUse"][0]["hooks"] == [mixed["hooks"][1]]
+    assert settings["hooks"]["PostToolUse"][1:] == [unrelated, malformed]
     monkeypatch.setenv("PALLIUM_POSTTOOL_TRIGGERS", "1")
-    setup_claude_code._register_hooks(settings); setup_claude_code._register_hooks(settings)
+    setup_claude_code._register_hooks(settings)
+    setup_claude_code._register_hooks(settings)
     managed = [h for e in settings["hooks"]["PostToolUse"] if isinstance(e, dict) for h in e.get("hooks", []) if isinstance(h, dict) and "post_tool_use.py" in h.get("command", "")]
     assert len(managed) == 1
     monkeypatch.delenv("PALLIUM_POSTTOOL_TRIGGERS", raising=False)
     setup_claude_code._register_hooks(settings)
-    assert settings["hooks"]["PostToolUse"][:2] == [unrelated, malformed]
+    assert settings["hooks"]["PostToolUse"][0]["hooks"] == [mixed["hooks"][1]]
+    assert settings["hooks"]["PostToolUse"][1:] == [unrelated, malformed]

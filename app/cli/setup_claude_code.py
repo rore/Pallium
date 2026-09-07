@@ -165,7 +165,13 @@ def _reconcile_posttool_hook(settings: dict) -> None:
     def managed(value: object) -> bool:
         return isinstance(value, str) and value.replace("\\", "/") == command
     if os.environ.get("PALLIUM_POSTTOOL_TRIGGERS") == "1":
-        if not any(isinstance(entry, dict) and isinstance(entry.get("hooks"), list) and any(isinstance(hook, dict) and managed(hook.get("command")) for hook in entry["hooks"]) for entry in existing):
+        already_registered = any(
+            isinstance(entry, dict)
+            and isinstance(entry.get("hooks"), list)
+            and any(isinstance(hook, dict) and managed(hook.get("command")) for hook in entry["hooks"])
+            for entry in existing
+        )
+        if not already_registered:
             existing.append({"matcher": "", "hooks": [{"type": "command", "command": command, "timeout": 8}]})
         return
     filtered_entries = []
@@ -175,7 +181,9 @@ def _reconcile_posttool_hook(settings: dict) -> None:
             continue
         remaining = [hook for hook in entry["hooks"] if not (isinstance(hook, dict) and managed(hook.get("command")))]
         if remaining:
-            updated = dict(entry); updated["hooks"] = remaining; filtered_entries.append(updated)
+            updated = dict(entry)
+            updated["hooks"] = remaining
+            filtered_entries.append(updated)
     if filtered_entries: hooks[event] = filtered_entries
     else: hooks.pop(event, None)
 
