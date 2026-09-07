@@ -3,14 +3,23 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/*.md"
+      - "docs/**/*.md"
+      - "roadmap/*.md"
+      - "roadmap/**/*.md"
   pull_request:
     branches: [main]
   schedule:
     # Nightly full run (incl. the full Windows matrix). Off-peak, off :00.
     - cron: "17 6 * * *"
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # Full suite on Ubuntu — every PR, push, and nightly. Gates PRs (~2 min).
+  # Full suite on Ubuntu — every PR, push, and nightly. Gates PRs (~3 min).
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -28,14 +37,17 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
-        run: pip install -e ".[dev,vector]"
+        run: pip install -e ".[dev,vector,mcp]"
+
+      - name: Verify MCP test dependency
+        run: python -c "import mcp; import app.mcp.server"
 
       - name: Run tests
-        run: python -m pytest tests/ -x -q
+        run: python -m pytest tests/ -x -q --durations=20
 
   # Fast Windows regression — every PR and push. Runs only the
   # Windows-sensitive hotspots (process mgmt, subprocess hooks, file I/O,
-  # SQLite locking) so PRs get Windows signal without the ~10 min full suite.
+  # SQLite locking) so PRs get Windows signal without the ~20 min full suite.
   # The full Windows matrix runs in `windows-full` on push-to-main + nightly.
   windows-smoke:
     runs-on: windows-latest
@@ -66,7 +78,7 @@ jobs:
 
       - name: Run Windows-sensitive tests
         run: >
-          python -m pytest -x -q
+          python -m pytest -x -q --durations=20
           tests/test_supervisor.py
           tests/test_supervisor_kill_tree.py
           tests/test_codex_integration.py
@@ -119,7 +131,35 @@ jobs:
         run: pip install -e ".[dev,vector]"
 
       - name: Run process-sensitive tests serially
-        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py -x -q -n 0
+        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py -x -q -n 0 --durations=20
 
       - name: Run remaining tests
-        run: python -m pytest tests/ -x -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py
+        run: python -m pytest tests/ -x -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --durations=20
+
+  nightly-slow-smoke:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,vector,mcp]"
+
+      - name: Run hermetic slow smoke tests
+        run: >
+          python -m pytest
+          tests/test_snapshot.py
+          tests/test_snapshot_concurrent.py
+          tests/test_snapshot_failure.py
+          tests/test_storage_sqlite.py
+          tests/test_thread_summary_accumulation.py
+          tests/test_relay_load_smoke.py
+          -m slow -n 0 -q --durations=20

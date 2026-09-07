@@ -12,7 +12,13 @@ Add `import pytest` if not already present. The `slow` marker is registered in `
 
 ## Test vector index
 
-The shared test helpers (`build_llm_test_config` in `tests/config_helpers.py`, the `client` fixture in `tests/conftest.py`) use `VectorIndexConfig(enabled=False)` by default. Do not change this. Tests that specifically exercise vector retrieval, embedding, or composite retrieval must create their own `AppConfig` with an explicit `VectorIndexConfig(enabled=True, index_path=...)`. This keeps the default test run fast (~20s) by avoiding ONNX model inference and usearch index creation in tests that don't need them.
+The shared test helpers (`build_llm_test_config` in `tests/config_helpers.py`, the `client` fixture in `tests/conftest.py`) use `VectorIndexConfig(enabled=False)` by default. Do not change this. Tests that specifically exercise vector retrieval, embedding, or composite retrieval must create their own `AppConfig` with an explicit `VectorIndexConfig(enabled=True, index_path=...)`. This keeps the default test run near its current ~3-minute Linux CI profile by avoiding ONNX model inference and usearch index creation in tests that do not need them.
+
+## CI profiles
+
+Required Linux CI installs the existing `dev`, `vector`, and `mcp` extras, verifies that the MCP server imports, and reports the 20 slowest tests. Windows smoke and full lanes report the same timing diagnostics.
+
+The nightly slow smoke is deliberately an explicit, serial allowlist covering snapshot, SQLite, thread-summary accumulation, and Relay load paths. Do not replace it with the complete `-m slow` suite until the separately tracked stale slow-test expectations are green; opt-in service tests, live providers, model downloads, and generated P2 scenarios remain excluded.
 
 ## Exploratory QA
 
