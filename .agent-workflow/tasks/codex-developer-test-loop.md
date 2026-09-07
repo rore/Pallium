@@ -21,15 +21,15 @@
 
 **Plan:** 1. Add concise repository guidance requiring a targeted node/file test with `-n 0` while editing, affected-subsystem files after a coherent change, native `--lf --lfnf=none` for failure reruns, and one full non-slow run before review rather than after each edit. 2. Keep operation admission counted before limiter acquisition and add a condition-locked ownership handoff: async cleanup cancels/decrements only unclaimed work; a worker skips work already cancelled or atomically claims it and decrements in its own `finally`. Retain the same generic accounting for Relay and diagnostics. 3. Expand HTTP regressions for active cancellation, limiter-queued cancellation, controlled cancellation after dispatch but before worker claim (then invoke the retained callable to prove it skips storage), worker exception, dispatch failure, barrier-entry synchronization, subsequent successful work, and queued diagnostic draining; raise only the Relay-during-saturated-diagnostics guard from 0.5 to 1.0 seconds. 4. Combine the two count-gate assertions into one test item sharing one count measurement, so the expensive deterministic seed/run is paid once even under default xdist without changing the gate's counts or baseline comparison. 5. Do not add a wrapper, dependency, marker, changed-file mapper, or CI worker change. 6. Run focused tests, full non-slow validation once, workflow/redline gates, clean-context result review, and the authorized PR lifecycle. Stop on public-contract, dependency/marker, required-coverage, or unbounded suite changes.
 
-**Verification plan:** Validate the documented focused and last-failed commands directly; run focused HTTP regressions for active and pre-claim cancellation, normal/exception/dispatch-failure completion, subsequent success, and queued diagnostics; then repeat the capacity test at least 20 times serially and under the default four-worker setting with explicit barrier-entry synchronization; verify both count-gate checks pass in the single test item and compare module runtime before/after; run the full default suite once after implementation; finish with `git diff --check`, redline, Agent Workflow, clean-context result review, and green PR CI.
+**Verification plan:** Focused-loop contract → run the documented exact-node command and a cached last-failed rerun. Operation accounting → run HTTP regressions for active and pre-claim cancellation, normal/exception/dispatch-failure completion, subsequent success, and queued diagnostics, then repeat the capacity file 20 times serially and with four workers using explicit barrier-entry synchronization. Count-gate cost → run the consolidated test and compare its duration with the two-item baseline. Regression safety → run the full default suite once. Governance → run `git diff --check`, redline, Agent Workflow, clean-context result review, and green PR CI.
 
 **Plan review:** Senior clean-context follow-up approved the lock-protected ownership handoff with no design blockers. It requires explicit controlled coverage of cancellation after dispatch but before worker claim, in addition to active/queued cancellation, exception, failure, barrier, diagnostic, and subsequent-success paths.
 
-**Approvals:** User explicitly authorized this second optimization round with “ok, do it” and previously authorized full PR tracking and merge after review and green checks.
+**Approvals:** Approved by user 2026-09-07: "ok, do it". Prior authorization also covers full PR tracking and merge after review and green checks.
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -41,6 +41,8 @@
 - 2026-09-07 Plan review: senior clean-context review rejected a module fixture because xdist can duplicate it across workers, approved one combined count-gate item instead, and signed off the narrowed no-CI plan with no remaining blockers.
 - 2026-09-07 Verification finding: native duplicate collection reproduced a real operation-tracking race (4 failures in 20 runs): after request cancellation, `_wait_for_operations()` sometimes returned while the mocked Relay worker was still blocked. Redline classified `app/main.py` as watched with no formal checkpoint; product-code implementation is paused for expanded high-risk plan review.
 - 2026-09-07 Expanded plan review: senior review reproduced the queued-cancel leak in a worker-only design, approved the atomic ownership handoff, and required a controlled late-worker skip regression. The revised high-risk plan is signed off with no remaining blockers.
+- 2026-09-07 Implement: added the focused edit/subsystem/full test ladder; consolidated the vNext count gate into one measurement; replaced cancellation-sensitive operation accounting with a condition-locked async/worker ownership handoff shared by Relay and diagnostics; added HTTP regressions for active, queued, after-dispatch, worker-error, dispatch-error, barrier, and subsequent-success paths; raised only the diagnostic-isolation guard to one second. CI and pytest configuration are unchanged. The local patch helper failed with Windows error 1327, so edits used deterministic replacements limited to named files.
+- 2026-09-07 Verify: focused tests passed 3/3 in 4.34s; Relay operation E2Es passed 40/40 serially in 16.03s and 40/40 with four workers in 8.66s; affected app/observability tests passed 45 with 17 Windows skips in 9.45s; the full non-slow suite passed 4,578 with 32 skips and 2 expected xfails in 218.95s.
 
 ## Plan review
 
@@ -48,7 +50,7 @@ Senior clean-context review confirmed the Relay guard is test synchronization ra
 
 ## Evidence
 
-Pending implementation.
+Focused serial: `3 passed in 4.34s`, with the consolidated count gate at 3.38s versus the earlier roughly 8-10s two-item module run. Stress: duplicate collection ran both Relay operation-accounting E2Es 20 times each, yielding `40 passed in 16.03s` serial and `40 passed in 8.66s` with four workers; before the tracker fix, the same method exposed 4 failures in 20 runs. Affected subsystem: `45 passed, 17 skipped in 9.45s`. Full default: `4578 passed, 32 skipped, 2 xfailed in 218.95s`. CI configuration and required lane coverage were not changed.
 
 ## Result review
 

@@ -187,18 +187,36 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
 
     async def run_operation(operation, limiter):
         nonlocal active_operations
+        worker_started = False
+        released_before_start = False
         with operations:
             active_operations += 1
+
+        def tracked_operation():
+            nonlocal active_operations, worker_started
+            with operations:
+                if released_before_start:
+                    return None
+                worker_started = True
+            try:
+                return operation()
+            finally:
+                with operations:
+                    active_operations -= 1
+                    operations.notify_all()
+
         try:
             return await anyio.to_thread.run_sync(
-                operation,
+                tracked_operation,
                 abandon_on_cancel=False,
                 limiter=limiter,
             )
         finally:
             with operations:
-                active_operations -= 1
-                operations.notify_all()
+                if not worker_started:
+                    released_before_start = True
+                    active_operations -= 1
+                    operations.notify_all()
     async def run_relay_operation(operation):
         return await run_operation(operation, relay_limiter)
 
