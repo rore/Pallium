@@ -52,6 +52,7 @@
 - fix-relay-claim-before-context-emission
 - add-workstream-rolling-topic
 - idea-reuse-judge-calibration
+- fix-real-corpus-memory-access-and-evaluation
 - idea-evidence-backed-agent-memory
 - idea-generic-memory-lifecycle-signals
 - idea-multi-package-source-item-processing
