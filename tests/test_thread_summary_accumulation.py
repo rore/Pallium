@@ -349,8 +349,9 @@ def test_dual_package_concurrent_rapid_fire(monkeypatch, test_db_url: str) -> No
             raise AssertionError("Ingest failed after retries: database is locked")
 
     stop_event.set()
-    t1.join(timeout=5)
-    t2.join(timeout=5)
+    deadline = time.monotonic() + 20  # In-flight SQLite work may wait up to the 15-second busy timeout.
+    t1.join(timeout=max(0, deadline - time.monotonic()))
+    t2.join(timeout=max(0, deadline - time.monotonic()))
 
     assert not t1.is_alive()
     assert not t2.is_alive()
