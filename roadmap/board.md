@@ -14,6 +14,9 @@
 - idea-deferred-relay
 - add-copilot-relay-integration
 
+# P1 · Test Health
+- stabilize-test-health-and-ci-cost
+
 # P1 · Reuse Measurement
 - idea-pull-real-corpus-validation
 - idea-visibility-violation-metric-completeness
@@ -42,6 +45,7 @@
 - fix-redline-self-protection-path-mismatch
 - fix-add-limit-to-injection-replay-simulation
 - fix-work-resumption-benchmark-scenario-count-drift
+- fix-slow-suite-contract-drift
 - idea-operational-scale-hardening
 - idea-optional-reranker-support
 - idea-document-schema-evolution-strategy
