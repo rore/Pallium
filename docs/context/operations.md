@@ -66,9 +66,12 @@ scope identifiers are logged.
 
 The service reconciliation loop scans eligible never-claimed pending deliveries and
 expired claims at startup and every 30 seconds, then dispatches through the existing
-runtime adapter without claiming early. Codex queued or ambiguous admission retains
-the oldest per-session trigger and becomes retryable on that sweep until a real
-hook-time turn is admitted. An exact internal Codex wake that cannot render a
+runtime adapter without claiming early. Codex confirmed or ambiguous native wake
+submission retains the oldest per-session
+trigger without blind retry inside the live service because native queue writes are
+not idempotent; a real hook-time turn clears that ownership. Service restart still
+reconstructs pending work, but process-local ownership cannot deduplicate a prompt
+accepted by Codex before the restart. An exact internal Codex wake that cannot render a
 verified delivery is blocked before deduplication, memory ingestion, or model work;
 ordinary user prompts remain fail-open.
 

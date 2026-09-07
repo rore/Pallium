@@ -51,7 +51,6 @@ def setup_function() -> None:
     codex_wake._scheduled_delivery_ids.clear()
     codex_wake._scheduled_session_generations.clear()
     codex_wake._scheduled_session_delivery_ids.clear()
-    codex_wake._scheduled_session_retry_at.clear()
 
 
 def test_successful_resume_does_not_queue_and_hides_process() -> None:
@@ -214,12 +213,11 @@ def test_busy_wakes_coalesce_until_admission_then_rearm(monkeypatch, outcome: st
 
 
 @pytest.mark.parametrize("outcome", ["queued", "ambiguous"])
-def test_busy_wake_retry_retains_earliest_session_trigger(monkeypatch, caplog, outcome: str) -> None:
+def test_busy_wake_holds_earliest_trigger_without_blind_retry(
+    monkeypatch, outcome: str,
+) -> None:
     workers = []
-    clock = [10.0]
-    caplog.set_level("INFO", logger="app.codex_wake")
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    monkeypatch.setattr(codex_wake.time, "monotonic", lambda: clock[0])
     with patch("app.codex_wake.threading.Thread") as thread, patch(
         "app.codex_wake._wake", return_value=outcome
     ):
@@ -229,23 +227,17 @@ def test_busy_wake_retry_retains_earliest_session_trigger(monkeypatch, caplog, o
         )[1]
         _schedule(_delivery())
         codex_wake._wake_after_debounce(*workers[0])
-        _schedule(_delivery("delivery-before-retry"))
-        assert len(workers) == 1
-        clock[0] += codex_wake._RETRY_SECONDS
-        _schedule(_delivery("delivery-after-retry"))
+        _schedule(_delivery("delivery-after-wake"))
 
-    assert len(workers) == 2
+    assert len(workers) == 1
     assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
-    assert "outcome=retry_scheduled delay_seconds=30" in caplog.text
-    assert SCOPE["container_ref"] not in caplog.text
 
 
-def test_concurrent_recovery_sweep_retries_busy_wake_without_new_delivery(monkeypatch) -> None:
+def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> None:
     from app import dependencies
     from core.claude_wake import ClaudeWakeRegistry
 
     workers = []
-    clock = [10.0]
     real_thread = threading.Thread
     start = threading.Barrier(3)
     candidate = {
@@ -265,7 +257,6 @@ def test_concurrent_recovery_sweep_retries_busy_wake_without_new_delivery(monkey
             return None
 
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    monkeypatch.setattr(codex_wake.time, "monotonic", lambda: clock[0])
     with patch("app.codex_wake.threading.Thread") as thread, patch(
         "app.codex_wake._wake", return_value="queued"
     ):
@@ -275,7 +266,6 @@ def test_concurrent_recovery_sweep_retries_busy_wake_without_new_delivery(monkey
         )[1]
         _schedule(_delivery())
         codex_wake._wake_after_debounce(*workers[0])
-        clock[0] += codex_wake._RETRY_SECONDS
 
         def recover():
             start.wait()
@@ -291,8 +281,7 @@ def test_concurrent_recovery_sweep_retries_busy_wake_without_new_delivery(monkey
             recovery_thread.join(timeout=1)
             assert not recovery_thread.is_alive()
 
-    assert len(workers) == 2
-    assert workers[1][0] == "delivery-1"
+    assert len(workers) == 1
     assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
 
 def test_exec_completion_requires_matching_admission_before_return(monkeypatch) -> None:
@@ -888,9 +877,11 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     ).json()["deliveries"][0]["state"] == "delivered"
 
 
-def test_competing_hook_consumes_delivery_before_accepted_queue_blocks_empty_wake(
+def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake(
     client, monkeypatch, tmp_path, capsys,
 ) -> None:
+    from app.dependencies import recover_expired_relay_wakes
+    from core.claude_wake import ClaudeWakeRegistry
     from integrations.codex.hooks import user_prompt_submit as hook
 
     scope = {
@@ -917,7 +908,9 @@ def test_competing_hook_consumes_delivery_before_accepted_queue_blocks_empty_wak
         }).status_code == 200
 
     workers = []
+    clock = [10.0]
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    monkeypatch.setattr(codex_wake.time, "monotonic", lambda: clock[0])
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
@@ -930,17 +923,31 @@ def test_competing_hook_consumes_delivery_before_accepted_queue_blocks_empty_wak
             "payload": "consume before queued wake executes →",
             **scope,
         }).json()
-    assert len(workers) == 1
+        assert len(workers) == 1
 
-    active = subprocess.CompletedProcess(
-        [], 1, stderr="already has an active writer (code -32600)"
-    )
-    queued = subprocess.CompletedProcess([], 0, stderr="")
-    with patch(
-        "app.codex_wake.subprocess.run", side_effect=[active, queued],
-    ) as run:
-        codex_wake._wake_after_debounce(*workers[0])
-    queue_command = run.call_args_list[1].args[0]
+        active = subprocess.CompletedProcess(
+            [], 1, stderr="already has an active writer (code -32600)"
+        )
+        queued = subprocess.CompletedProcess([], 0, stderr="")
+        native_commands = []
+
+        def native_run(command, **_kwargs):
+            native_commands.append(command)
+            return active if command[1] == "exec" else queued
+
+        processed = 0
+        relay = RelayService(client.app.state.pallium_service._storage)
+        with patch("app.codex_wake.subprocess.run", side_effect=native_run):
+            for _ in range(6):
+                while processed < len(workers):
+                    codex_wake._wake_after_debounce(*workers[processed])
+                    processed += 1
+                clock[0] += 31
+                recover_expired_relay_wakes(relay, ClaudeWakeRegistry())
+
+    queue_commands = [command for command in native_commands if command[1] == "queue"]
+    assert len(queue_commands) == 1
+    queue_command = queue_commands[0]
     queued_prompt = queue_command[queue_command.index("--message") + 1]
     assert queued_prompt == codex_wake._wake_prompt()
     assert route.get(
