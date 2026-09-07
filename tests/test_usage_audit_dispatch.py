@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from threading import Event
+from threading import Event, Thread
 from types import SimpleNamespace
 
 from core.service import PalliumService
@@ -43,3 +43,52 @@ def test_audit_queue_saturation_and_shutdown_are_deterministic(monkeypatch):
     release.set()
     service.close()
     assert finished.is_set()
+def test_source_miss_retries_on_later_assistant_ingest_idempotently(monkeypatch):
+    service = _service(monkeypatch)
+    lookup_done = Event()
+    attempts = []
+    item = SimpleNamespace(role="assistant", thread_ref="thread", content="persisted")
+
+    def get_source_item(source_id):
+        attempts.append(source_id)
+        if len(attempts) == 1:
+            lookup_done.set()
+            raise KeyError(source_id)
+        return item
+
+    service._storage.get_source_item = get_source_item
+    populated = []
+    service.populate_memory_usage_audit = lambda thread, content: populated.append((thread, content))
+    assert service.enqueue_memory_usage_audit("source-retry")
+    assert lookup_done.wait(1)
+    assert service.enqueue_memory_usage_audit("source-retry")
+    service.close()
+    assert populated == [("thread", "persisted")]
+    assert attempts == ["source-retry", "source-retry"]
+
+
+def test_close_drains_active_audit_before_storage_close(monkeypatch):
+    service = _service(monkeypatch)
+    started, release, finished = Event(), Event(), Event()
+    storage_closed = Event()
+    service._storage.get_source_item = lambda _id: SimpleNamespace(
+        role="assistant", thread_ref="thread", content="persisted"
+    )
+
+    def work(*_args):
+        started.set()
+        release.wait()
+        finished.set()
+
+    service.populate_memory_usage_audit = work
+    assert service.enqueue_memory_usage_audit("source-close")
+    assert started.wait(1)
+    closer = Thread(target=service.close)
+    closer.start()
+    assert not finished.wait(0.05)
+    assert not storage_closed.is_set()
+    release.set()
+    closer.join(1)
+    storage_closed.set()
+    assert finished.is_set()
+    assert not closer.is_alive()
