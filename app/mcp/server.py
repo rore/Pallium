@@ -265,10 +265,9 @@ def _relay_recipients_text(result: object, offset: int = 0) -> str:
     rows.sort(key=lambda row: str(row.get("last_seen_at", "")), reverse=True)
     rows.sort(key=lambda row: str(row.get("runtime", "")))
     for row in rows:
-        runtime = str(row.get("runtime", ""))
-        row["exact_selector"] = f"{runtime}:{row.get('session_ref', '')}"
+        row["exact_selector"] = row.get("endpoint_id")
         if row.get("alias"):
-            row["alias_selector"] = f"{runtime}:@{row['alias']}"
+            row["alias_selector"] = f"@{row['alias']}"
 
     total = len(rows)
 
@@ -811,7 +810,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         actor_ref: str | None = None,
         offset: int = 0,
     ) -> str:
-        """Return a bounded Relay address-book page. Each item includes exact_selector and optional alias_selector (`runtime:@alias`). Continue with next_offset; use pallium_relay_receive for inbox delivery."""
+        """Return a bounded Relay address-book page. Each item includes canonical exact_selector (relay-session-...) and optional actor-global alias_selector (@alias). Continue with next_offset; use pallium_relay_receive for inbox delivery."""
         if offset < 0:
             return _relay_recipients_text([], offset)
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
@@ -831,7 +830,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Name the current Relay session. Copy current_runtime from injected agent_ref and current_session_ref from injected thread_ref; never discover self from recipient listings. If the user explicitly assigns an alias held by an older session, retry with replace_existing=true to transfer it; otherwise report the conflict."""
+        """Name the current Relay endpoint. Copy current_runtime from injected agent_ref and current_session_ref from injected thread_ref; never discover self from recipient listings. First try without takeover. If the actor-global name is occupied, ask the user before retrying with replace_existing=true. Use replace_existing=true immediately only when the user already explicitly said to take over that name."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
@@ -853,7 +852,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         actor_ref: str | None = None,
     ) -> str:
-        """Send new text of at most 16,000 Unicode code points to a runtime, exact-session, or alias selector: codex, codex:<session_ref>, or codex:@review (and equivalent supported runtimes). Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery."""
+        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or actor-global alias (@review). Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery."""
         ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG

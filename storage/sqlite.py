@@ -35,6 +35,7 @@ from storage.sqlite_schema import (
     MemoryUsageAuditRecord,
     PackageProcessingStatusRecord,
     QueryAuditLogRecord,
+    RelayAliasRecord,
     RelayDeliveryRecord,
     RelayMessageRecord,
     RelayMigrationMetadataRecord,
@@ -112,6 +113,7 @@ class SQLiteStorageProvider(
     StorageProvider,
 ):
     _RELAY_MIGRATION_KEY = "relay_split_v1"
+    _RELAY_ENDPOINT_MIGRATION_KEY = "relay_endpoint_identity_v1"
     _RELAY_IMMEDIATE_ATTEMPTS = 3
     _RELAY_IMMEDIATE_BUSY_TIMEOUT_MS = 100
 
@@ -131,6 +133,7 @@ class SQLiteStorageProvider(
             self._initialize_sqlite_pragmas(self._relay_engine)
             self._initialize_relay_schema(self._relay_engine)
             self._migrate_legacy_relay()
+        self._migrate_relay_endpoint_identity()
 
     @classmethod
     def _create_engine(cls, database_url: str):
@@ -189,13 +192,14 @@ class SQLiteStorageProvider(
                         return
                     with self._begin_relay_immediate() as target:
                         target_marker = target.get(RelayMigrationMetadataRecord, self._RELAY_MIGRATION_KEY)
+                        fresh_target = target_marker is None
                         if target_marker is not None and (
                             target_marker.source_identity,
                             target_marker.target_identity,
                         ) != (source_identity, target_identity):
                             raise RuntimeError("Relay database was initialized from a different source database")
                         self._copy_relay_rows(source, target)
-                        self._verify_relay_ids(source, target, require_exact=True)
+                        self._verify_relay_ids(source, target, require_exact=fresh_target)
                         if target_marker is None:
                             target.add(RelayMigrationMetadataRecord(
                                 key=self._RELAY_MIGRATION_KEY,
@@ -225,7 +229,12 @@ class SQLiteStorageProvider(
     def _copy_relay_rows(self, source: Session, target: Session) -> None:
         if not self._relay_tables_present(source):
             return
-        for model in (RelaySessionRecord, RelayMessageRecord, RelayDeliveryRecord):
+        models = [RelaySessionRecord, RelayMessageRecord, RelayDeliveryRecord]
+        if source.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='relay_aliases'")
+        ).first():
+            models.append(RelayAliasRecord)
+        for model in models:
             rows = source.execute(select(model)).scalars().all()
             if rows:
                 target.execute(
@@ -254,6 +263,94 @@ class SQLiteStorageProvider(
                     for column in model.__table__.columns
                 ):
                     raise RuntimeError(f"Relay split migration found conflicting {model.__tablename__} row {row_id}")
+
+        if source.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='relay_aliases'")
+        ).first():
+            source_aliases = {
+                (row.actor_ref, row.alias): row.endpoint_id
+                for row in source.execute(select(RelayAliasRecord)).scalars()
+            }
+            target_aliases = {
+                (row.actor_ref, row.alias): row.endpoint_id
+                for row in target.execute(select(RelayAliasRecord)).scalars()
+            }
+            if not set(source_aliases).issubset(target_aliases) or (
+                require_exact and source_aliases != target_aliases
+            ):
+                raise RuntimeError("Relay split migration verification failed for relay_aliases")
+
+    def _migrate_relay_endpoint_identity(self) -> None:
+        """Bind legacy rows to endpoint IDs once; unresolved rows never rebind later."""
+        identity = self._sqlite_identity(self._relay_engine)
+        with self._schema_initialization_lock(self._relay_engine):
+            with self._begin_relay_immediate() as db:
+                marker = db.get(
+                    RelayMigrationMetadataRecord,
+                    self._RELAY_ENDPOINT_MIGRATION_KEY,
+                )
+                if marker is not None:
+                    if (marker.source_identity, marker.target_identity) != (identity, identity):
+                        raise RuntimeError("Relay endpoint migration marker does not match the Relay database")
+                    return
+
+                sessions = db.execute(select(RelaySessionRecord)).scalars().all()
+                by_location = {
+                    (row.container_ref, row.actor_ref, row.runtime, row.session_ref): row.id
+                    for row in sessions
+                }
+                messages = {
+                    row.id: row for row in db.execute(select(RelayMessageRecord)).scalars()
+                }
+                for message in messages.values():
+                    if message.sender_endpoint_id is None:
+                        message.sender_endpoint_id = by_location.get(
+                            (
+                                message.container_ref,
+                                message.actor_ref,
+                                message.sender_runtime,
+                                message.sender_session_ref,
+                            )
+                        )
+                for delivery in db.execute(select(RelayDeliveryRecord)).scalars():
+                    message = messages.get(delivery.message_id)
+                    if message is None:
+                        continue
+                    if delivery.recipient_container_ref is None:
+                        delivery.recipient_container_ref = message.container_ref
+                    if delivery.recipient_endpoint_id is None:
+                        delivery.recipient_endpoint_id = by_location.get(
+                            (
+                                message.container_ref,
+                                message.actor_ref,
+                                delivery.recipient_runtime,
+                                delivery.recipient_session_ref,
+                            )
+                        )
+
+                alias_groups: dict[tuple[str, str], list[str]] = {}
+                for session in sessions:
+                    if session.alias is not None:
+                        alias_groups.setdefault(
+                            (session.actor_ref, session.alias), []
+                        ).append(session.id)
+                for (actor_ref, alias), endpoint_ids in alias_groups.items():
+                    if db.get(RelayAliasRecord, (actor_ref, alias)) is None:
+                        db.add(
+                            RelayAliasRecord(
+                                actor_ref=actor_ref,
+                                alias=alias,
+                                endpoint_id=endpoint_ids[0] if len(endpoint_ids) == 1 else None,
+                            )
+                        )
+                db.add(
+                    RelayMigrationMetadataRecord(
+                        key=self._RELAY_ENDPOINT_MIGRATION_KEY,
+                        source_identity=identity,
+                        target_identity=identity,
+                        completed_at=utc_now(),
+                    )
+                )
 
     @staticmethod
     def _register_sqlite_connect_hooks(engine) -> None:

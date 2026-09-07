@@ -250,6 +250,7 @@ def test_concurrent_recovery_sweep_retries_busy_wake_without_new_delivery(monkey
     start = threading.Barrier(3)
     candidate = {
         "delivery_id": "delivery-1",
+        "recipient_endpoint_id": "relay-session-" + "a" * 32,
         "recipient_runtime": "codex",
         "recipient_session_ref": "target-session",
         "state": "pending",
@@ -740,7 +741,7 @@ def test_http_reply_uses_the_same_post_persistence_callback(client) -> None:
     assert reply.status_code == 200
     assert len(seen) == 2
     assert seen[1][0]["in_reply_to"] == parent["message_id"]
-    assert seen[1][0]["recipient"] == "codex:original"
+    assert seen[1][0]["recipient"] == parent["sender_endpoint_id"]
 
 def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_action(
     client, monkeypatch, tmp_path
@@ -876,7 +877,7 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     }
     assert client.post(
         "/relay/replies", json={**reply_body, "container_ref": "git:example.test/other"}
-    ).status_code == 404
+    ).status_code == 200
     first = client.post("/relay/replies", json=reply_body)
     duplicate = client.post("/relay/replies", json=reply_body)
     assert first.status_code == duplicate.status_code == 200
@@ -1316,8 +1317,10 @@ def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client) 
         assert wake["deliveries"] == [{
             "delivery_id": sent[1]["deliveries"][0]["delivery_id"],
             "state": "pending",
+            "recipient_endpoint_id": sent[1]["deliveries"][0]["recipient_endpoint_id"],
             "recipient_runtime": "codex",
             "recipient_session_ref": "target",
+            "recipient_container_ref": SCOPE["container_ref"],
         }]
 
         duplicate = route.post("/relay/deliveries/ack", json=ack_body)
@@ -1377,6 +1380,31 @@ def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client) 
     )
     assert turn_limit["default"] == 3
     assert turn_limit["minimum"] == 0
+
+def test_build_router_normalizes_endpoint_send_for_codex_wake(client) -> None:
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+    ))
+    route = TestClient(app)
+    target_scope = {"container_ref": "git:example.test/target", "actor_ref": "wake-user"}
+    source_scope = {"container_ref": "git:example.test/source", "actor_ref": "wake-user"}
+    target = route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target-session", **target_scope})
+    assert target.status_code == 200
+    endpoint_id = target.json()["session"]["endpoint_id"]
+    assert route.post("/relay/turn", json={"runtime": "claude-code", "session_ref": "sender", **source_scope}).status_code == 200
+    assert route.post("/relay/sessions/name", json={"runtime": "codex", "session_ref": "target-session", "alias": "target", **target_scope}).status_code == 200
+    with patch("app.dependencies.schedule_codex_relay_wake") as schedule:
+        response = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code", "sender_session_ref": "sender",
+            "recipient": endpoint_id, "payload": "wake", **source_scope,
+        })
+    assert response.status_code == 200
+    wake, scope = schedule.call_args.args
+    assert scope == target_scope
+    assert wake["recipient"] == "codex:target-session"
+
 
 def test_relay_turn_callback_rearms_only_after_success(client) -> None:
     callbacks = []
@@ -1587,8 +1615,10 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     assert wake["deliveries"][0] == {
         "delivery_id": claimed["delivery_id"],
         "state": "pending",
+        "recipient_endpoint_id": claimed["recipient_endpoint_id"],
         "recipient_runtime": "codex",
         "recipient_session_ref": "crash-target",
+        "recipient_container_ref": SCOPE["container_ref"],
     }
 
     state_dir = tmp_path / "crash-hook-state"

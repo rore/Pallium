@@ -16,7 +16,7 @@ RELAY_MESSAGE_MAX_CHARS = 16000
 RELAY_MESSAGE_PAGE_DEFAULT_CHARS = 2000
 RELAY_TURN_MAX_CHARS = 2400
 RELAY_TURN_MAX_MESSAGES = 3
-RELAY_BROADCAST_MAX_RECIPIENTS = 25
+
 RELAY_DEFAULT_EXPIRY_SECONDS: int | None = None
 RELAY_MIN_EXPIRY_SECONDS = 60
 RELAY_MAX_EXPIRY_SECONDS = 7 * 24 * 60 * 60
@@ -25,6 +25,7 @@ RELAY_CLAIM_LEASE_SECONDS = 60
 _REDACTED_OVERFLOW = "[REDACTED: payload omitted because sanitization exceeded the Relay limit]"
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+_ENDPOINT_ID_RE = re.compile(r"^relay-session-[0-9a-f]{32}$")
 
 
 class RelayError(Exception):
@@ -89,12 +90,16 @@ def _stored_payload(value: str) -> tuple[str, str]:
     return raw, stored
 
 
-def parse_selector(value: str) -> tuple[str, str, str | None]:
+def parse_selector(value: str) -> tuple[str | None, str, str]:
     selector = _opaque(value, "recipient", maximum=320)
+    if _ENDPOINT_ID_RE.fullmatch(selector):
+        return None, "endpoint", selector
+    if selector.startswith("@"):
+        return None, "alias", validate_alias(selector[1:])
     runtime, separator, target = selector.partition(":")
     validate_runtime(runtime)
     if not separator:
-        return runtime, "runtime", None
+        raise ValueError("recipient must name one exact endpoint or alias; broadcast is not supported")
     if not target:
         raise ValueError("recipient session or alias is required after ':'")
     if target.startswith("@"):
@@ -269,8 +274,6 @@ class RelayService:
             actor_ref=actor,
             expires_in_seconds=expires_in_seconds,
             in_reply_to=None if in_reply_to is None else _opaque(in_reply_to, "in_reply_to", maximum=128),
-            broadcast_recent_seconds=RELAY_RECENT_SECONDS,
-            broadcast_max_recipients=RELAY_BROADCAST_MAX_RECIPIENTS,
             now=now,
         )
 

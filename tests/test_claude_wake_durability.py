@@ -151,7 +151,11 @@ def test_pending_candidate_is_read_only_at_the_real_relay_surface(client) -> Non
     before = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
     candidate = relay.pending_candidate(runtime="claude-code", session_ref="target", **scope)
     after = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
-    assert candidate == {"delivery_id": before["delivery_id"], "state": "pending"}
+    assert candidate == {
+        "delivery_id": before["delivery_id"],
+        "state": "pending",
+        "recipient_endpoint_id": before["recipient_endpoint_id"],
+    }
     assert after["state"] == "pending" and after["attempts"] == before["attempts"] == 0
 
 def test_persistent_register_rejection_is_http_conflict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -400,7 +404,11 @@ def test_expired_claim_recovery_retries_without_mutating_relay(
     assert relay.pending_candidate(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
         delivery_id=claimed["delivery_id"], **scope,
-    ) == {"delivery_id": claimed["delivery_id"], "state": "pending"}
+    ) == {
+        "delivery_id": claimed["delivery_id"],
+        "state": "pending",
+        "recipient_endpoint_id": claimed["recipient_endpoint_id"],
+    }
     retried = threading.Event()
     transport_calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -845,6 +853,7 @@ def test_expired_claim_recovery_rechecks_and_isolates_candidate_errors(
         return {
             "delivery_id": delivery_id,
             "state": "pending",
+            "recipient_endpoint_id": "relay-session-" + "a" * 32,
             "recipient_runtime": "codex",
             "recipient_session_ref": "target",
             "container_ref": "git:example/repo",

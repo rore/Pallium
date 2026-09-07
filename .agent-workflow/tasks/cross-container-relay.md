@@ -67,14 +67,22 @@ Verification plan: Public HTTP, MCP, and hook E2E across containers; migration/r
 ## Implementation
 
 - Established isolated branch `feat/cross-container-relay` from `origin/main` at `88ed0e64`.
-- Discovery and pre-edit redline classification completed. No production code has been edited.
+- Discovery and pre-edit redline classification completed; production implementation is now in progress.
 - Intended production files are limited to the schema/migration/store/service/API/MCP/wake/instruction surfaces named in Plan; tests and post-witness docs may change within Scope.
-- Revised planning after strong-model review: actor-level caller trust is explicit; orphan rebinding is forbidden; split migration is sequenced; global names use a durable registry; wake adapters receive normalized destination location. No production edits yet.
+- Implemented the reviewed architecture: actor-trusted canonical endpoint IDs, permanent orphan non-binding, sequenced split migration, durable actor-global names, and recipient-location wake normalization.
+- Added literal legacy-DDL migration coverage for same-DB backfill, alias uniqueness/conflicts, permanent orphan NULLs, fresh split sequencing, and target-marker recovery.
+- Removed bare-runtime broadcast from regular send, exposed endpoint/location provenance in HTTP/MCP results, and updated takeover guidance across integrations.
+- Added caller-level cross-container HTTP E2E; existing Relay regression expectations are being migrated to the exact-endpoint contract.
 
 ## Evidence
 
 - Pre-edit inventory: current Relay code and tests plus roadmap feature.
 - Redline: MIXED SCHEMA_CHANGE + API_CHANGE; persistence-review and api-review; no boundary violation.
+- Focused result: uv run --with pytest python -m pytest -o addopts="" tests/test_sqlite_relay_isolation.py -k "literal_legacy or split_recovery" -q -> 5 passed.
+
+- Focused persistence/isolation suite: 15 passed.
+- Direct cross-container send, claim, ACK, status, reply, actor-denial, and no-broadcast smoke: passed.
+- Expanded persistence/lifecycle/wake contract suite: 46 passed with one intentional stale wrong-container expectation delegated for update.
 
 ## Plan review
 

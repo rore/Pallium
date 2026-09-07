@@ -5,9 +5,10 @@ another. Pallium stores the message before attempting delivery, so a busy or
 unavailable recipient can receive it later.
 
 Pallium currently ships Relay integrations for Claude Code, Codex, and OpenCode.
-Sessions must connect to the same local Pallium service and currently belong to
-the same repository. Routing uses explicit session identity; it does not use
-search, embeddings, ranking, or an LLM.
+Sessions must connect to the same local Pallium service. Cross-container routing
+applies only within the same actor; Session History and derived-memory scoping
+are unchanged. Routing uses explicit session identity; it does not use search,
+embeddings, ranking, or an LLM.
 
 ## Send a message
 
@@ -23,8 +24,7 @@ learned, when you need a decision from that session, when it is now unblocked,
 or when you need a concrete review or action.
 
 Avoid routine status, unrelated context, speculative “maybe useful” messages,
-open-ended chat, and broadcasts whose only purpose is to keep every session
-informed. A delivered message can start a paid model turn on supported targets.
+and open-ended chat. Regular sends reject a bare runtime selector; there is no broadcast send API yet. A delivered message can start a paid model turn on supported targets.
 
 ## Limits
 
@@ -39,8 +39,7 @@ Codex, Claude, and OpenCode hooks claim within 2,360 characters, reserving 40
 characters for a compact backlog notice inside their 2,400-character output budget.
 A long message is injected as an attributed prefix with the exact omitted count
 and a `pallium_relay_status` continuation call. Status pages use Unicode
-code-point offsets and reconstruct the complete stored redacted body; continue
-with `next_offset` until it is null. The unpaged HTTP status response remains a
+code-point offsets and reconstruct the complete stored redacted body; continue with `next_offset` until it is null. The unpaged HTTP status response remains a
 full-body compatibility view. `has_more` and `remaining_count` report all
 unclaimed work, and integrations acknowledge only blocks actually added to model
 context.
@@ -56,20 +55,18 @@ response budget.
 
 ## Select a recipient
 
-`pallium_relay_recipients` returns a bounded envelope of recent sessions. Each item includes a canonical `exact_selector` and, when named, `alias_selector`; when `has_more` is true, call it again with `next_offset`. The HTTP session-list response remains unchanged.
-Selectors have three forms:
+`pallium_relay_recipients` returns a bounded envelope of recent sessions. Each item includes a canonical `exact_selector` and, when named, `alias_selector`; when `has_more` is true, call it again with `next_offset`. The HTTP session-list response remains container-local and exposes each endpoint ID.
+Legacy selectors have three forms:
 
-- `codex` — every currently recent Codex session in scope
-- `codex:<session_ref>` — one immutable session
-- `codex:@review` — the session currently holding the `review` alias
+- `codex` — legacy runtime-wide compatibility selector; regular sends reject it
+- `codex:<session_ref>` — legacy runtime/session compatibility selector; it may be ambiguous
+- `codex:@review` — compatibility alias selector; use `@review` instead
 
-The same forms apply to other supported runtimes. Runtime-wide sends require
-explicit user intent and resolve their recipients at send time. Sessions opened
-later do not receive the message.
+The canonical exact selector is `relay-session-<32 lowercase hex>`. The actor-global alias form is `@name`. A `runtime:@name` selector is compatibility only; if it does not match, the error says to use `@name`. Regular sends do not broadcast; a separate broadcast API may be added later.
 
-`pallium_relay_name` assigns or transfers an alias. Transferring an alias
-affects future sends; messages already queued remain addressed to the original
-session.
+Legacy runtime-qualified forms apply to other supported runtimes.
+
+`pallium_relay_name` assigns or transfers an alias. First try without takeover; if occupied, fail and ask the user. Retry with `replace_existing=true` only after explicit approval, or immediately when the original request explicitly says to take over. Transferring an alias affects future sends; messages already queued remain addressed to the original session.
 
 ## Replies
 

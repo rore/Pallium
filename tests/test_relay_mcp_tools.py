@@ -682,10 +682,10 @@ async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
     assert repeated == refs
     assert targets[2] not in refs
     assert all(item["runtime"] == "codex" for item in seen)
-    assert all(item["exact_selector"] == f"codex:{item['session_ref']}" for item in seen)
+    assert all(item["exact_selector"] == item["endpoint_id"] for item in seen)
     holder = next(item for item in seen if item["session_ref"] == targets[1])
     released = next(item for item in seen if item["session_ref"] == targets[0])
-    assert holder["alias_selector"] == "codex:@review"
+    assert holder["alias_selector"] == "@review"
     assert "alias_selector" not in released
     assert any(item["title"].startswith("מפתח 日本語") for item in seen)
 

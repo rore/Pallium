@@ -131,11 +131,11 @@ def test_mcp_ack_stale_receipt_returns_409(client: TestClient, relay_storage):
     assert _mcp_ack(client, d["delivery_id"], new_receipt).status_code == 200
 
 
-def test_mcp_ack_wrong_container_returns_404(client: TestClient):
+def test_mcp_ack_same_actor_cross_container_returns_200(client: TestClient):
     _register(client)
     _send(client)
     d = _turn(client)["deliveries"][0]
-    assert _mcp_ack(client, d["delivery_id"], d["receipt"], container_ref="git:other/repo").status_code == 404
+    assert _mcp_ack(client, d["delivery_id"], d["receipt"], container_ref="git:other/repo").status_code == 200
 
 
 def test_mcp_ack_not_claimed_returns_409(client: TestClient):

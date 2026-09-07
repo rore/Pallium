@@ -541,6 +541,7 @@ class RelayMessageRecord(Base):
     id = Column(String, primary_key=True)
     sender_runtime = Column(String, nullable=False)
     sender_session_ref = Column(String, nullable=False)
+    sender_endpoint_id = Column(String, nullable=True)
     recipient_selector = Column(String, nullable=False)
     container_ref = Column(String, nullable=False)
     actor_ref = Column(String, nullable=False)
@@ -558,6 +559,8 @@ class RelayDeliveryRecord(Base):
     message_id = Column(String, nullable=False)
     recipient_runtime = Column(String, nullable=False)
     recipient_session_ref = Column(String, nullable=False)
+    recipient_endpoint_id = Column(String, nullable=True)
+    recipient_container_ref = Column(String, nullable=True)
     state = Column(String, nullable=False, default="pending")
     claim_token = Column(String, nullable=True)
     claimed_at = Column(DateTime(timezone=True), nullable=True)
@@ -571,6 +574,14 @@ class RelayDeliveryRecord(Base):
             name="uq_relay_delivery_recipient",
         ),
     )
+
+
+class RelayAliasRecord(Base):
+    __tablename__ = "relay_aliases"
+
+    actor_ref = Column(String, primary_key=True)
+    alias = Column(String, primary_key=True)
+    endpoint_id = Column(String, nullable=True)
 
 
 class RelayMigrationMetadataRecord(Base):
@@ -588,10 +599,18 @@ _RELAY_TABLE_NAMES = frozenset({
     RelaySessionRecord.__tablename__,
     RelayMessageRecord.__tablename__,
     RelayDeliveryRecord.__tablename__,
+    RelayAliasRecord.__tablename__,
 })
 
 
 class SQLiteSchemaMixin:
+    _RELAY_MESSAGE_COLUMN_MIGRATIONS = {
+        "sender_endpoint_id": "ALTER TABLE relay_messages ADD COLUMN sender_endpoint_id VARCHAR",
+    }
+    _RELAY_DELIVERY_COLUMN_MIGRATIONS = {
+        "recipient_endpoint_id": "ALTER TABLE relay_deliveries ADD COLUMN recipient_endpoint_id VARCHAR",
+        "recipient_container_ref": "ALTER TABLE relay_deliveries ADD COLUMN recipient_container_ref VARCHAR",
+    }
     _SOURCE_ITEM_MIGRATIONS = {
         "occurred_at": "ALTER TABLE source_items ADD COLUMN occurred_at DATETIME",
         "actor_ref": "ALTER TABLE source_items ADD COLUMN actor_ref VARCHAR",
@@ -681,6 +700,14 @@ class SQLiteSchemaMixin:
         "idx_relay_messages_expiry": (
             "CREATE INDEX IF NOT EXISTS idx_relay_messages_expiry "
             "ON relay_messages(expires_at)"
+        ),
+        "idx_relay_sessions_actor_alias": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_sessions_actor_alias "
+            "ON relay_sessions(actor_ref, alias)"
+        ),
+        "idx_relay_deliveries_recipient_endpoint": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_deliveries_recipient_endpoint "
+            "ON relay_deliveries(recipient_endpoint_id, state, lease_expires_at)"
         ),
         # General container+lifecycle lookup. The hot retrieval / consolidation
         # / thread-rebuild / work-trace paths all call
@@ -960,6 +987,7 @@ class SQLiteSchemaMixin:
                     if include_relay or name not in _RELAY_TABLE_NAMES
                 ],
             )
+            self._ensure_relay_columns(self._engine)
             self._ensure_thread_processing_lease_nullable_thread_ref()
             self._ensure_thread_processing_lease_columns()
             self._ensure_source_item_columns()
@@ -994,14 +1022,39 @@ class SQLiteSchemaMixin:
                     RelaySessionRecord.__table__,
                     RelayMessageRecord.__table__,
                     RelayDeliveryRecord.__table__,
+                    RelayAliasRecord.__table__,
                     RelayMigrationMetadataRecord.__table__,
                 ],
             )
+            self._ensure_relay_columns(engine)
             with engine.begin() as connection:
                 for name, create_sql in self._INDEX_MIGRATIONS.items():
                     if name.startswith("idx_relay_"):
                         connection.execute(text(create_sql))
             self._optimize_query_planner_stats(engine)
+
+    def _ensure_relay_columns(self, engine) -> None:
+        with engine.begin() as connection:
+            tables = {
+                row[0] for row in connection.execute(
+                    text(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name IN ('relay_messages', 'relay_deliveries')"
+                    )
+                )
+            }
+            for table, migrations in (
+                ("relay_messages", self._RELAY_MESSAGE_COLUMN_MIGRATIONS),
+                ("relay_deliveries", self._RELAY_DELIVERY_COLUMN_MIGRATIONS),
+            ):
+                if table not in tables:
+                    continue
+                existing = {
+                    row[1] for row in connection.execute(text(f"PRAGMA table_info({table})"))
+                }
+                for column_name, migration_sql in migrations.items():
+                    if column_name not in existing:
+                        connection.execute(text(migration_sql))
 
     @contextmanager
     def _schema_initialization_lock(self, engine=None):
