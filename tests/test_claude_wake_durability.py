@@ -22,12 +22,24 @@ PAYLOAD = {
 }
 
 
-def _intent_path(root: Path, session_ref: str) -> Path:
-    return root / "intents" / (hashlib.sha256(session_ref.encode("utf-8")).hexdigest() + ".json")
+def _intent_path(
+    root: Path,
+    session_ref: str,
+    container_ref: str = PAYLOAD["container_ref"],
+    actor_ref: str = PAYLOAD["actor_ref"],
+) -> Path:
+    identity = json.dumps(
+        ["claude-code", session_ref, container_ref, actor_ref],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return root / "intents" / (
+        hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json"
+    )
 
 
 def _write_intent(root: Path, payload: dict, intent_id: str) -> None:
-    path = _intent_path(root, payload["session_ref"])
+    path = _intent_path(root, payload["session_ref"], payload["container_ref"], payload["actor_ref"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({**payload, "intent_id": intent_id}), encoding="utf-8")
 
@@ -151,7 +163,11 @@ def test_pending_candidate_is_read_only_at_the_real_relay_surface(client) -> Non
     before = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
     candidate = relay.pending_candidate(runtime="claude-code", session_ref="target", **scope)
     after = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
-    assert candidate == {"delivery_id": before["delivery_id"], "state": "pending"}
+    assert candidate == {
+        "delivery_id": before["delivery_id"],
+        "state": "pending",
+        "recipient_endpoint_id": before["recipient_endpoint_id"],
+    }
     assert after["state"] == "pending" and after["attempts"] == before["attempts"] == 0
 
 def test_persistent_register_rejection_is_http_conflict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -333,9 +349,9 @@ def test_close_preserves_intent_replaced_after_validation(tmp_path: Path, monkey
     path = _intent_path(tmp_path, PAYLOAD["session_ref"])
     path.write_text(json.dumps(closed), encoding="utf-8")
     original = registry._delete_intent_locked
-    def replace_then_delete(session_ref: str, expected_intent_id: str | None) -> bool:
+    def replace_then_delete(runtime, session_ref, container_ref, actor_ref, expected_intent_id) -> bool:
         path.write_text(json.dumps({**PAYLOAD, "token": "new", "intent_id": "new"}), encoding="utf-8")
-        return original(session_ref, expected_intent_id)
+        return original(runtime, session_ref, container_ref, actor_ref, expected_intent_id)
     monkeypatch.setattr(registry, "_delete_intent_locked", replace_then_delete)
     assert registry.close(**{key: closed[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
     assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "new"
@@ -400,7 +416,11 @@ def test_expired_claim_recovery_retries_without_mutating_relay(
     assert relay.pending_candidate(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
         delivery_id=claimed["delivery_id"], **scope,
-    ) == {"delivery_id": claimed["delivery_id"], "state": "pending"}
+    ) == {
+        "delivery_id": claimed["delivery_id"],
+        "state": "pending",
+        "recipient_endpoint_id": claimed["recipient_endpoint_id"],
+    }
     retried = threading.Event()
     transport_calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -667,9 +687,9 @@ def test_session_end_outage_preserves_newer_registration_intent(tmp_path: Path, 
     newer = {**PAYLOAD, "token": "new-token"}
     original_delete = restarted._delete_intent_locked
 
-    def replace_closed_intent(session_ref: str, expected_intent_id: str | None) -> bool:
+    def replace_closed_intent(runtime, session_ref, container_ref, actor_ref, expected_intent_id) -> bool:
         _write_intent(state_dir, newer, "newer")
-        return original_delete(session_ref, expected_intent_id)
+        return original_delete(runtime, session_ref, container_ref, actor_ref, expected_intent_id)
 
     monkeypatch.setattr(restarted, "_delete_intent_locked", replace_closed_intent)
     restarted.recover_intents()
@@ -845,6 +865,7 @@ def test_expired_claim_recovery_rechecks_and_isolates_candidate_errors(
         return {
             "delivery_id": delivery_id,
             "state": "pending",
+            "recipient_endpoint_id": "relay-session-" + "a" * 32,
             "recipient_runtime": "codex",
             "recipient_session_ref": "target",
             "container_ref": "git:example/repo",
@@ -921,3 +942,144 @@ def test_relay_claim_recovery_is_startup_immediate_rate_limited_and_resilient(
         reconciler.stop()
 
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
+
+def test_persistent_registry_keeps_duplicate_native_sessions_per_scope(
+    tmp_path: Path,
+) -> None:
+    first = {**PAYLOAD, "session_ref": "duplicate", "container_ref": "container-a", "socket_path": "socket-a", "token": "token-a"}
+    second = {**PAYLOAD, "session_ref": "duplicate", "container_ref": "container-b", "socket_path": "socket-b", "token": "token-b"}
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, first, "first")
+    assert _register(registry, tmp_path, second, "second")
+
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert {
+        (item["session_ref"], item["container_ref"], item["actor_ref"])
+        for item in restarted.recovery_candidates()
+    } == {
+        ("duplicate", "container-a", PAYLOAD["actor_ref"]),
+        ("duplicate", "container-b", PAYLOAD["actor_ref"]),
+    }
+    observed: list[tuple[str, str]] = []
+    for payload in (first, second):
+        assert restarted.probe(
+            runtime="claude-code",
+            session_ref="duplicate",
+            container_ref=payload["container_ref"],
+            actor_ref=payload["actor_ref"],
+            transport=lambda socket, token: observed.append((socket, token)) or "accepted",
+        )
+    assert observed == [("socket-a", "token-a"), ("socket-b", "token-b")]
+
+def test_legacy_intent_fences_existing_idle_capability_on_upgrade(
+    tmp_path: Path,
+) -> None:
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    legacy_path = tmp_path / "intents" / (
+        hashlib.sha256(PAYLOAD["session_ref"].encode("utf-8")).hexdigest() + ".json"
+    )
+    legacy_path.write_text(
+        json.dumps({
+            "runtime": PAYLOAD["runtime"],
+            "session_ref": PAYLOAD["session_ref"],
+            "container_ref": PAYLOAD["container_ref"],
+            "actor_ref": PAYLOAD["actor_ref"],
+            "intent_id": "legacy-close",
+            "closed": True,
+        }),
+        encoding="utf-8",
+    )
+
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path)
+    restarted.recover_intents()
+    assert restarted.recovery_candidates() == []
+    assert not restarted.probe(
+        runtime=PAYLOAD["runtime"],
+        session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"],
+        actor_ref=PAYLOAD["actor_ref"],
+        transport=lambda *_: pytest.fail("legacy close must fence wake"),
+    )
+    assert not legacy_path.exists()
+
+def test_legacy_intent_fences_memory_when_canonical_removal_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    legacy_path = tmp_path / "intents" / (
+        hashlib.sha256(PAYLOAD["session_ref"].encode("utf-8")).hexdigest() + ".json"
+    )
+    legacy_path.write_text(
+        json.dumps({
+            "runtime": PAYLOAD["runtime"],
+            "session_ref": PAYLOAD["session_ref"],
+            "container_ref": PAYLOAD["container_ref"],
+            "actor_ref": PAYLOAD["actor_ref"],
+            "intent_id": "legacy-close",
+            "closed": True,
+        }),
+        encoding="utf-8",
+    )
+    original_write = registry._write_canonical_locked
+    attempts = 0
+
+    def fail_once(registrations) -> bool:
+        nonlocal attempts
+        attempts += 1
+        return False if attempts == 1 else original_write(registrations)
+
+    monkeypatch.setattr(registry, "_write_canonical_locked", fail_once)
+    monkeypatch.setattr(registry, "_quarantine_or_mark_unusable_locked", lambda: False)
+
+    registry.recover_intents()
+
+    assert registry.durability_degraded
+    assert legacy_path.exists()
+    assert not registry.probe(
+        runtime=PAYLOAD["runtime"],
+        session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"],
+        actor_ref=PAYLOAD["actor_ref"],
+        transport=lambda *_: pytest.fail("failed persistence must still fence memory"),
+    )
+
+    registry.recover_intents()
+    assert not legacy_path.exists()
+    assert ClaudeWakeRegistry(state_dir=tmp_path).recovery_candidates() == []
+
+
+def test_corrupt_scoped_intent_cannot_suppress_valid_legacy_fence(
+    tmp_path: Path,
+) -> None:
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "idle")
+    legacy_path = tmp_path / "intents" / (
+        hashlib.sha256(PAYLOAD["session_ref"].encode("utf-8")).hexdigest() + ".json"
+    )
+    legacy_path.write_text(
+        json.dumps({
+            "runtime": PAYLOAD["runtime"],
+            "session_ref": PAYLOAD["session_ref"],
+            "container_ref": PAYLOAD["container_ref"],
+            "actor_ref": PAYLOAD["actor_ref"],
+            "intent_id": "legacy-close",
+            "closed": True,
+        }),
+        encoding="utf-8",
+    )
+    _intent_path(tmp_path, PAYLOAD["session_ref"]).write_text("{", encoding="utf-8")
+
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path)
+    restarted.recover_intents()
+
+    assert restarted.recovery_candidates() == []
+    assert not legacy_path.exists()
+    assert not restarted.probe(
+        runtime=PAYLOAD["runtime"],
+        session_ref=PAYLOAD["session_ref"],
+        container_ref=PAYLOAD["container_ref"],
+        actor_ref=PAYLOAD["actor_ref"],
+        transport=lambda *_: pytest.fail("corrupt scoped intent must not suppress fence"),
+    )

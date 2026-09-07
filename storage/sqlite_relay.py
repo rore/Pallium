@@ -12,7 +12,7 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from core.relay import RelayConflictError, RelayNotFoundError
-from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
+from storage.sqlite_schema import RelayAliasRecord, RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
 
 
 def _now(value: datetime | None = None) -> datetime:
@@ -50,6 +50,7 @@ def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int) -
         last_seen = _now(row.last_seen_at)
         lifecycle = "recent" if last_seen >= now - timedelta(seconds=recent_seconds) else "dormant"
     return {
+        "endpoint_id": row.id,
         "runtime": row.runtime,
         "session_ref": row.session_ref,
         "title": row.title,
@@ -159,8 +160,11 @@ def _delivery_view(
         "receipt": _delivery_receipt(delivery.claim_token) if delivery.state == "claimed" else None,
         "recipient_runtime": delivery.recipient_runtime,
         "recipient_session_ref": delivery.recipient_session_ref,
+        "recipient_endpoint_id": delivery.recipient_endpoint_id,
+        "recipient_container_ref": delivery.recipient_container_ref,
         "sender_runtime": message.sender_runtime,
         "sender_session_ref": message.sender_session_ref,
+        "sender_endpoint_id": message.sender_endpoint_id,
         "recipient": message.recipient_selector,
         **payload,
         "redacted": bool(message.redacted),
@@ -222,6 +226,69 @@ class SQLiteRelayMixin:
                 RelaySessionRecord.session_ref == session_ref,
             )
         ).scalar_one_or_none()
+
+    @staticmethod
+    def _relay_session_by_endpoint(
+        db, *, endpoint_id: str | None, actor_ref: str
+    ) -> RelaySessionRecord | None:
+        if endpoint_id is None:
+            return None
+        row = db.get(RelaySessionRecord, endpoint_id)
+        return row if row is not None and row.actor_ref == actor_ref else None
+
+    def _relay_target(
+        self,
+        db,
+        *,
+        actor_ref: str,
+        recipient_runtime: str | None,
+        recipient_kind: str,
+        recipient_value: str,
+    ) -> RelaySessionRecord:
+        if recipient_kind == "endpoint":
+            target = self._relay_session_by_endpoint(
+                db, endpoint_id=recipient_value, actor_ref=actor_ref
+            )
+        elif recipient_kind == "alias":
+            binding = db.get(RelayAliasRecord, (actor_ref, recipient_value))
+            if binding is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            if binding.endpoint_id is None:
+                raise RelayConflictError(
+                    "relay alias has unresolved legacy owners; use replace_existing=true to take it over"
+                )
+            target = self._relay_session_by_endpoint(
+                db, endpoint_id=binding.endpoint_id, actor_ref=actor_ref
+            )
+            if (
+                target is not None
+                and recipient_runtime is not None
+                and target.runtime != recipient_runtime
+            ):
+                raise RelayConflictError(
+                    "relay alias belongs to a different runtime; address the global name as @alias"
+                )
+        else:
+            matches = db.execute(
+                select(RelaySessionRecord).where(
+                    RelaySessionRecord.actor_ref == actor_ref,
+                    RelaySessionRecord.runtime == recipient_runtime,
+                    RelaySessionRecord.session_ref == recipient_value,
+                )
+            ).scalars().all()
+            if len(matches) > 1:
+                raise RelayConflictError(
+                    "legacy recipient is ambiguous; use the canonical relay-session endpoint ID"
+                )
+            target = matches[0] if matches else None
+
+        if target is None:
+            raise RelayNotFoundError("relay entity not found in the requested scope")
+        if target.state == "unreachable":
+            raise RelayConflictError("recipient session is unreachable")
+        if target.state != "active":
+            raise RelayNotFoundError("relay entity not found in the requested scope")
+        return target
 
     @staticmethod
     def _require_actor(row: RelaySessionRecord | RelayMessageRecord, actor_ref: str) -> None:
@@ -302,9 +369,7 @@ class SQLiteRelayMixin:
                 select(RelayDeliveryRecord, RelayMessageRecord)
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
                 .where(
-                    RelayDeliveryRecord.recipient_runtime == runtime,
-                    RelayDeliveryRecord.recipient_session_ref == session_ref,
-                    RelayMessageRecord.container_ref == container_ref,
+                    RelayDeliveryRecord.recipient_endpoint_id == registered.id,
                     RelayMessageRecord.actor_ref == actor_ref,
                     RelayMessageRecord.expires_at > current,
                     or_(
@@ -412,9 +477,12 @@ class SQLiteRelayMixin:
             self._require_actor(row, actor_ref)
             row.state = "closed"
             row.closed_at = current
+            if row.alias is not None:
+                binding = db.get(RelayAliasRecord, (actor_ref, row.alias))
+                if binding is not None and binding.endpoint_id == row.id:
+                    db.delete(binding)
             row.alias = None
             return _session_view(row, current, 24 * 60 * 60)
-
     def relay_list_sessions(
         self,
         *,
@@ -469,31 +537,55 @@ class SQLiteRelayMixin:
                 self._require_actor(row, actor_ref)
                 if row.state == "closed":
                     raise RelayConflictError("closed sessions cannot be named")
+
+                old_alias = row.alias
                 if alias is not None:
-                    existing = db.execute(
+                    binding = db.get(RelayAliasRecord, (actor_ref, alias))
+                    other_owners = db.execute(
                         select(RelaySessionRecord).where(
-                            RelaySessionRecord.container_ref == container_ref,
-                            RelaySessionRecord.runtime == runtime,
                             RelaySessionRecord.actor_ref == actor_ref,
                             RelaySessionRecord.alias == alias,
                             RelaySessionRecord.id != row.id,
                         )
-                    ).scalar_one_or_none()
-                    if existing is not None:
-                        if not replace_existing:
-                            raise RelayConflictError(
-                                "relay alias is already assigned; use replace_existing=true to transfer it"
-                            )
-                        existing.alias = None
+                    ).scalars().all()
+                    if (
+                        (binding is not None and binding.endpoint_id != row.id)
+                        or other_owners
+                    ) and not replace_existing:
+                        raise RelayConflictError(
+                            "relay alias is already assigned; ask the user before retrying with replace_existing=true"
+                        )
+                    if old_alias != alias and old_alias is not None:
+                        old_binding = db.get(RelayAliasRecord, (actor_ref, old_alias))
+                        if old_binding is not None and old_binding.endpoint_id == row.id:
+                            db.delete(old_binding)
+                    for previous in other_owners:
+                        previous.alias = None
+                    if other_owners:
                         db.flush()
-                row.alias = alias
+                    if binding is None:
+                        db.add(
+                            RelayAliasRecord(
+                                actor_ref=actor_ref,
+                                alias=alias,
+                                endpoint_id=row.id,
+                            )
+                        )
+                    else:
+                        binding.endpoint_id = row.id
+                    row.alias = alias
+                else:
+                    if old_alias is not None:
+                        binding = db.get(RelayAliasRecord, (actor_ref, old_alias))
+                        if binding is not None and binding.endpoint_id == row.id:
+                            db.delete(binding)
+                    row.alias = None
                 db.flush()
                 return _session_view(row, current, 24 * 60 * 60)
         except IntegrityError as exc:
             raise RelayConflictError(
-                "relay alias is already assigned; use replace_existing=true to transfer it"
+                "relay alias is already assigned; ask the user before retrying with replace_existing=true"
             ) from exc
-
     def relay_send(
         self,
         *,
@@ -501,17 +593,15 @@ class SQLiteRelayMixin:
         sender_runtime: str,
         sender_session_ref: str,
         recipient: str,
-        recipient_runtime: str,
+        recipient_runtime: str | None,
         recipient_kind: str,
-        recipient_value: str | None,
+        recipient_value: str,
         payload: str,
         redacted: bool,
         container_ref: str,
         actor_ref: str,
         expires_in_seconds: int | None,
         in_reply_to: str | None,
-        broadcast_recent_seconds: int,
-        broadcast_max_recipients: int,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
@@ -530,19 +620,21 @@ class SQLiteRelayMixin:
 
             if in_reply_to is not None:
                 parent = db.get(RelayMessageRecord, in_reply_to)
-                if parent is None or parent.container_ref != container_ref or parent.actor_ref != actor_ref:
+                if parent is None or parent.actor_ref != actor_ref:
                     raise RelayNotFoundError("relay entity not found in the requested scope")
 
             existing_message = db.get(RelayMessageRecord, message_id)
             if existing_message is not None:
-                if (
-                    existing_message.container_ref != container_ref
-                    or existing_message.actor_ref != actor_ref
-                ):
+                if existing_message.actor_ref != actor_ref:
                     raise RelayNotFoundError("relay entity not found in the requested scope")
-                if (
-                    existing_message.sender_runtime == sender_runtime
+                same_legacy_sender = (
+                    existing_message.sender_endpoint_id is None
+                    and existing_message.container_ref == container_ref
+                    and existing_message.sender_runtime == sender_runtime
                     and existing_message.sender_session_ref == sender_session_ref
+                )
+                if (
+                    (existing_message.sender_endpoint_id == sender.id or same_legacy_sender)
                     and existing_message.recipient_selector == recipient
                     and existing_message.payload == payload
                     and bool(existing_message.redacted) == bool(redacted)
@@ -552,56 +644,20 @@ class SQLiteRelayMixin:
                     return self._relay_status_in_session(db, existing_message, current)
                 raise RelayConflictError("message_id is already in use")
 
-            target_statement = select(RelaySessionRecord).where(
-                RelaySessionRecord.container_ref == container_ref,
-                RelaySessionRecord.actor_ref == actor_ref,
-                RelaySessionRecord.runtime == recipient_runtime,
-                RelaySessionRecord.state == "active",
+            target = self._relay_target(
+                db,
+                actor_ref=actor_ref,
+                recipient_runtime=recipient_runtime,
+                recipient_kind=recipient_kind,
+                recipient_value=recipient_value,
             )
-            if recipient_kind == "runtime":
-                target_statement = target_statement.where(
-                    RelaySessionRecord.last_seen_at
-                    >= current - timedelta(seconds=broadcast_recent_seconds)
-                ).order_by(RelaySessionRecord.session_ref).limit(broadcast_max_recipients + 1)
-            elif recipient_kind == "session":
-                target_statement = target_statement.where(
-                    RelaySessionRecord.session_ref == recipient_value
-                )
-            else:
-                target_statement = target_statement.where(RelaySessionRecord.alias == recipient_value)
-
-            recipients = db.execute(target_statement).scalars().all()
-            if not recipients:
-                if recipient_kind == "runtime":
-                    raise RelayConflictError("recipient resolved to no eligible sessions")
-                unreachable_statement = select(RelaySessionRecord).where(
-                    RelaySessionRecord.container_ref == container_ref,
-                    RelaySessionRecord.actor_ref == actor_ref,
-                    RelaySessionRecord.runtime == recipient_runtime,
-                    RelaySessionRecord.state == "unreachable",
-                )
-                if recipient_kind == "session":
-                    unreachable_statement = unreachable_statement.where(
-                        RelaySessionRecord.session_ref == recipient_value
-                    )
-                else:
-                    unreachable_statement = unreachable_statement.where(
-                        RelaySessionRecord.alias == recipient_value
-                    )
-                if db.execute(unreachable_statement).first() is not None:
-                    raise RelayConflictError("recipient session is unreachable")
-                raise RelayNotFoundError("relay entity not found in the requested scope")
-            if len(recipients) > broadcast_max_recipients:
-                raise RelayConflictError(
-                    f"recipient resolves to more than {broadcast_max_recipients} sessions"
-                )
-
             message = RelayMessageRecord(
                 id=message_id,
                 sender_runtime=sender_runtime,
                 sender_session_ref=sender_session_ref,
+                sender_endpoint_id=sender.id,
                 recipient_selector=recipient,
-                container_ref=container_ref,
+                container_ref=sender.container_ref,
                 actor_ref=actor_ref,
                 payload=payload,
                 redacted=1 if redacted else 0,
@@ -611,20 +667,20 @@ class SQLiteRelayMixin:
             )
             db.add(message)
             db.flush()
-            for target in recipients:
-                db.add(
-                    RelayDeliveryRecord(
-                        id=f"relay-delivery-{uuid.uuid4().hex}",
-                        message_id=message.id,
-                        recipient_runtime=target.runtime,
-                        recipient_session_ref=target.session_ref,
-                        state="pending",
-                        attempts=0,
-                    )
+            db.add(
+                RelayDeliveryRecord(
+                    id=f"relay-delivery-{uuid.uuid4().hex}",
+                    message_id=message.id,
+                    recipient_runtime=target.runtime,
+                    recipient_session_ref=target.session_ref,
+                    recipient_endpoint_id=target.id,
+                    recipient_container_ref=target.container_ref,
+                    state="pending",
+                    attempts=0,
                 )
+            )
             db.flush()
             return self._relay_status_in_session(db, message, current)
-
     def relay_reply_atomic(
         self,
         *,
@@ -638,13 +694,9 @@ class SQLiteRelayMixin:
         expires_in_seconds: int | None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        """Validate, create reply, and optionally mark delivery delivered — all in one transaction.
-
-        receipt is required when delivery.state == 'claimed' (MCP receive path).
-        For delivery.state == 'delivered' (hook-ACK-then-reply path), receipt is not checked.
-        Delivery is marked delivered only after the reply message is successfully created.
-        """
+        """Validate, create reply, and optionally ACK the delivery in one transaction."""
         current = _now(now)
+
         def run(db):
             row = db.execute(
                 select(RelayDeliveryRecord, RelayMessageRecord)
@@ -654,7 +706,7 @@ class SQLiteRelayMixin:
             if row is None:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             delivery, message = row
-            if message.container_ref != container_ref or message.actor_ref != actor_ref:
+            if message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
 
             if delivery.state == "claimed":
@@ -673,20 +725,14 @@ class SQLiteRelayMixin:
             else:
                 raise RelayConflictError("only claimed or delivered relay messages can be replied to")
 
-            # validate the sender session (the delivery recipient is now replying)
-            sender_runtime = delivery.recipient_runtime
-            sender_session_ref = delivery.recipient_session_ref
-            sender = self._relay_session(db, container_ref=container_ref, runtime=sender_runtime, session_ref=sender_session_ref)
+            sender = self._relay_session_by_endpoint(
+                db, endpoint_id=delivery.recipient_endpoint_id, actor_ref=actor_ref
+            )
             if sender is None:
-                raise RelayNotFoundError("relay entity not found in the requested scope")
-            self._require_actor(sender, actor_ref)
+                raise RelayConflictError("legacy delivery has no canonical recipient endpoint")
+            if sender.state != "active":
+                raise RelayConflictError("closed or unreachable sessions cannot reply")
 
-            # recipient of the reply is the original message sender
-            recipient_runtime = message.sender_runtime
-            recipient_session_ref = message.sender_session_ref
-            recipient_selector = f"{recipient_runtime}:{recipient_session_ref}"
-
-            # idempotency: reply_message_id is deterministic so a second attempt returns the existing message
             existing = db.get(RelayMessageRecord, reply_message_id)
             if existing is not None:
                 if (
@@ -697,24 +743,23 @@ class SQLiteRelayMixin:
                     raise RelayConflictError("reply already exists with different parameters")
                 return self._relay_status_in_session(db, existing, current)
 
-            recipient_session = db.execute(
-                select(RelaySessionRecord).where(
-                    RelaySessionRecord.container_ref == container_ref,
-                    RelaySessionRecord.actor_ref == actor_ref,
-                    RelaySessionRecord.runtime == recipient_runtime,
-                    RelaySessionRecord.session_ref == recipient_session_ref,
-                    RelaySessionRecord.state == "active",
-                )
-            ).scalar_one_or_none()
+            recipient_session = self._relay_session_by_endpoint(
+                db, endpoint_id=message.sender_endpoint_id, actor_ref=actor_ref
+            )
             if recipient_session is None:
+                raise RelayConflictError("legacy message has no canonical sender endpoint")
+            if recipient_session.state == "unreachable":
+                raise RelayConflictError("recipient session is unreachable")
+            if recipient_session.state != "active":
                 raise RelayNotFoundError("relay entity not found in the requested scope")
 
             reply_msg = RelayMessageRecord(
                 id=reply_message_id,
-                sender_runtime=sender_runtime,
-                sender_session_ref=sender_session_ref,
-                recipient_selector=recipient_selector,
-                container_ref=container_ref,
+                sender_runtime=sender.runtime,
+                sender_session_ref=sender.session_ref,
+                sender_endpoint_id=sender.id,
+                recipient_selector=recipient_session.id,
+                container_ref=sender.container_ref,
                 actor_ref=actor_ref,
                 payload=payload,
                 redacted=1 if redacted else 0,
@@ -724,26 +769,26 @@ class SQLiteRelayMixin:
             )
             db.add(reply_msg)
             db.flush()
-            db.add(RelayDeliveryRecord(
-                id=f"relay-delivery-{uuid.uuid4().hex}",
-                message_id=reply_message_id,
-                recipient_runtime=recipient_runtime,
-                recipient_session_ref=recipient_session_ref,
-                state="pending",
-                attempts=0,
-            ))
+            db.add(
+                RelayDeliveryRecord(
+                    id=f"relay-delivery-{uuid.uuid4().hex}",
+                    message_id=reply_message_id,
+                    recipient_runtime=recipient_session.runtime,
+                    recipient_session_ref=recipient_session.session_ref,
+                    recipient_endpoint_id=recipient_session.id,
+                    recipient_container_ref=recipient_session.container_ref,
+                    state="pending",
+                    attempts=0,
+                )
+            )
             db.flush()
-
-            # mark original delivery as delivered only after reply creation succeeds
             if delivery.state == "claimed":
                 delivery.state = "delivered"
                 delivery.delivered_at = current
-
             return self._relay_status_in_session(db, reply_msg, current)
 
         with self._begin_relay_immediate() as db:
             return run(db)
-
     def _relay_status_in_session(
         self, db, message: RelayMessageRecord, current: datetime,
         *, payload_offset: int = 0, payload_limit: int | None = None,
@@ -767,6 +812,7 @@ class SQLiteRelayMixin:
             "message_id": message.id,
             "sender_runtime": message.sender_runtime,
             "sender_session_ref": message.sender_session_ref,
+            "sender_endpoint_id": message.sender_endpoint_id,
             "recipient": message.recipient_selector,
             **payload,
             "redacted": bool(message.redacted),
@@ -779,11 +825,10 @@ class SQLiteRelayMixin:
                     message,
                     (
                         session.state
-                        if (session := self._relay_session(
+                        if (session := self._relay_session_by_endpoint(
                             db,
-                            container_ref=message.container_ref,
-                            runtime=row.recipient_runtime,
-                            session_ref=row.recipient_session_ref,
+                            endpoint_id=row.recipient_endpoint_id,
+                            actor_ref=message.actor_ref,
                         )) is not None and session.state != "closed"
                         else None
                     ),
@@ -807,13 +852,19 @@ class SQLiteRelayMixin:
         """Read exact-scope Relay state without claiming, ACKing, or admitting a turn."""
         current = _now(now)
         with self._relay_session_factory() as db:
+            session = self._relay_session(
+                db,
+                container_ref=container_ref,
+                runtime=runtime,
+                session_ref=session_ref,
+            )
+            if session is None or session.actor_ref != actor_ref:
+                return None
             statement = (
                 select(RelayDeliveryRecord, RelayMessageRecord)
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
                 .where(
-                    RelayDeliveryRecord.recipient_runtime == runtime,
-                    RelayDeliveryRecord.recipient_session_ref == session_ref,
-                    RelayMessageRecord.container_ref == container_ref,
+                    RelayDeliveryRecord.recipient_endpoint_id == session.id,
                     RelayMessageRecord.actor_ref == actor_ref,
                 )
                 .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
@@ -844,7 +895,11 @@ class SQLiteRelayMixin:
                 return None
             delivery, message = row
             state = "expired" if _now(message.expires_at) <= current and delivery.state in {"pending", "claimed"} else ("pending" if delivery.state == "claimed" and delivery.lease_expires_at is not None and _now(delivery.lease_expires_at) <= current else delivery.state)
-            return {"delivery_id": delivery.id, "state": state}
+            return {
+                "delivery_id": delivery.id,
+                "state": state,
+                "recipient_endpoint_id": session.id,
+            }
 
     def relay_wake_candidates(
         self,
@@ -857,7 +912,7 @@ class SQLiteRelayMixin:
         current = _now(now)
         with self._relay_session_factory() as db:
             statement = (
-                select(RelayDeliveryRecord, RelayMessageRecord)
+                select(RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord)
                 .join(
                     RelayMessageRecord,
                     RelayMessageRecord.id == RelayDeliveryRecord.message_id,
@@ -865,9 +920,7 @@ class SQLiteRelayMixin:
                 .join(
                     RelaySessionRecord,
                     and_(
-                        RelaySessionRecord.runtime == RelayDeliveryRecord.recipient_runtime,
-                        RelaySessionRecord.session_ref == RelayDeliveryRecord.recipient_session_ref,
-                        RelaySessionRecord.container_ref == RelayMessageRecord.container_ref,
+                        RelaySessionRecord.id == RelayDeliveryRecord.recipient_endpoint_id,
                         RelaySessionRecord.actor_ref == RelayMessageRecord.actor_ref,
                     ),
                 )
@@ -894,16 +947,11 @@ class SQLiteRelayMixin:
                 statement = statement.where(RelayDeliveryRecord.id == delivery_id)
 
             candidates: list[dict[str, Any]] = []
-            seen: set[tuple[str, str, str, str]] = set()
-            for delivery, message in db.execute(statement):
+            seen: set[str] = set()
+            for delivery, message, session in db.execute(statement):
                 if not _render_safe(message.payload):
                     continue
-                key = (
-                    message.container_ref,
-                    message.actor_ref,
-                    delivery.recipient_runtime,
-                    delivery.recipient_session_ref,
-                )
+                key = session.id
                 if key in seen:
                     continue
                 seen.add(key)
@@ -911,9 +959,10 @@ class SQLiteRelayMixin:
                     {
                         "delivery_id": delivery.id,
                         "state": "pending",
-                        "recipient_runtime": delivery.recipient_runtime,
-                        "recipient_session_ref": delivery.recipient_session_ref,
-                        "container_ref": message.container_ref,
+                        "recipient_endpoint_id": session.id,
+                        "recipient_runtime": session.runtime,
+                        "recipient_session_ref": session.session_ref,
+                        "container_ref": session.container_ref,
                         "actor_ref": message.actor_ref,
                     }
                 )
@@ -945,7 +994,7 @@ class SQLiteRelayMixin:
         current = _now(now)
         with self._begin_relay_immediate() as db:
             message = db.get(RelayMessageRecord, message_id)
-            if message is None or message.container_ref != container_ref or message.actor_ref != actor_ref:
+            if message is None or message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             return self._relay_status_in_session(
                 db, message, current,
@@ -979,7 +1028,7 @@ class SQLiteRelayMixin:
             if row is None:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             delivery, message = row
-            if message.container_ref != container_ref or message.actor_ref != actor_ref:
+            if message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             if delivery.state == "delivered":
                 expected = _delivery_receipt(delivery.claim_token)
@@ -990,6 +1039,10 @@ class SQLiteRelayMixin:
                     "state": "delivered",
                     "delivered_at": _iso(delivery.delivered_at),
                     "already_delivered": True,
+                    "recipient_endpoint_id": delivery.recipient_endpoint_id,
+                    "recipient_runtime": delivery.recipient_runtime,
+                    "recipient_session_ref": delivery.recipient_session_ref,
+                    "recipient_container_ref": delivery.recipient_container_ref,
                 }
             if delivery.state != "claimed":
                 raise RelayConflictError("delivery is not in claimed state")
@@ -1010,6 +1063,10 @@ class SQLiteRelayMixin:
                     "state": "delivered",
                     "delivered_at": _iso(current),
                     "already_delivered": False,
+                    "recipient_endpoint_id": delivery.recipient_endpoint_id,
+                    "recipient_runtime": delivery.recipient_runtime,
+                    "recipient_session_ref": delivery.recipient_session_ref,
+                    "recipient_container_ref": delivery.recipient_container_ref,
                 }
         if expired:
             raise RelayConflictError("message has expired")
@@ -1034,7 +1091,7 @@ class SQLiteRelayMixin:
             if row is None:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             delivery, message = row
-            if message.container_ref != container_ref or message.actor_ref != actor_ref:
+            if message.actor_ref != actor_ref:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             if delivery.state == "delivered":
                 if delivery.claim_token == claim_token:
@@ -1043,6 +1100,10 @@ class SQLiteRelayMixin:
                         "state": "delivered",
                         "delivered_at": _iso(delivery.delivered_at),
                         "already_delivered": True,
+                        "recipient_endpoint_id": delivery.recipient_endpoint_id,
+                        "recipient_runtime": delivery.recipient_runtime,
+                        "recipient_session_ref": delivery.recipient_session_ref,
+                        "recipient_container_ref": delivery.recipient_container_ref,
                     }
                 raise RelayConflictError("claim token is stale")
             if delivery.state != "claimed" or delivery.claim_token != claim_token:
@@ -1062,8 +1123,10 @@ class SQLiteRelayMixin:
                     "state": "delivered",
                     "delivered_at": _iso(current),
                     "already_delivered": False,
+                    "recipient_endpoint_id": delivery.recipient_endpoint_id,
                     "recipient_runtime": delivery.recipient_runtime,
                     "recipient_session_ref": delivery.recipient_session_ref,
+                    "recipient_container_ref": delivery.recipient_container_ref,
                 }
         if expired:
             raise RelayConflictError("message has expired")

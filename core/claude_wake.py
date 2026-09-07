@@ -51,9 +51,17 @@ def _valid(value: object, maximum: int) -> bool:
     )
 
 
-def _safe_session_file(session_ref: str) -> str:
+
+def _safe_session_file(
+    runtime: str, session_ref: str, container_ref: str, actor_ref: str
+) -> str:
     import hashlib
-    return hashlib.sha256(session_ref.encode("utf-8")).hexdigest() + ".json"
+    identity = json.dumps(
+        [runtime, session_ref, container_ref, actor_ref],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json"
 
 
 class ClaudeWakeRegistry:
@@ -64,7 +72,7 @@ class ClaudeWakeRegistry:
         self._wall_clock = wall_clock
         self._lock = threading.RLock()
         self._generation = 0
-        self._registrations: dict[tuple[str, str], _Registration] = {}
+        self._registrations: dict[tuple[str, str, str, str], _Registration] = {}
         self._state_dir = state_dir
         self._canonical = state_dir / "capabilities.json" if state_dir else None
         self._intents = state_dir / "intents" if state_dir else None
@@ -94,7 +102,7 @@ class ClaudeWakeRegistry:
         if self._state_dir is not None and not _valid(intent_id, 128):
             raise ValueError("invalid registration")
         with self._lock:
-            key = (runtime, session_ref)
+            key = (runtime, session_ref, container_ref, actor_ref)
             if self._state_dir is None:
                 now = self._clock()
                 self._registrations = {
@@ -102,7 +110,7 @@ class ClaudeWakeRegistry:
                     if current.expires_at > now
                 }
             if self._state_dir is not None:
-                intent = self._read_intent_locked(session_ref)
+                intent = self._read_intent_locked(runtime, session_ref, container_ref, actor_ref)
                 # Compare-before-apply: a delayed request can never replace newer state.
                 if intent is None or intent.get("intent_id") != intent_id or not self._intent_matches(intent, runtime, session_ref, container_ref, actor_ref, socket_path, token, idle):
                     return False
@@ -129,7 +137,10 @@ class ClaudeWakeRegistry:
                 return False
             self._registrations[key] = registration
             if self._state_dir is not None:
-                self._delete_intent_locked(session_ref, expected_intent_id=intent_id)
+                self._delete_intent_locked(
+                    runtime, session_ref, container_ref, actor_ref,
+                    expected_intent_id=intent_id,
+                )
                 self.signal_reconcile()
             return True
 
@@ -138,12 +149,12 @@ class ClaudeWakeRegistry:
     ) -> bool:
         """Fail closed immediately when a coordinator observes active Claude work."""
         with self._lock:
-            registration = self._active_locked(runtime, session_ref)
+            registration = self._active_locked(runtime, session_ref, container_ref, actor_ref)
             if registration is None or registration.container_ref != container_ref or registration.actor_ref != actor_ref:
                 return False
             self._generation += 1
             busy = replace(registration, generation=self._generation, idle=False, state="busy", delivery_id=None, attempted_at=None)
-            key = (runtime, session_ref)
+            key = (runtime, session_ref, container_ref, actor_ref)
             if self._state_dir is None or self._write_canonical_locked({**self._registrations, key: busy}):
                 self._registrations[key] = busy
                 return True
@@ -167,7 +178,7 @@ class ClaudeWakeRegistry:
         if transport is None:
             return False
         with self._lock:
-            registration = self._active_locked(runtime, session_ref)
+            registration = self._active_locked(runtime, session_ref, container_ref, actor_ref)
             if (
                 registration is None
                 or registration.container_ref != container_ref
@@ -184,7 +195,7 @@ class ClaudeWakeRegistry:
                 delivery_id=delivery_id,
                 attempted_at=self._wall_clock(),
             )
-            key = (runtime, session_ref)
+            key = (runtime, session_ref, container_ref, actor_ref)
             if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, key: consumed}):
                 return False
             self._registrations[key] = consumed
@@ -198,7 +209,7 @@ class ClaudeWakeRegistry:
             outcome = "retryable"
         if outcome == "unreachable" and on_unreachable is not None:
             with self._lock:
-                current = self._active_locked(runtime, session_ref)
+                current = self._active_locked(runtime, session_ref, container_ref, actor_ref)
                 notify = current is not None and current.generation == consumed.generation
             if notify:
                 try:
@@ -207,14 +218,14 @@ class ClaudeWakeRegistry:
                     outcome = "retryable"
         if outcome != "accepted":
             with self._lock:
-                current = self._active_locked(runtime, session_ref)
+                current = self._active_locked(runtime, session_ref, container_ref, actor_ref)
                 if current is not None and current.generation == consumed.generation:
                     if outcome == "unreachable":
                         updated = replace(current, idle=False, state="unreachable", delivery_id=None, attempted_at=None)
                     else:
                         updated = replace(current, idle=True, state="idle", delivery_id=None, attempted_at=None)
-                    if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref): updated}):
-                        self._registrations[(runtime, session_ref)] = updated
+                    if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref, container_ref, actor_ref): updated}):
+                        self._registrations[(runtime, session_ref, container_ref, actor_ref)] = updated
         return outcome == "accepted"
 
     @property
@@ -258,34 +269,66 @@ class ClaudeWakeRegistry:
                 intent_paths = list(self._intents.glob("*.json"))
             except OSError:
                 return
+            intents = []
             for path in intent_paths:
                 intent = self._read_json(path)
                 if not isinstance(intent, dict):
                     continue
-                if intent.get("closed") is True:
+                scope = tuple(
+                    intent.get(key)
+                    for key in ("runtime", "session_ref", "container_ref", "actor_ref")
+                )
+                if not all(isinstance(value, str) for value in scope):
+                    continue
+                intents.append((path, intent, scope, path == self._intent_path(*scope)))
+            intents.sort(key=lambda item: not item[3])
+            applied_scopes = set()
+            for path, intent, scope, is_scoped in intents:
+                if is_scoped:
                     try:
-                        self.close(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
+                        if intent.get("closed") is True:
+                            applied = self.close(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
+                        else:
+                            applied = self.register(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle", "intent_id")})
                     except (KeyError, ValueError):
+                        applied = False
+                    if applied:
+                        applied_scopes.add(scope)
+                    continue
+
+                # Pre-scoped intents cannot safely compete with exact-scope state.
+                # Fence unless a newer scoped intent was successfully applied.
+                if scope not in applied_scopes:
+                    updated = dict(self._registrations)
+                    updated.pop(scope, None)
+                    if not self._write_canonical_locked(updated):
+                        self._registrations = updated
+                        self._rehydration_refused = True
+                        self._durability_degraded = (
+                            not self._quarantine_or_mark_unusable_locked()
+                        )
+                        continue
+                    self._registrations = updated
+                current = self._read_json(path)
+                if isinstance(current, dict) and current.get("intent_id") == intent.get("intent_id"):
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
                         pass
-                    continue
-                try:
-                    self.register(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle", "intent_id")})
-                except (KeyError, ValueError):
-                    continue
 
     def rearm_inflight(self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str, delivery_id: str, grace_seconds: float) -> bool:
         """Make an observed pending inflight delivery eligible after bounded grace."""
         with self._lock:
-            current = self._active_locked(runtime, session_ref)
+            current = self._active_locked(runtime, session_ref, container_ref, actor_ref)
             if (current is None or current.container_ref != container_ref or current.actor_ref != actor_ref
                     or current.state != "wake_inflight" or current.delivery_id != delivery_id
                     or current.attempted_at is None or 0 <= self._wall_clock() - current.attempted_at < grace_seconds):
                 return False
             idle = replace(current, generation=current.generation + 1, idle=True, state="idle", delivery_id=None, attempted_at=None)
-            if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, (runtime, session_ref): idle}):
+            if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, (runtime, session_ref, container_ref, actor_ref): idle}):
                 return False
             self._generation = max(self._generation, idle.generation)
-            self._registrations[(runtime, session_ref)] = idle
+            self._registrations[(runtime, session_ref, container_ref, actor_ref)] = idle
             return True
 
     def clear_inflight(self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str, delivery_id: str) -> bool:
@@ -296,43 +339,59 @@ class ClaudeWakeRegistry:
         """Consume an exact closed intent without opening or admitting its endpoint."""
         with self._lock:
             if self._state_dir is not None:
-                intent = self._read_intent_locked(session_ref)
+                intent = self._read_intent_locked(runtime, session_ref, container_ref, actor_ref)
                 if not isinstance(intent, dict) or intent.get("intent_id") != intent_id or intent.get("closed") is not True:
                     return False
                 if any(intent.get(key) != value for key, value in {
                     "runtime": runtime, "session_ref": session_ref, "container_ref": container_ref, "actor_ref": actor_ref,
                 }.items()):
                     return False
-            registration = self._registrations.get((runtime, session_ref))
+            registration = self._registrations.get((runtime, session_ref, container_ref, actor_ref))
             if registration is not None and (registration.container_ref != container_ref or registration.actor_ref != actor_ref):
                 return False
-            return self._remove_locked(session_ref, expected_intent_id=intent_id)
+            return self._remove_locked(
+                runtime, session_ref, container_ref, actor_ref,
+                expected_intent_id=intent_id,
+            )
     def remove(self, *, runtime: str, session_ref: str, container_ref: str, actor_ref: str) -> bool:
         with self._lock:
-            registration = self._registrations.get((runtime, session_ref))
+            registration = self._registrations.get((runtime, session_ref, container_ref, actor_ref))
             if registration is None or registration.container_ref != container_ref or registration.actor_ref != actor_ref:
                 return False
-            return self._remove_locked(session_ref)
+            return self._remove_locked(runtime, session_ref, container_ref, actor_ref)
 
-    def _remove_locked(self, session_ref: str, *, expected_intent_id: str | None = None) -> bool:
-        key = (RUNTIME, session_ref)
+    def _remove_locked(
+        self,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        actor_ref: str,
+        *,
+        expected_intent_id: str | None = None,
+    ) -> bool:
+        key = (runtime, session_ref, container_ref, actor_ref)
         updated = dict(self._registrations)
         updated.pop(key, None)
         if self._state_dir is not None and not self._write_canonical_locked(updated):
             return False
         self._registrations = updated
-        self._delete_intent_locked(session_ref, expected_intent_id=expected_intent_id)
+        self._delete_intent_locked(
+            runtime, session_ref, container_ref, actor_ref,
+            expected_intent_id=expected_intent_id,
+        )
         self.signal_reconcile()
         return True
 
-    def _active_locked(self, runtime: str, session_ref: str) -> _Registration | None:
-        registration = self._registrations.get((runtime, session_ref))
+    def _active_locked(
+        self, runtime: str, session_ref: str, container_ref: str, actor_ref: str
+    ) -> _Registration | None:
+        registration = self._registrations.get((runtime, session_ref, container_ref, actor_ref))
         if registration is None:
             return None
         if self._state_dir is not None or registration.expires_at > self._clock():
             return registration
-        if self._registrations.get((runtime, session_ref)) is registration:
-            del self._registrations[(runtime, session_ref)]
+        if self._registrations.get((runtime, session_ref, container_ref, actor_ref)) is registration:
+            del self._registrations[(runtime, session_ref, container_ref, actor_ref)]
         return None
 
     @staticmethod
@@ -355,7 +414,7 @@ class ClaudeWakeRegistry:
         raw = self._read_json(self._canonical)
         if not isinstance(raw, dict) or raw.get("version") != 1 or not isinstance(raw.get("registrations"), list):
             return
-        loaded: dict[tuple[str, str], _Registration] = {}
+        loaded: dict[tuple[str, str, str, str], _Registration] = {}
         for item in raw["registrations"]:
             if not isinstance(item, dict):
                 continue
@@ -363,7 +422,12 @@ class ClaudeWakeRegistry:
                 continue
             registration = _Registration(**item)
             if self._valid_registration(registration.runtime, registration.session_ref, registration.container_ref, registration.actor_ref, registration.socket_path, registration.token):
-                loaded[(registration.runtime, registration.session_ref)] = registration
+                loaded[(
+                    registration.runtime,
+                    registration.session_ref,
+                    registration.container_ref,
+                    registration.actor_ref,
+                )] = registration
                 self._generation = max(self._generation, registration.generation)
         self._registrations = loaded
 
@@ -405,11 +469,17 @@ class ClaudeWakeRegistry:
                 return exc.winerror == winerror.ERROR_FILE_NOT_FOUND
         except Exception:
             return False
-    def _intent_path(self, session_ref: str) -> Path | None:
-        return self._intents / _safe_session_file(session_ref) if self._intents else None
+    def _intent_path(
+        self, runtime: str, session_ref: str, container_ref: str, actor_ref: str
+    ) -> Path | None:
+        return self._intents / _safe_session_file(
+            runtime, session_ref, container_ref, actor_ref
+        ) if self._intents else None
 
-    def _read_intent_locked(self, session_ref: str) -> dict | None:
-        path = self._intent_path(session_ref)
+    def _read_intent_locked(
+        self, runtime: str, session_ref: str, container_ref: str, actor_ref: str
+    ) -> dict | None:
+        path = self._intent_path(runtime, session_ref, container_ref, actor_ref)
         raw = self._read_json(path) if path else None
         return raw if isinstance(raw, dict) else None
 
@@ -420,8 +490,15 @@ class ClaudeWakeRegistry:
             "actor_ref": actor_ref, "socket_path": socket_path, "token": token, "idle": idle,
         }.items())
 
-    def _delete_intent_locked(self, session_ref: str, expected_intent_id: str | None) -> bool:
-        path = self._intent_path(session_ref)
+    def _delete_intent_locked(
+        self,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        actor_ref: str,
+        expected_intent_id: str | None,
+    ) -> bool:
+        path = self._intent_path(runtime, session_ref, container_ref, actor_ref)
         if path is None:
             return True
         raw = self._read_json(path)
@@ -433,7 +510,7 @@ class ClaudeWakeRegistry:
         except OSError:
             return False
 
-    def _write_canonical_locked(self, registrations: dict[tuple[str, str], _Registration]) -> bool:
+    def _write_canonical_locked(self, registrations: dict[tuple[str, str, str, str], _Registration]) -> bool:
         if self._canonical is None:
             return True
         payload = {"version": 1, "registrations": [asdict(item) for item in registrations.values()]}

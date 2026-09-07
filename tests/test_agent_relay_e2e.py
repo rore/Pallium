@@ -72,7 +72,7 @@ def relay_storage(client):
     return client.app.state.pallium_service._storage
 
 
-def test_full_broadcast_snapshot_alias_transfer_reply_and_lifecycle(client):
+def test_alias_transfer_reply_and_lifecycle(client):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "review-old", title="review")
     _turn(client, "codex", "review-new", title="review")
@@ -90,13 +90,9 @@ def test_full_broadcast_snapshot_alias_transfer_reply_and_lifecycle(client):
     assert new["deliveries"][0]["recipient_session_ref"] == "review-new"
     assert _status(client, old["message_id"]).json()["deliveries"][0]["recipient_session_ref"] == "review-old"
 
-    broadcast = _send(client, "claude-code", "sender", "codex", "all current").json()
-    assert {d["recipient_session_ref"] for d in broadcast["deliveries"]} == {"review-old", "review-new"}
-    _turn(client, "codex", "later")
-    assert {d["recipient_session_ref"] for d in _status(client, broadcast["message_id"]).json()["deliveries"]} == {
-        "review-old",
-        "review-new",
-    }
+    broadcast = _send(client, "claude-code", "sender", "codex", "all current")
+    assert broadcast.status_code == 422
+    assert _turn(client, "codex", "later")["deliveries"] == []
 
     first_claim = _turn(client, "codex", "review-old")["deliveries"][0]
     assert _ack(client, first_claim).status_code == 200
@@ -209,14 +205,14 @@ def test_reply_payload_boundaries_and_long_preview(client):
     assert 0 < preview["next_offset"] < 16000
 
 
-def test_scoped_codepoint_pages_reconstruct_redacted_broadcast_body(client):
+def test_scoped_codepoint_pages_reconstruct_redacted_message_body(client):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "target-a")
     _turn(client, "codex", "target-b")
     pattern = '😀"\\\nאב'
     raw = ("Authorization: Bearer super-secret\n" + pattern * 4000)[:16000]
     assert len(raw) == 16000
-    sent = _send(client, "claude-code", "sender", "codex", raw).json()
+    sent = _send(client, "claude-code", "sender", "codex:target-a", raw).json()
     stored = sent["payload"]
     assert sent["redacted"] is True
     assert "super-secret" not in stored
@@ -271,7 +267,7 @@ def test_scoped_codepoint_pages_reconstruct_redacted_broadcast_body(client):
     assert _status(client, sent["message_id"], actor_ref="other", offset=0, page_size=1).status_code == 404
     assert _status(
         client, sent["message_id"], container_ref="git:other", offset=0, page_size=1,
-    ).status_code == 404
+    ).status_code == 200
 
 
 
@@ -281,7 +277,7 @@ def test_identity_selector_scope_and_state_errors_are_visible(client):
     assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "bad\x00", **SCOPE}).status_code == 422
     assert _send(client, "claude-code", "sender", "codex:missing").status_code in (404, 409)
     assert _send(client, "claude-code", "sender", "codex:@missing").status_code in (404, 409)
-    assert _send(client, "claude-code", "sender", "codex").status_code == 409
+    assert _send(client, "claude-code", "sender", "codex").status_code == 422
     assert _send(client, "claude-code", "sender", "bad").status_code == 422
     assert _name(client, "codex", "missing", "alias").status_code == 404
     assert _status(client, "missing").status_code == 404
@@ -334,8 +330,8 @@ def test_message_id_idempotency_redaction_and_reply_scope(client):
         client, "claude-code", "other-scope-sender", "codex:missing",
         message_id="stable-message", container_ref="git:other",
     )
-    assert collision.status_code == 404
-    assert collision.json()["detail"] == "relay entity not found in the requested scope"
+    assert collision.status_code == 409
+    assert collision.json()["detail"] == "message_id is already in use"
 
     wrong_scope_parent = _send(
         client, "claude-code", "sender", "codex:target", "reply", in_reply_to="missing"
@@ -460,7 +456,7 @@ def test_delivery_derived_reply_is_attributed_scoped_and_idempotent(client):
     body = first.json()
     assert body["sender_runtime"] == "codex"
     assert body["sender_session_ref"] == "target"
-    assert body["recipient"] == "claude-code:sender"
+    assert body["recipient"].startswith("relay-session-")
     assert body["in_reply_to"] == parent["message_id"]
     assert body["payload"] == "תשובה → 你好"
 
@@ -475,7 +471,7 @@ def test_delivery_derived_reply_is_attributed_scoped_and_idempotent(client):
 
     assert _reply(client, "missing").status_code == 404
     assert _reply(client, claimed["delivery_id"], actor_ref="different").status_code == 404
-    assert _reply(client, claimed["delivery_id"], container_ref="git:other").status_code == 404
+    assert _reply(client, claimed["delivery_id"], "תשובה → 你好", container_ref="git:other").status_code == 200
 
 
 def test_delivery_derived_reply_chain_and_boundaries(client):
@@ -504,22 +500,20 @@ def test_delivery_derived_reply_chain_and_boundaries(client):
     assert second.status_code == 200
     assert second.json()["sender_runtime"] == "claude-code"
     assert second.json()["sender_session_ref"] == "sender"
-    assert second.json()["recipient"] == "codex:target"
+    assert second.json()["recipient"].startswith("relay-session-")
     assert second.json()["in_reply_to"].startswith("relay-reply-")
 
 
-def test_broadcast_zero_exact_max_and_over_max(client):
+def test_bare_runtime_broadcast_is_rejected_without_side_effects(client):
     _turn(client, "claude-code", "sender")
-    assert _send(client, "claude-code", "sender", "codex").status_code == 409
-    for index in range(25):
-        _turn(client, "codex", f"target-{index:02d}")
-    at_max = _send(client, "claude-code", "sender", "codex", message_id="at-max")
-    assert at_max.status_code == 200
-    assert len(at_max.json()["deliveries"]) == 25
-    _turn(client, "codex", "target-25")
-    over = _send(client, "claude-code", "sender", "codex", message_id="over-max")
-    assert over.status_code == 409
-    assert _status(client, "over-max").status_code == 404
+    for message_id in ("no-targets", "many-targets"):
+        response = _send(
+            client, "claude-code", "sender", "codex", message_id=message_id
+        )
+        assert response.status_code == 422
+        assert _status(client, message_id).status_code == 404
+    for index in range(26):
+        assert _turn(client, "codex", f"target-{index:02d}")["deliveries"] == []
 
 
 def test_concurrent_claim_lease_recovery_stale_token_and_expiry(client, relay_storage):
@@ -578,7 +572,7 @@ def test_dormant_hidden_default_exact_addressable_and_reactivated(client, relay_
 
     direct = _send(client, "claude-code", "sender", "codex:dormant")
     assert direct.status_code == 200
-    assert _send(client, "claude-code", "sender", "codex").status_code == 409
+    assert _send(client, "claude-code", "sender", "codex").status_code == 422
     reactivated = _turn(client, "codex", "dormant")
     assert reactivated["session"]["state"] == "recent"
     assert len(reactivated["deliveries"]) == 1
@@ -816,6 +810,7 @@ def test_pending_candidate_skips_unsafe_without_hiding_exact_status(client, rela
     assert candidate == {
         "delivery_id": safe["deliveries"][0]["delivery_id"],
         "state": "pending",
+        "recipient_endpoint_id": safe["deliveries"][0]["recipient_endpoint_id"],
     }
     exact = relay.pending_candidate(
         runtime="codex",
@@ -826,6 +821,7 @@ def test_pending_candidate_skips_unsafe_without_hiding_exact_status(client, rela
     assert exact == {
         "delivery_id": unsafe["deliveries"][0]["delivery_id"],
         "state": "pending",
+        "recipient_endpoint_id": unsafe["deliveries"][0]["recipient_endpoint_id"],
     }
 
 def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage):
@@ -922,6 +918,7 @@ def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage
     ) == [{
         "delivery_id": pending["deliveries"][0]["delivery_id"],
         "state": "pending",
+        "recipient_endpoint_id": pending["deliveries"][0]["recipient_endpoint_id"],
         "recipient_runtime": "codex",
         "recipient_session_ref": "recover-pending",
         **scope,
@@ -935,6 +932,7 @@ def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage
     assert candidates[0] == {
         "delivery_id": first_claim["delivery_id"],
         "state": "pending",
+        "recipient_endpoint_id": first_claim["recipient_endpoint_id"],
         "recipient_runtime": "codex",
         "recipient_session_ref": "recover-codex",
         **scope,
@@ -944,7 +942,11 @@ def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage
     ) == [candidates[0]]
     assert relay.pending_candidate(
         runtime="codex", session_ref="recover-codex", **scope
-    ) == {"delivery_id": first_claim["delivery_id"], "state": "pending"}
+    ) == {
+        "delivery_id": first_claim["delivery_id"],
+        "state": "pending",
+        "recipient_endpoint_id": first_claim["recipient_endpoint_id"],
+    }
 
     for message, item in (
         (excluded["active"][0], excluded["active"][1]),
@@ -1247,10 +1249,8 @@ def test_unreachable_destination_rejects_new_exact_and_alias_sends_only(client, 
     assert closed_session["destination_health"] is None
 
     broadcast = _send(client, "claude-code", "sender", "codex", "active only")
-    assert broadcast.status_code == 200
-    assert {item["recipient_session_ref"] for item in broadcast.json()["deliveries"]} == {
-        "active-peer"
-    }
+    assert broadcast.status_code == 422
+    assert row_counts() == before
 
     repeated = _send(
         client, "claude-code", "sender", "codex:target", "stable",
@@ -1258,7 +1258,7 @@ def test_unreachable_destination_rejects_new_exact_and_alias_sends_only(client, 
     )
     assert repeated.status_code == 200
     assert repeated.json()["deliveries"][0]["delivery_id"] == delivery_id
-    assert row_counts() == (before[0] + 1, before[1] + 1)
+    assert row_counts() == before
 
     assert relay.mark_unreachable(
         runtime="claude-code", session_ref="sender", **SCOPE,

@@ -858,6 +858,7 @@ class RelayAckRequest(BaseModel):
 
 
 class RelaySessionResponse(BaseModel):
+    endpoint_id: str
     runtime: str
     session_ref: str
     title: str | None = None
@@ -878,8 +879,11 @@ class RelayDeliveryResponse(BaseModel):
     receipt: str | None = None
     recipient_runtime: str
     recipient_session_ref: str
+    recipient_endpoint_id: str | None = None
+    recipient_container_ref: str | None = None
     sender_runtime: str
     sender_session_ref: str
+    sender_endpoint_id: str | None = None
     recipient: str
     payload: str
     payload_offset: int = Field(ge=0)
@@ -907,6 +911,7 @@ class RelayMessageResponse(BaseModel):
     message_id: str
     sender_runtime: str
     sender_session_ref: str
+    sender_endpoint_id: str | None = None
     recipient: str
     payload: str
     payload_offset: int = Field(ge=0)

@@ -799,7 +799,7 @@ async def test_relay_mcp_client_to_http_full_named_session_round_trip(
 
         sent = await client.relay_send(
             message="review this → 你好",
-            recipient="codex:@review",
+            recipient="@review",
             sender_runtime="codex",
             sender_session_ref="sender",
         )
@@ -828,7 +828,7 @@ async def test_relay_mcp_client_to_http_full_named_session_round_trip(
             message="acknowledged ✓",
         )
         assert reply["sender_session_ref"] == "review-new"
-        assert reply["recipient"] == "codex:sender"
+        assert reply["recipient"] == sent["sender_endpoint_id"]
         sender_turn = (
             await http.post(
                 "/relay/turn",

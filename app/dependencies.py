@@ -576,30 +576,38 @@ def dispatch_relay_wake(
     deliveries = result.get("deliveries")
     if not isinstance(deliveries, list) or not deliveries or not isinstance(deliveries[0], dict):
         return
-    runtime = deliveries[0].get("recipient_runtime")
+    delivery = deliveries[0]
+    runtime = delivery.get("recipient_runtime")
+    session_ref = delivery.get("recipient_session_ref")
+    container_ref = delivery.get("recipient_container_ref")
+    actor_ref = scope.get("actor_ref")
+    if not all(isinstance(value, str) and value for value in (runtime, session_ref, container_ref, actor_ref)):
+        return
+    target_scope = {"container_ref": container_ref, "actor_ref": actor_ref}
+    target_result = {**result, "recipient": f"{runtime}:{session_ref}"}
     if runtime == "claude-code":
         registry.signal_reconcile()
         schedule_claude_relay_wake(
-            result,
-            scope,
+            target_result,
+            target_scope,
             registry=registry,
             on_unreachable=lambda attempt_started_at: relay_service.mark_unreachable(
                 runtime="claude-code",
-                session_ref=deliveries[0]["recipient_session_ref"],
-                container_ref=scope["container_ref"],
-                actor_ref=scope["actor_ref"],
+                session_ref=session_ref,
+                container_ref=container_ref,
+                actor_ref=actor_ref,
                 attempt_started_at=attempt_started_at,
             ),
         )
     elif runtime == "codex":
         schedule_codex_relay_wake(
-            result,
-            scope,
+            target_result,
+            target_scope,
             on_unreachable=lambda attempt_started_at: relay_service.mark_unreachable(
                 runtime="codex",
-                session_ref=deliveries[0]["recipient_session_ref"],
-                container_ref=scope["container_ref"],
-                actor_ref=scope["actor_ref"],
+                session_ref=session_ref,
+                container_ref=container_ref,
+                actor_ref=actor_ref,
                 attempt_started_at=attempt_started_at,
             ),
         )
@@ -625,8 +633,10 @@ def recover_expired_relay_wakes(
                     "deliveries": [{
                         "delivery_id": candidate["delivery_id"],
                         "state": candidate["state"],
+                        "recipient_endpoint_id": candidate["recipient_endpoint_id"],
                         "recipient_runtime": runtime,
                         "recipient_session_ref": session_ref,
+                        "recipient_container_ref": candidate["container_ref"],
                     }],
                 },
                 {
@@ -670,12 +680,13 @@ def build_router(
         ):
             return
         session_ref = result.get("recipient_session_ref")
-        if not isinstance(session_ref, str):
+        container_ref = result.get("recipient_container_ref")
+        if not isinstance(session_ref, str) or not isinstance(container_ref, str):
             return
         candidate = relay_service.pending_candidate(
             runtime="codex",
             session_ref=session_ref,
-            container_ref=scope.get("container_ref"),
+            container_ref=container_ref,
             actor_ref=scope.get("actor_ref"),
         )
         if candidate is not None:
@@ -685,11 +696,13 @@ def build_router(
                     "deliveries": [{
                         "delivery_id": candidate["delivery_id"],
                         "state": candidate["state"],
+                        "recipient_endpoint_id": candidate.get("recipient_endpoint_id"),
                         "recipient_runtime": "codex",
                         "recipient_session_ref": session_ref,
+                        "recipient_container_ref": container_ref,
                     }],
                 },
-                scope,
+                {"container_ref": container_ref, "actor_ref": scope.get("actor_ref")},
             )
 
     def _relay_turn_admission(request: object) -> None:
