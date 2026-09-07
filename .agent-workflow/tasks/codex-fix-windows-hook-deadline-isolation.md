@@ -29,6 +29,10 @@
 
 ## Evidence
 
-- Revision cf83ec26: explicit expired-deadline recovery passed; dynamic-loader plus container suite passed 40/40; affected hook/deadline files passed 102/102 under xdist; committed failed targets passed 2/2; redline and workflow gates are clean.
+- Final test diff 380acd26: explicit expired-deadline recovery passed; dynamic-loader plus container suite passed 40/40; affected hook/deadline files passed 102/102 under xdist; committed failed targets passed 2/2; redline and workflow gates are clean.
 - Review correction: reverted the non-causal subprocess patch rewrite; all common modules share the same stdlib subprocess object, while the retained deadline state is the actual isolation boundary.
 - Review-fix verification: explicitly expired retained Claude deadline passed the original failing target; affected hook/deadline files again passed 102/102 under xdist.
+
+## Result review
+
+- Independent high-effort review signed off on rebased test diff 380acd26 with no remaining findings; production behavior and assertions are unchanged.
