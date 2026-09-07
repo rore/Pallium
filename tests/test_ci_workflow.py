@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -55,3 +56,8 @@ def test_nightly_slow_smoke_is_bounded_and_hermetic() -> None:
     assert "-m slow -n 0 -q --durations=20" in nightly
     assert "test_linux_service_lifecycle_e2e.py" not in nightly
     assert "test_live_exploratory_runner.py" not in nightly
+
+def test_explicit_ci_test_paths_exist() -> None:
+    root = Path(__file__).parents[1]
+    for relative in re.findall(r"(?m)^\s+(tests/\S+)$", WORKFLOW):
+        assert (root / relative).exists(), relative

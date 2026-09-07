@@ -82,6 +82,7 @@ Not required at this risk level.
 - Final focused PR2 verification: 200 passed, 1 skipped in 9.87s across deadline/flush, Relay hooks, audit dispatch, Claude/Codex integration, structural work refs, wake registration, canonical matcher, and Phase 5b match-text coverage; no real sleeps were added.
 - Hook parity verification: 110 passed. Opt-in PostToolUse verification: 19 passed. Dedicated deadline-safety file: 14 passed in 4.06s.
 - Server lifecycle regressions verify source-miss retry on later assistant ingest and active audit drain before storage-close progression using events rather than wall-clock sleeps.
+- Result-review fixes: Windows smoke now runs the replacement deadline-safety suite and a workflow regression rejects every nonexistent explicit test path; exhausted timeout helpers return safe zero rather than an unbounded `None` sentinel.
 - Clean-context plan review /root/pr2_plan_review.
 
 ## Plan review
@@ -90,4 +91,10 @@ The reviewer found four blocking gaps: semantic processing cannot cover the no-p
 
 ## Result review
 
-Pending.
+Clean-context review `/root/pr2_result_review` found one real CI blocker and one
+defensive timeout hazard; both were fixed. The stale Windows smoke reference now
+points to `test_hook_deadline_safety.py`, explicit CI test paths are validated, and
+exhausted timeout helpers return `0.0` with callers skipping non-positive values.
+The reported CI/roadmap rollback was a two-dot comparison artifact caused by main
+advancing with PR #130; merging main into this branch preserved that work. The
+reviewer found no blocker in audit shutdown or Relay flush-before-ACK ordering.

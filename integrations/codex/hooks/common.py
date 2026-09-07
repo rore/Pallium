@@ -32,9 +32,8 @@ class HookDeadline:
     def remaining(self) -> float:
         return max(0.0, self.deadline - self.clock() - self.reserve)
 
-    def timeout(self, cap: float) -> float | None:
-        remaining = self.remaining()
-        return min(max(0.0, cap), remaining) if remaining > 0 else None
+    def timeout(self, cap: float) -> float:
+        return min(max(0.0, cap), self.remaining())
 
 
 _HOOK_DEADLINE: HookDeadline | None = None
@@ -67,7 +66,7 @@ def remaining_safe_time(deadline: HookDeadline | None = None) -> float:
 def _bounded_timeout(
     cap: float,
     deadline: HookDeadline | None = None,
-) -> float | None:
+) -> float:
     current = deadline or _HOOK_DEADLINE
     return current.timeout(cap) if current is not None else cap
 
@@ -388,7 +387,7 @@ def derive_container_ref(cwd: str) -> str:
     3. Not a git repo -> "path:<sanitized-dirname>:<hash-of-cwd>" (or "path:<hash>" if dirname is empty)
     """
     timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
-    if timeout is None:
+    if timeout <= 0:
         return _path_container(cwd)
     try:
         result = subprocess.run(
@@ -401,7 +400,7 @@ def derive_container_ref(cwd: str) -> str:
         return _path_container(cwd)
 
     timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
-    if timeout is None:
+    if timeout <= 0:
         return _path_container(cwd)
     try:
         result = subprocess.run(
@@ -855,7 +854,7 @@ def derive_actor_ref(
 
     actor_ref = "local"
     timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
-    if timeout is None:
+    if timeout <= 0:
         _cache_identity_context(session_id, context, actor_ref=actor_ref)
         return actor_ref
     try:
@@ -893,7 +892,7 @@ def pallium_request(
         headers={"Content-Type": "application/json"} if body else {},
     )
     request_timeout = _bounded_timeout(HTTP_TIMEOUT, deadline)
-    if request_timeout is None:
+    if request_timeout <= 0:
         return None
     try:
         with urllib.request.urlopen(req, timeout=request_timeout) as resp:
@@ -917,7 +916,7 @@ def relay_request(
         headers={"Content-Type": "application/json"},
     )
     request_timeout = _bounded_timeout(timeout, deadline)
-    if request_timeout is None:
+    if request_timeout <= 0:
         return None
     started = time.monotonic()
     try:

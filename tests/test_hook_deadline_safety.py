@@ -27,10 +27,15 @@ HOOKS = (
 
 
 def _load(name: str, relative: str):
-    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    path = ROOT / relative
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    sys.path.insert(0, str(path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
     return module
 
 
