@@ -45,11 +45,11 @@ Key conventions: no new delivery engine, auth system, or dependency; API remains
 - When the final diff is ready, import boundaries, redline/workflow predicates, targeted Relay suites, full test suite, and installed cross-runtime dogfood shall pass → repository scripts, pytest, service wrapper health checks, and installed witnesses.
 **Plan review:** Clean-context architecture re-review approves the revised plan; all five blockers are resolved. See ### Re-review under ## Plan review.
 
-**Approvals:** Pending post-review user approval.
+**Approvals:** Approved by user 2026-09-07T16:23:31+03:00: "yes, approve this and you should take this through pr, seeing everything is green, commenting and resolveing pr comments"
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Checkpoint: persistence-review + api-review
