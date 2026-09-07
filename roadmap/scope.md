@@ -140,9 +140,9 @@ Agent Relay tests a separate product hypothesis: Pallium's durable local service
 and agent integration points may be valuable as a context-exchange layer, even
 where semantic memory is not involved. An agent explicitly sends an attributed,
 scoped message to another supported runtime. Shipped R1 persists it for the
-recipient's next applicable natural turn. The committed wake-first extension will
-attempt immediate activation by default and retain that R1 path as the fallback
-when wake is unsupported, unsafe, or unavailable.
+recipient's next applicable natural turn. The committed wake-first extension now
+attempts immediate activation by default on qualified runtime/OS combinations and
+retains that R1 path when wake is unsupported, unsafe, or unavailable.
 
 Pallium currently integrates with **Claude Code, Codex, and OpenCode**. R1 supports
 runtime-wide fan-out plus exact-session and Relay-alias delivery within the same
@@ -156,11 +156,13 @@ Relay has two design invariants:
 - Pallium may trigger a delivery turn, but it does not spawn, assign, supervise,
   restart, or continuously coordinate agents
 
-R1 explicit runtime/session Relay is shipped. The next committed steps are
-wake-first delivery with deterministic next-turn fallback, followed by three
-dependency-workflow E2E scenarios whose evidence drives public positioning and
-usage guidance. Add only further extensions repeatedly demanded by real use. See
-`roadmap/ideas/idea-agent-relay.md`.
+R1 explicit runtime/session Relay is shipped. Wake-first delivery with deterministic
+next-turn fallback is qualified for Claude Code on Windows/Linux and Codex on
+Windows. The active wake-first item owns the remaining Codex lifecycle and
+first-run setup gates, macOS Claude and non-Windows Codex qualification, and
+OpenCode activation. Three dependency-workflow E2E scenarios follow and drive
+public positioning and usage guidance. Add only further extensions repeatedly
+demanded by real use. See `roadmap/ideas/idea-agent-relay.md`.
 
 Paused or parked work is listed explicitly in `roadmap/board.md`; completed
 investigations and superseded directions are not active optimization targets.

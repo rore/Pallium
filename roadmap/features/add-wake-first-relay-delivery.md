@@ -39,14 +39,15 @@ prerequisite because both wake and fallback must be loss-safe.
 
 ### Milestone order (user priority, 2026-08-31)
 
-1. **Codex↔Codex dogfood first:** the existing Codex architect and developer
+1. **Codex↔Codex dogfood first — Windows-qualified:** the existing Codex architect and developer
    sessions exchange a bounded task → result → review → remediation/verdict
    sequence through Relay alone. Send and reply activate the exact recipient in
    both directions; neither the user nor either agent sends a separate ping,
    invokes a wake command manually, or uses an app messaging tool to advance the test.
    Qualify the actual sessions used for work, not just disposable TUI substitutes.
-2. **Claude↔Codex next:** add Claude's qualified idle-only adapter and validate the
-   cross-runtime journey. Claude qualification does not block milestone 1.
+2. **Claude↔Codex next — Claude wake qualified on Windows and Linux:** the
+   cross-runtime journey is proven without a manual recipient turn. Claude macOS
+   and Codex non-Windows qualification remain S4; neither reopens milestone 1.
 3. **OpenCode later:** add its adapter after the first two milestones.
 
 Milestone 1 includes the smallest persist-first coordinator needed by Codex,
