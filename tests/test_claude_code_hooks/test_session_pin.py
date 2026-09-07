@@ -220,11 +220,16 @@ class TestResolveContainerRef:
         assert result.startswith("path:")  # not git: of pelican
 
     @patch("common.subprocess.run")
-    def test_deliberate_git_project_switch_updates_pin(self, mock_run, tmp_state):
+    def test_deliberate_git_project_switch_updates_pin(
+        self, mock_run, tmp_state, tmp_path, monkeypatch,
+    ):
+        root, _git_dir = _fake_repo(tmp_path, monkeypatch)
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = "https://github.com/new/repo.git\n"
         common.pin_container("s1", "git:old/repo")
-        result = common.resolve_container_ref("/new/repo", "s1", allow_project_switch=True)
+        result = common.resolve_container_ref(
+            str(root), "s1", allow_project_switch=True,
+        )
         assert result == "git:github.com/new/repo"
         assert common.get_pinned_container("s1") == result
         assert common.get_pending_relay_closes("s1") == ["git:old/repo"]
