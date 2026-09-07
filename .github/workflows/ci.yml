@@ -131,10 +131,10 @@ jobs:
         run: pip install -e ".[dev,vector]"
 
       - name: Run process-sensitive tests serially
-        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py -x -q -n 0 --durations=20
+        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py tests/test_stable_actor_identity_e2e.py -x -q -n 0 --durations=20
 
       - name: Run remaining tests
-        run: python -m pytest tests/ -x -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --durations=20
+        run: python -m pytest tests/ -x -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --ignore=tests/test_stable_actor_identity_e2e.py --durations=20
 
   nightly-slow-smoke:
     if: github.event_name == 'schedule'
