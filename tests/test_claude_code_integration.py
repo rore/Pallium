@@ -229,7 +229,7 @@ def test_claude_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     monkeypatch.setattr(hook, "check_dedup", lambda _prompt, _session: False)
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(
         hook,
         "build_work_refs_metadata",
@@ -274,7 +274,7 @@ def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monk
         lambda *_args: {"pallium_work_refs": ["git-branch:feature/demo"]},
     )
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(stop, "_populate_usage_audit_rows", lambda _session, _text: None)
     monkeypatch.setattr(stop, "pallium_request", lambda _method, _path, body: calls.append(body))
     with pytest.raises(SystemExit):
@@ -289,7 +289,7 @@ def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monk
 def test_session_end_is_fail_safe(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, failure: str) -> None:
     session_end = _load_claude_hook("session_end", monkeypatch)
     monkeypatch.setattr(session_end, "read_hook_input", lambda: {} if failure == "missing" else {"session_id": "session", "cwd": "bad"})
-    monkeypatch.setattr(session_end, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(session_end, "derive_actor_ref", lambda *_: "actor")
     if failure == "invalid_cwd":
         monkeypatch.setattr(session_end, "resolve_container_ref", lambda *_args: (_ for _ in ()).throw(OSError("invalid cwd")))
     else:

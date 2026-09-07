@@ -520,7 +520,7 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
 
     scope = {
         "container_ref": "git:example.test/no-hook",
-        "actor_ref": hook.derive_actor_ref(),
+        "actor_ref": hook.derive_actor_ref(str(tmp_path)),
     }
     monkeypatch.setattr(
         "app.dependencies.schedule_codex_relay_wake",
@@ -567,8 +567,8 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
     state_dir = tmp_path / "no-hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
-    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda: scope["actor_ref"])
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: scope["actor_ref"])
     monkeypatch.setattr(
         hook,
         "pallium_request",
@@ -749,7 +749,7 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
 
     scope = {
         "container_ref": "git:example.test/wake",
-        "actor_ref": hook.derive_actor_ref(),
+        "actor_ref": hook.derive_actor_ref(str(tmp_path)),
     }
     state_dir = tmp_path / "hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
@@ -811,7 +811,8 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
             hook.main()
         assert exited.value.code == 0
 
-    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: scope["actor_ref"])
     monkeypatch.setattr(hook, "relay_request", relay_request)
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
 
@@ -892,12 +893,12 @@ def test_competing_hook_consumes_delivery_before_accepted_queue_blocks_empty_wak
 
     scope = {
         "container_ref": "git:example.test/overtaken-wake",
-        "actor_ref": hook.derive_actor_ref(),
+        "actor_ref": hook.derive_actor_ref(str(tmp_path)),
     }
     state_dir = tmp_path / "overtaken-hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
-    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
     monkeypatch.setattr(
         "app.dependencies.schedule_codex_relay_wake",
         codex_wake.schedule_codex_relay_wake,
@@ -1003,14 +1004,14 @@ def test_redaction_expansion_is_compacted_and_internal_wake_delivers_once(
 
     scope = {
         "container_ref": "git:example.test/oversized-wake",
-        "actor_ref": hook.derive_actor_ref(),
+        "actor_ref": hook.derive_actor_ref(str(tmp_path)),
     }
     sender = "s" * 255
     target = "oversized-target"
     state_dir = tmp_path / "oversized-hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
-    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
     monkeypatch.setattr(
         "app.dependencies.schedule_codex_relay_wake",
         lambda *_args, **_kwargs: None,
@@ -1079,11 +1080,11 @@ def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
 
-    scope = {"container_ref": SCOPE["container_ref"], "actor_ref": hook.derive_actor_ref()}
+    scope = {"container_ref": SCOPE["container_ref"], "actor_ref": hook.derive_actor_ref(str(tmp_path))}
     state_dir = tmp_path / "drain-hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
-    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
     scheduled = []
     monkeypatch.setattr(
         "app.dependencies.schedule_codex_relay_wake",
@@ -1169,12 +1170,12 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
 
     scope = {
         "container_ref": SCOPE["container_ref"],
-        "actor_ref": hook.derive_actor_ref(),
+        "actor_ref": hook.derive_actor_ref(str(tmp_path)),
     }
     state_dir = tmp_path / "maximum-hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
-    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda *_: None)
 
     sender = "s" * 255
@@ -1536,8 +1537,8 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     state_dir = tmp_path / "timeout-hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
-    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda: SCOPE["actor_ref"])
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: SCOPE["actor_ref"])
     monkeypatch.setattr(
         hook,
         "pallium_request",
@@ -1593,8 +1594,8 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     state_dir = tmp_path / "crash-hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
-    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda: SCOPE["actor_ref"])
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: SCOPE["actor_ref"])
     monkeypatch.setattr(
         hook,
         "pallium_request",
@@ -1706,8 +1707,8 @@ def test_pending_and_expired_codex_work_rewakes_after_real_app_restart(
         state_dir = tmp_path / "restart-hook-state"
         monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
         monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
-        monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
-        monkeypatch.setattr(hook, "derive_actor_ref", lambda: SCOPE["actor_ref"])
+        monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
+        monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: SCOPE["actor_ref"])
         monkeypatch.setattr(
             hook,
             "pallium_request",

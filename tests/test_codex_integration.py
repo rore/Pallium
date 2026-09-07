@@ -238,7 +238,7 @@ def test_codex_stop_hook_ingests_quietly(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _: None)
     monkeypatch.setattr(stop, "build_work_refs_metadata", lambda *_: {})
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session_id: "git:github.com/rore/pallium")
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda: "Rotem")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "Rotem")
 
     def fake_request(method: str, path: str, payload: object, *, quiet: bool = False) -> None:
         calls.append({"method": method, "path": path, "payload": payload, "quiet": quiet})
@@ -553,7 +553,7 @@ def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     monkeypatch.setattr(hook, "check_dedup", lambda _prompt, _session: False)
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(
         hook,
         "build_work_refs_metadata",
@@ -598,8 +598,8 @@ def test_codex_relay_delivery_bypasses_identical_prompt_dedup(
         lambda: {"cwd": ".", "session_id": "session-1", "prompt": "same wake signal"},
     )
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "local")
-    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
     monkeypatch.setattr(
         hook,
         "relay_request",
@@ -637,8 +637,8 @@ def test_codex_no_relay_still_dedups_before_ingestion(
         lambda: {"cwd": ".", "session_id": "session-1", "prompt": "same normal prompt"},
     )
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda: "local")
-    monkeypatch.setattr(hook, "get_pending_relay_closes", lambda _: [])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
     monkeypatch.setattr(
         hook,
         "relay_request",
@@ -672,7 +672,7 @@ def test_codex_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monke
         lambda *_args: {"pallium_work_refs": ["git-branch:feature/demo"]},
     )
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(stop, "_populate_usage_audit_rows", lambda _session, _text: None)
     monkeypatch.setattr(stop, "pallium_request", lambda _method, _path, body, **_kwargs: calls.append(body))
     with pytest.raises(SystemExit):

@@ -14,11 +14,11 @@ from common import (
     RELAY_TURN_BUDGET,
     acknowledge_relay,
     check_dedup,
+    complete_relay_closes,
     derive_actor_ref,
     format_injection,
     format_relay,
-    get_pending_relay_closes,
-    pin_container,
+    get_pending_relay_close_batch,
     pallium_request,
     read_hook_input,
     relay_request,
@@ -45,17 +45,19 @@ def main() -> None:
         prompt = payload.get("prompt", "")
         has_session = isinstance(session_id, str) and bool(session_id)
         container_ref = resolve_container_ref(cwd, session_id if has_session else None, True)
-        actor_ref = derive_actor_ref()
+        actor_ref = derive_actor_ref(cwd, session_id)
         if has_session:
             register_claude_wake(session_id, container_ref, actor_ref, idle=False)
-        pending_closes = get_pending_relay_closes(session_id if has_session else None)
+        pending_closes, close_generation = get_pending_relay_close_batch(
+            session_id if has_session else None
+        )
 
         if not isinstance(prompt, str) or not prompt or prompt.startswith("/"):
             return
         if session_id and check_dedup(prompt, session_id):
             return
         if pending_closes:
-            remaining = []
+            completed = []
             for previous_container in pending_closes:
                 closed = relay_request(
                     "POST",
@@ -68,9 +70,9 @@ def main() -> None:
                     },
                     timeout=0.5,
                 )
-                if closed is None:
-                    remaining.append(previous_container)
-            pin_container(session_id, container_ref, pending_relay_closes=remaining)
+                if closed is not None:
+                    completed.append(previous_container)
+            complete_relay_closes(session_id, completed, close_generation)
         content = _strip_ide_context(prompt)
         if not content:
             return

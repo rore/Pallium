@@ -162,7 +162,7 @@ def main() -> None:
         source = payload.get("source", "")
         container_ref = derive_container_ref(cwd)
         pin_container(session_id, container_ref, source=source)
-        actor_ref = derive_actor_ref()
+        actor_ref = derive_actor_ref(cwd, session_id)
         register_claude_wake(session_id, container_ref, actor_ref, idle=False)
 
         relay_scope = format_injection(

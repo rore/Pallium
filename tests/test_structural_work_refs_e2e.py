@@ -61,8 +61,8 @@ def _repo_metadata(path: Path) -> Path:
 def _quiet_common_side_effects(module, monkeypatch: pytest.MonkeyPatch) -> None:
     for name, replacement in (
         ("register_claude_wake", lambda *_a, **_k: None),
-        ("get_pending_relay_closes", lambda *_a, **_k: []),
-        ("pin_container", lambda *_a, **_k: None),
+        ("get_pending_relay_close_batch", lambda *_a, **_k: ([], 0)),
+        ("complete_relay_closes", lambda *_a, **_k: True),
         ("relay_request", lambda *_a, **_k: None),
         ("acknowledge_relay", lambda *_a, **_k: []),
     ):
@@ -90,7 +90,7 @@ def _python_payloads(
         }
         monkeypatch.setattr(prompt, "read_hook_input", lambda value=prompt_input: value)
         monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: "git:example.test/repo")
-        monkeypatch.setattr(prompt, "derive_actor_ref", lambda: "actor")
+        monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "actor")
         monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
         _quiet_common_side_effects(prompt, monkeypatch)
         if hasattr(prompt, "emit_context"):
@@ -116,7 +116,7 @@ def _python_payloads(
         }
         monkeypatch.setattr(stop, "read_hook_input", lambda value=stop_input: value)
         monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: "git:example.test/repo")
-        monkeypatch.setattr(stop, "derive_actor_ref", lambda: "actor")
+        monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "actor")
         monkeypatch.setattr(
             stop,
             "read_turn",
@@ -380,11 +380,11 @@ def test_python_caller_scope_work_ref_round_trips_into_exact_http_search(
     monkeypatch.setattr(
         prompt, "resolve_container_ref", lambda *_a: "git:example.test/repo"
     )
-    monkeypatch.setattr(prompt, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(prompt, "check_dedup", lambda *_a: False)
-    monkeypatch.setattr(prompt, "get_pending_relay_closes", lambda *_a: [])
+    monkeypatch.setattr(prompt, "get_pending_relay_close_batch", lambda *_a: ([], 0))
     monkeypatch.setattr(prompt, "relay_request", lambda *_a, **_k: None)
-    monkeypatch.setattr(prompt, "pin_container", lambda *_a, **_k: None)
+    monkeypatch.setattr(prompt, "complete_relay_closes", lambda *_a, **_k: True)
     if hasattr(prompt, "emit_context"):
         monkeypatch.setattr(
             prompt, "emit_context", lambda text, _event: emitted.append(text)
@@ -510,14 +510,14 @@ def test_python_relay_early_return_includes_structural_work_ref(
     monkeypatch.setattr(
         module, "resolve_container_ref", lambda *_a: "git:example.test/repo"
     )
-    monkeypatch.setattr(module, "derive_actor_ref", lambda: "actor")
+    monkeypatch.setattr(module, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(module, "check_dedup", lambda *_a: False)
-    monkeypatch.setattr(module, "get_pending_relay_closes", lambda *_a: [])
+    monkeypatch.setattr(module, "get_pending_relay_close_batch", lambda *_a: ([], 0))
     if hasattr(module, "register_claude_wake"):
         monkeypatch.setattr(
             module, "register_claude_wake", lambda *_a, **_k: None
         )
-    monkeypatch.setattr(module, "pin_container", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "complete_relay_closes", lambda *_a, **_k: True)
     monkeypatch.setattr(module, "acknowledge_relay", lambda *_a, **_k: None)
     monkeypatch.setattr(
         module,
@@ -549,3 +549,153 @@ def test_python_relay_early_return_includes_structural_work_ref(
 
     assert discoveries == 1
     assert '"work_ref":"git-branch:fix/alpha"' in capsys.readouterr().out
+
+
+def test_codex_prompt_identity_cache_keeps_work_refs_live(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _repo_metadata(tmp_path / "repo")
+    git_dir = repo / ".git"
+    (git_dir / "config").write_text(
+        "[remote \"origin\"]\nurl = https://example.test/repo.git\n",
+        encoding="utf-8",
+    )
+    tasks = repo / ".agent-workflow" / "tasks"
+    (tasks / "beta.md").write_text(
+        "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->",
+        encoding="utf-8",
+    )
+    other_repo = _repo_metadata(tmp_path / "other-repo")
+    other_git_dir = other_repo / ".git"
+    (other_git_dir / "config").write_text(
+        "[remote \"origin\"]\nurl = https://example.test/other.git\n",
+        encoding="utf-8",
+    )
+    (other_git_dir / "HEAD").write_text(
+        "ref: refs/heads/fix/gamma\n",
+        encoding="utf-8",
+    )
+    other_tasks = other_repo / ".agent-workflow" / "tasks"
+    (other_tasks / "gamma.md").write_text(
+        "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->",
+        encoding="utf-8",
+    )
+    prompt = _load(
+        "codex_identity_cache_e2e",
+        Path("integrations/codex/hooks/user_prompt_submit.py"),
+        monkeypatch,
+    )
+    state_dir = tmp_path / "state"
+    monkeypatch.setattr(prompt._common, "STATE_DIR", state_dir)
+    monkeypatch.setattr(prompt._common, "SESSIONS_DIR", state_dir / "sessions")
+    prompt._common.pin_container(
+        "cache-session",
+        "git:example.test/repo",
+        source="startup",
+    )
+
+    git_calls = []
+
+    def run(command, **kwargs):
+        git_calls.append(tuple(command))
+        if command[1] == "remote":
+            output = (
+                "https://example.test/other.git\n"
+                if Path(kwargs["cwd"]) == other_repo
+                else "https://example.test/repo.git\n"
+            )
+        elif Path(kwargs["cwd"]) == other_repo:
+            output = "Other Actor\n"
+        else:
+            output = "Actor\n"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(prompt._common.subprocess, "run", run)
+    current = {
+        "cwd": str(repo),
+        "prompt": "First prompt with enough text to ingest.",
+    }
+    monkeypatch.setattr(
+        prompt,
+        "read_hook_input",
+        lambda: {
+            "cwd": current["cwd"],
+            "session_id": "cache-session",
+            "prompt": current["prompt"],
+        },
+    )
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_args: False)
+    relay_calls = []
+
+    def relay_request(_method, path, body=None, **_kwargs):
+        relay_calls.append((path, body))
+        if path == "/relay/sessions/close":
+            return {}
+        return {
+            "deliveries": [],
+            "has_more": False,
+            "remaining_count": 0,
+        }
+
+    monkeypatch.setattr(prompt, "relay_request", relay_request)
+    monkeypatch.setattr(prompt, "emit_context", lambda *_args: None)
+    requests = []
+
+    def request(_method, path, body=None, **_kwargs):
+        if path == "/item-and-query":
+            requests.append(body)
+            return {"source_item_id": f"source-{len(requests)}", "injectable_blocks": []}
+        return None
+
+    monkeypatch.setattr(prompt, "pallium_request", request)
+    with pytest.raises(SystemExit):
+        prompt.main()
+
+    (git_dir / "HEAD").write_text(
+        "ref: refs/heads/fix/beta\n",
+        encoding="utf-8",
+    )
+    current["prompt"] = "Second prompt after the active work changed."
+    with pytest.raises(SystemExit):
+        prompt.main()
+
+    current["cwd"] = str(other_repo)
+    current["prompt"] = "Third prompt after switching repository and active work."
+    with pytest.raises(SystemExit):
+        prompt.main()
+
+    assert git_calls == [
+        ("git", "remote", "get-url", "origin"),
+        ("git", "config", "user.name"),
+        ("git", "remote", "get-url", "origin"),
+        ("git", "config", "user.name"),
+    ]
+    assert requests[0]["metadata"]["pallium_work_refs"] == [
+        "git-branch:fix/alpha",
+        "agent-workflow:alpha",
+    ]
+    assert requests[1]["metadata"]["pallium_work_refs"] == [
+        "git-branch:fix/beta",
+        "agent-workflow:beta",
+    ]
+    assert requests[2]["container_ref"] == "git:example.test/other"
+    assert requests[2]["metadata"]["pallium_work_refs"] == [
+        "git-branch:fix/gamma",
+        "agent-workflow:gamma",
+    ]
+    assert [request["actor_ref"] for request in requests] == [
+        "Actor", "Actor", "Other Actor",
+    ]
+    close_calls = [
+        body for path, body in relay_calls
+        if path == "/relay/sessions/close"
+    ]
+    assert close_calls == [{
+        "runtime": "codex",
+        "session_ref": "cache-session",
+        "container_ref": "git:example.test/repo",
+        "actor_ref": "Other Actor",
+    }]
+    assert prompt._common.get_pinned_container("cache-session") == "git:example.test/other"
+    assert prompt._common.get_pending_relay_closes("cache-session") == []

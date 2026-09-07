@@ -231,7 +231,7 @@ def test_session_start_and_stop_refresh_before_early_return(monkeypatch: pytest.
     start_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(start, "read_hook_input", lambda: {"cwd": ".", "session_id": "session-1"})
     monkeypatch.setattr(start, "derive_container_ref", lambda _cwd: "git:example/repo")
-    monkeypatch.setattr(start, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(start, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(start, "pin_container", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(start, "register_claude_wake", lambda *args, **kwargs: start_calls.append((args, kwargs)))
     monkeypatch.setattr(start, "relay_request", lambda *_args, **_kwargs: {"deliveries": []})
@@ -245,7 +245,7 @@ def test_session_start_and_stop_refresh_before_early_return(monkeypatch: pytest.
     stop_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(stop, "read_hook_input", lambda: {"cwd": ".", "session_id": "session-1", "transcript_path": ""})
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_args: "git:example/repo")
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: stop_calls.append((args, kwargs)))
     stop.main()
     assert stop_calls == [(('session-1', 'git:example/repo', 'local'), {'idle': True})] * 2
@@ -585,7 +585,7 @@ def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest
     payload = {"cwd": ".", "session_id": "session-1", "transcript_path": "" if case == "missing" else "turn.jsonl"}
     monkeypatch.setattr(stop, "read_hook_input", lambda: payload)
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_args: "git:example/repo")
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: calls.append((args, kwargs)))
     if case == "none":
         monkeypatch.setattr(stop, "read_turn", lambda _path: None)
@@ -637,13 +637,16 @@ def test_hook_timeout_or_http_failure_is_silent(failure: Exception, monkeypatch:
     captured = capsys.readouterr()
     assert "transport-secret" not in captured.out + captured.err
     assert not caplog.records
-def test_claude_hook_lifecycle_surfaces_registration_turn_and_stop(monkeypatch) -> None:
+def test_claude_hook_lifecycle_surfaces_registration_turn_and_stop(
+    monkeypatch, tmp_path,
+) -> None:
     calls = []
+    session_id = f"session-{tmp_path.name}"
     start = _load_claude_hook("session_start", monkeypatch)
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     stop = _load_claude_hook("stop", monkeypatch)
-    payload = {"session_id": "session-test", "cwd": ".", "prompt": "a sufficiently long prompt for relay"}
-    monkeypatch.setattr(start, "read_hook_input", lambda: {"session_id": "session-test", "cwd": ".", "source": "startup"})
+    payload = {"session_id": session_id, "cwd": ".", "prompt": "a sufficiently long prompt for relay"}
+    monkeypatch.setattr(start, "read_hook_input", lambda: {"session_id": session_id, "cwd": ".", "source": "startup"})
     monkeypatch.setattr(start, "register_claude_wake", lambda *args, **kwargs: calls.append(("start", args)) or True)
     monkeypatch.setattr(start, "_fetch_orientation", lambda *_: [])
     with pytest.raises(SystemExit):
@@ -655,7 +658,7 @@ def test_claude_hook_lifecycle_surfaces_registration_turn_and_stop(monkeypatch) 
     monkeypatch.setattr(prompt, "pallium_request", lambda *args, **kwargs: None)
     with pytest.raises(SystemExit):
         prompt.main()
-    monkeypatch.setattr(stop, "read_hook_input", lambda: {"session_id": "session-test", "cwd": "."})
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {"session_id": session_id, "cwd": "."})
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: calls.append(("stop", args)) or True)
     monkeypatch.setattr(stop, "read_turn", lambda *_: None)
@@ -714,7 +717,7 @@ def test_session_start_delivers_and_acks_relay_before_orientation(
         lambda: {"cwd": ".", "session_id": "session-1", "source": "startup"},
     )
     monkeypatch.setattr(start, "derive_container_ref", lambda _cwd: "git:example/repo")
-    monkeypatch.setattr(start, "derive_actor_ref", lambda: "local")
+    monkeypatch.setattr(start, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(start, "pin_container", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(start, "register_claude_wake", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(

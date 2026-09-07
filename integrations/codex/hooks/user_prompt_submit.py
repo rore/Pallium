@@ -21,12 +21,12 @@ RELAY_TURN_BUDGET = _common.RELAY_TURN_BUDGET
 SOURCE_TYPE = _common.SOURCE_TYPE
 acknowledge_relay = _common.acknowledge_relay
 check_dedup = _common.check_dedup
+complete_relay_closes = _common.complete_relay_closes
 derive_actor_ref = _common.derive_actor_ref
 emit_context = _common.emit_context
 format_injection = _common.format_injection
 format_relay = _common.format_relay
-get_pending_relay_closes = _common.get_pending_relay_closes
-pin_container = _common.pin_container
+get_pending_relay_close_batch = _common.get_pending_relay_close_batch
 pallium_request = _common.pallium_request
 read_hook_input = _common.read_hook_input
 relay_request = _common.relay_request
@@ -59,10 +59,12 @@ def main() -> None:
             return
         has_session = isinstance(session_id, str) and bool(session_id)
         container_ref = resolve_container_ref(cwd, session_id if has_session else None, True)
-        actor_ref = derive_actor_ref()
-        pending_closes = get_pending_relay_closes(session_id if has_session else None)
+        actor_ref = derive_actor_ref(cwd, session_id)
+        pending_closes, close_generation = get_pending_relay_close_batch(
+            session_id if has_session else None
+        )
         if pending_closes:
-            remaining = []
+            completed = []
             for previous_container in pending_closes:
                 closed = relay_request(
                     "POST",
@@ -75,9 +77,9 @@ def main() -> None:
                     },
                     timeout=0.5,
                 )
-                if closed is None:
-                    remaining.append(previous_container)
-            pin_container(session_id, container_ref, pending_relay_closes=remaining)
+                if closed is not None:
+                    completed.append(previous_container)
+            complete_relay_closes(session_id, completed, close_generation)
         content = _strip_ide_context(prompt)
         if not content:
             return

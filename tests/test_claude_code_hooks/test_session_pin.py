@@ -330,6 +330,245 @@ class TestSweep:
         assert (sessions / "new-session.json").exists()
 
 
+# --- Stable identity cache ---
+
+
+def _fake_repo(tmp_path: Path, monkeypatch):
+    root = tmp_path / "repo"
+    git_dir = root / ".git"
+    git_dir.mkdir(parents=True)
+    (git_dir / "config").write_text("[remote \"origin\"]\nurl = example\n", encoding="utf-8")
+    monkeypatch.setattr(common, "_find_repo", lambda _cwd: (root, git_dir))
+    return root, git_dir
+
+
+class TestIdentityCache:
+    def test_same_repo_reuses_container_and_actor_without_git(self, tmp_state, tmp_path, monkeypatch):
+        root, _git_dir = _fake_repo(tmp_path, monkeypatch)
+        calls = []
+
+        def run(command, **_kwargs):
+            calls.append(tuple(command))
+            return common.subprocess.CompletedProcess(command, 0, "משתמש\n", "")
+
+        monkeypatch.setattr(common.subprocess, "run", run)
+        common.pin_container("s1", "git:example/repo", source="startup")
+
+        assert common.derive_actor_ref(str(root), "s1") == "משתמש"
+        assert common.resolve_container_ref(str(root), "s1", True) == "git:example/repo"
+        assert common.derive_actor_ref(str(root), "s1") == "משתמש"
+        assert calls == [("git", "config", "user.name")]
+
+    def test_repo_config_change_refreshes_container_and_actor(self, tmp_state, tmp_path, monkeypatch):
+        root, git_dir = _fake_repo(tmp_path, monkeypatch)
+        calls = []
+
+        def run(command, **_kwargs):
+            calls.append(tuple(command))
+            output = "https://example.test/repo.git\n" if command[1] == "remote" else f"Actor-{len(calls)}\n"
+            return common.subprocess.CompletedProcess(command, 0, output, "")
+
+        monkeypatch.setattr(common.subprocess, "run", run)
+        common.pin_container("s1", "git:example.test/repo", source="startup")
+        assert common.derive_actor_ref(str(root), "s1") == "Actor-1"
+
+        (git_dir / "config").write_text("[user]\nname = changed\n", encoding="utf-8")
+        assert common.resolve_container_ref(str(root), "s1", True) == "git:example.test/repo"
+        assert common.derive_actor_ref(str(root), "s1") == "Actor-3"
+        assert calls == [
+            ("git", "config", "user.name"),
+            ("git", "remote", "get-url", "origin"),
+            ("git", "config", "user.name"),
+        ]
+
+    def test_work_refs_remain_live_while_identity_is_cached(self, tmp_state, tmp_path, monkeypatch):
+        root, git_dir = _fake_repo(tmp_path, monkeypatch)
+        tasks = root / ".agent-workflow" / "tasks"
+        tasks.mkdir(parents=True)
+        for slug in ("one", "two"):
+            (tasks / f"{slug}.md").write_text(
+                "<!-- agent-workflow:start -->\n<!-- agent-workflow:end -->",
+                encoding="utf-8",
+            )
+        (git_dir / "HEAD").write_text("ref: refs/heads/feature/one\n", encoding="utf-8")
+        monkeypatch.setattr(
+            common.subprocess,
+            "run",
+            lambda command, **_kwargs: common.subprocess.CompletedProcess(command, 0, "Actor\n", ""),
+        )
+        common.pin_container("s1", "git:example/repo", source="startup")
+        common.derive_actor_ref(str(root), "s1")
+
+        assert "git-branch:feature/one" in common.discover_work_refs(str(root)).structural_refs
+        (git_dir / "HEAD").write_text("ref: refs/heads/feature/two\n", encoding="utf-8")
+        assert "git-branch:feature/two" in common.discover_work_refs(str(root)).structural_refs
+
+    def test_lock_failure_returns_fresh_actor(self, tmp_state, tmp_path, monkeypatch):
+        root, _git_dir = _fake_repo(tmp_path, monkeypatch)
+        monkeypatch.setattr(common, "_acquire_session_lock", lambda _session_id: None)
+        monkeypatch.setattr(
+            common.subprocess,
+            "run",
+            lambda command, **_kwargs: common.subprocess.CompletedProcess(
+                command, 0, "Fresh Actor\n", ""
+            ),
+        )
+
+        assert common.derive_actor_ref(str(root), "s1") == "Fresh Actor"
+        assert common.get_pinned_container("s1") is None
+    def test_corrupt_state_recomputes_instead_of_using_stale_scope(self, tmp_state, tmp_path, monkeypatch):
+        root, _git_dir = _fake_repo(tmp_path, monkeypatch)
+        sessions = tmp_state / "sessions"
+        sessions.mkdir(parents=True)
+        (sessions / "s1.json").write_text("{broken", encoding="utf-8")
+        monkeypatch.setattr(
+            common.subprocess,
+            "run",
+            lambda command, **_kwargs: common.subprocess.CompletedProcess(
+                command, 0, "https://example.test/fresh.git\n", ""
+            ),
+        )
+
+        assert common.resolve_container_ref(str(root), "s1", True) == "git:example.test/fresh"
+
+    def test_interleaved_updates_preserve_unknown_and_pending_fields(self, tmp_state, tmp_path, monkeypatch):
+        root, _git_dir = _fake_repo(tmp_path, monkeypatch)
+        sessions = tmp_state / "sessions"
+        sessions.mkdir(parents=True)
+        (sessions / "s1.json").write_text(
+            json.dumps({
+                "container_ref": "git:example/repo",
+                "pending_relay_closes": ["git:example/old"],
+                "legacy": {"keep": True},
+            }),
+            encoding="utf-8",
+        )
+        context = common._identity_context(str(root))
+        assert common._cache_identity_context("s1", context, actor_ref="Actor")
+        common.pin_container(
+            "s1",
+            "git:example/repo",
+            pending_relay_closes=["git:example/old"],
+        )
+
+        state = json.loads((sessions / "s1.json").read_text(encoding="utf-8"))
+        assert state["legacy"] == {"keep": True}
+        assert state["pending_relay_closes"] == ["git:example/old"]
+        assert state["actor_ref"] == "Actor"
+        assert list(sessions.glob("*.tmp")) == []
+
+
+class TestIdentityCacheTransitions:
+    def test_resume_refreshes_old_live_state_before_sweep(self, tmp_state):
+        common.pin_container(
+            "s1",
+            "git:example/repo",
+            pending_relay_closes=["git:example/old"],
+        )
+        state_file = tmp_state / "sessions" / "s1.json"
+        ancient = time.time() - common.SESSION_PIN_TTL_SECONDS - 60
+        import os
+        os.utime(state_file, (ancient, ancient))
+
+        assert common.pin_container(
+            "s1",
+            "git:ignored/repo",
+            source="resume",
+        )
+        assert common.get_pinned_container("s1") == "git:example/repo"
+        assert common.get_pending_relay_closes("s1") == ["git:example/old"]
+        assert state_file.stat().st_mtime > ancient
+
+    def test_overlapping_project_switch_unions_predecessor_under_lock(self, tmp_state):
+        assert common.pin_container("s1", "git:example/one", source="startup")
+        stale_pending = common.get_pending_relay_closes("s1")
+
+        assert common.pin_container("s1", "git:example/two")
+        assert common.pin_container(
+            "s1",
+            "git:example/three",
+            pending_relay_closes=stale_pending,
+        )
+
+        assert common.get_pinned_container("s1") == "git:example/three"
+        assert common.get_pending_relay_closes("s1") == [
+            "git:example/one",
+            "git:example/two",
+        ]
+
+    def test_stale_close_completion_cannot_erase_newer_transition(self, tmp_state):
+        assert common.pin_container("s1", "git:example/one", source="startup")
+        assert common.pin_container(
+            "s1",
+            "git:example/two",
+            pending_relay_closes=["git:example/one"],
+        )
+        pending, stale_generation = common.get_pending_relay_close_batch("s1")
+        assert pending == ["git:example/one"]
+
+        assert common.pin_container(
+            "s1",
+            "git:example/three",
+            pending_relay_closes=["git:example/one", "git:example/two"],
+        )
+        assert common.complete_relay_closes(
+            "s1",
+            ["git:example/one"],
+            stale_generation,
+        )
+        assert common.get_pinned_container("s1") == "git:example/three"
+        assert common.get_pending_relay_closes("s1") == [
+            "git:example/one",
+            "git:example/two",
+        ]
+
+        pending, current_generation = common.get_pending_relay_close_batch("s1")
+        assert common.complete_relay_closes(
+            "s1",
+            [pending[0]],
+            current_generation,
+        )
+        assert common.get_pending_relay_closes("s1") == ["git:example/two"]
+
+    def test_project_switch_lock_failure_keeps_existing_scope(
+        self, tmp_state, monkeypatch,
+    ):
+        common.pin_container("s1", "git:example/old", source="startup")
+        monkeypatch.setattr(common, "_identity_context", lambda _cwd: None)
+        monkeypatch.setattr(common, "_acquire_session_lock", lambda _session_id: None)
+        monkeypatch.setattr(
+            common,
+            "derive_container_ref",
+            lambda _cwd: "git:example/new",
+        )
+
+        assert common.resolve_container_ref("/new/repo", "s1", True) == "git:example/old"
+        assert common.get_pinned_container("s1") == "git:example/old"
+        assert common.get_pending_relay_closes("s1") == []
+
+    def test_legacy_actor_without_identity_context_is_recomputed(
+        self, tmp_state, tmp_path, monkeypatch,
+    ):
+        root, _git_dir = _fake_repo(tmp_path, monkeypatch)
+        sessions = tmp_state / "sessions"
+        sessions.mkdir(parents=True)
+        (sessions / "s1.json").write_text(
+            json.dumps({
+                "container_ref": "git:example/repo",
+                "actor_ref": "stale",
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            common.subprocess,
+            "run",
+            lambda command, **_kwargs: common.subprocess.CompletedProcess(
+                command, 0, "Fresh\n", ""
+            ),
+        )
+
+        assert common.derive_actor_ref(str(root), "s1") == "Fresh"
+
 # --- Codex parity ---
 
 
