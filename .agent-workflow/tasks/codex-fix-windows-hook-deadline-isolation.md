@@ -25,3 +25,4 @@
 ## Implementation
 
 - Discovery: the wake test calls pin_container before main resets an expired process-global deadline; the container tests patch sys.modules["common"] after another loader can replace that alias, while their imported function still points at the original module.
+- Implemented: renew the public hook deadline immediately before pre-hook pin setup; patch the retained Claude common module object across all 16 subprocess-mock tests.
