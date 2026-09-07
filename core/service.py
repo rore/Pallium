@@ -44,6 +44,7 @@ from core.text import normalize_for_index as _normalize_for_index
 from core.work_ref import _normalize_work_refs
 
 _WORK_REFS_METADATA_KEY = "pallium_work_refs"
+_ANY_CONTAINER = object()
 
 def _sanitize_work_ref_metadata(metadata: dict | None) -> dict | None:
     """Keep only safe, list-valued structural work references."""
@@ -1719,8 +1720,12 @@ class PalliumService:
         # the API can surface it on the response (additive; never gates behavior).
         return row["id"]
 
-    def populate_memory_usage_audit(self, thread_ref: str, response_text: str) -> None:
-        for row in self.list_pending_memory_usage_audit_by_thread(thread_ref, limit=20):
+    def populate_memory_usage_audit(
+        self, container_ref: str | None, thread_ref: str, response_text: str,
+    ) -> None:
+        for row in self.list_pending_memory_usage_audit_by_thread(
+            thread_ref, container_ref=container_ref, limit=20,
+        ):
             try:
                 _, _, match_text = self.get_memory_expand(row["memory_object_id"])
                 referenced, reference_kind = classify_memory_reference(
@@ -1750,7 +1755,9 @@ class PalliumService:
             item = self._storage.get_source_item(source_item_id)
             if item.role != "assistant" or not item.thread_ref or not item.content:
                 return
-            self.populate_memory_usage_audit(item.thread_ref, item.content)
+            self.populate_memory_usage_audit(
+                item.container_ref, item.thread_ref, item.content,
+            )
         except KeyError:
             return
         except Exception:
@@ -1772,6 +1779,7 @@ class PalliumService:
         self,
         thread_ref: str,
         *,
+        container_ref=_ANY_CONTAINER,
         limit: int = 20,
     ) -> list[dict]:
         """Phase 5b: list pending (populated_at IS NULL) usage-audit rows
@@ -1781,8 +1789,12 @@ class PalliumService:
         assistant item's thread rather than individual query IDs. See docs/specs/2026-06-27-injection-policy-abstention.md
         (Phase 5b).
         """
+        if container_ref is _ANY_CONTAINER:
+            return self._storage.list_pending_memory_usage_audit_rows_by_thread(
+                thread_ref, limit=limit,
+            )
         return self._storage.list_pending_memory_usage_audit_rows_by_thread(
-            thread_ref, limit=limit,
+            thread_ref, container_ref=container_ref, limit=limit,
         )
 
     def update_memory_usage_audit(

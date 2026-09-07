@@ -88,7 +88,7 @@ def _write_query_with_blocks(
     service,
     *,
     audit_id: str | None = None,
-    container_ref: str = "git:test",
+    container_ref: str | None = "git:test",
     thread_ref: str | None = "thread-1",
     trigger_origin: str | None = None,
     blocks: list[dict] | None = None,
@@ -292,6 +292,42 @@ def test_list_memory_usage_audit_rows_returns_oldest_first(service_and_client):
 def test_list_memory_usage_audit_rows_empty_for_unknown_query(service_and_client):
     service, _client, _db_path = service_and_client
     assert service.list_memory_usage_audit("no-such-id") == []
+
+
+def test_pending_usage_audit_scope_distinguishes_same_thread_by_container(
+    service_and_client,
+):
+    service, _client, _db_path = service_and_client
+    for container_ref, memory_id in (
+        ("git:a", "m-a"),
+        ("git:b", "m-b"),
+        (None, "m-none"),
+    ):
+        _write_query_with_blocks(
+            service,
+            container_ref=container_ref,
+            thread_ref="shared-thread",
+            blocks=[{
+                "memory_object_id": memory_id,
+                "memory_type": "decision",
+                "block_type": "memory",
+                "title_preview": "x",
+                "score": 20,
+                "retrieval_source": "vector",
+            }],
+        )
+
+    broad = service.list_pending_memory_usage_audit_by_thread("shared-thread")
+    scoped = service.list_pending_memory_usage_audit_by_thread(
+        "shared-thread", container_ref="git:b",
+    )
+    null_scoped = service.list_pending_memory_usage_audit_by_thread(
+        "shared-thread", container_ref=None,
+    )
+
+    assert {row["memory_object_id"] for row in broad} == {"m-a", "m-b", "m-none"}
+    assert [row["memory_object_id"] for row in scoped] == ["m-b"]
+    assert [row["memory_object_id"] for row in null_scoped] == ["m-none"]
 
 
 def test_update_memory_usage_audit_row_happy_path(service_and_client):

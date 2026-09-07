@@ -71,6 +71,7 @@ Approved by user 2026-09-07: "you have approval for all prs you manage"
 - 2026-09-07: Added the shared monotonic deadline primitive to both standalone hook common modules; Pallium/Relay HTTP and aggregate ACK calls clamp to the same remaining budget and skip network work when exhausted. A cheaper delegated attempt was interrupted after correctness review found undefined deadline variables and an unbounded timeout=None path; the parent repaired the minimal slice.
 - 2026-09-07: Completed whole-hook budgets across all nine installed Python entry points, bounded stdin/transcript parsing, Git, state-lock, credential, Pallium, Relay, and ACK work, and added exact UTF-8 flush-before-ACK behavior. Removed both synchronous Stop audit loops and their compatibility wrapper; Stop now performs Relay plus one durable assistant ingest only.
 - 2026-09-07: `apply_patch` was attempted once and failed with the machine-local CreateProcessWithLogonW restriction. Subsequent edits used exact, named-file deterministic replacements. A delegated test edit corrupted one test file without committing; the parent restored that file from HEAD, reapplied the three known local assertions, and verified the full focused suite.
+- 2026-09-07: CodeRabbit review identified cross-container audit classification plus partial-stdin and slow-response deadline gaps. The worker now scopes by container and thread while the existing thread-wide compatibility endpoint remains unchanged; both standalone hook runtimes bound blocking stdin and complete HTTP operations with one portable daemon-worker helper. Deterministic event tests cover timeout without wall-clock sleeps.
 
 ## Evidence
 
@@ -83,6 +84,7 @@ Approved by user 2026-09-07: "you have approval for all prs you manage"
 - Hook parity verification: 110 passed. Opt-in PostToolUse verification: 19 passed. Dedicated deadline-safety file: 14 passed in 4.06s.
 - Server lifecycle regressions verify source-miss retry on later assistant ingest and active audit drain before storage-close progression using events rather than wall-clock sleeps.
 - Result-review fixes: Windows smoke now runs the replacement deadline-safety suite and a workflow regression rejects every nonexistent explicit test path; exhausted timeout helpers return safe zero rather than an unbounded `None` sentinel.
+- Post-review focused verification: 138 hook, Relay, audit isolation, Claude, and Codex tests passed in 7.02s; the expanded High-risk workflow check is clean.
 - Clean-context plan review /root/pr2_plan_review.
 
 ## Plan review

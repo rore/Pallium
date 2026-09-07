@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -85,6 +86,99 @@ def test_hook_input_and_local_work_fail_closed_after_budget(relative, monkeypatc
     assert common.read_turn("ignored") is None
     assert common._acquire_session_lock("session") is None
 
+
+@pytest.mark.parametrize("relative", COMMONS)
+def test_partial_hook_input_cannot_outlive_deadline(relative, monkeypatch):
+    common = _load("deadline_stdin_" + relative.replace("/", "_"), relative)
+    common.start_hook_deadline(2.0, host_reserve=0.5, clock=lambda: 10.0)
+    started = threading.Event()
+    release = threading.Event()
+    joined = []
+    workers = []
+    real_thread = threading.Thread
+
+    class BlockingInput:
+        def read(self, _limit):
+            started.set()
+            release.wait(1)
+            return "{}"
+
+    class DeadlineThread:
+        def __init__(self, *, target, daemon):
+            self.thread = real_thread(target=target, daemon=daemon)
+            workers.append(self.thread)
+
+        def start(self):
+            self.thread.start()
+
+        def join(self, timeout):
+            joined.append(timeout)
+            assert started.wait(1)
+
+        def is_alive(self):
+            return self.thread.is_alive()
+
+    monkeypatch.setattr(common.threading, "Thread", DeadlineThread)
+    monkeypatch.setattr(common.sys, "stdin", BlockingInput())
+    assert common.read_hook_input() == {}
+    assert joined == [1.5]
+    release.set()
+    workers[0].join(1)
+
+
+@pytest.mark.parametrize("relative", COMMONS)
+@pytest.mark.parametrize("request_kind", ("pallium", "relay"))
+def test_slow_response_body_cannot_outlive_deadline(
+    relative, request_kind, monkeypatch,
+):
+    common = _load(
+        f"deadline_response_{request_kind}_" + relative.replace("/", "_"),
+        relative,
+    )
+    common.start_hook_deadline(2.0, host_reserve=0.5, clock=lambda: 10.0)
+    started = threading.Event()
+    release = threading.Event()
+    joined = []
+    workers = []
+    real_thread = threading.Thread
+
+    class BlockingResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            started.set()
+            release.wait(1)
+            return b'{}'
+
+    class DeadlineThread:
+        def __init__(self, *, target, daemon):
+            self.thread = real_thread(target=target, daemon=daemon)
+            workers.append(self.thread)
+
+        def start(self):
+            self.thread.start()
+
+        def join(self, timeout):
+            joined.append(timeout)
+            assert started.wait(1)
+
+        def is_alive(self):
+            return self.thread.is_alive()
+
+    monkeypatch.setattr(common.threading, "Thread", DeadlineThread)
+    monkeypatch.setattr(common.urllib.request, "urlopen", lambda *_a, **_k: BlockingResponse())
+    if request_kind == "pallium":
+        result = common.pallium_request("GET", "/health")
+    else:
+        result = common.relay_request("POST", "/relay/turn", {}, timeout=3.0)
+    assert result is None
+    assert joined == [1.5]
+    release.set()
+    workers[0].join(1)
 
 @pytest.mark.parametrize("relative", HOOKS)
 def test_each_hook_starts_one_budget_before_reading_input(relative, monkeypatch):

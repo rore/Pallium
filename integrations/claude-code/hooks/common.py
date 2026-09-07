@@ -12,6 +12,7 @@ import re
 import stat
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 import uuid
@@ -69,6 +70,36 @@ def _bounded_timeout(
 ) -> float:
     current = deadline or _HOOK_DEADLINE
     return current.timeout(cap) if current is not None else cap
+
+
+def _run_before_deadline(
+    operation: Callable[[], Any],
+    deadline: HookDeadline | None = None,
+) -> Any:
+    """Run one blocking operation without letting it outlive the hook budget."""
+    timeout = remaining_safe_time(deadline)
+    if timeout <= 0:
+        raise TimeoutError("hook deadline expired")
+    if timeout == float("inf"):
+        return operation()
+
+    result: list[Any] = []
+    failure: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            result.append(operation())
+        except BaseException as exc:
+            failure.append(exc)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise TimeoutError("hook deadline expired")
+    if failure:
+        raise failure[0]
+    return result[0]
 
 
 PALLIUM_PORT = int(os.environ.get("PALLIUM_PORT", "19836"))
@@ -344,7 +375,7 @@ def injected_work_ref(discovery: WorkRefDiscovery) -> str | None:
 def read_hook_input() -> dict:
     """Read one bounded JSON payload from stdin; fail closed on bad input."""
     try:
-        data = sys.stdin.read(4 * 1024 * 1024 + 1)
+        data = _run_before_deadline(lambda: sys.stdin.read(4 * 1024 * 1024 + 1))
         if len(data) > 4 * 1024 * 1024 or not data.strip():
             return {}
         return json.loads(data)
@@ -890,8 +921,11 @@ def pallium_request(
     if request_timeout <= 0:
         return None
     try:
-        with urllib.request.urlopen(req, timeout=request_timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        def request_json():
+            with urllib.request.urlopen(req, timeout=request_timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+
+        return _run_before_deadline(request_json, deadline)
     except Exception as exc:
         print(f"pallium hook: {method} {path} failed: {exc}", file=sys.stderr)
         return None
@@ -1035,8 +1069,11 @@ def relay_request(
         return None
     started = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=request_timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        def request_json():
+            with urllib.request.urlopen(req, timeout=request_timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+
+        return _run_before_deadline(request_json, deadline)
     except Exception as exc:
         print(
             f"pallium relay: {method} {path} failed "
