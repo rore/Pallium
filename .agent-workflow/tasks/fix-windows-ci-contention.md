@@ -43,7 +43,11 @@ Run 34083835988 failed `test_concurrent_claim_next_source_item_two_items_two_win
 - When the branch is proposed, all platforms shall remain compatible → full focused suites, agent-workflow/redline checks, and GitHub PR CI.
 
 **Plan review:**
-Pending clean-context review via `codex:@relaydev`.
+Approved by clean-context `codex:@relaydev` review. The implementation will
+pass the wider budget only from `_begin_immediate()` so the legacy migration
+default and Relay override remain at 100 ms. One-shot Node harnesses will exit
+from the stdout completion callback so output is flushed and hook failures
+retain their normal nonzero exit.
 
 **Approvals:**
 Not required at this risk level.
@@ -51,17 +55,18 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Blocked
-<!-- Ready to implement | Blocked | Ready for review -->
+**State:** Ready to implement
+
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Discovery and Elevated/Moderate classification complete; implementation awaits clean-context plan review.
+- Discovery, Elevated/Moderate classification, and clean-context plan review complete.
 
 ## Evidence
 
 - GitHub Actions runs 34083835988 and 34083904007.
+- Clean-context plan review: `codex:@relaydev`, 2026-09-07.
 
 ## Result review
 
