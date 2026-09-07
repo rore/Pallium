@@ -1,7 +1,7 @@
 ---
 id: stabilize-test-health-and-ci-cost
 title: Stabilize test health and CI cost
-status: in-progress
+status: done
 priority: high
 commitment: committed
 milestone: engineering-health

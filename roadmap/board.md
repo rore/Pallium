@@ -14,9 +14,6 @@
 - idea-deferred-relay
 - add-copilot-relay-integration
 
-# P1 · Test Health
-- stabilize-test-health-and-ci-cost
-
 # P1 · Reuse Measurement
 - idea-pull-real-corpus-validation
 - idea-visibility-violation-metric-completeness
@@ -52,6 +49,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- stabilize-test-health-and-ci-cost
 - add-budgeted-long-relay-messages
 - fix-disabled-derived-memory-injection-observability
 - decouple-session-history-from-derived-packages
