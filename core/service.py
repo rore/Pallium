@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 import uuid
+import threading
 from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
@@ -23,6 +25,7 @@ from core.processing import (
 )
 from core.query import QueryExecutor
 from core.thread_rebuild import ThreadRebuilder, truncate_processing_error
+from core.usage_audit_matcher import classify_memory_reference
 from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
@@ -284,6 +287,8 @@ class PalliumService:
             metrics_store=metrics_store,
         )
         self._logger = logging.getLogger(__name__)
+        self._audit_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="usage-audit")
+        self._audit_slots = threading.BoundedSemaphore(2)
         self._metrics_store = metrics_store
         self._metrics_retention_days = metrics_retention_days
 
@@ -1714,6 +1719,42 @@ class PalliumService:
         # the API can surface it on the response (additive; never gates behavior).
         return row["id"]
 
+    def populate_memory_usage_audit(self, thread_ref: str, response_text: str) -> None:
+        for row in self.list_pending_memory_usage_audit_by_thread(thread_ref, limit=20):
+            try:
+                _, _, match_text = self.get_memory_expand(row["memory_object_id"])
+                referenced, reference_kind = classify_memory_reference(
+                    memory_object_id=row["memory_object_id"], memory_text=match_text or "",
+                    response_text=response_text,
+                )
+                self.update_memory_usage_audit(
+                    audit_row_id=row["id"], referenced_in_next_turn=referenced,
+                    reference_kind=reference_kind, observation_window_turns=1,
+                )
+            except Exception:
+                self._logger.warning("memory_usage_audit row population failed", exc_info=True)
+
+    def enqueue_memory_usage_audit(self, thread_ref: str | None, response_text: str | None) -> bool:
+        if not thread_ref or not response_text or not self._audit_slots.acquire(blocking=False):
+            return False
+        try:
+            self._audit_executor.submit(self._run_audit_job, thread_ref, response_text)
+            return True
+        except Exception:
+            self._audit_slots.release()
+            self._logger.warning("memory_usage_audit enqueue failed", exc_info=True)
+            return False
+
+    def _run_audit_job(self, thread_ref: str, response_text: str) -> None:
+        try:
+            self.populate_memory_usage_audit(thread_ref, response_text)
+        except Exception:
+            self._logger.warning("memory_usage_audit job failed", exc_info=True)
+        finally:
+            self._audit_slots.release()
+
+    def close(self) -> None:
+        self._audit_executor.shutdown(wait=True, cancel_futures=True)
     def list_memory_usage_audit(self, query_audit_log_id: str) -> list[dict]:
         """Phase 5: list usage-audit rows for a given query.
 

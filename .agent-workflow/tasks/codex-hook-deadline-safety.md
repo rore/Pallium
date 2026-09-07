@@ -66,11 +66,13 @@ Not required at this risk level.
 - 2026-09-07: Established scope from the user-approved two-PR performance plan and recovered the prior Claude architecture review. PR #129 is merged; this branch starts from main 9ccdcccd.
 - 2026-09-07: Pre-edit redline review reported a red-zone orchestrator touch (core/service.py), no boundary violation, and minimum Elevated risk.
 - 2026-09-07: Discovery disproved reuse of the semantic source-item worker for all audit work because no-package assistant items are never claimed. Revised the plan to a bounded post-ingest executor with explicit lifecycle and pending-row retry semantics.
+- 2026-09-07: Implemented the server-owned slice: moved the pure matcher to `core/usage_audit_matcher.py` with an integration compatibility re-export; added a one-worker, one-queued-slot audit executor and per-row population method to `PalliumService`; assistant `/items` ingestion enqueues best-effort work; shutdown drains audit work before SQLite close. Used the documented deterministic file-write fallback after Windows patch helper error 1327.
 
 ## Evidence
 
 - Historical plan lookup 6e66a3a4-25ba-596f-bd07-12cd33cd0f09.
 - Pre-edit clean-context redline review /root/pr2_redline.
+- Focused verification: 31 matcher/canonical-text tests and 2 deterministic audit-dispatch lifecycle tests passed.
 - Clean-context plan review /root/pr2_plan_review.
 
 ## Plan review

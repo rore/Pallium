@@ -613,6 +613,8 @@ def create_router(
             artifact_kind=request.artifact_kind,
             visibility=request.visibility_kind(),
         )
+        if request.role == "assistant":
+            service.enqueue_memory_usage_audit(request.thread_ref, request.content)
         return ItemCreateResponse(**result.as_dict())
 
     MAX_ITEMS_PER_REQUEST = 50
