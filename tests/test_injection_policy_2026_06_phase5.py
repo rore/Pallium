@@ -48,6 +48,42 @@ def service_and_client(tmp_path):
     return service, client, tmp_path
 
 
+def test_items_enqueue_durable_assistant_id_without_semantic_package(service_and_client, monkeypatch):
+    service, client, _ = service_and_client
+    service._semantic_plugins.clear()
+    service._configured_use_cases = frozenset()
+    enqueued = []
+    monkeypatch.setattr(service, "enqueue_memory_usage_audit", enqueued.append)
+    response = client.post("/items", json=[{
+        "source_type": "hook", "source_id": "assistant-1", "content_type": "text",
+        "content": "persist this assistant response", "role": "assistant", "thread_ref": "thread-1",
+    }])
+    assert response.status_code == 200
+    source_id = response.json()[0]["source_item_id"]
+    assert enqueued == [source_id]
+    assert service._storage.get_source_item(source_id).content == "persist this assistant response"
+    service.close()
+
+
+@pytest.mark.parametrize("enqueue_result", [False, RuntimeError("full")])
+def test_items_succeeds_when_audit_enqueue_is_unavailable(service_and_client, monkeypatch, enqueue_result):
+    service, client, _ = service_and_client
+    service._semantic_plugins.clear()
+    service._configured_use_cases = frozenset()
+    if isinstance(enqueue_result, Exception):
+        def enqueue(_source_id):
+            raise enqueue_result
+    else:
+        enqueue = lambda _source_id: enqueue_result
+    monkeypatch.setattr(service, "enqueue_memory_usage_audit", enqueue)
+    response = client.post("/items", json=[{
+        "source_type": "hook", "source_id": "assistant-2", "content_type": "text",
+        "content": "still durable", "role": "assistant", "thread_ref": "thread-2",
+    }])
+    assert response.status_code == 200
+    assert service._storage.get_source_item(response.json()[0]["source_item_id"]).content == "still durable"
+    service.close()
+
 def _write_query_with_blocks(
     service,
     *,

@@ -74,6 +74,7 @@ Not required at this risk level.
 - Historical plan lookup 6e66a3a4-25ba-596f-bd07-12cd33cd0f09.
 - Pre-edit clean-context redline review /root/pr2_redline.
 - Focused verification: 31 matcher/canonical-text tests and 2 deterministic audit-dispatch lifecycle tests passed.
+- Final server-slice verification: 46 focused tests passed, including exact POST /items semantic-unavailable persistence, enqueue false/exception isolation, durable-ID dispatch, per-row failure isolation, and matcher regressions; matcher now indexes fixed-width response windows.
 - Clean-context plan review /root/pr2_plan_review.
 
 ## Plan review

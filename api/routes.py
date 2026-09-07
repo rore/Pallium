@@ -614,7 +614,10 @@ def create_router(
             visibility=request.visibility_kind(),
         )
         if request.role == "assistant":
-            service.enqueue_memory_usage_audit(result.source_item_id)
+            try:
+                service.enqueue_memory_usage_audit(result.source_item_id)
+            except Exception:
+                logger.warning("memory_usage_audit enqueue failed", exc_info=True)
         return ItemCreateResponse(**result.as_dict())
 
     MAX_ITEMS_PER_REQUEST = 50
