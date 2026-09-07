@@ -1,0 +1,108 @@
+<!-- agent-workflow:start -->
+**Outcome:** Agent Relay accepts one message or reply up to 16,000 Unicode code points, delivers a bounded actionable preview automatically, and exposes the complete redacted body through scoped pagination without invisible claims.
+
+**Target:** Pallium Agent Relay.
+
+**Scope:** Relay validation, HTTP request/response and existing message-status pagination, shared SQLite turn selection/projection, MCP client/serialization, Claude Code/Codex/OpenCode delivery formatting where required, focused public-surface tests, docs, and roadmap status.
+
+**Constraints:** Preserve short-message behavior, stored-payload/idempotency semantics, actor/container isolation, 2,400-character hook and 2,000-character MCP budgets, ACK/lease/expiry behavior, and existing endpoint identity; no chunk/reassembly, new dependency, schema migration, or new delivery endpoint unless the recorded message-scope assumption fails.
+
+**Completion criteria:** Exact 16,000-code-point send/reply boundaries pass; long stored bodies preview within each caller budget and reconstruct exactly through scoped pages; no claim can become payload-free/invisible; mixed backlogs and full create → preview/read → ACK/reply lifecycle pass through HTTP, MCP, and all three integrations.
+
+**Risk:** High
+
+**Complexity:** Moderate
+
+**Reason:** `api/schemas.py` is an API-contract red zone requiring API review; the behavior also changes shared delivery selection/claim semantics. Moderate because several components and caller surfaces change in one repository with one coherent outcome.
+
+**Discovery:** `core/relay.py` and `api/schemas.py` independently cap payloads at 1,500; SQLite stores unbounded TEXT and `_stored_payload` already redacts/guards expansion. `storage/sqlite_relay.py::relay_turn` sizes complete rendered messages and skips those that do not fit. Existing scoped `GET /relay/messages/{message_id}` should be reused, but MCP status compaction omits normal over-budget bodies and MCP receive can serialize an over-budget claimed result. Existing recipient pagination and history expansion provide bounded-page/binary-search patterns. Hook formatters currently require complete payloads. Focused coverage lives in Relay E2E, hooks, MCP client/server/lifecycle, and OpenCode tests. Roadmap and code agree on the queued slice.
+
+**Material assumptions:** (1) Message-scoped actor/container checks are sufficient for the full-body read; if recipient-bound authorization is required, return to planning before adding a delivery endpoint. (2) Response-only preview metadata can preserve stored payload and idempotency; if any integration must mutate persistence or independently truncate, return to planning. (3) A bounded shared turn projection can prove serializability before claim; if the minimum envelope itself exceeds a caller budget, leave the row unclaimed and return an explicit bounded error/backlog signal.
+
+**Plan:** 1. Extend the existing cap to 16,000 in core validation and API request schemas, retaining blank/control/redaction checks. 2. Add `payload_offset`, `payload_total_chars`, `content_truncated`, and nullable `next_offset` to message/delivery responses. The existing status endpoint accepts optional code-point `offset` (`>=0`) and `page_size` (`1..16,000`); neither supplied preserves the full-body HTTP response, either supplied enables paging with defaults `offset=0` and `page_size=2,000`, `offset == total` returns an empty final page, `offset > total` returns 422, and every non-final page has `next_offset > payload_offset`. In paged mode the same exact slice and metadata replace the payload in both the top-level message and every nested delivery, so no nested full-body copy escapes. 3. At shared turn selection, return the largest exact payload prefix whose complete attributed block, exact omitted-count marker, and full-read hint fit the caller text budget; preserve full stored text, set continuation metadata truthfully, and claim only after sizing that exact projection. Add an optional generic compact-JSON response budget to `/relay/turn`; when present, size the complete prospective turn response with actual metadata, generated fixed-length claim credentials, escaping, queue fields, and all selected deliveries before committing any claim. Short messages remain complete. Every formatter-consumed identifier/reply/payload field is render-validated; unsafe legacy rows remain unclaimed but count in `remaining_count`/`has_more`. 4. Make MCP receive use an effective response budget of 2,000 when `max_chars=0`, clamp larger values to 2,000, reject a documented below-minimum value before calling/claiming, request one delivery, and pass the effective budget as the turn response budget. The MCP serializer removes claim tokens and emits a subset of the already-sized response, so its final JSON cannot be larger; tests use escape-heavy bodies and maximum identifiers to prove this. Add `offset` to MCP status and serialize its exact payload page plus compact delivery states within the budget, shrinking only the page and returning a strictly advancing `next_offset`. 5. Make the minimum integration changes needed to render the server-selected exact prefix plus common marker/hint and ACK only the formatter-returned, actually attached subset. Claude UserPromptSubmit/Codex ACK after successful output; Claude Stop changes from ACK-before-emit to emit-before-ACK and tests both failures; OpenCode sends its 2,400-character turn budget, formats with the same budget, mutates model-bound history, then ACKs. Any post-claim failure before ACK relies on the existing lease for redelivery. 6. Add boundary, Unicode, redaction, pagination, isolation, fairness, lease/restart, idempotency, malformed-legacy, and full-lifecycle E2E coverage through HTTP/MCP/hooks/OpenCode. 7. Update Relay docs/tool guidance and mark the roadmap feature done only after verification. Stop and return to planning on any new endpoint, schema migration, forbidden import, persisted-preview mutation, or authorization-model change.
+
+**Verification plan:** Cap boundaries and unsafe input → HTTP/MCP send+reply schema/service tests at empty, 16,000, 16,001, Unicode, control, and redaction overflow. Automatic preview → Relay turn plus Claude/Codex/OpenCode formatter E2E at short/exact/over-budget and worst-case identifiers, asserting output ceilings and exact omitted count. Full read → HTTP and MCP pagination tests for empty, exact, final, invalid, over-max, reconstruction, and wrong scope. Claim safety/lifecycle → public-surface preview → read → ACK/reply, lease expiry/restart, idempotent retry, and malformed legacy row tests. Queue truth → mixed long/short backlog tests for order, fairness, `has_more`, and `remaining_count`. Architecture/API safety → import-linter, agent-redline report, Agent Workflow checker, focused suites, then full test suite if focused checks pass.
+
+**Plan review:** Senior clean-context review completed after the initial checklist pass; all findings are resolved below. Implementation remains blocked only for human approval.
+
+**Approvals:** Approved by user 2026-09-07T11:15:00+03:00: "approve"
+
+**Exceptions:** —
+
+**State:** Ready to implement
+<!-- agent-workflow:end -->
+
+## Implementation
+
+- 2026-09-07 Establish Context: isolated worktree and task branch created; no guarded edits.
+- 2026-09-07 Discovery: traced validation, storage selection, status, MCP serialization, integration formatters, focused tests, and roadmap contract. Existing message read is reusable; automatic delivery and MCP read budgets are the failing seams.
+- 2026-09-07 Assess Risk: clean-context redline verdict `API_CHANGE`; High/Moderate selected. API review is mandatory, architecture review required by the roadmap; no persistence or boundary change planned.
+- 2026-09-07 Plan: initial checklist review was superseded by an independent senior review; its MCP-envelope and nested-payload findings were resolved, re-reviewed, and approved by the user.
+- 2026-09-07 Implement file list: production changes are limited to `core/relay.py`, `api/schemas.py`, `api/routes.py`, `storage/sqlite_relay.py`, `app/mcp/client.py`, `app/mcp/server.py`, `integrations/codex/hooks/common.py`, `integrations/claude-code/hooks/common.py`, `integrations/claude-code/hooks/stop.py`, `integrations/opencode/.opencode/plugins/pallium-common.mjs`, and `integrations/opencode/.opencode/plugins/pallium.mjs`. Planned verification changes are limited to `tests/test_agent_relay_e2e.py`, `tests/test_agent_relay_hooks.py`, `tests/test_sqlite_relay_isolation.py`, `tests/test_relay_mcp_tools.py`, `tests/test_mcp_client.py`, `tests/test_mcp_server.py`, `tests/test_hook_common_parity.py`, `integrations/opencode/tests/common.test.mjs`, and `integrations/opencode/tests/plugin.test.mjs`. Documentation/status changes are limited to `docs/agent-relay.md`, the three integration `pallium-memory/SKILL.md` files, `roadmap/features/add-budgeted-long-relay-messages.md`, and `roadmap/board.md`. Any additional file is a scope check before edit.
+
+## Checkpoint: api-review
+
+What is changing: Raise the accepted Relay payload maximum and add optional bounded body-page metadata/parameters to the existing message status contract; automatic turn responses may carry an explicit preview instead of a skipped full body.
+
+Why: The current 1,500-character content cap forces manual multipart sends, while raising it alone makes long messages ineligible for automatic context.
+
+Affected contract / model / boundary: `RelaySendRequest`, `RelayReplyRequest`, Relay message/delivery responses, `/relay/turn`, and `GET /relay/messages/{message_id}`. The change is additive plus behavior-only; existing short-message consumers remain unchanged.
+
+Compatibility / migration risk: medium — no endpoint or required field is removed, but long-message selection and new optional pagination semantics affect callers; all in-repo consumers are included in scope.
+
+Verification plan: schema boundary tests, HTTP/MCP response-contract tests, all integration renderers, full lifecycle/isolation coverage, redline/import checks.
+
+## Checkpoint: architecture-review
+
+What is changing: Separate persisted Relay content size from automatic context projection and make serializability a pre-claim invariant.
+
+Why: One limit currently represents two independent resource boundaries, leaking server work to senders and allowing oversized work to remain invisible.
+
+Affected contract / model / boundary: shared Relay validation, storage turn selection/projection, MCP budgeting, and integration delivery rendering; no new abstraction or cross-layer import is planned.
+
+Compatibility / migration risk: medium — persistence shape and short-message behavior remain stable, while long messages gain response-only preview/read behavior.
+
+Verification plan: shared-boundary tests, worst-case budget checks, mixed backlog/lifecycle E2E, and final import/redline reports.
+
+## Plan review
+
+Findings / resolution requirements:
+
+1. **Blocking — claim-before-serializability.** `storage/sqlite_relay.py::relay_turn` currently selects only `_render_safe(message.payload)`, measures the complete rendered payload, and claims only rows that fit. The implementation must define one shared bounded projection (including worst-case identifiers, attribution, omitted-count marker, and full-read instruction), prove that exact projection fits the caller budget before mutating claim state, and preserve fair mixed-backlog accounting. A claimed row must never fall through to a generic MCP over-budget error or an integration formatter that emits nothing.
+
+2. **Blocking — public response contracts are underspecified.** `RelayDeliveryResponse`, `RelayTurnResponse`, and `RelayMessageResponse` currently expose only complete `payload` and have no preview/truncation/continuation fields. Specify additive fields, nullability, and semantics for short, exact-boundary, over-budget, malformed-legacy, and redaction-overflow rows. Keep HTTP default status behavior compatible, while ensuring MCP status/receive use deterministic bounded pages rather than the existing generic 2,000-character error. State whether offsets are code-point offsets and whether `next_offset` is absent or null on the final page.
+
+3. **Blocking — authorization/read scope.** `GET /relay/messages/{message_id}` checks only `container_ref` and `actor_ref`, then returns the whole message plus every delivery. Confirm this is the intended recipient authorization model for deliberate full-body reads (including broadcast and cross-runtime recipients); otherwise stop and redesign before adding pagination. Tests must prove wrong container, wrong actor, and any recipient/session that is not entitled cannot read pages, and that pagination cannot widen the existing scope.
+
+4. **Blocking — claim lifecycle and integration acknowledgement.** The plan must specify what makes a preview “model-visible” for Codex, Claude Code, OpenCode, and MCP, and the exact behavior when formatting/injection fails after claim. Cover preview → full read → ACK/reply, lease expiry/reclaim, restart, duplicate/idempotent calls, and no-empty-output cases through each real caller surface. ACK must not be sent merely because the server returned a claimed row.
+
+5. **Required clarification — pagination and redaction invariants.** Define whether page size is caller-controlled, its minimum/maximum, invalid/negative/over-max behavior, and reconstruction guarantees for Unicode code points. Prove pagination returns the complete redacted stored body (not raw input), does not mutate it, and handles the redaction-overflow sentinel and malformed legacy payloads without violating response budgets.
+
+6. **Required verification — API/tool/docs compatibility.** Update HTTP schemas, MCP tool descriptions/client arguments, and all three integration guidance documents together; assert old short-message shapes and status behavior remain valid. Include exact 16,000/16,001 boundaries, unsafe controls, non-ASCII, worst-case IDs, `has_more`/`remaining_count` with skipped/previewed rows, expiry, and full lifecycle E2E. Re-run API, architecture, and security checkpoint evidence before changing State or Approvals.
+Resolutions incorporated into the plan:
+
+- The four additive payload-page fields are present on both delivery and message responses. `payload` is always an exact code-point slice of the stored redacted body; marker/hint text is rendered separately and never contaminates reconstruction. `content_truncated` is true whenever the response is not the complete body (`payload_offset != 0` or `next_offset != null`). Redaction-overflow sentinels page as the stored body; paging never reads pre-redaction input or mutates persistence.
+- The existing `container_ref` + `actor_ref` check is confirmed as the deliberate principal scope for full-body reads, including broadcast and cross-runtime recipients owned by that principal. Pagination does not add recipient/session authority and wrong-container/wrong-actor reads remain indistinguishable 404s. If product review rejects this existing model, work stops before code changes to the read surface.
+- The selection boundary sizes the same attributed block contract consumed by every integration, including worst-case metadata and the queue notice. It continues scanning eligible rows as today, claims only selected projections, and computes `remaining_count` from every still-unclaimed safe or unsafe row so long/blocked rows cannot disappear from queue truth.
+- “Model-visible” means the formatter returned the delivery in its rendered subset and the integration successfully attached that text to the host turn. Only that subset is ACKed. MCP exposes a receipt with every serialized claimed preview; serialization is proven within budget before return. Any later caller failure leaves the claim leased and reclaimable.
+- Compatibility proof covers additive schema fields, unchanged unpaged HTTP bodies and short-message payload values, deterministic code-point reconstruction, invalid paging as 422, fixed MCP output ceilings, and the complete lease/ACK/reply lifecycle across all caller surfaces.
+
+**2026-09-07 clean-context re-review sign-off:** All six prior findings are resolved in the updated plan: pre-claim bounded projection, additive paging contract, principal scope, model-visible ACK semantics, redaction/code-point reconstruction, and compatibility/lifecycle verification are explicit. No blocking plan ambiguity remains. Ready for human approval; keep State and Approvals unchanged.
+### Senior clean-context review
+
+The stronger review supersedes the initial readiness sign-off and identified two blockers plus two required implementation clarifications:
+
+1. Text-block sizing did not prove MCP JSON serializability because escaping and the session/delivery envelope differ. Resolution: the turn request gains a generic compact-JSON response budget; storage sizes the complete prospective response, with actual metadata and credentials, before claim. MCP requests one delivery and its final serializer only removes fields from that bounded response.
+2. Paged status left full payload copies in nested deliveries. Resolution: paged mode applies the identical slice and metadata to the top-level message and every nested delivery; broadcast and empty-final-page E2E assert no full copy escapes.
+3. Claude Stop ACKs before emit today, while OpenCode omits turn/formatter budgets. Resolution: both caller paths are explicit implementation and failure-test targets in plan step 5.
+4. Continuations and legacy metadata needed stronger invariants. Resolution: non-final offsets strictly advance, and pre-claim validation covers every formatter-consumed field while unsafe rows stay unclaimed and visible in queue counts.
+
+**2026-09-07 senior re-review sign-off:** No blocking findings remain. The compact-JSON response budget is compatible with the existing claim transaction when it uses the exact MCP compact serializer settings, includes every response-model field before claim, and is verified against the final returned MCP string. Nested paging, advancing offsets, malformed metadata, Claude Stop ordering, and OpenCode budgets are concretely covered. Ready for human approval.
+
+## Evidence
+
+Pending implementation and verification.
+
+## Result review
+
+Pending.
