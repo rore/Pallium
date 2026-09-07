@@ -17,7 +17,7 @@ No public API or schema change; Relay remains first and fail-closed; never ACK c
 Every installed Python hook observes one monotonic total budget and bounds or explicitly skips blocking work by remaining time; Relay output is UTF-8 and flushed before ACK with safe lease recovery when completion budget is unavailable; Stop performs no synchronous audit fan-out; every durable assistant ingest can enqueue bounded audit population even without a semantic package; failed/dropped audit work leaves idempotent pending rows for retry on a later assistant ingest; deterministic caller-surface tests cover slow/unavailable services, interruption, retry, optional-work skipping, queue saturation/shutdown, and mixed load.
 
 **Risk:**
-Elevated
+High
 
 **Complexity:**
 Moderate
@@ -53,7 +53,7 @@ All supported runtime paths shall remain portable → focused Claude/Codex/OpenC
 Clean-context review /root/pr2_plan_review; blocking findings incorporated in the revised plan and Plan review section below.
 
 **Approvals:**
-Not required at this risk level.
+Approved by user 2026-09-07: "you have approval for all prs you manage"
 
 **Exceptions:**
 —

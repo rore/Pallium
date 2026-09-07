@@ -58,10 +58,17 @@ def test_source_miss_retries_on_later_assistant_ingest_idempotently(monkeypatch)
 
     service._storage.get_source_item = get_source_item
     populated = []
-    service.populate_memory_usage_audit = lambda thread, content: populated.append((thread, content))
+    populated_done = Event()
+
+    def populate(thread, content):
+        populated.append((thread, content))
+        populated_done.set()
+
+    service.populate_memory_usage_audit = populate
     assert service.enqueue_memory_usage_audit("source-retry")
     assert lookup_done.wait(1)
     assert service.enqueue_memory_usage_audit("source-retry")
+    assert populated_done.wait(1)
     service.close()
     assert populated == [("thread", "persisted")]
     assert attempts == ["source-retry", "source-retry"]
