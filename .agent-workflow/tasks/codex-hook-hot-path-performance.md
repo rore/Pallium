@@ -35,6 +35,7 @@
 
 ## Implementation
 
+- Reconciled Claude PostToolUse setup conditionally on PALLIUM_POSTTOOL_TRIGGERS=1, preserving unrelated and malformed entries across idempotent enable-disable cycles.
 - Established context and completed focused discovery from the live timeout incident, source paths, tests, Claude architect review, and pre-edit redline classification.
 - Resolved the clean-context review blocker in the plan with portable per-session locking, fail-open cache reads, and a single executor-owned semantic availability path; re-review accepted the revision and implementation is ready to begin.
 

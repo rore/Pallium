@@ -324,3 +324,20 @@ def test_claude_setup_registers_session_end_once_and_uninstall_removes_it(monkey
     monkeypatch.setattr(setup_claude_code.Path, "home", lambda: tmp_path)
     assert setup_claude_code.uninstall() == 0
     assert "SessionEnd" not in json.loads(settings.read_text(encoding="utf-8")).get("hooks", {})
+
+
+def test_posttool_hook_is_opt_in_and_preserves_unrelated_entries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(setup_claude_code, "_pallium_repo_root", lambda: tmp_path)
+    unrelated = {"matcher": "Bash", "hooks": [{"type": "command", "command": "other-tool"}]}
+    malformed = "keep me"
+    settings = {"hooks": {"PostToolUse": [unrelated, malformed]}}
+    monkeypatch.delenv("PALLIUM_POSTTOOL_TRIGGERS", raising=False)
+    setup_claude_code._register_hooks(settings)
+    assert settings["hooks"]["PostToolUse"][:2] == [unrelated, malformed]
+    monkeypatch.setenv("PALLIUM_POSTTOOL_TRIGGERS", "1")
+    setup_claude_code._register_hooks(settings); setup_claude_code._register_hooks(settings)
+    managed = [h for e in settings["hooks"]["PostToolUse"] if isinstance(e, dict) for h in e.get("hooks", []) if isinstance(h, dict) and "post_tool_use.py" in h.get("command", "")]
+    assert len(managed) == 1
+    monkeypatch.delenv("PALLIUM_POSTTOOL_TRIGGERS", raising=False)
+    setup_claude_code._register_hooks(settings)
+    assert settings["hooks"]["PostToolUse"][:2] == [unrelated, malformed]

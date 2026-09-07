@@ -130,10 +130,6 @@ def _register_hooks(settings: dict) -> dict:
         ("UserPromptSubmit", "user_prompt_submit.py", 8),
         ("Stop", "stop.py", 15),
         ("PreCompact", "pre_compact.py", 8),
-        # Phase 4 (2026-06-27): deterministic on-demand triggers for
-        # investigation_outcome (failure + retry-threshold). See
-        # docs/specs/2026-06-27-injection-policy-abstention.md.
-        ("PostToolUse", "post_tool_use.py", 8),
     ]
 
     for event, script, timeout in hook_defs:
@@ -154,7 +150,34 @@ def _register_hooks(settings: dict) -> dict:
                 "hooks": [{"type": "command", "command": command, "timeout": timeout}],
             })
 
+    _reconcile_posttool_hook(settings)
     return settings
+
+
+def _reconcile_posttool_hook(settings: dict) -> None:
+    """Install Pallium PostToolUse only when explicitly enabled."""
+    event = "PostToolUse"
+    command = _hook_command("post_tool_use.py")
+    hooks = settings.setdefault("hooks", {})
+    existing = hooks.get(event, [])
+    if not isinstance(existing, list):
+        return
+    def managed(value: object) -> bool:
+        return isinstance(value, str) and value.replace("\\", "/") == command
+    if os.environ.get("PALLIUM_POSTTOOL_TRIGGERS") == "1":
+        if not any(isinstance(entry, dict) and isinstance(entry.get("hooks"), list) and any(isinstance(hook, dict) and managed(hook.get("command")) for hook in entry["hooks"]) for entry in existing):
+            existing.append({"matcher": "", "hooks": [{"type": "command", "command": command, "timeout": 8}]})
+        return
+    filtered_entries = []
+    for entry in existing:
+        if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+            filtered_entries.append(entry)
+            continue
+        remaining = [hook for hook in entry["hooks"] if not (isinstance(hook, dict) and managed(hook.get("command")))]
+        if remaining:
+            updated = dict(entry); updated["hooks"] = remaining; filtered_entries.append(updated)
+    if filtered_entries: hooks[event] = filtered_entries
+    else: hooks.pop(event, None)
 
 
 def _unregister_hooks(settings: dict) -> dict:
