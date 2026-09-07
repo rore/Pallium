@@ -107,6 +107,12 @@ def test_record_query_injection_persists_with_refs(stats: QueryStats, store: Met
 # ---------------------------------------------------------------------------
 
 
+def test_disabled_and_source_only_queries_do_not_persist_metrics(stats: QueryStats, store: MetricsStore) -> None:
+    stats.record_query(_skip_result(reason="semantic_package_unavailable"))
+    stats.record_query(_skip_result(reason="source_only_search"))
+    stats.record_query(_skip_result(reason="visibility_context_required"), source_only=True)
+    assert store.query(category="query") == []
+
 def test_record_query_skip_persists(stats: QueryStats, store: MetricsStore) -> None:
     stats.record_query(_skip_result(reason="no_relevant_memory"))
 

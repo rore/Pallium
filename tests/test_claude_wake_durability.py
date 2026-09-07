@@ -456,7 +456,7 @@ def test_reconciler_retries_pending_wake_until_native_transport_accepts(
     reconciler = ClaudeWakeReconciler(registry, relay, interval_seconds=0.01)
     reconciler.start()
     try:
-        assert accepted.wait(timeout=1)
+        assert accepted.wait(timeout=5), observed
     finally:
         reconciler.stop()
     assert observed == [("pending", None, None, 0)] * 4

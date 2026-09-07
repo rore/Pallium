@@ -73,6 +73,11 @@ identifiers are never returned by the summary endpoint.
 
 ### Query Activity
 
+The heading shows whether automatic injection can run now. When it is OFF,
+Pallium still records and can explicitly search raw Session History, but it does not
+search derived memory automatically. Raw-history lookups are measured separately and
+do not appear as skipped injections.
+
 Two cards. The left card has four dual-time tiles plus an hourly stacked bar.
 
 - **Injections** — 24h count with `blocks · avg blocks` plus all-time count

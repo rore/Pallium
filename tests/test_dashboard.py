@@ -264,6 +264,9 @@ class TestDashboardIntegration:
         assert "fetchMetricsTotals" in html
         # Dual-time atom + sparkline + stacked-bar renderers
         assert "renderQueryTiles" in html
+        assert "qa-derived-mode" in html
+        assert "automatic injection: " in html
+        assert "Pallium does not search derived memory automatically" in html
         assert "renderSparkline" in html
         assert "renderStackedBars" in html
         # Skip-reason trend (24h + 7d + delta)

@@ -22,7 +22,7 @@ from starlette.testclient import TestClient
 
 from app.config import (
     AppConfig, EmbeddingProviderConfig, LLMProviderConfig, RetentionConfig,
-    SemanticPackageConfig,
+    SemanticPackageConfig, ObservabilityConfig,
 )
 from app.main import create_app
 from app.mcp.client import PalliumMcpClient
@@ -40,7 +40,7 @@ THREAD = "session:raw-derived"
 VISIBILITY = "private"
 
 
-def _disabled_config(db_url: str, *, vector_path: Path | None = None) -> AppConfig:
+def _disabled_config(db_url: str, *, vector_path: Path | None = None, audit_log_enabled: bool = False) -> AppConfig:
     """Provider/model are configured, but no semantic package is enabled."""
     return AppConfig(
         storage_backend="sqlite",
@@ -63,6 +63,7 @@ def _disabled_config(db_url: str, *, vector_path: Path | None = None) -> AppConf
             index_path=str(vector_path or "unused"),
             embedding_provider="test" if vector_path is not None else "",
         ),
+        observability=ObservabilityConfig(query_audit_log=audit_log_enabled),
         semantic_packages={
             "agent_conversation_memory": SemanticPackageConfig(
                 name="agent_conversation_memory",
@@ -171,7 +172,7 @@ def test_gate_a_raw_history_has_no_semantic_activation(
     )
     app = create_app(
         _disabled_config(
-            f"sqlite:///{tmp_path / 'raw.db'}", vector_path=tmp_path / "raw.index"
+            f"sqlite:///{tmp_path / 'raw.db'}", vector_path=tmp_path / "raw.index", audit_log_enabled=True
         )
     )
     client = TestClient(app)
@@ -193,6 +194,40 @@ def test_gate_a_raw_history_has_no_semantic_activation(
         )
         assert first.status_code == 200, first.text
         source_id = first.json()[0]["source_item_id"]
+
+        status_off = client.get("/status")
+        assert status_off.status_code == 200
+        derived_off = status_off.json()['derived_memory']
+        assert derived_off == {
+            'enabled': False,
+            'packages': [],
+            'injection_enabled': False,
+        }
+
+        retrieval_calls: list[object] = []
+        original_retrieval_query = client.app.state.pallium_service._retrieval.query
+        def forbidden_retrieval(*_args, **_kwargs):
+            retrieval_calls.append(True)
+            raise AssertionError("disabled package unexpectedly queried retrieval")
+        client.app.state.pallium_service._retrieval.query = forbidden_retrieval
+        item_and_query = client.post(
+            "/item-and-query",
+            json=_item("raw-audit", "Unicode audit anchor: החלטה حفظ", work_ref="feature:audit"),
+        )
+        derived_query = client.post(
+            "/query", json=_query_payload("Unicode audit anchor", source_only=False)
+        )
+        client.app.state.pallium_service._retrieval.query = original_retrieval_query
+        assert item_and_query.status_code == 200, item_and_query.text
+        assert item_and_query.json()["decision_reason"] == "semantic_package_unavailable"
+        assert derived_query.status_code == 200, derived_query.text
+        assert derived_query.json()["decision_reason"] == "semantic_package_unavailable"
+        assert retrieval_calls == []
+        assert client.app.state.pallium_service._query_stats.snapshot()["total_queries"] == 0
+        assert client.app.state.metrics_store.query(category="query") == []
+        with client.app.state.pallium_service._storage._engine.connect() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM query_audit_log")).scalar_one() == 0
+            assert conn.execute(text("SELECT content FROM source_items WHERE source_id = 'raw-audit'")).scalar_one() == "Unicode audit anchor: החלטה حفظ"
 
         duplicate = client.post(
             "/items",
@@ -325,7 +360,7 @@ def test_gate_a_raw_history_has_no_semantic_activation(
             worker_id="raw-retention-gate",
             now=stored.created_at + timedelta(days=31),
         )
-        assert retention is not None and retention.deleted_source_items == 1
+        assert retention is not None and retention.deleted_source_items == 2
         with pytest.raises(KeyError):
             client.app.state.pallium_service._storage.get_source_item(source_id)
         assert client.app.state.pallium_service._storage.list_index_entries_for_target(

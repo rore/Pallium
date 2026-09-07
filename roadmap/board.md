@@ -49,6 +49,7 @@
 
 # Done
 - add-budgeted-long-relay-messages
+- fix-disabled-derived-memory-injection-observability
 - decouple-session-history-from-derived-packages
 - fix-agent-work-ref-injection
 - add-distinct-work-and-broad-history-search-tools

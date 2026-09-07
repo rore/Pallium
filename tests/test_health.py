@@ -210,6 +210,7 @@ class TestStatusResponseShape:
             "vector_rebuild",
             "uptime_seconds",
             "query",
+            "derived_memory",
             "metrics_summary",
             "historical_lookup_funnel",
         }

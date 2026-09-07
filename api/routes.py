@@ -335,7 +335,11 @@ def _maybe_write_query_audit(
     """Write the query-audit row when enabled; return its id (the
     vNext P0 lookup_event_id) or None when audit is disabled or the write
     fails. The id is additive on the response and never gates behavior."""
-    if not audit_log_enabled:
+    if (
+        not audit_log_enabled
+        or getattr(request, "source_only", False)
+        or getattr(query_result, "decision_reason", None) == "semantic_package_unavailable"
+    ):
         return None
     try:
         ranked_candidates = getattr(query_result, '_ranked_candidates', None)
@@ -736,7 +740,7 @@ def create_router(
         except LookupRequestLinkError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         lookup_event_id: str | None = None
-        if audit_log_enabled:
+        if audit_log_enabled and not request.source_only and result.decision_reason != "semantic_package_unavailable":
             try:
                 ranked_candidates = getattr(result, '_ranked_candidates', None)
                 lookup_event_id = service.write_query_audit(
