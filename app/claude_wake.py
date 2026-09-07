@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-_workers: set[tuple[int, str]] = set()
+_workers: set[tuple[int, str, str, str]] = set()
 _workers_lock = threading.Lock()
 
 
@@ -78,7 +78,7 @@ def schedule_claude_relay_wake(
     ):
         return None
 
-    key = (id(registry), session_ref)
+    key = (id(registry), session_ref, container_ref, actor_ref)
     with _workers_lock:
         if key in _workers:
             return None
@@ -157,7 +157,12 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
                 registry.clear_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], actor_ref=candidate["actor_ref"], delivery_id=delivery_id)
                 continue
             with _workers_lock:
-                if (id(registry), candidate["session_ref"]) in _workers:
+                if (
+                    id(registry),
+                    candidate["session_ref"],
+                    candidate["container_ref"],
+                    candidate["actor_ref"],
+                ) in _workers:
                     continue
             if not registry.rearm_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], actor_ref=candidate["actor_ref"], delivery_id=delivery_id, grace_seconds=1.0):
                 continue

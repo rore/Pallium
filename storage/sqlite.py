@@ -184,11 +184,14 @@ class SQLiteStorageProvider(
                     if marker is not None:
                         if (marker.source_identity, marker.target_identity) != (source_identity, target_identity):
                             raise RuntimeError("Relay split marker does not match the configured source and target databases")
-                        with self._relay_session_factory() as target:
+                        with self._begin_relay_immediate() as target:
                             target_marker = target.get(RelayMigrationMetadataRecord, self._RELAY_MIGRATION_KEY)
                             if target_marker is None or (target_marker.source_identity, target_marker.target_identity) != (source_identity, target_identity):
                                 raise RuntimeError("Relay split target marker is missing or does not match the configured databases")
                             self._verify_relay_ids(source, target, require_exact=False)
+                            self._preserve_relay_endpoint_marker(
+                                source, target, source_identity, target_identity
+                            )
                         return
                     with self._begin_relay_immediate() as target:
                         target_marker = target.get(RelayMigrationMetadataRecord, self._RELAY_MIGRATION_KEY)
@@ -198,8 +201,13 @@ class SQLiteStorageProvider(
                             target_marker.target_identity,
                         ) != (source_identity, target_identity):
                             raise RuntimeError("Relay database was initialized from a different source database")
-                        self._copy_relay_rows(source, target)
+                        self._copy_relay_rows(
+                            source, target, include_aliases=fresh_target
+                        )
                         self._verify_relay_ids(source, target, require_exact=fresh_target)
+                        self._preserve_relay_endpoint_marker(
+                            source, target, source_identity, target_identity
+                        )
                         if target_marker is None:
                             target.add(RelayMigrationMetadataRecord(
                                 key=self._RELAY_MIGRATION_KEY,
@@ -226,11 +234,13 @@ class SQLiteStorageProvider(
             raise RuntimeError("legacy Relay schema is incomplete; refusing split migration")
         return bool(names)
 
-    def _copy_relay_rows(self, source: Session, target: Session) -> None:
+    def _copy_relay_rows(
+        self, source: Session, target: Session, *, include_aliases: bool
+    ) -> None:
         if not self._relay_tables_present(source):
             return
         models = [RelaySessionRecord, RelayMessageRecord, RelayDeliveryRecord]
-        if source.execute(
+        if include_aliases and source.execute(
             text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='relay_aliases'")
         ).first():
             models.append(RelayAliasRecord)
@@ -264,7 +274,7 @@ class SQLiteStorageProvider(
                 ):
                     raise RuntimeError(f"Relay split migration found conflicting {model.__tablename__} row {row_id}")
 
-        if source.execute(
+        if require_exact and source.execute(
             text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='relay_aliases'")
         ).first():
             source_aliases = {
@@ -279,6 +289,47 @@ class SQLiteStorageProvider(
                 require_exact and source_aliases != target_aliases
             ):
                 raise RuntimeError("Relay split migration verification failed for relay_aliases")
+
+    def _preserve_relay_endpoint_marker(
+        self,
+        source: Session,
+        target: Session,
+        source_identity: str,
+        target_identity: str,
+    ) -> None:
+        """Translate completed one-shot identity migration to a new Relay DB."""
+        source_marker = source.get(
+            RelayMigrationMetadataRecord, self._RELAY_ENDPOINT_MIGRATION_KEY
+        )
+        if source_marker is None:
+            return
+        if (source_marker.source_identity, source_marker.target_identity) != (
+            source_identity,
+            source_identity,
+        ):
+            raise RuntimeError(
+                "Relay endpoint migration marker does not match the source database"
+            )
+        target_marker = target.get(
+            RelayMigrationMetadataRecord, self._RELAY_ENDPOINT_MIGRATION_KEY
+        )
+        if target_marker is not None:
+            if (target_marker.source_identity, target_marker.target_identity) != (
+                target_identity,
+                target_identity,
+            ):
+                raise RuntimeError(
+                    "Relay endpoint migration marker does not match the Relay database"
+                )
+            return
+        target.add(
+            RelayMigrationMetadataRecord(
+                key=self._RELAY_ENDPOINT_MIGRATION_KEY,
+                source_identity=target_identity,
+                target_identity=target_identity,
+                completed_at=utc_now(),
+            )
+        )
 
     def _migrate_relay_endpoint_identity(self) -> None:
         """Bind legacy rows to endpoint IDs once; unresolved rows never rebind later."""

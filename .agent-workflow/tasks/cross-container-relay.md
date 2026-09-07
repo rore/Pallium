@@ -49,7 +49,7 @@ Key conventions: no new delivery engine, auth system, or dependency; API remains
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Checkpoint: persistence-review + api-review
@@ -108,4 +108,13 @@ Approved: the revised plan resolves all five blocking findings. It explicitly pr
 
 ## Result review
 
-Pending.
+Implemented and reviewed. Persistence/security review found and verified fixes for permanent orphan adoption during same-DB-to-split migration, mutable target alias removal on restart, and alias resurrection during interrupted split recovery. API/wake review found and verified fixes for duplicate native Claude session IDs across containers plus scoped wake-intent upgrade, corruption, persistence-failure, repeated-recovery, and restart safety. Both smart-model re-reviews report no remaining concrete findings.
+
+Verification:
+- Focused cross-container, migration, FastMCP, Claude wake, and Codex wake matrix: 241 passed, 2 skipped.
+- Complete Claude wake regression matrix after final intent-precedence hardening: 140 passed, 2 skipped.
+- Full repository suite after all review fixes: 4578 passed, 32 skipped, 2 expected failures.
+- Diff hygiene and Python syntax compilation: clean.
+- Import-linter report: zero violations.
+
+Installed dogfood remains a pre-merge roadmap gate. Repository operations forbid repointing the long-lived installation at this temporary worktree; run the installed witness from a stable checkout before merging/publication. The roadmap item therefore remains queued.

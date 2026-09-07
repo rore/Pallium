@@ -31,6 +31,7 @@ from core.claude_wake import (
     MAX_SOCKET_CHARS,
     MAX_TOKEN_CHARS,
     TTL_SECONDS,
+    _safe_session_file,
 )
 from tests.test_claude_code_integration import _load_claude_hook
 
@@ -55,14 +56,12 @@ def _client(registry: ClaudeWakeRegistry, peer: tuple[str, int] = ("127.0.0.1", 
 def test_registration_keeps_intent_when_store_unusable_marker_cannot_clear(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from hashlib import sha256
-
     state_dir = tmp_path / "wake"
     marker = state_dir / "store-unusable"
     marker.parent.mkdir()
     marker.write_text('{"unusable":true}', encoding="utf-8")
     payload = {**PAYLOAD, "intent_id": "marker-recovery"}
-    intent = state_dir / "intents" / (sha256(PAYLOAD["session_ref"].encode("utf-8")).hexdigest() + ".json")
+    intent = state_dir / "intents" / _safe_session_file(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"], PAYLOAD["actor_ref"])
     intent.parent.mkdir()
     intent.write_text(json.dumps(payload), encoding="utf-8")
     registry = ClaudeWakeRegistry(state_dir=state_dir)
@@ -91,10 +90,8 @@ def test_registration_keeps_intent_when_store_unusable_marker_cannot_clear(
 def test_close_endpoint_write_failure_preserves_exact_intent_for_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_closed_intent: bool,
 ) -> None:
-    from hashlib import sha256
-
     state_dir = tmp_path / "wake"
-    intent = state_dir / "intents" / (sha256(PAYLOAD["session_ref"].encode("utf-8")).hexdigest() + ".json")
+    intent = state_dir / "intents" / _safe_session_file(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"], PAYLOAD["actor_ref"])
 
     def write_intent(payload: dict[str, object]) -> None:
         intent.parent.mkdir(parents=True, exist_ok=True)
@@ -505,7 +502,7 @@ def test_hook_helpers_use_persistent_loopback_register_and_close_routes(
     def open_request(request, **_kwargs):
         path = urlsplit(request.full_url).path
         body = json.loads(request.data.decode("utf-8"))
-        intent = json.loads(common._wake_intent_path(session_ref).read_text(encoding="utf-8"))
+        intent = json.loads(common._wake_intent_path("claude-code", session_ref, scope["container_ref"], scope["actor_ref"]).read_text(encoding="utf-8"))
         assert intent == (body if path.endswith("/register") else {**body, "closed": True})
         response = http.request(request.get_method(), path, content=request.data)
         responses.append(response)
@@ -514,7 +511,7 @@ def test_hook_helpers_use_persistent_loopback_register_and_close_routes(
 
     monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=open_request))
     assert common.register_claude_wake(session_ref, idle=True, **scope)
-    assert not common._wake_intent_path(session_ref).exists()
+    assert not common._wake_intent_path("claude-code", session_ref, scope["container_ref"], scope["actor_ref"]).exists()
     reloaded = ClaudeWakeRegistry(state_dir=wake_dir)
     candidate = next(iter(reloaded.recovery_candidates()))
     assert {key: candidate[key] for key in ("session_ref", "container_ref", "actor_ref", "state")} == {
@@ -522,7 +519,7 @@ def test_hook_helpers_use_persistent_loopback_register_and_close_routes(
     }
 
     assert common.close_claude_wake(session_ref, **scope)
-    assert not common._wake_intent_path(session_ref).exists()
+    assert not common._wake_intent_path("claude-code", session_ref, scope["container_ref"], scope["actor_ref"]).exists()
     assert ClaudeWakeRegistry(state_dir=wake_dir).recovery_candidates() == []
     captured = capsys.readouterr()
     assert token not in captured.out + captured.err
@@ -543,7 +540,7 @@ def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatc
         lambda *_args: opener_calls.append(True) or pytest.fail("oversized encoded body must not open"),
     )
     assert not common.register_claude_wake("session", "git:example/repo", "local")
-    assert opener_calls == [] and not common._wake_intent_path("session").exists()
+    assert opener_calls == [] and not common._wake_intent_path("claude-code", "session", "git:example/repo", "local").exists()
     assert list((wake_dir / "intents").glob("*.tmp")) == []
     restarted = ClaudeWakeRegistry(state_dir=wake_dir)
     restarted.recover_intents()
@@ -554,7 +551,7 @@ def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatc
 
     def open_request(request, **_kwargs):
         body = json.loads(request.data.decode("utf-8"))
-        assert common._wake_intent_path("session-✓").exists()
+        assert common._wake_intent_path("claude-code", "session-✓", "git:é/repo", "actor-α").exists()
         assert body["session_ref"] == "session-✓" and body["container_ref"] == "git:é/repo"
         return nullcontext()
 

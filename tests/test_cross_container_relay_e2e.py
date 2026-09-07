@@ -202,3 +202,74 @@ def test_concurrent_first_claim_of_global_alias_has_one_owner_and_one_route(clie
         *client.get("/relay/sessions", params={"container_ref": TARGET, "actor_ref": ACTOR, "include_inactive": True}).json(),
     ]
     assert [session["endpoint_id"] for session in sessions if session["alias"] == "race"] == [owner]
+
+def test_cross_container_reply_chain_and_bounded_backlog_continuation(client):
+    sender = _turn(client, "codex", "chain-sender", SOURCE)["session"]
+    target = _turn(client, "codex", "chain-target", TARGET)["session"]
+    initial = _send(
+        client, "chain-sender", target["endpoint_id"], payload="chain-0"
+    ).json()
+
+    target_claim = _turn(client, "codex", "chain-target", TARGET)["deliveries"][0]
+    reply_one = client.post("/relay/replies", json={
+        "delivery_id": target_claim["delivery_id"],
+        "receipt": target_claim["receipt"],
+        "payload": "chain-1",
+        "container_ref": TARGET,
+        "actor_ref": ACTOR,
+    }).json()
+    sender_claim = _turn(client, "codex", "chain-sender", SOURCE)["deliveries"][0]
+    reply_two = client.post("/relay/replies", json={
+        "delivery_id": sender_claim["delivery_id"],
+        "receipt": sender_claim["receipt"],
+        "payload": "chain-2",
+        "container_ref": SOURCE,
+        "actor_ref": ACTOR,
+    }).json()
+    final_claim = _turn(client, "codex", "chain-target", TARGET)["deliveries"][0]
+
+    assert reply_one["in_reply_to"] == initial["message_id"]
+    assert reply_two["in_reply_to"] == reply_one["message_id"]
+    assert final_claim["message_id"] == reply_two["message_id"]
+    assert reply_one["deliveries"][0]["recipient_endpoint_id"] == sender["endpoint_id"]
+    assert reply_two["deliveries"][0]["recipient_endpoint_id"] == target["endpoint_id"]
+    assert client.post("/relay/deliveries/ack", json={
+        "delivery_id": final_claim["delivery_id"],
+        "claim_token": final_claim["claim_token"],
+        "container_ref": TARGET,
+        "actor_ref": ACTOR,
+    }).status_code == 200
+
+    for index in range(3):
+        assert _send(
+            client,
+            "chain-sender",
+            target["endpoint_id"],
+            payload=f"backlog-{index}",
+        ).status_code == 200
+    first = client.post("/relay/turn", json={
+        "runtime": "codex",
+        "session_ref": "chain-target",
+        "container_ref": TARGET,
+        "actor_ref": ACTOR,
+        "max_messages": 1,
+        "max_chars": 1000,
+    }).json()
+    assert len(first["deliveries"]) == 1
+    assert first["has_more"] is True
+    assert first["remaining_count"] == 2
+
+    second = client.post("/relay/turn", json={
+        "runtime": "codex",
+        "session_ref": "chain-target",
+        "container_ref": TARGET,
+        "actor_ref": ACTOR,
+        "max_messages": 2,
+        "max_chars": 1000,
+    }).json()
+    assert [item["payload"] for item in second["deliveries"]] == [
+        "backlog-1",
+        "backlog-2",
+    ]
+    assert second["has_more"] is False
+    assert second["remaining_count"] == 0

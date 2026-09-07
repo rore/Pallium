@@ -945,14 +945,26 @@ class _RejectCredentialRedirects(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _wake_intent_path(session_ref: str) -> Path:
-    return CLAUDE_WAKE_INTENTS_DIR / (hashlib.sha256(session_ref.encode("utf-8")).hexdigest() + ".json")
+def _wake_intent_path(
+    runtime: str, session_ref: str, container_ref: str, actor_ref: str
+) -> Path:
+    identity = json.dumps(
+        [runtime, session_ref, container_ref, actor_ref],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return CLAUDE_WAKE_INTENTS_DIR / (
+        hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json"
+    )
 
 
 def _write_wake_intent(payload: dict[str, object]) -> bool:
     """Durably publish the exact registration before its loopback request."""
-    session_ref = payload.get("session_ref")
-    if not isinstance(session_ref, str):
+    identity = tuple(
+        payload.get(key)
+        for key in ("runtime", "session_ref", "container_ref", "actor_ref")
+    )
+    if not all(isinstance(value, str) for value in identity):
         return False
     temporary: Path | None = None
     try:
@@ -963,7 +975,7 @@ def _write_wake_intent(payload: dict[str, object]) -> bool:
                 os.chmod(CLAUDE_WAKE_INTENTS_DIR, 0o700)
             except OSError:
                 pass
-        target = _wake_intent_path(session_ref)
+        target = _wake_intent_path(*identity)
         temporary = target.with_name(target.name + ".tmp")
         temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
         if os.name != "nt":

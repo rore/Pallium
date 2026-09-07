@@ -308,3 +308,158 @@ def test_literal_legacy_duplicate_alias_is_unresolved(tmp_path: Path) -> None:
     with provider._relay_engine.connect() as connection:
         assert connection.execute(text("SELECT endpoint_id FROM relay_aliases WHERE actor_ref='actor-a' AND alias='shared'")).scalar() is None
     _dispose(provider)
+
+
+def test_split_restart_keeps_target_alias_registry_authoritative(tmp_path: Path) -> None:
+    from core.relay import RelayNotFoundError
+
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    scope = {"container_ref": "container-a", "actor_ref": "actor-a"}
+    legacy = SQLiteStorageProvider(f"sqlite:///{main}")
+    legacy.relay_turn(
+        runtime="codex", session_ref="sender", title=None,
+        max_chars=100, max_messages=1, lease_seconds=60, **scope,
+    )
+    legacy.relay_turn(
+        runtime="codex", session_ref="target", title=None,
+        max_chars=100, max_messages=1, lease_seconds=60, **scope,
+    )
+    legacy.relay_name_session(
+        runtime="codex", session_ref="target", alias="unique",
+        replace_existing=False, **scope,
+    )
+    _dispose(legacy)
+
+    split = SQLiteStorageProvider(
+        f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
+    )
+    split.relay_name_session(
+        runtime="codex", session_ref="target", alias=None,
+        replace_existing=False, **scope,
+    )
+    _dispose(split)
+
+    reopened = SQLiteStorageProvider(
+        f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
+    )
+    assert reopened.relay_list_sessions(
+        runtime=None, include_inactive=True, recent_seconds=60, **scope
+    )[0]["alias"] is None
+    _dispose(reopened)
+
+    # Model crash recovery after the target marker committed but before the
+    # source marker: the target remains authoritative and removed aliases stay removed.
+    with sqlite3.connect(main) as connection:
+        connection.execute(
+            "DELETE FROM relay_migration_metadata WHERE key='relay_split_v1'"
+        )
+    recovered = SQLiteStorageProvider(
+        f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
+    )
+    assert recovered.relay_list_sessions(
+        runtime=None, include_inactive=True, recent_seconds=60, **scope
+    )[0]["alias"] is None
+    with pytest.raises(RelayNotFoundError):
+        recovered.relay_send(
+            message_id="must-not-route",
+            sender_runtime="codex",
+            sender_session_ref="sender",
+            recipient="@unique",
+            recipient_runtime=None,
+            recipient_kind="alias",
+            recipient_value="unique",
+            payload="no resurrection",
+            redacted=False,
+            expires_in_seconds=60,
+            in_reply_to=None,
+            **scope,
+        )
+    _dispose(recovered)
+
+
+def test_same_db_endpoint_marker_survives_split_without_adopting_orphan(
+    tmp_path: Path,
+) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    _legacy_relay_db(main, unmatched=True)
+
+    same = SQLiteStorageProvider(f"sqlite:///{main}")
+    first = same.relay_turn(
+        runtime="codex",
+        session_ref="missing-recipient",
+        container_ref="container-a",
+        actor_ref="actor-a",
+        title=None,
+        max_chars=100,
+        max_messages=1,
+        lease_seconds=60,
+    )
+    assert first["deliveries"] == []
+    _dispose(same)
+
+    split = SQLiteStorageProvider(
+        f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
+    )
+    second = split.relay_turn(
+        runtime="codex",
+        session_ref="missing-recipient",
+        container_ref="container-a",
+        actor_ref="actor-a",
+        title=None,
+        max_chars=100,
+        max_messages=1,
+        lease_seconds=60,
+    )
+    status = split.relay_message_status(
+        message_id="message-1",
+        container_ref="container-a",
+        actor_ref="actor-a",
+    )
+    assert second["deliveries"] == []
+    assert status["deliveries"][0]["recipient_endpoint_id"] is None
+    _dispose(split)
+
+def test_endpoint_marker_split_chain_through_http_keeps_orphan_unclaimed(
+    tmp_path: Path,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.config import AppConfig
+    from app.main import create_app
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    _legacy_relay_db(main, unmatched=True)
+    scope = {"container_ref": "container-a", "actor_ref": "actor-a"}
+    turn = {
+        "runtime": "codex",
+        "session_ref": "missing-recipient",
+        "max_chars": 100,
+        "max_messages": 1,
+        "lease_seconds": 60,
+        **scope,
+    }
+
+    same = SQLiteStorageProvider(f"sqlite:///{main}")
+    assert same.relay_turn(title=None, **turn)["deliveries"] == []
+    _dispose(same)
+
+    app = create_app(AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{main}",
+        relay_sqlite_url=f"sqlite:///{relay}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+    with TestClient(app) as http:
+        response = http.post("/relay/turn", json=turn)
+        assert response.status_code == 200, response.text
+        assert response.json()["deliveries"] == []
+        status = http.get("/relay/messages/message-1", params=scope)
+        assert status.status_code == 200, status.text
+        assert status.json()["deliveries"][0]["recipient_endpoint_id"] is None

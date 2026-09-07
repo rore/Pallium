@@ -548,6 +548,97 @@ async def test_unconfigured_paired_scope_receive_to_reply_is_atomic(monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejection(
+    monkeypatch: pytest.MonkeyPatch, relay_app, asgi_post, asgi_get,
+):
+    """FastMCP callers can route by endpoint or global alias across containers."""
+    bind_asgi_post(monkeypatch, asgi_post)
+
+    async def get_from_app(_client, path, params):
+        return await asgi_get(path, params)
+
+    monkeypatch.setattr(PalliumMcpClient, "_get_or_error", get_from_app)
+    monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
+    monkeypatch.delenv("PALLIUM_ACTOR_REF", raising=False)
+    source = {"container_ref": "git:example.test/source", "actor_ref": "shared-actor"}
+    target = {"container_ref": "git:example.test/target", "actor_ref": "shared-actor"}
+    sender = (await asgi_post("/relay/turn", {
+        "runtime": "codex", "session_ref": "mcp-source", **source,
+    }))["session"]
+    recipient = (await asgi_post("/relay/turn", {
+        "runtime": "claude-code", "session_ref": "mcp-target", **target,
+    }))["session"]
+
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "claude-code")
+    monkeypatch.setenv("PALLIUM_THREAD_REF", "mcp-target")
+    server = create_server()
+    named, _ = await server.call_tool("pallium_relay_name", {
+        "current_runtime": "claude-code", "current_session_ref": "mcp-target",
+        "alias": "global-review", **target,
+    })
+    assert json.loads(named[0].text)["alias"] == "global-review"
+
+    sent, _ = await server.call_tool("pallium_relay_send", {
+        "message": "canonical cross-container",
+        "recipient": recipient["endpoint_id"],
+        "sender_runtime": "codex", "sender_session_ref": "mcp-source", **source,
+    })
+    sent_data = json.loads(sent[0].text)
+    message_id = sent_data["message_id"]
+    assert sent_data["deliveries"][0]["recipient_endpoint_id"] == recipient["endpoint_id"]
+
+    status, _ = await server.call_tool("pallium_relay_status", {
+        "message_id": message_id, **source,
+    })
+    assert json.loads(status[0].text)["deliveries"][0]["state"] == "pending"
+
+    received, _ = await server.call_tool("pallium_relay_receive", {**target})
+    delivery = json.loads(received[0].text)["deliveries"][0]
+    assert delivery["message_id"] == message_id
+    acked, _ = await server.call_tool("pallium_relay_ack", {
+        "delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"], **target,
+    })
+    assert json.loads(acked[0].text)["state"] == "delivered"
+
+    aliased, _ = await server.call_tool("pallium_relay_send", {
+        "message": "alias cross-container",
+        "recipient": "@global-review",
+        "sender_runtime": "codex", "sender_session_ref": "mcp-source", **source,
+    })
+    alias_data = json.loads(aliased[0].text)
+    alias_delivery = alias_data["deliveries"][0]
+    received_alias, _ = await server.call_tool("pallium_relay_receive", {**target})
+    alias_claim = json.loads(received_alias[0].text)["deliveries"][0]
+    replied, _ = await server.call_tool("pallium_relay_reply", {
+        "delivery_id": alias_claim["delivery_id"], "receipt": alias_claim["receipt"],
+        "message": "reply from target", **target,
+    })
+    reply_data = json.loads(replied[0].text)
+    assert reply_data["in_reply_to"] == alias_data["message_id"]
+    assert reply_data["deliveries"][0]["recipient_endpoint_id"] == sender["endpoint_id"]
+    assert alias_delivery["recipient_endpoint_id"] == recipient["endpoint_id"]
+
+    from sqlalchemy import func, select
+    from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord
+
+    with relay_app.state.pallium_service._storage._relay_session_factory() as db:
+        before = (
+            db.scalar(select(func.count()).select_from(RelayMessageRecord)),
+            db.scalar(select(func.count()).select_from(RelayDeliveryRecord)),
+        )
+    rejected, _ = await server.call_tool("pallium_relay_send", {
+        "message": "must not broadcast", "recipient": "codex",
+        "sender_runtime": "codex", "sender_session_ref": "mcp-source", **source,
+    })
+    assert "422" in rejected[0].text
+    with relay_app.state.pallium_service._storage._relay_session_factory() as db:
+        after = (
+            db.scalar(select(func.count()).select_from(RelayMessageRecord)),
+            db.scalar(select(func.count()).select_from(RelayDeliveryRecord)),
+        )
+    assert after == before
+
+@pytest.mark.asyncio
 async def test_redacted_send_and_reply_summaries_are_safe_and_bounded(
     monkeypatch: pytest.MonkeyPatch, asgi_post,
 ):

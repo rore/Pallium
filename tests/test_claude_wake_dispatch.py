@@ -1355,7 +1355,7 @@ def test_unreachable_callback_is_aware_and_exception_safe(monkeypatch: pytest.Mo
         registry=registry, on_unreachable=callback,
     ))
     assert len(observed) == 1 and observed[0].tzinfo is not None
-    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"])].state == "idle"
+    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"], PAYLOAD["actor_ref"])].state == "idle"
     assert registry.recovery_candidates()[0]["state"] == "idle"
 
     retried: list[datetime] = []
@@ -1365,7 +1365,7 @@ def test_unreachable_callback_is_aware_and_exception_safe(monkeypatch: pytest.Mo
         registry=registry, on_unreachable=retried.append,
     ))
     assert len(retried) == 1
-    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"])].state == "unreachable"
+    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"], PAYLOAD["actor_ref"])].state == "unreachable"
 
 
 
@@ -1418,7 +1418,7 @@ def test_real_router_unreachable_feedback_and_registration_self_heal(
         f"/relay/messages/{retryable.json()['message_id']}", params=scope
     ).json()
     assert retryable_status["deliveries"][0]["destination_health"] == "active"
-    assert registry._registrations[("claude-code", "health-target")].state == "idle"
+    assert registry._registrations[("claude-code", "health-target", scope["container_ref"], scope["actor_ref"])].state == "idle"
     monkeypatch.setattr(registry, "probe", original_probe)
 
     persisted = threading.Event()
@@ -1443,7 +1443,7 @@ def test_real_router_unreachable_feedback_and_registration_self_heal(
     status = http.get(f"/relay/messages/{sent.json()['message_id']}", params=scope).json()
     assert status["deliveries"][0]["state"] == "pending"
     assert status["deliveries"][0]["destination_health"] == "unreachable"
-    assert registry._registrations[("claude-code", "health-target")].state == "unreachable"
+    assert registry._registrations[("claude-code", "health-target", scope["container_ref"], scope["actor_ref"])].state == "unreachable"
 
     assert http.post("/internal/claude-wake/register", json=registration).status_code == 204
     sessions = http.get(
@@ -1451,7 +1451,7 @@ def test_real_router_unreachable_feedback_and_registration_self_heal(
     ).json()
     target = next(row for row in sessions if row["session_ref"] == "health-target")
     assert target["destination_health"] == "active"
-    assert registry._registrations[("claude-code", "health-target")].state == "idle"
+    assert registry._registrations[("claude-code", "health-target", scope["container_ref"], scope["actor_ref"])].state == "idle"
 
 def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
@@ -1592,7 +1592,7 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
     ] == ["delivered"] * 5
     combined = first_output + final_output
     assert all(combined.count(payload) == 1 for payload in ("one", "two", "three", "four", "five"))
-    registration = registry._registrations[("claude-code", "rw007")]
+    registration = registry._registrations[("claude-code", "rw007", scope["container_ref"], scope["actor_ref"])]
     assert registration.state == "idle" and registration.delivery_id is None
 
 
@@ -1721,3 +1721,78 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
     assert relay.turn(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope
     )["deliveries"] == []
+
+
+def test_cross_container_duplicate_native_claude_endpoints_wake_independently(
+    client, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.dependencies import build_router
+
+    actor = "shared-wake-actor"
+    source = "git:example.test/wake-source"
+    target = "git:example.test/wake-target"
+    registry = ClaudeWakeRegistry()
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+        claude_wake_registry=registry,
+    ))
+    http = TestClient(app, client=("127.0.0.1", 50000))
+
+    def turn(runtime: str, session_ref: str, container_ref: str) -> dict:
+        response = http.post("/relay/turn", json={
+            "runtime": runtime,
+            "session_ref": session_ref,
+            "container_ref": container_ref,
+            "actor_ref": actor,
+        })
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    turn("codex", "sender", source)
+    first = turn("claude-code", "duplicate", source)["session"]
+    second = turn("claude-code", "duplicate", target)["session"]
+    for container_ref, socket_path, token in (
+        (source, "socket-a", "token-a"),
+        (target, "socket-b", "token-b"),
+    ):
+        response = http.post("/internal/claude-wake/register", json={
+            "runtime": "claude-code",
+            "session_ref": "duplicate",
+            "container_ref": container_ref,
+            "actor_ref": actor,
+            "socket_path": socket_path,
+            "token": token,
+            "idle": True,
+        })
+        assert response.status_code == 204, response.text
+
+    observed: list[tuple[str, str]] = []
+    complete = threading.Event()
+
+    def transport(socket_path: str, token: str) -> str:
+        observed.append((socket_path, token))
+        if len(observed) == 2:
+            complete.set()
+        return "accepted"
+
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
+    for endpoint, payload in ((first["endpoint_id"], "left"), (second["endpoint_id"], "right")):
+        response = http.post("/relay/messages", json={
+            "sender_runtime": "codex",
+            "sender_session_ref": "sender",
+            "recipient": endpoint,
+            "payload": payload,
+            "container_ref": source,
+            "actor_ref": actor,
+        })
+        assert response.status_code == 200, response.text
+
+    assert complete.wait(timeout=1)
+    assert sorted(observed) == [("socket-a", "token-a"), ("socket-b", "token-b")]
+    assert [item["payload"] for item in turn("claude-code", "duplicate", source)["deliveries"]] == ["left"]
+    assert [item["payload"] for item in turn("claude-code", "duplicate", target)["deliveries"]] == ["right"]
