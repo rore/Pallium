@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -43,6 +43,8 @@
 - Live Relay database: the two deliveries were claimed and delivered once at 2026-09-07 17:45:49Z and no exact-session delivery remains pending.
 - Service log: confirmed queue outcomes repeatedly scheduled another retry during the busy interval.
 - Canonical Codex transcript: thirty task starts and zero visible user messages during the post-delivery drain window.
+- Pre-fix reproduction: the new caller-surface test failed with six native queues instead of one.
+- Revision dfc1cd86: 41 Codex wake tests and 76 related Relay wake-contract/E2E/integration tests passed; Python compile, import-linter, redline, workflow, and diff checks were clean. Ruff was not run because it is neither installed nor configured in this repository.
 
 ## Plan review
 
