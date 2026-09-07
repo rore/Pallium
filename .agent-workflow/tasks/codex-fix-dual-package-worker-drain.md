@@ -19,10 +19,14 @@
 
 **Verification:** Run the failing test repeatedly and serially, the full test module, agent-workflow/redline checks, and PR CI; review the final diff independently before merge.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Discovery: Windows CI failed because `join(timeout=5)` is shorter than SQLite's configured 15-second busy timeout; workers only observe the stop event between claims.
 - Implemented: replaced the two independent 5-second joins with one shared 20-second deadline, preserving immediate return and a bounded hang assertion.
+
+## Evidence
+
+- Revision b0863fcf: focused test passed 5 repeated runs, then passed again at the committed revision; all 4 module scenarios passed serially in 8.21s; redline and agent-workflow gates are clean.
