@@ -75,6 +75,8 @@ Approved by user 2026-09-07: "you have approval for all prs you manage"
 
 - 2026-09-07: High-risk result review found three lifecycle gaps. Claude wake register/close now use the shared absolute deadline; both combined ingest/query routes dispatch assistant usage audits after query-audit creation; and shutdown coverage drives the real HTTP route plus TestClient lifespan through actual storage close. All regressions use events/fake clocks rather than sleeps.
 
+- 2026-09-07: Final CodeRabbit review identified a temporal attribution bug in combined assistant ingest/query requests: the current assistant could classify usage rows created by the query it predates. The shared worker now selects only pending rows created strictly before the durable assistant source item; the caller-visible lifecycle test proves the current row stays pending and a later assistant resolves it.
+
 ## Evidence
 
 - Historical plan lookup 6e66a3a4-25ba-596f-bd07-12cd33cd0f09.
@@ -91,6 +93,9 @@ Approved by user 2026-09-07: "you have approval for all prs you manage"
 
 - High-risk remediation verification: 28 new/focused tests passed in 5.06s; the full affected hook/integration/audit surface passed 192 tests in 10.10s; the previously failing Codex wake lifecycle passed under four-worker execution; workflow and diff checks are clean.
 - Final clean-context re-review `/root/pr131_high_risk_review` verified all three remediation areas and found no blockers.
+
+- Temporal-integrity remediation: the full affected hook/integration/audit surface passed 193 tests in 9.87s; the new HTTP lifecycle drives the real async worker and reads both pending and populated state through GET /memory-usage-audit.
+- Follow-up clean-context High-risk review `/root/pr131_high_risk_review` verified the exclusive timestamp cutoff, SQLite representation, compatibility callers, and lifecycle regression; no blockers.
 
 ## Plan review
 

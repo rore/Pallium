@@ -15,6 +15,7 @@ hook that observes the agent's next turns and POSTs to update rows.
 from __future__ import annotations
 
 import uuid
+from threading import Event
 
 import pytest
 from fastapi import FastAPI
@@ -22,6 +23,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from api.routes import create_router
+from core.contracts import QueryResult
 from core.models import InjectableBlock
 from core.service import PalliumService
 from retrieval.lexical import LexicalRetrievalProvider
@@ -63,6 +65,87 @@ def test_items_enqueue_durable_assistant_id_without_semantic_package(service_and
     assert enqueued == [source_id]
     assert service._storage.get_source_item(source_id).content == "persist this assistant response"
     service.close()
+
+
+def test_combined_assistant_query_defers_current_usage_audit_until_later_turn(
+    service_and_client, monkeypatch,
+):
+    service, client, _ = service_and_client
+    memory_text = "Use stable event time for reservation ordering across delayed synchronization."
+    query_result = QueryResult(
+        results=[],
+        should_inject=True,
+        decision_reason="carry_forward_available",
+        injectable_blocks=[InjectableBlock(
+            result_id="memory_object:memory-current-query",
+            memory_object_id="memory-current-query",
+            block_type="memory",
+            title="Ordering decision",
+            text=memory_text,
+            evidence=[],
+            memory_type="decision",
+        )],
+    )
+    monkeypatch.setattr(service, "query", lambda *_args, **_kwargs: query_result)
+    monkeypatch.setattr(
+        service,
+        "get_memory_expand",
+        lambda _memory_id: (None, [], memory_text),
+    )
+    original_populate = service.populate_memory_usage_audit
+    completions = [Event(), Event()]
+    calls = []
+
+    def tracked_populate(*args, **kwargs):
+        index = len(calls)
+        calls.append((args, kwargs))
+        try:
+            original_populate(*args, **kwargs)
+        finally:
+            completions[index].set()
+
+    monkeypatch.setattr(service, "populate_memory_usage_audit", tracked_populate)
+
+    try:
+        combined = client.post("/item-and-query", json={
+            "source_type": "hook",
+            "source_id": "assistant-before-current-query",
+            "content_type": "text/plain",
+            "content": "This assistant response predates the query below.",
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "git:temporal-audit",
+            "thread_ref": "thread-temporal-audit",
+            "visibility": "private",
+        })
+        assert combined.status_code == 200
+        assert completions[0].wait(1)
+        audit_id = combined.json()["lookup_event_id"]
+        current_rows = client.get(
+            "/memory-usage-audit", params={"query_audit_log_id": audit_id},
+        ).json()["rows"]
+        assert len(current_rows) == 1
+        assert current_rows[0]["referenced_in_next_turn"] is None
+
+        later = client.post("/items", json=[{
+            "source_type": "hook",
+            "source_id": "assistant-after-current-query",
+            "content_type": "text/plain",
+            "content": memory_text,
+            "artifact_kind": "message",
+            "role": "assistant",
+            "container_ref": "git:temporal-audit",
+            "thread_ref": "thread-temporal-audit",
+            "visibility": "private",
+        }])
+        assert later.status_code == 200
+        assert completions[1].wait(1)
+        populated_rows = client.get(
+            "/memory-usage-audit", params={"query_audit_log_id": audit_id},
+        ).json()["rows"]
+        assert populated_rows[0]["referenced_in_next_turn"] is True
+    finally:
+        service.close()
 
 
 @pytest.mark.parametrize("enqueue_result", [False, RuntimeError("full")])

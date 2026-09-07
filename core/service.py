@@ -1721,10 +1721,18 @@ class PalliumService:
         return row["id"]
 
     def populate_memory_usage_audit(
-        self, container_ref: str | None, thread_ref: str, response_text: str,
+        self,
+        container_ref: str | None,
+        thread_ref: str,
+        response_text: str,
+        *,
+        before_created_at: datetime | None = None,
     ) -> None:
         for row in self.list_pending_memory_usage_audit_by_thread(
-            thread_ref, container_ref=container_ref, limit=20,
+            thread_ref,
+            container_ref=container_ref,
+            before_created_at=before_created_at,
+            limit=20,
         ):
             try:
                 _, _, match_text = self.get_memory_expand(row["memory_object_id"])
@@ -1756,7 +1764,10 @@ class PalliumService:
             if item.role != "assistant" or not item.thread_ref or not item.content:
                 return
             self.populate_memory_usage_audit(
-                item.container_ref, item.thread_ref, item.content,
+                item.container_ref,
+                item.thread_ref,
+                item.content,
+                before_created_at=item.created_at,
             )
         except KeyError:
             return
@@ -1780,6 +1791,7 @@ class PalliumService:
         thread_ref: str,
         *,
         container_ref=_ANY_CONTAINER,
+        before_created_at: datetime | None = None,
         limit: int = 20,
     ) -> list[dict]:
         """Phase 5b: list pending (populated_at IS NULL) usage-audit rows
@@ -1791,10 +1803,13 @@ class PalliumService:
         """
         if container_ref is _ANY_CONTAINER:
             return self._storage.list_pending_memory_usage_audit_rows_by_thread(
-                thread_ref, limit=limit,
+                thread_ref, before_created_at=before_created_at, limit=limit,
             )
         return self._storage.list_pending_memory_usage_audit_rows_by_thread(
-            thread_ref, container_ref=container_ref, limit=limit,
+            thread_ref,
+            container_ref=container_ref,
+            before_created_at=before_created_at,
+            limit=limit,
         )
 
     def update_memory_usage_audit(

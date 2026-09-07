@@ -1760,6 +1760,7 @@ class SQLiteStorageProvider(
         thread_ref: str,
         *,
         container_ref=_ANY_CONTAINER,
+        before_created_at: datetime | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """List usage-audit rows for a thread that are still pending
@@ -1787,6 +1788,8 @@ class SQLiteStorageProvider(
                     else MemoryUsageAuditRecord.container_ref == container_ref
                 )
                 stmt = stmt.where(predicate)
+            if before_created_at is not None:
+                stmt = stmt.where(MemoryUsageAuditRecord.created_at < before_created_at)
             stmt = stmt.order_by(MemoryUsageAuditRecord.created_at.desc()).limit(limit)
             out: list[dict[str, Any]] = []
             for r in session.execute(stmt).scalars().all():

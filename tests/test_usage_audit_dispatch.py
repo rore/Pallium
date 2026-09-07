@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from threading import Event, Thread
 from types import SimpleNamespace
 
@@ -55,7 +56,7 @@ def test_audit_queue_saturation_and_shutdown_are_deterministic(monkeypatch):
     service = _service(monkeypatch)
     started, release, finished = Event(), Event(), Event()
 
-    def work(*_args):
+    def work(*_args, **_kwargs):
         started.set()
         release.wait()
         finished.set()
@@ -64,6 +65,7 @@ def test_audit_queue_saturation_and_shutdown_are_deterministic(monkeypatch):
     service._storage.get_source_item = lambda _id: SimpleNamespace(
         role="assistant", container_ref="container", thread_ref="thread",
         content="persisted redacted",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
     assert service.enqueue_memory_usage_audit("source-2")
     assert started.wait(1)
@@ -81,6 +83,7 @@ def test_source_miss_retries_on_later_assistant_ingest_idempotently(monkeypatch)
     item = SimpleNamespace(
         role="assistant", container_ref="container", thread_ref="thread",
         content="persisted",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
 
     def get_source_item(source_id):
@@ -94,8 +97,8 @@ def test_source_miss_retries_on_later_assistant_ingest_idempotently(monkeypatch)
     populated = []
     populated_done = Event()
 
-    def populate(container, thread, content):
-        populated.append((container, thread, content))
+    def populate(container, thread, content, *, before_created_at):
+        populated.append((container, thread, content, before_created_at))
         populated_done.set()
 
     service.populate_memory_usage_audit = populate
@@ -104,7 +107,9 @@ def test_source_miss_retries_on_later_assistant_ingest_idempotently(monkeypatch)
     assert service.enqueue_memory_usage_audit("source-retry")
     assert populated_done.wait(1)
     service.close()
-    assert populated == [("container", "thread", "persisted")]
+    assert populated == [(
+        "container", "thread", "persisted", datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )]
     assert attempts == ["source-retry", "source-retry"]
 
 
@@ -121,7 +126,7 @@ def test_app_shutdown_drains_http_audit_before_storage_close(monkeypatch, tmp_pa
     started, release, finished = Event(), Event(), Event()
     close_started, storage_closed = Event(), Event()
 
-    def work(*_args):
+    def work(*_args, **_kwargs):
         started.set()
         release.wait()
         finished.set()
