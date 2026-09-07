@@ -898,7 +898,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         """Read a bounded Relay body page and compact delivery status. Continue with next_offset until null."""
         if offset < 0:
             return _json_text({"error": "offset must be non-negative"})
-        ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
+        if scope_error:
+            return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_status(

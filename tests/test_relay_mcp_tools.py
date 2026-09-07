@@ -472,6 +472,7 @@ async def test_long_mcp_preview_status_pages_and_ack_reconstruct_stored_body(
 
 
 _RELAY_SCOPE_TOOL_METHODS = {
+    "pallium_relay_status": ("relay_status", {"message_id": "message"}),
     "pallium_relay_receive": ("relay_receive", {}),
     "pallium_relay_ack": ("relay_mcp_ack", {"delivery_id": "delivery", "receipt": "receipt"}),
     "pallium_relay_reply": ("relay_reply", {"delivery_id": "delivery", "message": "reply"}),
