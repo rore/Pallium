@@ -88,6 +88,6 @@
 - Fresh smart static review traced every Python actor-derivation caller and OpenCode pin/close path. It found no production correctness, security, lifecycle, or MCP-scope defect.
 - One P2 test-isolation finding was fixed by redirecting the real post-tool retry-counter directory into the test temporary directory; delta re-review closed the finding with no new findings.
 - Independent verification was performed by a separate worker before and after rebasing; reliable passing suites were not duplicated by the smart reviewer.
-- Claude architect review was requested by exact Relay alias and is pending delivery; any finding will be handled on the PR before merge.
+- CodeRabbit was rate-limited, so a bounded Claude Opus architect review inspected the final PR diff and relevant callers. It found no blocking findings and recommended merge; its two non-blocking observations concern a real-Uvicorn Claude close test and the intentionally unsupported no-configuration cross-repository resume case.
 
 - Lifecycle implementation boundary: pre-compact, post-tool-use, and session-end now pass the same cwd/session_id into actor derivation, preserving resumed cache pins. Focused resumed-actor regression verification remains pending; State stays Ready to implement.
