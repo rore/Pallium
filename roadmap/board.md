@@ -49,6 +49,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- fix-disabled-derived-memory-injection-observability
 - decouple-session-history-from-derived-packages
 - fix-agent-work-ref-injection
 - add-distinct-work-and-broad-history-search-tools

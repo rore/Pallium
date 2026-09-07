@@ -555,6 +555,12 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "issues": ingestion_issues,
         }
 
+        derived_memory_info = {
+            "enabled": bool(service._semantic_plugins),
+            "packages": sorted(service._semantic_plugins),
+            "injection_enabled": service._default_use_case in service._semantic_plugins,
+        }
+
         return JSONResponse(content={
             "pending_items": pending_count,
             "oldest_pending_age_seconds": oldest_pending_age,
@@ -570,6 +576,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "vector_rebuild": rebuild_info,
             "uptime_seconds": uptime,
             "query": query_info,
+            "derived_memory": derived_memory_info,
             "metrics_summary": metrics_summary,
             "historical_lookup_funnel": funnel_info,
         })
