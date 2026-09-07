@@ -42,12 +42,14 @@
 - fix-redline-self-protection-path-mismatch
 - fix-add-limit-to-injection-replay-simulation
 - fix-work-resumption-benchmark-scenario-count-drift
+- fix-slow-suite-contract-drift
 - idea-operational-scale-hardening
 - idea-optional-reranker-support
 - idea-document-schema-evolution-strategy
 - idea-multi-vector-long-text-embedding
 
 # Done
+- stabilize-test-health-and-ci-cost
 - add-budgeted-long-relay-messages
 - fix-disabled-derived-memory-injection-observability
 - decouple-session-history-from-derived-packages

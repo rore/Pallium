@@ -857,6 +857,8 @@ async def test_relay_reply_uses_delivery_without_model_supplied_identity(monkeyp
 @pytest.mark.asyncio
 async def test_relay_status_keeps_errors_visible(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", "git:example/repo")
+    monkeypatch.setenv("PALLIUM_ACTOR_REF", "actor-1")
     error = {"error": "conflict", "status_code": 409, "detail": {"reason": "already delivered"}}
     with patch("app.mcp.client.PalliumMcpClient.relay_status", new=AsyncMock(return_value=error)):
         server = create_server()
@@ -890,6 +892,8 @@ async def test_relay_broadcast_response_keeps_success_summary(monkeypatch: pytes
 @pytest.mark.asyncio
 async def test_relay_status_preserves_a_short_response_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", "git:example/repo")
+    monkeypatch.setenv("PALLIUM_ACTOR_REF", "actor-1")
     result = {
         "message_id": "m-short",
         "sender_runtime": "codex",
@@ -939,6 +943,8 @@ async def test_relay_status_preserves_a_short_response_shape(monkeypatch: pytest
 @pytest.mark.asyncio
 async def test_relay_status_page_is_bounded_escape_safe_and_advancing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", "git:example/repo")
+    monkeypatch.setenv("PALLIUM_ACTOR_REF", "actor-1")
     payload = ('"\\\n😀' * 500)[:2000]
     page = {
         "message_id": "m-1",
@@ -969,6 +975,8 @@ async def test_relay_status_page_is_bounded_escape_safe_and_advancing(monkeypatc
 @pytest.mark.asyncio
 async def test_relay_status_rejects_nonadvancing_metadata_without_second_read(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", "git:example/repo")
+    monkeypatch.setenv("PALLIUM_ACTOR_REF", "actor-1")
     malformed = {
         "message_id": "m-1", "payload": "page", "payload_offset": 4,
         "payload_total_chars": 10, "content_truncated": True, "next_offset": 4,
