@@ -19,6 +19,7 @@ from app import codex_wake
 from app.config import AppConfig
 from app.main import create_app
 from core.relay import RelayService
+from integrations.codex.hooks import common as hook_common
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
@@ -48,6 +49,7 @@ def _schedule(result: dict) -> None:
 
 
 def setup_function() -> None:
+    hook_common._HOOK_DEADLINE = None
     codex_wake._scheduled_delivery_ids.clear()
     codex_wake._scheduled_session_generations.clear()
     codex_wake._scheduled_session_delivery_ids.clear()
@@ -585,7 +587,6 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
 
     monkeypatch.setattr(hook, "relay_request", relay_request)
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
-    hook.start_hook_deadline(8, host_reserve=1)
     hook._common.pin_container("target", scope["container_ref"])
     monkeypatch.setattr(hook, "read_hook_input", lambda: {
         "cwd": str(tmp_path),
