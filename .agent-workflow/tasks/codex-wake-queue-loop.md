@@ -35,6 +35,8 @@
 ## Implementation
 
 - Context, live incident evidence, caller graph, existing tests, and documentation contract inspected. No production code changed. Elevated-risk clean-context plan review and revised-plan re-review completed; implementation is ready to begin.
+- Failing caller-surface regression added: six deterministic recovery windows produced six native queue submissions on current code (expected one).
+- Implemented the root fix by deleting per-session blind retry timing; confirmed and ambiguous non-idempotent native writes now retain one scheduler generation until hook admission. Updated unit/concurrency expectations, operations, and RW-022.
 
 ## Evidence
 
