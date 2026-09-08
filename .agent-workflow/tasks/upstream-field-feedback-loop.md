@@ -50,14 +50,14 @@ Not required at this risk level.
 ## Implementation
 
 - Added a 192-character field-feedback pointer to the byte-identical Codex, Claude Code, and OpenCode skills; detailed filters, privacy rules, approval, duplicate handling, bounds, and fallbacks live only in byte-identical `references/field-feedback.md` files.
-- Updated Codex and Claude setup to replace the Pallium-managed skill tree from the complete source directory, removing stale nested artifacts on reinstall.
-- Added exact tree lifecycle tests, three-runtime lazy/content/parity contracts, and a real OpenCode npm dry-run package-manifest test.
+- Updated Codex and Claude setup to stage and validate the complete source tree before activation, restore the prior installation on activation failure, and remove stale nested artifacts on successful reinstall.
+- Added exact tree lifecycle and failure-preservation tests, three-runtime lazy/content/parity/security contracts, a real OpenCode npm dry-run package-manifest test, and the matching package-tree README entry.
 - Added and completed the distinct upstream-defect minimap feature, cross-linked to the existing memory-quality feedback/replay lane.
 ## Evidence
 
 - Base revision: `19f500ac8b6125fd7f58914f4eb74bbf4cea8b85`.
 - Skill normalized size: 2,529 characters (2,337 before); all three skill copies and all three references are byte-identical.
-- Focused contracts: `tests/test_guidance_budget.py` — 6 passed.
+- Focused contracts plus both installer lifecycle nodes after review fixes: 8 passed.
 - Installer lifecycle nodes: Codex + Claude — 2 passed.
 - Affected Python files: 51 passed.
 - OpenCode `npm test`: 49 passed, 7 platform skips; `npm pack --dry-run --json` includes `skills/pallium-memory/references/field-feedback.md`.
@@ -68,4 +68,4 @@ Approved after two clean-context reviews. The first review blocked on runtime-re
 
 ## Result review
 
-Pending.
+The first clean-context result review blocked on four findings: shell-interpolated issue examples, stale Redline evidence, destructive-before-copy installer replacement, and OpenCode package documentation drift. The implementation now uses argv-only examples plus `--body-file`, stages before activation and restores on failure with explicit tests, and aligns the README. A fresh branch-specific Redline verdict and final reviewer approval remain pending.

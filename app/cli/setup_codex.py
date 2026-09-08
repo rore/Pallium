@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -75,11 +76,26 @@ def _codex_skill_dir() -> Path:
 
 
 def _install_skill() -> None:
-    """Replace the Pallium-managed skill with the complete shipped tree."""
+    """Stage and atomically activate the complete Pallium-managed skill tree."""
+    source_dir = _codex_skill_src().parent
     dest_dir = _codex_skill_dir()
-    shutil.rmtree(dest_dir, ignore_errors=True)
-    shutil.copytree(_codex_skill_src().parent, dest_dir)
-
+    dest_dir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=".pallium-memory-", dir=dest_dir.parent
+    ) as temp_dir:
+        staged = Path(temp_dir) / "skill"
+        previous = Path(temp_dir) / "previous"
+        shutil.copytree(source_dir, staged)
+        if not (staged / "SKILL.md").is_file():
+            raise FileNotFoundError("staged Pallium skill has no SKILL.md")
+        if dest_dir.exists():
+            dest_dir.rename(previous)
+        try:
+            staged.rename(dest_dir)
+        except BaseException:
+            if previous.exists():
+                previous.rename(dest_dir)
+            raise
 
 def _remove_skill() -> None:
     """Remove the deployed pallium-memory skill directory (if present)."""

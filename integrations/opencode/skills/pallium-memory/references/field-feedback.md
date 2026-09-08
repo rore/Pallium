@@ -31,13 +31,15 @@ Non-ASCII text is allowed after redaction and remains subject to both limits.
 ## Search and submit
 
 1. Show the redacted draft to the user and ask for explicit approval before any GitHub search, issue creation, or comment.
-2. Only after approval, search for duplicates:
+2. Only after approval, search for duplicates through a process or tool API that passes arguments without a shell:
 
-   `gh issue list --repo rore/Pallium --state all --search "<public-safe terms>" --limit 20`
+   `["gh", "issue", "list", "--repo", "rore/Pallium", "--state", "all", "--search", "<public-safe terms>", "--limit", "20"]`
 
 3. If a duplicate exists, report its URL and do not create or comment unless separately approved.
-4. Otherwise create the approved issue:
+4. Otherwise write the approved body to a private temporary file with a file API, then invoke without a shell:
 
-   `gh issue create --repo rore/Pallium --title "field-feedback: <summary>" --body "<approved body>"`
+   `["gh", "issue", "create", "--repo", "rore/Pallium", "--title", "field-feedback: <summary>", "--body-file", "<temp-file>"]`
+
+Delete the temporary file afterward. Never interpolate draft, title, search, or path text into a shell command. If an argv-safe process call and safe file API are unavailable, use the unsent fallback.
 
 If approval is withheld, `gh` is missing or unauthenticated, access is denied, the network fails, or submission is uncertain, do not retry blindly. Return the safe draft under `## Field feedback (unsent)` in the current Work Record when repository-safe; otherwise show it only to the user. Do not add telemetry, service APIs, or feedback storage.

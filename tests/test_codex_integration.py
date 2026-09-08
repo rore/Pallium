@@ -421,6 +421,27 @@ def test_codex_setup_deploys_and_removes_skill(
         if item.is_file()
     } == expected
 
+    working = skill_dir / "SKILL.md"
+    working.write_text("working", encoding="utf-8")
+    with monkeypatch.context() as failure:
+        failure.setattr(setup_codex, "_codex_skill_src", lambda: tmp_path / "missing" / "SKILL.md")
+        with pytest.raises(FileNotFoundError):
+            setup_codex._install_skill()
+    assert working.read_text(encoding="utf-8") == "working"
+
+    original_rename = Path.rename
+
+    def fail_activation(path: Path, target: Path) -> Path:
+        if path.name == "skill":
+            raise OSError("activation failed")
+        return original_rename(path, target)
+
+    with monkeypatch.context() as failure:
+        failure.setattr(Path, "rename", fail_activation)
+        with pytest.raises(OSError, match="activation failed"):
+            setup_codex._install_skill()
+    assert working.read_text(encoding="utf-8") == "working"
+
     (skill_dir / "SKILL.md").write_text("outdated", encoding="utf-8")
     stale = skill_dir / "references" / "stale.md"
     stale.write_text("obsolete", encoding="utf-8")

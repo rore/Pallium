@@ -139,7 +139,9 @@ integrations/opencode/
 |-- AGENTS.md
 |-- README.md
 |-- skills/
-|   +-- pallium-memory/SKILL.md
+|   +-- pallium-memory/
+|       |-- SKILL.md
+|       +-- references/field-feedback.md
 |-- .opencode/
 |   |-- command/pallium-memory.md
 |   +-- plugins/
