@@ -58,6 +58,7 @@ Not required at this risk level.
 - 2026-09-08: Clean-context Elevated plan review approved after adding a real isolated-home Codex trust/hook witness and conditional rerun wording.
 - 2026-09-08: Replaced the installer's unconditional ready claim with configuration-installed plus restart/review-if-prompted guidance; added public install lifecycle coverage and explicit docs without adding trust logic.
 - 2026-09-08: Windows Codex 0.149.1 isolated-home witness showed the native three-hook review, persisted three hashes through Codex, ran all three hooks, and returned `TRUST_WITNESS_OK`. No bypass was used. A whole live-config hash proved too broad because Codex owns unrelated config; targeted pre/post Pallium hook trust entries were unchanged. The temporary home and copied auth were deleted.
+- 2026-09-08: PR review identified that the focused assertions did not directly pin the restart wording; added the two exact installer/docs assertions and reran both regression tests (2 passed).
 
 ## Evidence
 
@@ -71,4 +72,4 @@ Not required at this risk level.
 
 ## Result review
 
-2026-09-08 clean-context review by /root/review_relay_first_run_result: APPROVE. Evidence supports all completion criteria and the Windows Codex 0.149.1-qualified roadmap status; Codex retains trust ownership and the diff remains minimal.
+2026-09-08 clean-context review by /root/review_relay_first_run_result: APPROVE. Evidence supports all completion criteria and the Windows Codex 0.149.1-qualified roadmap status; Codex retains trust ownership and the diff remains minimal. Approval reconfirmed after the PR-review restart-assertion follow-up; 2 focused tests passed.

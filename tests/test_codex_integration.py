@@ -123,6 +123,7 @@ def test_codex_install_reports_hook_review_boundary_and_preserves_codex_trust(
     config = config_path.read_text(encoding="utf-8")
     assert "[hooks.state]" not in config
     assert "Configuration installed." in first_output
+    assert "Restart Codex." in first_output
     assert "Approve the Pallium hook review if prompted." in first_output
     assert "Relay wake is ready only after that review." in first_output
     assert "Pallium is now integrated with Codex" not in first_output
@@ -147,6 +148,7 @@ def test_codex_install_reports_hook_review_boundary_and_preserves_codex_trust(
 def test_codex_setup_docs_require_owned_hook_review() -> None:
     docs = Path("docs/codex-integration.md").read_text(encoding="utf-8")
 
+    assert "Restart Codex after setup." in docs
     assert "Approve the Pallium hooks if" in docs
     assert "prompted. Until that review" in docs
     assert "Do not use `--dangerously-bypass-hook-trust`" in docs
