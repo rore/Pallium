@@ -651,6 +651,70 @@ def test_hook_timeout_or_http_failure_is_silent(failure: Exception, monkeypatch:
     captured = capsys.readouterr()
     assert "transport-secret" not in captured.out + captured.err
     assert not caplog.records
+
+def test_prompt_cleanup_retries_real_wake_and_relay_transition(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    hook = _load_claude_hook("user_prompt_submit", monkeypatch)
+    common = sys.modules[hook.close_claude_wake.__module__]
+    session_id = "session-transition"
+    old_container, new_container = "git:old/repo", "git:new/repo"
+    wake_dir = tmp_path / "wake"
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(common, "PALLIUM_BASE_URL", "http://testserver")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
+    registry = ClaudeWakeRegistry(state_dir=wake_dir)
+    wake_http = _client(registry)
+    http = client
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(
+        open=lambda request, **_: nullcontext(wake_http.request(request.get_method(), urlsplit(request.full_url).path, content=request.data)),
+    ))
+    assert common.register_claude_wake(session_id, old_container, idle=True)
+    assert common.register_claude_wake(session_id, new_container, idle=False)
+    common.pin_container(session_id, old_container)
+    assert http.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": session_id, "container_ref": old_container,
+    }).status_code == 200
+    common.pin_container(session_id, new_container)
+    assert common.get_pending_relay_closes(session_id) == [old_container]
+
+    def relay(method, path, body, **_):
+        response = http.request(method, path, json=body)
+        return response.json() if response.status_code < 400 and response.content else None
+    monkeypatch.setattr(hook, "relay_request", relay)
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "session_id": session_id, "cwd": str(tmp_path), "prompt": "normal prompt",
+    })
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: new_container)
+    monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "pallium_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(hook, "emit_utf8", lambda *_args, **_kwargs: True)
+    close_attempts = [0]
+    actual_close = hook.close_claude_wake
+    def fail_first_wake_close(*args):
+        close_attempts[0] += 1
+        return close_attempts[0] > 1 and actual_close(*args)
+    monkeypatch.setattr(hook, "close_claude_wake", fail_first_wake_close)
+    assert {row.container_ref for row in registry._registrations.values()} == {old_container, new_container}
+
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert http.get("/relay/sessions", params={"container_ref": old_container, "include_inactive": "true"}).json()[0]["state"] == "closed"
+    assert any(row.container_ref == old_container for row in registry._registrations.values())
+    assert any(row.container_ref == new_container for row in registry._registrations.values())
+    assert common.get_pending_relay_closes(session_id) == [old_container]
+
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert not any(row.container_ref == old_container for row in registry._registrations.values())
+    assert any(row.container_ref == new_container for row in registry._registrations.values())
+    assert common.get_pending_relay_closes(session_id) == []
+    assert http.get("/relay/sessions", params={"container_ref": new_container, "include_inactive": "true"}).json()[0]["state"] == "recent"
+
 def test_claude_hook_lifecycle_surfaces_registration_turn_and_stop(
     monkeypatch, tmp_path,
 ) -> None:
