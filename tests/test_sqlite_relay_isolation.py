@@ -14,33 +14,6 @@ def _dispose(*stores):
             store._relay_engine.dispose()
 
 
-def test_isolated_relay_schema_and_legacy_import_are_idempotent(tmp_path: Path) -> None:
-    main = tmp_path / "main.db"
-    relay = tmp_path / "relay.db"
-    legacy = SQLiteStorageProvider(f"sqlite:///{main}")
-    legacy.relay_turn(runtime="a", session_ref="s", container_ref="c", actor_ref="u", title=None, max_chars=100, max_messages=1, lease_seconds=1)
-    split = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-    reopened = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-    with split._relay_engine.connect() as connection:
-        tables = {row[0] for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
-    assert {"relay_sessions", "relay_messages", "relay_deliveries", "relay_migration_metadata"} <= tables
-    assert "memory_objects" not in tables
-    assert reopened.relay_list_sessions(container_ref="c", actor_ref="u", runtime=None, include_inactive=True, recent_seconds=1)
-    _dispose(legacy, split, reopened)
-
-
-def test_post_marker_missing_legacy_id_fails_closed(tmp_path: Path) -> None:
-    main = tmp_path / "main.db"
-    relay = tmp_path / "relay.db"
-    legacy = SQLiteStorageProvider(f"sqlite:///{main}")
-    legacy.relay_turn(runtime="a", session_ref="s", container_ref="c", actor_ref="u", title=None, max_chars=100, max_messages=1, lease_seconds=1)
-    split = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-    split._engine.dispose()
-    split._relay_engine.dispose()
-    with pytest.raises(RuntimeError, match="marker"): 
-        SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{tmp_path / 'different.db'}")
-    _dispose(legacy)
-
 def _pragma(path: Path, name: str):
     import sqlite3
     with sqlite3.connect(path) as connection:
@@ -81,29 +54,6 @@ def test_relay_indexes_support_claim_lookup_plan(tmp_path: Path) -> None:
     assert any("idx_relay_deliveries_claim" in str(row) for row in plan)
     _dispose(provider)
 
-
-def test_populated_legacy_relay_rows_migrate_exactly_once(tmp_path: Path) -> None:
-    main = tmp_path / "main.db"
-    relay = tmp_path / "relay.db"
-    legacy = SQLiteStorageProvider(f"sqlite:///{main}")
-    scope = {"container_ref": "c", "actor_ref": "u"}
-    for session in ("sender", "target"):
-        legacy.relay_turn(runtime="codex", session_ref=session, title=None, max_chars=2000, max_messages=3, lease_seconds=60, **scope)
-    legacy.relay_send(message_id="stable-message", sender_runtime="codex", sender_session_ref="sender", recipient="codex:target", recipient_runtime="codex", recipient_kind="session", recipient_value="target", payload="payload", redacted=False, expires_in_seconds=3600, in_reply_to=None, **scope)
-    claimed = legacy.relay_turn(runtime="codex", session_ref="target", title=None, max_chars=2000, max_messages=3, lease_seconds=60, **scope)["deliveries"][0]
-    with legacy._engine.connect() as connection:
-        before = {table: connection.execute(text(f"SELECT * FROM {table} ORDER BY 1")).fetchall() for table in ("relay_sessions", "relay_messages", "relay_deliveries")}
-    legacy._engine.dispose()
-    split = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-    with split._relay_engine.connect() as connection:
-        after = {table: connection.execute(text(f"SELECT * FROM {table} ORDER BY 1")).fetchall() for table in before}
-    assert after == before
-    assert claimed["state"] == "claimed"
-    split._engine.dispose(); split._relay_engine.dispose()
-    reopened = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-    with reopened._relay_engine.connect() as connection:
-        assert {table: connection.execute(text(f"SELECT * FROM {table} ORDER BY 1")).fetchall() for table in before} == before
-    _dispose(reopened)
 
 def test_bounded_multi_agent_relay_fan_in_has_no_lost_deliveries(tmp_path: Path) -> None:
     from concurrent.futures import ThreadPoolExecutor
@@ -166,300 +116,225 @@ def test_http_relay_remains_available_during_main_writer(tmp_path: Path, monkeyp
             blocker.close()
 
 
-def test_split_marker_detects_missing_target_row(tmp_path: Path) -> None:
-    main = tmp_path / "main.db"
-    relay = tmp_path / "relay.db"
-    legacy = SQLiteStorageProvider(f"sqlite:///{main}")
-    legacy.relay_turn(runtime="codex", session_ref="target", container_ref="c", actor_ref="u", title=None, max_chars=1000, max_messages=1, lease_seconds=60)
-    legacy._engine.dispose()
-    split = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-    split._engine.dispose(); split._relay_engine.dispose()
-    with __import__("sqlite3").connect(relay) as connection:
-        connection.execute("DELETE FROM relay_sessions")
-    with pytest.raises(RuntimeError, match="migration|marker"):
-        SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
 
 
-def test_split_rejects_competing_legacy_writer_within_bound(tmp_path: Path) -> None:
-    import sqlite3
-    import time
-
-    main = tmp_path / "main.db"
-    relay = tmp_path / "relay.db"
-    legacy = SQLiteStorageProvider(f"sqlite:///{main}")
-    legacy.relay_turn(runtime="codex", session_ref="target", container_ref="c", actor_ref="u", title=None, max_chars=1000, max_messages=1, lease_seconds=60)
-    legacy._engine.dispose()
-    blocker = sqlite3.connect(main, timeout=0)
-    try:
-        blocker.execute("BEGIN IMMEDIATE")
-        started = time.perf_counter()
-        with pytest.raises(Exception, match="locked|busy"):
-            SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-        assert time.perf_counter() - started < 5.0
-    finally:
-        blocker.rollback()
-        blocker.close()
-
-
-def test_split_resume_tolerates_heartbeat_drift(tmp_path: Path) -> None:
-    # last_seen_at advances only in the relay DB after the split, so it diverges
-    # from the frozen main-DB copy. The resumed-startup verify must not treat that
-    # expected drift as corruption.
-    import sqlite3
-
-    main = tmp_path / "main.db"
-    relay = tmp_path / "relay.db"
-    legacy = SQLiteStorageProvider(f"sqlite:///{main}")
-    legacy.relay_turn(runtime="codex", session_ref="target", container_ref="c", actor_ref="u", title=None, max_chars=1000, max_messages=1, lease_seconds=60)
-    legacy._engine.dispose()
-    split = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-    split._engine.dispose(); split._relay_engine.dispose()
-    with sqlite3.connect(relay) as connection:
-        connection.execute("UPDATE relay_sessions SET last_seen_at='2099-01-01 00:00:00.000000'")
-    # Must not raise despite the drifted column.
-    reopened = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-    _dispose(reopened)
-
-def _legacy_relay_db(path: Path, *, duplicate_alias: bool = False, unmatched: bool = False) -> None:
+def _tables(path: Path) -> set[str]:
     with sqlite3.connect(path) as connection:
-        connection.executescript("""
-            CREATE TABLE relay_sessions (id VARCHAR PRIMARY KEY, runtime VARCHAR NOT NULL, session_ref VARCHAR NOT NULL, container_ref VARCHAR NOT NULL, actor_ref VARCHAR NOT NULL, title VARCHAR, alias VARCHAR, state VARCHAR NOT NULL, first_seen_at DATETIME NOT NULL, last_seen_at DATETIME NOT NULL, closed_at DATETIME);
-            CREATE TABLE relay_messages (id VARCHAR PRIMARY KEY, sender_runtime VARCHAR NOT NULL, sender_session_ref VARCHAR NOT NULL, recipient_selector VARCHAR NOT NULL, container_ref VARCHAR NOT NULL, actor_ref VARCHAR NOT NULL, payload TEXT NOT NULL, redacted INTEGER NOT NULL, in_reply_to VARCHAR, created_at DATETIME NOT NULL, expires_at DATETIME NOT NULL);
-            CREATE TABLE relay_deliveries (id VARCHAR PRIMARY KEY, message_id VARCHAR NOT NULL, recipient_runtime VARCHAR NOT NULL, recipient_session_ref VARCHAR NOT NULL, state VARCHAR NOT NULL, claim_token VARCHAR, claimed_at DATETIME, lease_expires_at DATETIME, delivered_at DATETIME, attempts INTEGER NOT NULL);
-        """)
-        now = "2026-01-01 00:00:00.000000"
-        connection.executemany("INSERT INTO relay_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-            ("endpoint-a", "codex", "session-a", "container-a", "actor-a", None, "shared", "active", now, now, None),
-            ("endpoint-b", "codex", "session-b", "container-b" if duplicate_alias else "container-a", "actor-a", None, "shared" if duplicate_alias else "unique", "active", now, now, None),
-        ])
-        sender = "missing-sender" if unmatched else "session-a"
-        recipient = "missing-recipient" if unmatched else "session-b"
-        connection.execute("INSERT INTO relay_messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", ("message-1", "codex", sender, "codex:" + recipient, "container-a", "actor-a", "payload", 0, None, now, "2027-01-01 00:00:00.000000"))
-        connection.execute("INSERT INTO relay_deliveries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", ("delivery-1", "message-1", "codex", recipient, "pending", None, None, None, None, 0))
+        return {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
 
 
-def _relay_row(path: Path, table: str, row_id: str) -> tuple:
+def _columns(path: Path, table: str) -> set[str]:
     with sqlite3.connect(path) as connection:
-        return connection.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,)).fetchone()
+        return {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
 
 
-def test_literal_legacy_same_db_backfills_locations_and_alias_registry(tmp_path: Path) -> None:
-    relay = tmp_path / "legacy.db"
-    _legacy_relay_db(relay)
-    provider = SQLiteStorageProvider(f"sqlite:///{relay}")
-    with provider._relay_engine.connect() as connection:
-        rows = connection.execute(text("SELECT sender_endpoint_id FROM relay_messages WHERE id='message-1'")).fetchone()
-        delivery = connection.execute(text("SELECT recipient_endpoint_id, recipient_container_ref FROM relay_deliveries WHERE id='delivery-1'")).fetchone()
-        aliases = connection.execute(text("SELECT actor_ref, alias, endpoint_id FROM relay_aliases ORDER BY alias")).fetchall()
-    assert rows == ("endpoint-a",)
-    assert delivery == ("endpoint-b", "container-a")
-    assert aliases == [("actor-a", "shared", "endpoint-a"), ("actor-a", "unique", "endpoint-b")]
-    _dispose(provider)
+def test_fresh_separate_and_same_databases_use_current_schema(tmp_path: Path) -> None:
+    separate_main = tmp_path / "main.db"
+    separate_relay = tmp_path / "relay.db"
+    separate = SQLiteStorageProvider(
+        f"sqlite:///{separate_main}",
+        relay_database_url=f"sqlite:///{separate_relay}",
+    )
+    same_path = tmp_path / "same.db"
+    same = SQLiteStorageProvider(f"sqlite:///{same_path}")
+    required = {"relay_sessions", "relay_messages", "relay_deliveries", "relay_aliases"}
+    for path in (separate_relay, same_path):
+        assert required <= _tables(path)
+        assert "relay_migration_metadata" not in _tables(path)
+        assert "sender_endpoint_id" in _columns(path, "relay_messages")
+        assert {"recipient_endpoint_id", "recipient_container_ref"} <= _columns(
+            path, "relay_deliveries"
+        )
+    assert "memory_objects" not in _tables(separate_relay)
+    _dispose(separate, same)
 
 
-def test_literal_legacy_orphans_stay_unresolved_after_restart_and_registration(tmp_path: Path) -> None:
-    relay = tmp_path / "legacy.db"
-    _legacy_relay_db(relay, unmatched=True)
-    provider = SQLiteStorageProvider(f"sqlite:///{relay}")
-    _dispose(provider)
-    reopened = SQLiteStorageProvider(f"sqlite:///{relay}")
-    reopened.relay_turn(runtime="codex", session_ref="missing-recipient", container_ref="container-a", actor_ref="actor-a", title=None, max_chars=100, max_messages=1, lease_seconds=60)
-    with reopened._relay_engine.connect() as connection:
-        row = connection.execute(text("SELECT sender_endpoint_id FROM relay_messages WHERE id='message-1'")).fetchone()
-        delivery = connection.execute(text("SELECT recipient_endpoint_id FROM relay_deliveries WHERE id='delivery-1'")).fetchone()
-    assert row == (None,)
-    assert delivery == (None,)
-    _dispose(reopened)
-
-
-def test_literal_legacy_fresh_split_runs_endpoint_migration_after_copy(tmp_path: Path) -> None:
+@pytest.mark.parametrize("missing", ["main", "relay"])
+def test_existing_one_file_only_pair_fails_without_creating_other(
+    tmp_path: Path, missing: str
+) -> None:
     main = tmp_path / "main.db"
     relay = tmp_path / "relay.db"
-    _legacy_relay_db(main)
-    provider = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-    with provider._relay_engine.connect() as connection:
-        assert connection.execute(text("SELECT sender_endpoint_id FROM relay_messages WHERE id='message-1'")).scalar() == "endpoint-a"
-        assert connection.execute(text("SELECT recipient_endpoint_id FROM relay_deliveries WHERE id='delivery-1'")).scalar() == "endpoint-b"
-        keys = {row[0] for row in connection.execute(text("SELECT key FROM relay_migration_metadata"))}
-    assert {"relay_split_v1", "relay_endpoint_identity_v1"} <= keys
-    _dispose(provider)
-
-
-def test_split_recovery_does_not_overwrite_authoritative_target(tmp_path: Path) -> None:
-    main = tmp_path / "main.db"
-    relay = tmp_path / "relay.db"
-    _legacy_relay_db(main)
-    first = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-    _dispose(first)
-    with sqlite3.connect(relay) as connection:
-        connection.execute("UPDATE relay_messages SET payload='authoritative-target' WHERE id='message-1'")
-    with sqlite3.connect(main) as connection:
-        connection.execute("DELETE FROM relay_migration_metadata WHERE key='relay_split_v1'")
-    reopened = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
-    with sqlite3.connect(relay) as connection:
-        assert connection.execute("SELECT payload FROM relay_messages WHERE id='message-1'").fetchone() == ("authoritative-target",)
-    _dispose(reopened)
-
-
-def test_literal_legacy_duplicate_alias_is_unresolved(tmp_path: Path) -> None:
-    relay = tmp_path / "duplicate.db"
-    _legacy_relay_db(relay, duplicate_alias=True)
-    provider = SQLiteStorageProvider(f"sqlite:///{relay}")
-    with provider._relay_engine.connect() as connection:
-        assert connection.execute(text("SELECT endpoint_id FROM relay_aliases WHERE actor_ref='actor-a' AND alias='shared'")).scalar() is None
-    _dispose(provider)
-
-
-def test_split_restart_keeps_target_alias_registry_authoritative(tmp_path: Path) -> None:
-    from core.relay import RelayNotFoundError
-
-    main = tmp_path / "main.db"
-    relay = tmp_path / "relay.db"
-    scope = {"container_ref": "container-a", "actor_ref": "actor-a"}
-    legacy = SQLiteStorageProvider(f"sqlite:///{main}")
-    legacy.relay_turn(
-        runtime="codex", session_ref="sender", title=None,
-        max_chars=100, max_messages=1, lease_seconds=60, **scope,
-    )
-    legacy.relay_turn(
-        runtime="codex", session_ref="target", title=None,
-        max_chars=100, max_messages=1, lease_seconds=60, **scope,
-    )
-    legacy.relay_name_session(
-        runtime="codex", session_ref="target", alias="unique",
-        replace_existing=False, **scope,
-    )
-    _dispose(legacy)
-
-    split = SQLiteStorageProvider(
+    provider = SQLiteStorageProvider(
         f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
     )
-    split.relay_name_session(
-        runtime="codex", session_ref="target", alias=None,
-        replace_existing=False, **scope,
-    )
-    _dispose(split)
+    provider.close()
+    (main if missing == "main" else relay).unlink()
+    with pytest.raises(RuntimeError, match="partial|pair"):
+        SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    assert main.exists() == (missing != "main")
+    assert relay.exists() == (missing != "relay")
 
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [
+        ("relay_messages", "sender_endpoint_id"),
+        ("relay_deliveries", "recipient_endpoint_id"),
+        ("relay_deliveries", "recipient_container_ref"),
+    ],
+)
+def test_missing_current_endpoint_column_fails_without_mutation(
+    tmp_path: Path, table: str, column: str
+) -> None:
+    path = tmp_path / "relay.db"
+    provider = SQLiteStorageProvider(f"sqlite:///{path}")
+    provider.close()
+    with sqlite3.connect(path) as connection:
+        if table == "relay_deliveries" and column == "recipient_endpoint_id":
+            connection.execute("DROP INDEX IF EXISTS idx_relay_deliveries_recipient_endpoint")
+        connection.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+    before = path.read_bytes()
+    with pytest.raises(RuntimeError, match="column|schema|current"):
+        SQLiteStorageProvider(f"sqlite:///{path}")
+    assert path.read_bytes() == before
+    assert column not in _columns(path, table)
+
+
+def test_existing_empty_relay_file_fails_without_initializing_or_mutating_it(
+    tmp_path: Path,
+) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    main_store = SQLiteStorageProvider(f"sqlite:///{main}")
+    main_store.close()
+    with sqlite3.connect(relay) as connection:
+        connection.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
+        connection.execute("INSERT INTO unrelated VALUES (1)")
+    before = relay.read_bytes()
+    with pytest.raises(RuntimeError, match="Relay|relay|schema|table|incomplete"):
+        SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    assert relay.read_bytes() == before
+    assert _tables(relay) == {"unrelated"}
+
+
+def test_dormant_legacy_relay_table_in_main_does_not_block_active_pair(
+    tmp_path: Path,
+) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    provider = SQLiteStorageProvider(
+        f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
+    )
+    provider.close()
+    with sqlite3.connect(main) as connection:
+        connection.execute("CREATE TABLE relay_migration_metadata (key TEXT)")
+    before = _columns(main, "relay_migration_metadata")
     reopened = SQLiteStorageProvider(
         f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
     )
-    assert reopened.relay_list_sessions(
-        runtime=None, include_inactive=True, recent_seconds=60, **scope
-    )[0]["alias"] is None
-    _dispose(reopened)
+    result = reopened.relay_turn(
+        runtime="codex",
+        session_ref="target",
+        container_ref="c",
+        actor_ref="u",
+        title=None,
+        max_chars=100,
+        max_messages=1,
+        lease_seconds=60,
+    )
+    assert result["session"]["session_ref"] == "target"
+    assert _columns(main, "relay_migration_metadata") == before
+    reopened.close()
 
-    # Model crash recovery after the target marker committed but before the
-    # source marker: the target remains authoritative and removed aliases stay removed.
-    with sqlite3.connect(main) as connection:
-        connection.execute(
-            "DELETE FROM relay_migration_metadata WHERE key='relay_split_v1'"
-        )
-    recovered = SQLiteStorageProvider(
+
+def test_current_relay_rows_alias_removal_unresolved_binding_and_claim_survive_restart(
+    tmp_path: Path,
+) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    scope = {"container_ref": "c", "actor_ref": "u"}
+    provider = SQLiteStorageProvider(
         f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
     )
-    assert recovered.relay_list_sessions(
-        runtime=None, include_inactive=True, recent_seconds=60, **scope
-    )[0]["alias"] is None
-    with pytest.raises(RelayNotFoundError):
-        recovered.relay_send(
-            message_id="must-not-route",
-            sender_runtime="codex",
-            sender_session_ref="sender",
-            recipient="@unique",
-            recipient_runtime=None,
-            recipient_kind="alias",
-            recipient_value="unique",
-            payload="no resurrection",
-            redacted=False,
-            expires_in_seconds=60,
-            in_reply_to=None,
+    for session in ("sender", "target"):
+        provider.relay_turn(
+            runtime="codex",
+            session_ref=session,
+            title=None,
+            max_chars=1000,
+            max_messages=3,
+            lease_seconds=60,
             **scope,
         )
-    _dispose(recovered)
-
-
-def test_same_db_endpoint_marker_survives_split_without_adopting_orphan(
-    tmp_path: Path,
-) -> None:
-    main = tmp_path / "main.db"
-    relay = tmp_path / "relay.db"
-    _legacy_relay_db(main, unmatched=True)
-
-    same = SQLiteStorageProvider(f"sqlite:///{main}")
-    first = same.relay_turn(
+    provider.relay_name_session(
         runtime="codex",
-        session_ref="missing-recipient",
-        container_ref="container-a",
-        actor_ref="actor-a",
-        title=None,
-        max_chars=100,
-        max_messages=1,
-        lease_seconds=60,
+        session_ref="target",
+        alias="gone",
+        replace_existing=False,
+        **scope,
     )
-    assert first["deliveries"] == []
-    _dispose(same)
-
-    split = SQLiteStorageProvider(
+    provider.relay_send(
+        message_id="stable",
+        sender_runtime="codex",
+        sender_session_ref="sender",
+        recipient="codex:target",
+        recipient_runtime="codex",
+        recipient_kind="session",
+        recipient_value="target",
+        payload="payload",
+        redacted=False,
+        expires_in_seconds=3600,
+        in_reply_to=None,
+        **scope,
+    )
+    claimed = provider.relay_turn(
+        runtime="codex",
+        session_ref="target",
+        title=None,
+        max_chars=1000,
+        max_messages=3,
+        lease_seconds=60,
+        **scope,
+    )["deliveries"][0]
+    provider.relay_name_session(
+        runtime="codex",
+        session_ref="target",
+        alias=None,
+        replace_existing=False,
+        **scope,
+    )
+    with provider._relay_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE relay_messages SET sender_endpoint_id = NULL WHERE id = :id"),
+            {"id": "stable"},
+        )
+        connection.execute(
+            text("UPDATE relay_deliveries SET recipient_endpoint_id = NULL WHERE message_id = :id"),
+            {"id": "stable"},
+        )
+    with provider._relay_engine.connect() as connection:
+        before = {
+            table: connection.execute(text(f"SELECT * FROM {table} ORDER BY 1")).fetchall()
+            for table in ("relay_sessions", "relay_messages", "relay_deliveries", "relay_aliases")
+        }
+    provider.close()
+    reopened = SQLiteStorageProvider(
         f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
     )
-    second = split.relay_turn(
+    with reopened._relay_engine.connect() as connection:
+        assert {
+            table: connection.execute(text(f"SELECT * FROM {table} ORDER BY 1")).fetchall()
+            for table in before
+        } == before
+    assert reopened.relay_message_status(message_id="stable", **scope)["deliveries"][0]["state"] == "claimed"
+    assert claimed["state"] == "claimed"
+    reopened.relay_ack_by_receipt(
+        delivery_id=claimed["delivery_id"], receipt=claimed["receipt"], **scope
+    )
+    assert reopened.relay_message_status(message_id="stable", **scope)["deliveries"][0]["state"] == "delivered"
+    assert reopened.relay_turn(
         runtime="codex",
-        session_ref="missing-recipient",
-        container_ref="container-a",
-        actor_ref="actor-a",
+        session_ref="target",
         title=None,
-        max_chars=100,
-        max_messages=1,
+        max_chars=1000,
+        max_messages=3,
         lease_seconds=60,
-    )
-    status = split.relay_message_status(
-        message_id="message-1",
-        container_ref="container-a",
-        actor_ref="actor-a",
-    )
-    assert second["deliveries"] == []
-    assert status["deliveries"][0]["recipient_endpoint_id"] is None
-    _dispose(split)
-
-def test_endpoint_marker_split_chain_through_http_keeps_orphan_unclaimed(
-    tmp_path: Path,
-) -> None:
-    from fastapi.testclient import TestClient
-
-    from app.config import AppConfig
-    from app.main import create_app
-    from storage.vector_index import VectorIndexConfig
-    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
-
-    main = tmp_path / "main.db"
-    relay = tmp_path / "relay.db"
-    _legacy_relay_db(main, unmatched=True)
-    scope = {"container_ref": "container-a", "actor_ref": "actor-a"}
-    turn = {
-        "runtime": "codex",
-        "session_ref": "missing-recipient",
-        "max_chars": 100,
-        "max_messages": 1,
-        "lease_seconds": 60,
         **scope,
-    }
-
-    same = SQLiteStorageProvider(f"sqlite:///{main}")
-    assert same.relay_turn(title=None, **turn)["deliveries"] == []
-    _dispose(same)
-
-    app = create_app(AppConfig(
-        storage_backend="sqlite",
-        sqlite_url=f"sqlite:///{main}",
-        relay_sqlite_url=f"sqlite:///{relay}",
-        default_use_case="demo_agent_memory",
-        semantic_packages=DEMO_SEMANTIC_PACKAGES,
-        vector_index=VectorIndexConfig(enabled=False),
-    ))
-    with TestClient(app) as http:
-        response = http.post("/relay/turn", json=turn)
-        assert response.status_code == 200, response.text
-        assert response.json()["deliveries"] == []
-        status = http.get("/relay/messages/message-1", params=scope)
-        assert status.status_code == 200, status.text
-        assert status.json()["deliveries"][0]["recipient_endpoint_id"] is None
+    )["deliveries"] == []
+    reopened.close()

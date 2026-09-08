@@ -27,18 +27,31 @@
 
 **Approvals:** Approved by user 2026-09-08: "there's no need for the db migration beyond my own service because no one else is using pallium at the moment, so we can remove that code"
 
-**Exceptions:** `apply_patch` failed with Windows error 1327 while revising this Work Record; a deterministic write limited to this file was used as the repository-approved fallback.
+**Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Discovery and pre-edit risk classification complete. No production file has been edited; implementation waits for clean-context plan review.
+- Deleted both one-time Relay migrations, migration marker model/table creation, endpoint-column ALTER helpers, and all runtime marker dependencies.
+- Added pre-mutation validation: separate file pairs reject either missing side; an existing active Relay database must have the complete current tables and endpoint columns; same-database mode validates any existing Relay schema. Dormant legacy Relay tables in the separate main database remain inert and are not treated as the active schema.
+- Removed legacy single-file-to-pair snapshot restore and legacy snapshot status counting. Paired-generation restore and the generic single-database snapshot API remain unchanged.
+- Removed `relay_migration_ready` and its unused storage status helper; both current database sizes remain reported.
+- Replaced migration-only tests with current-format schema, partial-pair, incomplete-schema, no-mutation, full-row restart, unresolved-binding, alias removal, claimed-delivery ACK/status, dormant-main, and unsupported legacy-snapshot coverage. Existing writer isolation, fan-in, HTTP, and Relay caller-surface coverage was preserved.
+- Updated worker fixtures to create the separate Relay database from their first storage open instead of depending on the removed implicit same-to-separate migration.
+- Updated operations guidance to current-format-only support and aligned the shipped cross-container roadmap item to done without changing global names, takeover, actor isolation, or the no-broadcast boundary.
 
 ## Evidence
 
-- Installed `pallium-relay.db`: split and endpoint markers present; current endpoint columns present; `PRAGMA quick_check` returned `ok`.
+- Focused persistence/snapshot/status/lifecycle verification: 75 passed; final isolation delta after the installed-database correction: 13 passed.
+- Cross-container HTTP, hook, and MCP Relay E2E: 153 passed.
+- Complete non-slow repository suite on the implementation candidate: 4,640 passed, 32 skipped, 2 expected failures. The subsequent one-line narrowing removed only validation of dormant main-DB Relay remnants; its dedicated final regression passed.
+- Import boundaries: 8 contracts kept, 0 broken across 146 files and 505 dependencies.
+- Installed-database backup smoke: 32 main tables and 5 Relay tables reopened; all 3,168 Relay rows, both retained marker rows, both schemas, main row counts, and `PRAGMA quick_check` results were unchanged. The first smoke correctly exposed over-broad validation of dormant main-DB remnants before commit; validation was narrowed to the active Relay file and the repeated smoke passed.
+- No live database was opened by feature-branch code. The 408 MB temporary backup directory was verified under the isolated worktree and removed after the smoke.
+- `git diff --check` passed; only expected Windows line-ending notices were emitted.
+- Machine-local edit fallback: after the required pply_patch attempt failed with Windows error 1327, deterministic replacements were limited to this Work Record and the explicit storage/sqlite.py validation correction; delegated edits remained limited to their named files.
 
 ## Plan review
 

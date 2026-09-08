@@ -52,7 +52,7 @@ Both SQLite files use the same lifecycle: WAL, auto_vacuum=INCREMENTAL, and a bo
 
 Persistent `auto_vacuum` and WAL modes are initialized once under the schema lock on an autocommit connection. Pooled connections set only their bounded busy timeout before ordinary work. Incremental-vacuum/checkpoint maintenance temporarily fails fast and restores the connection's prior timeout, so a live reader defers truncation instead of holding a worker for the full busy window.
 
-The first split upgrade is supported only while the previous service process tree is fully stopped. Use the platform service wrapper (on Windows, scripts/restart-service.ps1; on Unix, stop the service before starting the new version), then verify /health, /status, and /debug/queue/health. The migration copies legacy Relay sessions, messages, and deliveries transactionally and records a source/target marker. Re-running is safe before completion; after the marker, a missing or mismatched Relay file fails closed. Legacy Relay rows remain in the main file as rollback evidence, but rollback after new Relay writes is not automatic. Do not restart an old binary after the split: older code does not understand the marker and is outside the supported upgrade path; if it writes to the legacy tables, stop both versions and reconcile before continuing.
+Only the current Relay schema is supported. Keep the main and Relay SQLite files together, back up and restore them as a paired snapshot generation, and verify /health, /status, and /debug/queue/health after service restart. A partial live pair or a database missing required current Relay columns fails closed without being rewritten.
 
 ## Relay control-plane resilience
 
@@ -135,7 +135,7 @@ another storage backend is configured.
 | Endpoint | Field | Meaning |
 |----------|-------|---------|
 | `/health` | `status: ok` | Lifespan complete, vector index ready (or intentionally off). |
-| `/health` | `status: initializing` (503) | Still starting — schema migration / vector load in progress. |
+| `/health` | `status: initializing` (503) | Still starting — schema initialization / vector load in progress. |
 | `/health` | `status: degraded` (200) | Reachable but **impaired**: vector was expected but the embedding provider failed to initialize. See `degraded_reasons`. |
 | `/status` | `vector_expected` | Config intends vector search to run. |
 | `/status` | `embedding_provider_ok` | `false` = vector expected but the embedding provider did not load. |

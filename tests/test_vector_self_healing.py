@@ -331,7 +331,14 @@ def test_worker_loop_does_not_call_reconciliation(test_db_url: str, monkeypatch)
     from core.service import PalliumService
     from retrieval.lexical import LexicalRetrievalProvider
 
-    storage = SQLiteStorageProvider(test_db_url)
+    worker_config = AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=test_db_url,
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    )
+    storage = SQLiteStorageProvider(test_db_url, relay_database_url=worker_config.resolved_relay_sqlite_url)
     retrieval = LexicalRetrievalProvider(storage)
     plugins = {"demo_agent_memory": DemoAgentMemoryPlugin()}
     real_service = PalliumService(
@@ -348,12 +355,6 @@ def test_worker_loop_does_not_call_reconciliation(test_db_url: str, monkeypatch)
         lambda config, **_kw: types.SimpleNamespace(service=tracking_service),
     )
 
-    run_worker(["--once"], config=AppConfig(
-        storage_backend="sqlite",
-        sqlite_url=test_db_url,
-        default_use_case="demo_agent_memory",
-        semantic_packages=DEMO_SEMANTIC_PACKAGES,
-        vector_index=VectorIndexConfig(enabled=False),
-    ))
+    run_worker(["--once"], config=worker_config)
 
     assert len(reconcile_calls) == 0, "Worker should NOT call reconcile_vector_index (server handles it)"

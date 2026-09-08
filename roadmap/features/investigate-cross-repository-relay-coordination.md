@@ -1,7 +1,7 @@
 ---
 id: investigate-cross-repository-relay-coordination
 title: Investigate actor-scoped cross-container Relay routing
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -56,7 +56,7 @@ Caller-surface E2E must drive the same public HTTP/MCP and hook/plugin paths use
 7. Different actors cannot discover, target, claim, ACK, reply to, inspect status for, rename, transfer, close, or reactivate each other's endpoints, aliases, messages, or deliveries.
 8. Bare runtime selectors are rejected through every regular HTTP/MCP send surface, create no message or delivery rows, and trigger no wake; exact endpoint and alias sends remain the only proactive send forms.
 9. Cross-container Relay activity does not change or leak Session History, memory visibility, repository/worktree state, artifacts, or workflow records.
-10. Migration from the current schema preserves session, alias, message, delivery, reply, receipt, expiry, and lifecycle state exactly once, including duplicate native IDs and aliases that were previously legal only because containers or runtimes differed.
+10. Current-format persistence preserves session, alias, message, delivery, reply, receipt, expiry, and lifecycle state across restart, including duplicate native IDs and aliases across containers or runtimes.
 11. Full register → optionally name → send → claim/receive → ACK or reply → status → close/unreachable → reactivate journeys pass on supported runtime/OS combinations without a second delivery engine.
 
 The name lifecycle E2E matrix must drive the public naming, send, receive/list, and status surfaces and verify:
@@ -82,9 +82,9 @@ The name lifecycle E2E matrix must drive the public naming, send, receive/list, 
 
 ## Done when
 
-1. A written contract defines the actor-scoped Relay domain, canonical endpoint identity, exact and alias addressing, destination-aware storage, caller authorization, discovery boundary, target-only regular-send boundary, wake/fallback behavior, migration, and lifecycle semantics, with every current container-coupled implementation point accounted for.
+1. A written contract defines the actor-scoped Relay domain, canonical endpoint identity, exact and alias addressing, destination-aware storage, caller authorization, discovery boundary, target-only regular-send boundary, wake/fallback behavior, current-format persistence and lifecycle semantics, with every current container-coupled implementation point accounted for.
 2. The contract explicitly records that the old same-container plus explicit coordination-scope model was replaced and either removes coordination scopes from the design or cites the concrete unmet isolation requirement that justifies them.
-3. The smallest implementation reuses the existing delivery engine and passes every caller-surface journey above, including duplicate native identity, legacy alias-conflict migration, actor isolation, bare-runtime rejection without side effects, and memory/history separation.
+3. The smallest implementation reuses the existing delivery engine and passes every caller-surface journey above, including duplicate native identity, actor isolation, bare-runtime rejection without side effects, and memory/history separation.
 4. Installed dogfood completes unnamed exact-session, alias, reply, wake-capable, and fallback cross-container exchanges without manual recipient wake where wake support exists.
 5. README and Relay documentation claim actor-scoped cross-container targeting only after the tests and installed witnesses pass, while stating that regular send requires an exact endpoint or alias, broadcast is not currently supported, and memory/history scope is unchanged.
 

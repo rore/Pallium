@@ -506,6 +506,7 @@ def test_gate_b_explicit_package_restores_derived_lifecycle(
         default_use_case="agent_conversation_memory",
         sqlite_url=f"sqlite:///{tmp_path / 'derived.db'}",
     )
+    config = replace(config, relay_sqlite_url=config.resolved_relay_sqlite_url)
     # Exactly one semantic package is enabled; configured providers alone are inert.
     packages = {
         name: replace(package, enabled=(name == "agent_conversation_memory"))
