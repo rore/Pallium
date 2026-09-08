@@ -24,19 +24,19 @@ Moderate
 Redline classifies integration skills as gray and setup scripts as app-layer watch, with no red/API/persistence/security/boundary surface. Multiple runtimes and installed-artifact behavior require coordinated verification.
 
 **Discovery:**
-The three `SKILL.md` files are byte-identical and already sit at the 2,337-character normalized budget. Codex and Claude installers copy only `SKILL.md`; OpenCode packages `skills/` recursively. Existing `tests/test_guidance_budget.py` checks surfaces but not byte parity. Agent-workflow provides a useful lazy feedback pattern, while `add-live-integration-improvement-loop-and-replay-pipeline` owns memory-quality misses and replay promotion.
+The three `SKILL.md` files are byte-identical and already sit at the 2,337-character normalized budget. Codex and Claude installers copy only `SKILL.md`; OpenCode packages `skills/` recursively. Existing `tests/test_guidance_budget.py` checks surfaces but not byte parity. Agent-workflow provides a useful lazy feedback pattern, while `add-live-integration-improvement-loop-and-replay-pipeline` owns memory-quality misses and replay promotion. Runtime sources: Claude Code Skills docs (`https://code.claude.com/docs/en/skills`) document linked supporting files beside `SKILL.md`; OpenCode Skills docs (`https://opencode.ai/v2/docs/skills`) state that skill paths resolve relative to the directory containing `SKILL.md`; and the current Codex host skill contract instructs filesystem-backed skills to resolve relative resources against the `SKILL.md` directory and load them only when relevant. Static link checks plus fresh installed/package manifests will verify those conventions without loading the detailed reference into normal context.
 
 **Material assumptions:**
-Relative skill references are supported by all three runtimes; a failed installed-artifact or package test disproves this and requires a packaging-compatible reference path. npm's existing `files: ["skills/"]` includes nested references; a dry-run package manifest disproves this and requires the smallest manifest correction.
+npm's existing `files: ["skills/"]` includes nested references; an actual dry-run package manifest disproves this and requires the smallest manifest correction. The Pallium-owned installed skill directories may be replaced on reinstall, matching their existing whole-directory uninstall ownership; lifecycle tests disprove this if unmanaged content must be preserved.
 
 **Plan:**
-1. Add one short field-feedback trigger/pointer to the three identical skills and a self-contained `references/field-feedback.md` copy under each, reusing the existing actionability/filter shape while targeting `rore/Pallium`. 2. Change the Codex and Claude installers to copy the complete skill directory so lazy references deploy with `SKILL.md`; keep OpenCode's existing recursive `skills/` package entry. 3. Extend existing guidance-budget/parity and installer lifecycle tests, and add a completed minimap feature entry without reopening the memory-quality replay lane. 4. Run focused Python/OpenCode/package checks, installed-artifact parity, the affected subsystem tests, the full pre-PR suite, and independent result review. Stop if a runtime cannot resolve relative references or the change requires a service/API/storage surface.
+1. Add one short trigger/pointer to `integrations/{codex,claude-code,opencode}/skills/pallium-memory/SKILL.md` and byte-identical `references/field-feedback.md` files. The reference will load only after a trigger; accept only repeatable, pointable defects owned by Pallium's product, integrations, contracts, packaging, or documentation; route memory-quality misses exclusively to existing debug/flag/rate/replay mechanisms; redact private context; bound drafts to 200 words and 2,000 Unicode characters; prepare the draft before asking explicit user approval for any GitHub write; only after approval search `rore/Pallium` for duplicates; report an existing issue without creating another, create only when no duplicate exists, and return a safe unsent draft on missing `gh`, authentication/permission/network failure, or withheld approval. 2. Change `app/cli/setup_codex.py` and `app/cli/setup_claude_code.py` to replace each Pallium-managed destination skill tree with the complete source tree. Extend `tests/test_claude_code_integration.py` and `tests/test_codex_integration.py` across fresh install, overwrite/update, stale nested-file removal, repeat install, and uninstall. Keep OpenCode's recursive package entry, but add an actual `npm pack --dry-run --json` assertion in `integrations/opencode/tests/package.test.mjs` for the nested reference. 3. Extend `tests/test_guidance_budget.py` for the three-copy byte parity, bounded pointer, lazy-detail separation, relative link target, byte-identical references, reporting/privacy/fallback contracts, memory-miss exclusion, and non-ASCII-safe dual bound. Add `roadmap/features/add-context-conscious-upstream-field-feedback.md` and `roadmap/board.md` as an active integration-feedback item cross-linked to the distinct memory-quality replay feature; mark it done only after verification. 4. Run the exact focused Python and OpenCode tests, installer/package artifact parity, affected subsystem tests, full `python -m pytest tests/ -x -q`, diff hygiene, Redline/workflow checker, and clean-context result review. Stop if a runtime cannot resolve the packaged relative reference or the change requires service/API/storage state.
 
 **Verification plan:**
 When any shipped skill is loaded, normal context shall contain only the bounded trigger/pointer and all three copies shall match → guidance budget/parity test. When the trigger fires, the reference shall cover repeatability, actionability, ownership, privacy, duplicate search, bounded issue submission/fallback, and memory-quality routing → focused content-contract test and review. When Codex or Claude setup runs, the reference shall deploy and reinstall idempotently → existing installer lifecycle tests extended for the reference. When OpenCode is packed, the nested reference shall be present → `npm pack --dry-run --json` manifest check. Before PR, affected tests, full `tests/`, diff hygiene, Redline/checker, and clean-context result review shall pass.
 
 **Plan review:**
-Pending clean-context review.
+Approved after two clean-context reviews. The final review confirmed sourced runtime-reference conventions, exact targets, explicit external-write approval, safe duplicate/fallback handling, exact installer lifecycle, strict memory-quality separation, and minimap coordination; no blockers remain.
 
 **Approvals:**
 Not required at this risk level.
@@ -44,7 +44,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -58,7 +58,7 @@ Not required at this risk level.
 
 ## Plan review
 
-Pending.
+Approved after two clean-context reviews. The first review blocked on runtime-resolution evidence, external-write approval, exact targets, full installer lifecycle, privacy/negative/Unicode cases, and minimap separation. The second caught incorrect installer test names and unnamed runtime sources. The structured record now addresses all findings; the reviewer approved implementation with no remaining blockers.
 
 ## Result review
 
