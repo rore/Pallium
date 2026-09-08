@@ -39,7 +39,7 @@ renderReuseCalibration({
   available: true,
   report: { judge_vs_gold: { kappa: 0.75, threshold: 0.70, n: 12, calibrated: true } },
 });
-assert.match(elements['hh-reuse-kpi'].innerHTML, /do not know yet whether pulled-up memory helped/i);
+assert.match(elements['hh-reuse-kpi'].innerHTML, /do not know yet whether pulled-up history helped/i);
 assert.match(elements['hh-reuse-kpi'].innerHTML, /does not show that Pallium improved real work/);
 assert.match(elements['hh-reuse-kpi'].innerHTML, /ready for cautious use/);
 elements['hh-reuse-kpi'].querySelector('details').open = true;
@@ -206,7 +206,8 @@ const cleanStatus = {
 const cleanQueue = { status_counts_24h: { failed: 0 } };
 const cleanRelay = { status: 'idle', deliveries: { expired_last_24h: 0 } };
 renderOperational(cleanStatus, cleanQueue, cleanRelay);
-assert.equal(operationalElements['operational-summary'].hidden, true);
+assert.equal(operationalElements['operational-summary'].hidden, false);
+assert.equal(operationalElements['ops-title'].textContent, 'Pallium is operating normally');
 
 operationalElements['operational-summary'].open = false;
 renderOperational(cleanStatus, cleanQueue, {
@@ -237,6 +238,7 @@ const relaySelection = new Function(`
   let _relay = { selected: 'old', pair: ['old', 'pair'], message: 'old-message' };
   let renders = 0;
   function renderRelay() { renders += 1; }
+  function relayFocus() {}
   ${html.slice(relaySelectionStart, relaySelectionEnd)}
   return { selectRelayPair, state: () => _relay, renders: () => renders };
 `)();
@@ -269,6 +271,49 @@ assert.deepEqual(abConnection.forwardStates, { pending: 1, delivered: 1 });
 assert.deepEqual(abConnection.backwardStates, { delivered: 3 });
 assert.doesNotMatch(relayEdgeGeometry({ x: 50, y: 50 }, { x: 50, y: 50 }, false).path, /NaN/);
 
+const ownerResetStart = html.indexOf('function resetRelayData(');
+const ownerResetEnd = html.indexOf('function relaySessionParams(', ownerResetStart);
+const ownerLoadStart = html.indexOf('async function loadMoreRelayOwners(');
+const ownerLoadEnd = html.indexOf('function relayOwnerOverview(', ownerLoadStart);
+assert.ok(ownerResetStart >= 0 && ownerResetEnd > ownerResetStart && ownerLoadStart >= 0 && ownerLoadEnd > ownerLoadStart);
+const relayOwnerState = { sessions: [], messages: [], owners: [], generation: 1, ownerNext: 100, ownerLoadKey: null };
+const relayOwnerElements = new Map();
+const relayOwnerDocument = { getElementById(id) { if (!relayOwnerElements.has(id)) relayOwnerElements.set(id, { textContent: '', innerHTML: '' }); return relayOwnerElements.get(id); } };
+let firstOwnerReject;
+let ownerRequestCount = 0;
+const firstOwnerRequest = new Promise((resolve, reject) => { firstOwnerReject = reject; });
+const ownerOverviews = [];
+const ownerHarness = new Function('_relay', 'document', 'relayJson', 'relayScopeSnapshot', 'relayOwnerOverview', 'resetRelaySelection', `
+  ${html.slice(ownerResetStart, ownerResetEnd)}
+  ${html.slice(ownerLoadStart, ownerLoadEnd)}
+  return { resetRelayData, loadMoreRelayOwners };
+`)(relayOwnerState, relayOwnerDocument, async () => {
+  ownerRequestCount++;
+  if (ownerRequestCount === 1) return firstOwnerRequest;
+  return { owners: [{ actor_ref: 'owner-2' }], has_more: false };
+}, () => 'scope', data => ownerOverviews.push(data), () => {});
+const staleOwnerLoad = ownerHarness.loadMoreRelayOwners();
+assert.ok(relayOwnerState.ownerLoadKey);
+relayOwnerState.generation = 2;
+ownerHarness.resetRelayData('Refreshing…');
+relayOwnerState.ownerNext = 100;
+await ownerHarness.loadMoreRelayOwners();
+assert.equal(ownerRequestCount, 2);
+assert.equal(relayOwnerState.ownerLoadKey, null);
+firstOwnerReject(new Error('stale failure'));
+await staleOwnerLoad;
+assert.equal(relayOwnerState.ownerLoadKey, null);
+assert.equal(ownerOverviews.length, 1);
+
+const fitStart = html.indexOf('function relayFitScale(');
+const fitEnd = html.indexOf('function zoomRelay(', fitStart);
+assert.ok(fitStart >= 0 && fitEnd > fitStart);
+const { relayFitScale, relayZoomScale } = new Function(`${html.slice(fitStart, fitEnd)}; return { relayFitScale, relayZoomScale };`)();
+const narrowFit = relayFitScale(1100, 680, 382, 440);
+assert.ok(narrowFit * 1100 <= 358.001);
+assert.ok(narrowFit * 680 <= 416.001);
+assert.ok(relayZoomScale(narrowFit, .8) < narrowFit);
+
 assert.doesNotMatch(html, /id="relay-map-tab"|id="relay-messages-tab"/);
 assert.doesNotMatch(html, /relay-map-wrap'\)\.style\.display/);
 assert.match(html, /Owners keep different people or configurations from sharing Relay names and sessions/);
@@ -276,5 +321,18 @@ assert.match(html, /request!==_relay\.generation/);
 assert.doesNotMatch(html, /relayActor\.value\s*=\s*_actors\[0\]/);
 assert.ok(html.indexOf('id="relay-map-wrap"') < html.indexOf('id="relay-messages"'));
 assert.match(html, /data-rfrom=.*data-rto=/);
+assert.match(html, /class="edge-line"/);
+assert.doesNotMatch(html, /relay-edge(?:\.selected)? path:last-child/);
 assert.match(html, /data&&data\.owners&&data\.owners\.length\?data\.owners:_relay\.owners/);
+assert.doesNotMatch(html, /<details id="operational-summary"/);
+assert.match(html, /Session History source items/);
+assert.match(html, /SourceItems are the original prompts, responses, tool results, and notes/);
+assert.match(html, /Owner<\/strong> is the person or configuration identity/);
+assert.match(html, /Browse or search recorded history/);
+assert.match(html, /derivedPanel\.open = derived\.enabled === true/);
+assert.ok(html.indexOf("overview.id='overview-panel'") < html.indexOf("relay.id='relay-health-panel'"));
+assert.ok(html.indexOf("relay.id='relay-health-panel'") < html.indexOf("history.id='session-history-panel'"));
+assert.ok(html.indexOf("history.id='session-history-panel'") < html.indexOf("derived.id='derived-memory-panel'"));
+assert.match(html, /source-results-grid/);
+assert.match(html, /source-evidence/);
 console.log('plain-language dashboard renderers: all cases passed');

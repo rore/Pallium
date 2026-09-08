@@ -1,15 +1,15 @@
 # Relay dashboard usability
 
 <!-- agent-workflow:start -->
-**Outcome:** The live Relay dashboard starts with an understandable owner overview and provides a usable, visually verified workspace for finding active containers, sessions, conversations, and delivery detail.
+**Outcome:** The live dashboard presents a clear Operations hierarchy and a usable, visually verified Relay workspace for understanding inventory, health, recorded history, sessions, conversations, and delivery detail.
 
 **Target:** Pallium dashboard.
 
-**Scope:** Relay dashboard read projections, vanilla HTML/CSS/JS interaction and layout, focused caller-surface tests, dashboard design/docs, and visual evidence.
+**Scope:** Operations and Relay dashboard information architecture, Relay read projections, vanilla HTML/CSS/JS interaction and layout, focused caller-surface tests, dashboard design/docs, and visual evidence.
 
 **Constraints:** Preserve actor-domain isolation, bounded secret-free reads, canonical Relay identity/naming semantics, keyboard accessibility, and the no-composer boundary. Add no frontend framework or dependency. Keep this branch open and do not create a PR until the user finishes the wider dashboard improvement round.
 
-**Completion criteria:** (1) When no owner is selected, the Relay view shall explain the owner boundary and show useful owner activity summaries instead of an empty workspace. (2) When an owner is selected, containers and sessions shall default to recent activity, rank active containers first, and keep dormant/history records behind explicit controls. (3) When a session, graph node, connection, or message is selected, the graph, message list, and visible detail shall stay in one context without an implicit view switch. (4) At realistic high cardinality and narrow/desktop widths, the graph shall remain navigable with zoom/reset controls and the session/message/detail surfaces shall remain readable. (5) The dashboard API shall remain bounded, actor-isolated, deterministic, read-only, and free of delivery-control secrets.
+**Completion criteria:** (1) Operations shall keep Overview, System Health, Relay Health, and Session History KPIs visible in that order, clearly distinguish original SourceItems from optional Derived Memory objects, collapse only subordinate browsers/diagnostics, and make Derived Memory openness follow its enabled state. (2) Session History browsing shall explain what is searchable and why Owner and Workspace scope are required, while keeping a bounded list and selected detail in context. (3) When no owner is selected, Relay shall explain the owner boundary and show useful owner activity summaries instead of an empty workspace. (4) When an owner is selected, containers and sessions shall default to recent activity, rank active containers first, and keep dormant/history records behind explicit controls. (5) A session, graph node, connection, or message selection shall keep graph, messages, and visible detail in one context, with usable zoom and responsive layouts. (6) Dashboard reads shall remain bounded, actor-isolated, deterministic, read-only, and free of delivery-control secrets.
 
 **Risk:** Routine
 
@@ -58,6 +58,8 @@ The Relay slice now uses one bounded `/dashboard/api/relay/overview` projection 
 
 The dependency-free workspace now starts with an explanatory owner overview; retains all owner choices after selection; ranks and searches check-in-derived containers; defaults the session scope to recent activity but shows only current-window participants until full browsing is requested; and keeps the graph, bounded message timeline, and side detail visible together. Repeated reciprocal communications collapse into one bidirectional connection with direction/state detail, unresolved endpoints remain explicit, and native zoom/fit plus keyboard controls keep the graph inspectable.
 
+Operations now places distinct SourceItem and Derived Memory inventory totals in the always-visible Overview, followed by the operating summary and System Health. Relay Health and Session History are static sections; Session History keeps its KPIs visible and collapses only its plain-language governed browser. That browser uses native controls and a bounded master/detail layout. Derived Memory is last and opens only when enabled.
+
 `apply_patch` was attempted once and failed with the machine-local `CreateProcessWithLogonW 1327` constraint. Subsequent edits used narrowly scoped deterministic PowerShell replacements limited to the named worktree files, as required by the repository instructions.
 
 ## Evidence
@@ -67,8 +69,11 @@ The dependency-free workspace now starts with an explanatory owner overview; ret
 - JavaScript parse check and `git diff --check` passed.
 - Live database QA on isolated port 19837: 8 owner options; `Rotem Hermon` ranked first with 288 reachable recent sessions and 1,134 recorded messages at capture time; the bounded 100-message window rendered 10 participants and 11 collapsed connections. Browser runtime errors: none. Zoom changed rendered width from 900 to 1125 pixels.
 - Desktop, selected-message detail, and narrow responsive captures were visually inspected. Desktop keeps map, scrolling message list, and selected detail visible together; narrow layout stacks panes and bounds graph overflow.
-- The full suite, final clean-context result review, public screenshot, roadmap closure note, PR, merge, and installed-service restart are intentionally deferred until the user supplies the Operations-tab feedback and the combined improvement round is complete.
+- Operations live-data QA used a consistent SQLite snapshot with 10,954 SourceItems and 12,189 Derived Memory objects. A scoped blank-query browse returned 25 of 4,744 matching items and loaded selected detail beside the list with no browser runtime errors. Desktop and 760px layouts were visually inspected; the browser stacks cleanly at the narrow breakpoint.
+- Derived Memory state behavior was exercised in the browser: enabled opened the section and disabled closed it. The two inventory totals remained visible.
+- A smart clean-context review found no remaining Operations or Relay usability defects after request-lock, stale-response, keyboard-focus, edge-visibility, and fit/zoom regressions were fixed and covered.
+- The full suite, final post-integration review, public screenshot, roadmap closure note, PR, merge, and installed-service restart remain deferred until the user confirms the combined improvement round is complete.
 
 ## Result review
 
-Pending.
+Incremental smart review on 2026-09-08: clean, with no actionable findings. The reviewer specifically rechecked Operations hierarchy and copy, bounded Relay reads, selection behavior, owner pagination across refresh/stale failure, graph keyboard focus, visible edges, and zoom below the fitted scale. A final review remains required after the pending actor-free Relay migration is merged and adapted.

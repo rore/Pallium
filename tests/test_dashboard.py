@@ -244,8 +244,8 @@ class TestDashboardIntegration:
         assert "fetchStatus" in html
         assert "/dashboard/api/memories" in html
         assert "/dashboard/api/relay/summary" in html
-        assert '<details id="operational-summary"' in html
-        assert "summary.hidden = !attention" in html
+        assert '<section id="operational-summary"' in html
+        assert "summary.hidden = false" in html
         assert "Agent Relay" in html
         assert 'class="table-scroll"' in html
         assert "@media (max-width: 600px)" in html
@@ -434,8 +434,8 @@ class TestDashboardTwoViewShell:
         assert "How memory helps" in html
         assert 'id="funnel-pill"' in html
         assert "fetchEffectivenessReports" in html
-        assert "Did pulled-up memory help the next task?" in html
-        assert "We do not know yet whether pulled-up memory helped." in html
+        assert "Did pulled-up history help the next task?" in html
+        assert "We do not know yet whether pulled-up history helped." in html
         assert "does not show that Pallium improved real work." in html
         assert "hand-reviewed examples" in html
         # Derivation research leads with human conclusions; jargon stays secondary.
