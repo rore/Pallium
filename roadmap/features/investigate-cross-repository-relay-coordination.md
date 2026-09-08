@@ -56,7 +56,7 @@ Caller-surface E2E must drive the same public HTTP/MCP and hook/plugin paths use
 7. Relay has no actor partition: all local service endpoints, names, messages, and deliveries share one operational domain.
 8. Bare runtime selectors are rejected through every regular HTTP/MCP send surface, create no message or delivery rows, and trigger no wake; exact endpoint and name sends remain the only proactive send forms.
 9. Cross-container Relay activity does not change or leak Session History, memory visibility, repository/worktree state, artifacts, or workflow records.
-10. Current-format persistence preserves session, name, message, delivery, reply, receipt, expiry, and lifecycle state across restart, including duplicate native IDs and names across containers or runtimes.
+10. Current-format persistence preserves session, name, message, delivery, reply, receipt, expiry, and lifecycle state across restart, including duplicate native IDs across containers or runtimes. Service-global names remain unique; any unresolved duplicate name is inactive until an explicit deterministic takeover.
 11. Full register → optionally name → send → claim/receive → ACK or reply → status → close/unreachable → reactivate journeys pass on supported runtime/OS combinations without a second delivery engine.
 
 The name lifecycle E2E matrix must drive the public naming, send, receive/list, and status surfaces and verify:

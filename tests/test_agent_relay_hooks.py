@@ -977,7 +977,7 @@ def test_relay_ack_batch_stops_at_shared_deadline(
 def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     client, monkeypatch, tmp_path: Path, runtime: str, relative: str, codex: bool,
 ):
-    """Real Relay reads see one configured identity despite distinct local Git names."""
+    """Relay delivery crosses containers and configured actor metadata."""
     hook = _load(f"stable_actor_{runtime}", relative)
     repos = []
     for name, git_name in (("source", "Source Git Name"), ("target", "Target Git Name")):
@@ -987,8 +987,6 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
         subprocess.run(["git", "config", "user.name", git_name], cwd=repo, check=True, capture_output=True)
         repos.append(repo)
     source, target = repos
-    actor = "מפעיל 統一"
-    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", f"  {actor}  ")
     monkeypatch.setitem(hook.derive_actor_ref.__globals__, "SESSIONS_DIR", tmp_path / "sessions")
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_args: ([], 0))
     monkeypatch.setattr(hook, "check_dedup", lambda *_args: False)
@@ -1018,10 +1016,12 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
         monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
 
     payload = {"cwd": str(source), "session_id": "source-session", "prompt": "hi"}
+    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", "מפעיל מקור")
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     with pytest.raises(SystemExit):
         hook.main()
     payload = {"cwd": str(target), "session_id": "target-session", "prompt": "hi"}
+    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", "操作员目标")
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     with pytest.raises(SystemExit):
         hook.main()

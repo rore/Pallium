@@ -457,5 +457,7 @@ def test_actor_bearing_relay_schema_is_rejected_without_migration(tmp_path: Path
     provider.close()
     with sqlite3.connect(relay) as connection:
         connection.execute("ALTER TABLE relay_sessions ADD COLUMN actor_ref TEXT")
+    before = relay.read_bytes()
     with pytest.raises(RuntimeError, match="column|schema|current"):
         SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    assert relay.read_bytes() == before

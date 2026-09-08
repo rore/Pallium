@@ -263,8 +263,11 @@ def test_request_link_actor_is_optional_metadata(
             )
             assert result["decision_reason"] == "source_only_search"
 
-        assert {event["actor_ref"] for event in _events(client, "lookup")} == {
-            None, "操作员乙",
+        assert {
+            (event["actor_ref"], event["request_source_item_id"])
+            for event in _events(client, "lookup")
+        } == {
+            (None, request_id), ("操作员乙", request_id),
         }
 
 # ---------------------------------------------------------------------------

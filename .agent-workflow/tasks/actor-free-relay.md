@@ -52,6 +52,8 @@
 
 2026-09-08 — Smart result review of the Session History extension by `/root/history_actor_plan_review` initially found missing exact-work cross-actor E2E, missing direct supported-global-memory fallback protection, and one Relay discovery wording error. All were corrected; the two new caller-surface regressions passed, the four affected files passed 48 tests, and the reviewer returned APPROVE with no remaining actionable findings.
 
+2026-09-08 — CodeRabbit completed its PR review. Five valid documentation/coverage observations were addressed and the four affected test files pass 115 tests; smart adjudication rejected a proposed container restriction on the intentionally compatible legacy `runtime:session_ref` selector because unique matches remain targeted and ambiguous matches fail explicitly.
+
 ## Plan review
 
 Smart clean-context reviewer `/root/actor_free_relay_plan_review` approved the actor-free direction but initially blocked implementation. Resolved findings: the operational conversion now covers durable wake registrations/intents and preserves busy/inflight fencing; cutover is quiesced with paired backups, field-level relationship verification, coordinated host reload, and matched code/data rollback; no ordinary-HTTP compatibility assumption is used for exact-key wake routes; normal recipient discovery is explicitly container-local while names/routing and the dashboard operations view are service-global; and named suites cover native-ID collisions, takeover queue stability, stale claims, wake restart recovery, and schema rejection. The reviewer re-read the revised plan and returned APPROVE with no remaining blockers.

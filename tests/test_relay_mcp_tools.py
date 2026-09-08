@@ -510,11 +510,18 @@ async def test_partial_or_conflicting_relay_scope_never_calls_http(monkeypatch, 
 @pytest.mark.asyncio
 async def test_configured_actor_is_irrelevant_to_relay_scope(monkeypatch):
     monkeypatch.delenv("PALLIUM_ACTOR_REF", raising=False)
-    http_call = AsyncMock(return_value={})
-    with patch.object(PalliumMcpClient, "relay_receive", new=http_call):
+    captured = {}
+
+    async def capture(_client, path, payload, **_kwargs):
+        captured.update(path=path, payload=payload)
+        return {}
+
+    with patch.object(PalliumMcpClient, "_post_or_error", new=capture):
         content, _ = await create_server().call_tool("pallium_relay_receive", _SCOPE)
     assert "invalid relay receive response" in content[0].text
-    http_call.assert_awaited_once()
+    assert captured["path"] == "/relay/turn"
+    assert captured["payload"]["container_ref"] == _SCOPE["container_ref"]
+    assert "actor_ref" not in captured["payload"]
 
 
 @pytest.mark.asyncio
