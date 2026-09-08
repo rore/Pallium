@@ -61,11 +61,13 @@ Not required at this risk level.
 - Installer lifecycle nodes: Codex + Claude — 2 passed.
 - Affected Python files: 51 passed.
 - OpenCode `npm test`: 49 passed, 7 platform skips; `npm pack --dry-run --json` includes `skills/pallium-memory/references/field-feedback.md`.
-- Full pre-PR suite: 4,643 passed, 32 skipped, 2 xfailed, 4 existing warnings in 249.14 seconds.
+- Fresh base-to-HEAD Redline verdict: GRAY advisory; 15 scoped files, no red zones, checkpoints, boundary violations, API/schema/security/runtime-config changes.
+- `agent-workflow-check.py`: clean.
+- Post-review full pre-PR suite: 4,643 passed, 32 skipped, 2 xfailed, 4 existing warnings in 210.14 seconds.
 ## Plan review
 
 Approved after two clean-context reviews. The first review blocked on runtime-resolution evidence, external-write approval, exact targets, full installer lifecycle, privacy/negative/Unicode cases, and minimap separation. The second caught incorrect installer test names and unnamed runtime sources. The structured record now addresses all findings; the reviewer approved implementation with no remaining blockers.
 
 ## Result review
 
-The first clean-context result review blocked on four findings: shell-interpolated issue examples, stale Redline evidence, destructive-before-copy installer replacement, and OpenCode package documentation drift. The implementation now uses argv-only examples plus `--body-file`, stages before activation and restores on failure with explicit tests, and aligns the README. A fresh branch-specific Redline verdict and final reviewer approval remain pending.
+The first clean-context result review blocked on four findings: shell-interpolated issue examples, stale Redline evidence, destructive-before-copy installer replacement, and OpenCode package documentation drift. All four were fixed. The reviewer then confirmed argv-only no-shell guidance with `--body-file`, staged activation and restoration tests, README/package parity, the fresh branch-specific Redline verdict, focused tests, diff hygiene, and the workflow gate. Final result: approved with no remaining findings.
