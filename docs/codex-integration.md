@@ -28,9 +28,11 @@ messages, and supports Pallium's optional derived-memory behavior.
 - inspect, flag, and write memory through MCP tools
 
 Windows and Linux exact-session wake are qualified. Windows also proves loaded
-and unloaded tasks plus overtaken-wake suppression. Remaining lifecycle,
-telemetry, sustained-use, and macOS qualification work retains next-turn
-delivery where active wake is not qualified.
+and unloaded tasks, overtaken-wake suppression, delivery-derived reply wake of
+an idle sender, and a bounded remediation round trip without manual turns.
+Remaining interrupted/restart lifecycle and macOS qualification work retains
+next-turn delivery where active wake is not qualified. Correlation telemetry is
+deferred until existing evidence cannot diagnose a concrete failure.
 
 ## Architecture
 
