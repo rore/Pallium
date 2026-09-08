@@ -177,13 +177,14 @@ def _read_effectiveness_report(path: Path) -> dict:
         return {"available": False, "last_modified": None, "error": "unreadable"}
 
 
-def mount_dashboard(app: FastAPI) -> None:
+def mount_dashboard(app: FastAPI, *, show_roi: bool = False) -> None:
     assets_dir = Path(__file__).resolve().parent.parent / "assets"
     app.mount("/static", StaticFiles(directory=str(assets_dir)), name="static")
 
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard_page() -> HTMLResponse:
         html = _DASHBOARD_HTML_PATH.read_text(encoding="utf-8")
+        html = html.replace('data-roi-enabled="false"', f'data-roi-enabled="{str(show_roi).lower()}"', 1)
         return HTMLResponse(content=html)
 
     @app.get("/dashboard/api/effectiveness/reports")
@@ -194,6 +195,8 @@ def mount_dashboard(app: FastAPI) -> None:
         fixed, hardcoded set (no user input), so the route is traversal-proof.
         A missing dir/file returns a present-but-empty 200 state per report.
         """
+        if not show_roi:
+            raise HTTPException(status_code=404, detail="dashboard evaluation is disabled")
         reports = {
             key: _read_effectiveness_report(path)
             for key, path in _EFFECTIVENESS_REPORT_PATHS.items()

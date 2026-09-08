@@ -227,14 +227,6 @@ assert.equal(operationalElements['operational-summary'].open, false);
 assert.equal(operationalElements['ops-title'].textContent, 'Pallium needs attention');
 
 
-const reuseClassStart = html.indexOf('function reuseClassification(');
-const reuseClassEnd = html.indexOf('function reuseEventParams(', reuseClassStart);
-assert.ok(reuseClassStart >= 0 && reuseClassEnd > reuseClassStart);
-const reuseClassification = new Function(`${html.slice(reuseClassStart, reuseClassEnd)}; return reuseClassification;`)();
-assert.equal(reuseClassification({ rung: null }), 'no genuine reuse');
-assert.equal(reuseClassification({ rung: 'downstream' }), 'downstream');
-assert.equal(reuseClassification({}), 'unlabelled');
-
 const relaySelectionStart = html.indexOf('function selectRelayNode(');
 const relaySelectionEnd = html.indexOf('function renderMap(', relaySelectionStart);
 assert.ok(relaySelectionStart >= 0 && relaySelectionEnd > relaySelectionStart);
@@ -292,40 +284,6 @@ relayPositions(['a', 'b', 'c', 'd'], manualLayout, savedPositions, movedNodes);
 assert.deepEqual(manualLayout.positions.a, { x: 123, y: 123 });
 assert.deepEqual(relayClampPoint({ x: -50, y: 900 }, 760, 430), { x: 78, y: 396 });
 
-const ownerResetStart = html.indexOf('function resetRelayData(');
-const ownerResetEnd = html.indexOf('function relaySessionParams(', ownerResetStart);
-const ownerLoadStart = html.indexOf('async function loadMoreRelayOwners(');
-const ownerLoadEnd = html.indexOf('function relayOwnerOverview(', ownerLoadStart);
-assert.ok(ownerResetStart >= 0 && ownerResetEnd > ownerResetStart && ownerLoadStart >= 0 && ownerLoadEnd > ownerLoadStart);
-const relayOwnerState = { sessions: [], messages: [], owners: [], generation: 1, ownerNext: 100, ownerLoadKey: null };
-const relayOwnerElements = new Map();
-const relayOwnerDocument = { getElementById(id) { if (!relayOwnerElements.has(id)) relayOwnerElements.set(id, { textContent: '', innerHTML: '' }); return relayOwnerElements.get(id); } };
-let firstOwnerReject;
-let ownerRequestCount = 0;
-const firstOwnerRequest = new Promise((resolve, reject) => { firstOwnerReject = reject; });
-const ownerOverviews = [];
-const ownerHarness = new Function('_relay', 'document', 'relayJson', 'relayScopeSnapshot', 'relayOwnerOverview', 'resetRelaySelection', `
-  ${html.slice(ownerResetStart, ownerResetEnd)}
-  ${html.slice(ownerLoadStart, ownerLoadEnd)}
-  return { resetRelayData, loadMoreRelayOwners };
-`)(relayOwnerState, relayOwnerDocument, async () => {
-  ownerRequestCount++;
-  if (ownerRequestCount === 1) return firstOwnerRequest;
-  return { owners: [{ actor_ref: 'owner-2' }], has_more: false };
-}, () => 'scope', data => ownerOverviews.push(data), () => {});
-const staleOwnerLoad = ownerHarness.loadMoreRelayOwners();
-assert.ok(relayOwnerState.ownerLoadKey);
-relayOwnerState.generation = 2;
-ownerHarness.resetRelayData('Refreshing…');
-relayOwnerState.ownerNext = 100;
-await ownerHarness.loadMoreRelayOwners();
-assert.equal(ownerRequestCount, 2);
-assert.equal(relayOwnerState.ownerLoadKey, null);
-firstOwnerReject(new Error('stale failure'));
-await staleOwnerLoad;
-assert.equal(relayOwnerState.ownerLoadKey, null);
-assert.equal(ownerOverviews.length, 1);
-
 const fitStart = html.indexOf('function relayFitScale(');
 const fitEnd = html.indexOf('function zoomRelay(', fitStart);
 assert.ok(fitStart >= 0 && fitEnd > fitStart);
@@ -337,25 +295,27 @@ assert.ok(relayZoomScale(narrowFit, .8) < narrowFit);
 
 assert.doesNotMatch(html, /id="relay-map-tab"|id="relay-messages-tab"/);
 assert.doesNotMatch(html, /relay-map-wrap'\)\.style\.display/);
-assert.match(html, /Owners keep different people or configurations from sharing Relay names and sessions/);
+
 assert.match(html, /request!==_relay\.generation/);
-assert.doesNotMatch(html, /relayActor\.value\s*=\s*_actors\[0\]/);
+assert.doesNotMatch(html, /id="relay-actor-filter"/);
 assert.ok(html.indexOf('id="relay-map-wrap"') < html.indexOf('id="relay-messages"'));
 assert.match(html, /data-rfrom=.*data-rto=/);
 assert.match(html, /class="edge-line"/);
 assert.doesNotMatch(html, /relay-edge(?:\.selected)? path:last-child/);
-assert.match(html, /data&&data\.owners&&data\.owners\.length\?data\.owners:_relay\.owners/);
+
 assert.doesNotMatch(html, /<details id="operational-summary"/);
 assert.match(html, /Session History source items/);
 assert.match(html, /SourceItems are the original prompts, responses, tool results, and notes/);
-assert.match(html, /Owner<\/strong> is the person or configuration identity/);
+assert.match(html, /Type to narrow the workspace list/);
 assert.match(html, /Browse or search recorded history/);
 assert.match(html, /derivedPanel\.open = derived\.enabled === true/);
 assert.ok(html.indexOf("overview.id='overview-panel'") < html.indexOf("relay.id='relay-health-panel'"));
 assert.ok(html.indexOf("relay.id='relay-health-panel'") < html.indexOf("history.id='session-history-panel'"));
 assert.ok(html.indexOf("history.id='session-history-panel'") < html.indexOf("derived.id='derived-memory-panel'"));
 assert.match(html, /source-results-grid/);
-assert.match(html, /source-evidence/);
+assert.match(html, /source-divider/);
+assert.doesNotMatch(html, /Open Relay workspace/);
+assert.match(html, /data-roi-enabled="false"/);
 assert.match(html, /align-items:start/);
 assert.match(html, /relay-map-hint[^>]*>Drag background to pan · drag boxes to arrange/);
 assert.match(html, /overflow:hidden[^}]*cursor:grab/);
@@ -367,4 +327,67 @@ assert.match(html, /point=\{\.\.\.\(_relay\.nodePositions\[item\.dataset\.rnode\
 assert.doesNotMatch(html, /_relay\.nodePositions\[dragging\.id\][^;]*;renderMap\(messages,false\)/);
 assert.match(html, /if\(_relay\.message\).*relay-session-detail/);
 assert.match(html, /class=\"time\">.*time/);
+const sourceRaceElements = Object.fromEntries([
+  'source-container', 'source-actor', 'source-query', 'source-thread', 'source-type',
+  'source-role', 'source-agent', 'source-status', 'source-rows', 'source-detail',
+  'source-prev', 'source-next', 'source-page', 'source-context', 'source-context-result',
+].map(id => [id, { value: '', innerHTML: '', textContent: '', disabled: false, className: '', querySelectorAll: () => [] }]));
+sourceRaceElements['source-container'].value = 'workspace-a';
+sourceRaceElements['source-actor'].value = 'owner-a';
+const sourceRaceDocument = { getElementById: id => sourceRaceElements[id] || null };
+const pendingSourceReads = [];
+function deferredSourceFetch(url) {
+  return new Promise(resolve => pendingSourceReads.push({
+    url: String(url),
+    answer: body => resolve({ ok: true, status: 200, json: async () => body }),
+  }));
+}
+const sourceFlowStart = html.indexOf('function sourceParams()');
+const sourceFlowEnd = html.indexOf('function relayActor()', sourceFlowStart);
+assert.ok(sourceFlowStart >= 0 && sourceFlowEnd > sourceFlowStart);
+const sourceFlow = new Function('document', 'fetch', `
+let _sourceOffset=0,_sourceSelected=null,_sourceSelectedScope=null,_sourceFacets={containers:[],actors:[]},_sourceGeneration=0,_sourceDetailGeneration=0;const _sourcePage=25;
+function scoped(id){return(document.getElementById(id)||{}).value||''}
+function escapeHtml(value){return String(value == null ? '' : value)}
+function esc(value){return escapeHtml(value)}
+function formatDate(value){return String(value || '')}
+${html.slice(sourceFlowStart, sourceFlowEnd)}
+return {fetchSources,sourceDetail,sourceContext,setOffset:value=>{_sourceOffset=value}};
+`)(sourceRaceDocument, deferredSourceFetch);
+
+const ownerARead = sourceFlow.fetchSources();
+sourceRaceElements['source-actor'].value = 'owner-b';
+const ownerBRead = sourceFlow.fetchSources();
+pendingSourceReads[1].answer({ items: [], total: 0 });
+await ownerBRead;
+assert.match(sourceRaceElements['source-status'].textContent, /owner-b/);
+pendingSourceReads[0].answer({ items: [], total: 8 });
+await ownerARead;
+assert.match(sourceRaceElements['source-status'].textContent, /owner-b/);
+
+sourceFlow.setOffset(0);
+const firstPageRead = sourceFlow.fetchSources();
+sourceFlow.setOffset(25);
+const secondPageRead = sourceFlow.fetchSources();
+pendingSourceReads[3].answer({ items: [], total: 30 });
+await secondPageRead;
+assert.equal(sourceRaceElements['source-page'].textContent, '26–25 of 30');
+pendingSourceReads[2].answer({ items: [], total: 30 });
+await firstPageRead;
+assert.equal(sourceRaceElements['source-page'].textContent, '26–25 of 30');
+
+const firstDetailRead = sourceFlow.sourceDetail('first');
+const secondDetailRead = sourceFlow.sourceDetail('second');
+pendingSourceReads[5].answer({ source: { id: 'second', content: 'second detail', actor_ref: 'owner-b', container_ref: 'workspace-a' } });
+await secondDetailRead;
+assert.match(sourceRaceElements['source-detail'].innerHTML, /second detail/);
+pendingSourceReads[4].answer({ source: { id: 'first', content: 'first detail', actor_ref: 'owner-b', container_ref: 'workspace-a' } });
+await firstDetailRead;
+assert.doesNotMatch(sourceRaceElements['source-detail'].innerHTML, /first detail/);
+
+const staleContextRead = sourceFlow.sourceContext('second');
+sourceRaceElements['source-container'].value = 'workspace-b';
+pendingSourceReads[6].answer({ items: [{ content: 'workspace-a context' }] });
+await staleContextRead;
+assert.doesNotMatch(sourceRaceElements['source-context-result'].innerHTML, /workspace-a context/);
 console.log('plain-language dashboard renderers: all cases passed');

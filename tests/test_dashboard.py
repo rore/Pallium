@@ -27,6 +27,11 @@ def _test_config(tmp_path: Path) -> AppConfig:
     )
 
 
+def _roi_config(tmp_path: Path) -> AppConfig:
+    config = _test_config(tmp_path)
+    return replace(config, features=replace(config.features, dashboard_roi=True))
+
+
 def _seed_memory(app, *, type: str = "decision", lifecycle: str = "active", container_ref: str = "test-container") -> MemoryObject:
     service = app.state.pallium_service
     mo = MemoryObject(
@@ -479,7 +484,7 @@ class TestDashboardEffectivenessReports:
     def test_empty_state_when_dir_absent(self, tmp_path: Path, monkeypatch) -> None:
         # cwd where .local/research/ does not exist → present-but-empty 200
         monkeypatch.chdir(tmp_path)
-        app = create_app(_test_config(tmp_path))
+        app = create_app(_roi_config(tmp_path))
         with TestClient(app) as client:
             resp = client.get("/dashboard/api/effectiveness/reports")
         assert resp.status_code == 200
@@ -497,7 +502,7 @@ class TestDashboardEffectivenessReports:
         (research / "raw_derived_hybrid_report.json").write_text(
             __import__("json").dumps(payload), encoding="utf-8"
         )
-        app = create_app(_test_config(tmp_path))
+        app = create_app(_roi_config(tmp_path))
         with TestClient(app) as client:
             resp = client.get("/dashboard/api/effectiveness/reports")
         assert resp.status_code == 200
@@ -523,7 +528,7 @@ class TestDashboardEffectivenessReports:
         (research / "derivation_fidelity_report.json").write_text(
             _json.dumps(payload), encoding="utf-8"
         )
-        app = create_app(_test_config(tmp_path))
+        app = create_app(_roi_config(tmp_path))
         with TestClient(app) as client:
             resp = client.get("/dashboard/api/effectiveness/reports")
         assert resp.status_code == 200
@@ -539,7 +544,7 @@ class TestDashboardEffectivenessReports:
         """Traversal-proof: there is no filename/path param — an arbitrary
         query string resolves the same fixed keys, never an outside file."""
         monkeypatch.chdir(tmp_path)
-        app = create_app(_test_config(tmp_path))
+        app = create_app(_roi_config(tmp_path))
         with TestClient(app) as client:
             resp = client.get(
                 "/dashboard/api/effectiveness/reports?report=../../../../etc/passwd"
@@ -552,7 +557,7 @@ class TestDashboardEffectivenessReports:
         """Unlike other /dashboard/api/* routes, the file-backed report
         endpoint returns 200 (not 501) even without a SQLite backend."""
         monkeypatch.chdir(tmp_path)
-        app = create_app(_test_config(tmp_path))
+        app = create_app(_roi_config(tmp_path))
         with TestClient(app) as client:
             resp = client.get("/dashboard/api/effectiveness/reports")
         assert resp.status_code == 200

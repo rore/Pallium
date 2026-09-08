@@ -491,6 +491,7 @@ or override via `PALLIUM_FEATURES_<FLAG_UPPER>` env variable (env wins).
 [features]
 operational_fact_derivation = false
 typed_extraction_shadow     = false
+dashboard_roi               = false
 ```
 
 - `operational_fact_derivation` — when true, the `agent_work_trace` plugin
@@ -505,6 +506,10 @@ typed_extraction_shadow     = false
   extractor whose output lands in `memory_objects_shadow`. Zero effect on
   live retrieval; used for offline comparison via
   `evals/typed_extraction_shadow/compare.py`. Default off (extra LLM cost).
+- `dashboard_roi` — exposes the Evaluation tab and its file-backed effectiveness
+  reports in the local dashboard. Default off because these research diagnostics are
+  intended for product evaluation, not ordinary Pallium operation. Override with
+  `PALLIUM_FEATURES_DASHBOARD_ROI=true`.
 
 ## Injection Policy (Abstention)
 

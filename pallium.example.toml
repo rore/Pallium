@@ -134,6 +134,7 @@ min_similarity = 0.55
 # # UserPromptSubmit operational_intent signal.
 # [features]
 # operational_fact_derivation = false
+# dashboard_roi = false  # private/local Evaluation tab and offline ROI reports
 #
 # # Per-container override example: disable proactive on the xlm container
 # # while leaving the focused-repo container free to override differently.

@@ -198,6 +198,9 @@ class FeaturesConfig:
     # extractor costs an extra LLM call per source item.
     typed_extraction_shadow: bool = False
 
+    # Local dashboard-only effectiveness evidence. Safe off.
+    dashboard_roi: bool = False
+
 
 def _default_semantic_packages() -> dict[str, SemanticPackageConfig]:
     return {
@@ -853,6 +856,11 @@ def _build_features_config(
             raw.get("typed_extraction_shadow"),
             False,
         ),
+        dashboard_roi=_resolve_bool_value(
+            "PALLIUM_FEATURES_DASHBOARD_ROI", env_values,
+            raw.get("dashboard_roi"), False,
+        ),
+
     )
 
 

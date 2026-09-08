@@ -591,7 +591,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     async def status() -> JSONResponse:
         return await run_diagnostic_operation(status_body)
 
-    mount_dashboard(app)
+    mount_dashboard(app, show_roi=resolved_config.features.dashboard_roi)
     claude_wake_registry = build_claude_wake_registry()
     app.state.claude_wake_registry = claude_wake_registry
     app.include_router(build_router(
