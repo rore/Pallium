@@ -108,6 +108,8 @@ registered VBS, interpreter, optional working directory, configured port, and
 `app.run` imports before stopping a healthy process tree. After launch it reports
 success only when `/health`, `/status`, and `/debug/queue/health` satisfy their
 documented readiness contracts; failures name the last check and Pallium log.
+The default readiness budget is three minutes; an explicit
+`-ReadinessTimeoutSeconds` value keeps its exact finite deadline.
 The installed launcher must use a dependency-complete Python and the supported
 `python -m app.run service run --port <port>` path: `service run` applies the
 managed `~/.pallium/config/.env` and service configuration. Do not use the

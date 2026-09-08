@@ -17,6 +17,13 @@ pytestmark = pytest.mark.skipif(
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESTART_SCRIPT = REPO_ROOT / "scripts" / "restart-service.ps1"
 
+
+def test_default_readiness_budget_allows_three_minute_cold_start() -> None:
+    script = RESTART_SCRIPT.read_text(encoding="utf-8")
+
+    assert "[double]$ReadinessTimeoutSeconds = 180" in script
+
+
 HARNESS = r'''
 function Log-Call {
     param([string]$Value)
