@@ -27,6 +27,11 @@ def _test_config(tmp_path: Path) -> AppConfig:
     )
 
 
+def _roi_config(tmp_path: Path) -> AppConfig:
+    config = _test_config(tmp_path)
+    return replace(config, features=replace(config.features, dashboard_roi=True))
+
+
 def _seed_memory(app, *, type: str = "decision", lifecycle: str = "active", container_ref: str = "test-container") -> MemoryObject:
     service = app.state.pallium_service
     mo = MemoryObject(
@@ -244,8 +249,8 @@ class TestDashboardIntegration:
         assert "fetchStatus" in html
         assert "/dashboard/api/memories" in html
         assert "/dashboard/api/relay/summary" in html
-        assert '<details id="operational-summary"' in html
-        assert "summary.hidden = !attention" in html
+        assert '<section id="operational-summary"' in html
+        assert "summary.hidden = false" in html
         assert "Agent Relay" in html
         assert 'class="table-scroll"' in html
         assert "@media (max-width: 600px)" in html
@@ -434,8 +439,8 @@ class TestDashboardTwoViewShell:
         assert "How memory helps" in html
         assert 'id="funnel-pill"' in html
         assert "fetchEffectivenessReports" in html
-        assert "Did pulled-up memory help the next task?" in html
-        assert "We do not know yet whether pulled-up memory helped." in html
+        assert "Functional outcome evidence" in html
+        assert "We do not know yet whether pulled-up history helped." in html
         assert "does not show that Pallium improved real work." in html
         assert "hand-reviewed examples" in html
         # Derivation research leads with human conclusions; jargon stays secondary.
@@ -479,7 +484,7 @@ class TestDashboardEffectivenessReports:
     def test_empty_state_when_dir_absent(self, tmp_path: Path, monkeypatch) -> None:
         # cwd where .local/research/ does not exist → present-but-empty 200
         monkeypatch.chdir(tmp_path)
-        app = create_app(_test_config(tmp_path))
+        app = create_app(_roi_config(tmp_path))
         with TestClient(app) as client:
             resp = client.get("/dashboard/api/effectiveness/reports")
         assert resp.status_code == 200
@@ -497,7 +502,7 @@ class TestDashboardEffectivenessReports:
         (research / "raw_derived_hybrid_report.json").write_text(
             __import__("json").dumps(payload), encoding="utf-8"
         )
-        app = create_app(_test_config(tmp_path))
+        app = create_app(_roi_config(tmp_path))
         with TestClient(app) as client:
             resp = client.get("/dashboard/api/effectiveness/reports")
         assert resp.status_code == 200
@@ -523,7 +528,7 @@ class TestDashboardEffectivenessReports:
         (research / "derivation_fidelity_report.json").write_text(
             _json.dumps(payload), encoding="utf-8"
         )
-        app = create_app(_test_config(tmp_path))
+        app = create_app(_roi_config(tmp_path))
         with TestClient(app) as client:
             resp = client.get("/dashboard/api/effectiveness/reports")
         assert resp.status_code == 200
@@ -539,7 +544,7 @@ class TestDashboardEffectivenessReports:
         """Traversal-proof: there is no filename/path param — an arbitrary
         query string resolves the same fixed keys, never an outside file."""
         monkeypatch.chdir(tmp_path)
-        app = create_app(_test_config(tmp_path))
+        app = create_app(_roi_config(tmp_path))
         with TestClient(app) as client:
             resp = client.get(
                 "/dashboard/api/effectiveness/reports?report=../../../../etc/passwd"
@@ -552,7 +557,7 @@ class TestDashboardEffectivenessReports:
         """Unlike other /dashboard/api/* routes, the file-backed report
         endpoint returns 200 (not 501) even without a SQLite backend."""
         monkeypatch.chdir(tmp_path)
-        app = create_app(_test_config(tmp_path))
+        app = create_app(_roi_config(tmp_path))
         with TestClient(app) as client:
             resp = client.get("/dashboard/api/effectiveness/reports")
         assert resp.status_code == 200
@@ -733,10 +738,14 @@ class TestDashboardSourceAndRelayProjections:
                 assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, **scope}).status_code == 200
             sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "one",
                 "recipient": "claude-code:two", "payload": "AKIA1234567890ABCDEF", **scope}).json()
-            sessions = client.get("/dashboard/api/relay/sessions?").json()["sessions"]
+            session_page = client.get("/dashboard/api/relay/sessions?limit=1").json()
+            sessions = client.get("/dashboard/api/relay/sessions").json()["sessions"]
+            assert session_page["total"] == 2 and len(session_page["sessions"]) == 1
             assert {session["session_ref"] for session in sessions} == {"one", "two"}
             page = client.get("/dashboard/api/relay/messages?limit=1").json()
             assert page["total"] == 1 and page["messages"][0]["id"] == sent["message_id"]
+            endpoints = {page["messages"][0]["sender_endpoint_id"], page["messages"][0]["deliveries"][0]["recipient_endpoint_id"]}
+            assert {session["id"] for session in page["endpoint_sessions"]} == endpoints
             assert "claim_token" not in str(page) and "receipt" not in str(page)
             assert "AKIA1234567890ABCDEF" not in str(page)
             assert page["messages"][0]["expires_at"] is None
@@ -901,3 +910,74 @@ class TestDashboardSourceAndRelayProjections:
         assert first["messages"][0]["id"] == second_id
         assert second["messages"][0]["id"] == first_id
         assert inserted_id not in {first["messages"][0]["id"], second["messages"][0]["id"]}
+
+class TestDashboardRelayOverview:
+    def test_overview_global_summary_facets_and_read_only_split_store(self, tmp_path: Path) -> None:
+        app = create_app(replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay-overview.db'}"))
+        now = datetime.now(timezone.utc)
+        with TestClient(app) as client:
+            for runtime, session_ref, container in (
+                ("codex", "alpha-one", "git:alpha"),
+                ("claude-code", "alpha-two", "git:alpha"),
+                ("codex", "dormant", "git:zeta"),
+                ("codex", "recent-unreachable", "git:omega"),
+                ("opencode", "closed", "git:東京"),
+            ):
+                assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref,
+                    "container_ref": container}).status_code == 200
+            sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "alpha-one",
+                "recipient": "claude-code:alpha-two", "container_ref": "git:alpha",
+                "payload": "overview-secret"}).json()
+            storage = app.state.pallium_service._storage
+            with storage._relay_session_factory() as session:
+                rows = {row.session_ref: row for row in session.query(RelaySessionRecord)}
+                rows["dormant"].last_seen_at = now - timedelta(days=2)
+                rows["dormant"].state = "unreachable"
+                rows["recent-unreachable"].state = "unreachable"
+                rows["closed"].state = "closed"
+                session.add(RelayDeliveryRecord(id="fanout-overview", message_id=sent["message_id"], recipient_runtime="codex",
+                    recipient_session_ref="alpha-one", recipient_endpoint_id=rows["alpha-one"].id,
+                    recipient_container_ref="git:alpha", state="pending", attempts=0))
+                session.commit()
+                before = [(row.id, row.state, row.last_seen_at) for row in session.query(RelaySessionRecord).all()]
+            overview = client.get("/dashboard/api/relay/overview", params={"limit": 1}).json()
+            assert set(overview) == {"as_of", "summary", "containers", "offset", "limit", "has_more", "next_offset"}
+            summary = overview["summary"]
+            assert set(summary) == {"session_count", "message_count", "last_seen_at", "last_message_at", "active_session_count", "recent_session_count", "dormant_session_count", "closed_session_count", "unreachable_session_count"}
+            assert summary["session_count"] == 5 and summary["message_count"] == 1
+            assert summary["active_session_count"] == 2 and summary["recent_session_count"] == 3
+            assert summary["unreachable_session_count"] == 2 and "overview-secret" not in str(overview)
+            assert overview["containers"][0]["container_ref"] == "git:alpha"
+            assert overview["has_more"] is True and overview["next_offset"] == 1
+            next_page = client.get("/dashboard/api/relay/overview", params={"limit": 1, "offset": 1}).json()
+            assert next_page["containers"][0]["container_ref"] != overview["containers"][0]["container_ref"]
+            search = client.get("/dashboard/api/relay/overview", params={"container_search": "東京"}).json()
+            assert [row["container_ref"] for row in search["containers"]] == ["git:東京"]
+            assert search["containers"][0]["closed_session_count"] == 1
+            dormant = next(row for row in client.get("/dashboard/api/relay/overview").json()["containers"] if row["container_ref"] == "git:zeta")
+            assert dormant["dormant_session_count"] == 1 and dormant["unreachable_session_count"] == 1
+            assert client.get("/dashboard/api/relay/overview?limit=201").status_code == 422
+            assert client.get("/dashboard/api/relay/overview?limit=200").status_code == 200
+            assert client.get("/dashboard/api/relay/sessions").status_code == 200
+            assert client.get("/dashboard/api/relay/messages").status_code == 200
+            client.get("/dashboard/api/relay/overview")
+            with storage._relay_session_factory() as session:
+                after = [(row.id, row.state, row.last_seen_at) for row in session.query(RelaySessionRecord).all()]
+            normalize = lambda value: value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+            assert [(row_id, state, normalize(last_seen_at)) for row_id, state, last_seen_at in before] == [(row_id, state, normalize(last_seen_at)) for row_id, state, last_seen_at in after]
+
+
+    def test_overview_container_ties_are_deterministic(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        at = datetime.now(timezone.utc)
+        with TestClient(app) as client:
+            for container in ("git:tie-b", "git:tie-a"):
+                assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "same", "container_ref": container}).status_code == 200
+            storage = app.state.pallium_service._storage
+            with storage._relay_session_factory() as session:
+                session.execute(text("UPDATE relay_sessions SET last_seen_at=:at"), {"at": at})
+                session.commit()
+            first = client.get("/dashboard/api/relay/overview", params={"limit": 1}).json()
+            second = client.get("/dashboard/api/relay/overview", params={"limit": 1, "offset": 1}).json()
+        assert first["containers"][0]["container_ref"] == "git:tie-a"
+        assert second["containers"][0]["container_ref"] == "git:tie-b"

@@ -39,7 +39,7 @@ renderReuseCalibration({
   available: true,
   report: { judge_vs_gold: { kappa: 0.75, threshold: 0.70, n: 12, calibrated: true } },
 });
-assert.match(elements['hh-reuse-kpi'].innerHTML, /do not know yet whether pulled-up memory helped/i);
+assert.match(elements['hh-reuse-kpi'].innerHTML, /do not know yet whether pulled-up history helped/i);
 assert.match(elements['hh-reuse-kpi'].innerHTML, /does not show that Pallium improved real work/);
 assert.match(elements['hh-reuse-kpi'].innerHTML, /ready for cautious use/);
 elements['hh-reuse-kpi'].querySelector('details').open = true;
@@ -206,7 +206,8 @@ const cleanStatus = {
 const cleanQueue = { status_counts_24h: { failed: 0 } };
 const cleanRelay = { status: 'idle', deliveries: { expired_last_24h: 0 } };
 renderOperational(cleanStatus, cleanQueue, cleanRelay);
-assert.equal(operationalElements['operational-summary'].hidden, true);
+assert.equal(operationalElements['operational-summary'].hidden, false);
+assert.equal(operationalElements['ops-title'].textContent, 'Pallium is operating normally');
 
 operationalElements['operational-summary'].open = false;
 renderOperational(cleanStatus, cleanQueue, {
@@ -216,34 +217,241 @@ assert.equal(operationalElements['operational-summary'].hidden, false);
 assert.equal(operationalElements['operational-summary'].open, false);
 assert.match(operationalElements['ops-title'].textContent, /warnings/i);
 
+renderOperational(cleanStatus, { status_counts_24h: { failed: 1 } }, cleanRelay);
+assert.match(operationalElements['ops-title'].textContent, /warnings/i);
+assert.doesNotMatch(operationalElements['ops-title'].textContent, /needs attention/i);
+
 renderOperational({ ...cleanStatus, ingestion: { status: 'degraded', issues: [{}] } }, cleanQueue, cleanRelay);
 assert.equal(operationalElements['operational-summary'].hidden, false);
 assert.equal(operationalElements['operational-summary'].open, false);
 assert.equal(operationalElements['ops-title'].textContent, 'Pallium needs attention');
 
 
-const reuseClassStart = html.indexOf('function reuseClassification(');
-const reuseClassEnd = html.indexOf('function reuseEventParams(', reuseClassStart);
-assert.ok(reuseClassStart >= 0 && reuseClassEnd > reuseClassStart);
-const reuseClassification = new Function(`${html.slice(reuseClassStart, reuseClassEnd)}; return reuseClassification;`)();
-assert.equal(reuseClassification({ rung: null }), 'no genuine reuse');
-assert.equal(reuseClassification({ rung: 'downstream' }), 'downstream');
-assert.equal(reuseClassification({}), 'unlabelled');
-
 const relaySelectionStart = html.indexOf('function selectRelayNode(');
 const relaySelectionEnd = html.indexOf('function renderMap(', relaySelectionStart);
 assert.ok(relaySelectionStart >= 0 && relaySelectionEnd > relaySelectionStart);
 const relaySelection = new Function(`
-  let _relay = { selected: 'old', pair: ['old', 'pair'], message: 'old-message', mode: 'map' };
-  function setRelayMode(mode) { _relay.mode = mode; }
+  let _relay = { selected: 'old', pair: ['old', 'pair'], message: 'old-message' };
+  let renders = 0;
+  function renderRelay() { renders += 1; }
+  function relayFocus() {}
   ${html.slice(relaySelectionStart, relaySelectionEnd)}
-  return { selectRelayPair, state: () => _relay };
+  return { selectRelayPair, state: () => _relay, renders: () => renders };
 `)();
 relaySelection.selectRelayPair('sender\u0000literal', 'recipient"quoted');
 assert.deepEqual(relaySelection.state().pair, ['sender\u0000literal', 'recipient"quoted']);
 assert.equal(relaySelection.state().selected, null);
 assert.equal(relaySelection.state().message, null);
-assert.equal(relaySelection.state().mode, 'messages');
-assert.doesNotMatch(html, /data-rpair=/);
+assert.equal(relaySelection.renders(), 1);
+
+const pairStart = html.indexOf('function relayPairSummaries(');
+const pairEnd = html.indexOf('function selectRelayNode(', pairStart);
+assert.ok(pairStart >= 0 && pairEnd > pairStart);
+const { relayPairSummaries, relayConnectionSummaries, relayEdgeGeometry, relayLayout, relayPositions, relayClampPoint } = new Function(`
+  function rdeliveries(message) { return message.edges; }
+  ${html.slice(pairStart, pairEnd)}
+  return { relayPairSummaries, relayConnectionSummaries, relayEdgeGeometry, relayLayout, relayPositions, relayClampPoint };
+`)();
+const pairRows = relayPairSummaries([
+  { edges: [{ from: 'a', to: 'b', state: 'pending' }, { from: 'a', to: 'c', state: 'delivered' }] },
+  { edges: [{ from: 'a', to: 'b', state: 'delivered' }] },
+]);
+const ab = pairRows.find(row => row.from === 'a' && row.to === 'b');
+assert.equal(ab.count, 2);
+assert.deepEqual(ab.states, { pending: 1, delivered: 1 });
+const connections = relayConnectionSummaries([...pairRows, { from: 'b', to: 'a', count: 3, states: { delivered: 3 } }]);
+const abConnection = connections.find(row => row.a === 'a' && row.b === 'b');
+assert.equal(abConnection.forward, 2);
+assert.equal(abConnection.backward, 3);
+assert.deepEqual(abConnection.forwardStates, { pending: 1, delivered: 1 });
+assert.deepEqual(abConnection.backwardStates, { delivered: 3 });
+assert.doesNotMatch(relayEdgeGeometry({ x: 50, y: 50 }, { x: 50, y: 50 }, false).path, /NaN/);
+const twoNodeLayout = relayLayout(['a', 'b'], []);
+assert.equal(twoNodeLayout.positions.a.y, twoNodeLayout.height / 2);
+assert.equal(twoNodeLayout.positions.b.y, twoNodeLayout.height / 2);
+const tenNodeLayout = relayLayout(Array.from({ length: 10 }, (_, index) => 'n' + index), []);
+const tenPositions = Object.values(tenNodeLayout.positions);
+for (let i = 0; i < tenPositions.length; i++) for (let j = i + 1; j < tenPositions.length; j++) assert.ok(Math.abs(tenPositions[i].x - tenPositions[j].x) >= 156 || Math.abs(tenPositions[i].y - tenPositions[j].y) >= 68);
+const savedPositions = {}, movedNodes = new Set();
+relayPositions(['a', 'b'], relayLayout(['a', 'b'], []), savedPositions, movedNodes);
+const pagedLayout = relayLayout(['a', 'b', 'c'], []);
+relayPositions(['a', 'b', 'c'], pagedLayout, savedPositions, movedNodes);
+const pagedPositions = Object.values(pagedLayout.positions);
+for (let i = 0; i < pagedPositions.length; i++) for (let j = i + 1; j < pagedPositions.length; j++) assert.ok(Math.abs(pagedPositions[i].x - pagedPositions[j].x) >= 156 || Math.abs(pagedPositions[i].y - pagedPositions[j].y) >= 68);
+movedNodes.add('a'); savedPositions.a = { x: 123, y: 123 };
+const manualLayout = relayLayout(['a', 'b', 'c', 'd'], []);
+relayPositions(['a', 'b', 'c', 'd'], manualLayout, savedPositions, movedNodes);
+assert.deepEqual(manualLayout.positions.a, { x: 123, y: 123 });
+assert.deepEqual(relayClampPoint({ x: -50, y: 900 }, 760, 430), { x: 78, y: 396 });
+
+const endpointMergeStart = html.indexOf('function rememberRelayEndpoints(');
+const endpointMergeEnd = html.indexOf('function relayContainerLabel(', endpointMergeStart);
+assert.ok(endpointMergeStart >= 0 && endpointMergeEnd > endpointMergeStart);
+const endpointState = { endpointSessions: {} };
+const endpointMerge = new Function('state', `
+  let _relay = state;
+  function rf(value, names, fallback = 'unknown') { for (const name of names) if (value && value[name] != null && value[name] !== '') return String(value[name]); return fallback; }
+  function rid(message, side) { return rf(message, side === 'from' ? ['sender_endpoint_id'] : ['recipient_endpoint_id']); }
+  ${html.slice(endpointMergeStart, endpointMergeEnd)}
+  return rememberRelayEndpoints;
+`)(endpointState);
+endpointMerge({
+  endpoint_sessions: [{ id: 'known', runtime: 'codex', session_ref: 'one' }],
+  messages: [{ sender_endpoint_id: 'known', actor_ref: 'owner', deliveries: [{ recipient_endpoint_id: 'paged', recipient_runtime: 'claude-code', recipient_session_ref: 'two', recipient_container_ref: 'workspace' }] }],
+});
+assert.equal(endpointState.endpointSessions.known.session_ref, 'one');
+assert.equal(endpointState.endpointSessions.paged.session_ref, 'two');
+assert.doesNotMatch(html, /Unresolved session/);
+assert.match(html, /if\(session\._snapshot\).*name changes are disabled/);
+const visibleSessionsStart = html.indexOf('function rsessionName(');
+const visibleSessionsEnd = html.indexOf('function renderRelaySessions(', visibleSessionsStart);
+const visibleSessions = new Function('state', 'search', `
+  let _relay = state;
+  function scoped() { return search; }
+  function rf(value, names, fallback = 'unknown') { for (const name of names) if (value && value[name] != null && value[name] !== '') return String(value[name]); return fallback; }
+  function rid(message, side) { return rf(message, side === 'from' ? ['sender_endpoint_id'] : ['recipient_endpoint_id']); }
+  ${html.slice(visibleSessionsStart, visibleSessionsEnd)}
+  return relayVisibleSessions();
+`)({
+  sessions: [{ id: 'known', runtime: 'codex', session_ref: 'one' }],
+  endpointSessions: endpointState.endpointSessions,
+  messages: [{ sender_endpoint_id: 'known', deliveries: [{ recipient_endpoint_id: 'paged', state: 'delivered' }] }],
+  showAllSessions: false,
+}, 'two');
+assert.deepEqual(visibleSessions.map(session => session.id), ['paged']);
+const fitStart = html.indexOf('function relayFitScale(');
+const fitEnd = html.indexOf('function zoomRelay(', fitStart);
+assert.ok(fitStart >= 0 && fitEnd > fitStart);
+const { relayFitScale, relayZoomScale } = new Function(`${html.slice(fitStart, fitEnd)}; return { relayFitScale, relayZoomScale };`)();
+const narrowFit = relayFitScale(1100, 680, 382, 440);
+assert.ok(narrowFit * 1100 <= 358.001);
+assert.ok(narrowFit * 680 <= 416.001);
+assert.ok(relayZoomScale(narrowFit, .8) < narrowFit);
+
+assert.doesNotMatch(html, /id="relay-map-tab"|id="relay-messages-tab"/);
+assert.doesNotMatch(html, /relay-map-wrap'\)\.style\.display/);
+
+assert.match(html, /request!==_relay\.generation/);
+assert.doesNotMatch(html, /id="relay-actor-filter"/);
+assert.ok(html.indexOf('id="relay-map-wrap"') < html.indexOf('id="relay-messages"'));
 assert.match(html, /data-rfrom=.*data-rto=/);
+assert.match(html, /class="edge-line"/);
+assert.doesNotMatch(html, /relay-edge(?:\.selected)? path:last-child/);
+
+assert.doesNotMatch(html, /<details id="operational-summary"/);
+assert.match(html, /Session History source items/);
+assert.match(html, /SourceItems are the original prompts, responses, tool results, and notes/);
+assert.match(html, /Type to narrow the workspace list/);
+assert.match(html, /Browse or search recorded history/);
+assert.match(html, /derivedPanel\.open = derived\.enabled === true/);
+assert.ok(html.indexOf("overview.id='overview-panel'") < html.indexOf("relay.id='relay-health-panel'"));
+assert.ok(html.indexOf("relay.id='relay-health-panel'") < html.indexOf("history.id='session-history-panel'"));
+assert.ok(html.indexOf("history.id='session-history-panel'") < html.indexOf("derived.id='derived-memory-panel'"));
+assert.match(html, /source-results-grid/);
+assert.match(html, /source-divider/);
+assert.doesNotMatch(html, /Open Relay workspace/);
+assert.match(html, /data-roi-enabled="false"/);
+assert.match(html, /align-items:start/);
+assert.match(html, /relay-map-hint[^>]*>Drag background to pan · drag boxes to arrange/);
+assert.match(html, /overflow:hidden[^}]*cursor:grab/);
+assert.match(html, /mapFitPending/);
+assert.match(html, /nodePositions/);
+assert.match(html, /onpointerdown=event=>/);
+assert.match(html, /relayUpdateMapPositions\(svg\)/);
+assert.match(html, /point=\{\.\.\.\(_relay\.nodePositions\[item\.dataset\.rnode\]/);
+assert.doesNotMatch(html, /_relay\.nodePositions\[dragging\.id\][^;]*;renderMap\(messages,false\)/);
+assert.match(html, /if\(_relay\.message\).*relay-session-detail/);
+assert.match(html, /class=\"time\">.*time/);
+const sourceRaceElements = Object.fromEntries([
+  'source-container', 'source-actor', 'source-query', 'source-thread', 'source-type',
+  'source-role', 'source-agent', 'source-status', 'source-rows', 'source-detail',
+  'source-prev', 'source-next', 'source-page', 'source-context', 'source-context-result',
+].map(id => [id, { value: '', innerHTML: '', textContent: '', disabled: false, className: '', querySelectorAll: () => [] }]));
+sourceRaceElements['source-container'].value = 'workspace-a';
+sourceRaceElements['source-actor'].value = 'owner-a';
+const sourceRaceDocument = { getElementById: id => sourceRaceElements[id] || null };
+const pendingSourceReads = [];
+function deferredSourceFetch(url) {
+  return new Promise(resolve => pendingSourceReads.push({
+    url: String(url),
+    answer: body => resolve({ ok: true, status: 200, json: async () => body }),
+  }));
+}
+const sourceFlowStart = html.indexOf('function sourceParams()');
+const sourceFlowEnd = html.indexOf('function relayLifecycle()', sourceFlowStart);
+assert.ok(sourceFlowStart >= 0 && sourceFlowEnd > sourceFlowStart);
+const sourceFlow = new Function('document', 'fetch', `
+let _sourceOffset=0,_sourceSelected=null,_sourceSelectedScope=null,_sourceFacets={containers:[],actors:[]},_sourceGeneration=0,_sourceDetailGeneration=0;const _sourcePage=25;
+function scoped(id){return(document.getElementById(id)||{}).value||''}
+function escapeHtml(value){return String(value == null ? '' : value)}
+function esc(value){return escapeHtml(value)}
+function formatDate(value){return String(value || '')}
+${html.slice(sourceFlowStart, sourceFlowEnd)}
+return {fetchSources,sourceDetail,sourceContext,setOffset:value=>{_sourceOffset=value}};
+`)(sourceRaceDocument, deferredSourceFetch);
+
+const ownerARead = sourceFlow.fetchSources();
+sourceRaceElements['source-actor'].value = 'owner-b';
+const ownerBRead = sourceFlow.fetchSources();
+pendingSourceReads[1].answer({ items: [], total: 0 });
+await ownerBRead;
+assert.match(sourceRaceElements['source-status'].textContent, /owner-b/);
+pendingSourceReads[0].answer({ items: [], total: 8 });
+await ownerARead;
+assert.match(sourceRaceElements['source-status'].textContent, /owner-b/);
+
+sourceFlow.setOffset(0);
+const firstPageRead = sourceFlow.fetchSources();
+sourceFlow.setOffset(25);
+const secondPageRead = sourceFlow.fetchSources();
+pendingSourceReads[3].answer({ items: [], total: 30 });
+await secondPageRead;
+assert.equal(sourceRaceElements['source-page'].textContent, '26–25 of 30');
+pendingSourceReads[2].answer({ items: [], total: 30 });
+await firstPageRead;
+assert.equal(sourceRaceElements['source-page'].textContent, '26–25 of 30');
+
+const firstDetailRead = sourceFlow.sourceDetail('first');
+const secondDetailRead = sourceFlow.sourceDetail('second');
+pendingSourceReads[5].answer({ source: { id: 'second', content: 'second detail', actor_ref: 'owner-b', container_ref: 'workspace-a' } });
+await secondDetailRead;
+assert.match(sourceRaceElements['source-detail'].innerHTML, /second detail/);
+pendingSourceReads[4].answer({ source: { id: 'first', content: 'first detail', actor_ref: 'owner-b', container_ref: 'workspace-a' } });
+await firstDetailRead;
+assert.doesNotMatch(sourceRaceElements['source-detail'].innerHTML, /first detail/);
+
+const staleContextRead = sourceFlow.sourceContext('second');
+sourceRaceElements['source-container'].value = 'workspace-b';
+pendingSourceReads[6].answer({ items: [{ content: 'workspace-a context' }] });
+await staleContextRead;
+assert.doesNotMatch(sourceRaceElements['source-context-result'].innerHTML, /workspace-a context/);
+
+sourceRaceElements['source-container'].value = 'workspace-c';
+sourceRaceElements['source-actor'].value = '';
+const allOwnersRead = sourceFlow.fetchSources();
+const allOwnersRequest = pendingSourceReads.at(-1);
+assert.doesNotMatch(allOwnersRequest.url, /actor_ref=/);
+allOwnersRequest.answer({ items: [], total: 0 });
+await allOwnersRead;
+assert.match(sourceRaceElements['source-status'].textContent, /across all owners/);
+const viewSwitchStart = html.indexOf('const _VIEWS =');
+const viewSwitchEnd = html.indexOf('function openExpiredRelay', viewSwitchStart);
+assert.ok(viewSwitchStart >= 0 && viewSwitchEnd > viewSwitchStart);
+function viewElement(hidden = false) {
+  const values = new Set(hidden ? ['hidden'] : []);
+  return { classList: { toggle: (name, on) => on ? values.add(name) : values.delete(name), contains: name => values.has(name) }, setAttribute() {} };
+}
+const viewElements = {
+  'view-operational': viewElement(false), 'view-relay': viewElement(true), 'view-how-it-helps': viewElement(true),
+  'tab-operational': viewElement(false), 'tab-relay': viewElement(false), 'tab-evaluation': viewElement(false),
+};
+let evaluationLoads = 0;
+const switchDashboardView = new Function('document', 'window', 'history', 'DASHBOARD_ROI_ENABLED', 'fetchRelay', 'fetchEffectivenessReports', `
+  ${html.slice(viewSwitchStart, viewSwitchEnd)}
+  return switchView;
+`)({ getElementById: id => viewElements[id] || null }, { location: { hash: '' }, scrollTo() {} }, { replaceState() {} }, true, () => {}, () => { evaluationLoads += 1; });
+switchDashboardView('evaluation');
+assert.equal(viewElements['view-how-it-helps'].classList.contains('hidden'), false);
+assert.equal(viewElements['view-operational'].classList.contains('hidden'), true);
+assert.equal(evaluationLoads, 1);
 console.log('plain-language dashboard renderers: all cases passed');

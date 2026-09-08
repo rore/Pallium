@@ -44,18 +44,18 @@ still represents the earlier memory-centric product:
   forgetting. Broad/exact history search and bounded /source/{id}/context expansion
   already enforce visibility, redaction, and forgotten-item exclusion. There is no
   dashboard-oriented SourceItem list/detail projection.
-- Relay already has container-scoped session list/name/close, targeted send/reply,
+- Relay already has service-global session/name/close, targeted send/reply,
   message-status, delivery/ACK, lifecycle, and wake-candidate behavior. The current
   session view omits the persisted RelaySessionRecord.id and container metadata;
-  dashboard-oriented actor-domain session and paginated message-history projections are now
+  dashboard-oriented service-global session and paginated message-history projections are now
   implemented as bounded reads.
 - persisted Relay messages contain the post-redaction payload, sender runtime/native
-  session, recipient selector, reply link, actor/container, creation, and expiry.
+  session, recipient selector, reply link, container, creation, and expiry.
   Deliveries contain recipient runtime/native session, state, claim/delivery times,
   and attempts. Wake attempt/success telemetry is not persisted and must not be
   invented by the UI.
-- Relay identity, alias uniqueness, delivery lookup, reply, status, and wake paths use the
-  merged actor-scoped endpoint and routing contract; the dashboard consumes those semantics
+- Relay identity, global name uniqueness, delivery lookup, reply, status, and wake paths use the
+  merged actor-free endpoint and routing contract; the dashboard consumes those semantics
   through bounded read projections and the canonical naming route.
 
 The UX/design artifact records two implementation matrices:
@@ -70,7 +70,7 @@ The UX/design artifact records two implementation matrices:
 Open [the interactive UX mock](../../docs/designs/dashboard-operations-relay-ux.html)
 in a browser. This standalone repo-local reference illustrates navigation,
 progressive disclosure, selection, and drill-down—not graphic design. Preserve the
-production design system. Synthetic data, IDs, health values, and simplified alias
+production design system. Synthetic data, IDs, health values, and simplified name
 behavior are not API contracts; this feature and canonical backend semantics take
 precedence over mock simplifications.
 The older [two-view design](../../docs/designs/dashboard-two-view-ux.md) documents
@@ -193,7 +193,7 @@ communication actually occurred?** It is not the Relay health screen.
 #### Session explorer and naming
 
 Show named and unnamed Pallium-known sessions as equal participants. Where the
-canonical contract provides it, show endpoint ID, optional alias, runtime, native
+canonical contract provides it, show endpoint ID, optional name, runtime, native
 session reference/title, container/repository/worktree metadata, last seen,
 lifecycle, and persisted destination health. Show wake capability/status only from
 observable evidence.
@@ -204,13 +204,13 @@ distinguish repository/worktree metadata when available. Include containers in
 session search and filtering. Duplicate readable names remain distinguishable
 through canonical endpoint/container references. Missing metadata is explicitly
 unknown, never inferred from the dashboard checkout. Cross-container edges are
-visible within the authorized actor domain without widening History/Memory access.
+visible across the local Relay service without widening History/Memory access.
 
-Allow assign, transfer, and remove alias through the existing canonical naming
-semantics. Provide copy actions for canonical exact selectors and alias selectors.
+Allow assign, transfer, and remove name through the existing canonical naming
+semantics. Provide copy actions for canonical exact selectors and name selectors.
 Naming is optional addressing metadata, not registration, permission, or Relay
-membership. Containers are provenance/filter/group metadata, not a communication
-boundary in the intended actor-scoped Relay domain.
+membership. Containers are provenance/filter/group metadata. Ordinary discovery is container-local,
+but containers are not a routing boundary for known endpoints or global names.
 
 #### Communication graph
 
@@ -233,7 +233,7 @@ aggregate endpoint only if real volume or latency warrants it.
 #### Message explorer
 
 Provide global recent activity plus per-session and pairwise views. Show sender and
-recipient, selector/alias used at send time when represented, timestamps,
+recipient, selector/name used at send time when represented, timestamps,
 reply/in-reply-to relationship, delivery states/attempts/timestamps, expiry, and
 persisted destination health.
 
@@ -270,7 +270,7 @@ separate work.
   storage internals directly;
 - replace memory-backed container/actor/activity projections with capability-neutral
   or SourceItem-backed equivalents so Operations works with zero semantic packages;
-- use the merged actor-domain Relay contract for a bounded session projection exposing
+- use the merged actor-free Relay contract for a bounded service-global session projection exposing
   canonical endpoint identity and location metadata;
 - add one paginated Relay message/delivery history projection with time, session,
   pair, runtime, container, state, and reply filters. Derive the first graph from
@@ -279,14 +279,14 @@ separate work.
   for the local dashboard. Do not expose storage writes directly.
 
 All new list endpoints require explicit maximum page sizes, deterministic ordering,
-empty pages, invalid-filter errors, and actor/visibility isolation. Avoid returning
+empty pages, invalid-filter errors, Session History visibility governance, and actor-free Relay behavior. Avoid returning
 claim tokens, receipts, secrets, or other delivery-control material to the browser.
 
 ### Explicit dependencies
 
 - UX/IA, Operations, package-free health, SourceItem exploration, and relocation of
   existing panels can be designed and implemented against shipped behavior.
-- canonical endpoint identity, actor-domain alias namespace, cross-container session
+- canonical endpoint identity, service-global name namespace, cross-container session
   listing, and graph edges are shipped Relay semantics; do not hardcode container-scoped
   selectors as the dashboard contract.
 - recent native Claude Code/Codex/OpenCode session discovery is an investigation or
@@ -324,15 +324,14 @@ not widen Session History or Derived Memory visibility.
    search/filter combinations, deterministic pagination, missing IDs, invalid
    filters, forgotten anchors/neighbors, mixed visibility, redaction, retention,
    structural references, and raw lexical/vector enabled/disabled/failure states.
-5. Cover Relay empty/one/max/over-max pages, named and unnamed sessions, alias
+5. Cover Relay empty/one/max/over-max pages, named and unnamed sessions, name
    assign/transfer/remove/conflict/idempotence, multiple runtimes, closed/dormant/
    unreachable/reactivated states, replies and reply chains longer than two,
    pending/claimed/delivered/expired/redelivered delivery states, Unicode/redacted
-   payloads, and missing/invalid/other-actor entities.
+   payloads, and missing/invalid endpoint entities.
 6. After cross-container Relay lands, drive traffic between sessions in different
    repositories/containers and verify session list, graph, message filters, naming,
-   and detail views through public endpoints. Assert the dashboard exposes no
-   cross-actor Relay data and no cross-container Session History data.
+   and detail views through public endpoints. Assert the dashboard sends no Relay actor filter and does not widen cross-container Session History visibility.
 7. Verify graph nodes/edges exactly match the selected bounded message window;
    unnamed sessions remain visible, message-less sessions have no invented edges,
    and graph interaction cannot create messages or workflow state.
@@ -354,7 +353,7 @@ not widen Session History or Derived Memory visibility.
 2. A governed SourceItem explorer supports bounded recent/search/filter/detail and
    existing surrounding-context behavior without a dashboard-only access path.
 3. The Relay workspace shows canonical named and unnamed sessions, observational
-   communication edges, and stored/redacted message-delivery history; aliases can be
+   communication edges, and stored/redacted message-delivery history; names can be
    managed without changing communication authority.
 4. No dashboard composer, workflow control, invented wake telemetry, unbounded list,
    governance bypass, or heavy frontend stack is introduced.

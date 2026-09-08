@@ -10,7 +10,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
@@ -63,6 +63,23 @@ def _dashboard_utc(value: datetime | None) -> datetime | None:
 def _dashboard_time(value: datetime | None) -> str | None:
     value = _dashboard_utc(value)
     return value.isoformat() if value else None
+
+
+def _dashboard_relay_session(record: RelaySessionRecord, cutoff: datetime) -> dict:
+    last_seen = _dashboard_utc(record.last_seen_at)
+    lifecycle = "closed" if record.state == "closed" else (
+        "recent" if last_seen >= cutoff else "dormant"
+    )
+    return {
+        "id": record.id, "runtime": record.runtime, "session_ref": record.session_ref,
+        "container_ref": record.container_ref,
+        "title": record.title, "alias": record.alias, "state": lifecycle,
+        "lifecycle": lifecycle,
+        "destination_health": None if lifecycle == "closed" else record.state,
+        "first_seen_at": _dashboard_time(record.first_seen_at),
+        "last_seen_at": _dashboard_time(record.last_seen_at),
+        "closed_at": _dashboard_time(record.closed_at),
+    }
 
 
 def _dashboard_source_item(record: SourceItemRecord) -> SourceItem:
@@ -177,14 +194,15 @@ def _read_effectiveness_report(path: Path) -> dict:
         return {"available": False, "last_modified": None, "error": "unreadable"}
 
 
-def mount_dashboard(app: FastAPI) -> None:
+def mount_dashboard(app: FastAPI, *, show_roi: bool = False) -> None:
     assets_dir = Path(__file__).resolve().parent.parent / "assets"
     app.mount("/static", StaticFiles(directory=str(assets_dir)), name="static")
 
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard_page() -> HTMLResponse:
         html = _DASHBOARD_HTML_PATH.read_text(encoding="utf-8")
-        return HTMLResponse(content=html)
+        html = html.replace('<body data-roi-enabled="false">', f'<body data-roi-enabled="{str(show_roi).lower()}">', 1)
+        return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
 
     @app.get("/dashboard/api/effectiveness/reports")
     def dashboard_effectiveness_reports() -> JSONResponse:
@@ -194,6 +212,8 @@ def mount_dashboard(app: FastAPI) -> None:
         fixed, hardcoded set (no user input), so the route is traversal-proof.
         A missing dir/file returns a present-but-empty 200 state per report.
         """
+        if not show_roi:
+            raise HTTPException(status_code=404, detail="dashboard evaluation is disabled")
         reports = {
             key: _read_effectiveness_report(path)
             for key, path in _EFFECTIVENESS_REPORT_PATHS.items()
@@ -419,6 +439,61 @@ def mount_dashboard(app: FastAPI) -> None:
             "sessions": runtimes,
         })
 
+    @app.get("/dashboard/api/relay/overview")
+    def dashboard_relay_overview(
+        container_search: str | None = Query(None),
+        limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0),
+    ) -> JSONResponse:
+        """Bounded service-global Relay summary and ranked container facets."""
+        storage = app.state.pallium_service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+        as_of = datetime.now(timezone.utc)
+        cutoff = as_of - timedelta(hours=24)
+        recent = and_(RelaySessionRecord.state != "closed", RelaySessionRecord.last_seen_at >= cutoff)
+        active_recent = and_(RelaySessionRecord.state == "active", RelaySessionRecord.last_seen_at >= cutoff)
+        dormant = and_(RelaySessionRecord.state != "closed", RelaySessionRecord.last_seen_at < cutoff)
+
+        def aggregates():
+            return (
+                func.count(RelaySessionRecord.id).label("session_count"),
+                func.coalesce(func.sum(case((active_recent, 1), else_=0)), 0).label("active_session_count"),
+                func.coalesce(func.sum(case((recent, 1), else_=0)), 0).label("recent_session_count"),
+                func.coalesce(func.sum(case((dormant, 1), else_=0)), 0).label("dormant_session_count"),
+                func.coalesce(func.sum(case((RelaySessionRecord.state == "closed", 1), else_=0)), 0).label("closed_session_count"),
+                func.coalesce(func.sum(case((RelaySessionRecord.state == "unreachable", 1), else_=0)), 0).label("unreachable_session_count"),
+                func.max(RelaySessionRecord.last_seen_at).label("last_seen_at"),
+            )
+
+        factory = getattr(storage, "_relay_session_factory", storage._session_factory)
+        with factory() as session:
+            summary = session.execute(select(*aggregates())).one()
+            message_count, last_message_at = session.execute(select(
+                func.count(RelayMessageRecord.id), func.max(RelayMessageRecord.created_at),
+            )).one()
+            facets = select(RelaySessionRecord.container_ref, *aggregates())
+            if container_search and container_search.strip():
+                facets = facets.where(RelaySessionRecord.container_ref.ilike(f"%{container_search.strip()}%"))
+            rows = session.execute(facets.group_by(RelaySessionRecord.container_ref).order_by(
+                func.coalesce(func.sum(case((active_recent, 1), else_=0)), 0).desc(),
+                func.max(RelaySessionRecord.last_seen_at).desc(),
+                RelaySessionRecord.container_ref.asc(),
+            ).offset(offset).limit(limit + 1)).all()
+
+        has_more, rows = len(rows) > limit, rows[:limit]
+        return JSONResponse(content={"as_of": _dashboard_time(as_of),
+            "summary": {"session_count": summary.session_count, "message_count": message_count,
+                "last_seen_at": _dashboard_time(summary.last_seen_at), "last_message_at": _dashboard_time(last_message_at),
+                "active_session_count": summary.active_session_count, "recent_session_count": summary.recent_session_count,
+                "dormant_session_count": summary.dormant_session_count, "closed_session_count": summary.closed_session_count,
+                "unreachable_session_count": summary.unreachable_session_count},
+            "containers": [{"container_ref": row.container_ref, "session_count": row.session_count,
+                "last_seen_at": _dashboard_time(row.last_seen_at), "active_session_count": row.active_session_count,
+                "recent_session_count": row.recent_session_count, "dormant_session_count": row.dormant_session_count,
+                "closed_session_count": row.closed_session_count, "unreachable_session_count": row.unreachable_session_count}
+                for row in rows],
+            "offset": offset, "limit": limit, "has_more": has_more,
+            "next_offset": offset + limit if has_more else None})
     @app.get("/dashboard/api/sources")
     def dashboard_sources(
         container_ref: str = Query(..., min_length=1), actor_ref: str | None = Query(None, min_length=1),
@@ -583,17 +658,7 @@ def mount_dashboard(app: FastAPI) -> None:
             total = session.scalar(select(func.count()).select_from(RelaySessionRecord).where(clause)) or 0
             records = session.scalars(select(RelaySessionRecord).where(clause).order_by(
                 RelaySessionRecord.last_seen_at.desc(), RelaySessionRecord.id.desc()).offset(offset).limit(limit)).all()
-        sessions = []
-        for record in records:
-            item_lifecycle = "closed" if record.state == "closed" else (
-                "recent" if (record.last_seen_at if record.last_seen_at.tzinfo else record.last_seen_at.replace(tzinfo=timezone.utc)) >= cutoff else "dormant"
-            )
-            sessions.append({"id": record.id, "runtime": record.runtime, "session_ref": record.session_ref,
-                "container_ref": record.container_ref, "title": record.title,
-                "alias": record.alias, "state": item_lifecycle, "lifecycle": item_lifecycle,
-                "destination_health": None if item_lifecycle == "closed" else record.state,
-                "first_seen_at": _dashboard_time(record.first_seen_at), "last_seen_at": _dashboard_time(record.last_seen_at),
-                "closed_at": _dashboard_time(record.closed_at)})
+        sessions = [_dashboard_relay_session(record, cutoff) for record in records]
         return JSONResponse(content={"sessions": sessions, "total": total, "offset": offset, "limit": limit,
                                      "as_of": _dashboard_time(as_of)})
     @app.get("/dashboard/api/relay/messages")
@@ -673,6 +738,11 @@ def mount_dashboard(app: FastAPI) -> None:
             message_ids = [message.id for message in messages]
             delivery_query = select(RelayDeliveryRecord).where(RelayDeliveryRecord.message_id.in_(message_ids)).order_by(RelayDeliveryRecord.id)
             deliveries = session.scalars(delivery_query).all() if message_ids else []
+            endpoint_ids = {message.sender_endpoint_id for message in messages if message.sender_endpoint_id}
+            endpoint_ids.update(delivery.recipient_endpoint_id for delivery in deliveries if delivery.recipient_endpoint_id)
+            endpoint_records = session.scalars(select(RelaySessionRecord).where(
+                RelaySessionRecord.id.in_(endpoint_ids),
+            )).all() if endpoint_ids else []
         deliveries_by_message: dict[str, list[dict]] = {}
         message_by_id = {message.id: message for message in messages}
         for delivery in deliveries:
@@ -697,7 +767,9 @@ def mount_dashboard(app: FastAPI) -> None:
                 "in_reply_to": message.in_reply_to, "created_at": _dashboard_time(message.created_at),
                 "expires_at": None if durable else _dashboard_time(expires), "effective_expired": not durable and expires <= as_of,
                 "deliveries": deliveries_by_message.get(message.id, [])})
-        return JSONResponse(content={"messages": items, "total": total, "limit": limit, "until": _dashboard_time(as_of),
+        endpoint_sessions = [_dashboard_relay_session(record, as_of - timedelta(hours=24)) for record in endpoint_records]
+        return JSONResponse(content={"messages": items, "endpoint_sessions": endpoint_sessions,
+                                     "total": total, "limit": limit, "until": _dashboard_time(as_of),
                                      "as_of": _dashboard_time(as_of), "has_more": has_more,
                                      "next_before_created_at": _dashboard_time(messages[-1].created_at) if has_more else None,
                                      "next_before_id": messages[-1].id if has_more else None})

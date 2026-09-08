@@ -1,6 +1,6 @@
 # Dashboard
 
-The local dashboard presents Pallium as two top-level views: **Operations** (the default) answers whether the service and each capability are healthy; **Relay** is an observational workspace for recorded sessions and exchanges. It is localhost-only and read-only: it does not create agents, send messages, assign work, or define workflows.
+The local dashboard presents **Operations** (the default) for service and capability health and **Relay** for recorded sessions and exchanges. An optional **Evaluation** view exposes private product-effectiveness diagnostics only when `[features].dashboard_roi` is enabled. The dashboard does not create agents, send messages, assign work, or define workflows.
 
 ![Dashboard](../assets/dashboard_screenshot.png)
 
@@ -9,30 +9,33 @@ The local dashboard presents Pallium as two top-level views: **Operations** (the
 - Service mode: http://localhost:19836/dashboard
 - Dev mode: http://localhost:8000/dashboard
 
-No authentication is required because the dashboard is localhost-only, like the local API. Scope fields still apply to every history read; they are not an authentication boundary.
+The default service binds locally and the dashboard has no authentication. If a deployment exposes the service beyond localhost, protect the whole API and dashboard at the network boundary. Session History scope fields constrain reads but are not authentication.
 
 ## Operations
 
-Operations leads with service, storage, raw recording, queue, search, and Relay health, followed by collapsible capability sections. Pending Relay delivery is neutral; expired delivery and impaired dependencies are called out with actionable links. Existing metrics, activity, feedback, and diagnostics remain available under their owning capability.
+Operations opens with an always-visible Overview: separate totals for original Session History source items and all stored Memory objects, the current operating summary, and System Health. System Health reports semantic-search readiness, absolute database inventory, and current/24-hour processing counts without inventing capacity limits or success rates. Relay Health follows as an always-visible status surface, then Session History. Only the Session History browser and lower-level diagnostics use progressive disclosure. Pending Relay delivery is neutral; expired delivery and impaired dependencies are called out with actionable links.
 
 ### Session History
 
-Session History remains useful with semantic packages disabled. The governed SourceItem explorer supports explicitly scoped list/search/filter/detail reads using required `container_ref` and typed `query_visibility`; `actor_ref` is an optional exact metadata filter. Omitted required or invalid scope is rejected. Visibility, shared-item actor rules, retention/forgotten state, filters, and pagination are applied before counts and ordering, with per-record defense and redaction afterward. Detail is read-only and telemetry-free. An explicit surrounding-context action reuses `/source/{id}/context` with the same scope; refresh does not manufacture lookup events. Inaccessible, forgotten, or deleted evidence is shown as unavailable, never from a cached excerpt.
+Session History remains useful with semantic packages disabled. The section shows the total original SourceItem inventory and collapses only its browser. The browser explains what is searchable, accepts a typed workspace plus an optional owner filter and content/provenance filters, and keeps a compact scrolling list beside a selected detail pane. The divider between them supports pointer dragging and keyboard arrows; narrow layouts stack the panes. Scrollbars use the dashboard theme.
 
-The usefulness panel separates live lookup/exposure/expansion facts from retrospective judge or benefit claims. Last-written aggregate reports show their generation time, evaluated window, denominators, sample/rated/failed/missing counts, completeness, versions, and uncertainty when present. Missing, stale, incomplete, or unvalidated reports are not rendered as zero benefit. A separately bounded reuse-event view exposes only redacted query/linkage/label metadata and resolves source evidence live; it is operational evidence, not assumed to be the exact aggregate sample.
-
+The governed projection requires exact `container_ref` and typed `query_visibility`; `actor_ref` is optional metadata filtering. When omitted, Session History searches all otherwise-visible owners in that workspace; when supplied, it is an exact filter. Visibility, forgotten state, filters, and pagination are applied before counts and ordering, with per-record defense and redaction afterward. Detail is read-only and telemetry-free. An explicit surrounding-context action reuses `/source/{id}/context` with the selected item's recorded scope; refresh does not manufacture lookup events.
 ### Derived Memory
 
-Derived Memory is optional and disabled by default. Existing Memory Browser, query activity, injection/skip/feedback/flag diagnostics, Query Debug, and extraction reports remain here. Disabled processing means no new derivation, not data loss: preserved memories remain browsable and historical/offline diagnostics retain honest labels. Empty, unavailable, and stale states are explicit.
+Derived Memory is optional and last in Operations. Its section is collapsed while derivation is disabled and opens automatically while enabled; its object total remains visible in Overview either way. Existing Memory Browser, query activity, injection/skip/feedback/flag diagnostics, Query Debug, and extraction reports remain here. Disabled processing means no new derivation, not data loss: preserved memories remain browsable and historical/offline diagnostics retain honest labels. Empty, unavailable, and stale states are explicit.
+### Evaluation
+
+Evaluation is hidden and its report endpoint returns 404 by default. Set `[features].dashboard_roi = true` or `PALLIUM_FEATURES_DASHBOARD_ROI=true` only on the private installation used for product measurement. The view contains lookup/reuse, candidate-recovery, and fidelity evidence with explicit denominators, timestamps, uncertainty, and “not measured” states; none is presented as proof of downstream benefit.
 
 ## Relay
 
-Relay shows service-global named and unnamed sessions across containers, with endpoint ID, name, runtime/native reference, container/repository metadata, lifecycle, last-seen, and persisted destination health when available. Container is provenance/filter metadata, not a hidden communication boundary. Runtime discovery and wake outcome are shown only when recorded; otherwise they are unavailable.
+Relay opens directly into service-global recorded activity without an actor/owner picker. Relay sessions, messages, and names have no actor scope. Ordinary recipient discovery remains container-local, while an exact endpoint ID or global `@name` can address a known session across containers; sends remain targeted and there is no broadcast.
 
-The workspace offers session/pair/all message views and an observational graph. Nodes are persisted endpoint IDs; edges are persisted communications. Legacy null endpoint IDs remain unknown and duplicate native IDs are never rebound. The graph and message list use the same bounded, redacted projection, filters, fixed `until` boundary, and deterministic `(created_at, id)` ordering. A graph is labelled partial until its bounded pages are fully loaded. Delivery state, lifecycle, effective expiry, reply links, selector-at-send, and timing are inspectable without claim tokens or receipts. Durable year-9999 expiry renders as no practical expiry; delivery admission never implies recipient action.
+Named and unnamed sessions appear across containers with endpoint ID, name, runtime/native reference, container/repository metadata, lifecycle, last-seen, and persisted destination health when available. Containers come from Relay session check-ins, are ranked by active sessions, show active/total counts, and can be searched beyond the first page. The default list shows current-window participants; full recent-session discovery is explicit.
 
-Names are optional addressing metadata. Save, transfer, or remove is an explicit action through canonical naming semantics. A conflict is a visible 409 requiring a separate confirmation/retry against the selected endpoint identity; no silent rebinding occurs.
+The communication map and recorded-message timeline stay visible together. The map initially fits the complete loaded projection, hides browser scrollbars, pans by background drag, allows node dragging, and provides zoom and Fit controls. Reciprocal traffic collapses into one bidirectional connection while preserving direction counts. Messages are newest-first with recorded time visually primary; selected delivery detail stays beside the bounded scrolling list. Aliases are endpoint-only and disappear from message detail. The expired-delivery KPI in Operations opens Relay with the expired filter selected.
 
+The graph and list use the same bounded, redacted projection, fixed `until` boundary, and deterministic `(created_at, id)` ordering. Legacy null endpoint IDs remain unresolved. Delivery admission never implies recipient action, and claim tokens or receipts are never exposed.
 ## Read behavior and states
 
 Dashboard projections are bounded app-local reads over existing records and allowlisted report files; they do not alter storage, claim deliveries, expand context, or expose pre-redaction content. Every panel has honest loading, empty, error, stale, and partial states with retry or next-page affordances. Narrow layouts stack capability cards and Relay panes without page overflow; keyboard users can reach tabs, collapsibles, filters, list/detail controls, graph nodes/edges, names, and linear graph alternatives with visible focus and status/error announcements.
@@ -40,6 +43,6 @@ Dashboard projections are bounded app-local reads over existing records and allo
 ## When to use it
 
 - Scan Operations for service and capability health.
-- Browse governed Session History and deliberately open bounded context.
+- Browse governed Session History, resize list/detail as needed, and deliberately open bounded context.
 - Use Relay to follow a session, pair, reply chain, or expired delivery.
-- Use Derived Memory diagnostics only as optional historical/experimental evidence, never as proof of downstream benefit.
+- Use Derived Memory for optional memory/search diagnostics; use the private Evaluation view for ROI research, never as automatic proof of downstream benefit.
