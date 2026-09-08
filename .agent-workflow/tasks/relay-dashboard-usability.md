@@ -71,7 +71,7 @@ The current refinement keeps Memory objects first, moves ROI/effectiveness mater
 - Focused caller-surface suite: `.venv\Scripts\python.exe -m pytest tests/test_dashboard_flags.py tests/test_dashboard.py tests/test_config_typed_extraction_shadow_flag.py -q -n 0` → 54 passed.
 - Renderer/interaction regression check: `node tests/dashboard_plain_language_renderer.mjs app/dashboard.html` → all cases passed, including reciprocal aggregation, self-loop geometry, combined workspace, no implicit view switch, and deferred owner/page/detail/context responses.
 - JavaScript parse check and `git diff --check` passed.
-- Repository-wide pytest and the workflow checker were attempted; collection stopped before project tests because this worktree environment lacks optional `numpy` and `jsonschema`, respectively.
+- Exact-head repository suite on verified code revision `0d12927af0ebc3a7a61e08b268f9ba7cec5dff74`: `uv run --isolated --frozen --all-extras python -m pytest tests/ -x -q` → 4,664 passed, 32 skipped, 2 xfailed in 198.59s.
 - Initial live database QA on isolated port 19837 established the high-cardinality problems: 8 accidental owner labels, 288 reachable recent sessions under the dominant label, 1,134 messages, 10 participants, and 11 collapsed connections in the bounded window. Browser runtime errors were absent and zoom changed rendered width from 900 to 1125 pixels.
 - Desktop, selected-message detail, and narrow responsive captures were visually inspected. Desktop keeps map, scrolling message list, and selected detail visible together; narrow layout stacks panes and bounds graph overflow.
 - Operations live-data QA used a consistent SQLite snapshot with 10,998 SourceItems and 12,182 Memory objects. It verified strict semantic-search readiness, absolute rather than invented storage-capacity indicators, current/24-hour processing counts, visible Session History usage KPIs, collapsed disabled Derived Memory, and aligned two-column health cards.
@@ -82,10 +82,22 @@ The current refinement keeps Memory objects first, moves ROI/effectiveness mater
 - Post-refinement live snapshot QA on port 19837 rendered Operations, Session History, Relay, and selected-message detail with zero browser exceptions at 1600×1100 and 1100×900. The map initially fit 13 visible endpoints/13 connections into the pane, the actor control was absent, 100 newest-first messages loaded, and the right-side delivery detail remained visible. Memory objects stayed first; disabled Derived Memory closed with a preserved-object explanation; Evaluation appeared only in the explicitly enabled preview.
 - The reported "Unresolved session" defect was traced to joining an independent 100-session browse page against a 100-message window. Message pages now include exact endpoint metadata independently of session pagination, and the client synthesizes a read-only message snapshot only for genuinely absent current session records. The actor-free preview returned 18 metadata records for 18 displayed endpoints with zero missing; no user-facing "Unresolved session" label remains.
 - The inert Evaluation tab was traced to feature-flag injection replacing the CSS selector before the body marker. Injection now targets the exact `<body>` attribute and dashboard HTML is served with `Cache-Control: no-store`. Focused tests assert both the true body flag and unchanged false-state CSS selector. Real Chrome clicking changed `#operational` to `#evaluation`, selected the tab, displayed the panel, loaded 713 recorded lookups, and produced zero JavaScript errors.
-- The complete dashboard suite, final smart review, public screenshot, roadmap closure note, PR, merge, and installed-service restart remain deferred until the user confirms the combined improvement round is complete.
+- The frozen workflow checker passed clean and the post-PR-151 smart review found no actionable issue. PR, merge, and installed-service restart are now authorized and pending.
 
 ## Result review
 
 Incremental smart review on 2026-09-08 was clean after pointer-layout, stale-response, keyboard-focus, edge-visibility, fit/zoom, and paged endpoint-metadata findings were fixed and re-reviewed.
 
 Final smart review against actor-free main (`b591709b`) found no actionable issues. It verified actor-free Relay requests, optional exact-owner Session History filtering, global overview aggregation, endpoint metadata merging, read-only snapshots, Evaluation gating/no-store behavior, request-state guards, and docs/roadmap alignment.
+
+## Skill feedback (unsent)
+
+**Trigger fired:** 3 — a skill instruction told me to run a command that did not work.
+
+**What the skill said (or failed to say):** `operating-mode.md` instructs agents to run `python scripts/agent-workflow-check.py`, but does not ensure or name the checker's `jsonschema` runtime dependency.
+
+**What happened:** The declared consumer `dev` environment could run tests, but the checker failed at import time because `jsonschema` was absent. An isolated locked run with explicit `--with jsonschema` passed.
+
+**Suggested fix:** Declare `jsonschema` in generated consumer development dependencies, or document a self-contained locked invocation in `operating-mode.md`.
+
+**Work Record:** `0d12927af0ebc3a7a61e08b268f9ba7cec5dff74` and `.agent-workflow/tasks/relay-dashboard-usability.md` in Pallium. External filing was not authorized, so this report remains here for maintainers.
