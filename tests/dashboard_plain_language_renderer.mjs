@@ -234,16 +234,47 @@ const relaySelectionStart = html.indexOf('function selectRelayNode(');
 const relaySelectionEnd = html.indexOf('function renderMap(', relaySelectionStart);
 assert.ok(relaySelectionStart >= 0 && relaySelectionEnd > relaySelectionStart);
 const relaySelection = new Function(`
-  let _relay = { selected: 'old', pair: ['old', 'pair'], message: 'old-message', mode: 'map' };
-  function setRelayMode(mode) { _relay.mode = mode; }
+  let _relay = { selected: 'old', pair: ['old', 'pair'], message: 'old-message' };
+  let renders = 0;
+  function renderRelay() { renders += 1; }
   ${html.slice(relaySelectionStart, relaySelectionEnd)}
-  return { selectRelayPair, state: () => _relay };
+  return { selectRelayPair, state: () => _relay, renders: () => renders };
 `)();
 relaySelection.selectRelayPair('sender\u0000literal', 'recipient"quoted');
 assert.deepEqual(relaySelection.state().pair, ['sender\u0000literal', 'recipient"quoted']);
 assert.equal(relaySelection.state().selected, null);
 assert.equal(relaySelection.state().message, null);
-assert.equal(relaySelection.state().mode, 'messages');
-assert.doesNotMatch(html, /data-rpair=/);
+assert.equal(relaySelection.renders(), 1);
+
+const pairStart = html.indexOf('function relayPairSummaries(');
+const pairEnd = html.indexOf('function selectRelayNode(', pairStart);
+assert.ok(pairStart >= 0 && pairEnd > pairStart);
+const { relayPairSummaries, relayConnectionSummaries, relayEdgeGeometry } = new Function(`
+  function rdeliveries(message) { return message.edges; }
+  ${html.slice(pairStart, pairEnd)}
+  return { relayPairSummaries, relayConnectionSummaries, relayEdgeGeometry };
+`)();
+const pairRows = relayPairSummaries([
+  { edges: [{ from: 'a', to: 'b', state: 'pending' }, { from: 'a', to: 'c', state: 'delivered' }] },
+  { edges: [{ from: 'a', to: 'b', state: 'delivered' }] },
+]);
+const ab = pairRows.find(row => row.from === 'a' && row.to === 'b');
+assert.equal(ab.count, 2);
+assert.deepEqual(ab.states, { pending: 1, delivered: 1 });
+const connections = relayConnectionSummaries([...pairRows, { from: 'b', to: 'a', count: 3, states: { delivered: 3 } }]);
+const abConnection = connections.find(row => row.a === 'a' && row.b === 'b');
+assert.equal(abConnection.forward, 2);
+assert.equal(abConnection.backward, 3);
+assert.deepEqual(abConnection.forwardStates, { pending: 1, delivered: 1 });
+assert.deepEqual(abConnection.backwardStates, { delivered: 3 });
+assert.doesNotMatch(relayEdgeGeometry({ x: 50, y: 50 }, { x: 50, y: 50 }, false).path, /NaN/);
+
+assert.doesNotMatch(html, /id="relay-map-tab"|id="relay-messages-tab"/);
+assert.doesNotMatch(html, /relay-map-wrap'\)\.style\.display/);
+assert.match(html, /Owners keep different people or configurations from sharing Relay names and sessions/);
+assert.match(html, /request!==_relay\.generation/);
+assert.doesNotMatch(html, /relayActor\.value\s*=\s*_actors\[0\]/);
+assert.ok(html.indexOf('id="relay-map-wrap"') < html.indexOf('id="relay-messages"'));
 assert.match(html, /data-rfrom=.*data-rto=/);
+assert.match(html, /data&&data\.owners&&data\.owners\.length\?data\.owners:_relay\.owners/);
 console.log('plain-language dashboard renderers: all cases passed');

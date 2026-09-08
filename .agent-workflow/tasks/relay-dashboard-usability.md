@@ -54,11 +54,20 @@ Decision: acceptable with the following resolved conditions incorporated into im
 
 ## Implementation
 
-Pending.
+The Relay slice now uses one bounded `/dashboard/api/relay/overview` projection for counts-only owner discovery and exact-owner container facets. It applies actor predicates before grouping, uses the Relay database factory, counts messages separately from sessions/deliveries, ranks owners and containers by recent reachable activity, and preserves deterministic paging/search and exact field allowlists.
+
+The dependency-free workspace now starts with an explanatory owner overview; retains all owner choices after selection; ranks and searches check-in-derived containers; defaults the session scope to recent activity but shows only current-window participants until full browsing is requested; and keeps the graph, bounded message timeline, and side detail visible together. Repeated reciprocal communications collapse into one bidirectional connection with direction/state detail, unresolved endpoints remain explicit, and native zoom/fit plus keyboard controls keep the graph inspectable.
+
+`apply_patch` was attempted once and failed with the machine-local `CreateProcessWithLogonW 1327` constraint. Subsequent edits used narrowly scoped deterministic PowerShell replacements limited to the named worktree files, as required by the repository instructions.
 
 ## Evidence
 
-Pending.
+- Focused caller-surface suite: `.venv\Scripts\python.exe -m pytest tests/test_dashboard.py -q -n 0` → 42 passed.
+- Renderer/interaction regression check: `node tests/dashboard_plain_language_renderer.mjs app/dashboard.html` → all cases passed, including reciprocal aggregation, self-loop geometry, owner-option retention, combined workspace, and no implicit view switch.
+- JavaScript parse check and `git diff --check` passed.
+- Live database QA on isolated port 19837: 8 owner options; `Rotem Hermon` ranked first with 288 reachable recent sessions and 1,134 recorded messages at capture time; the bounded 100-message window rendered 10 participants and 11 collapsed connections. Browser runtime errors: none. Zoom changed rendered width from 900 to 1125 pixels.
+- Desktop, selected-message detail, and narrow responsive captures were visually inspected. Desktop keeps map, scrolling message list, and selected detail visible together; narrow layout stacks panes and bounds graph overflow.
+- The full suite, final clean-context result review, public screenshot, roadmap closure note, PR, merge, and installed-service restart are intentionally deferred until the user supplies the Operations-tab feedback and the combined improvement round is complete.
 
 ## Result review
 
