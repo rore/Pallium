@@ -52,7 +52,7 @@
 - Installed-database backup smoke: 32 main tables and 5 Relay tables reopened; all 3,168 Relay rows, both retained marker rows, both schemas, main row counts, and `PRAGMA quick_check` results were unchanged. The first smoke correctly exposed over-broad validation of dormant main-DB remnants before commit; validation was narrowed to the active Relay file and the repeated smoke passed.
 - No live database was opened by feature-branch code. The 408 MB temporary backup directory was verified under the isolated worktree and removed after the smoke.
 - `git diff --check` passed; only expected Windows line-ending notices were emitted.
-- Machine-local edit fallback: after the required pply_patch attempt failed with Windows error 1327, deterministic replacements were limited to this Work Record and the explicit storage/sqlite.py validation correction; delegated edits remained limited to their named files.
+- Machine-local edit fallback: after the required apply_patch attempt failed with Windows error 1327, deterministic replacements were limited to this Work Record and the explicit storage/sqlite.py validation correction; delegated edits remained limited to their named files.
 
 ## Plan review
 
@@ -64,4 +64,4 @@
 - First clean-context smart result review verdict: request changes. A reproduced fresh-start race showed pair validation was not serialized with two-file initialization; a second process could see main created before Relay and reject healthy startup. Add one shared pair lock around validation plus both existing per-file initialization locks and prove concurrent fresh startup.
 - Test finding: the dormant-main regression seeded only ignored marker metadata and could not catch renewed validation of actual dormant Relay tables. Seed incomplete legacy Relay data tables and assert their schema and rows remain unchanged while the active Relay file works.
 - No other correctness, snapshot, status, path/URI, or public-contract finding was reported. Return to implementation for these two bounded corrections, then repeat clean-context result review.
-- Both findings are addressed: validation and two-file initialization share a distinct pair lock without nesting the same schema lock, and the dormant-main regression now preserves real incomplete legacy message/delivery schemas and rows. Focused verification is green; repeat clean-context review pending.
+- Both findings are addressed: validation and two-file initialization share a distinct pair lock without nesting the same schema lock, and the dormant-main regression now preserves real incomplete legacy message/delivery schemas and rows. Focused verification is green. Repeat clean-context smart review approved commit `7de816a0` with no remaining actionable findings; the reviewer also ran an isolated same-database concurrency probe successfully.
