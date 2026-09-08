@@ -51,9 +51,10 @@ superseded guidance.
 
 ## Scope and governance
 
-History search and expansion enforce the requesting session's container, actor,
-and visibility scope before returning content. Expansion applies the same checks
-to every surrounding turn.
+History search and expansion enforce the requesting session's container and
+visibility scope before returning content. `actor_ref` is stored attribution metadata:
+omit it to search every otherwise-eligible actor, or supply it as an exact
+metadata filter. Expansion applies the same checks to every surrounding turn.
 
 Pallium records lookup and expansion telemetry, supports raw-turn forgetting,
 and applies redaction on both search and expansion.

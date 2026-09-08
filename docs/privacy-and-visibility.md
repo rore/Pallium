@@ -3,17 +3,18 @@
 This document explains Pallium's current scope model across Session History,
 Relay, and optional derived memory.
 
-The main rule is simple: scope is checked before history or memory content is
-returned, and Relay recipients are resolved within the same local container and
-actor context. `container_ref`, `actor_ref`, and `visibility` are claimed local
-scope. They are not a cross-user authentication or authorization system.
+Session History and derived memory apply their documented visibility rules before
+returning content. Session History treats `actor_ref` as optional attribution
+metadata and an exact filter only when supplied. Relay is service-global within
+the local single-user service. These values are not cross-user authentication or
+authorization.
 
 ## How each capability uses scope
 
 - **Session History:** search and every neighboring turn returned by expansion
   must be visible to the requesting context.
-- **Relay:** session discovery, addressing, messages, and replies remain within
-  the resolved local container and actor scope.
+- **Relay:** session discovery, addressing, messages, and replies are service-global
+  for the local single-user service; container and actor values are only metadata.
 - **Derived memory:** retrieval filters source evidence and derived objects before
   ranking, then preserves visibility through derivation.
 

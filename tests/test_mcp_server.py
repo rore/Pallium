@@ -238,10 +238,11 @@ async def test_expand_source_tool_forwards_visibility(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
-    captured: dict[str, str] = {}
+    captured: dict[str, str | None] = {}
 
     async def fake_get_source_context(source_item_id: str, **kwargs):
         captured["source_item_id"] = source_item_id
+        captured["actor_ref"] = kwargs["actor_ref"]
         return {"items": []}
 
     with (
@@ -254,11 +255,11 @@ async def test_expand_source_tool_forwards_visibility(
         server = create_server()
         await server.call_tool(
             "pallium_expand_source",
-            {"source_item_id": "s-1", "visibility": "public"},
+            {"source_item_id": "s-1", "actor_ref": "操作员", "visibility": "public"},
         )
 
     assert init.call_args.args[0].visibility == "public"
-    assert captured == {"source_item_id": "s-1"}
+    assert captured == {"source_item_id": "s-1", "actor_ref": "操作员"}
 
 @pytest.mark.asyncio
 async def test_historical_search_empty_echoes_exact_requested_scope(
@@ -285,6 +286,7 @@ async def test_historical_search_empty_echoes_exact_requested_scope(
         })
 
     assert search_mock.await_args.kwargs["request_source_item_id"] == "请求:42"
+    assert search_mock.await_args.kwargs["actor_ref"] is None
     payload = json.loads(content[0].text)
     assert payload["requested_container_ref"] == "git:example.com/example/repository"
     assert "exact" in payload["empty_result_hint"]
@@ -297,12 +299,12 @@ async def test_historical_search_keeps_request_link_validation_visible(
 ) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
     detail = "request_source_item_id must reference a live user request in the same scope"
+    search_mock = AsyncMock(return_value={
+        "error": "Client error '422 Unprocessable Entity'",
+        "detail": {"detail": detail},
+    })
     with patch(
-        "app.mcp.client.PalliumMcpClient.search_history",
-        new=AsyncMock(return_value={
-            "error": "Client error '422 Unprocessable Entity'",
-            "detail": {"detail": detail},
-        }),
+        "app.mcp.client.PalliumMcpClient.search_history", new=search_mock,
     ):
         server = create_server()
         content, _ = await server.call_tool("pallium_search_history", {
@@ -316,6 +318,7 @@ async def test_historical_search_keeps_request_link_validation_visible(
 
     payload = json.loads(content[0].text)
     assert payload["detail"] == {"detail": detail}
+    assert search_mock.await_args.kwargs["actor_ref"] == "actor:1"
 
 
 @pytest.mark.asyncio

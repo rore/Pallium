@@ -107,7 +107,7 @@ def test_public_context_private_anchor_denied(client: TestClient) -> None:
 def test_container_context_excludes_other_actor_private(client: TestClient) -> None:
     ids = _ordered_thread(client)
     resp = _context(client, ids["anchor"], before=2, after=2,
-                    query_visibility="container", query_actor_ref="actor-A")
+                    query_visibility="container")
     assert resp.status_code == 200, resp.text
     returned = {it["source_item_id"] for it in resp.json()["items"]}
     assert ids["priv_b"] not in returned  # actor-B private never leaks
@@ -134,6 +134,40 @@ def test_private_context_default_returns_private_neighbors(client: TestClient) -
     assert ids["pub_before"] in returned
     assert ids["pub_after"] in returned
 
+
+def test_private_context_actor_filter_is_optional_and_exact(client: TestClient) -> None:
+    actor_a_before = _ingest(
+        client, source_id="actor-a-before", content="actor A before",
+        actor_ref="操作员甲",
+    )
+    anchor = _ingest(
+        client, source_id="actor-a-anchor", content="actor A anchor",
+        actor_ref="操作员甲",
+    )
+    actor_b_after = _ingest(
+        client, source_id="actor-b-after", content="actor B after",
+        actor_ref="操作员乙",
+    )
+    no_actor_after = _ingest(
+        client, source_id="no-actor-after", content="no actor after",
+    )
+
+    unfiltered = _context(client, anchor, before=2, after=2)
+    assert unfiltered.status_code == 200, unfiltered.text
+    assert {item["source_item_id"] for item in unfiltered.json()["items"]} == {
+        actor_a_before, anchor, actor_b_after, no_actor_after,
+    }
+
+    filtered = _context(
+        client, anchor, before=2, after=2, query_actor_ref="操作员甲",
+    )
+    assert filtered.status_code == 200, filtered.text
+    assert {item["source_item_id"] for item in filtered.json()["items"]} == {
+        actor_a_before, anchor,
+    }
+
+    wrong_actor = _context(client, anchor, query_actor_ref="操作员乙")
+    assert wrong_actor.status_code == 404
 
 # ---------------------------------------------------------------------------
 # Invalid visibility rejected at the boundary (422), never permissive.
@@ -181,7 +215,7 @@ def _mock_get_response() -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_mcp_client_sends_query_visibility_when_set() -> None:
+async def test_mcp_client_sends_visibility_but_omits_ambient_actor() -> None:
     ctx = PalliumContext(base_url="http://localhost:8000",
                          container_ref="c", actor_ref="a", visibility="public")
     with patch("httpx.AsyncClient.get", return_value=_mock_get_response()) as mock_get:
@@ -190,7 +224,7 @@ async def test_mcp_client_sends_query_visibility_when_set() -> None:
         params = mock_get.call_args.kwargs.get("params")
         assert params["query_visibility"] == "public"
         assert params["container_ref"] == "c"
-        assert params["query_actor_ref"] == "a"
+        assert "query_actor_ref" not in params
 
 
 @pytest.mark.asyncio

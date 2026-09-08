@@ -924,7 +924,7 @@ class PalliumService:
                 source_only
                 and all(
                     isinstance(value, str) and bool(value)
-                    for value in (container_ref, thread_ref, actor_ref, visibility)
+                    for value in (container_ref, thread_ref, visibility)
                 )
             ):
                 try:
@@ -937,7 +937,6 @@ class PalliumService:
                 or linked_source.role != "user"
                 or canonicalize_container_ref(linked_source.container_ref) != container_ref
                 or linked_source.thread_ref != thread_ref
-                or linked_source.actor_ref != actor_ref
                 or linked_source.visibility != visibility
             ):
                 raise LookupRequestLinkError(
@@ -1982,6 +1981,8 @@ class PalliumService:
           ``get_memory_expand``): a forgotten or not-visible anchor yields 404
           (raises KeyError). Source items use ``"public"`` as the cross-container
           carve-out (there is no ``"global"`` for source items).
+        - ``query_actor_ref`` is an optional exact metadata filter for the anchor and
+          raw neighbors; omission includes every actor allowed by visibility.
         - Neighbors are a two-sided, SQL-LIMIT-bounded window (never an unbounded
           transcript walk); each neighbor is individually forgotten-skipped +
           ``is_visible``-checked against the CALLER scope + redacted (note
@@ -2017,10 +2018,12 @@ class PalliumService:
         # existence leak).
         if anchor.forgotten:
             raise KeyError(source_item_id)
+        if query_actor_ref is not None and anchor.actor_ref != query_actor_ref:
+            raise KeyError(source_item_id)
         if container_ref is not None and anchor.visibility != "public" and anchor.container_ref != container_ref:
             raise KeyError(source_item_id)
         effective_container = container_ref or anchor.container_ref
-        effective_actor_ref = query_actor_ref or anchor.actor_ref
+        effective_actor_ref = query_actor_ref
         if not is_visible(
             anchor.visibility, anchor.container_ref, effective_container,
             anchor.actor_ref, query_visibility=query_visibility,
@@ -2049,6 +2052,8 @@ class PalliumService:
 
             def _keep(item: SourceItem) -> SourceItem | None:
                 if item.forgotten:
+                    return None
+                if query_actor_ref is not None and item.actor_ref != query_actor_ref:
                     return None
                 if not is_visible(
                     item.visibility, item.container_ref, effective_container,

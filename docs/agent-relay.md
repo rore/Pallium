@@ -10,7 +10,7 @@ embeddings, ranking, or an LLM.
 
 ## Hook identity for memory and history
 
-PALLIUM_HOOK_ACTOR_REF remains the stable attribution key for hook-provided memory and Session History records. Relay ignores this value: Relay sessions, names, messages, and wake state are global to the local Pallium service. The variable is not authentication and is separate from the paired MCP trusted-scope variables PALLIUM_ACTOR_REF and PALLIUM_CONTAINER_REF.
+PALLIUM_HOOK_ACTOR_REF remains attribution metadata for hook-provided memory and Session History records; raw history search does not filter by it unless the caller explicitly asks. Relay ignores this value: Relay sessions, names, messages, and wake state are global to the local Pallium service. The variable is not authentication and is separate from the paired MCP trusted-scope variables PALLIUM_ACTOR_REF and PALLIUM_CONTAINER_REF.
 
 ## Send a message
 
@@ -126,7 +126,7 @@ session ID.
 - storage: local persistent SQLite state
 - security boundary: local single-user coordination
 
-The generic secret redactor runs before persistence. `actor_ref` remains memory/history attribution; Relay has no actor scope.
+The generic secret redactor runs before persistence. `actor_ref` remains memory/history attribution metadata; Relay has no actor scope.
 
 ## Tools
 

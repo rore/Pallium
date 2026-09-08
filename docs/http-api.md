@@ -222,12 +222,15 @@ Additional filters:
   (casefold, separator-canonical). "PROJ-123", "PROJ 123", "proj_123" all match.
 - `request_source_item_id` — optional measurement link for a
   `source_only=true` historical lookup. It must reference a live user source
-  item with the same container, thread, actor, and visibility as the request.
-  Invalid links return HTTP 422 on both `/query` and `/query/debug`; omission
+  item with the same container, thread, and visibility as the request. Actor
+  attribution is metadata, not part of lookup linkage. Invalid links return HTTP
+  422 on both `/query` and `/query/debug`; omission
   remains supported. This field is telemetry, not authorization.
-- `actor_ref` — filter by actor identity. When provided, only returns memories
-  whose `actor_ref` matches or is null (shared). When omitted, no actor
-  filtering is applied. See
+- `actor_ref` — optional actor metadata filter. For `source_only=true` Session
+  History queries, omission searches every otherwise-eligible actor and a supplied
+  value is an exact match (including excluding null actor metadata). For derived
+  memory queries, existing actor-scoped visibility and shared-memory behavior are
+  unchanged. See
   [privacy-and-visibility.md](privacy-and-visibility.md#actor-scoping) for
   details.
 Minimal example (accepted only by packages that don't enforce visibility):

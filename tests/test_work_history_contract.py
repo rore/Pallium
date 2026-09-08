@@ -85,7 +85,6 @@ async def test_exact_client_uses_existing_source_only_query_funnel() -> None:
             "work_refs": ["proj-42"],
             "container_ref": "git:example/repo",
             "thread_ref": "session-1",
-            "actor_ref": "actor-1",
             "visibility": "private",
             "request_source_item_id": "request-1",
         },
@@ -109,6 +108,10 @@ async def test_tool_schema_and_descriptions_distinguish_exact_from_broad(
     assert "compatibility-only" in broad.description
     assert "cannot prove messages were received or sent" in broad.description
     assert "work_refs" in broad.inputSchema["properties"]
+    assert "actor_ref" not in exact.inputSchema.get("required", [])
+    assert "actor_ref" not in broad.inputSchema.get("required", [])
+    assert "exact metadata filter" in exact.description
+    assert "exact metadata filter" in broad.description
 
 
 @pytest.mark.asyncio
@@ -164,6 +167,7 @@ async def test_exact_tool_finalizes_only_compacted_hits_and_normalizes_ref(
                 "limit": 1,
                 "container_ref": "c",
                 "visibility": "private",
+                "actor_ref": "工具乙",
             },
         )
 
@@ -172,6 +176,7 @@ async def test_exact_tool_finalizes_only_compacted_hits_and_normalizes_ref(
     assert payload["requested_work_ref"] == "proj-42"
     assert payload["lookup_event_id"] == "finalized"
     assert search.await_args.args[:2] == ("proj-42", None)
+    assert search.await_args.kwargs["actor_ref"] == "工具乙"
     assert receipt.await_args.kwargs["items"] == [
         {"source_item_id": "kept", "role": "search_match"}
     ]
@@ -325,3 +330,44 @@ async def test_exact_empty_deferred_result_reserves_final_lookup_uuid_budget(
     assert "use broad search" in payload["empty_result_hint"]
     assert "never guess" in payload["empty_result_hint"]
     assert len(content[0].text) <= 300
+
+
+@pytest.mark.asyncio
+async def test_exact_client_omits_context_actor_for_blank_query() -> None:
+    client = PalliumMcpClient(PalliumContext(
+        base_url="http://testserver",
+        container_ref="git:example/repo",
+        thread_ref="session-1",
+        actor_ref="工具甲",
+        visibility="private",
+    ))
+    captured: dict = {}
+
+    async def capture(path, payload):
+        captured["payload"] = payload
+        return {"results": []}
+
+    client._post = capture
+    await client.search_history_by_work_ref("proj-42")
+    assert captured["payload"]["text"] == ""
+    assert "actor_ref" not in captured["payload"]
+
+
+@pytest.mark.asyncio
+async def test_exact_client_sends_explicit_unicode_actor_for_nonblank_query() -> None:
+    client = PalliumMcpClient(PalliumContext(
+        base_url="http://testserver",
+        container_ref="git:example/repo",
+        thread_ref="session-1",
+        actor_ref="ambient-actor",
+        visibility="private",
+    ))
+    captured: dict = {}
+
+    async def capture(path, payload):
+        captured["payload"] = payload
+        return {"results": []}
+
+    client._post = capture
+    await client.search_history_by_work_ref("proj-42", "任务", actor_ref="工具乙")
+    assert captured["payload"]["actor_ref"] == "工具乙"

@@ -463,11 +463,12 @@ def test_source_item_matches_filters_respects_actor_ref() -> None:
     assert source_item_matches_filters(item_a, filters_a) is True
     # Actor B's item must NOT pass for actor A query
     assert source_item_matches_filters(item_b, filters_a) is False
-    # Shared item (actor_ref=None) always passes
-    assert source_item_matches_filters(item_shared, filters_a) is True
+    # Explicit actor metadata filters are exact, so an unlabelled item does not pass
+    assert source_item_matches_filters(item_shared, filters_a) is False
     # Query without actor_ref sees everything
     assert source_item_matches_filters(item_a, filters_none) is True
     assert source_item_matches_filters(item_b, filters_none) is True
+    assert source_item_matches_filters(item_shared, filters_none) is True
 
 
 def test_evidence_matches_filters_respects_actor_ref() -> None:

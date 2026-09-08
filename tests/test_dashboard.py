@@ -626,7 +626,7 @@ class TestDashboardFlagsEndpoint:
         assert resp.json()["items"] == []
 
 class TestDashboardSourceAndRelayProjections:
-    def test_sources_require_scope_and_enforce_actor_visibility_forget_and_redaction(self, tmp_path: Path) -> None:
+    def test_sources_require_scope_and_apply_optional_exact_actor_filter_forget_and_redaction(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
         now = datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc)
         visible = SourceItem(source_type="turn", source_id="visible", content_type="text/plain",
@@ -634,12 +634,15 @@ class TestDashboardSourceAndRelayProjections:
             container_ref="c1", actor_ref="a1", agent_ref="α-agent", visibility="private", created_at=now)
         other_actor = SourceItem(source_type="turn", source_id="other", content_type="text/plain", content="nope",
             container_ref="c1", actor_ref="a2", visibility="private", created_at=now + timedelta(seconds=1))
+        actorless = SourceItem(source_type="turn", source_id="actorless", content_type="text/plain", content="shared",
+            container_ref="c1", agent_ref="α-agent", visibility="private", created_at=now + timedelta(seconds=4))
         forgotten = SourceItem(source_type="turn", source_id="forgotten", content_type="text/plain", content="gone",
             container_ref="c1", actor_ref="a1", visibility="private", forgotten_at=now, created_at=now + timedelta(seconds=2))
         note = SourceItem(source_type="turn", source_id="note", content_type="text/plain", content="AKIA1234567890ABCDEF",
             artifact_kind="note", container_ref="c1", actor_ref="a1", agent_ref="α-agent", visibility="private", created_at=now + timedelta(seconds=3))
         app.state.pallium_service._storage.create_source_item(visible)
         app.state.pallium_service._storage.create_source_item(other_actor)
+        app.state.pallium_service._storage.create_source_item(actorless)
         app.state.pallium_service._storage.create_source_item(forgotten)
         app.state.pallium_service._storage.create_source_item(note)
         with app.state.pallium_service._storage._session_factory() as session:
@@ -648,6 +651,10 @@ class TestDashboardSourceAndRelayProjections:
         with TestClient(app) as client:
             assert client.get("/dashboard/api/sources").status_code == 422
             assert client.get("/dashboard/api/sources?container_ref=c1&actor_ref=a1&query_visibility=nope").status_code == 422
+            assert client.get("/dashboard/api/sources?container_ref=c1&actor_ref=&query_visibility=private").status_code == 422
+            unfiltered = client.get("/dashboard/api/sources?container_ref=c1&query_visibility=private").json()
+            assert unfiltered["total"] == 4
+            assert [item["id"] for item in unfiltered["sources"]] == [actorless.id, note.id, other_actor.id, visible.id]
             response = client.get("/dashboard/api/sources?container_ref=c1&actor_ref=a1&query_visibility=private&agent_ref=%CE%B1-agent")
             assert response.status_code == 200
             body = response.json()
@@ -656,8 +663,44 @@ class TestDashboardSourceAndRelayProjections:
             assert "AKIA1234567890ABCDEF" not in str(body["sources"][1]["metadata"])
             assert body["sources"][0]["content"] == "AKIA1234567890ABCDEF"  # intentional note carve-out
             assert client.get(f"/dashboard/api/sources/{other_actor.id}?container_ref=c1&actor_ref=a1&query_visibility=private").status_code == 404
+            assert client.get(f"/dashboard/api/sources/{actorless.id}?container_ref=c1&actor_ref=a1&query_visibility=private").status_code == 404
+            assert client.get(f"/dashboard/api/sources/{other_actor.id}?container_ref=c1&query_visibility=private").status_code == 200
             assert client.get(f"/dashboard/api/sources/{forgotten.id}?container_ref=c1&actor_ref=a1&query_visibility=private").status_code == 404
             assert "AKIA1234567890ABCDEF" not in str(client.get("/dashboard/api/activity").json())
+
+    def test_reuse_events_apply_optional_exact_actor_metadata_filter(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        storage = app.state.pallium_service._storage
+        now = datetime.now(timezone.utc)
+        with storage._session_factory() as session:
+            for event_id, actor_ref, visibility in (
+                ("event-a", "操作员甲", "private"),
+                ("event-b", "操作员乙", "private"),
+                ("event-none", None, "private"),
+                ("event-global", "操作员甲", "global"),
+            ):
+                session.add(HistoricalLookupReuseEventRecord(
+                    id=event_id, created_at=now, event_type="lookup",
+                    container_ref="c1", actor_ref=actor_ref, visibility=visibility,
+                ))
+            session.commit()
+
+        with TestClient(app) as client:
+            base = "/dashboard/api/history/reuse-events?container_ref=c1&query_visibility=private"
+            unfiltered = client.get(base).json()
+            actor_a = client.get(base + "&actor_ref=%E6%93%8D%E4%BD%9C%E5%91%98%E7%94%B2").json()
+            actor_b = client.get(base + "&actor_ref=%E6%93%8D%E4%BD%9C%E5%91%98%E4%B9%99").json()
+            assert client.get(base + "&actor_ref=").status_code == 422
+
+        assert unfiltered["total"] == 3
+        assert {event["id"] for event in unfiltered["events"]} == {
+            "event-a", "event-b", "event-none",
+        }
+        assert actor_a["total"] == 2
+        assert {event["id"] for event in actor_a["events"]} == {"event-a", "event-global"}
+        assert actor_b["total"] == 1
+        assert actor_b["events"][0]["id"] == "event-b"
+
 
     def test_history_projection_never_returns_cached_source_text(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
@@ -752,8 +795,12 @@ class TestDashboardSourceAndRelayProjections:
             second = client.get("/dashboard/api/sources", params={**params, "offset": 1}).json()
             assert first["total"] == 2 and [item["id"] for item in first["sources"]] == ["page-b"]
             assert [item["id"] for item in second["sources"]] == ["page-a"]
-            assert client.get("/dashboard/api/sources/public", params={"container_ref": "c1", "actor_ref": "a1", "query_visibility": "public"}).status_code == 200
+            assert client.get("/dashboard/api/sources/public", params={"container_ref": "c1", "actor_ref": "a1", "query_visibility": "public"}).status_code == 404
+            assert client.get("/dashboard/api/sources/public", params={"container_ref": "c1", "query_visibility": "public"}).status_code == 200
             assert client.get("/dashboard/api/sources/global", params={"container_ref": "c1", "actor_ref": "a1", "query_visibility": "public"}).status_code == 200
+            unfiltered_public = client.get("/dashboard/api/sources", params={"container_ref": "c1", "query_visibility": "public"}).json()
+            assert unfiltered_public["total"] == 1
+            assert [item["id"] for item in unfiltered_public["sources"]] == ["public"]
             assert client.get("/dashboard/api/sources/page-a", params={"container_ref": "c1", "actor_ref": "a1", "query_visibility": "public"}).status_code == 404
             container = client.get("/dashboard/api/sources", params={"container_ref": "c1", "actor_ref": "a1", "query_visibility": "container"}).json()
             assert "container" in {item["id"] for item in container["sources"]} and "page-a" not in {item["id"] for item in container["sources"]}

@@ -58,6 +58,7 @@ class PalliumMcpClient:
         source_type: str | None = None,
         role: str | None = None,
         artifact_kind: str | None = None,
+        actor_ref: str | None = None,
         work_refs: list[str] | None = None,
         request_source_item_id: str | None = None,
         defer_delivery: bool = False,
@@ -76,6 +77,9 @@ class PalliumMcpClient:
             "defer_delivery": defer_delivery,
         }
         payload.update(self._scope_params())
+        payload.pop("actor_ref", None)
+        if actor_ref is not None:
+            payload["actor_ref"] = actor_ref
         if source_type is not None:
             payload["source_type"] = source_type
         if role is not None:
@@ -90,6 +94,7 @@ class PalliumMcpClient:
 
     async def search_history_by_work_ref(
         self, work_ref: str, query: str | None = None, *, limit: int = 3,
+        actor_ref: str | None = None,
         request_source_item_id: str | None = None, defer_delivery: bool = False,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -98,6 +103,9 @@ class PalliumMcpClient:
             "work_refs": [work_ref],
         }
         payload.update(self._scope_params())
+        payload.pop("actor_ref", None)
+        if actor_ref is not None:
+            payload["actor_ref"] = actor_ref
         if request_source_item_id is not None:
             payload["request_source_item_id"] = request_source_item_id
         return await self._post("/query", payload)
@@ -176,6 +184,7 @@ class PalliumMcpClient:
         max_chars: int | None = None,
         include_supported_memories: bool = False,
         parent_lookup_id: str | None = None,
+        actor_ref: str | None = None,
         defer_delivery: bool = False,
     ) -> dict[str, Any]:
         """Fetch a bounded neighborhood of raw turns around a source item.
@@ -186,9 +195,8 @@ class PalliumMcpClient:
         params: dict[str, Any] = {}
         if self._ctx.container_ref:
             params["container_ref"] = self._ctx.container_ref
-        actor = getattr(self._ctx, "actor_ref", None)
-        if actor:
-            params["query_actor_ref"] = actor
+        if actor_ref is not None:
+            params["query_actor_ref"] = actor_ref
         # Active (requesting) session for reuse-funnel attribution — so the
         # expansion event records THIS session, never the historical anchor's.
         session = getattr(self._ctx, "thread_ref", None)

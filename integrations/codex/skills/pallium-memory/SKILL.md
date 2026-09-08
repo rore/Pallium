@@ -18,7 +18,7 @@ description: Use Pallium Relay, Session History, or optional derived memory.
 - `pallium_search_history_by_work_ref`
   Current-work search. Copy injected `work_ref`; if absent, use broad search—never guess. Blank `query` resumes newest state; otherwise ask the question.
 - `pallium_search_history`
-  Broad topic search across eligible history/work items. `work_refs` is compatibility-only.
+  Broad topic search; `work_refs` is compatibility-only. Omit `actor_ref` unless exact.
 - `pallium_expand_source`
   After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`.
 - Use injected `container_ref` and active `thread_ref`; never derive, guess, or normalize scope. Pass `request_source_item_id` only to either history search. Values are context/telemetry, not authorization.

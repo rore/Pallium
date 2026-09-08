@@ -84,7 +84,7 @@ def _dashboard_source_item(record: SourceItemRecord) -> SourceItem:
     )
 
 
-def _dashboard_source_visible(record: SourceItemRecord, *, container_ref: str, actor_ref: str,
+def _dashboard_source_visible(record: SourceItemRecord, *, container_ref: str, actor_ref: str | None,
                               query_visibility: str, filters: QueryFilters) -> bool:
     item = _dashboard_source_item(record)
     return not item.forgotten and is_visible(
@@ -110,20 +110,29 @@ def _dashboard_source_view(record: SourceItemRecord) -> dict:
     }
 
 
-def _dashboard_source_scope_clause(*, container_ref: str, actor_ref: str, query_visibility: str):
+def _dashboard_source_scope_clause(*, container_ref: str, actor_ref: str | None, query_visibility: str):
     visibility = func.coalesce(SourceItemRecord.visibility, "private")
-    actor_matches = or_(SourceItemRecord.actor_ref.is_(None), SourceItemRecord.actor_ref == actor_ref)
-    global_same_actor = and_(visibility == "global", SourceItemRecord.actor_ref == actor_ref)
+    global_same_actor = and_(
+        visibility == "global", SourceItemRecord.actor_ref.isnot(None),
+        SourceItemRecord.actor_ref == actor_ref,
+    )
     public = and_(visibility == "public", SourceItemRecord.actor_ref.is_(None))
     if query_visibility == "public":
         accessible = or_(global_same_actor, public)
     elif query_visibility == "container":
         accessible = or_(global_same_actor, public, and_(
-            SourceItemRecord.container_ref == container_ref, visibility != "private", actor_matches,
+            SourceItemRecord.container_ref == container_ref, visibility.notin_(("private", "global")),
         ))
     else:
-        accessible = or_(global_same_actor, public, and_(SourceItemRecord.container_ref == container_ref, actor_matches))
-    return and_(SourceItemRecord.forgotten_at.is_(None), accessible)
+        accessible = or_(
+            global_same_actor, public, and_(
+                SourceItemRecord.container_ref == container_ref, visibility != "global",
+            ),
+        )
+    clause = and_(SourceItemRecord.forgotten_at.is_(None), accessible)
+    if actor_ref is not None:
+        clause = and_(clause, SourceItemRecord.actor_ref == actor_ref)
+    return clause
 
 
 def _sanitize_non_finite(obj):
@@ -412,7 +421,7 @@ def mount_dashboard(app: FastAPI) -> None:
 
     @app.get("/dashboard/api/sources")
     def dashboard_sources(
-        container_ref: str = Query(..., min_length=1), actor_ref: str = Query(..., min_length=1),
+        container_ref: str = Query(..., min_length=1), actor_ref: str | None = Query(None, min_length=1),
         query_visibility: Literal["public", "container", "private", "global"] = Query(...),
         source_type: str | None = Query(None), role: str | None = Query(None),
         artifact_kind: str | None = Query(None), thread_ref: str | None = Query(None),
@@ -449,7 +458,7 @@ def mount_dashboard(app: FastAPI) -> None:
 
     @app.get("/dashboard/api/sources/{source_item_id}")
     def dashboard_source_detail(
-        source_item_id: str, container_ref: str = Query(..., min_length=1), actor_ref: str = Query(..., min_length=1),
+        source_item_id: str, container_ref: str = Query(..., min_length=1), actor_ref: str | None = Query(None, min_length=1),
         query_visibility: Literal["public", "container", "private", "global"] = Query(...),
     ) -> JSONResponse:
         storage = app.state.pallium_service._storage
@@ -465,7 +474,7 @@ def mount_dashboard(app: FastAPI) -> None:
 
     @app.get("/dashboard/api/history/reuse-events")
     def dashboard_reuse_events(
-        container_ref: str = Query(..., min_length=1), actor_ref: str = Query(..., min_length=1),
+        container_ref: str = Query(..., min_length=1), actor_ref: str | None = Query(None, min_length=1),
         query_visibility: Literal["public", "container", "private", "global"] = Query(...),
         limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
     ) -> JSONResponse:
@@ -473,16 +482,23 @@ def mount_dashboard(app: FastAPI) -> None:
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
         visibility = func.coalesce(HistoricalLookupReuseEventRecord.visibility, "private")
-        actor_matches = or_(HistoricalLookupReuseEventRecord.actor_ref.is_(None), HistoricalLookupReuseEventRecord.actor_ref == actor_ref)
         public = and_(visibility == "public", HistoricalLookupReuseEventRecord.actor_ref.is_(None))
-        global_same_actor = and_(visibility == "global", HistoricalLookupReuseEventRecord.actor_ref == actor_ref)
-        local = HistoricalLookupReuseEventRecord.container_ref == container_ref
+        global_same_actor = and_(
+            visibility == "global", HistoricalLookupReuseEventRecord.actor_ref.isnot(None),
+            HistoricalLookupReuseEventRecord.actor_ref == actor_ref,
+        )
+        local = and_(
+            HistoricalLookupReuseEventRecord.container_ref == container_ref,
+            visibility != "global",
+        )
         if query_visibility == "public":
             clause = or_(public, global_same_actor)
         elif query_visibility == "container":
-            clause = or_(public, global_same_actor, and_(local, visibility != "private", actor_matches))
+            clause = or_(public, global_same_actor, and_(local, visibility != "private"))
         else:
-            clause = or_(public, global_same_actor, and_(local, actor_matches))
+            clause = or_(public, global_same_actor, local)
+        if actor_ref is not None:
+            clause = and_(clause, HistoricalLookupReuseEventRecord.actor_ref == actor_ref)
         with storage._session_factory() as session:
             total = session.scalar(select(func.count()).select_from(HistoricalLookupReuseEventRecord).where(clause)) or 0
             events = session.scalars(select(HistoricalLookupReuseEventRecord).where(clause).order_by(

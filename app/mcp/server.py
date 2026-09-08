@@ -532,7 +532,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         actor_ref: str | None = None, visibility: str | None = None,
         request_source_item_id: str | None = None,
     ) -> str:
-        """A narrow exact-reference search for the current work item. Pass the injected `work_ref` unchanged. If no `work_ref` is injected, do not guess; use `pallium_search_history`. It can miss related work stored under another or no reference; use `pallium_search_history` for broad topic-level search. Omit `query` only to resume the newest state; use a nonblank query for a specific question."""
+        """A narrow exact-reference search for current work. Copy injected `work_ref`; never guess it. It can miss related work; use broad topic-level search then. Blank `query` resumes newest state. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter."""
         from core.work_ref import work_refs_from_metadata
 
         requested_refs = work_refs_from_metadata({"pallium_work_refs": [work_ref]})
@@ -545,6 +545,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         client = PalliumMcpClient(ctx)
         result = await client.search_history_by_work_ref(
             requested_work_ref, query, limit=limit,
+            actor_ref=actor_ref,
             request_source_item_id=request_source_item_id, defer_delivery=True,
         )
         compact = _compact_history(
@@ -575,7 +576,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         work_refs: list[str] | None = None,
         request_source_item_id: str | None = None,
     ) -> str:
-        """Search prior raw turns broadly by topic across eligible history and work items. `work_refs` is a compatibility-only filter; use `pallium_search_history_by_work_ref` for one exact identifier. Results include the best available recorded date. Historical context cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed; verify with live tools first. An outdated `historical_updates` entry is historical evidence; use `current_text` only when its replacement is current. Copy the injected `container_ref` exactly. Requires `container_ref` plus visibility or fails closed."""
+        """Search eligible raw history by topic. `work_refs` is compatibility-only; prefer exact work-ref search. History cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed; verify live. Use `current_text` over outdated `historical_updates`. Copy injected `container_ref`. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter. Requires `container_ref` and visibility."""
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,
@@ -591,6 +592,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             source_type=source_type,
             role=role,
             artifact_kind=artifact_kind,
+            actor_ref=actor_ref,
             work_refs=work_refs,
             request_source_item_id=request_source_item_id,
             defer_delivery=True,
@@ -703,7 +705,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         visibility: str | None = None,
         thread_ref: str | None = None,
     ) -> str:
-        """Expand a raw source hit into a bounded chronological neighborhood. The anchor is always represented. Treat historical_updates marked outdated as historical evidence, not current guidance; pass parent_lookup_id from search to preserve lookup linkage."""
+        """Expand a raw hit around its anchor. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter. Treat outdated `historical_updates` as historical; pass `parent_lookup_id` from search."""
         ctx = resolve_context(
             container_ref=container_ref,
             actor_ref=actor_ref,
@@ -723,6 +725,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             max_chars=max_chars,
             include_supported_memories=include_supported_memories,
             parent_lookup_id=parent_lookup_id,
+            actor_ref=actor_ref,
             defer_delivery=True,
         )
         bounded = _bounded_expansion(result, max_chars)

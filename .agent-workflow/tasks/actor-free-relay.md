@@ -38,9 +38,13 @@
 
 2026-09-08 — Preserved the full edge-case suites and replaced actor-isolation assertions with actor-independence, global-name collision/takeover, cross-container exact/name routing, wake durability, and legacy-state rejection. A cheap-worker rewrite that accidentally collapsed the 845-line wake registration suite was detected during root review, discarded, and replaced with a minimal coverage-preserving conversion.
 
+2026-09-08 — Made raw Session History actor attribution optional metadata across broad/exact MCP search, expansion, request linkage, and dashboard history projections. Omitted actor now searches all otherwise-visible actors; an explicit actor is exact, including exclusion of null attribution. Expansion no longer borrows the historical anchor's actor for supported-memory visibility or audit attribution. Derived-memory and global-visibility actor gates remain unchanged.
+
 ## Evidence
 
 2026-09-08 — Full Python suite on current main: 4,647 passed, 32 skipped, 2 expected failures, and 4 existing Pydantic forward-reference warnings. Changed-surface regression: 558 passed, 2 platform skips. Earlier focused runs: core/API/MCP/dashboard 164 passed; wake/hook 236 passed, 2 skips. Import-linter report has zero violations; full Python compile and `git diff --check` pass. E2E evidence includes changing legacy actor values across register/name/send/receive/ACK/reply/status/container-local discovery and takeover, actor-bearing Relay DB startup rejection, and actor-bearing wake intent/canonical restart rejection without mutation.
+
+2026-09-08 — After the Session History extension, the affected MCP/history/dashboard/visibility/integration suite passed 385 tests before a guidance-budget-only failure; the instruction was compacted without raising the budget and its seven focused contracts passed. The final complete non-slow repository suite passed 4,655 tests with 32 skips, 170 slow deselections, 2 expected failures, and 1 existing Pydantic warning in 13m06s. `compileall` and `git diff --check` pass. New caller-surface E2E covers omitted, null, different, empty, and Unicode actor metadata; exact filtering; mixed-actor expansion; request linkage; dashboard rows/counts/events; audit attribution; and unchanged fail-closed global-memory visibility.
 
 ## Result review
 
