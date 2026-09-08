@@ -9,8 +9,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -60,24 +62,31 @@ def _claude_skill_dir() -> Path:
 
 
 def _install_skill() -> None:
-    """Copy the pallium-memory SKILL.md into Claude's skill-discovery dir.
-
-    Idempotent: overwrites on reinstall so the deployed guidance always
-    matches the shipped skill.
-    """
+    """Stage and atomically activate the complete Pallium-managed skill tree."""
+    source_dir = _claude_skill_src().parent
     dest_dir = _claude_skill_dir()
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    (dest_dir / "SKILL.md").write_text(
-        _claude_skill_src().read_text(encoding="utf-8"), encoding="utf-8"
-    )
-
+    dest_dir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=".pallium-memory-", dir=dest_dir.parent
+    ) as temp_dir:
+        staged = Path(temp_dir) / "skill"
+        previous = Path(temp_dir) / "previous"
+        shutil.copytree(source_dir, staged)
+        if not (staged / "SKILL.md").is_file():
+            raise FileNotFoundError("staged Pallium skill has no SKILL.md")
+        if dest_dir.exists():
+            dest_dir.rename(previous)
+        try:
+            staged.rename(dest_dir)
+        except BaseException:
+            if previous.exists():
+                previous.rename(dest_dir)
+            raise
 
 def _remove_skill() -> None:
     """Remove the deployed pallium-memory skill directory (if present)."""
     skill_dir = _claude_skill_dir()
     if skill_dir.exists():
-        import shutil
-
         shutil.rmtree(skill_dir, ignore_errors=True)
 
 

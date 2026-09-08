@@ -407,22 +407,54 @@ def test_codex_setup_deploys_and_removes_skill(
 ) -> None:
     skill_dir = tmp_path / ".codex" / "skills" / "pallium-memory"
     monkeypatch.setattr(setup_codex, "_codex_skill_dir", lambda: skill_dir)
+    source_dir = setup_codex._codex_skill_src().parent
+    expected = {
+        item.relative_to(source_dir): item.read_bytes()
+        for item in source_dir.rglob("*")
+        if item.is_file()
+    }
 
-    # Install deploys the SKILL.md into the discovery dir with expected content.
     setup_codex._install_skill()
-    dest = skill_dir / "SKILL.md"
-    assert dest.exists()
-    content = dest.read_text(encoding="utf-8")
-    assert "Pallium Workflow" in content
-    assert "pallium_search_history" in content
+    assert {
+        item.relative_to(skill_dir): item.read_bytes()
+        for item in skill_dir.rglob("*")
+        if item.is_file()
+    } == expected
 
-    # Reinstall is idempotent (overwrites, no duplication/error).
+    working = skill_dir / "SKILL.md"
+    working.write_text("working", encoding="utf-8")
+    with monkeypatch.context() as failure:
+        failure.setattr(setup_codex, "_codex_skill_src", lambda: tmp_path / "missing" / "SKILL.md")
+        with pytest.raises(FileNotFoundError):
+            setup_codex._install_skill()
+    assert working.read_text(encoding="utf-8") == "working"
+
+    original_rename = Path.rename
+
+    def fail_activation(path: Path, target: Path) -> Path:
+        if path.name == "skill":
+            raise OSError("activation failed")
+        return original_rename(path, target)
+
+    with monkeypatch.context() as failure:
+        failure.setattr(Path, "rename", fail_activation)
+        with pytest.raises(OSError, match="activation failed"):
+            setup_codex._install_skill()
+    assert working.read_text(encoding="utf-8") == "working"
+
+    (skill_dir / "SKILL.md").write_text("outdated", encoding="utf-8")
+    stale = skill_dir / "references" / "stale.md"
+    stale.write_text("obsolete", encoding="utf-8")
     setup_codex._install_skill()
-    assert dest.read_text(encoding="utf-8") == content
+    assert not stale.exists()
+    setup_codex._install_skill()
+    assert {
+        item.relative_to(skill_dir): item.read_bytes()
+        for item in skill_dir.rglob("*")
+        if item.is_file()
+    } == expected
 
-    # Uninstall removes the deployed skill directory.
     setup_codex._remove_skill()
-    assert not dest.exists()
     assert not skill_dir.exists()
 
 

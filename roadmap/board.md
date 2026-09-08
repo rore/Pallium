@@ -49,6 +49,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-context-conscious-upstream-field-feedback
 - optimize-developer-test-loop
 - stabilize-test-health-and-ci-cost
 - add-budgeted-long-relay-messages

@@ -30,3 +30,6 @@ description: Use Pallium Relay, Session History, or optional derived memory.
 - Flag bad cards with `pallium_flag_memory`. Do not ingest routine turns, repeat injected queries, or use forget as vote suppression.
 - Writes: `pallium_remember`, `pallium_correct`, `pallium_supersede`, `pallium_forget`, `pallium_record_outcome`. Retrieval alone never updates accessibility/ranking.
 - Remember, supersede, and record-outcome copy exact `container_ref`, `thread_ref`, `actor_ref`, `agent_ref`, and `visibility`. Never use cwd. Default private; correction/forget retain provenance.
+## Field feedback
+
+For repeatable Pallium product/integration/contract/docs defects, load [field feedback](references/field-feedback.md). Memory-quality misses stay in existing feedback/replay.
