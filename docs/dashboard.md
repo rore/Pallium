@@ -27,15 +27,15 @@ Derived Memory is optional and disabled by default. Existing Memory Browser, que
 
 ## Relay
 
-Relay shows actor-domain named and unnamed sessions across containers, with endpoint ID, alias, runtime/native reference, container/repository metadata, lifecycle, last-seen, and persisted destination health when available. Container is provenance/filter metadata, not a hidden communication boundary. Runtime discovery and wake outcome are shown only when recorded; otherwise they are unavailable.
+Relay shows service-global named and unnamed sessions across containers, with endpoint ID, name, runtime/native reference, container/repository metadata, lifecycle, last-seen, and persisted destination health when available. Container is provenance/filter metadata, not a hidden communication boundary. Runtime discovery and wake outcome are shown only when recorded; otherwise they are unavailable.
 
 The workspace offers session/pair/all message views and an observational graph. Nodes are persisted endpoint IDs; edges are persisted communications. Legacy null endpoint IDs remain unknown and duplicate native IDs are never rebound. The graph and message list use the same bounded, redacted projection, filters, fixed `until` boundary, and deterministic `(created_at, id)` ordering. A graph is labelled partial until its bounded pages are fully loaded. Delivery state, lifecycle, effective expiry, reply links, selector-at-send, and timing are inspectable without claim tokens or receipts. Durable year-9999 expiry renders as no practical expiry; delivery admission never implies recipient action.
 
-Aliases are optional addressing metadata. Save, transfer, or remove is an explicit action through canonical naming semantics. A conflict is a visible 409 requiring a separate confirmation/retry against the selected endpoint identity; no silent rebinding occurs.
+Names are optional addressing metadata. Save, transfer, or remove is an explicit action through canonical naming semantics. A conflict is a visible 409 requiring a separate confirmation/retry against the selected endpoint identity; no silent rebinding occurs.
 
 ## Read behavior and states
 
-Dashboard projections are bounded app-local reads over existing records and allowlisted report files; they do not alter storage, claim deliveries, expand context, or expose pre-redaction content. Every panel has honest loading, empty, error, stale, and partial states with retry or next-page affordances. Narrow layouts stack capability cards and Relay panes without page overflow; keyboard users can reach tabs, collapsibles, filters, list/detail controls, graph nodes/edges, aliases, and linear graph alternatives with visible focus and status/error announcements.
+Dashboard projections are bounded app-local reads over existing records and allowlisted report files; they do not alter storage, claim deliveries, expand context, or expose pre-redaction content. Every panel has honest loading, empty, error, stale, and partial states with retry or next-page affordances. Narrow layouts stack capability cards and Relay panes without page overflow; keyboard users can reach tabs, collapsibles, filters, list/detail controls, graph nodes/edges, names, and linear graph alternatives with visible focus and status/error announcements.
 
 ## When to use it
 

@@ -211,9 +211,6 @@ def mount_dashboard(app: FastAPI) -> None:
         with storage._session_factory() as session:
             values = set(session.scalars(select(MemoryObjectRecord.actor_ref).where(MemoryObjectRecord.actor_ref.isnot(None)).distinct()))
             values.update(session.scalars(select(SourceItemRecord.actor_ref).where(SourceItemRecord.actor_ref.isnot(None)).distinct()))
-        factory = getattr(storage, "_relay_session_factory", storage._session_factory)
-        with factory() as session:
-            values.update(session.scalars(select(RelaySessionRecord.actor_ref).where(RelaySessionRecord.actor_ref.isnot(None)).distinct()))
         return JSONResponse(content={"actors": sorted(values)})
     @app.get("/dashboard/api/activity")
     def dashboard_activity(limit: int = Query(10, ge=1, le=50)) -> JSONResponse:
@@ -541,7 +538,7 @@ def mount_dashboard(app: FastAPI) -> None:
 
     @app.get("/dashboard/api/relay/sessions")
     def dashboard_relay_sessions(
-        actor_ref: str = Query(..., min_length=1), runtime: str | None = Query(None),
+        runtime: str | None = Query(None),
         container_ref: str | None = Query(None),
         lifecycle: Literal["recent", "dormant", "closed"] | None = Query(None),
         destination_health: Literal["active", "unreachable"] | None = Query(None), limit: int = Query(100, ge=1, le=200),
@@ -552,7 +549,7 @@ def mount_dashboard(app: FastAPI) -> None:
             return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
         as_of = datetime.now(timezone.utc)
         cutoff = as_of - timedelta(hours=24)
-        clause = RelaySessionRecord.actor_ref == actor_ref
+        clause = True
         if runtime is not None:
             clause = and_(clause, RelaySessionRecord.runtime == runtime)
         if container_ref is not None:
@@ -576,7 +573,7 @@ def mount_dashboard(app: FastAPI) -> None:
                 "recent" if (record.last_seen_at if record.last_seen_at.tzinfo else record.last_seen_at.replace(tzinfo=timezone.utc)) >= cutoff else "dormant"
             )
             sessions.append({"id": record.id, "runtime": record.runtime, "session_ref": record.session_ref,
-                "container_ref": record.container_ref, "actor_ref": record.actor_ref, "title": record.title,
+                "container_ref": record.container_ref, "title": record.title,
                 "alias": record.alias, "state": item_lifecycle, "lifecycle": item_lifecycle,
                 "destination_health": None if item_lifecycle == "closed" else record.state,
                 "first_seen_at": _dashboard_time(record.first_seen_at), "last_seen_at": _dashboard_time(record.last_seen_at),
@@ -585,7 +582,7 @@ def mount_dashboard(app: FastAPI) -> None:
                                      "as_of": _dashboard_time(as_of)})
     @app.get("/dashboard/api/relay/messages")
     def dashboard_relay_messages(
-        actor_ref: str = Query(..., min_length=1), limit: int = Query(50, ge=1, le=200),
+        limit: int = Query(50, ge=1, le=200),
         until: datetime | None = Query(None), before_created_at: datetime | None = Query(None), before_id: str | None = Query(None),
         since: datetime | None = Query(None), runtime: str | None = Query(None), container_ref: str | None = Query(None),
         endpoint_id: str | None = Query(None), peer_endpoint_id: str | None = Query(None),
@@ -601,7 +598,7 @@ def mount_dashboard(app: FastAPI) -> None:
         as_of = _dashboard_utc(until) or datetime.now(timezone.utc)
         since = _dashboard_utc(since)
         before_created_at = _dashboard_utc(before_created_at)
-        clause = and_(RelayMessageRecord.actor_ref == actor_ref, RelayMessageRecord.created_at <= as_of)
+        clause = RelayMessageRecord.created_at <= as_of
         if since is not None:
             clause = and_(clause, RelayMessageRecord.created_at >= since)
         if runtime is not None:
@@ -634,7 +631,7 @@ def mount_dashboard(app: FastAPI) -> None:
                                       and_(RelayMessageRecord.created_at == before_created_at, RelayMessageRecord.id < before_id)))
         factory = getattr(storage, "_relay_session_factory", storage._session_factory)
         with factory() as session:
-            total_clause = and_(RelayMessageRecord.actor_ref == actor_ref, RelayMessageRecord.created_at <= as_of)
+            total_clause = RelayMessageRecord.created_at <= as_of
             if since is not None:
                 total_clause = and_(total_clause, RelayMessageRecord.created_at >= since)
             if runtime is not None:
@@ -679,7 +676,7 @@ def mount_dashboard(app: FastAPI) -> None:
             durable = expires.year >= 9999
             items.append({"id": message.id, "sender_runtime": message.sender_runtime, "sender_session_ref": message.sender_session_ref,
                 "sender_endpoint_id": message.sender_endpoint_id, "recipient_selector": message.recipient_selector,
-                "container_ref": message.container_ref, "actor_ref": message.actor_ref,
+                "container_ref": message.container_ref,
                 "payload": redact_sensitive(message.payload) if message.payload else message.payload, "redacted": bool(message.redacted),
                 "in_reply_to": message.in_reply_to, "created_at": _dashboard_time(message.created_at),
                 "expires_at": None if durable else _dashboard_time(expires), "effective_expired": not durable and expires <= as_of,

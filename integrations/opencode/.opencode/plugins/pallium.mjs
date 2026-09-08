@@ -337,7 +337,7 @@ export default async ({ client, directory, worktree } = {}) => {
         textPart.text += `\n\n<system-reminder>\n${pending.text}\n</system-reminder>`;
         pendingRelay.delete(sessionId);
         if (pending.deliveries.length) {
-          await pallium.acknowledgeRelay(pending.deliveries, pending.containerRef, pending.actorRef);
+          await pallium.acknowledgeRelay(pending.deliveries, pending.containerRef);
         }
       } catch (e) {
         log("error", `messages.transform failed: ${e && e.message}`);
@@ -382,7 +382,6 @@ export default async ({ client, directory, worktree } = {}) => {
             runtime: "opencode",
             session_ref: sessionId,
             container_ref: containerRef,
-            actor_ref: actorRef,
             max_chars: RELAY_TURN_BUDGET,
           }, 750);
           const deliveries = (relayResponse && relayResponse.deliveries) || [];
@@ -398,7 +397,6 @@ export default async ({ client, directory, worktree } = {}) => {
             text: [relayText, scopeText].filter(Boolean).join("\n\n"),
             deliveries: renderedDeliveries,
             containerRef,
-            actorRef,
           });
           if (renderedDeliveries.length) return;
         }
@@ -453,7 +451,7 @@ export default async ({ client, directory, worktree } = {}) => {
             const containerRef = pallium.resolveContainerRef(cwd, sessionId);
             await pallium.relayRequest("POST", "/relay/sessions/close", {
               runtime: "opencode", session_ref: sessionId,
-              container_ref: containerRef, actor_ref: pallium.resolveActorRef(cwd, sessionId),
+              container_ref: containerRef,
             }, 500);
           }
           pallium.removeSessionPin(sessionId);

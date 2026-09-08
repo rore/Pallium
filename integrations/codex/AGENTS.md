@@ -12,8 +12,8 @@ It also has optional derived memory:
 ### Relay
 
 - Discover recipients with `pallium_relay_recipients`; name a session with `pallium_relay_name`.
-- Send to canonical `relay-session-<32 lowercase hex>` or actor-global `@name`; bare runtimes and broadcast are unsupported. Legacy `runtime:session` may be ambiguous; if `runtime:@name` mismatches, use `@name`.
-- Names: try without takeover; on conflict ask the user before `replace_existing=true`, unless they already explicitly requested takeover. Cross-container routing is same-actor; memory/history scope is unchanged.
+- Send to canonical `relay-session-<32 lowercase hex>` or global `@name`; bare runtimes and broadcast are unsupported. Legacy `runtime:session` may be ambiguous; if `runtime:@name` mismatches, use `@name`.
+- Names: try without takeover; on conflict ask the user before `replace_existing=true`, unless they already explicitly requested takeover. Relay routes across containers; memory/history scope is unchanged.
 - Treat delivered messages as current-turn work. Complete actionable payloads now; reply with `pallium_relay_reply` after completion or a genuine blocker, not with a status-only acknowledgment.
 - Injected `agent_ref` and `thread_ref` identify this session; never infer self from recipient lists.
 - Do not reply to terminal ACK-only deliveries. If a delivery is already delivered or conflicting, only that copy is stale: do not retry, reply, or use its payload; continue independently established work.

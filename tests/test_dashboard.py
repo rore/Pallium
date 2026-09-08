@@ -146,7 +146,7 @@ class TestDashboardRelaySummary:
 
     def test_relay_summary_reports_pending_delivery_expiry_and_latency_without_content(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
-        scope = {"container_ref": "git:example.test/team/dashboard", "actor_ref": "operator"}
+        scope = {"container_ref": "git:example.test/team/dashboard"}
         with TestClient(app) as client:
             for runtime, session_ref in (("claude-code", "sender"), ("codex", "target")):
                 response = client.post(
@@ -682,30 +682,30 @@ class TestDashboardSourceAndRelayProjections:
         assert "private body" not in str(item)
         assert "AKIA1234567890ABCDEF" not in str(item)
 
-    def test_relay_actor_projection_is_paginated_read_only_and_secret_free(self, tmp_path: Path) -> None:
+    def test_relay_global_projection_is_paginated_read_only_and_secret_free(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
-        scope = {"container_ref": "c1", "actor_ref": "a1"}
+        scope = {"container_ref": "c1"}
         with TestClient(app) as client:
             for runtime, session_ref in (("codex", "one"), ("claude-code", "two")):
                 assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, **scope}).status_code == 200
             sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "one",
                 "recipient": "claude-code:two", "payload": "AKIA1234567890ABCDEF", **scope}).json()
-            sessions = client.get("/dashboard/api/relay/sessions?actor_ref=a1").json()["sessions"]
+            sessions = client.get("/dashboard/api/relay/sessions?").json()["sessions"]
             assert {session["session_ref"] for session in sessions} == {"one", "two"}
-            page = client.get("/dashboard/api/relay/messages?actor_ref=a1&limit=1").json()
+            page = client.get("/dashboard/api/relay/messages?limit=1").json()
             assert page["total"] == 1 and page["messages"][0]["id"] == sent["message_id"]
             assert "claim_token" not in str(page) and "receipt" not in str(page)
             assert "AKIA1234567890ABCDEF" not in str(page)
             assert page["messages"][0]["expires_at"] is None
-            assert client.get("/dashboard/api/relay/messages?actor_ref=other").json()["messages"] == []
+            assert len(client.get("/dashboard/api/relay/messages?").json()["messages"]) == 1
 
     def test_relay_session_filters_and_message_window_filters(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
         with TestClient(app) as client:
             for runtime, session_ref, container_ref in (("codex", "sender", "c1"), ("claude-code", "peer", "c2"), ("codex", "dormant", "c2")):
                 assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref,
-                    "container_ref": container_ref, "actor_ref": "a1"}).status_code == 200
-            sessions = client.get("/dashboard/api/relay/sessions?actor_ref=a1").json()
+                    "container_ref": container_ref}).status_code == 200
+            sessions = client.get("/dashboard/api/relay/sessions?").json()
             assert sessions["total"] == 3
             endpoints = {item["session_ref"]: item["id"] for item in sessions["sessions"]}
             storage = app.state.pallium_service._storage
@@ -713,23 +713,23 @@ class TestDashboardSourceAndRelayProjections:
                 session.execute(text("UPDATE relay_sessions SET state='unreachable', last_seen_at=:old WHERE session_ref='dormant'"),
                     {"old": datetime.now(timezone.utc) - timedelta(days=2)})
                 session.commit()
-            filtered = client.get("/dashboard/api/relay/sessions?actor_ref=a1&container_ref=c2&runtime=codex&lifecycle=dormant&destination_health=unreachable").json()
+            filtered = client.get("/dashboard/api/relay/sessions?container_ref=c2&runtime=codex&lifecycle=dormant&destination_health=unreachable").json()
             assert filtered["total"] == 1
             assert filtered["sessions"][0]["lifecycle"] == "dormant"
             assert filtered["sessions"][0]["destination_health"] == "unreachable"
             assert client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender",
-                "recipient": "claude-code:peer", "container_ref": "c1", "actor_ref": "a1", "payload": "one"}).status_code == 200
+                "recipient": "claude-code:peer", "container_ref": "c1", "payload": "one"}).status_code == 200
             assert client.post("/relay/messages", json={"sender_runtime": "claude-code", "sender_session_ref": "peer",
-                "recipient": "codex:sender", "container_ref": "c2", "actor_ref": "a1", "payload": "two"}).status_code == 200
-            query = f"/dashboard/api/relay/messages?actor_ref=a1&endpoint_id={endpoints['sender']}&peer_endpoint_id={endpoints['peer']}&delivery_state=pending&limit=1"
+                "recipient": "codex:sender", "container_ref": "c2", "payload": "two"}).status_code == 200
+            query = f"/dashboard/api/relay/messages?endpoint_id={endpoints['sender']}&peer_endpoint_id={endpoints['peer']}&delivery_state=pending&limit=1"
             first = client.get(query).json()
             assert first["total"] == 2 and first["has_more"] is True and first["as_of"] == first["until"]
             assert all("claim_token" not in str(item) and "receipt" not in str(item) for item in first["messages"])
             assert all(endpoints["sender"] in {item["sender_endpoint_id"], *[d["recipient_endpoint_id"] for d in item["deliveries"]]} for item in first["messages"])
             second = client.get(query + f"&until={first['until'].replace('+', '%2B')}&before_created_at={first['next_before_created_at'].replace('+', '%2B')}&before_id={first['next_before_id']}").json()
             assert second["has_more"] is False and len(second["messages"]) == 1
-            assert client.get("/dashboard/api/relay/messages?actor_ref=a1&peer_endpoint_id=x").status_code == 422
-            assert client.get("/dashboard/api/relay/messages?actor_ref=a1&runtime=codex&container_ref=c1").json()["total"] == 1
+            assert client.get("/dashboard/api/relay/messages?peer_endpoint_id=x").status_code == 422
+            assert client.get("/dashboard/api/relay/messages?runtime=codex&container_ref=c1").json()["total"] == 1
 
     def test_source_scope_pagination_unicode_filters_and_reads_are_telemetry_free(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
@@ -781,26 +781,26 @@ class TestDashboardSourceAndRelayProjections:
         config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
         app = create_app(config)
         with TestClient(app) as client:
-            for runtime, session_ref, container, actor in (("codex", "sender", "c1", "a"), ("claude-code", "first", "c2", "a"), ("codex", "second", "c2", "a"), ("codex", "other", "c3", "b")):
-                assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, "container_ref": container, "actor_ref": actor}).status_code == 200
-            sessions = client.get("/dashboard/api/relay/sessions?actor_ref=a").json()
-            assert {item["container_ref"] for item in sessions["sessions"]} == {"c1", "c2"}
-            assert client.get("/dashboard/api/relay/sessions?actor_ref=b").json()["total"] == 1
-            assert client.get("/dashboard/api/relay/messages?actor_ref=a").json()["messages"] == []
-            sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:first", "container_ref": "c1", "actor_ref": "a", "payload": "fanout"}).json()
+            for runtime, session_ref, container in (("codex", "sender", "c1"), ("claude-code", "first", "c2"), ("codex", "second", "c2"), ("codex", "other", "c3")):
+                assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, "container_ref": container}).status_code == 200
+            sessions = client.get("/dashboard/api/relay/sessions?").json()
+            assert {item["container_ref"] for item in sessions["sessions"]} == {"c1", "c2", "c3"}
+            assert client.get("/dashboard/api/relay/sessions?").json()["total"] == 4
+            assert client.get("/dashboard/api/relay/messages").json()["messages"] == []
+            sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:first", "container_ref": "c1", "payload": "fanout"}).json()
             ids = {item["session_ref"]: item["id"] for item in sessions["sessions"]}
             storage = app.state.pallium_service._storage
             with storage._relay_session_factory() as session:
                 session.add(RelayDeliveryRecord(id="second-delivery", message_id=sent["message_id"], recipient_runtime="codex", recipient_session_ref="second", recipient_endpoint_id=ids["second"], recipient_container_ref="c2", state="pending", attempts=0))
                 session.execute(text("UPDATE relay_sessions SET state='closed' WHERE id=:id"), {"id": ids["second"]})
                 session.commit()
-            page = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "endpoint_id": ids["sender"], "peer_endpoint_id": ids["second"], "delivery_state": "pending"}).json()
+            page = client.get("/dashboard/api/relay/messages", params={"endpoint_id": ids["sender"], "peer_endpoint_id": ids["second"], "delivery_state": "pending"}).json()
             assert page["total"] == 1 and len(page["messages"][0]["deliveries"]) == 2
-            assert client.get("/dashboard/api/relay/messages?actor_ref=a&limit=201").status_code == 422
-            assert client.get("/dashboard/api/relay/messages?actor_ref=a&delivery_state=nope").status_code == 422
-            assert client.get("/dashboard/api/relay/sessions?actor_ref=a&destination_health=nope").status_code == 422
-            assert client.get("/dashboard/api/relay/messages?actor_ref=a&before_id=only").status_code == 422
-            closed = client.get("/dashboard/api/relay/sessions?actor_ref=a&lifecycle=closed").json()["sessions"]
+            assert client.get("/dashboard/api/relay/messages?limit=201").status_code == 422
+            assert client.get("/dashboard/api/relay/messages?delivery_state=nope").status_code == 422
+            assert client.get("/dashboard/api/relay/sessions?destination_health=nope").status_code == 422
+            assert client.get("/dashboard/api/relay/messages?before_id=only").status_code == 422
+            closed = client.get("/dashboard/api/relay/sessions?lifecycle=closed").json()["sessions"]
             assert closed[0]["session_ref"] == "second" and closed[0]["destination_health"] is None
 
     def test_reuse_event_free_text_is_suppressed_when_source_is_forgotten(self, tmp_path: Path) -> None:
@@ -821,36 +821,36 @@ class TestDashboardSourceAndRelayProjections:
         app = create_app(_test_config(tmp_path))
         with TestClient(app) as client:
             for runtime, session_ref in (("codex", "sender"), ("claude-code", "target")):
-                assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, "container_ref": "c", "actor_ref": "a"}).status_code == 200
-            sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "actor_ref": "a", "payload": "expiring", "expires_in_seconds": 60}).json()
+                assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, "container_ref": "c"}).status_code == 200
+            sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "payload": "expiring", "expires_in_seconds": 60}).json()
             storage = app.state.pallium_service._storage
             with storage._relay_session_factory() as session:
                 session.execute(text("UPDATE relay_messages SET expires_at=:past WHERE id=:id"), {"past": datetime.now(timezone.utc) - timedelta(seconds=1), "id": sent["message_id"]})
                 session.commit()
-            expired = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "delivery_state": "expired"}).json()
+            expired = client.get("/dashboard/api/relay/messages", params={"delivery_state": "expired"}).json()
             assert expired["total"] == 1 and expired["messages"][0]["deliveries"][0]["state"] == "expired"
-            assert client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "delivery_state": "pending"}).json()["total"] == 0
+            assert client.get("/dashboard/api/relay/messages", params={"delivery_state": "pending"}).json()["total"] == 0
             with storage._relay_session_factory() as session:
                 assert session.scalar(text("SELECT state FROM relay_deliveries WHERE message_id=:id"), {"id": sent["message_id"]}) == "pending"
-            assert client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "until": "2026-09-07T12:00:00", "since": "2026-09-07T11:00:00"}).status_code == 200
+            assert client.get("/dashboard/api/relay/messages", params={"until": "2026-09-07T12:00:00", "since": "2026-09-07T11:00:00"}).status_code == 200
             future_utc = datetime.now(timezone.utc) + timedelta(minutes=5)
             future_offset = future_utc.astimezone(timezone(timedelta(hours=2)))
-            utc_bound = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "until": future_utc.isoformat()}).json()
-            offset_bound = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "until": future_offset.isoformat()}).json()
+            utc_bound = client.get("/dashboard/api/relay/messages", params={"until": future_utc.isoformat()}).json()
+            offset_bound = client.get("/dashboard/api/relay/messages", params={"until": future_offset.isoformat()}).json()
             assert [item["id"] for item in utc_bound["messages"]] == [sent["message_id"]]
             assert [item["id"] for item in offset_bound["messages"]] == [sent["message_id"]]
-            assert client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "before_created_at": "2026-09-07T12:00:00", "before_id": "x"}).status_code == 200
+            assert client.get("/dashboard/api/relay/messages", params={"before_created_at": "2026-09-07T12:00:00", "before_id": "x"}).status_code == 200
 
     def test_relay_fixed_window_excludes_concurrent_insert(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
         with TestClient(app) as client:
             for runtime, session_ref in (("codex", "sender"), ("claude-code", "target")):
-                client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, "container_ref": "c", "actor_ref": "a"})
-            first_id = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "actor_ref": "a", "payload": "first"}).json()["message_id"]
-            second_id = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "actor_ref": "a", "payload": "second"}).json()["message_id"]
-            first = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "limit": 1}).json()
-            inserted_id = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "actor_ref": "a", "payload": "new"}).json()["message_id"]
-            second = client.get("/dashboard/api/relay/messages", params={"actor_ref": "a", "limit": 1, "until": first["until"], "before_created_at": first["next_before_created_at"], "before_id": first["next_before_id"]}).json()
+                client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, "container_ref": "c"})
+            first_id = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "payload": "first"}).json()["message_id"]
+            second_id = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "payload": "second"}).json()["message_id"]
+            first = client.get("/dashboard/api/relay/messages", params={"limit": 1}).json()
+            inserted_id = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "claude-code:target", "container_ref": "c", "payload": "new"}).json()["message_id"]
+            second = client.get("/dashboard/api/relay/messages", params={"limit": 1, "until": first["until"], "before_created_at": first["next_before_created_at"], "before_id": first["next_before_id"]}).json()
         assert first["messages"][0]["id"] == second_id
         assert second["messages"][0]["id"] == first_id
         assert inserted_id not in {first["messages"][0]["id"], second["messages"][0]["id"]}

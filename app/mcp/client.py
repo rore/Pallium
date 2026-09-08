@@ -1,6 +1,6 @@
 """Async HTTP client wrapping Pallium's REST API for MCP tools.
 
-The client reads all scope parameters (container_ref, thread_ref, actor_ref,
+The client reads memory/history scope parameters (container_ref, thread_ref, actor_ref,
 visibility) from the PalliumContext it receives. Context resolution (merging
 explicit overrides with env var defaults) is the server layer's responsibility.
 """
@@ -39,7 +39,7 @@ class PalliumMcpClient:
     def _relay_scope_params(self) -> dict[str, str]:
         """Return the exact Relay scope carried by the active context."""
         params: dict[str, str] = {}
-        for key in ("container_ref", "actor_ref"):
+        for key in ("container_ref",):
             value = getattr(self._ctx, key, None)
             if value is not None:
                 params[key] = value

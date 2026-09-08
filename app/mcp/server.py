@@ -807,13 +807,14 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         runtime: str | None = None,
         include_inactive: bool = False,
         container_ref: str | None = None,
-        actor_ref: str | None = None,
         offset: int = 0,
     ) -> str:
-        """Return a bounded Relay address-book page. Each item includes canonical exact_selector (relay-session-...) and optional actor-global alias_selector (@alias). Continue with next_offset; use pallium_relay_receive for inbox delivery."""
+        """Return a bounded Relay address-book page. Each item includes canonical exact_selector (relay-session-...) and optional service-global alias_selector (`@name`; internal wire-field name). Continue with next_offset; use pallium_relay_receive for inbox delivery."""
         if offset < 0:
             return _relay_recipients_text([], offset)
-        ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
+        if scope_error:
+            return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_recipients(
@@ -825,17 +826,18 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     async def pallium_relay_name(
         current_runtime: str,
         current_session_ref: str,
-        alias: str | None = None,
+        name: str | None = None,
         replace_existing: bool = False,
         container_ref: str | None = None,
-        actor_ref: str | None = None,
     ) -> str:
-        """Name the current Relay endpoint. Copy current_runtime from injected agent_ref and current_session_ref from injected thread_ref; never discover self from recipient listings. First try without takeover. If the actor-global name is occupied, ask the user before retrying with replace_existing=true. Use replace_existing=true immediately only when the user already explicitly said to take over that name."""
-        ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
+        """Name the current Relay endpoint. Copy current_runtime from injected agent_ref and current_session_ref from injected thread_ref; never discover self from recipient listings. First try without takeover. If the service-global name is occupied, ask the user before retrying with replace_existing=true. Use replace_existing=true immediately only when the user already explicitly said to take over that name."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
+        if scope_error:
+            return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_name(
-            alias=alias,
+            alias=name,
             current_runtime=current_runtime,
             current_session_ref=current_session_ref,
             replace_existing=replace_existing,
@@ -850,10 +852,11 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         sender_session_ref: str,
         expires_in_seconds: int | None = None,
         container_ref: str | None = None,
-        actor_ref: str | None = None,
     ) -> str:
-        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or actor-global alias (@review). Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery."""
-        ctx = resolve_context(container_ref=container_ref, actor_ref=actor_ref)
+        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
+        if scope_error:
+            return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_send(
@@ -872,10 +875,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         receipt: str | None = None,
         expires_in_seconds: int | None = None,
         container_ref: str | None = None,
-        actor_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery with at most 16,000 Unicode code points. A delivery permits one idempotent reply. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt."""
-        ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
+        """Reply once to a received Relay delivery with at most 16,000 Unicode code points. A delivery permits one idempotent reply. If this MCP configuration lacks Relay scope, copy container_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
         if not ctx.is_configured:
@@ -892,12 +894,11 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         message_id: str,
         offset: int = 0,
         container_ref: str | None = None,
-        actor_ref: str | None = None,
     ) -> str:
         """Read a bounded Relay body page and compact delivery status. Continue with next_offset until null."""
         if offset < 0:
             return _json_text({"error": "offset must be non-negative"})
-        ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
         if not ctx.is_configured:
@@ -910,21 +911,20 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     async def pallium_relay_receive(
         max_chars: int = 0,
         container_ref: str | None = None,
-        actor_ref: str | None = None,
         request_ctx: object | None = None,
     ) -> str:
-        """Claim one bounded Relay delivery for this runtime session. max_chars=0 uses 2,000; larger values clamp to 2,000. Continue truncated bodies with pallium_relay_status(message_id, next_offset). If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. Call pallium_relay_ack(delivery_id, receipt), or pallium_relay_reply to reply and ACK atomically."""
+        """Claim one bounded Relay delivery for this runtime session. max_chars=0 uses 2,000; larger values clamp to 2,000. Continue truncated bodies with pallium_relay_status(message_id, next_offset). If this MCP configuration lacks Relay scope, copy container_ref from injected scope. Call pallium_relay_ack(delivery_id, receipt), or pallium_relay_reply to reply and ACK atomically."""
         if max_chars < 0 or 0 < max_chars < _MCP_RELAY_MIN_CHARS:
             return _json_text({
                 "error": f"max_chars must be 0 or at least {_MCP_RELAY_MIN_CHARS}",
                 "min_max_chars": _MCP_RELAY_MIN_CHARS,
             })
         effective_max_chars = _MCP_RELAY_MAX_CHARS if max_chars == 0 else min(max_chars, _MCP_RELAY_MAX_CHARS)
-        ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return (
-                f"{scope_error} Relay receive needs its trusted paired scope from the integration; "
-                "copy both injected container_ref and actor_ref, never a session identity."
+                f"{scope_error} Relay receive needs its trusted scope from the integration; "
+                "copy injected container_ref, never a session identity."
             )
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
@@ -972,10 +972,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         delivery_id: str,
         receipt: str,
         container_ref: str | None = None,
-        actor_ref: str | None = None,
     ) -> str:
-        """Acknowledge a Relay delivery after receiving its payload. If this MCP configuration lacks Relay scope, copy both container_ref and actor_ref from injected scope. Pass the receipt from pallium_relay_receive; use pallium_relay_reply when replying atomically. If the result says already_delivered=true, this is a duplicate: do not act on it again."""
-        ctx, scope_error = resolve_relay_context(container_ref=container_ref, actor_ref=actor_ref)
+        """Acknowledge a Relay delivery after receiving its payload. If this MCP configuration lacks Relay scope, copy container_ref from injected scope. Pass the receipt from pallium_relay_receive; use pallium_relay_reply when replying atomically. If the result says already_delivered=true, this is a duplicate: do not act on it again."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
         if not ctx.is_configured:

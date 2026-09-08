@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-SCOPE = {"container_ref": "git:example.test/relay-mcp", "actor_ref": "test-actor"}
+SCOPE = {"container_ref": "git:example.test/relay-mcp"}
 RUNTIME = "claude-code"
 SESSION = "session-mcp-test"
 

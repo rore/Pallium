@@ -448,7 +448,6 @@ def create_router(
     @router.get("/relay/sessions", response_model=list[RelaySessionResponse])
     async def relay_sessions(
         container_ref: str = Query(min_length=1, max_length=512),
-        actor_ref: str = Query(min_length=1, max_length=255),
         runtime: str | None = Query(default=None, max_length=32),
         include_inactive: bool = False,
     ):
@@ -456,7 +455,6 @@ def create_router(
             "list_sessions",
             lambda: _relay().list_sessions(
                 container_ref=container_ref,
-                actor_ref=actor_ref,
                 runtime=runtime,
                 include_inactive=include_inactive,
             )
@@ -473,7 +471,6 @@ def create_router(
             try:
                 relay_send_callback(result, {
                     "container_ref": request.container_ref,
-                    "actor_ref": request.actor_ref,
                 })
             except Exception:
                 logger.exception("Relay wake callback failed after persistence")
@@ -486,7 +483,6 @@ def create_router(
             try:
                 relay_send_callback(result, {
                     "container_ref": request.container_ref,
-                    "actor_ref": request.actor_ref,
                 })
             except Exception:
                 logger.exception("Relay wake callback failed after persistence")
@@ -496,7 +492,6 @@ def create_router(
     async def relay_message_status(
         message_id: str,
         container_ref: str = Query(min_length=1, max_length=512),
-        actor_ref: str = Query(min_length=1, max_length=255),
         offset: int | None = Query(default=None, ge=0),
         page_size: int | None = Query(default=None, ge=1, le=RELAY_MESSAGE_MAX_CHARS),
     ):
@@ -505,7 +500,6 @@ def create_router(
             lambda: _relay().message_status(
                 message_id=message_id,
                 container_ref=container_ref,
-                actor_ref=actor_ref,
                 offset=offset,
                 page_size=page_size,
             )
@@ -518,7 +512,6 @@ def create_router(
             try:
                 relay_ack_callback(result, {
                     "container_ref": request.container_ref,
-                    "actor_ref": request.actor_ref,
                 })
             except Exception:
                 logger.exception("Relay ACK callback failed after persistence")
@@ -550,11 +543,11 @@ def create_router(
                 chunks.append(chunk)
             payload = json.loads(b"".join(chunks))
             if not isinstance(payload, dict) or set(payload) not in ({
-                "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token",
+                "runtime", "session_ref", "container_ref", "socket_path", "token",
             }, {
-                "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle",
+                "runtime", "session_ref", "container_ref", "socket_path", "token", "idle",
             }, {
-                "runtime", "session_ref", "container_ref", "actor_ref", "socket_path", "token", "idle", "intent_id",
+                "runtime", "session_ref", "container_ref", "socket_path", "token", "idle", "intent_id",
             }):
                 raise ValueError
             payload.setdefault("idle", False)
@@ -570,7 +563,6 @@ def create_router(
                             runtime=payload["runtime"],
                             session_ref=payload["session_ref"],
                             container_ref=payload["container_ref"],
-                            actor_ref=payload["actor_ref"],
                         ),
                     )
                 except HTTPException as exc:
@@ -601,7 +593,7 @@ def create_router(
                     raise ValueError
                 chunks.append(chunk)
             payload = json.loads(b"".join(chunks))
-            if not isinstance(payload, dict) or set(payload) != {"runtime", "session_ref", "container_ref", "actor_ref", "intent_id"}:
+            if not isinstance(payload, dict) or set(payload) != {"runtime", "session_ref", "container_ref", "intent_id"}:
                 raise ValueError
             if not wake_registry.close(**payload):
                 raise ValueError

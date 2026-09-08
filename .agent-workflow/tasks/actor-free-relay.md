@@ -29,20 +29,22 @@
 
 **Exceptions:** -
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Discovery and redline classification complete on isolated branch `feat/actor-free-relay` from `origin/main` at `19f500ac`. No code edits have started. Redline found breaking API and schema changes with required `api-review` and `persistence-review`, no boundary violation. The first clean-context review blocked on wake-state conversion, quiesced rollback-safe cutover, mixed-version fencing, ambiguous discovery scope, and concrete tests; the revised plan addresses each item and the reviewer approved implementation.
+2026-09-08 — Removed `actor_ref` from Relay core, SQLite schema/queries, REST, MCP, dashboard Relay projections, wake identity/persistence, and Claude/Codex/OpenCode Relay payloads while retaining it for memory and Session History. Relay names are service-global and database-unique; ordinary discovery remains container-local; endpoint IDs and `@name` route across containers; bare runtime sends remain rejected; takeover still requires an explicit `replace_existing=true` retry. Existing `alias`/`alias_selector` wire and storage fields remain internal compatibility names, while the agent-facing tool accepts `name`. No reusable migration code was added; current-format startup rejects actor-bearing Relay schemas and old wake state is rejected for operational conversion.
+
+2026-09-08 — Preserved the full edge-case suites and replaced actor-isolation assertions with actor-independence, global-name collision/takeover, cross-container exact/name routing, wake durability, and legacy-state rejection. A cheap-worker rewrite that accidentally collapsed the 845-line wake registration suite was detected during root review, discarded, and replaced with a minimal coverage-preserving conversion.
 
 ## Evidence
 
-Pending implementation and verification.
+2026-09-08 — Changed-surface regression: 558 passed, 2 platform skips, 4 existing Pydantic forward-reference warnings. Earlier focused runs: core/API/MCP/dashboard 164 passed; wake/hook 236 passed, 2 skips. Import-linter report has zero violations; full Python compile and `git diff --check` pass. E2E evidence includes changing legacy actor values across register/name/send/receive/ACK/reply/status/container-local discovery and takeover, actor-bearing Relay DB startup rejection, and actor-bearing wake intent/canonical restart rejection without mutation.
 
 ## Result review
 
-Pending.
+2026-09-08 — Clean-context smart review by `/root/actor_free_relay_result_review` found no production correctness or architecture defect. Its P2 coverage findings (tautological wake candidates, weakened MCP scope assertions, missing direct actor-independence lifecycle) and P3 roadmap drift were corrected; the reviewer re-read the revised diff and returned APPROVE with no remaining actionable issues.
 
 ## Plan review
 

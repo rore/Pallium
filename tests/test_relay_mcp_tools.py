@@ -26,7 +26,6 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 _SCOPE = {
     "container_ref": "git:example.test/relay-tools",
-    "actor_ref": "tool-actor",
 }
 _RUNTIME = "claude-code"
 _SESSION = "mcp-tool-session"
@@ -76,7 +75,7 @@ def bind_asgi_post(monkeypatch: pytest.MonkeyPatch, asgi_post) -> None:
 def base_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
     monkeypatch.setenv("PALLIUM_CONTAINER_REF", _SCOPE["container_ref"])
-    monkeypatch.setenv("PALLIUM_ACTOR_REF", _SCOPE["actor_ref"])
+    monkeypatch.setenv("PALLIUM_ACTOR_REF", "actor-ref")
     monkeypatch.setenv("PALLIUM_AGENT_REF", _RUNTIME)
     monkeypatch.setenv("PALLIUM_THREAD_REF", _SESSION)
 
@@ -113,7 +112,7 @@ class TestIdentityGuard:
         monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
         with patch.object(PalliumMcpClient, "relay_receive", new_callable=AsyncMock) as receive:
             content, _ = await create_server().call_tool("pallium_relay_receive", {})
-        assert "both container_ref and actor_ref" in content[0].text
+        assert "requires container_ref" in content[0].text
         assert "PALLIUM_THREAD_REF" not in content[0].text
         receive.assert_not_awaited()
     @pytest.mark.asyncio
@@ -495,8 +494,8 @@ async def test_configured_relay_scope_accepts_matching_pair(monkeypatch, tool):
 @pytest.mark.parametrize(
     "scope",
     [
-        {"container_ref": _SCOPE["container_ref"]},
-        {"container_ref": _SCOPE["container_ref"], "actor_ref": "other-actor"},
+        {"container_ref": " "},
+        {"container_ref": "git:example.test/other"},
     ],
 )
 async def test_partial_or_conflicting_relay_scope_never_calls_http(monkeypatch, tool, scope):
@@ -509,18 +508,18 @@ async def test_partial_or_conflicting_relay_scope_never_calls_http(monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_partial_configured_scope_cannot_be_bypassed(monkeypatch):
+async def test_configured_actor_is_irrelevant_to_relay_scope(monkeypatch):
     monkeypatch.delenv("PALLIUM_ACTOR_REF", raising=False)
     http_call = AsyncMock(return_value={})
     with patch.object(PalliumMcpClient, "relay_receive", new=http_call):
         content, _ = await create_server().call_tool("pallium_relay_receive", _SCOPE)
-    assert "Configured Relay scope" in content[0].text
-    http_call.assert_not_awaited()
+    assert "invalid relay receive response" in content[0].text
+    http_call.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_unconfigured_paired_scope_receive_to_reply_is_atomic(monkeypatch, asgi_post, asgi_get):
-    scope = {"container_ref": "git:example.test/unconfigured-relay", "actor_ref": "unconfigured-actor"}
+    scope = {"container_ref": "git:example.test/unconfigured-relay",}
     monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
     monkeypatch.delenv("PALLIUM_ACTOR_REF", raising=False)
     bind_asgi_post(monkeypatch, asgi_post)
@@ -560,8 +559,8 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
     monkeypatch.setattr(PalliumMcpClient, "_get_or_error", get_from_app)
     monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
     monkeypatch.delenv("PALLIUM_ACTOR_REF", raising=False)
-    source = {"container_ref": "git:example.test/source", "actor_ref": "shared-actor"}
-    target = {"container_ref": "git:example.test/target", "actor_ref": "shared-actor"}
+    source = {"container_ref": "git:example.test/source",}
+    target = {"container_ref": "git:example.test/target",}
     sender = (await asgi_post("/relay/turn", {
         "runtime": "codex", "session_ref": "mcp-source", **source,
     }))["session"]
@@ -574,7 +573,7 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
     server = create_server()
     named, _ = await server.call_tool("pallium_relay_name", {
         "current_runtime": "claude-code", "current_session_ref": "mcp-target",
-        "alias": "global-review", **target,
+        "name": "global-review", **target,
     })
     assert json.loads(named[0].text)["alias"] == "global-review"
 
@@ -808,10 +807,10 @@ async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
     assert exact_delivery["recipient_session_ref"] == targets[0]
 
     conflict, _ = await server.call_tool("pallium_relay_recipients", {
-        "container_ref": "git:example.test/other", "actor_ref": _SCOPE["actor_ref"],
+        "container_ref": "git:example.test/other",
     })
-    assert json.loads(conflict[0].text)["recipients"] == []
+    assert "Relay scope conflicts" in conflict[0].text
     other_actor, _ = await server.call_tool("pallium_relay_recipients", {
-        "container_ref": _SCOPE["container_ref"], "actor_ref": "other-actor",
+        "container_ref": _SCOPE["container_ref"],
     })
-    assert json.loads(other_actor[0].text)["recipients"] == []
+    assert json.loads(other_actor[0].text)["recipients"]

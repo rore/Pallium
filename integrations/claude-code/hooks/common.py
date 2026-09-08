@@ -116,7 +116,7 @@ CLAUDE_WAKE_DIR = Path(os.environ.get("PALLIUM_CLAUDE_WAKE_DIR", str(Path.home()
 CLAUDE_WAKE_INTENTS_DIR = CLAUDE_WAKE_DIR / "intents"
 _CREDENTIAL_HTTP_TIMEOUT = 1
 _CREDENTIAL_BODY_MAX_BYTES = 16_384
-_CREDENTIAL_LIMITS = (32, 512, 512, 255, 4096, 8192)
+_CREDENTIAL_LIMITS = (32, 512, 512, 4096, 8192)
 _WORK_REF_PREFIXES = ("slice/", "feat/", "feature/", "fix/", "bug/", "chore/", "demo/")
 _BASE_BRANCHES = frozenset({"main", "master", "develop", "trunk", "head"})
 _GIT_PATH_ENV = (
@@ -951,10 +951,10 @@ class _RejectCredentialRedirects(urllib.request.HTTPRedirectHandler):
 
 
 def _wake_intent_path(
-    runtime: str, session_ref: str, container_ref: str, actor_ref: str
+    runtime: str, session_ref: str, container_ref: str
 ) -> Path:
     identity = json.dumps(
-        [runtime, session_ref, container_ref, actor_ref],
+        [runtime, session_ref, container_ref],
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -967,9 +967,9 @@ def _write_wake_intent(payload: dict[str, object]) -> bool:
     """Durably publish the exact registration before its loopback request."""
     identity = tuple(
         payload.get(key)
-        for key in ("runtime", "session_ref", "container_ref", "actor_ref")
+        for key in ("runtime", "session_ref", "container_ref")
     )
-    if not all(isinstance(value, str) for value in identity):
+    if "actor_ref" in payload or not all(isinstance(value, str) for value in identity):
         return False
     temporary: Path | None = None
     try:
@@ -1002,21 +1002,19 @@ def _write_wake_intent(payload: dict[str, object]) -> bool:
 def register_claude_wake(
     session_ref: object,
     container_ref: object,
-    actor_ref: object,
     *,
     idle: bool = False
 ) -> bool:
     """Write ahead the credential handoff; ambiguous HTTP leaves that intent intact."""
     socket_path = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
     token = os.environ.get("CLAUDE_CODE_MESSAGING_TOKEN")
-    values = ("claude-code", session_ref, container_ref, actor_ref, socket_path, token)
+    values = ("claude-code", session_ref, container_ref, socket_path, token)
     if not all(_credential_value(value, maximum) for value, maximum in zip(values, _CREDENTIAL_LIMITS, strict=True)):
         return False
     body_data: dict[str, object] = {
         "runtime": "claude-code",
         "session_ref": session_ref,
         "container_ref": container_ref,
-        "actor_ref": actor_ref,
         "socket_path": socket_path,
         "token": token,
         "idle": idle,
@@ -1049,18 +1047,18 @@ def register_claude_wake(
     except Exception:
         return False
 
-def close_claude_wake(session_ref: object, container_ref: object, actor_ref: object) -> bool:
+def close_claude_wake(session_ref: object, container_ref: object) -> bool:
     """Write a closed intent before best-effort loopback removal."""
-    if not all(_credential_value(value, maximum) for value, maximum in zip(("claude-code", session_ref, container_ref, actor_ref), _CREDENTIAL_LIMITS[:4], strict=True)):
+    if not all(_credential_value(value, maximum) for value, maximum in zip(("claude-code", session_ref, container_ref), _CREDENTIAL_LIMITS[:3], strict=True)):
         return False
     payload: dict[str, object] = {
         "runtime": "claude-code", "session_ref": session_ref, "container_ref": container_ref,
-        "actor_ref": actor_ref, "intent_id": uuid.uuid4().hex, "closed": True,
+        "intent_id": uuid.uuid4().hex, "closed": True,
     }
     if not _write_wake_intent(payload):
         return False
     request = urllib.request.Request(
-        f"{PALLIUM_BASE_URL}/internal/claude-wake/close", data=json.dumps({key: payload[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")}).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"},
+        f"{PALLIUM_BASE_URL}/internal/claude-wake/close", data=json.dumps({key: payload[key] for key in ("runtime", "session_ref", "container_ref", "intent_id")}).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"},
     )
     request_timeout = _bounded_timeout(_CREDENTIAL_HTTP_TIMEOUT)
     if request_timeout <= 0:
@@ -1197,7 +1195,7 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0, remaining_count:
     return output, rendered
 
 
-def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: str) -> list[dict]:
+def acknowledge_relay(deliveries: list[dict], *, container_ref: str) -> list[dict]:
     """Acknowledge deliveries and return only those confirmed by Pallium."""
     acknowledged: list[dict] = []
     for delivery in deliveries:
@@ -1212,7 +1210,6 @@ def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: 
                 "delivery_id": delivery_id,
                 "claim_token": claim_token,
                 "container_ref": container_ref,
-                "actor_ref": actor_ref,
             },
             timeout=0.5,
         ) is not None:

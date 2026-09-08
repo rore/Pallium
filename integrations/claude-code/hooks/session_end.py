@@ -1,7 +1,7 @@
 """SessionEnd hook — closes the trusted-local Claude wake capability."""
 from __future__ import annotations
 
-from common import close_claude_wake, derive_actor_ref, read_hook_input, resolve_container_ref, start_hook_deadline
+from common import close_claude_wake, read_hook_input, resolve_container_ref, start_hook_deadline
 
 
 def main() -> None:
@@ -13,7 +13,7 @@ def main() -> None:
             return
         cwd = payload.get("cwd", ".")
         container_ref = resolve_container_ref(cwd, session_id)
-        close_claude_wake(session_id, container_ref, derive_actor_ref(cwd, session_id))
+        close_claude_wake(session_id, container_ref)
     except Exception:
         return
 

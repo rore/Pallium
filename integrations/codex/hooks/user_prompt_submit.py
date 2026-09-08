@@ -76,7 +76,6 @@ def main() -> None:
                         "runtime": "codex",
                         "session_ref": session_id,
                         "container_ref": previous_container,
-                        "actor_ref": actor_ref,
                     },
                     timeout=0.5,
                 )
@@ -109,7 +108,6 @@ def main() -> None:
                         "runtime": "codex",
                         "session_ref": session_id,
                         "container_ref": container_ref,
-                        "actor_ref": actor_ref,
                         "max_chars": RELAY_TURN_BUDGET,
                     },
                     timeout=0.75,
@@ -142,7 +140,6 @@ def main() -> None:
             acknowledge_relay(
                 rendered_deliveries,
                 container_ref=container_ref,
-                actor_ref=actor_ref,
             )
             sys.exit(0)
 
@@ -202,7 +199,7 @@ def main() -> None:
             emit_context(output, "UserPromptSubmit")
             if relay_output:
                 acknowledge_relay(
-                    rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref
+                    rendered_deliveries, container_ref=container_ref
                 )
     except Exception as exc:
         print(f"pallium user_prompt_submit hook error: {exc}", file=sys.stderr)

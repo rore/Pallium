@@ -5,20 +5,12 @@ another. Pallium stores the message before attempting delivery, so a busy or
 unavailable recipient can receive it later.
 
 Pallium currently ships Relay integrations for Claude Code, Codex, and OpenCode.
-Sessions must connect to the same local Pallium service. Cross-container routing
-applies only within the same actor; Session History and derived-memory scoping
-are unchanged. Routing uses explicit session identity; it does not use search,
+Sessions must connect to the same local Pallium service. Cross-container routing is service-global; Session History and derived-memory scoping are unchanged. Routing uses explicit session identity; it does not use search,
 embeddings, ranking, or an LLM.
 
-## Stable hook actor identity
+## Hook identity for memory and history
 
-Set the same nonblank, trimmed `PALLIUM_HOOK_ACTOR_REF` in the process environment
-of every participating Claude Code, Codex, and OpenCode host before starting fresh
-sessions. It controls hook attribution, Session History, and derived-memory
-attribution across repositories; existing valid Python session-cache pins and
-OpenCode session pins remain authoritative until reset/invalidation. This
-variable is not authentication and is separate from the paired MCP trusted-scope
-variables `PALLIUM_ACTOR_REF` and `PALLIUM_CONTAINER_REF`.
+PALLIUM_HOOK_ACTOR_REF remains the stable attribution key for hook-provided memory and Session History records. Relay ignores this value: Relay sessions, names, messages, and wake state are global to the local Pallium service. The variable is not authentication and is separate from the paired MCP trusted-scope variables PALLIUM_ACTOR_REF and PALLIUM_CONTAINER_REF.
 
 ## Send a message
 
@@ -65,18 +57,18 @@ response budget.
 
 ## Select a recipient
 
-`pallium_relay_recipients` returns a bounded envelope of recent sessions. Each item includes a canonical `exact_selector` and, when named, `alias_selector`; when `has_more` is true, call it again with `next_offset`. The HTTP session-list response remains container-local and exposes each endpoint ID.
+`pallium_relay_recipients` returns a bounded envelope of recent sessions. Each item includes a canonical `exact_selector` and, when named, `alias_selector` (the internal wire-field name for its `@name`); when `has_more` is true, call it again with `next_offset`. The HTTP session-list response remains container-local and exposes each endpoint ID.
 Legacy selectors have three forms:
 
 - `codex` — legacy runtime-wide compatibility selector; regular sends reject it
 - `codex:<session_ref>` — legacy runtime/session compatibility selector; it may be ambiguous
-- `codex:@review` — compatibility alias selector; use `@review` instead
+- `codex:@review` — compatibility name selector; use `@review` instead
 
-The canonical exact selector is `relay-session-<32 lowercase hex>`. The actor-global alias form is `@name`. A `runtime:@name` selector is compatibility only; if it does not match, the error says to use `@name`. Regular sends do not broadcast; a separate broadcast API may be added later.
+The canonical exact selector is `relay-session-<32 lowercase hex>`. The service-global name form is `@name`. A `runtime:@name` selector is compatibility only; if it does not match, the error says to use `@name`. Regular sends do not broadcast; a separate broadcast API may be added later.
 
 Legacy runtime-qualified forms apply to other supported runtimes.
 
-`pallium_relay_name` assigns or transfers an alias. First try without takeover; if occupied, fail and ask the user. Retry with `replace_existing=true` only after explicit approval, or immediately when the original request explicitly says to take over. Transferring an alias affects future sends; messages already queued remain addressed to the original session.
+`pallium_relay_name(name="…")` assigns or transfers a name. First try without takeover; if occupied, fail and ask the user. Retry with `replace_existing=true` only after explicit approval, or immediately when the original request explicitly says to take over. Transferring a name affects future sends; messages already queued remain addressed to the original session.
 
 ## Replies
 
@@ -119,7 +111,7 @@ that are interrupted become eligible again after their lease expires.
 
 Recent sessions appear in recipient discovery by default. A session becomes
 dormant after 24 hours without a turn but remains exactly addressable. A close
-event marks it closed and releases its alias; a later turn reactivates the same
+event marks it closed and releases its name; a later turn reactivates the same
 session ID.
 
 ## Limits and scope
@@ -134,8 +126,7 @@ session ID.
 - storage: local persistent SQLite state
 - security boundary: local single-user coordination
 
-The generic secret redactor runs before persistence. `actor_ref` is claimed
-scope, not authenticated cross-user authorization.
+The generic secret redactor runs before persistence. `actor_ref` remains memory/history attribution; Relay has no actor scope.
 
 ## Tools
 

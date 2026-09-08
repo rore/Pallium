@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-_workers: set[tuple[int, str, str, str]] = set()
+_workers: set[tuple[int, str, str]] = set()
 _workers_lock = threading.Lock()
 
 
@@ -57,7 +57,6 @@ def schedule_claude_relay_wake(
     session_ref = delivery.get("recipient_session_ref")
     recipient = result.get("recipient")
     container_ref = scope.get("container_ref")
-    actor_ref = scope.get("actor_ref")
     selector = recipient.removeprefix("claude-code:") if isinstance(recipient, str) else ""
     valid_selector = selector == session_ref or bool(
         re.fullmatch(r"@[a-z0-9][a-z0-9_-]{0,31}", selector)
@@ -72,13 +71,11 @@ def schedule_claude_relay_wake(
         or not session_ref.isprintable()
         or not isinstance(container_ref, str)
         or not container_ref
-        or not isinstance(actor_ref, str)
-        or not actor_ref
         or not valid_selector
     ):
         return None
 
-    key = (id(registry), session_ref, container_ref, actor_ref)
+    key = (id(registry), session_ref, container_ref)
     with _workers_lock:
         if key in _workers:
             return None
@@ -107,7 +104,6 @@ def schedule_claude_relay_wake(
                 runtime="claude-code",
                 session_ref=session_ref,
                 container_ref=container_ref,
-                actor_ref=actor_ref,
                 transport=transport,
                 delivery_id=delivery_id,
                 on_unreachable=notify_unreachable,
@@ -144,7 +140,6 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
                 runtime="claude-code",
                 session_ref=candidate["session_ref"],
                 container_ref=candidate["container_ref"],
-                actor_ref=candidate["actor_ref"],
                 delivery_id=candidate["delivery_id"] if candidate["state"] == "wake_inflight" else None,
             )
         except Exception:
@@ -154,17 +149,16 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
             if not isinstance(delivery_id, str):
                 continue
             if not isinstance(status, dict) or status.get("state") != "pending":
-                registry.clear_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], actor_ref=candidate["actor_ref"], delivery_id=delivery_id)
+                registry.clear_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], delivery_id=delivery_id)
                 continue
             with _workers_lock:
                 if (
                     id(registry),
                     candidate["session_ref"],
                     candidate["container_ref"],
-                    candidate["actor_ref"],
                 ) in _workers:
                     continue
-            if not registry.rearm_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], actor_ref=candidate["actor_ref"], delivery_id=delivery_id, grace_seconds=1.0):
+            if not registry.rearm_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], delivery_id=delivery_id, grace_seconds=1.0):
                 continue
         if not isinstance(status, dict) or status.get("state") != "pending":
             continue
@@ -181,13 +175,12 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
                     "recipient_session_ref": candidate["session_ref"],
                 }],
             },
-            {"container_ref": candidate["container_ref"], "actor_ref": candidate["actor_ref"]},
+            {"container_ref": candidate["container_ref"]},
             registry=registry,
             on_unreachable=lambda attempt_started_at, candidate=candidate: relay_service.mark_unreachable(
                 runtime="claude-code",
                 session_ref=candidate["session_ref"],
                 container_ref=candidate["container_ref"],
-                actor_ref=candidate["actor_ref"],
                 attempt_started_at=attempt_started_at,
             ),
         )

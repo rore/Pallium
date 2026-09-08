@@ -24,7 +24,6 @@ PAYLOAD = {
     "runtime": "claude-code",
     "session_ref": "session-test",
     "container_ref": "git:example/repo",
-    "actor_ref": "local",
     "socket_path": r"\\.\pipe\claude" if os.name == "nt" else "/tmp/claude-test.sock",
     "token": "test-token",
 }
@@ -184,7 +183,6 @@ class TestDispatch:
         }
         scope = {
             "container_ref": "git:example/repo",
-            "actor_ref": "local",
         }
 
         _join(schedule_claude_relay_wake(result, scope, registry=registry))
@@ -194,7 +192,6 @@ class TestDispatch:
         assert call_kwargs["runtime"] == "claude-code"
         assert call_kwargs["session_ref"] == "session-test"
         assert call_kwargs["container_ref"] == "git:example/repo"
-        assert call_kwargs["actor_ref"] == "local"
         assert callable(call_kwargs["transport"])
 
     def test_malformed_delivery_no_op(self) -> None:
@@ -203,7 +200,6 @@ class TestDispatch:
         result = {"recipient": "claude-code:session-test"}
         scope = {
             "container_ref": "git:example/repo",
-            "actor_ref": "local",
         }
 
         schedule_claude_relay_wake(result, scope, registry=registry)
@@ -252,7 +248,6 @@ class TestDispatch:
         }
         scope = {
             "container_ref": "git:example/repo",
-            "actor_ref": "local",
         }
 
         schedule_claude_relay_wake(result, scope, registry=registry)
@@ -275,7 +270,6 @@ class TestDispatch:
         }
         scope = {
             "container_ref": "git:example/repo",
-            "actor_ref": "local",
         }
 
         _join(schedule_claude_relay_wake(result, scope, registry=registry))
@@ -298,7 +292,6 @@ class TestDispatch:
         }
         scope = {
             "container_ref": "git:example/repo",
-            "actor_ref": "local",
         }
 
         schedule_claude_relay_wake(result, scope, registry=registry)
@@ -320,7 +313,6 @@ class TestDispatch:
         }
         scope = {
             "container_ref": "git:example/repo",
-            "actor_ref": "local",
         }
 
         schedule_claude_relay_wake(result, scope, registry=registry)
@@ -348,7 +340,6 @@ class TestDispatch:
         }
         scope = {
             "container_ref": "git:example/repo",
-            "actor_ref": "local",
         }
 
         schedule_claude_relay_wake(result, scope, registry=registry)
@@ -363,7 +354,7 @@ def test_wake_worker_returns_without_waiting_and_logs_credential_free_outcome(
     registry = ClaudeWakeRegistry()
     secret = "token-secret"
     session_ref = "session-א"
-    scope = {"container_ref": "git:é/repo", "actor_ref": "local"}
+    scope = {"container_ref": "git:é/repo"}
     registry.register(**{**PAYLOAD, **scope, "session_ref": session_ref, "token": secret, "idle": True})
     started = threading.Event()
     release = threading.Event()
@@ -410,7 +401,7 @@ def test_wake_worker_coalesces_concurrent_sends(monkeypatch: pytest.MonkeyPatch)
     def submit() -> None:
         barrier.wait()
         workers.append(schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"]), {
-            "container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"],
+            "container_ref": PAYLOAD["container_ref"],
         }, registry=registry))
 
     senders = [threading.Thread(target=submit) for _ in range(2)]
@@ -442,7 +433,7 @@ def test_transport_failure_rearms_only_the_same_generation(monkeypatch: pytest.M
         return "accepted"
 
     monkeypatch.setattr(wake, "claude_wake_transport", transport)
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     _join(schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "first"), scope, registry=registry))
     _join(schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "second"), scope, registry=registry))
     assert calls == 2
@@ -462,7 +453,7 @@ def test_failed_old_generation_cannot_rearm_replacement(monkeypatch: pytest.Monk
         return "retryable"
 
     monkeypatch.setattr(wake, "claude_wake_transport", transport)
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     worker = schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"]), scope, registry=registry)
     assert started.wait(timeout=1)
     registry.register(**{**PAYLOAD, "token": "replacement", "idle": False})
@@ -470,7 +461,7 @@ def test_failed_old_generation_cannot_rearm_replacement(monkeypatch: pytest.Monk
     _join(worker)
     assert not registry.probe(
         runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        container_ref=PAYLOAD["container_ref"],
         transport=lambda *_: pytest.fail("replacement must remain busy"),
     )
 
@@ -490,7 +481,7 @@ def test_relay_messages_response_does_not_wait_for_claude_transport(
         claude_wake_registry=registry,
     ))
     http = TestClient(app, client=("127.0.0.1", 50000))
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     for runtime, session_ref in (("claude-code", "target"), ("codex", "sender")):
         assert http.post("/relay/turn", json={
             "runtime": runtime, "session_ref": session_ref, **scope,
@@ -530,7 +521,7 @@ def test_wake_outcome_categories_are_distinct_and_secret_free(
     import app.claude_wake as wake
 
     caplog.set_level(logging.INFO, logger="app.claude_wake")
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     secret = "token-secret"
     socket_path = "socket-secret"
     result = _wake_result(PAYLOAD["session_ref"], "delivery-category")
@@ -570,7 +561,7 @@ def test_worker_start_failure_logs_and_later_send_retries(
 
     registry = ClaudeWakeRegistry()
     registry.register(**{**PAYLOAD, "idle": True})
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     thread_class = threading.Thread
     caplog.set_level(logging.INFO, logger="app.claude_wake")
     monkeypatch.setattr(wake.threading, "Thread", FailingThread)
@@ -594,10 +585,10 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     app.include_router(create_router(client.app.state.pallium_service, relay_service=relay, claude_wake_registry=registry,
         relay_turn_callback=lambda req: registry.mark_busy(
             runtime=req["runtime"], session_ref=req["session_ref"],
-            container_ref=req["container_ref"], actor_ref=req["actor_ref"])))
+            container_ref=req["container_ref"])))
     client = TestClient(app, client=("127.0.0.1", 50000))
     payload = {**PAYLOAD, "session_ref": "session-test", "socket_path": "/tmp/test.sock", "idle": True}
-    scope = {"container_ref": payload["container_ref"], "actor_ref": payload["actor_ref"]}
+    scope = {"container_ref": payload["container_ref"]}
     relay.turn(runtime="claude-code", session_ref=payload["session_ref"], **scope)
     relay.close_session(runtime="claude-code", session_ref=payload["session_ref"], **scope)
     assert relay.list_sessions(runtime="claude-code", include_inactive=True, **scope)[0]["state"] == "closed"
@@ -616,7 +607,7 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
         mp.setattr("app.claude_wake.claude_wake_transport", transport)
         _join(schedule_claude_relay_wake(result, scope, registry=registry))
     transport.assert_called_once()
-    assert not registry.probe(runtime="claude-code", session_ref="session-test", container_ref="wrong", actor_ref=scope["actor_ref"], transport=transport)
+    assert not registry.probe(runtime="claude-code", session_ref="session-test", container_ref="wrong", transport=transport)
 
 
 def test_windows_write_closes_event_after_cancelled_completion(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -776,7 +767,7 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
         claude_wake_registry=registry,
     ))
     http = TestClient(app, client=("127.0.0.1", 50000))
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     start = _load_claude_hook("session_start", monkeypatch)
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     stop = _load_claude_hook("stop", monkeypatch)
@@ -791,19 +782,17 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
             lambda *_: scope["container_ref"], raising=False,
         )
         monkeypatch.setattr(
-            hook, "derive_actor_ref", lambda *_: scope["actor_ref"], raising=False,
+            hook, "derive_actor_ref", lambda *_: "local", raising=False,
         )
 
     def relay(method, path, body, timeout=0.75):
         response = http.request(method, path, json=body)
         return response.json() if response.content else None
-
-    def register(session, container, actor, **kwargs):
+    def register(session, container, **kwargs):
         response = http.post("/internal/claude-wake/register", json={
             **PAYLOAD,
             "session_ref": session,
             "container_ref": container,
-            "actor_ref": actor,
             "idle": kwargs.get("idle", False),
         })
         return response.status_code == 204
@@ -889,12 +878,12 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
         "thread_ref": "session-test",
         "agent_ref": "claude-code",
         "visibility": "private",
+        "actor_ref": "local",
     }
     assert http.post("/relay/replies", json={
         "delivery_id": sent1["deliveries"][0]["delivery_id"],
         "payload": "handled D1",
         "container_ref": prompt_scope["container_ref"],
-        "actor_ref": prompt_scope["actor_ref"],
     }).status_code == 200
 
     sent2 = send("D2")
@@ -917,7 +906,6 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
         "delivery_id": sent2["deliveries"][0]["delivery_id"],
         "payload": "handled D2",
         "container_ref": stop_scope["container_ref"],
-        "actor_ref": stop_scope["actor_ref"],
     }).status_code == 200
     ingested = []
 
@@ -981,7 +969,7 @@ def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
         return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
 
     monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
 
     def router(registry: ClaudeWakeRegistry) -> TestClient:
         app = FastAPI()
@@ -1030,7 +1018,7 @@ def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
 
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
-    monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: scope["actor_ref"])
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
     monkeypatch.setattr(prompt, "pallium_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(prompt, "read_hook_input", lambda: {
@@ -1040,11 +1028,9 @@ def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
     def relay(method, path, body, timeout=0.75):
         response = http.request(method, path, json=body)
         return response.json() if response.content else None
-
-    def register(session, container, actor, **kwargs):
+    def register(session, container, **kwargs):
         response = http.post("/internal/claude-wake/register", json={
-            **PAYLOAD, "session_ref": session, "container_ref": container,
-            "actor_ref": actor, "idle": kwargs.get("idle", False),
+            **PAYLOAD, "session_ref": session, "container_ref": container, "idle": kwargs.get("idle", False),
         })
         return response.status_code == 204
 
@@ -1101,15 +1087,13 @@ def test_empty_stop_rearms_claude_wake_after_turn_admission(client, monkeypatch,
         claude_wake_registry=registry,
     ))
     http = TestClient(app, client=("127.0.0.1", 50000))
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     stop = _load_claude_hook("stop", monkeypatch)
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: scope["actor_ref"])
-
-    def register(session, container, actor, **kwargs):
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
+    def register(session, container, **kwargs):
         response = http.post("/internal/claude-wake/register", json={
-            **PAYLOAD, "session_ref": session, "container_ref": container,
-            "actor_ref": actor, "idle": kwargs.get("idle", False),
+            **PAYLOAD, "session_ref": session, "container_ref": container, "idle": kwargs.get("idle", False),
         })
         return response.status_code == 204
 
@@ -1150,7 +1134,7 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
     from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
     from tests.test_claude_code_integration import _load_claude_hook
 
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     transport_called = threading.Event()
     transport_calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -1180,7 +1164,7 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
             "build_opener",
             lambda *_: SimpleNamespace(open=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())),
         )
-        assert not common.register_claude_wake("lost-http", scope["container_ref"], scope["actor_ref"], idle=True)
+        assert not common.register_claude_wake("lost-http", scope["container_ref"], idle=True)
 
         sent = http.post("/relay/messages", json={
             "sender_runtime": "codex", "sender_session_ref": "sender",
@@ -1222,7 +1206,7 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
 
     monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     transport_called = threading.Event()
     transport_calls: list[tuple[str, str]] = []
     monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(tmp_path / "wake"))
@@ -1277,7 +1261,7 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         registry.set_reconcile_signal(None)
         stop = _load_claude_hook("stop", monkeypatch)
         monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
-        monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: scope["actor_ref"])
+        monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
         monkeypatch.setattr(stop, "read_hook_input", lambda: {
             "session_id": "restart-target", "cwd": str(tmp_path), "transcript_path": "",
         })
@@ -1286,10 +1270,10 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         states_before_ack: list[str] = []
         acknowledged_ids: list[str] = []
 
-        def register(session: object, container: object, actor: object, *, idle: bool = False) -> bool:
+        def register(session: object, container: object, *, idle: bool = False) -> bool:
             registration = {
                 **PAYLOAD, "session_ref": session, "container_ref": container,
-                "actor_ref": actor, "idle": idle, "intent_id": f"stop-{len(registrations)}",
+ "idle": idle, "intent_id": f"stop-{len(registrations)}",
             }
             registrations.append(registration)
             assert common._write_wake_intent(registration)
@@ -1351,21 +1335,21 @@ def test_unreachable_callback_is_aware_and_exception_safe(monkeypatch: pytest.Mo
 
     _join(schedule_claude_relay_wake(
         _wake_result(PAYLOAD["session_ref"]),
-        {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]},
+        {"container_ref": PAYLOAD["container_ref"]},
         registry=registry, on_unreachable=callback,
     ))
     assert len(observed) == 1 and observed[0].tzinfo is not None
-    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"], PAYLOAD["actor_ref"])].state == "idle"
+    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])].state == "idle"
     assert registry.recovery_candidates()[0]["state"] == "idle"
 
     retried: list[datetime] = []
     _join(schedule_claude_relay_wake(
         _wake_result(PAYLOAD["session_ref"], "delivery-2"),
-        {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]},
+        {"container_ref": PAYLOAD["container_ref"]},
         registry=registry, on_unreachable=retried.append,
     ))
     assert len(retried) == 1
-    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"], PAYLOAD["actor_ref"])].state == "unreachable"
+    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])].state == "unreachable"
 
 
 
@@ -1386,7 +1370,7 @@ def test_real_router_unreachable_feedback_and_registration_self_heal(
         claude_wake_registry=registry,
     ))
     http = TestClient(app, client=("127.0.0.1", 50000))
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     for runtime, session_ref in (("claude-code", "health-target"), ("codex", "sender")):
         assert http.post("/relay/turn", json={
             "runtime": runtime, "session_ref": session_ref, **scope,
@@ -1418,7 +1402,7 @@ def test_real_router_unreachable_feedback_and_registration_self_heal(
         f"/relay/messages/{retryable.json()['message_id']}", params=scope
     ).json()
     assert retryable_status["deliveries"][0]["destination_health"] == "active"
-    assert registry._registrations[("claude-code", "health-target", scope["container_ref"], scope["actor_ref"])].state == "idle"
+    assert registry._registrations[("claude-code", "health-target", scope["container_ref"])].state == "idle"
     monkeypatch.setattr(registry, "probe", original_probe)
 
     persisted = threading.Event()
@@ -1443,7 +1427,7 @@ def test_real_router_unreachable_feedback_and_registration_self_heal(
     status = http.get(f"/relay/messages/{sent.json()['message_id']}", params=scope).json()
     assert status["deliveries"][0]["state"] == "pending"
     assert status["deliveries"][0]["destination_health"] == "unreachable"
-    assert registry._registrations[("claude-code", "health-target", scope["container_ref"], scope["actor_ref"])].state == "unreachable"
+    assert registry._registrations[("claude-code", "health-target", scope["container_ref"])].state == "unreachable"
 
     assert http.post("/internal/claude-wake/register", json=registration).status_code == 204
     sessions = http.get(
@@ -1451,7 +1435,7 @@ def test_real_router_unreachable_feedback_and_registration_self_heal(
     ).json()
     target = next(row for row in sessions if row["session_ref"] == "health-target")
     assert target["destination_health"] == "active"
-    assert registry._registrations[("claude-code", "health-target", scope["container_ref"], scope["actor_ref"])].state == "idle"
+    assert registry._registrations[("claude-code", "health-target", scope["container_ref"])].state == "idle"
 
 def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
@@ -1466,7 +1450,6 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
 
     scope = {
         "container_ref": PAYLOAD["container_ref"],
-        "actor_ref": PAYLOAD["actor_ref"],
     }
     registry = ClaudeWakeRegistry()
     app = FastAPI()
@@ -1478,13 +1461,11 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
     http = TestClient(app, client=("127.0.0.1", 50000))
     relay = RelayService(client.app.state.pallium_service._storage)
     stop = _load_claude_hook("stop", monkeypatch)
-
-    def register(session, container, actor, **kwargs):
+    def register(session, container, **kwargs):
         response = http.post("/internal/claude-wake/register", json={
             **PAYLOAD,
             "session_ref": session,
             "container_ref": container,
-            "actor_ref": actor,
             "idle": kwargs.get("idle", False),
         })
         return response.status_code == 204
@@ -1505,7 +1486,7 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
         return deliveries
 
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: scope["actor_ref"])
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(stop, "register_claude_wake", register)
     monkeypatch.setattr(stop, "relay_request", request)
     monkeypatch.setattr(stop, "acknowledge_relay", acknowledge)
@@ -1592,7 +1573,7 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
     ] == ["delivered"] * 5
     combined = first_output + final_output
     assert all(combined.count(payload) == 1 for payload in ("one", "two", "three", "four", "five"))
-    registration = registry._registrations[("claude-code", "rw007", scope["container_ref"], scope["actor_ref"])]
+    registration = registry._registrations[("claude-code", "rw007", scope["container_ref"])]
     assert registration.state == "idle" and registration.delivery_id is None
 
 
@@ -1614,7 +1595,7 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
         return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
 
     monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     registry = ClaudeWakeRegistry()
     assert registry.register(**PAYLOAD, idle=False)
     app = FastAPI()
@@ -1638,13 +1619,11 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope
     )["deliveries"][0]
     assert claimed["delivery_id"] == sent["deliveries"][0]["delivery_id"]
-
-    def register(session, container, actor, **kwargs):
+    def register(session, container, **kwargs):
         response = http.post("/internal/claude-wake/register", json={
             **PAYLOAD,
             "session_ref": session,
             "container_ref": container,
-            "actor_ref": actor,
             "idle": kwargs.get("idle", False),
         })
         return response.status_code == 204
@@ -1668,7 +1647,7 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
 
     stop = _load_claude_hook("stop", monkeypatch)
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
-    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: scope["actor_ref"])
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(stop, "register_claude_wake", register)
     monkeypatch.setattr(stop, "relay_request", relay_request)
     monkeypatch.setattr(stop, "acknowledge_relay", acknowledge)
@@ -1693,7 +1672,7 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
 
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
-    monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: scope["actor_ref"])
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(prompt, "register_claude_wake", register)
     monkeypatch.setattr(prompt, "relay_request", relay_request)
     monkeypatch.setattr(prompt, "acknowledge_relay", acknowledge)
@@ -1748,7 +1727,6 @@ def test_cross_container_duplicate_native_claude_endpoints_wake_independently(
             "runtime": runtime,
             "session_ref": session_ref,
             "container_ref": container_ref,
-            "actor_ref": actor,
         })
         assert response.status_code == 200, response.text
         return response.json()
@@ -1764,7 +1742,6 @@ def test_cross_container_duplicate_native_claude_endpoints_wake_independently(
             "runtime": "claude-code",
             "session_ref": "duplicate",
             "container_ref": container_ref,
-            "actor_ref": actor,
             "socket_path": socket_path,
             "token": token,
             "idle": True,
@@ -1788,7 +1765,6 @@ def test_cross_container_duplicate_native_claude_endpoints_wake_independently(
             "recipient": endpoint,
             "payload": payload,
             "container_ref": source,
-            "actor_ref": actor,
         })
         assert response.status_code == 200, response.text
 

@@ -464,14 +464,13 @@ export function formatRelay(deliveries, budgetChars = 0, remainingCount = 0) {
 }
 
 
-export async function acknowledgeRelay(deliveries, containerRef, actorRef) {
+export async function acknowledgeRelay(deliveries, containerRef) {
   for (const delivery of deliveries || []) {
     if (typeof delivery?.delivery_id !== "string" || typeof delivery?.claim_token !== "string") continue;
     await relayRequest("POST", "/relay/deliveries/ack", {
       delivery_id: delivery.delivery_id,
       claim_token: delivery.claim_token,
       container_ref: containerRef,
-      actor_ref: actorRef,
     }, 500);
   }
 }
