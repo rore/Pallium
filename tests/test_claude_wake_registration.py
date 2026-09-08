@@ -662,6 +662,7 @@ def test_prompt_cleanup_retries_real_wake_and_relay_transition(
     wake_dir = tmp_path / "wake"
     monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
     monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
     monkeypatch.setattr(common, "PALLIUM_BASE_URL", "http://testserver")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")

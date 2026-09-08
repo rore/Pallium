@@ -463,6 +463,13 @@ def test_failed_project_close_is_retried(
         ),
     )
     calls = []
+    wake_closes = []
+    if not imported:
+        monkeypatch.setattr(
+            hook,
+            "close_claude_wake",
+            lambda session, container: wake_closes.append((session, container)) or True,
+        )
     close_attempts = 0
 
     def relay(method, path, body, *, timeout):
@@ -490,6 +497,11 @@ def test_failed_project_close_is_retried(
         "container_ref": "git:old/repo",
     }
     assert state["pending"] == []
+    if not imported:
+        assert wake_closes == [
+            ("target", "git:old/repo"),
+            ("target", "git:old/repo"),
+        ]
 
 @pytest.mark.parametrize(
     ("relative", "imported"),
