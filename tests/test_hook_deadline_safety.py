@@ -272,3 +272,42 @@ def test_claude_prompt_emission_failure_leaves_relay_unacknowledged(monkeypatch)
 
     hook.main()
     assert acknowledgements == []
+
+
+def test_claude_user_prompt_outer_timeout_preserves_process_startup_slack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.cli import setup_claude_code
+
+    hook = _load(
+        "deadline_claude_prompt_outer_contract",
+        "integrations/claude-code/hooks/user_prompt_submit.py",
+    )
+    started = []
+
+    class Halt(BaseException):
+        pass
+
+    monkeypatch.setattr(
+        hook,
+        "start_hook_deadline",
+        lambda *args, **kwargs: started.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        hook,
+        "read_hook_input",
+        lambda: (_ for _ in ()).throw(Halt()),
+    )
+    with pytest.raises(Halt):
+        hook.main()
+
+    settings = setup_claude_code._register_hooks({})
+    managed = [
+        item
+        for entry in settings["hooks"]["UserPromptSubmit"]
+        for item in entry["hooks"]
+        if item["command"].endswith("user_prompt_submit.py")
+    ]
+    assert len(managed) == 1
+    active_budget = started[0][0][0] - started[0][1]["host_reserve"]
+    assert managed[0]["timeout"] - active_budget == 5

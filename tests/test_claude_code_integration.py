@@ -396,3 +396,59 @@ def test_posttool_hook_is_opt_in_and_preserves_unrelated_entries(monkeypatch: py
     setup_claude_code._register_hooks(settings)
     assert settings["hooks"]["PostToolUse"][0]["hooks"] == [mixed["hooks"][1]]
     assert settings["hooks"]["PostToolUse"][1:] == [unrelated, malformed]
+
+
+def test_user_prompt_timeout_reconciles_exact_managed_hooks_without_duplication(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(setup_claude_code, "_pallium_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        setup_claude_code, "_python_executable", lambda: r"C:\Pallium\python.exe"
+    )
+    command = setup_claude_code._hook_command("user_prompt_submit.py")
+    first = {
+        "type": "command",
+        "command": command.replace("/", "\\"),
+        "timeout": 8,
+        "statusMessage": "keep",
+    }
+    duplicate = {"type": "command", "command": command, "timeout": 7}
+    near_match = {"type": "command", "command": command + "-old", "timeout": 8}
+    unrelated = {"type": "command", "command": "other-tool", "timeout": 99}
+    malformed_entry = {"matcher": "", "hooks": "keep"}
+    settings = {
+        "hooks": {
+            "UserPromptSubmit": [
+                {
+                    "matcher": "",
+                    "label": "keep",
+                    "hooks": [first, None, near_match, unrelated],
+                },
+                {"matcher": "", "hooks": [duplicate]},
+                malformed_entry,
+                "keep",
+            ]
+        }
+    }
+
+    setup_claude_code._register_hooks(settings)
+    setup_claude_code._register_hooks(settings)
+
+    entries = settings["hooks"]["UserPromptSubmit"]
+    managed = [
+        hook
+        for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get("hooks"), list)
+        for hook in entry["hooks"]
+        if isinstance(hook, dict)
+        and isinstance(hook.get("command"), str)
+        and hook["command"].replace("\\", "/") == command
+    ]
+    assert managed == [first, duplicate]
+    assert [hook["timeout"] for hook in managed] == [12, 12]
+    assert first["statusMessage"] == "keep"
+    assert near_match["timeout"] == 8
+    assert unrelated["timeout"] == 99
+    assert entries[0]["label"] == "keep"
+    assert entries[2:] == [malformed_entry, "keep"]

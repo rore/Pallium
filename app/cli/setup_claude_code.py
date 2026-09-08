@@ -136,7 +136,7 @@ def _register_hooks(settings: dict) -> dict:
     hook_defs = [
         ("SessionStart", "session_start.py", 8),
         ("SessionEnd", "session_end.py", 8),
-        ("UserPromptSubmit", "user_prompt_submit.py", 8),
+        ("UserPromptSubmit", "user_prompt_submit.py", 12),
         ("Stop", "stop.py", 15),
         ("PreCompact", "pre_compact.py", 8),
     ]
@@ -148,12 +148,21 @@ def _register_hooks(settings: dict) -> dict:
         existing = settings["hooks"][event]
         command = _hook_command(script)
 
-        already_registered = any(
-            any(command in h.get("command", "") for h in entry.get("hooks", []))
-            for entry in existing
-            if isinstance(entry, dict)
-        )
-        if not already_registered:
+        managed = []
+        for entry in existing:
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                continue
+            for hook in entry["hooks"]:
+                if not isinstance(hook, dict):
+                    continue
+                configured = hook.get("command")
+                if (
+                    isinstance(configured, str)
+                    and configured.replace("\\", "/") == command
+                ):
+                    hook["timeout"] = timeout
+                    managed.append(hook)
+        if not managed:
             existing.append({
                 "matcher": "",
                 "hooks": [{"type": "command", "command": command, "timeout": timeout}],
