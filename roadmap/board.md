@@ -1,18 +1,13 @@
 # Next · Agent Relay
-- investigate-cross-repository-relay-coordination
-- add-dashboard-operations-and-relay-workspace
+- add-wake-first-relay-delivery
+- add-relay-retention-and-lifecycle-hardening
 
 # Parallel · Session History
 - improve-session-history-search-quality
 - investigate-history-navigation-and-on-demand-compression
 
 # Parallel · Agent Relay
-- add-wake-first-relay-delivery
-- idea-agent-relay
-- add-relay-retention-and-lifecycle-hardening
 - validate-relay-dependency-workflows
-- idea-explicit-relay-broadcast
-- idea-deferred-relay
 - add-copilot-relay-integration
 
 # P1 · Reuse Measurement
