@@ -29,12 +29,12 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Discovery and elevated gray-zone classification completed. Two review passes exposed both partial-success directions. Plan now attempts both closes independently and clears pending state only after both succeed; an existing Relay row closes idempotently on retry. No code edits started.
+- Reused the existing pending-close loop to retire the exact stale Claude wake registration and Relay endpoint independently, clearing transition bookkeeping only after both succeed. Added one hook-driven retry lifecycle test over real wake HTTP and Relay HTTP/storage paths.
 
 ## Plan review
 
@@ -46,7 +46,10 @@ Final clean-context review approved the revised plan with no remaining blockers.
 
 ## Evidence
 
-Pending.
+- Revision `7f067888`: focused Claude integration suite → 153 passed, 3 skipped.
+- Import-boundary adapter and agent-redline report → no boundary violations; detected risk Elevated.
+- Agent Workflow local gate → clean.
+- `apply_patch` was unavailable due the documented Windows sandbox launch failure; the test-only correction used a deterministic replacement limited to the named file.
 
 ## Result review
 
