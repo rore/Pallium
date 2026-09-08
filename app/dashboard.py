@@ -201,8 +201,8 @@ def mount_dashboard(app: FastAPI, *, show_roi: bool = False) -> None:
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard_page() -> HTMLResponse:
         html = _DASHBOARD_HTML_PATH.read_text(encoding="utf-8")
-        html = html.replace('data-roi-enabled="false"', f'data-roi-enabled="{str(show_roi).lower()}"', 1)
-        return HTMLResponse(content=html)
+        html = html.replace('<body data-roi-enabled="false">', f'<body data-roi-enabled="{str(show_roi).lower()}">', 1)
+        return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
 
     @app.get("/dashboard/api/effectiveness/reports")
     def dashboard_effectiveness_reports() -> JSONResponse:
@@ -441,11 +441,10 @@ def mount_dashboard(app: FastAPI, *, show_roi: bool = False) -> None:
 
     @app.get("/dashboard/api/relay/overview")
     def dashboard_relay_overview(
-        actor_ref: str | None = Query(None, min_length=1),
         container_search: str | None = Query(None),
         limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0),
     ) -> JSONResponse:
-        """Bounded Relay entry summary; details require an exact actor."""
+        """Bounded service-global Relay summary and ranked container facets."""
         storage = app.state.pallium_service._storage
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
@@ -468,48 +467,33 @@ def mount_dashboard(app: FastAPI, *, show_roi: bool = False) -> None:
 
         factory = getattr(storage, "_relay_session_factory", storage._session_factory)
         with factory() as session:
-            if actor_ref is None:
-                rows = session.execute(select(RelaySessionRecord.actor_ref, *aggregates()).group_by(
-                    RelaySessionRecord.actor_ref).order_by(func.coalesce(func.sum(case((active_recent, 1), else_=0)), 0).desc(),
-                    func.max(RelaySessionRecord.last_seen_at).desc(),
-                    RelaySessionRecord.actor_ref.asc()).offset(offset).limit(limit + 1)).all()
-                has_more, rows = len(rows) > limit, rows[:limit]
-                actors = [row.actor_ref for row in rows]
-                messages = {actor: (count, latest) for actor, count, latest in session.execute(
-                    select(RelayMessageRecord.actor_ref, func.count(RelayMessageRecord.id),
-                           func.max(RelayMessageRecord.created_at)).where(
-                        RelayMessageRecord.actor_ref.in_(actors)).group_by(RelayMessageRecord.actor_ref)
-                ).all()} if actors else {}
-                owners = [{"actor_ref": row.actor_ref, "session_count": row.session_count,
-                    "message_count": messages.get(row.actor_ref, (0, None))[0], "last_seen_at": _dashboard_time(row.last_seen_at),
-                    "last_message_at": _dashboard_time(messages.get(row.actor_ref, (0, None))[1]),
-                    "active_session_count": row.active_session_count, "recent_session_count": row.recent_session_count, "dormant_session_count": row.dormant_session_count,
-                    "closed_session_count": row.closed_session_count, "unreachable_session_count": row.unreachable_session_count}
-                    for row in rows]
-                return JSONResponse(content={"as_of": _dashboard_time(as_of), "owners": owners, "offset": offset,
-                    "limit": limit, "has_more": has_more, "next_offset": offset + limit if has_more else None})
-
-            summary = session.execute(select(*aggregates()).where(RelaySessionRecord.actor_ref == actor_ref)).one()
-            message_count, last_message_at = session.execute(select(func.count(RelayMessageRecord.id),
-                func.max(RelayMessageRecord.created_at)).where(RelayMessageRecord.actor_ref == actor_ref)).one()
-            facets = select(RelaySessionRecord.container_ref, *aggregates()).where(RelaySessionRecord.actor_ref == actor_ref)
+            summary = session.execute(select(*aggregates())).one()
+            message_count, last_message_at = session.execute(select(
+                func.count(RelayMessageRecord.id), func.max(RelayMessageRecord.created_at),
+            )).one()
+            facets = select(RelaySessionRecord.container_ref, *aggregates())
             if container_search and container_search.strip():
                 facets = facets.where(RelaySessionRecord.container_ref.ilike(f"%{container_search.strip()}%"))
             rows = session.execute(facets.group_by(RelaySessionRecord.container_ref).order_by(
                 func.coalesce(func.sum(case((active_recent, 1), else_=0)), 0).desc(),
-                func.max(RelaySessionRecord.last_seen_at).desc(), RelaySessionRecord.container_ref.asc()).offset(offset).limit(limit + 1)).all()
+                func.max(RelaySessionRecord.last_seen_at).desc(),
+                RelaySessionRecord.container_ref.asc(),
+            ).offset(offset).limit(limit + 1)).all()
 
         has_more, rows = len(rows) > limit, rows[:limit]
-        return JSONResponse(content={"as_of": _dashboard_time(as_of), "actor_ref": actor_ref,
-            "owner": {"actor_ref": actor_ref, "session_count": summary.session_count, "message_count": message_count,
+        return JSONResponse(content={"as_of": _dashboard_time(as_of),
+            "summary": {"session_count": summary.session_count, "message_count": message_count,
                 "last_seen_at": _dashboard_time(summary.last_seen_at), "last_message_at": _dashboard_time(last_message_at),
-                "active_session_count": summary.active_session_count, "recent_session_count": summary.recent_session_count, "dormant_session_count": summary.dormant_session_count,
-                "closed_session_count": summary.closed_session_count, "unreachable_session_count": summary.unreachable_session_count},
+                "active_session_count": summary.active_session_count, "recent_session_count": summary.recent_session_count,
+                "dormant_session_count": summary.dormant_session_count, "closed_session_count": summary.closed_session_count,
+                "unreachable_session_count": summary.unreachable_session_count},
             "containers": [{"container_ref": row.container_ref, "session_count": row.session_count,
-                "last_seen_at": _dashboard_time(row.last_seen_at), "active_session_count": row.active_session_count, "recent_session_count": row.recent_session_count,
-                "dormant_session_count": row.dormant_session_count, "closed_session_count": row.closed_session_count,
-                "unreachable_session_count": row.unreachable_session_count} for row in rows],
-            "offset": offset, "limit": limit, "has_more": has_more, "next_offset": offset + limit if has_more else None})
+                "last_seen_at": _dashboard_time(row.last_seen_at), "active_session_count": row.active_session_count,
+                "recent_session_count": row.recent_session_count, "dormant_session_count": row.dormant_session_count,
+                "closed_session_count": row.closed_session_count, "unreachable_session_count": row.unreachable_session_count}
+                for row in rows],
+            "offset": offset, "limit": limit, "has_more": has_more,
+            "next_offset": offset + limit if has_more else None})
     @app.get("/dashboard/api/sources")
     def dashboard_sources(
         container_ref: str = Query(..., min_length=1), actor_ref: str | None = Query(None, min_length=1),

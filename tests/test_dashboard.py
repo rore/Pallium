@@ -912,76 +912,72 @@ class TestDashboardSourceAndRelayProjections:
         assert inserted_id not in {first["messages"][0]["id"], second["messages"][0]["id"]}
 
 class TestDashboardRelayOverview:
-    def test_overview_owner_allowlist_facets_and_read_only_split_store(self, tmp_path: Path) -> None:
+    def test_overview_global_summary_facets_and_read_only_split_store(self, tmp_path: Path) -> None:
         app = create_app(replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay-overview.db'}"))
         now = datetime.now(timezone.utc)
         with TestClient(app) as client:
-            for runtime, session_ref, container, actor in (
-                ("codex", "same-native", "git:alpha", "owner-a"),
-                ("claude-code", "same-native", "git:alpha", "owner-b"),
-                ("codex", "dormant", "git:zeta", "owner-a"),
-                ("codex", "recent-unreachable", "git:omega", "owner-a"),
-                ("opencode", "closed", "git:東京", "owner-a"),
+            for runtime, session_ref, container in (
+                ("codex", "alpha-one", "git:alpha"),
+                ("claude-code", "alpha-two", "git:alpha"),
+                ("codex", "dormant", "git:zeta"),
+                ("codex", "recent-unreachable", "git:omega"),
+                ("opencode", "closed", "git:東京"),
             ):
                 assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref,
-                    "container_ref": container, "actor_ref": actor}).status_code == 200
-            sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "same-native",
-                "recipient": "opencode:closed", "container_ref": "git:alpha", "actor_ref": "owner-a",
+                    "container_ref": container}).status_code == 200
+            sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "alpha-one",
+                "recipient": "claude-code:alpha-two", "container_ref": "git:alpha",
                 "payload": "overview-secret"}).json()
             storage = app.state.pallium_service._storage
             with storage._relay_session_factory() as session:
-                rows = {row.session_ref: row for row in session.query(RelaySessionRecord).filter_by(actor_ref="owner-a")}
+                rows = {row.session_ref: row for row in session.query(RelaySessionRecord)}
                 rows["dormant"].last_seen_at = now - timedelta(days=2)
                 rows["dormant"].state = "unreachable"
                 rows["recent-unreachable"].state = "unreachable"
                 rows["closed"].state = "closed"
                 session.add(RelayDeliveryRecord(id="fanout-overview", message_id=sent["message_id"], recipient_runtime="codex",
-                    recipient_session_ref="same-native", recipient_endpoint_id=rows["same-native"].id,
+                    recipient_session_ref="alpha-one", recipient_endpoint_id=rows["alpha-one"].id,
                     recipient_container_ref="git:alpha", state="pending", attempts=0))
                 session.commit()
                 before = [(row.id, row.state, row.last_seen_at) for row in session.query(RelaySessionRecord).all()]
-            overview = client.get("/dashboard/api/relay/overview").json()
-            assert set(overview) == {"as_of", "owners", "offset", "limit", "has_more", "next_offset"}
-            owner = next(row for row in overview["owners"] if row["actor_ref"] == "owner-a")
-            assert set(owner) == {"actor_ref", "session_count", "message_count", "last_seen_at", "last_message_at", "active_session_count", "recent_session_count", "dormant_session_count", "closed_session_count", "unreachable_session_count"}
-            assert owner["message_count"] == 1 and "overview-secret" not in str(overview) and "git:alpha" not in str(overview)
-            assert owner["active_session_count"] == 1 and owner["recent_session_count"] == 2 and owner["unreachable_session_count"] == 2
-            selected = client.get("/dashboard/api/relay/overview", params={"actor_ref": "owner-a", "limit": 1}).json()
-            assert selected["owner"]["session_count"] == 4 and selected["owner"]["message_count"] == 1
-            assert selected["owner"]["active_session_count"] == 1 and selected["containers"][0]["container_ref"] == "git:alpha"
-            assert selected["has_more"] is True and selected["next_offset"] == 1
-            next_page = client.get("/dashboard/api/relay/overview", params={"actor_ref": "owner-a", "limit": 1, "offset": 1}).json()
-            assert next_page["containers"][0]["container_ref"] != selected["containers"][0]["container_ref"]
-            search = client.get("/dashboard/api/relay/overview", params={"actor_ref": "owner-a", "container_search": "東京"}).json()
+            overview = client.get("/dashboard/api/relay/overview", params={"limit": 1}).json()
+            assert set(overview) == {"as_of", "summary", "containers", "offset", "limit", "has_more", "next_offset"}
+            summary = overview["summary"]
+            assert set(summary) == {"session_count", "message_count", "last_seen_at", "last_message_at", "active_session_count", "recent_session_count", "dormant_session_count", "closed_session_count", "unreachable_session_count"}
+            assert summary["session_count"] == 5 and summary["message_count"] == 1
+            assert summary["active_session_count"] == 2 and summary["recent_session_count"] == 3
+            assert summary["unreachable_session_count"] == 2 and "overview-secret" not in str(overview)
+            assert overview["containers"][0]["container_ref"] == "git:alpha"
+            assert overview["has_more"] is True and overview["next_offset"] == 1
+            next_page = client.get("/dashboard/api/relay/overview", params={"limit": 1, "offset": 1}).json()
+            assert next_page["containers"][0]["container_ref"] != overview["containers"][0]["container_ref"]
+            search = client.get("/dashboard/api/relay/overview", params={"container_search": "東京"}).json()
             assert [row["container_ref"] for row in search["containers"]] == ["git:東京"]
-            unicode_facet = search["containers"][0]
-            assert unicode_facet["closed_session_count"] == 1 and unicode_facet["unreachable_session_count"] == 0
-            dormant = next(row for row in client.get("/dashboard/api/relay/overview", params={"actor_ref": "owner-a"}).json()["containers"] if row["container_ref"] == "git:zeta")
+            assert search["containers"][0]["closed_session_count"] == 1
+            dormant = next(row for row in client.get("/dashboard/api/relay/overview").json()["containers"] if row["container_ref"] == "git:zeta")
             assert dormant["dormant_session_count"] == 1 and dormant["unreachable_session_count"] == 1
-            unknown = client.get("/dashboard/api/relay/overview", params={"actor_ref": "unknown"}).json()
-            assert unknown["owner"]["session_count"] == unknown["owner"]["message_count"] == 0 and unknown["containers"] == []
-            assert client.get("/dashboard/api/relay/overview?actor_ref=").status_code == 422
             assert client.get("/dashboard/api/relay/overview?limit=201").status_code == 422
             assert client.get("/dashboard/api/relay/overview?limit=200").status_code == 200
-            assert client.get("/dashboard/api/relay/sessions").status_code == 422
-            assert client.get("/dashboard/api/relay/messages?actor_ref=").status_code == 422
-            client.get("/dashboard/api/relay/overview", params={"actor_ref": "owner-a"})
+            assert client.get("/dashboard/api/relay/sessions").status_code == 200
+            assert client.get("/dashboard/api/relay/messages").status_code == 200
+            client.get("/dashboard/api/relay/overview")
             with storage._relay_session_factory() as session:
                 after = [(row.id, row.state, row.last_seen_at) for row in session.query(RelaySessionRecord).all()]
             normalize = lambda value: value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
             assert [(row_id, state, normalize(last_seen_at)) for row_id, state, last_seen_at in before] == [(row_id, state, normalize(last_seen_at)) for row_id, state, last_seen_at in after]
+
 
     def test_overview_container_ties_are_deterministic(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
         at = datetime.now(timezone.utc)
         with TestClient(app) as client:
             for container in ("git:tie-b", "git:tie-a"):
-                assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "same", "container_ref": container, "actor_ref": "ties"}).status_code == 200
+                assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "same", "container_ref": container}).status_code == 200
             storage = app.state.pallium_service._storage
             with storage._relay_session_factory() as session:
-                session.execute(text("UPDATE relay_sessions SET last_seen_at=:at WHERE actor_ref='ties'"), {"at": at})
+                session.execute(text("UPDATE relay_sessions SET last_seen_at=:at"), {"at": at})
                 session.commit()
-            first = client.get("/dashboard/api/relay/overview", params={"actor_ref": "ties", "limit": 1}).json()
-            second = client.get("/dashboard/api/relay/overview", params={"actor_ref": "ties", "limit": 1, "offset": 1}).json()
+            first = client.get("/dashboard/api/relay/overview", params={"limit": 1}).json()
+            second = client.get("/dashboard/api/relay/overview", params={"limit": 1, "offset": 1}).json()
         assert first["containers"][0]["container_ref"] == "git:tie-a"
         assert second["containers"][0]["container_ref"] == "git:tie-b"

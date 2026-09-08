@@ -18,11 +18,16 @@ def test_dashboard_roi_view_and_reports_are_server_gated() -> None:
     disabled = FastAPI()
     mount_dashboard(disabled)
     with TestClient(disabled) as client:
-        assert 'data-roi-enabled="false"' in client.get("/dashboard").text
+        dashboard = client.get("/dashboard")
+        assert '<body data-roi-enabled="false">' in dashboard.text
+        assert dashboard.headers["cache-control"] == "no-store"
         assert client.get("/dashboard/api/effectiveness/reports").status_code == 404
 
     enabled = FastAPI()
     mount_dashboard(enabled, show_roi=True)
     with TestClient(enabled) as client:
-        assert 'data-roi-enabled="true"' in client.get("/dashboard").text
+        dashboard = client.get("/dashboard")
+        assert '<body data-roi-enabled="true">' in dashboard.text
+        assert 'body[data-roi-enabled="false"] .roi-only' in dashboard.text
+        assert dashboard.headers["cache-control"] == "no-store"
         assert client.get("/dashboard/api/effectiveness/reports").status_code == 200

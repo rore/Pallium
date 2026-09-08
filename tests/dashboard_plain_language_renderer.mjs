@@ -290,7 +290,6 @@ assert.ok(endpointMergeStart >= 0 && endpointMergeEnd > endpointMergeStart);
 const endpointState = { endpointSessions: {} };
 const endpointMerge = new Function('state', `
   let _relay = state;
-  function relayActor() { return 'owner'; }
   function rf(value, names, fallback = 'unknown') { for (const name of names) if (value && value[name] != null && value[name] !== '') return String(value[name]); return fallback; }
   function rid(message, side) { return rf(message, side === 'from' ? ['sender_endpoint_id'] : ['recipient_endpoint_id']); }
   ${html.slice(endpointMergeStart, endpointMergeEnd)}
@@ -303,7 +302,7 @@ endpointMerge({
 assert.equal(endpointState.endpointSessions.known.session_ref, 'one');
 assert.equal(endpointState.endpointSessions.paged.session_ref, 'two');
 assert.doesNotMatch(html, /Unresolved session/);
-assert.match(html, /if\(session\._snapshot\).*alias changes are disabled/);
+assert.match(html, /if\(session\._snapshot\).*name changes are disabled/);
 const visibleSessionsStart = html.indexOf('function rsessionName(');
 const visibleSessionsEnd = html.indexOf('function renderRelaySessions(', visibleSessionsStart);
 const visibleSessions = new Function('state', 'search', `
@@ -379,7 +378,7 @@ function deferredSourceFetch(url) {
   }));
 }
 const sourceFlowStart = html.indexOf('function sourceParams()');
-const sourceFlowEnd = html.indexOf('function relayActor()', sourceFlowStart);
+const sourceFlowEnd = html.indexOf('function relayLifecycle()', sourceFlowStart);
 assert.ok(sourceFlowStart >= 0 && sourceFlowEnd > sourceFlowStart);
 const sourceFlow = new Function('document', 'fetch', `
 let _sourceOffset=0,_sourceSelected=null,_sourceSelectedScope=null,_sourceFacets={containers:[],actors:[]},_sourceGeneration=0,_sourceDetailGeneration=0;const _sourcePage=25;
@@ -426,4 +425,33 @@ sourceRaceElements['source-container'].value = 'workspace-b';
 pendingSourceReads[6].answer({ items: [{ content: 'workspace-a context' }] });
 await staleContextRead;
 assert.doesNotMatch(sourceRaceElements['source-context-result'].innerHTML, /workspace-a context/);
+
+sourceRaceElements['source-container'].value = 'workspace-c';
+sourceRaceElements['source-actor'].value = '';
+const allOwnersRead = sourceFlow.fetchSources();
+const allOwnersRequest = pendingSourceReads.at(-1);
+assert.doesNotMatch(allOwnersRequest.url, /actor_ref=/);
+allOwnersRequest.answer({ items: [], total: 0 });
+await allOwnersRead;
+assert.match(sourceRaceElements['source-status'].textContent, /across all owners/);
+const viewSwitchStart = html.indexOf('const _VIEWS =');
+const viewSwitchEnd = html.indexOf('function openExpiredRelay', viewSwitchStart);
+assert.ok(viewSwitchStart >= 0 && viewSwitchEnd > viewSwitchStart);
+function viewElement(hidden = false) {
+  const values = new Set(hidden ? ['hidden'] : []);
+  return { classList: { toggle: (name, on) => on ? values.add(name) : values.delete(name), contains: name => values.has(name) }, setAttribute() {} };
+}
+const viewElements = {
+  'view-operational': viewElement(false), 'view-relay': viewElement(true), 'view-how-it-helps': viewElement(true),
+  'tab-operational': viewElement(false), 'tab-relay': viewElement(false), 'tab-evaluation': viewElement(false),
+};
+let evaluationLoads = 0;
+const switchDashboardView = new Function('document', 'window', 'history', 'DASHBOARD_ROI_ENABLED', 'fetchRelay', 'fetchEffectivenessReports', `
+  ${html.slice(viewSwitchStart, viewSwitchEnd)}
+  return switchView;
+`)({ getElementById: id => viewElements[id] || null }, { location: { hash: '' }, scrollTo() {} }, { replaceState() {} }, true, () => {}, () => { evaluationLoads += 1; });
+switchDashboardView('evaluation');
+assert.equal(viewElements['view-how-it-helps'].classList.contains('hidden'), false);
+assert.equal(viewElements['view-operational'].classList.contains('hidden'), true);
+assert.equal(evaluationLoads, 1);
 console.log('plain-language dashboard renderers: all cases passed');
