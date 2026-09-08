@@ -46,11 +46,11 @@ Final clean-context review approved the revised plan with no remaining blockers.
 
 ## Evidence
 
-- Revision `7f067888`: focused Claude integration suite → 153 passed, 3 skipped.
+- Revision `5a9de9af`: expanded Claude/Relay integration suite → 197 passed, 3 skipped; full repository suite in the complete development environment → 4660 passed, 32 skipped, 2 expected failures.
 - Import-boundary adapter and agent-redline report → no boundary violations; detected risk Elevated.
 - Agent Workflow local gate → clean.
 - `apply_patch` was unavailable due the documented Windows sandbox launch failure; the test-only correction used a deterministic replacement limited to the named file.
 
 ## Result review
 
-Pending.
+Clean-context Astra review requested changes for an unstubbed wake HTTP dependency in an existing retry test and a real user-profile session-state write in the new test. Both were fixed and regression-tested. Re-review approved `5a9de9af` with no remaining actionable findings.
