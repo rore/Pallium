@@ -5,6 +5,7 @@ import logging
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -117,24 +118,54 @@ class SQLiteStorageProvider(
     _RELAY_IMMEDIATE_BUSY_TIMEOUT_MS = 100
 
     def __init__(self, database_url: str, relay_database_url: str | None = None) -> None:
-        separate_relay = relay_database_url is not None and not self._same_sqlite_file(database_url, relay_database_url)
-        if separate_relay:
-            self._validate_relay_database_pair(database_url, relay_database_url)
-        else:
-            self._validate_relay_schema(database_url)
-        self._engine = self._create_engine(database_url)
-        self._session_factory = sessionmaker(self._engine, expire_on_commit=False, class_=Session)
-        self._initialize_sqlite_pragmas(self._engine)
-        self._initialize_schema(include_relay=not separate_relay)
-        self._relay_engine = self._engine
-        self._relay_session_factory = self._session_factory
-        if separate_relay:
-            self._relay_engine = self._create_engine(relay_database_url)
-            self._relay_session_factory = sessionmaker(
-                self._relay_engine, expire_on_commit=False, class_=Session
+        separate_relay = relay_database_url is not None and not self._same_sqlite_file(
+            database_url, relay_database_url
+        )
+        pair_lock = (
+            self._relay_pair_initialization_lock(database_url)
+            if separate_relay
+            else nullcontext()
+        )
+        with pair_lock:
+            if separate_relay:
+                self._validate_relay_database_pair(database_url, relay_database_url)
+            else:
+                self._validate_relay_schema(database_url)
+            self._engine = self._create_engine(database_url)
+            self._session_factory = sessionmaker(
+                self._engine, expire_on_commit=False, class_=Session
             )
-            self._initialize_sqlite_pragmas(self._relay_engine)
-            self._initialize_relay_schema(self._relay_engine)
+            self._initialize_sqlite_pragmas(self._engine)
+            self._initialize_schema(include_relay=not separate_relay)
+            self._relay_engine = self._engine
+            self._relay_session_factory = self._session_factory
+            if separate_relay:
+                self._relay_engine = self._create_engine(relay_database_url)
+                self._relay_session_factory = sessionmaker(
+                    self._relay_engine, expire_on_commit=False, class_=Session
+                )
+                self._initialize_sqlite_pragmas(self._relay_engine)
+                self._initialize_relay_schema(self._relay_engine)
+
+    @contextmanager
+    def _relay_pair_initialization_lock(self, database_url: str):
+        path = self._sqlite_path(database_url)
+        if path is None:
+            yield
+            return
+        lock_path = path.with_name(f"{path.name}.relay-pair-init.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+b") as lock_file:
+            lock_file.seek(0, 2)
+            if lock_file.tell() == 0:
+                lock_file.write(b"0")
+                lock_file.flush()
+            lock_file.seek(0)
+            self._acquire_schema_file_lock(lock_file)
+            try:
+                yield
+            finally:
+                self._release_schema_file_lock(lock_file)
 
     @staticmethod
     def _sqlite_path(database_url: str) -> Path | None:

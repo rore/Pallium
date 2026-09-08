@@ -1,5 +1,7 @@
 from pathlib import Path
+import multiprocessing
 import sqlite3
+from queue import Empty
 
 import pytest
 from sqlalchemy import text
@@ -118,6 +120,32 @@ def test_http_relay_remains_available_during_main_writer(tmp_path: Path, monkeyp
 
 
 
+def _initialize_separate_pair_process(
+    main_url: str,
+    relay_url: str,
+    result_queue,
+    main_ready=None,
+    release=None,
+) -> None:
+    try:
+        if main_ready is not None:
+            original = SQLiteStorageProvider._initialize_schema
+
+            def pause_after_main_schema(self, include_relay=True):
+                result = original(self, include_relay=include_relay)
+                if not include_relay:
+                    main_ready.set()
+                    if not release.wait(15):
+                        raise RuntimeError("timed out waiting to release startup")
+                return result
+
+            SQLiteStorageProvider._initialize_schema = pause_after_main_schema
+        SQLiteStorageProvider(main_url, relay_database_url=relay_url).close()
+    except Exception as exc:  # pragma: no cover - exercised via multiprocessing
+        result_queue.put(f"error:{exc!r}")
+        raise
+    result_queue.put("ok")
+
 def _tables(path: Path) -> set[str]:
     with sqlite3.connect(path) as connection:
         return {
@@ -153,6 +181,40 @@ def test_fresh_separate_and_same_databases_use_current_schema(tmp_path: Path) ->
     assert "memory_objects" not in _tables(separate_relay)
     _dispose(separate, same)
 
+
+def test_concurrent_fresh_separate_pair_startup_is_serialized(tmp_path: Path) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    main_url = f"sqlite:///{main}"
+    relay_url = f"sqlite:///{relay}"
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    main_ready = context.Event()
+    release = context.Event()
+    first = context.Process(
+        target=_initialize_separate_pair_process,
+        args=(main_url, relay_url, result_queue, main_ready, release),
+    )
+    first.start()
+    assert main_ready.wait(15)
+    second = context.Process(
+        target=_initialize_separate_pair_process,
+        args=(main_url, relay_url, result_queue),
+    )
+    second.start()
+    try:
+        with pytest.raises(Empty):
+            result_queue.get(timeout=1)
+        release.set()
+        assert result_queue.get(timeout=15) == "ok"
+        assert result_queue.get(timeout=15) == "ok"
+    finally:
+        release.set()
+        first.join(timeout=15)
+        second.join(timeout=15)
+    assert first.exitcode == 0
+    assert second.exitcode == 0
+    SQLiteStorageProvider(main_url, relay_database_url=relay_url).close()
 
 @pytest.mark.parametrize("missing", ["main", "relay"])
 def test_existing_one_file_only_pair_fails_without_creating_other(
@@ -213,7 +275,7 @@ def test_existing_empty_relay_file_fails_without_initializing_or_mutating_it(
     assert _tables(relay) == {"unrelated"}
 
 
-def test_dormant_legacy_relay_table_in_main_does_not_block_active_pair(
+def test_dormant_legacy_relay_tables_in_main_do_not_block_active_pair(
     tmp_path: Path,
 ) -> None:
     main = tmp_path / "main.db"
@@ -223,8 +285,49 @@ def test_dormant_legacy_relay_table_in_main_does_not_block_active_pair(
     )
     provider.close()
     with sqlite3.connect(main) as connection:
-        connection.execute("CREATE TABLE relay_migration_metadata (key TEXT)")
-    before = _columns(main, "relay_migration_metadata")
+        connection.executescript(
+            """
+            CREATE TABLE relay_messages (
+                id TEXT PRIMARY KEY,
+                sender_runtime TEXT NOT NULL,
+                sender_session_ref TEXT NOT NULL,
+                recipient_selector TEXT NOT NULL,
+                container_ref TEXT NOT NULL,
+                actor_ref TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                redacted INTEGER NOT NULL,
+                in_reply_to TEXT,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
+            CREATE TABLE relay_deliveries (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                recipient_runtime TEXT NOT NULL,
+                recipient_session_ref TEXT NOT NULL,
+                state TEXT NOT NULL,
+                claim_token TEXT,
+                claimed_at TEXT,
+                lease_expires_at TEXT,
+                delivered_at TEXT,
+                attempts INTEGER NOT NULL
+            );
+            INSERT INTO relay_messages VALUES
+                ('legacy-message', 'codex', 'sender', 'codex:target', 'c', 'u', 'payload', 0, NULL, '2026-01-01', '2027-01-01');
+            INSERT INTO relay_deliveries VALUES
+                ('legacy-delivery', 'legacy-message', 'codex', 'target', 'pending', NULL, NULL, NULL, NULL, 0);
+            """
+        )
+        before_schema = {
+            table: connection.execute(
+                "SELECT sql FROM sqlite_master WHERE name = ?", (table,)
+            ).fetchone()[0]
+            for table in ("relay_messages", "relay_deliveries")
+        }
+        before_rows = {
+            table: connection.execute(f"SELECT * FROM {table}").fetchall()
+            for table in ("relay_messages", "relay_deliveries")
+        }
     reopened = SQLiteStorageProvider(
         f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
     )
@@ -239,9 +342,18 @@ def test_dormant_legacy_relay_table_in_main_does_not_block_active_pair(
         lease_seconds=60,
     )
     assert result["session"]["session_ref"] == "target"
-    assert _columns(main, "relay_migration_metadata") == before
+    with sqlite3.connect(main) as connection:
+        assert {
+            table: connection.execute(
+                "SELECT sql FROM sqlite_master WHERE name = ?", (table,)
+            ).fetchone()[0]
+            for table in before_schema
+        } == before_schema
+        assert {
+            table: connection.execute(f"SELECT * FROM {table}").fetchall()
+            for table in before_rows
+        } == before_rows
     reopened.close()
-
 
 def test_current_relay_rows_alias_removal_unresolved_binding_and_claim_survive_restart(
     tmp_path: Path,

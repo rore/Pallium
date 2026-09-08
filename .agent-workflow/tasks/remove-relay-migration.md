@@ -29,13 +29,14 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Deleted both one-time Relay migrations, migration marker model/table creation, endpoint-column ALTER helpers, and all runtime marker dependencies.
 - Added pre-mutation validation: separate file pairs reject either missing side; an existing active Relay database must have the complete current tables and endpoint columns; same-database mode validates any existing Relay schema. Dormant legacy Relay tables in the separate main database remain inert and are not treated as the active schema.
+- Smart-review fix: a distinct cross-process pair-initialization lock now serializes pair validation plus both existing per-file schema initializations, preventing a healthy concurrent fresh start from observing the transient main-only state.
 - Removed legacy single-file-to-pair snapshot restore and legacy snapshot status counting. Paired-generation restore and the generic single-database snapshot API remain unchanged.
 - Removed `relay_migration_ready` and its unused storage status helper; both current database sizes remain reported.
 - Replaced migration-only tests with current-format schema, partial-pair, incomplete-schema, no-mutation, full-row restart, unresolved-binding, alias removal, claimed-delivery ACK/status, dormant-main, and unsupported legacy-snapshot coverage. Existing writer isolation, fan-in, HTTP, and Relay caller-surface coverage was preserved.
@@ -44,7 +45,7 @@
 
 ## Evidence
 
-- Focused persistence/snapshot/status/lifecycle verification: 75 passed; final isolation delta after the installed-database correction: 13 passed.
+- Focused persistence/snapshot/status/lifecycle verification: 75 passed before review; final pair-lock and dormant-table delta: 77 passed. The deterministic concurrent-startup regression also passed five repeated runs in delegated verification.
 - Cross-container HTTP, hook, and MCP Relay E2E: 153 passed.
 - Complete non-slow repository suite on the implementation candidate: 4,640 passed, 32 skipped, 2 expected failures. The subsequent one-line narrowing removed only validation of dormant main-DB Relay remnants; its dedicated final regression passed.
 - Import boundaries: 8 contracts kept, 0 broken across 146 files and 505 dependencies.
@@ -63,3 +64,4 @@
 - First clean-context smart result review verdict: request changes. A reproduced fresh-start race showed pair validation was not serialized with two-file initialization; a second process could see main created before Relay and reject healthy startup. Add one shared pair lock around validation plus both existing per-file initialization locks and prove concurrent fresh startup.
 - Test finding: the dormant-main regression seeded only ignored marker metadata and could not catch renewed validation of actual dormant Relay tables. Seed incomplete legacy Relay data tables and assert their schema and rows remain unchanged while the active Relay file works.
 - No other correctness, snapshot, status, path/URI, or public-contract finding was reported. Return to implementation for these two bounded corrections, then repeat clean-context result review.
+- Both findings are addressed: validation and two-file initialization share a distinct pair lock without nesting the same schema lock, and the dormant-main regression now preserves real incomplete legacy message/delivery schemas and rows. Focused verification is green; repeat clean-context review pending.
