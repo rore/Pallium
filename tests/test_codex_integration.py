@@ -108,6 +108,50 @@ def test_codex_feature_flag_keeps_preexisting_shared_hooks() -> None:
     assert setup_codex._ensure_feature_flag(existing) == existing
     assert setup_codex._remove_feature_flag(existing) == existing
 
+
+def test_codex_install_reports_hook_review_boundary_and_preserves_codex_trust(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(setup_codex, "_verify_service", lambda _port: True)
+
+    assert setup_codex.install() == 0
+    first_output = capsys.readouterr().out
+    config_path = tmp_path / ".codex" / "config.toml"
+    config = config_path.read_text(encoding="utf-8")
+    assert "[hooks.state]" not in config
+    assert "Configuration installed." in first_output
+    assert "Approve the Pallium hook review if prompted." in first_output
+    assert "Relay wake is ready only after that review." in first_output
+    assert "Pallium is now integrated with Codex" not in first_output
+
+    sentinel = (
+        "\n[hooks.state]\n"
+        "\n[hooks.state.'codex-owned-sentinel']\n"
+        'trusted_hash = "sha256:owned-by-codex"\n'
+    )
+    config_path.write_text(config + sentinel, encoding="utf-8")
+
+    assert setup_codex.install() == 0
+    second_output = capsys.readouterr().out
+    reinstalled = config_path.read_text(encoding="utf-8")
+    assert reinstalled.count("[hooks.state]") == 1
+    assert 'trusted_hash = "sha256:owned-by-codex"' in reinstalled
+    assert "Approve the Pallium hook review if prompted." in second_output
+    assert (tmp_path / ".codex" / "hooks.json").is_file()
+    assert (tmp_path / ".pallium" / "hooks" / "state").is_dir()
+
+
+def test_codex_setup_docs_require_owned_hook_review() -> None:
+    docs = Path("docs/codex-integration.md").read_text(encoding="utf-8")
+
+    assert "Approve the Pallium hooks if" in docs
+    assert "prompted. Until that review" in docs
+    assert "Do not use `--dangerously-bypass-hook-trust`" in docs
+    assert "persisted hashes are owned by Codex" in docs
+
 def test_codex_hooks_use_absolute_commands_without_literal_quotes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

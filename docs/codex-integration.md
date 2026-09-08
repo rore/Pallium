@@ -108,6 +108,14 @@ This command:
 5. Creates the hook state directory for dedup tracking
 6. Verifies the Pallium service is reachable
 
+Restart Codex after setup. On the first start, or whenever a hook command changes,
+Codex asks you to review the new or changed hooks. Approve the Pallium hooks if
+prompted. Until that review, the configuration is installed but automatic Relay
+wake is not ready because Codex will not run the hooks.
+
+Do not use `--dangerously-bypass-hook-trust` as an installation shortcut. Hook
+review and its persisted hashes are owned by Codex.
+
 To remove the integration:
 
 ```bash

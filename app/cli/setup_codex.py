@@ -560,7 +560,9 @@ def install(port: int = 19836, guidance_strength: str = "base") -> int:
         print(f"  WARNING: Pallium service not reachable at port {port}")
         print(f"  Start it with: python -m app.run all --port {port}")
 
-    print("\nDone. Pallium is now integrated with Codex.")
+    print("\nConfiguration installed.")
+    print("Restart Codex. Approve the Pallium hook review if prompted.")
+    print("Relay wake is ready only after that review.")
     return 0
 
 
