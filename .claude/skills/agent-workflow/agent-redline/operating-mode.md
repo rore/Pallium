@@ -104,13 +104,22 @@ If the task asks for any of these as a side-effect, stop and escalate.
 
 ## Step 5 — Local check
 
-Run `scripts/agent-redline-check.sh`. Same logic as CI, on your local diff. Reports:
+Run `scripts/agent-redline-check.sh` (installed by bootstrap). Same logic as CI, on your local diff. Reports:
 - Classification verdict
 - Boundary violations
 - Required checkpoints (and whether satisfied)
 - PR size
 
 Fix what it surfaces before pushing.
+
+**If that wrapper isn't present** (partial install, or a platform without the pre-push hook), run the vendored reporter directly against a FRESHLY generated changed-files list — never reuse an existing `build/redline-verdict.json`, which may be stale from an earlier diff and misclassify this one:
+
+    git diff --name-only origin/main...HEAD > changed-files.txt   # regenerate every run
+    python scripts/agent-redline-report.py \
+      --policy agent-redline-policy.yaml \
+      --changed-files changed-files.txt
+
+This is a lighter check than the wrapper/CI (it omits the size-exclude and suppression inputs); CI remains the complete gate.
 
 ## Step 6 — PR description
 

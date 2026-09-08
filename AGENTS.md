@@ -6,7 +6,7 @@ Use `docs/context/` for broader design context, but keep roadmap state and queue
 Repo-level non-negotiables:
 
 - use `README.md`, `docs/context/*`, relevant `docs/designs/*`, and `roadmap/*` as the source of truth
-- roadmap-only updates under `roadmap/` may be committed and pushed directly to `main`; they do not require a feature branch or pull request. If the same change touches code or non-roadmap files, use the normal isolated branch and pull-request workflow.
+- changes limited to the documentation-only allowlist in `agent-workflow.yaml` are eligible for exemption, but need no Work Record or pull request only when the workflow's whole-change applicability decision passes; direct commit and push to `main` additionally require that decision's fresh protection check to confirm eligibility. Any failed or indeterminate decision, or any other changed path, uses the normal isolated branch and pull-request workflow
 - **Windows service operations:** always restart the installed service with [`scripts/restart-service.ps1`](scripts/restart-service.ps1). Do not invoke `pallium service restart`, Task Scheduler, or the launcher directly; the wrapper removes the full stale process tree. Then verify `/health`, `/status`, and `/debug/queue/health` on port 19836. See [`docs/context/operations.md`](docs/context/operations.md) for health-signal meaning and the silent embedding-provider degrade (check `embedding_provider_ok` when search returns too little).
 - **Local integration development:** Claude Code and Codex setup commands embed absolute checkout paths, and OpenCode's loader points to a concrete plugin file. Before moving, deleting, or replacing an installed worktree, follow [Developing integrations without leaving stale local installs](docs/context/operations.md#developing-integrations-without-leaving-stale-local-installs), including old-checkout uninstall, stable-checkout reinstall, host restart, and installed-state verification.
 - **honor the two invariants at the top of [`docs/context/lessons.md`](docs/context/lessons.md)** on every retrieval / ranking / eval PR: (1) retrieval alone never updates accessibility state â€” verified downstream use only; (2) every eval number states whether it measures candidate-recovery, injection-precision, or downstream-task-effect
@@ -38,7 +38,7 @@ This repository uses [agent-workflow](https://github.com/rore/agent-workflow) â€
 | `agent-workflow.yaml` | Per-repo config. Edit cautiously. |
 | `agent-redline-policy.yaml` | Per-repo redline policy (zones, boundaries, checkpoints). Architecture-review required. |
 | `.agent-redline/suppressions.yaml` | Suppression markers for redline. |
-| `.agent-workflow/tasks/<slug>.md` | One Work Record per task / branch. Slug derives from branch name. |
+| `.agent-workflow/tasks/<slug>.md` | One Work Record per non-exempt task. Slug derives from branch name. |
 | `scripts/agent-workflow-check.py` | Vendored CI checker. |
 | `scripts/agent-redline-report.py` | Vendored redline reporter. |
 | `docs/agent-workflow/` | Per-checkpoint reference docs. |
@@ -46,10 +46,9 @@ This repository uses [agent-workflow](https://github.com/rore/agent-workflow) â€
 | `.github/workflows/agent-workflow.yml` | Combined CI workflow (redline + agent-workflow gates). |
 | `.claude/hooks/` | Claude Code hooks that keep the workflow engaged in plan mode (see below). |
 
-**To start a task:** invoke the `/agent-workflow` slash command. The skill walks the checkpoints and validates the Work Record at each transition.
-If the runtime does not expose `/agent-workflow`, read `.claude/skills/agent-workflow/SKILL.md` directly and follow it, resolving referenced resources relative to that skill directory.
+**To start a task:** invoke the `/agent-workflow` slash command. The skill walks the checkpoints and validates the Work Record at each transition. If the runtime does not expose `/agent-workflow`, read `.claude/skills/agent-workflow/SKILL.md` directly and follow it, resolving referenced resources relative to that directory.
 
-**Plan mode:** when you produce an implementation plan for a change that touches a **guarded path** (configured in `agent-workflow.yaml` under `hooks.guardedPaths`; defaults to `src/`), the plan's **first implementation step must be** *"Invoke the `/agent-workflow` skill to create the Work Record and classify risk, before any code edit."* On approval, do that step first, before editing any guarded file. A repo hook (`.claude/hooks/check-plan.sh`) validates this at plan-approval time; it is a nudge, not a substitute for the CI gate.
+**Plan mode:** for every non-exempt task, the plan's **first implementation step must be** *"Invoke the `/agent-workflow` skill to create the Work Record and classify risk, before any code edit."* Do that first on approval. The hook checks plans that touch configured `hooks.guardedPaths` (default `src/`) as supplemental enforcement; it is a nudge, not the applicability decision or CI gate.
 
 **Local check before pushing:**
 

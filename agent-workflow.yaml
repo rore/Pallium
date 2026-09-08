@@ -12,6 +12,22 @@ redline: required
 
 redlineVerdictPath: build/redline-verdict.json
 
+applicability:
+  documentationOnly:
+    paths:
+      - "roadmap/"
+      - "README.md"
+      - "docs/README.md"
+      - "docs/getting-started.md"
+      - "docs/agent-relay.md"
+      - "docs/session-history.md"
+      - "docs/claude-code-integration.md"
+      - "docs/codex-integration.md"
+      - "docs/dashboard.md"
+      - "docs/derived-memory.md"
+    workflowRequired: false
+    directDefaultBranchAllowed: true
+
 hooks:
   guardedPaths:
     - "api/"

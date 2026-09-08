@@ -28,12 +28,11 @@ Active when `agent-workflow.yaml` exists at the repo root. Walks one engineering
 
 ## Step 1 — Read the config
 
-Open `agent-workflow.yaml`. You need two facts:
+Open `agent-workflow.yaml` and read:
 
-- `workRecord.backend` — `local` (supported) or `jira` (not yet — stop and tell the developer).
-- `workRecord.local.taskPath` — the per-task file path template, e.g. `.agent-workflow/tasks/{slug}.md`.
-
-Anything else in the file is for later work items; do not act on it.
+- `workRecord.backend` — `local` (supported) or `jira` (not yet — stop).
+- `workRecord.local.taskPath` — the per-task path template.
+- `applicability.documentationOnly`, when present — load [`applicability.md`](templates/checkpoints/applicability.md) and evaluate it before deriving a slug. If exempt, follow that file's branch decision and return without a Work Record.
 
 ## Step 2 — Derive the slug
 
@@ -43,7 +42,7 @@ git rev-parse --abbrev-ref HEAD
 
 Strip the first matching prefix from `slice/`, `feat/`, `feature/`, `fix/`, `bug/`, `chore/`, `demo/`. Replace any remaining `/` with `-`. Result is the slug.
 
-On `main` (or any long-lived branch), stop. Operating mode runs on task branches.
+On a long-lived branch, stop unless it is the default and the applicability gate passed.
 
 ## Step 3 — Classify, then read or initialise the Work Record
 

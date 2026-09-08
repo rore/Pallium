@@ -1,4 +1,8 @@
 <!-- agent-workflow:start -->
+<!-- A `**Label:**` at the start of a line inside this block is parsed as a field
+     header; an unexpected one (unknown or duplicate) fails the record. Keep bold
+     sub-headings out of a field's prose value (put such structure below the block,
+     or use plain text). -->
 **Outcome:**
 <!-- what should be true when complete -->
 
@@ -29,6 +33,6 @@
 **Verification:**
 <!-- the test(s) and CI job(s) that prove it -->
 
-**State:** Ready to implement
 <!-- Ready to implement | Blocked | Ready for review -->
+**State:** Ready to implement
 <!-- agent-workflow:end -->

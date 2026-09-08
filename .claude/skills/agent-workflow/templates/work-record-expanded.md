@@ -1,4 +1,8 @@
 <!-- agent-workflow:start -->
+<!-- A `**Label:**` at the start of a line inside this block is parsed as a field
+     header; an unexpected one (unknown or duplicate) fails the record. Keep bold
+     sub-headings out of a field's prose value (put such structure below the block,
+     or use plain text). -->
 **Outcome:**
 <!-- what should be true when complete -->
 
@@ -44,8 +48,8 @@
 **Exceptions:**
 <!-- Optional. Records task-level rule waivers per SPEC §11. Empty / "—" when no exception is recorded. When present, see `templates/checkpoints/plan-and-review.md` § Exceptions for the entry shape and non-waivable rules. -->
 
-**State:** Ready to implement
 <!-- Ready to implement | Blocked | Ready for review -->
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 <!--

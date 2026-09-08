@@ -12,7 +12,7 @@ agent-workflow ships with [agent-redline](agent-redline/SKILL.md) bundled. Boots
 
 | Category | What lands | When |
 |---|---|---|
-| **Committed directly** | the skill itself under `.claude/skills/agent-workflow/`, `agent-workflow.yaml`, `agent-redline-policy.yaml`, vendored `scripts/agent-workflow-check.py`, vendored `scripts/agent-redline-report.py`, AGENTS.md reference section, `.agent-redline/suppressions.yaml`, per-checkpoint docs under `docs/agent-redline/skills/`, `.agent-workflow/tasks/README.md` skeleton | Phase 4, after Phase 3 sign-off |
+| **Committed directly** | the skill itself under `.claude/skills/agent-workflow/`, `agent-workflow.yaml`, `agent-redline-policy.yaml`, vendored `scripts/agent-workflow-check.py`, vendored `scripts/agent-redline-report.py`, AGENTS.md reference section, `.agent-redline/suppressions.yaml`, per-checkpoint docs under `docs/agent-redline/skills/`, `.agent-workflow/tasks/README.md` skeleton, the OpenCode plugin `.opencode/plugins/agent-workflow.mjs` | Phase 4, after Phase 3 sign-off |
 | **Committed only with explicit confirmation** | `.github/workflows/agent-workflow.yml` | Phase 5, if developer confirms |
 | **Proposed but never committed by bootstrap** | `docs/agent-workflow-ci-proposal.md` (branch-protection + required-status-checks + CODEOWNERS additions). Workflow file goes here too when developer declines Phase 5. | Phase 5 |
 | **Final summary** | `docs/agent-workflow-bootstrap-summary.md` | Phase 6 |
@@ -69,6 +69,7 @@ Read on the agent-workflow side:
 - **Existing CI:** `.github/workflows/`. Note whether `agent-workflow.yml` exists, name collisions on `redline-verdict`, and dominant trigger style (`pull_request:` vs `push:`).
 - **Existing CODEOWNERS:** `.github/CODEOWNERS` or `CODEOWNERS` at root. Bootstrap doesn't modify it.
 - **Flow signal:** `gh pr list --state merged --limit 30 --json number` vs `git log --since="3 months ago" --pretty=format:%h | wc -l`. Used to pick PR-driven vs push-driven; agent-workflow CI template assumes PR-driven.
+- **Applicability candidates:** load [`applicability.md`](templates/checkpoints/applicability.md); discover actual documentation/roadmap/root-README paths and live default-branch protection. Do not assume path names.
 - **Workflow tuner (slice G2):** if repo is org-scoped (`<org>/<name>`), has ≥10 merged PRs, and `gh` is authenticated, run `python <install-root>/scripts/agent-workflow-tune.py --repo <slug> --limit 30`. Capture **Calibration suggestions** for Phase 2 and **Proposed `.github/CODEOWNERS`** for Phase 3. If `## Inspection skipped: <reason>` is emitted, note the reason; Phase 3 falls back to `@TODO-codeowners-team` placeholder.
 
 Then invoke redline's Phase 1 (extension pick, build files, source layout, boundary-rule backend, pre-push hook).
@@ -86,6 +87,8 @@ Then invoke redline's Phase 1 (extension pick, build files, source layout, bound
 **Authoritative sources found:** <requirements / architecture / decisions — paths or "none">
 **Existing CI:** <paths to workflows / "none">
 **Existing CODEOWNERS:** <yes / no>
+**Applicability candidates + protection:** <exact paths / none>; <protected / unprotected / unavailable>
+
 **YAML-formatting gate:** <yes (Spotless/jackson-YAML — `agent-workflow.yaml` + policy must be canonical) / no>
 **Detected flow mode:** <PR-driven / push-driven / mixed>
 **Detected language extension** (from redline's Phase 1): <jvm-archunit / python / other / zone-only>
@@ -125,6 +128,8 @@ Backend is always `local`. The taskPath template is the canonical default; don't
 
 **`hooks.guardedPaths`** — the plan-mode gate hook (4.3h) requires a plan to include the Work Record step when it touches these path prefixes. Detect this repo's code root(s) from inspection (the layout that holds the code redline treats as sensitive — e.g. `src/` for a standard Maven/Gradle repo, or the actual top-level dirs like `core/`, `lib/`, `app/`), propose them here, and confirm with the developer in Phase 3. Prefixes match on a path boundary, case-insensitively. If omitted the gate defaults to `["src/"]`.
 
+If candidates exist, add `applicability.documentationOnly` to the inert draft with exact paths. Set direct-default true only when live checks prove unprotected; otherwise false.
+
 ### Draft 2: `agent-redline-policy.yaml`
 
 Invoke redline's Phase 2 ([`agent-redline/bootstrap-mode.md`](agent-redline/bootstrap-mode.md) §"Phase 2"). Adapt the chosen extension's `profile.md` to this repo. Show the draft inline.
@@ -143,7 +148,7 @@ Ask the developer **only** what the inspection didn't already answer:
 - PR-driven vs push-driven? (Confirm Phase 1's detection.)
 - Per-checkpoint reference docs under `docs/agent-workflow/` (default) or somewhere else?
 
-Update both drafts. Show revised drafts. Loop until explicit sign-off.
+Update both drafts using the approval command in [`applicability.md`](templates/checkpoints/applicability.md); use only its emitted fragment. Direct-default needs separate approval. Show revised drafts until explicit sign-off.
 
 ## Phase 4 — Write
 
@@ -158,10 +163,11 @@ Write the committed artifacts. Branch each step on existing files; never overwri
 | 4.3 | `scripts/format-verdict-comment.py` | Copy `<install-root>/scripts/format-verdict-comment.py`. The CI workflow step `Format verdict for PR comment` invokes it. |
 | 4.3 | `scripts/agent-redline-report.py` | Copy `<install-root>/agent-redline/scripts/agent-redline-report.py`. |
 | 4.3h | `.claude/hooks/` + `.claude/settings.json` | Copy the hook files from `<install-root>/hooks/` into `.claude/hooks/` (committed), then run `python .claude/hooks/install-settings.py` to register the seed/gate/reinforce hooks (idempotent create-or-merge; never removes existing hooks; refuses on invalid JSON). The installer also reads `hooks.guardedPaths` from `agent-workflow.yaml` (written at 4.1, so run this after) and writes the gate's `guarded-paths.json` sidecar; if the key or pyyaml is absent the gate defaults to `src/`. Keeps the workflow engaged in plan mode — a nudge, not the CI floor. |
+| 4.3o | `.opencode/plugins/agent-workflow.mjs` | `mkdir -p .opencode/plugins`, then copy from `<install-root>/opencode/agent-workflow.mjs` (committed). OpenCode analog of the seed hook — a fail-open system-prompt nudge, auto-loaded from `.opencode/plugins/` (no `opencode.json` needed). CI checker stays the gate. |
 | 4.4 | AGENTS.md reference section | Marker-wrapped. No existing instruction file → fresh `AGENTS.md` from `templates/agents-section.md.template`. Existing instruction file, no markers → append the marker-wrapped section. **Existing markers (re-bootstrap) → reconcile, don't skip:** run `python <install-root>/hooks/merge-agents-section.py --file <instruction-file> --template <install-root>/templates/agents-section.md.template` — it refreshes only the bytes between the markers to the current template (idempotent; leaves surrounding prose byte-identical). Skipping when markers exist silently freezes the section at its first-installed version. |
 | 4.5 | `.agent-redline/suppressions.yaml` | Invoke redline's Phase 4 write step. |
 | 4.6 | `docs/agent-redline/skills/` | Invoke redline's Phase 4 write step. |
-| 4.7 | `docs/agent-workflow/` | Copy `templates/checkpoints/*.md` from the installed skill. |
+| 4.7 | `docs/agent-workflow/` | Copy `templates/checkpoints/` (keep the `checkpoints/` subdir) **and** `templates/skill-feedback.md` (as a sibling of `checkpoints/`) from the installed skill. Mirroring the skill's layout keeps the review-result → `../skill-feedback.md` cross-link resolvable. |
 | 4.8 | `.agent-workflow/tasks/README.md` | Skeleton explaining the `{slug}.md` convention; references operating-mode.md. |
 
 ### 4.4 marker shape

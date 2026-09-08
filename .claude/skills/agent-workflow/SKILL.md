@@ -17,7 +17,7 @@ Read only the file for the mode that applies.
 
 ## Principles
 
-- **Write the Work Record before starting.** Planning fields go in *before* you touch code.
+- **Gate applicability first.** Unless it exempts the whole change, write the Work Record before touching code.
 - **Shape is derived from `(Risk, Complexity)`.** `(Routine, Simple)` → compact. Anything else → expanded. Checker enforces via `workrecord.shape_matches_classification`.
 - **Stay within recorded scope.** Material scope expansion returns the task to planning.
 - **Update State at transitions.** `Ready to implement` → `Ready for review` only when verification passes.

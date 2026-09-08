@@ -18,7 +18,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
+from typing import Any, Iterable, Literal, Protocol, TypedDict, runtime_checkable
 
 import jsonschema
 import yaml
@@ -172,7 +172,23 @@ _INLINED_SCHEMA = { '$schema': 'https://json-schema.org/draft/2020-12/schema',
                                                                'items': { 'type': 'string',
                                                                           'minLength': 1},
                                                                'default': ['src/']}},
-                             'additionalProperties': True}},
+                             'additionalProperties': True},
+                  'applicability': { 'type': 'object',
+                                     'required': ['documentationOnly'],
+                                     'properties': { 'documentationOnly': { 'type': 'object',
+                                                                            'required': [ 'paths',
+                                                                                          'workflowRequired',
+                                                                                          'directDefaultBranchAllowed'],
+                                                                            'properties': { 'paths': { 'type': 'array',
+                                                                                                       'minItems': 1,
+                                                                                                       'uniqueItems': True,
+                                                                                                       'items': { 'type': 'string',
+                                                                                                                  'minLength': 1,
+                                                                                                                  'pattern': '^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*[*?\\[\\]{}])[^/]+(?:/[^/]+)*/?$'}},
+                                                                                            'workflowRequired': { 'type': 'boolean'},
+                                                                                            'directDefaultBranchAllowed': { 'type': 'boolean'}},
+                                                                            'additionalProperties': False}},
+                                     'additionalProperties': False}},
   'additionalProperties': True}
 
 # ----- core/work_record/parser.py -----
@@ -421,6 +437,12 @@ _FIELD_HEADER_RE = re.compile(r"^\*\*([^*]+?):\*\*\s*", re.MULTILINE)
 _START_MARKER_RE = re.compile(rf"^[ \t]*{re.escape(_START_MARKER)}[ \t]*$", re.MULTILINE)
 _END_MARKER_RE = re.compile(rf"^[ \t]*{re.escape(_END_MARKER)}[ \t]*$", re.MULTILINE)
 
+# Templates put an allowed-values hint comment right after a field (notably
+# the trailing State hint). The last field's value runs to the end of the
+# block, so it would otherwise swallow that comment and fail validation.
+# Comments in the marker block are always hints, never field content.
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
 
 def _extract_block(text: str) -> str:
     """Return the substring strictly between the start and end markers.
@@ -480,7 +502,7 @@ def _extract_fields(block: str) -> dict[str, str]:
         label = match.group(1).strip()
         value_start = match.end()
         value_end = matches[i + 1].start() if i + 1 < len(matches) else len(block)
-        value = block[value_start:value_end].strip()
+        value = _HTML_COMMENT_RE.sub("", block[value_start:value_end]).strip()
         if label in out:
             raise WorkRecordParseError(
                 f"duplicate field {label!r} in Work Record block — "
@@ -1116,6 +1138,185 @@ class LocalBackend:
         relative = relative.lstrip("/\\")
         return (self._repo_root / relative).resolve()
 
+# ----- core/config/applicability.py -----
+
+"""Pure, deny-overrides workflow applicability decisions."""
+
+
+
+
+RiskStatus = Literal["low", "risky", "unavailable"]
+ProtectionStatus = Literal["unprotected", "protected", "unavailable"]
+_GLOB_CHARS = frozenset("*?[]{}")
+
+
+@dataclass(frozen=True)
+class DocumentationOnlyConfig:
+    """One human-approved documentation-only rule."""
+
+    paths: tuple[str, ...]
+    workflow_required: bool
+    direct_default_branch_allowed: bool
+
+
+@dataclass(frozen=True)
+class ApplicabilityConfig:
+    """Optional applicability settings from the repository config."""
+
+    documentation_only: DocumentationOnlyConfig | None
+
+
+@dataclass(frozen=True)
+class ApplicabilityDecision:
+    """One fail-closed decision for a complete change set."""
+
+    workflow_required: bool
+    direct_default_branch_allowed: bool
+    matched_rule: str | None
+    paths: tuple[str, ...]
+    reason_codes: tuple[str, ...]
+
+
+def _valid_repo_path(path: object, *, allow_prefix: bool) -> bool:
+    if not isinstance(path, str) or not path or "\x00" in path:
+        return False
+    if path.startswith("/") or re.match(r"^[A-Za-z]:", path):
+        return False
+    if "\\" in path or any(char in _GLOB_CHARS for char in path):
+        return False
+    parts = path.split("/")
+    if allow_prefix and path.endswith("/"):
+        parts = parts[:-1]
+    return bool(parts) and all(part not in {"", ".", ".."} for part in parts)
+
+
+def _path_tuple(value: object) -> tuple[tuple[str, ...], bool]:
+    """Retain path bytes-as-text; never strip or repair caller evidence."""
+    if isinstance(value, (str, bytes)):
+        return (), False
+    try:
+        values = tuple(value)  # type: ignore[arg-type]
+    except TypeError:
+        return (), False
+    if any(not isinstance(item, str) for item in values):
+        return tuple(item for item in values if isinstance(item, str)), False
+    paths = tuple(values)
+    return paths, len(set(paths)) == len(paths)
+
+
+def _matches(path: str, rule: str) -> bool:
+    return path == rule or (rule.endswith("/") and path.startswith(rule))
+
+
+def approve_documentation_only(
+    discovered_paths: Iterable[str],
+    approved_paths: Iterable[str],
+    *,
+    direct_default_branch_approved: bool,
+    protection_status: ProtectionStatus | str,
+) -> DocumentationOnlyConfig | None:
+    """Persist only a valid human-approved subset of an inert proposal."""
+    discovered, discovered_valid = _path_tuple(discovered_paths)
+    approved, approved_valid = _path_tuple(approved_paths)
+    if (
+        not discovered_valid
+        or not approved_valid
+        or not discovered
+        or any(not _valid_repo_path(path, allow_prefix=True) for path in discovered + approved)
+        or not isinstance(direct_default_branch_approved, bool)
+        or protection_status not in {"unprotected", "protected", "unavailable"}
+    ):
+        raise ValueError("invalid documentation-only proposal or approval")
+    if any(path not in discovered for path in approved):
+        raise ValueError("approval contains a path that was not proposed")
+    if not approved:
+        return None
+    return DocumentationOnlyConfig(
+        paths=approved,
+        workflow_required=False,
+        direct_default_branch_allowed=(
+            direct_default_branch_approved and protection_status == "unprotected"
+        ),
+    )
+
+
+def evaluate_applicability(
+    changed_paths: Iterable[str],
+    risk_status: RiskStatus | str,
+    protection_status: ProtectionStatus | str,
+    protected_paths: Iterable[str],
+    config: DocumentationOnlyConfig | None,
+) -> ApplicabilityDecision:
+    """Evaluate explicit complete inputs; any workflow doubt wins."""
+    paths, paths_shape_valid = _path_tuple(changed_paths)
+    protected, protected_shape_valid = _path_tuple(protected_paths)
+    reasons: list[str] = []
+
+    valid_config = (
+        config is not None
+        and isinstance(config.workflow_required, bool)
+        and isinstance(config.direct_default_branch_allowed, bool)
+        and isinstance(config.paths, tuple)
+        and bool(config.paths)
+        and len(set(config.paths)) == len(config.paths)
+        and all(_valid_repo_path(path, allow_prefix=True) for path in config.paths)
+    )
+    if config is None:
+        reasons.append("no_applicability_config")
+    elif not valid_config:
+        reasons.append("invalid_applicability_config")
+
+    if not paths:
+        reasons.append("empty_changed_paths")
+    if not paths_shape_valid or any(
+        not _valid_repo_path(path, allow_prefix=False) for path in paths
+    ):
+        reasons.append("invalid_changed_path")
+    if not protected_shape_valid or any(
+        not _valid_repo_path(path, allow_prefix=True) for path in protected
+    ):
+        reasons.append("invalid_protected_path")
+
+    matched = bool(valid_config and paths) and all(
+        any(_matches(path, rule) for rule in config.paths) for path in paths
+    )
+    if valid_config and paths and not matched:
+        reasons.append("path_not_approved")
+    if paths and any(_matches(path, rule) for path in paths for rule in protected):
+        reasons.append("protected_path")
+
+    if risk_status not in {"low", "risky", "unavailable"}:
+        reasons.append("invalid_risk_status")
+    elif risk_status != "low":
+        reasons.append("risk_not_low")
+
+    workflow_required = bool(reasons) or bool(config and config.workflow_required)
+    if config and config.workflow_required:
+        reasons.append("workflow_required_by_config")
+
+    direct_allowed = False
+    if not workflow_required:
+        reasons.append("documentation_only")
+        if protection_status not in {"unprotected", "protected", "unavailable"}:
+            reasons.append("invalid_protection_status")
+        elif not config.direct_default_branch_allowed:
+            reasons.append("direct_default_branch_disabled")
+        elif protection_status == "protected":
+            reasons.append("default_branch_protected")
+        elif protection_status == "unavailable":
+            reasons.append("default_branch_protection_unavailable")
+        else:
+            direct_allowed = True
+            reasons.append("direct_default_branch_allowed")
+
+    return ApplicabilityDecision(
+        workflow_required=workflow_required,
+        direct_default_branch_allowed=direct_allowed,
+        matched_rule="documentationOnly" if matched else None,
+        paths=paths,
+        reason_codes=tuple(dict.fromkeys(reasons)),
+    )
+
 # ----- core/config/loader.py -----
 
 """``agent-workflow.yaml`` loader.
@@ -1126,6 +1327,7 @@ Reads a YAML config, validates against the JSON Schema at
 Slice Step 2 covers only the ``workRecord`` block; further fields land
 incrementally as their owning backlog items are picked up.
 """
+
 
 
 
@@ -1209,6 +1411,7 @@ class Config:
     project_name: str
     work_record: WorkRecordConfig
     redline: RedlineConfig
+    applicability: ApplicabilityConfig | None
     raw: dict[str, Any]
 
 
@@ -1298,6 +1501,24 @@ def _to_config(data: dict[str, Any]) -> Config:
         verdict_path=data.get("redlineVerdictPath", "build/redline-verdict.json"),
     )
 
+    applicability_block = data.get("applicability")
+    applicability = None
+    if applicability_block is not None:
+        documentation_only = applicability_block.get("documentationOnly")
+        applicability = ApplicabilityConfig(
+            documentation_only=(
+                None
+                if documentation_only is None
+                else DocumentationOnlyConfig(
+                    paths=tuple(documentation_only["paths"]),
+                    workflow_required=documentation_only["workflowRequired"],
+                    direct_default_branch_allowed=documentation_only[
+                        "directDefaultBranchAllowed"
+                    ],
+                )
+            )
+        )
+
     return Config(
         version=data["version"],
         project_name=data["project"]["name"],
@@ -1309,6 +1530,7 @@ def _to_config(data: dict[str, Any]) -> Config:
             ),
         ),
         redline=redline,
+        applicability=applicability,
         raw=data,
     )
 
@@ -1622,6 +1844,44 @@ class RedlineVerdict:
         # Step 3: nothing flagged — blue-only or empty diff.
         return "Routine"
 
+    def applicability_risk_status(self, changed_paths: list[str]) -> str:
+        """Return low only for complete, exact, blue-only evidence."""
+        if not changed_paths or len(set(changed_paths)) != len(changed_paths):
+            return "unavailable"
+        raw_zones = self.raw.get("zones")
+        required_lists = ("boundaryViolations", "checkpoints")
+        change_keys = (
+            "apiChanges",
+            "schemaChanges",
+            "securityChanges",
+            "runtimeConfigChanges",
+        )
+        if self.raw.get("verdict") != "BLUE" or not isinstance(raw_zones, dict):
+            return "unavailable"
+        if any(not isinstance(self.raw.get(key), list) for key in required_lists):
+            return "unavailable"
+        for key in ("blue", "gray", "red", "watch"):
+            value = raw_zones.get(key)
+            if not isinstance(value, list) or any(not isinstance(path, str) for path in value):
+                return "unavailable"
+        for key in change_keys:
+            value = self.raw.get(key)
+            if not isinstance(value, dict) or not isinstance(value.get("detected"), bool):
+                return "unavailable"
+
+        classified = set(raw_zones["blue"] + raw_zones["gray"] + raw_zones["red"])
+        if classified != set(changed_paths):
+            return "unavailable"
+        if (
+            self.boundary_violations
+            or self.checkpoints
+            or raw_zones["red"]
+            or raw_zones["gray"]
+            or raw_zones["watch"]
+            or any(self.raw[key]["detected"] for key in change_keys)
+        ):
+            return "risky"
+        return "low"
     def is_binding(self, check_name: str) -> bool:
         """Whether ``check_name`` is binding under the verdict's modes config.
 
@@ -3398,6 +3658,11 @@ Programmatic:
 
 
 import dataclasses
+import os
+import stat
+import subprocess
+from pathlib import Path, PurePosixPath
+from urllib.parse import quote
 
 
 
@@ -3647,353 +3912,481 @@ def run_checker_multi(
 
 
 # ---------------------------------------------------------------------------
-# Changed-files discovery (slice 0)
+# Changed-files discovery and applicability
 # ---------------------------------------------------------------------------
 
-# Files under the tasks directory that are not Work Records. The Work
-# Record contract is "one task per .md file"; everything else here is
-# documentation or hygiene.
 _NON_TASK_FILENAMES: frozenset[str] = frozenset({"README.md", "readme.md"})
+
+# These governance surfaces can never exempt themselves. Repo-specific
+# Redline policy adds further risk classification; this small list is the
+# checker-side floor when the policy is missing or incomplete.
+_PROTECTED_APPLICABILITY_PATHS: tuple[str, ...] = (
+    "agent-workflow.yaml",
+    "agent-redline-policy.yaml",
+    ".github/",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    ".claude/",
+    ".opencode/",
+    ".agent-redline/",
+    "dist/agent-workflow/",
+    "scripts/agent-workflow-check.py",
+    "scripts/agent-redline-report.py",
+    "core/schema/",
+    "core/config/",
+    "core/checker/",
+    "core/skill/",
+    "core/templates/",
+    "core/agent-redline/",
+    "docs/SPEC.md",
+    "docs/DECISIONS.md",
+)
+_PROTECTED_INSTRUCTION_FILENAMES: frozenset[str] = frozenset(
+    {"AGENTS.md", "CLAUDE.md", "GEMINI.md", "copilot-instructions.md"}
+)
+
+
+def read_changed_paths(
+    changed_files_path: Path,
+    *,
+    nul_delimited: bool = False,
+) -> list[str]:
+    """Read the complete path set; NUL mode preserves every filename byte."""
+    if not nul_delimited:
+        return [
+            line.strip().replace("\\", "/")
+            for line in changed_files_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    raw = changed_files_path.read_bytes()
+    if not raw or not raw.endswith(b"\0"):
+        raise ValueError("NUL-delimited changed-files input is empty or incomplete")
+    fields = raw.split(b"\0")
+    if fields[-1] != b"" or any(field == b"" for field in fields[:-1]):
+        raise ValueError("NUL-delimited changed-files input contains an empty path")
+    return [field.decode("utf-8") for field in fields[:-1]]
+
+
+def _task_path_parts(task_path_template: str) -> tuple[str, str]:
+    norm = task_path_template.replace("\\", "/")
+    if norm.count("{slug}") != 1:
+        return "", ""
+    return tuple(norm.split("{slug}", 1))  # type: ignore[return-value]
 
 
 def discover_slugs_from_changed_files(
     repo_root: Path,
     changed_files_path: Path,
+    task_path_template: str = ".agent-workflow/tasks/{slug}.md",
+    *,
+    changed_paths: list[str] | None = None,
+    nul_delimited: bool = False,
 ) -> list[str]:
-    """Read ``changed_files_path``; return slugs of changed Work Records.
+    """Return existing changed Work Record slugs for the configured taskPath."""
+    paths = changed_paths
+    if paths is None:
+        paths = read_changed_paths(changed_files_path, nul_delimited=nul_delimited)
+    prefix, suffix = _task_path_parts(task_path_template)
+    if not prefix and not suffix:
+        return []
 
-    The file is a newline-delimited list of repo-relative paths (the
-    output shape of ``git diff --name-only``). A path qualifies as a
-    Work Record when:
-
-    - it sits under ``.agent-workflow/tasks/``,
-    - it has a ``.md`` extension,
-    - its basename is not in :data:`_NON_TASK_FILENAMES`,
-    - its basename does not start with ``.`` (dotfiles),
-    - the file still exists on disk (so deleted records don't
-      contribute — deletion implies the task is no longer this PR's
-      concern).
-
-    Returns slugs in the order they appeared in ``changed_files_path``,
-    deduplicated. Slugs are derived as ``Path(filename).stem`` — i.e.
-    the filename without the ``.md`` extension. The order is preserved
-    so the verdict comment reads in the order CI fed the diff.
-    """
-    raw = changed_files_path.read_text(encoding="utf-8")
     seen: set[str] = set()
     out: list[str] = []
-    tasks_prefix = ".agent-workflow/tasks/"
-    for line in raw.splitlines():
-        path = line.strip()
-        if not path:
+    for path in paths:
+        norm = path if nul_delimited else path.replace("\\", "/")
+        if not norm.startswith(prefix) or (suffix and not norm.endswith(suffix)):
             continue
-        # Normalise Windows-style separators just in case.
-        norm = path.replace("\\", "/")
-        if not norm.startswith(tasks_prefix):
+        end = len(norm) - len(suffix) if suffix else len(norm)
+        slug = norm[len(prefix):end]
+        name = f"{slug}{suffix}"
+        if not slug or "/" in slug or name in _NON_TASK_FILENAMES or slug.startswith("."):
             continue
-        name = norm[len(tasks_prefix):]
-        # Reject paths that include nested subdirectories — tasks are
-        # flat under the directory.
-        if "/" in name:
+        if not (repo_root / norm).exists():
             continue
-        if not name.endswith(".md"):
-            continue
-        if name in _NON_TASK_FILENAMES:
-            continue
-        if name.startswith("."):
-            continue
-        # Filter out deleted files — git diff includes them, we don't
-        # want to "validate" a record that no longer exists.
-        full = repo_root / norm
-        if not full.exists():
-            continue
-        slug = Path(name).stem
         if slug not in seen:
             seen.add(slug)
             out.append(slug)
     return out
 
 
-def read_changed_paths(changed_files_path: Path) -> list[str]:
-    """Read ``changed_files_path`` and return all non-empty repo-relative
-    paths, in input order. Windows-style separators are normalised to ``/``.
-
-    Used by F5's ``workrecord.required_for_branch_changes`` synthesis to
-    decide whether a PR with zero discovered Work Records was pure
-    housekeeping (no code paths) or a forgotten Work Record (code paths
-    present). The sibling :func:`discover_slugs_from_changed_files`
-    filters this list further to Work Record paths only; this one keeps
-    everything.
-
-    Raises :exc:`FileNotFoundError` when the path is unreadable, same as
-    the discover sibling, so the caller treats both signals uniformly.
-    """
-    raw = changed_files_path.read_text(encoding="utf-8")
-    out: list[str] = []
-    for line in raw.splitlines():
-        path = line.strip()
-        if not path:
-            continue
-        out.append(path.replace("\\", "/"))
-    return out
-
-
 def task_path_prefix(task_path_template: str) -> str:
-    """Return the directory prefix of a Work Record taskPath template.
-
-    Strips the trailing ``{slug}.md`` (or anything after the last ``/``)
-    so a template like ``.agent-workflow/tasks/{slug}.md`` produces
-    ``.agent-workflow/tasks/``. Trailing slash is preserved so a simple
-    ``path.startswith(prefix)`` test classifies WR paths cleanly.
-
-    Returns the empty string when the template has no ``/`` — a
-    pathological config we can't infer a prefix from. Callers must
-    treat empty as "skip; can't classify safely" rather than as a
-    prefix that matches every path; treating an empty prefix as
-    "everything is non-WR" would let the F5 synthesis fire on
-    WR-adjacent paths in a malformed config.
-    """
-    norm = task_path_template.replace("\\", "/")
-    idx = norm.rfind("/")
-    if idx < 0:
+    """Return the static directory prefix before ``{slug}``, or empty."""
+    prefix, _ = _task_path_parts(task_path_template)
+    if not prefix or "/" not in prefix:
         return ""
-    return norm[: idx + 1]
+    return prefix[: prefix.rfind("/") + 1]
 
+
+def _windows_reparse_point(path: Path) -> bool:
+    """Detect junctions/reparse points on Python versions without Path.is_junction."""
+    if os.name != "nt":
+        return False
+    try:
+        attrs = path.lstat().st_file_attributes
+        mask = stat.FILE_ATTRIBUTE_REPARSE_POINT
+    except FileNotFoundError:
+        return False
+    except (AttributeError, OSError):
+        return True
+    return bool(attrs & mask)
+
+
+def _unsafe_applicability_path(repo_root: Path, path: str) -> bool:
+    """Reject directories and any symlink/junction traversal, including prospective paths."""
+    root = repo_root.resolve()
+    candidate = repo_root / path
+    try:
+        candidate.resolve(strict=False).relative_to(root)
+    except (OSError, ValueError):
+        return True
+    if candidate.is_dir():
+        return True
+    for ancestor in (candidate, *candidate.parents):
+        if ancestor == repo_root:
+            break
+        try:
+            if ancestor.is_symlink() or (
+                hasattr(ancestor, "is_junction") and ancestor.is_junction()
+            ) or _windows_reparse_point(ancestor):
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _github_default_branch_protection(repo_root: Path) -> str:
+    """Return a fresh GitHub protection status; any failed query is unavailable."""
+    def gh(*args: str):
+        try:
+            result = subprocess.run(
+                ["gh", *args], cwd=repo_root, capture_output=True, text=True,
+                encoding="utf-8", timeout=20, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return None
+
+    view = gh("repo", "view", "--json", "nameWithOwner")
+    if not isinstance(view, dict) or not isinstance(view.get("nameWithOwner"), str):
+        return "unavailable"
+    repo = view["nameWithOwner"]
+    metadata = gh("api", f"repos/{repo}")
+    if not isinstance(metadata, dict) or not isinstance(metadata.get("default_branch"), str):
+        return "unavailable"
+    try:
+        current = subprocess.run(
+            ["git", "branch", "--show-current"], cwd=repo_root,
+            capture_output=True, text=True, encoding="utf-8", timeout=20, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unavailable"
+    if current.returncode != 0 or current.stdout.strip() != metadata["default_branch"]:
+        return "unavailable"
+    branch = quote(metadata["default_branch"], safe="")
+    branch_info = gh("api", f"repos/{repo}/branches/{branch}")
+    rules = gh("api", f"repos/{repo}/rules/branches/{branch}")
+    if (
+        not isinstance(branch_info, dict)
+        or not isinstance(branch_info.get("protected"), bool)
+        or not isinstance(rules, list)
+    ):
+        return "unavailable"
+    return "protected" if branch_info["protected"] or rules else "unprotected"
+
+def _synthetic_verdict(
+    slug: str,
+    results: list[PredicateResult],
+    *,
+    source: str,
+) -> Verdict:
+    record = aggregate_record(slug, results)
+    record = dataclasses.replace(
+        record,
+        effective_rules=[{"name": result.name, "source": source} for result in results],
+    )
+    return aggregate([record])
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="agent-workflow-check",
-        description=(
-            "Validate workflow compliance for one or more Work Records. "
-            "Use --changed-files for PR-time multi-record discovery; use "
-            "--slug for single-record runs (local invocations, fallback "
-            "when --changed-files yields zero)."
-        ),
+        description="Validate workflow compliance for a task or a complete PR path set.",
     )
-    parser.add_argument(
-        "--repo-root",
-        required=True,
-        type=Path,
-        help="Path to the repository root (the directory containing agent-workflow.yaml).",
-    )
-    parser.add_argument(
-        "--slug",
-        default=None,
-        help=(
-            "Task slug; selects the Work Record file under the "
-            "configured taskPath. Used when --changed-files is not "
-            "supplied, or as a fallback when --changed-files cannot be "
-            "read. Not used when --changed-files was supplied and "
-            "discovery succeeded (even if it yielded zero records — "
-            "see the 'PR touched no Work Records' case below)."
-        ),
-    )
-    parser.add_argument(
+    parser.add_argument("--repo-root", required=True, type=Path)
+    parser.add_argument("--slug", default=None)
+    changed = parser.add_mutually_exclusive_group()
+    changed.add_argument(
         "--changed-files",
         type=Path,
-        default=None,
-        help=(
-            "Path to a newline-delimited file listing changed paths "
-            "(typically `git diff --name-only ...` piped to a file). "
-            "The checker discovers each changed Work Record and runs "
-            "the predicate set per record. When this is supplied and "
-            "discovery yields zero (a PR that touched no Work Records), "
-            "the checker exits clean — that's not a failure, and "
-            "--slug does not override it."
-        ),
+        help="Legacy newline-delimited paths; supported but never grants applicability.",
     )
-    parser.add_argument(
-        "--redline-verdict",
+    changed.add_argument(
+        "--changed-files-z",
         type=Path,
-        default=None,
-        help=(
-            "Path to redline's verdict JSON. Overrides the configured "
-            "redlineVerdictPath; CI uses this to point at the artifact "
-            "downloaded from the redline job."
-        ),
+        help="Complete NUL-delimited paths from `git diff --name-only -z --no-renames`.",
     )
+    parser.add_argument("--redline-verdict", type=Path, default=None)
+    parser.add_argument("--bootstrap-applicability-proposal-z", type=Path)
+    parser.add_argument("--bootstrap-applicability-approved-z", type=Path)
+    parser.add_argument("--bootstrap-direct-default-branch-approved", action="store_true")
     parser.add_argument(
-        "--base-ref",
-        type=str,
-        default=None,
-        help=(
-            "Git ref or SHA marking the PR's base. Used by the "
-            "workrecord.commit_order advisory predicate to walk the "
-            "branch's commit history. Defaults to BASE_SHA env var, "
-            "then to 'origin/main'. CI workflows should pass the "
-            "PR's actual base SHA so the synthetic pull/N/merge "
-            "commit doesn't collapse the branch's history to one."
-        ),
+        "--bootstrap-protection-status",
+        choices=("unprotected", "protected", "unavailable"),
     )
+    parser.add_argument("--base-ref", type=str, default=None)
+    parser.add_argument("--head-ref", type=str, default=None)
     parser.add_argument(
-        "--head-ref",
-        type=str,
-        default=None,
-        help=(
-            "Git ref or SHA marking the PR's head. Pairs with "
-            "--base-ref. Defaults to HEAD_SHA env var, then to "
-            "'HEAD'. On a pull/N/merge checkout, HEAD is the "
-            "synthetic merge commit; passing the real PR head SHA "
-            "lets the commit-order predicate see the actual branch."
-        ),
+        "--check-default-branch-protection", action="store_true",
+        help="Query GitHub live before reporting direct-default-branch eligibility.",
     )
     args = parser.parse_args(argv)
 
-    if args.slug is None and args.changed_files is None:
-        parser.error("at least one of --slug or --changed-files is required")
+    bootstrap_proposal = args.bootstrap_applicability_proposal_z
+    if bootstrap_proposal is not None:
+        if args.bootstrap_applicability_approved_z is None or args.bootstrap_protection_status is None:
+            parser.error("bootstrap applicability needs proposal, approved paths, and protection status")
+        try:
+            discovered = read_changed_paths(bootstrap_proposal, nul_delimited=True)
+            approved_file = args.bootstrap_applicability_approved_z
+            approved = (
+                [] if approved_file.read_bytes() == b""
+                else read_changed_paths(approved_file, nul_delimited=True)
+            )
+            rule = approve_documentation_only(
+                discovered,
+                approved,
+                direct_default_branch_approved=args.bootstrap_direct_default_branch_approved,
+                protection_status=args.bootstrap_protection_status,
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
+            print(f"bootstrap applicability approval failed: {exc}", file=sys.stderr)
+            return 2
+        fragment = None if rule is None else {
+            "paths": list(rule.paths),
+            "workflowRequired": rule.workflow_required,
+            "directDefaultBranchAllowed": rule.direct_default_branch_allowed,
+        }
+        print(json.dumps(fragment))
+        return 0
+
+    changed_path = args.changed_files_z or args.changed_files
+    trusted_paths = args.changed_files_z is not None
+    if args.slug is None and changed_path is None:
+        parser.error("at least one of --slug, --changed-files, or --changed-files-z is required")
 
     repo_root = args.repo_root.resolve()
-
-    slugs: list[str] = []
-    discovery_succeeded = False
-    if args.changed_files is not None:
-        try:
-            slugs = discover_slugs_from_changed_files(repo_root, args.changed_files)
-            discovery_succeeded = True
-        except FileNotFoundError:
-            # changed-files path was supplied but didn't resolve (e.g. CI
-            # step that produces it crashed, or an operator passed an
-            # inline value instead of a file path). Fall back to --slug
-            # if we have one — better to validate the branch's record
-            # than to exit silent on a broken signal. ``discovery_succeeded``
-            # stays False from its initialiser, no reassignment needed.
-            print(
-                f"warning: --changed-files path {str(args.changed_files)!r} "
-                f"could not be read; falling back to --slug if supplied. "
-                f"(Pass a path to a newline-delimited file of changed paths, "
-                f"not an inline value.)",
-                file=sys.stderr,
-            )
-
-    # --slug fallback fires in two cases:
-    #   (a) --changed-files was not supplied or failed to read; OR
-    #   (b) discovery succeeded with zero records but --slug names an
-    #       existing Work Record at the configured taskPath.
-    #
-    # Case (b) closes the F1 hole: a PR that touched only code (no
-    # task-file diff) on a branch whose Work Record was already
-    # committed in an earlier push still validates against that
-    # record. Without it, code-only PRs ship with `records: []` and a
-    # green verdict regardless of whether the branch has a Work Record
-    # at all. With it, the branch's WR must exist at the path bootstrap
-    # configured.
-    #
-    # Pure housekeeping PRs (vendored-script bumps, formatter passes
-    # without a feature branch) that have no matching WR fall through
-    # to `records: []` — the WR file simply doesn't exist at the slug
-    # so the fallback contributes nothing. This is the documented
-    # `riskNone` / housekeeping case.
-    # Config — loaded once and reused. Both the --slug fallback and the
-    # F5 missing-WR check need it. If it can't be loaded (no
-    # agent-workflow.yaml, malformed file), both fallbacks stay
-    # conservative; downstream code defaults to existing behaviour.
     cfg = None
+    config_error: str | None = None
     try:
         cfg = load(repo_root / "agent-workflow.yaml")
-    except Exception:
-        cfg = None
+    except Exception as exc:
+        config_error = str(exc)
+
+    paths: list[str] = []
+    slugs: list[str] = []
+    discovery_succeeded = False
+    if changed_path is not None:
+        try:
+            paths = read_changed_paths(changed_path, nul_delimited=trusted_paths)
+            task_template = (
+                cfg.work_record.local.task_path
+                if cfg is not None and cfg.work_record.local is not None
+                else ".agent-workflow/tasks/{slug}.md"
+            )
+            slugs = discover_slugs_from_changed_files(
+                repo_root,
+                changed_path,
+                task_template,
+                changed_paths=paths,
+                nul_delimited=trusted_paths,
+            )
+            discovery_succeeded = True
+        except (OSError, UnicodeError, ValueError) as exc:
+            print(
+                f"warning: --changed-files path {str(changed_path)!r} could not be read: {exc}; "
+                "falling back to --slug if supplied.",
+                file=sys.stderr,
+            )
 
     if args.slug is not None and not slugs:
         if not discovery_succeeded:
             slugs = [args.slug]
-        else:
-            # Discovery succeeded but yielded zero records. Probe the
-            # configured taskPath for a record at --slug; if one exists,
-            # validate against it (the "WR landed on an earlier commit"
-            # case). If not, leave slugs empty (the "pure housekeeping"
-            # case).
-            if cfg is not None and cfg.work_record.local is not None:
-                try:
-                    backend = LocalBackend(
-                        repo_root, cfg.work_record.local.task_path
-                    )
-                    wr_path = repo_root / backend.resolve_location(args.slug)
-                    if wr_path.is_file():
-                        slugs = [args.slug]
-                except Exception:
-                    # If backend instantiation fails, the fallback can't
-                    # decide — stay conservative, leave slugs empty.
-                    pass
-
-    verdict = run_checker_multi(
-        repo_root,
-        slugs,
-        redline_verdict_path=args.redline_verdict,
-        base_ref=args.base_ref,
-        head_ref=args.head_ref,
-    )
-
-    # F5 — forgotten Work Record predicate. When `--changed-files`
-    # discovery succeeded but turned up zero records AND the diff
-    # touched code paths outside the configured task-path prefix AND
-    # the per-repo config keeps the default
-    # `workRecord.requiredForBranchChanges: true`, surface a synthetic
-    # blocking record so a code-only PR with no Work Record fails CI
-    # instead of exiting `records: []`. Distinguishes "pure
-    # housekeeping" (explicit opt-out) from "agent forgot the Work
-    # Record" (the case this predicate catches).
-    if (
-        args.changed_files is not None
-        and discovery_succeeded
-        and not verdict.records
-        and cfg is not None
-        and cfg.work_record.required_for_branch_changes
-        and cfg.work_record.local is not None
-    ):
-        tpath_prefix = task_path_prefix(cfg.work_record.local.task_path)
-        # An empty prefix would mean the taskPath template has no `/`
-        # (pathological config) — without a way to tell which paths are
-        # WR-adjacent we'd be guessing, so skip the synthesis rather
-        # than block on false-positive non-WR paths. The existing
-        # `workrecord.exists` predicate path catches an unresolvable
-        # taskPath via its own diagnostics.
-        if tpath_prefix:
+        elif cfg is not None and cfg.work_record.local is not None:
             try:
-                all_paths = read_changed_paths(args.changed_files)
-            except FileNotFoundError:
-                all_paths = []
-            non_wr_paths = [p for p in all_paths if not p.startswith(tpath_prefix)]
-            if non_wr_paths:
-                examples = ", ".join(non_wr_paths[:3])
-                more = (
-                    f" (+{len(non_wr_paths) - 3} more)"
-                    if len(non_wr_paths) > 3
-                    else ""
-                )
-                slug_hint = args.slug or "<branch slug>"
-                pred = PredicateResult(
-                    name="workrecord.required_for_branch_changes",
-                    passed=False,
+                backend = LocalBackend(repo_root, cfg.work_record.local.task_path)
+                wr_path = repo_root / backend.resolve_location(args.slug)
+                if wr_path.is_file():
+                    slugs = [args.slug]
+            except Exception:
+                pass
+
+    if config_error is not None and changed_path is not None:
+        verdict = _synthetic_verdict(
+            args.slug or "<configuration>",
+            [PredicateResult(
+                name="config.valid",
+                passed=False,
+                detail=f"agent-workflow.yaml could not be loaded: {config_error}",
+                blocking=True,
+            )],
+            source="repo",
+        )
+    elif changed_path is not None and not discovery_succeeded and not slugs:
+        verdict = _synthetic_verdict(
+            args.slug or "<changed-files>",
+            [PredicateResult(
+                name="changed_paths.complete",
+                passed=False,
+                detail="changed-path input was unreadable or incomplete; workflow applicability cannot be decided.",
+                blocking=True,
+            )],
+            source="core",
+        )
+    else:
+        verdict = run_checker_multi(
+            repo_root,
+            slugs,
+            redline_verdict_path=args.redline_verdict,
+            base_ref=args.base_ref,
+            head_ref=args.head_ref,
+        )
+
+    redline = None
+    redline_error: str | None = None
+    risk_status = "unavailable"
+    if trusted_paths and discovery_succeeded and cfg is not None:
+        verdict_path = args.redline_verdict or Path(cfg.redline.verdict_path)
+        if not verdict_path.is_absolute():
+            verdict_path = repo_root / verdict_path
+        try:
+            redline = load_redline_verdict(verdict_path)
+        except RedlineVerdictError as exc:
+            redline_error = str(exc)
+        if redline is not None:
+            risk_status = redline.applicability_risk_status(paths)
+            if any(_unsafe_applicability_path(repo_root, path) for path in paths):
+                risk_status = "risky"
+
+    applicability = None
+    protection_status = (
+        _github_default_branch_protection(repo_root)
+        if args.check_default_branch_protection
+        else "unavailable"
+    )
+    documentation_only = (
+        cfg.applicability.documentation_only
+        if cfg is not None and cfg.applicability is not None
+        else None
+    )
+    if trusted_paths and discovery_succeeded and cfg is not None and not verdict.records:
+        protected_paths = list(_PROTECTED_APPLICABILITY_PATHS)
+        protected_paths.extend(
+            path
+            for path in paths
+            if PurePosixPath(path).name in _PROTECTED_INSTRUCTION_FILENAMES
+        )
+        if cfg.work_record.local is not None:
+            prefix = task_path_prefix(cfg.work_record.local.task_path)
+            if prefix:
+                protected_paths.append(prefix)
+        applicability = evaluate_applicability(
+            paths,
+            risk_status,
+            protection_status,
+            protected_paths,
+            documentation_only,
+        )
+        if not applicability.workflow_required:
+            verdict = _synthetic_verdict(
+                "<documentation-only>",
+                [PredicateResult(
+                    name="workflow.applicability",
+                    passed=True,
                     detail=(
-                        f"PR touched code paths but resolved no Work Record at "
-                        f"{tpath_prefix}{slug_hint}.md. Non-WR paths in this "
-                        f"PR: {examples}{more}. Either create the Work Record "
-                        f"for this branch, or set "
-                        f"`workRecord.requiredForBranchChanges: false` in "
-                        f"`agent-workflow.yaml` to opt this repo out (for "
-                        f"genuine housekeeping repos)."
+                        "all changed paths are in the human-approved documentation-only set; "
+                        "Work Record not required. "
+                        + (
+                            "Direct-default-branch is allowed by the fresh unprotected result."
+                            if applicability.direct_default_branch_allowed
+                            else "Direct-default-branch is not allowed: "
+                            + ", ".join(applicability.reason_codes)
+                        )
                     ),
                     blocking=True,
-                )
-                synth = aggregate_record(slug_hint, [pred])
-                # Preserve effective_rules so the comment formatter
-                # surfaces the rule under the "core" source. The name
-                # is also in PREDICATE_SOURCE so any callers that look
-                # it up by name see the same source attribution.
-                synth = dataclasses.replace(
-                    synth,
-                    effective_rules=[
-                        {
-                            "name": "workrecord.required_for_branch_changes",
-                            "source": "core",
-                        }
-                    ],
-                )
-                verdict = aggregate([synth])
+                )],
+                source="repo",
+            )
 
-    # Force UTF-8 on stdout regardless of platform default — verdict
-    # details can contain Unicode (em-dash, arrows, emoji). CI on Linux
-    # works fine; this keeps local invocations on Windows working too.
+    must_have_wr = bool(
+        cfg is not None
+        and cfg.work_record.local is not None
+        and (
+            cfg.work_record.required_for_branch_changes
+            or (trusted_paths and documentation_only is not None)
+        )
+    )
+    if (
+        changed_path is not None
+        and discovery_succeeded
+        and not verdict.records
+        and must_have_wr
+        and cfg is not None
+        and cfg.work_record.local is not None
+    ):
+        prefix = task_path_prefix(cfg.work_record.local.task_path)
+        non_wr_paths = [path for path in paths if not prefix or not path.startswith(prefix)]
+        blocking_paths = (
+            paths
+            if trusted_paths and documentation_only is not None and applicability is not None
+            else non_wr_paths
+        )
+        if blocking_paths:
+            examples = ", ".join(repr(path) for path in blocking_paths[:3])
+            more = f" (+{len(blocking_paths) - 3} more)" if len(blocking_paths) > 3 else ""
+            results = [PredicateResult(
+                name="workrecord.required_for_branch_changes",
+                passed=False,
+                detail=(
+                    f"change requires a Work Record; no changed record resolved. Paths: "
+                    f"{examples}{more}. Create the branch Work Record or, when no "
+                    "applicability policy is configured, explicitly set "
+                    "`workRecord.requiredForBranchChanges: false`."
+                ),
+                blocking=True,
+            )]
+            if trusted_paths and documentation_only is not None and applicability is not None:
+                results.append(PredicateResult(
+                    name="workflow.applicability",
+                    passed=False,
+                    detail="documentation-only exemption denied: " + ", ".join(applicability.reason_codes),
+                    blocking=True,
+                ))
+            if trusted_paths and (redline is None or redline_error is not None):
+                results.append(PredicateResult(
+                    name="risk.redline_findings_available",
+                    passed=False,
+                    detail=(
+                        f"redline verdict failed to parse: {redline_error}"
+                        if redline_error
+                        else "redline verdict missing; applicability requires complete risk evidence."
+                    ),
+                    blocking=True,
+                ))
+            if redline is not None and redline.has_boundary_violation:
+                results.append(PredicateResult(
+                    name="risk.boundary_violation_absent",
+                    passed=False,
+                    detail="boundary violation prevents workflow exemption.",
+                    blocking=True,
+                ))
+            verdict = _synthetic_verdict(args.slug or "<branch slug>", results, source="core")
+
     payload = json.dumps(verdict.to_dict(), indent=2, ensure_ascii=False) + "\n"
     sys.stdout.buffer.write(payload.encode("utf-8"))
     return verdict.exit_code
