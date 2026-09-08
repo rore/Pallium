@@ -6,10 +6,10 @@ Pallium uses the current local agent-workflow distribution, with every installed
 Pallium repository on `feat/update-agent-workflow-applicability`.
 
 **Scope:**
-Refresh `.claude/skills/agent-workflow/`, vendored workflow/redline scripts, Claude hooks/settings, OpenCode plugin, checkpoint docs, the AGENTS marker block, and the existing CI workflow from `C:\Dev\rore\agent-workflow` at `0a5cb06`; propose `roadmap/` alone for the new applicability block; correct the stale Redline self-protection path and close its roadmap item.
+Refresh `.claude/skills/agent-workflow/`, vendored workflow/redline scripts, Claude hooks/settings, OpenCode plugin, checkpoint docs, the AGENTS workflow marker and direct-main rule, and the existing CI workflow from `C:\Dev\rore\agent-workflow` at `0a5cb06`; configure applicability for `roadmap/` plus the explicitly approved user-facing README/docs allowlist; correct the stale Redline self-protection path and close its roadmap item.
 
 **Constraints:**
-Preserve Pallium-specific CI, Redline, and agent instructions; never overwrite existing config/policy wholesale; do not touch application code or the three user-owned dashboard screenshots; direct-to-main and documentation-only exemptions require separate explicit approval and must fail closed.
+Preserve Pallium-specific CI, Redline, and agent instructions except the exact user-approved direct-main expansion; never overwrite existing config/policy wholesale; do not touch application code or the three user-owned dashboard screenshots; applicability must remain fail closed.
 
 **Completion criteria:**
 Installed artifacts match the current source package where intended; new applicability behavior is either approved and validated or explicitly declined; existing Pallium adaptations remain intact; manifest/schema/hook/plugin/checker/Redline checks pass; the final diff receives independent result review.
@@ -27,30 +27,32 @@ The update changes repository-wide governance and the CI enforcer, including a l
 Source `C:\Dev\rore\agent-workflow` is clean at `0a5cb06`; Pallium started from `origin/main` at `9c11b537`. The new release adds documentation-only applicability with fail-closed path/risk/protection checks, an OpenCode workflow plugin, a new checkpoint-doc layout, and checker/workflow changes. Pallium is already installed, so bootstrap mode forbids destructive re-bootstrap and directs a tracked operating-mode re-vendor. Bootstrap discovered `roadmap/`, `docs/`, and `README.md`; only `roadmap/` matches Pallium's existing narrow exception. GitHub reports default branch `main`, classic protection false, and no applicable rulesets. Policy drift exists: the self-protection red path names `agent-policy.yaml`, not the live `agent-redline-policy.yaml`.
 
 **Material assumptions:**
-The committed `dist/agent-workflow/` is the authoritative install source; disprove with package/manifest failure, then stop and repair the source package rather than hand-copying. Existing Pallium workflow and policy adaptations remain authoritative; if the upstream template requires a conflicting semantic change, return to planning. Documentation-only applicability is optional and requires explicit approved paths; without approval, omit it. Direct-default permission additionally requires explicit approval plus live proof that the default branch is unprotected; otherwise keep it false.
+The committed `dist/agent-workflow/` is the authoritative install source; disprove with package/manifest failure, then stop and repair the source package rather than hand-copying. Existing Pallium workflow and policy adaptations remain authoritative; if the upstream template requires a conflicting semantic change, return to planning. Approved applicability paths are `roadmap/`, `README.md`, `docs/README.md`, `docs/getting-started.md`, `docs/agent-relay.md`, `docs/session-history.md`, `docs/claude-code-integration.md`, `docs/codex-integration.md`, `docs/dashboard.md`, and `docs/derived-memory.md`; no other `docs/` path is implied. Direct-default eligibility applies to this entire allowlist and still requires a fresh unprotected-branch result at use time.
 
 **Plan:**
-1. Re-vendor the complete skill tree and supported scripts from one source revision; add the packaged OpenCode plugin; reconcile hooks/settings and only the AGENTS marker block with upstream helpers. 2. Replace the stale flat `docs/agent-workflow/*.md` mirror with `docs/agent-workflow/checkpoints/*.md` plus `docs/agent-workflow/skill-feedback.md`; refresh Redline reference docs and schema without leaving duplicate instructions. 3. Preserve Pallium's Python 3.12, import-linter, boundary-report, test, suppressions, guarded-path, and settings adaptations while updating CI to feed the same trusted merge-base-to-head NUL path set to Redline and the checker. 4. Correct only the policy's stale `agent-policy.yaml` self-protection entry and align `fix-redline-self-protection-path-mismatch` plus the board. 5. Present one inert applicability choice: approve `roadmap/` as Work-Record-exempt; separately approve direct-default eligibility, currently supported by live `main` protection=false and rules=[]. Do not add `docs/` or `README.md`. Generate the config fragment only through the new checker with strict NUL proposal/approval files. 6. Validate manifest/schema parity, doc links, idempotent merges, plugin syntax/behavior, fail-closed applicability, local Redline/checker behavior, affected repository tests, and diff hygiene. Stop on source-package inconsistency, protection ambiguity, unexpected application files, or broader policy drift.
+1. Re-vendor the complete skill tree and supported scripts from one source revision; add the packaged OpenCode plugin; reconcile hooks/settings and only the AGENTS marker block with upstream helpers. 2. Replace the stale flat `docs/agent-workflow/*.md` mirror with `docs/agent-workflow/checkpoints/*.md` plus `docs/agent-workflow/skill-feedback.md`; refresh Redline reference docs and schema without leaving duplicate instructions. 3. Preserve Pallium's Python 3.12, import-linter, boundary-report, test, suppressions, guarded-path, and settings adaptations while updating CI to feed the same trusted merge-base-to-head NUL path set to Redline and the checker. 4. Correct the policy's stale `agent-policy.yaml` self-protection entry, add exact blue coverage for root `README.md`, and align `fix-redline-self-protection-path-mismatch` plus the board. 5. Generate the approved applicability fragment through the new checker using strict NUL proposal/approval inputs for `roadmap/` plus the nine exact README/user-facing docs listed in Material assumptions, with shared direct-default eligibility supported by live `main` protection=false and rules=[]. Reconcile the repo-level AGENTS direct-main sentence to exactly that allowlist; do not exempt any directory-wide `docs/` prefix. 6. Validate manifest/schema parity, doc links, idempotent merges, plugin syntax/behavior, fail-closed applicability, local Redline/checker behavior, affected repository tests, and diff hygiene. Stop on source-package inconsistency, protection ambiguity, unexpected application files, or broader policy drift.
 
 **Verification plan:**
 When refreshed, every installed packaged file shall match its manifest/source revision → manifest size/hash inventory and no-index diff. When applicability is configured or omitted, unapproved/risky/governance paths shall still require normal workflow → vendored checker applicability probes with NUL path inputs and Redline verdicts. When hooks/plugins run, existing settings and Pallium instructions shall remain intact → idempotent installers plus focused script/plugin checks. When CI/governance files change, Pallium shall retain its custom boundary and workflow behavior → inspect diff, run Redline/checker locally, schema validation, and affected repository tests. Before handoff, final diff shall have no unresolved independent-review findings → clean-context result review.
 
 **Plan review:**
-Clean-context architecture review recorded below; initial findings addressed in the revised scope/plan, re-review pending.
+Clean-context architecture review and documentation-allowlist delta review recorded below; all plan blockers resolved.
 
 **Approvals:**
 Approved by user 2026-09-08T11:34:44+03:00: "approve. what about docs and readme? shouldn't we exempt at least some paths that are only docs?"
+Approved applicability expansion by user 2026-09-08T11:38:08+03:00: "ok"
 
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Established the isolated branch, inspected the current/source installs, and completed a clean-context pre-edit Redline classification. No implementation files changed.
-- The user approved the reviewed High-risk plan, the `roadmap/` Work Record exemption, and roadmap-only direct-default eligibility. A possible documentation/README expansion remains blocked on an explicit path and direct-default decision.
+- The user approved the reviewed High-risk plan, the `roadmap/` Work Record exemption, and roadmap-only direct-default eligibility.
+- The user approved the exact nine-file README/user-facing documentation allowlist and extending shared direct-default eligibility to those paths; the required AGENTS and exact README Redline alignments passed final delta architecture review.
 
 ## Evidence
 
@@ -73,6 +75,18 @@ Readiness blockers: make the concrete path/default-branch proposal and the two s
 ### Re-review
 
 Approved for presentation to the human. The revised scope and plan resolve the architecture-review findings: they name the checkpoint-doc migration, self-protection correction and roadmap alignment, preserve Pallium-specific integrations, require complete NUL path evidence, and limit the proposed exemption to `roadmap/`. No plan-review blocker remains. Human approval is still required before implementation; the optional Work Record exemption and direct-default setting require their separately recorded decisions before configuration. Live protection evidence establishes eligibility only, with fresh runtime checks still required. Keep the initial review's focused verification cases as acceptance criteria.
+
+### Documentation allowlist re-review
+
+The exact approved set is suitable: `roadmap/`, `README.md`, `docs/README.md`, `docs/getting-started.md`, `docs/agent-relay.md`, `docs/session-history.md`, `docs/claude-code-integration.md`, `docs/codex-integration.md`, `docs/dashboard.md`, and `docs/derived-memory.md`. The nine files are user-facing overview, setup, capability, and diagnostic guides; their descriptions of behavior and safety do not make them repository governance or normative specifications. `docs/context/`, `docs/designs/`, `docs/specs/`, testing conventions, privacy/API/configuration contracts, and installed harness documentation remain outside the allowlist. Add the exact `README.md` Redline blue entry; existing `docs/**` and `roadmap/**` blue coverage is sufficient for these candidates without granting a directory-wide docs exemption. Blue classification alone never grants an exemption.
+
+One plan-alignment blocker remains: AGENTS.md currently requires branch/PR work for every non-roadmap change, while the plan preserves all prose outside its marker block. Explicitly include the narrow edit reconciling that sentence with the user-approved shared direct-default eligibility; this is already authorized by the recorded expansion and needs no further user approval. Also name the exact README blue alignment in the plan so it is not excluded by the self-protection-only policy edit. The allowlist itself needs no redesign or additional approval.
+
+The proposed applicability decision remains fail-closed under SPEC section 5 and the source applicability checkpoint: require complete trusted NUL path evidence, low-risk Redline evidence, built-in governance exclusions, and normal workflow for any mixed, ambiguous, or missing evidence. Recorded live `main` protection=false and rules=[] support eligibility only; the shared `directDefaultBranchAllowed=true` still requires a fresh actual-default-branch check before use and does not authorize commit/push. Preserve the first review's focused failure cases. Approve implementation once the two explicit plan alignments above are recorded; no other delta architecture blocker was found.
+
+#### Final delta re-review
+
+Approved for implementation. Updated Scope and Constraints explicitly permit only the approved AGENTS direct-main reconciliation; Plan step 4 names exact `README.md` blue coverage, and step 5 limits the AGENTS rule and shared direct-default eligibility to the approved allowlist. The Plan review field and Implementation note accurately record these corrections. Both final findings are resolved; no delta architecture blocker or additional user approval remains. Retain the recorded fail-closed evidence/protection gates and focused verification cases, then obtain independent result review after implementation.
 
 ## Result review
 
