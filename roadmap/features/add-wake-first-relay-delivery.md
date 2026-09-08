@@ -225,8 +225,13 @@ demand-driven and OpenCode stays later.
     was admitted without a manual recipient turn, answered `APPROVE`, and again
     resumed the idle sender. No product defect appeared, so no production code or
     speculative correlation telemetry was added.
-11. **Codex first-run setup qualification.** Verify and document the hook-trust
-   behavior so a fresh install cannot appear wake-ready before its hook is trusted.
+11. **Codex first-run setup qualification — complete 2026-09-08.** Setup now
+    reports configuration installed and requires a Codex restart plus hook review
+    if prompted before Relay wake is ready. An isolated Windows Codex 0.149.1 home
+    showed all three hooks as new, persisted their trust only through Codex's review
+    UI, ran SessionStart, UserPromptSubmit, and Stop, and returned the bounded witness
+    response. No trust bypass or Pallium trust write was used; live Pallium hook
+    trust entries remained unchanged.
    This setup gate is separate from runtime transport qualification.
 12. **S4 additional platforms.** Qualify installed Claude UDS and Codex wake on
    macOS. Windows/Linux Claude and Windows/Linux Codex wake remain
