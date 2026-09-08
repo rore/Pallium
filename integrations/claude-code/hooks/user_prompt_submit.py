@@ -14,6 +14,7 @@ from common import (
     RELAY_TURN_BUDGET,
     acknowledge_relay,
     check_dedup,
+    close_claude_wake,
     complete_relay_closes,
     derive_actor_ref,
     emit_utf8,
@@ -62,6 +63,7 @@ def main() -> None:
         if pending_closes:
             completed = []
             for previous_container in pending_closes:
+                wake_closed = close_claude_wake(session_id, previous_container)
                 closed = relay_request(
                     "POST",
                     "/relay/sessions/close",
@@ -72,7 +74,7 @@ def main() -> None:
                     },
                     timeout=0.5,
                 )
-                if closed is not None:
+                if wake_closed and closed is not None:
                     completed.append(previous_container)
             complete_relay_closes(session_id, completed, close_generation)
         content = _strip_ide_context(prompt)
