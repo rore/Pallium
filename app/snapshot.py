@@ -67,21 +67,6 @@ def _snapshot_live_paths(live_db_path: str | Mapping[str, str]) -> dict[str, str
     return {"main": str(live_db_path)}
 
 
-def _relay_split_activated(main_path: Path) -> bool:
-    """Whether the main DB records a completed split into a Relay DB."""
-    try:
-        with sqlite3.connect(f"file:{main_path}?mode=ro", uri=True) as conn:
-            table = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='relay_migration_metadata'"
-            ).fetchone()
-            if table is None:
-                return False
-            return conn.execute(
-                "SELECT 1 FROM relay_migration_metadata WHERE key='relay_split_v1'"
-            ).fetchone() is not None
-    except sqlite3.Error as exc:
-        raise RuntimeError(f"cannot inspect existing main database: {main_path}") from exc
-
 
 def create_snapshot(live_db_path: str | Mapping[str, str], snapshot_dir: Path, *, pages_per_step: int = BACKUP_PAGES_PER_STEP, sleep_between: float = BACKUP_SLEEP_BETWEEN) -> Path | None:
     paths = _snapshot_live_paths(live_db_path)
@@ -125,8 +110,6 @@ def restore_snapshot(snapshot_dir: Path, live_db_path: str | Mapping[str, str], 
         if len(existing) == len(live):
             return False
         if existing:
-            if existing == {"main"} and not _relay_split_activated(live["main"]):
-                return False
             raise RuntimeError("partial live database pair; refusing snapshot restore")
         for marker in sorted(snapshot_dir.glob("pallium-*.manifest.json"), key=lambda p: p.name, reverse=True):
             try:
@@ -151,30 +134,6 @@ def restore_snapshot(snapshot_dir: Path, live_db_path: str | Mapping[str, str], 
                         path.unlink(missing_ok=True)
                     raise
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError): continue
-        legacy = [
-            candidate for candidate in sorted(snapshot_dir.glob("pallium-*.db"), key=lambda p: p.name, reverse=True)
-            if not candidate.name.endswith(("-main.db", "-relay.db"))
-        ]
-        for candidate in legacy:
-            if not _validate_snapshot(candidate):
-                continue
-            staged = {
-                "main": live["main"].with_name(live["main"].name + ".restore.tmp"),
-                "relay": live["relay"].with_name(live["relay"].name + ".restore.tmp"),
-            }
-            try:
-                for path in live.values():
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(candidate), str(staged["main"]))
-                if not _validate_snapshot(staged["main"]):
-                    raise RuntimeError("legacy snapshot validation failed during restore")
-                sqlite3.connect(str(staged["relay"])).close()
-                for role, target_path in live.items():
-                    os.replace(str(staged[role]), str(target_path))
-                return True
-            finally:
-                for path in staged.values():
-                    path.unlink(missing_ok=True)
         return False
     if compatibility is False: return False
     live_path = Path(paths["main"])

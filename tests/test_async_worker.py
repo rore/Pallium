@@ -149,7 +149,9 @@ def _build_service(
     retention_lease_seconds: int = 300,
     retention_batch_size: int = 200,
 ) -> PalliumService:
-    storage = storage or SQLiteStorageProvider(test_db_url)
+    if storage is None:
+        relay_url = AppConfig(storage_backend="sqlite", sqlite_url=test_db_url).resolved_relay_sqlite_url
+        storage = SQLiteStorageProvider(test_db_url, relay_database_url=relay_url)
     retrieval = LexicalRetrievalProvider(storage)
     resolved_plugins = {'demo_agent_memory': DemoAgentMemoryPlugin()}
     if plugins:

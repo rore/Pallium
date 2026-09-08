@@ -252,11 +252,10 @@ class TestStatusResponseShape:
         with TestClient(app) as client:
             body = client.get("/status").json()
         storage = body["storage"]
-        assert set(storage.keys()) == {"sqlite_mb", "relay_sqlite_mb", "relay_migration_ready", "vector_index_mb"}
-        # Both SQLite files exist after DB init; migration readiness is explicit.
+        assert set(storage.keys()) == {"sqlite_mb", "relay_sqlite_mb", "vector_index_mb"}
+        # Both SQLite files exist after DB init.
         assert isinstance(storage["sqlite_mb"], float)
         assert isinstance(storage["relay_sqlite_mb"], float)
-        assert storage["relay_migration_ready"] is True
 
 
 class TestStatusIngestionProviderSignal:
@@ -467,8 +466,8 @@ class TestStatusSnapshot:
         # Create fake snapshot files in a subdirectory
         snapshot_dir = tmp_path / "snapshots"
         snapshot_dir.mkdir()
-        (snapshot_dir / "pallium-20260414T100000Z.db").write_bytes(b"fake")
-        (snapshot_dir / "pallium-20260414T103000Z.db").write_bytes(b"fake")
+        (snapshot_dir / "pallium-20260414T100000Z.manifest.json").write_text("{}")
+        (snapshot_dir / "pallium-20260414T103000Z.manifest.json").write_text("{}")
 
         config = _file_db_config(
             tmp_path,

@@ -130,7 +130,6 @@ def test_linux_service_full_lifecycle(tmp_path: Path):
             "vector_index_ready": True,
             "embedding_provider_ok": True,
         }
-        assert _json_endpoint(port, "/status")["storage"]["relay_migration_ready"]
         assert isinstance(_json_endpoint(port, "/debug/queue/health"), dict)
 
         status = cli("status", "--home", str(home))
