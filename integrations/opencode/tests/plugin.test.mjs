@@ -465,7 +465,7 @@ test("session.deleted closes Relay with pinned scope and removes the pin", async
   assert.equal(close.body.runtime, "opencode");
   assert.equal(close.body.session_ref, "sesClose");
   assert.equal(close.body.container_ref, "git:example.test/team/project");
-  assert.equal(close.body.actor_ref, "Relay Operator");
+  assert.equal("actor_ref" in close.body, false);
   assert.equal(fs.existsSync(pinFile), false);
 });
 

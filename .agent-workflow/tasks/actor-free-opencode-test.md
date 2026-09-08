@@ -29,7 +29,7 @@
 
 **Exceptions:** -
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -38,6 +38,14 @@
 
 2026-09-08 — Clean-context smart plan review approved the one-assertion change with no findings.
 
+2026-09-08 — Replaced only the retired actor_ref equality check with an explicit absence assertion; production code was unchanged.
+
 ## Evidence
 
 2026-09-08 — Before the fix, canonical npm test: 48 passed, 1 failed, 7 skipped; sole failure expected actor_ref in the Relay close payload.
+
+2026-09-08 — After the fix, canonical npm test: 49 passed, 0 failed, 7 Windows-specific skips. Redline and agent-workflow checks are clean with no boundary findings or review checkpoints.
+
+## Result review
+
+2026-09-08 — Smart review by /root/opencode_test_result_review: APPROVE. The one-line absence assertion matches the serialized production contract, retains all targeting and cleanup checks, and stays within scope.
