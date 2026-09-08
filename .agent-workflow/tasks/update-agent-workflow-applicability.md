@@ -39,7 +39,7 @@ When refreshed, every installed packaged file shall match its manifest/source re
 Clean-context architecture review recorded below; initial findings addressed in the revised scope/plan, re-review pending.
 
 **Approvals:**
-Pending human approval after plan review.
+Approved by user 2026-09-08T11:34:44+03:00: "approve. what about docs and readme? shouldn't we exempt at least some paths that are only docs?"
 
 **Exceptions:**
 —
@@ -50,6 +50,7 @@ Pending human approval after plan review.
 ## Implementation
 
 - Established the isolated branch, inspected the current/source installs, and completed a clean-context pre-edit Redline classification. No implementation files changed.
+- The user approved the reviewed High-risk plan, the `roadmap/` Work Record exemption, and roadmap-only direct-default eligibility. A possible documentation/README expansion remains blocked on an explicit path and direct-default decision.
 
 ## Evidence
 
