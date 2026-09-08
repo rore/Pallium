@@ -4,7 +4,7 @@ Fix two values in the Work Record's marker block before plan-and-review: **Risk*
 
 Risk classification is **delegated to agent-redline**. Redline knows about zones, boundary rules, and surface-touch detection; agent-workflow translates its verdict into our Risk values.
 
-To get redline's pre-edit verdict on the intended scope, invoke the redline skill per the canonical mechanism in [`../../operating-mode.md`](../../operating-mode.md) §"Clean-context delegation" — point a subagent at [`../../agent-redline/SKILL.md`](../../agent-redline/SKILL.md) with the list of paths you intend to change. The subagent returns the verdict (zones, boundary findings, surface-touch flags); you translate it via the table below.
+To get redline's pre-edit verdict on the intended scope, invoke the redline skill per the canonical mechanism in [`../../../.claude/skills/agent-workflow/operating-mode.md`](../../../.claude/skills/agent-workflow/operating-mode.md) §"Clean-context delegation" — point a subagent at [`../../../.claude/skills/agent-workflow/agent-redline/SKILL.md`](../../../.claude/skills/agent-workflow/agent-redline/SKILL.md) with the list of paths you intend to change. The subagent returns the verdict (zones, boundary findings, surface-touch flags); you translate it via the table below.
 
 ## Allowed values
 

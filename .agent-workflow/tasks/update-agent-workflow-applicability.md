@@ -43,9 +43,9 @@ Approved by user 2026-09-08T11:34:44+03:00: "approve. what about docs and readme
 Approved applicability expansion by user 2026-09-08T11:38:08+03:00: "ok"
 
 **Exceptions:**
-—
+Non-blocking workrecord.commit_order advisory: the first plan commit updated a pre-existing completed record with the reused slug before the corrected branch-specific record was added; no implementation preceded the plan.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -55,7 +55,8 @@ Approved applicability expansion by user 2026-09-08T11:38:08+03:00: "ok"
 - The user approved the exact nine-file README/user-facing documentation allowlist and extending shared direct-default eligibility to those paths; the required AGENTS and exact README Redline alignments passed final delta architecture review.
 - Implementation targets: `.claude/skills/agent-workflow/**`, `scripts/{agent-workflow-check,format-verdict-comment,agent-redline-report,run-import-linter}.py`, `.claude/hooks/**`, `.claude/settings.json`, `.opencode/plugins/agent-workflow.mjs`, `.agent-redline/agent-policy.schema.json`, `docs/agent-workflow/**`, `docs/agent-redline/skills/**`, `AGENTS.md`, `agent-workflow.yaml`, `agent-redline-policy.yaml`, `.github/workflows/agent-workflow.yml`, `tests/test_agent_workflow_ci.py`, `roadmap/board.md`, and `roadmap/ideas/fix-redline-self-protection-path-mismatch.md`.
 - Mechanical refresh complete from source `0a5cb06`: full skill tree, four vendored executables, hook helpers, OpenCode plugin, schema, Redline references, and the new checkpoint-doc layout. The upstream installers preserved existing settings/guarded paths and changed only the AGENTS marker block.
-- Semantic alignment complete: checker-emitted applicability fragment installed for the exact approved allowlist; CI now shares trusted NUL merge-base evidence and fails closed on invalid output; AGENTS direct-main guidance, README blue coverage, policy self-protection, and roadmap state were reconciled. Verification remains.
+- Semantic alignment complete: checker-emitted applicability fragment installed for the exact approved allowlist; CI now shares trusted NUL merge-base evidence and fails closed on invalid output; AGENTS direct-main guidance, README blue coverage, policy self-protection, and roadmap state were reconciled.
+- Verification completed against `7732e6bc1e1831504d414f9a880905947df7418d`. Skill-feedback trigger 5 fired for copied consumer-doc links; external issue creation was unavailable under current authorization, so the filtered report is recorded below and the three local links were corrected.
 
 ## Evidence
 
@@ -63,9 +64,9 @@ Approved applicability expansion by user 2026-09-08T11:38:08+03:00: "ok"
 - Target base: `9c11b5375f0703cafe6d69c32bd134508a4cf371`.
 - Source applicability/schema verification: 66 passed.
 - Pallium regression verification: `tests/test_agent_workflow_ci.py` passed; full `tests/` suite 4,646 passed, 32 skipped, 2 xfailed.
-- Artifact verification: skill/source hashes, manifest sizes, vendored executables, schema, checkpoint/Redline docs, hook installers, Python/shell/plugin syntax and plugin behavior passed.
+- Artifact verification: installed skill/source hashes, manifest sizes, vendored executables, schema, packaged checkpoint/Redline references, hook installers, Python/shell/plugin syntax and plugin behavior passed. Consumer docs match the package except three corrected consumer-relative link destinations; all their relative links resolve.
 - Applicability probes: exact README/user-doc/roadmap paths exempt; unapproved docs, mixed code, workflow governance, and Redline policy paths fail closed. Redline self-protection reports RED with `architecture-review`.
-- Optional history tuner attempted twice and timed out without output; no calibration data or configuration was changed.
+- Local gates at `7732e6bc1e1831504d414f9a880905947df7418d`: Redline reports RED with zero boundary violations; the checker has only the documented non-blocking commit-order advisory. Optional history tuner attempted twice and timed out without output; no calibration data or configuration was changed.
 
 ## Plan review
 
@@ -95,6 +96,18 @@ The proposed applicability decision remains fail-closed under SPEC section 5 and
 #### Final delta re-review
 
 Approved for implementation. Updated Scope and Constraints explicitly permit only the approved AGENTS direct-main reconciliation; Plan step 4 names exact `README.md` blue coverage, and step 5 limits the AGENTS rule and shared direct-default eligibility to the approved allowlist. The Plan review field and Implementation note accurately record these corrections. Both final findings are resolved; no delta architecture blocker or additional user approval remains. Retain the recorded fail-closed evidence/protection gates and focused verification cases, then obtain independent result review after implementation.
+
+## Skill feedback (unsent)
+
+**Trigger fired:** 5. A skill cross-reference was broken.
+
+**What the skill said (or failed to say):** `bootstrap-mode.md` Phase 4.7 says to copy `templates/checkpoints/` as a `checkpoints/` subdirectory plus `skill-feedback.md` as its sibling.
+
+**What happened:** In the resulting consumer tree, `checkpoints/assess-risk.md` and `checkpoints/plan-and-review.md` retained install-root-relative links that resolved to absent files under `docs/`.
+
+**Suggested fix:** Make checkpoint links consumer-layout-safe during Phase 4.7, or package separate consumer docs, and test links against the exact bootstrapped `docs/agent-workflow/` layout.
+
+**Work Record:** Pallium commit `7732e6bc1e1831504d414f9a880905947df7418d`, `.agent-workflow/tasks/update-agent-workflow-applicability.md`; skill source `0a5cb066a735b7ca6634c6c5ccb87fa1b28d86b5`.
 
 ## Result review
 
