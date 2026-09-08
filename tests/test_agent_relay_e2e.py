@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -1185,7 +1187,7 @@ def test_relay_destination_health_strict_cas_and_scope(client, relay_storage):
     ) is True
     assert state() == "active"
 
-def test_unreachable_destination_rejects_new_exact_and_alias_sends_only(client, relay_storage):
+def test_unreachable_and_closed_destinations_reject_without_new_state(client, relay_storage):
     relay = RelayService(relay_storage)
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "target")
@@ -1228,9 +1230,31 @@ def test_unreachable_destination_rejects_new_exact_and_alias_sends_only(client, 
     assert row_counts() == before
 
     assert _send(client, "claude-code", "sender", "codex:unknown").status_code == 404
-    _turn(client, "codex", "closed")
+    closed = _turn(client, "codex", "closed")["session"]
+    assert _name(client, "codex", "closed", "closed-alias").status_code == 200
     relay.close_session(runtime="codex", session_ref="closed", **SCOPE)
-    assert _send(client, "claude-code", "sender", "codex:closed").status_code == 404
+    closed_before = row_counts()
+    for recipient, message_id in (
+        (closed["endpoint_id"], "closed-endpoint-message"),
+        ("codex:closed", "closed-legacy-message"),
+        ("codex:closed", "closed-legacy-message"),
+    ):
+        rejected = _send(
+            client, "claude-code", "sender", recipient, message_id=message_id
+        )
+        assert rejected.status_code == 409
+        assert rejected.json()["detail"] == "recipient session is closed"
+        assert _status(client, message_id).status_code == 404
+    released_alias = _send(
+        client,
+        "claude-code",
+        "sender",
+        "codex:@closed-alias",
+        message_id="closed-alias-message",
+    )
+    assert released_alias.status_code == 404
+    assert _status(client, "closed-alias-message").status_code == 404
+    assert row_counts() == closed_before
     closed_session = next(
         row for row in client.get(
             "/relay/sessions", params={**SCOPE, "include_inactive": True}
@@ -1258,3 +1282,33 @@ def test_unreachable_destination_rejects_new_exact_and_alias_sends_only(client, 
     )
     assert _name(client, "claude-code", "sender", "sender-alias").status_code == 200
     assert _send(client, "claude-code", "sender", "codex:active-peer", "outbound").status_code == 200
+
+    _turn(client, "codex", "reply-origin")
+    _turn(client, "claude-code", "reply-author")
+    parent = _send(
+        client,
+        "codex",
+        "reply-origin",
+        "claude-code:reply-author",
+        message_id="closed-reply-parent",
+    )
+    assert parent.status_code == 200
+    claimed = _turn(client, "claude-code", "reply-author")["deliveries"][0]
+    relay.close_session(runtime="codex", session_ref="reply-origin", **SCOPE)
+    rejected_reply_id = "relay-reply-" + hashlib.sha256(
+        claimed["delivery_id"].encode("utf-8")
+    ).hexdigest()
+    reply_before = row_counts()
+    for _ in range(2):
+        rejected_reply = _reply(
+            client,
+            claimed["delivery_id"],
+            receipt=claimed["receipt"],
+        )
+        assert rejected_reply.status_code == 409
+        assert rejected_reply.json()["detail"] == "recipient session is closed"
+        assert _status(client, rejected_reply_id).status_code == 404
+    assert _status(client, parent.json()["message_id"]).json()["deliveries"][0][
+        "state"
+    ] == "claimed"
+    assert row_counts() == reply_before

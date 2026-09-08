@@ -275,6 +275,8 @@ class SQLiteRelayMixin:
             raise RelayNotFoundError("relay entity not found in the requested scope")
         if target.state == "unreachable":
             raise RelayConflictError("recipient session is unreachable")
+        if target.state == "closed":
+            raise RelayConflictError("recipient session is closed")
         if target.state != "active":
             raise RelayNotFoundError("relay entity not found in the requested scope")
         return target
@@ -713,6 +715,8 @@ class SQLiteRelayMixin:
                 raise RelayConflictError("legacy message has no canonical sender endpoint")
             if recipient_session.state == "unreachable":
                 raise RelayConflictError("recipient session is unreachable")
+            if recipient_session.state == "closed":
+                raise RelayConflictError("recipient session is closed")
             if recipient_session.state != "active":
                 raise RelayNotFoundError("relay entity not found in the requested scope")
 
