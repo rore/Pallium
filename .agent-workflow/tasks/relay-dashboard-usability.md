@@ -11,11 +11,11 @@
 
 **Completion criteria:** (1) Operations keeps Overview, System Health, Relay Health, and Session History KPIs visible in that order, distinguishes original SourceItems from all stored Memory objects, and keeps optional Derived Memory separate. (2) Session History explains what is searchable, keeps a compact resizable list/detail surface, and searches all otherwise-visible owners when its optional owner filter is blank. (3) Relay opens directly with no actor control or actor request parameter. (4) Containers and sessions default to recent activity, rank active containers first, and keep dormant/history records behind explicit controls. (5) Session, graph, connection, and message selection keeps graph, messages, and visible detail in one context, with usable zoom and responsive layouts. (6) Dashboard reads remain bounded, deterministic, read-only, and free of delivery-control secrets; Relay is service-global while History keeps workspace/visibility governance.
 
-**Risk:** Routine
+**Risk:** Elevated
 
 **Complexity:** Moderate
 
-**Reason:** Redline classifies every intended dashboard, test, docs, and roadmap path blue with no boundary findings or required checkpoint. Moderate complexity reflects coordinated read-model, interaction, responsive-layout, and real-data visual changes.
+**Reason:** PR-time redline classifies `app/config.py`, `app/main.py`, and `pallium.example.toml` gray because the private Evaluation feature flag changes runtime configuration, requiring Elevated risk. Moderate complexity reflects coordinated read-model, interaction, responsive-layout, and real-data visual changes.
 
 **Discovery:** The original live database had 8 accidental Relay actor labels, 837 sessions, 1,136 messages, and 251 unranked container options. Actor selection caused empty/racing states and hid most activity. The original circular graph cluttered nodes and replaced itself with the message list on selection; message detail rendered below a long list. A second live defect joined an independent 100-session page to a 100-message page, falsely labelling valid endpoints as unresolved. Evaluation was visible but inert because server flag injection rewrote the first CSS marker instead of the body marker.
 
@@ -27,7 +27,7 @@
 
 **Plan review:** Clean-context review completed on 2026-09-08. Its actor-scoped conditions record the pre-migration design and were superseded by the separately reviewed and merged actor-free Relay contract; its bounded-read, graph, accessibility, and caller-surface requirements remain applicable.
 
-**Approvals:** Not required at this risk level.
+**Approvals:** Not required at this risk level; the required clean-context plan review is recorded below.
 
 **Exceptions:** —
 
@@ -37,6 +37,8 @@
 ## Plan review
 
 Reviewed on 2026-09-08 by the clean-context reviewer against the Work Record, repository AGENTS.md, agent-workflow skill/operating mode and plan checkpoint, dashboard projections/UI/tests, and `docs/designs/dashboard-operations-relay-ux.md`. The requested `.claude/skills/agent-workflow/SPEC.md` is absent; the installed checkpoint and operating-mode instructions provide the applicable readiness rules. No product code was changed.
+
+Elevated-risk reassessment: the clean-context result reviewer rechecked the final configuration-gated Evaluation design and the post-PR-151 diff; it found no actionable issue or scope drift. The runtime flag is safe-off by default, typed, documented, and covered in both states.
 
 Decision: acceptable with the following resolved conditions incorporated into implementation and verification. The dependency-free dashboard projection plus native controls/SVG is the smallest viable architecture; no new graph backend, storage contract, framework, cache service, or alias behavior is needed.
 
