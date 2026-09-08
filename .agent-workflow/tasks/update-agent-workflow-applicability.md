@@ -53,6 +53,7 @@ Approved applicability expansion by user 2026-09-08T11:38:08+03:00: "ok"
 - Established the isolated branch, inspected the current/source installs, and completed a clean-context pre-edit Redline classification. No implementation files changed.
 - The user approved the reviewed High-risk plan, the `roadmap/` Work Record exemption, and roadmap-only direct-default eligibility.
 - The user approved the exact nine-file README/user-facing documentation allowlist and extending shared direct-default eligibility to those paths; the required AGENTS and exact README Redline alignments passed final delta architecture review.
+- Implementation targets: `.claude/skills/agent-workflow/**`, `scripts/{agent-workflow-check,format-verdict-comment,agent-redline-report,run-import-linter}.py`, `.claude/hooks/**`, `.claude/settings.json`, `.opencode/plugins/agent-workflow.mjs`, `.agent-redline/agent-policy.schema.json`, `docs/agent-workflow/**`, `docs/agent-redline/skills/**`, `AGENTS.md`, `agent-workflow.yaml`, `agent-redline-policy.yaml`, `.github/workflows/agent-workflow.yml`, `roadmap/board.md`, and `roadmap/ideas/fix-redline-self-protection-path-mismatch.md`.
 
 ## Evidence
 
