@@ -84,7 +84,7 @@ def _dashboard_source_item(record: SourceItemRecord) -> SourceItem:
     )
 
 
-def _dashboard_source_visible(record: SourceItemRecord, *, container_ref: str, actor_ref: str,
+def _dashboard_source_visible(record: SourceItemRecord, *, container_ref: str, actor_ref: str | None,
                               query_visibility: str, filters: QueryFilters) -> bool:
     item = _dashboard_source_item(record)
     return not item.forgotten and is_visible(
@@ -110,20 +110,29 @@ def _dashboard_source_view(record: SourceItemRecord) -> dict:
     }
 
 
-def _dashboard_source_scope_clause(*, container_ref: str, actor_ref: str, query_visibility: str):
+def _dashboard_source_scope_clause(*, container_ref: str, actor_ref: str | None, query_visibility: str):
     visibility = func.coalesce(SourceItemRecord.visibility, "private")
-    actor_matches = or_(SourceItemRecord.actor_ref.is_(None), SourceItemRecord.actor_ref == actor_ref)
-    global_same_actor = and_(visibility == "global", SourceItemRecord.actor_ref == actor_ref)
+    global_same_actor = and_(
+        visibility == "global", SourceItemRecord.actor_ref.isnot(None),
+        SourceItemRecord.actor_ref == actor_ref,
+    )
     public = and_(visibility == "public", SourceItemRecord.actor_ref.is_(None))
     if query_visibility == "public":
         accessible = or_(global_same_actor, public)
     elif query_visibility == "container":
         accessible = or_(global_same_actor, public, and_(
-            SourceItemRecord.container_ref == container_ref, visibility != "private", actor_matches,
+            SourceItemRecord.container_ref == container_ref, visibility.notin_(("private", "global")),
         ))
     else:
-        accessible = or_(global_same_actor, public, and_(SourceItemRecord.container_ref == container_ref, actor_matches))
-    return and_(SourceItemRecord.forgotten_at.is_(None), accessible)
+        accessible = or_(
+            global_same_actor, public, and_(
+                SourceItemRecord.container_ref == container_ref, visibility != "global",
+            ),
+        )
+    clause = and_(SourceItemRecord.forgotten_at.is_(None), accessible)
+    if actor_ref is not None:
+        clause = and_(clause, SourceItemRecord.actor_ref == actor_ref)
+    return clause
 
 
 def _sanitize_non_finite(obj):
@@ -211,9 +220,6 @@ def mount_dashboard(app: FastAPI) -> None:
         with storage._session_factory() as session:
             values = set(session.scalars(select(MemoryObjectRecord.actor_ref).where(MemoryObjectRecord.actor_ref.isnot(None)).distinct()))
             values.update(session.scalars(select(SourceItemRecord.actor_ref).where(SourceItemRecord.actor_ref.isnot(None)).distinct()))
-        factory = getattr(storage, "_relay_session_factory", storage._session_factory)
-        with factory() as session:
-            values.update(session.scalars(select(RelaySessionRecord.actor_ref).where(RelaySessionRecord.actor_ref.isnot(None)).distinct()))
         return JSONResponse(content={"actors": sorted(values)})
     @app.get("/dashboard/api/activity")
     def dashboard_activity(limit: int = Query(10, ge=1, le=50)) -> JSONResponse:
@@ -415,7 +421,7 @@ def mount_dashboard(app: FastAPI) -> None:
 
     @app.get("/dashboard/api/sources")
     def dashboard_sources(
-        container_ref: str = Query(..., min_length=1), actor_ref: str = Query(..., min_length=1),
+        container_ref: str = Query(..., min_length=1), actor_ref: str | None = Query(None, min_length=1),
         query_visibility: Literal["public", "container", "private", "global"] = Query(...),
         source_type: str | None = Query(None), role: str | None = Query(None),
         artifact_kind: str | None = Query(None), thread_ref: str | None = Query(None),
@@ -452,7 +458,7 @@ def mount_dashboard(app: FastAPI) -> None:
 
     @app.get("/dashboard/api/sources/{source_item_id}")
     def dashboard_source_detail(
-        source_item_id: str, container_ref: str = Query(..., min_length=1), actor_ref: str = Query(..., min_length=1),
+        source_item_id: str, container_ref: str = Query(..., min_length=1), actor_ref: str | None = Query(None, min_length=1),
         query_visibility: Literal["public", "container", "private", "global"] = Query(...),
     ) -> JSONResponse:
         storage = app.state.pallium_service._storage
@@ -468,7 +474,7 @@ def mount_dashboard(app: FastAPI) -> None:
 
     @app.get("/dashboard/api/history/reuse-events")
     def dashboard_reuse_events(
-        container_ref: str = Query(..., min_length=1), actor_ref: str = Query(..., min_length=1),
+        container_ref: str = Query(..., min_length=1), actor_ref: str | None = Query(None, min_length=1),
         query_visibility: Literal["public", "container", "private", "global"] = Query(...),
         limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
     ) -> JSONResponse:
@@ -476,16 +482,23 @@ def mount_dashboard(app: FastAPI) -> None:
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
         visibility = func.coalesce(HistoricalLookupReuseEventRecord.visibility, "private")
-        actor_matches = or_(HistoricalLookupReuseEventRecord.actor_ref.is_(None), HistoricalLookupReuseEventRecord.actor_ref == actor_ref)
         public = and_(visibility == "public", HistoricalLookupReuseEventRecord.actor_ref.is_(None))
-        global_same_actor = and_(visibility == "global", HistoricalLookupReuseEventRecord.actor_ref == actor_ref)
-        local = HistoricalLookupReuseEventRecord.container_ref == container_ref
+        global_same_actor = and_(
+            visibility == "global", HistoricalLookupReuseEventRecord.actor_ref.isnot(None),
+            HistoricalLookupReuseEventRecord.actor_ref == actor_ref,
+        )
+        local = and_(
+            HistoricalLookupReuseEventRecord.container_ref == container_ref,
+            visibility != "global",
+        )
         if query_visibility == "public":
             clause = or_(public, global_same_actor)
         elif query_visibility == "container":
-            clause = or_(public, global_same_actor, and_(local, visibility != "private", actor_matches))
+            clause = or_(public, global_same_actor, and_(local, visibility != "private"))
         else:
-            clause = or_(public, global_same_actor, and_(local, actor_matches))
+            clause = or_(public, global_same_actor, local)
+        if actor_ref is not None:
+            clause = and_(clause, HistoricalLookupReuseEventRecord.actor_ref == actor_ref)
         with storage._session_factory() as session:
             total = session.scalar(select(func.count()).select_from(HistoricalLookupReuseEventRecord).where(clause)) or 0
             events = session.scalars(select(HistoricalLookupReuseEventRecord).where(clause).order_by(
@@ -541,7 +554,7 @@ def mount_dashboard(app: FastAPI) -> None:
 
     @app.get("/dashboard/api/relay/sessions")
     def dashboard_relay_sessions(
-        actor_ref: str = Query(..., min_length=1), runtime: str | None = Query(None),
+        runtime: str | None = Query(None),
         container_ref: str | None = Query(None),
         lifecycle: Literal["recent", "dormant", "closed"] | None = Query(None),
         destination_health: Literal["active", "unreachable"] | None = Query(None), limit: int = Query(100, ge=1, le=200),
@@ -552,7 +565,7 @@ def mount_dashboard(app: FastAPI) -> None:
             return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
         as_of = datetime.now(timezone.utc)
         cutoff = as_of - timedelta(hours=24)
-        clause = RelaySessionRecord.actor_ref == actor_ref
+        clause = True
         if runtime is not None:
             clause = and_(clause, RelaySessionRecord.runtime == runtime)
         if container_ref is not None:
@@ -576,7 +589,7 @@ def mount_dashboard(app: FastAPI) -> None:
                 "recent" if (record.last_seen_at if record.last_seen_at.tzinfo else record.last_seen_at.replace(tzinfo=timezone.utc)) >= cutoff else "dormant"
             )
             sessions.append({"id": record.id, "runtime": record.runtime, "session_ref": record.session_ref,
-                "container_ref": record.container_ref, "actor_ref": record.actor_ref, "title": record.title,
+                "container_ref": record.container_ref, "title": record.title,
                 "alias": record.alias, "state": item_lifecycle, "lifecycle": item_lifecycle,
                 "destination_health": None if item_lifecycle == "closed" else record.state,
                 "first_seen_at": _dashboard_time(record.first_seen_at), "last_seen_at": _dashboard_time(record.last_seen_at),
@@ -585,7 +598,7 @@ def mount_dashboard(app: FastAPI) -> None:
                                      "as_of": _dashboard_time(as_of)})
     @app.get("/dashboard/api/relay/messages")
     def dashboard_relay_messages(
-        actor_ref: str = Query(..., min_length=1), limit: int = Query(50, ge=1, le=200),
+        limit: int = Query(50, ge=1, le=200),
         until: datetime | None = Query(None), before_created_at: datetime | None = Query(None), before_id: str | None = Query(None),
         since: datetime | None = Query(None), runtime: str | None = Query(None), container_ref: str | None = Query(None),
         endpoint_id: str | None = Query(None), peer_endpoint_id: str | None = Query(None),
@@ -601,7 +614,7 @@ def mount_dashboard(app: FastAPI) -> None:
         as_of = _dashboard_utc(until) or datetime.now(timezone.utc)
         since = _dashboard_utc(since)
         before_created_at = _dashboard_utc(before_created_at)
-        clause = and_(RelayMessageRecord.actor_ref == actor_ref, RelayMessageRecord.created_at <= as_of)
+        clause = RelayMessageRecord.created_at <= as_of
         if since is not None:
             clause = and_(clause, RelayMessageRecord.created_at >= since)
         if runtime is not None:
@@ -634,7 +647,7 @@ def mount_dashboard(app: FastAPI) -> None:
                                       and_(RelayMessageRecord.created_at == before_created_at, RelayMessageRecord.id < before_id)))
         factory = getattr(storage, "_relay_session_factory", storage._session_factory)
         with factory() as session:
-            total_clause = and_(RelayMessageRecord.actor_ref == actor_ref, RelayMessageRecord.created_at <= as_of)
+            total_clause = RelayMessageRecord.created_at <= as_of
             if since is not None:
                 total_clause = and_(total_clause, RelayMessageRecord.created_at >= since)
             if runtime is not None:
@@ -679,7 +692,7 @@ def mount_dashboard(app: FastAPI) -> None:
             durable = expires.year >= 9999
             items.append({"id": message.id, "sender_runtime": message.sender_runtime, "sender_session_ref": message.sender_session_ref,
                 "sender_endpoint_id": message.sender_endpoint_id, "recipient_selector": message.recipient_selector,
-                "container_ref": message.container_ref, "actor_ref": message.actor_ref,
+                "container_ref": message.container_ref,
                 "payload": redact_sensitive(message.payload) if message.payload else message.payload, "redacted": bool(message.redacted),
                 "in_reply_to": message.in_reply_to, "created_at": _dashboard_time(message.created_at),
                 "expires_at": None if durable else _dashboard_time(expires), "effective_expired": not durable and expires <= as_of,

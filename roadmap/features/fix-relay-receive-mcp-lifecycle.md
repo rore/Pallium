@@ -42,7 +42,7 @@ that runtime work.
 ## Design
 
 **`pallium_relay_receive(max_messages=1)`**
-- Uses injected container_ref, actor_ref, agent_ref, thread_ref from Pallium
+- Uses injected container_ref, agent_ref, thread_ref from Pallium
   session scope; no model-supplied identity accepted.
 - Claims deliveries, returns payload + opaque receipt handle; holds a lease.
 - Returns: `[{receipt, delivery_id, sender_runtime, sender_session_ref,

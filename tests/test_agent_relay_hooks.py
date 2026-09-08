@@ -111,7 +111,7 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
         "relay_request",
         lambda method, path, payload, *, timeout: calls.append((method, path, payload, timeout)),
     )
-    acknowledged = common.acknowledge_relay([DELIVERY], container_ref="container", actor_ref="actor")
+    acknowledged = common.acknowledge_relay([DELIVERY], container_ref="container")
     if name == "claude_common":
         assert acknowledged == []
     else:
@@ -158,7 +158,6 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
             "runtime": "codex" if codex else "claude-code",
             "session_ref": "target-session",
             "container_ref": "git:example/repo",
-            "actor_ref": "actor",
             "max_chars": 2360,
         },
         0.75,
@@ -489,7 +488,6 @@ def test_failed_project_close_is_retried(
         "runtime": runtime,
         "session_ref": "target",
         "container_ref": "git:old/repo",
-        "actor_ref": "actor",
     }
     assert state["pending"] == []
 
@@ -688,7 +686,7 @@ def test_claude_stop_emits_rendered_subset_before_ack(monkeypatch):
     assert stopped.value.code == 2
     assert calls == [("POST", "/relay/turn", {
         "runtime": "claude-code", "session_ref": "target", "container_ref": "git:example/repo",
-        "actor_ref": "actor", "max_chars": 2360,
+        "max_chars": 2360,
     }, 0.75)]
     assert [event[0] for event in events] == ["emit", "ack"]
     output = events[0][1]
@@ -748,7 +746,7 @@ def test_acknowledge_relay_returns_only_successful_acknowledgments(monkeypatch):
     monkeypatch.setattr(common, "relay_request", lambda *_args, **_kwargs: next(responses))
     second = {**DELIVERY, "delivery_id": "relay-delivery-2"}
 
-    assert common.acknowledge_relay([DELIVERY, second], container_ref="container", actor_ref="actor") == [DELIVERY]
+    assert common.acknowledge_relay([DELIVERY, second], container_ref="container") == [DELIVERY]
 
 def test_claude_stop_emits_and_leaves_lease_when_acknowledgment_fails(monkeypatch, capsys):
     hook = _load("claude_stop_ack_failure", "integrations/claude-code/hooks/stop.py")
@@ -959,7 +957,7 @@ def test_relay_ack_batch_stops_at_shared_deadline(
         "claim_token": "relay-claim-2",
     }
     result = common.acknowledge_relay(
-        [DELIVERY, second], container_ref="container", actor_ref="actor"
+        [DELIVERY, second], container_ref="container"
     )
 
     assert observed == [0.5]
@@ -979,7 +977,7 @@ def test_relay_ack_batch_stops_at_shared_deadline(
 def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     client, monkeypatch, tmp_path: Path, runtime: str, relative: str, codex: bool,
 ):
-    """Real Relay reads see one configured identity despite distinct local Git names."""
+    """Relay delivery crosses containers and configured actor metadata."""
     hook = _load(f"stable_actor_{runtime}", relative)
     repos = []
     for name, git_name in (("source", "Source Git Name"), ("target", "Target Git Name")):
@@ -989,8 +987,6 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
         subprocess.run(["git", "config", "user.name", git_name], cwd=repo, check=True, capture_output=True)
         repos.append(repo)
     source, target = repos
-    actor = "מפעיל 統一"
-    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", f"  {actor}  ")
     monkeypatch.setitem(hook.derive_actor_ref.__globals__, "SESSIONS_DIR", tmp_path / "sessions")
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_args: ([], 0))
     monkeypatch.setattr(hook, "check_dedup", lambda *_args: False)
@@ -1001,11 +997,11 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
         assert response.status_code == 200, response.text
         return response.json()
 
-    def acknowledge(deliveries, *, container_ref, actor_ref):
+    def acknowledge(deliveries, *, container_ref):
         for delivery in deliveries:
             response = client.post("/relay/deliveries/ack", json={
                 "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"],
-                "container_ref": container_ref, "actor_ref": actor_ref,
+                "container_ref": container_ref,
             })
             assert response.status_code == 200, response.text
         return deliveries if runtime == "claude-code" else None
@@ -1020,23 +1016,25 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
         monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
 
     payload = {"cwd": str(source), "session_id": "source-session", "prompt": "hi"}
+    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", "מפעיל מקור")
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     with pytest.raises(SystemExit):
         hook.main()
     payload = {"cwd": str(target), "session_id": "target-session", "prompt": "hi"}
+    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", "操作员目标")
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     with pytest.raises(SystemExit):
         hook.main()
 
     target_container = hook.resolve_container_ref(str(target), "target-session")
-    sessions = client.get("/relay/sessions", params={"container_ref": target_container, "actor_ref": actor}).json()
+    sessions = client.get("/relay/sessions", params={"container_ref": target_container}).json()
     assert [(row["runtime"], row["session_ref"]) for row in sessions] == [(runtime, "target-session")]
     target_endpoint = sessions[0]["endpoint_id"]
     source_container = hook.resolve_container_ref(str(source), "source-session")
     sent = client.post("/relay/messages", json={
         "sender_runtime": runtime, "sender_session_ref": "source-session",
         "recipient": target_endpoint, "payload": "cross-container delivery",
-        "container_ref": source_container, "actor_ref": actor,
+        "container_ref": source_container,
     })
     assert sent.status_code == 200, sent.text
     payload = {"cwd": str(target), "session_id": "target-session", "prompt": "deliver this"}
@@ -1044,4 +1042,4 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     with pytest.raises(SystemExit):
         hook.main()
     assert any("cross-container delivery" in text for text in emitted)
-    assert client.get(f"/relay/messages/{sent.json()['message_id']}", params={"container_ref": target_container, "actor_ref": actor}).json()["deliveries"][0]["state"] == "delivered"
+    assert client.get(f"/relay/messages/{sent.json()['message_id']}", params={"container_ref": target_container}).json()["deliveries"][0]["state"] == "delivered"

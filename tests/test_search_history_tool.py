@@ -133,3 +133,119 @@ async def test_search_history_omits_unset_optional_filters(client: PalliumMcpCli
     assert p["trigger_origin"] == "agent_pull"
     for k in ("source_type", "role", "artifact_kind", "work_refs", "request_source_item_id"):
         assert k not in p
+
+
+@pytest.mark.asyncio
+async def test_search_history_omits_context_actor_by_default() -> None:
+    history_client = PalliumMcpClient(PalliumContext(
+        base_url="http://testserver",
+        container_ref="test-container",
+        actor_ref="工具甲",
+        visibility="private",
+    ))
+    captured: dict = {}
+
+    async def capture(path, payload):
+        captured["payload"] = payload
+        return {"results": []}
+
+    history_client._post = capture
+    await history_client.search_history("anything")
+    assert "actor_ref" not in captured["payload"]
+
+
+@pytest.mark.asyncio
+async def test_search_history_sends_explicit_unicode_actor() -> None:
+    history_client = PalliumMcpClient(PalliumContext(
+        base_url="http://testserver",
+        container_ref="test-container",
+        actor_ref="ambient-actor",
+        visibility="private",
+    ))
+    captured: dict = {}
+
+    async def capture(path, payload):
+        captured["payload"] = payload
+        return {"results": []}
+
+    history_client._post = capture
+    await history_client.search_history("anything", actor_ref="工具甲")
+    assert captured["payload"]["actor_ref"] == "工具甲"
+
+@pytest.mark.asyncio
+async def test_search_history_actor_is_optional_exact_metadata_filter(
+    asgi_app, client: PalliumMcpClient,
+) -> None:
+    def history_client(actor_ref: str | None) -> PalliumMcpClient:
+        scoped = PalliumMcpClient(PalliumContext(
+            base_url="http://testserver",
+            container_ref="test-container",
+            actor_ref=actor_ref,
+            visibility="private",
+        ))
+        scoped._post = client._post
+        return scoped
+
+    actor_a = history_client("操作员甲")
+    actor_b = history_client("操作员乙")
+    actor_none = history_client(None)
+    for scoped, source_id in (
+        (actor_a, "history-actor-a"),
+        (actor_b, "history-actor-b"),
+        (actor_none, "history-no-actor"),
+    ):
+        await scoped._post("/items", [{
+            "source_type": "chat_message",
+            "source_id": source_id,
+            "content_type": "text/plain",
+            "content": f"cross actor history marker {source_id}",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test-container",
+            "actor_ref": scoped._ctx.actor_ref,
+            "visibility": "private",
+            "metadata": {"pallium_work_refs": ["CASE-42"]},
+        }])
+    await actor_b._post("/items", [{
+        "source_type": "chat_message",
+        "source_id": "history-other-work",
+        "content_type": "text/plain",
+        "content": "completely separate evidence",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "test-container",
+        "actor_ref": "操作员乙",
+        "visibility": "private",
+        "metadata": {"pallium_work_refs": ["OTHER-7"]},
+    }])
+    asgi_app.state.pallium_service.drain_processing_queue(worker_id="history-actor-test")
+
+    unfiltered = await actor_a.search_history("cross actor history marker", limit=10)
+    assert {item["source_id"] for item in unfiltered["results"]} == {
+        "history-actor-a", "history-actor-b", "history-no-actor",
+    }
+
+    filtered = await actor_a.search_history(
+        "cross actor history marker", limit=10, actor_ref="操作员乙",
+    )
+    assert [item["source_id"] for item in filtered["results"]] == ["history-actor-b"]
+
+    empty_actor = await actor_a.search_history(
+        "cross actor history marker", limit=10, actor_ref="",
+    )
+    assert empty_actor["results"] == []
+
+    for query in (None, "cross actor history marker"):
+        exact_unfiltered = await actor_a.search_history_by_work_ref(
+            "case-42", query, limit=10,
+        )
+        assert {item["source_id"] for item in exact_unfiltered["results"]} == {
+            "history-actor-a", "history-actor-b", "history-no-actor",
+        }
+
+        exact_filtered = await actor_a.search_history_by_work_ref(
+            "case-42", query, limit=10, actor_ref="操作员乙",
+        )
+        assert [item["source_id"] for item in exact_filtered["results"]] == [
+            "history-actor-b",
+        ]

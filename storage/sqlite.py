@@ -208,6 +208,10 @@ class SQLiteStorageProvider(
                         raise RuntimeError(
                             f"Relay schema missing required columns in {table}: {', '.join(sorted(missing))}"
                         )
+                    if "actor_ref" in actual:
+                        raise RuntimeError(
+                            f"Relay schema is actor-scoped in {table}; refusing startup"
+                        )
         except sqlite3.Error as exc:
             raise RuntimeError(f"cannot inspect existing Relay database: {path}") from exc
 

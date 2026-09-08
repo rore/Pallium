@@ -50,7 +50,7 @@ def main() -> None:
         container_ref = resolve_container_ref(cwd, session_id if has_session else None, True)
         actor_ref = derive_actor_ref(cwd, session_id)
         if has_session:
-            register_claude_wake(session_id, container_ref, actor_ref, idle=False)
+            register_claude_wake(session_id, container_ref, idle=False)
         pending_closes, close_generation = get_pending_relay_close_batch(
             session_id if has_session else None
         )
@@ -69,7 +69,6 @@ def main() -> None:
                         "runtime": "claude-code",
                         "session_ref": session_id,
                         "container_ref": previous_container,
-                        "actor_ref": actor_ref,
                     },
                     timeout=0.5,
                 )
@@ -98,7 +97,6 @@ def main() -> None:
                     "runtime": "claude-code",
                     "session_ref": session_id,
                     "container_ref": container_ref,
-                    "actor_ref": actor_ref,
                     "max_chars": RELAY_TURN_BUDGET,
                 },
                 timeout=0.75,
@@ -116,7 +114,7 @@ def main() -> None:
             if rendered_deliveries:
                 if not emit_utf8("\n\n".join((relay_output, relay_scope))):
                     return
-                acknowledge_relay(rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref)
+                acknowledge_relay(rendered_deliveries, container_ref=container_ref)
                 sys.exit(0)
 
         separator = 2 if relay_output else 0
@@ -163,7 +161,7 @@ def main() -> None:
         if output and emit_utf8(output):
             if relay_output:
                 acknowledge_relay(
-                    rendered_deliveries, container_ref=container_ref, actor_ref=actor_ref
+                    rendered_deliveries, container_ref=container_ref
                 )
     except Exception as exc:
         print(f"pallium user_prompt_submit hook error: {exc}", file=sys.stderr)

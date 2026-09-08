@@ -170,7 +170,7 @@ def main() -> None:
         container_ref = derive_container_ref(cwd)
         pin_container(session_id, container_ref, source=source)
         actor_ref = derive_actor_ref(cwd, session_id)
-        register_claude_wake(session_id, container_ref, actor_ref, idle=False)
+        register_claude_wake(session_id, container_ref, idle=False)
 
         relay_scope = format_injection(
             [], container_ref, budget_chars=RELAY_OUTPUT_BUDGET,
@@ -180,7 +180,7 @@ def main() -> None:
         relay_response = (
             relay_request("POST", "/relay/turn", {
                 "runtime": "claude-code", "session_ref": session_id,
-                "container_ref": container_ref, "actor_ref": actor_ref,
+                "container_ref": container_ref,
                 "max_chars": RELAY_TURN_BUDGET,
             }, timeout=0.75) or {}
         ) if relay_scope else {}
@@ -195,7 +195,7 @@ def main() -> None:
         if rendered:
             if not emit_utf8("\n\n".join((relay_output, relay_scope))):
                 return
-            acknowledge_relay(rendered, container_ref=container_ref, actor_ref=actor_ref)
+            acknowledge_relay(rendered, container_ref=container_ref)
             sys.exit(0)
 
         query_text = _derive_orientation_query(cwd)

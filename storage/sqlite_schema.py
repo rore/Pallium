@@ -519,7 +519,6 @@ class RelaySessionRecord(Base):
     runtime = Column(String, nullable=False)
     session_ref = Column(String, nullable=False)
     container_ref = Column(String, nullable=False)
-    actor_ref = Column(String, nullable=False)
     title = Column(String, nullable=True)
     alias = Column(String, nullable=True)
     state = Column(String, nullable=False, default="active")
@@ -529,11 +528,7 @@ class RelaySessionRecord(Base):
 
     __table_args__ = (
         UniqueConstraint("container_ref", "runtime", "session_ref", name="uq_relay_session_scope"),
-        # Legacy per-container guard for the denormalized session mirror only;
-        # RelayAliasRecord is authoritative for actor-global alias ownership.
-        UniqueConstraint(
-            "container_ref", "actor_ref", "runtime", "alias", name="uq_relay_session_alias"
-        ),
+        UniqueConstraint("alias", name="uq_relay_session_alias"),
     )
 
 
@@ -546,7 +541,6 @@ class RelayMessageRecord(Base):
     sender_endpoint_id = Column(String, nullable=True)
     recipient_selector = Column(String, nullable=False)
     container_ref = Column(String, nullable=False)
-    actor_ref = Column(String, nullable=False)
     payload = Column(Text, nullable=False)
     redacted = Column(Integer, nullable=False, default=0)
     in_reply_to = Column(String, nullable=True)
@@ -581,7 +575,6 @@ class RelayDeliveryRecord(Base):
 class RelayAliasRecord(Base):
     __tablename__ = "relay_aliases"
 
-    actor_ref = Column(String, primary_key=True)
     alias = Column(String, primary_key=True)
     endpoint_id = Column(String, nullable=True)
 
@@ -673,7 +666,7 @@ class SQLiteSchemaMixin:
     _INDEX_MIGRATIONS = {
         "idx_relay_sessions_discovery": (
             "CREATE INDEX IF NOT EXISTS idx_relay_sessions_discovery "
-            "ON relay_sessions(container_ref, actor_ref, runtime, state, last_seen_at)"
+            "ON relay_sessions(container_ref, runtime, state, last_seen_at)"
         ),
         "idx_relay_deliveries_claim": (
             "CREATE INDEX IF NOT EXISTS idx_relay_deliveries_claim "
@@ -686,10 +679,6 @@ class SQLiteSchemaMixin:
         "idx_relay_messages_expiry": (
             "CREATE INDEX IF NOT EXISTS idx_relay_messages_expiry "
             "ON relay_messages(expires_at)"
-        ),
-        "idx_relay_sessions_actor_alias": (
-            "CREATE INDEX IF NOT EXISTS idx_relay_sessions_actor_alias "
-            "ON relay_sessions(actor_ref, alias)"
         ),
         "idx_relay_deliveries_recipient_endpoint": (
             "CREATE INDEX IF NOT EXISTS idx_relay_deliveries_recipient_endpoint "

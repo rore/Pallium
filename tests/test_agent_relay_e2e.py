@@ -15,7 +15,7 @@ from core.relay import RelayNotFoundError, RelayService
 from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
 
 
-SCOPE = {"container_ref": "git:example.test/team/relay", "actor_ref": "local-user"}
+SCOPE = {"container_ref": "git:example.test/team/relay"}
 
 
 def _turn(client, runtime: str, session: str, **extra):
@@ -123,27 +123,24 @@ def test_alias_transfer_reply_and_lifecycle(client):
     assert _name(client, "codex", "review-new", "review").status_code == 200
 
 
-def test_aliases_are_actor_scoped_and_replacement_cannot_clear_another_actor(client):
-    _turn(client, "codex", "actor-one-old", actor_ref="actor-one")
-    _turn(client, "codex", "actor-one-new", actor_ref="actor-one")
-    _turn(client, "codex", "actor-two-target", actor_ref="actor-two")
-    _turn(client, "claude-code", "actor-two-sender", actor_ref="actor-two")
+def test_names_are_service_global_and_takeover_replaces_holder(client):
+    _turn(client, "codex", "actor-one-old")
+    _turn(client, "codex", "actor-one-new")
+    _turn(client, "codex", "actor-two-target")
+    _turn(client, "claude-code", "actor-two-sender")
 
     assert _name(
-        client, "codex", "actor-one-old", "review", actor_ref="actor-one"
+        client, "codex", "actor-one-old", "review"
     ).status_code == 200
+    assert _name(client, "codex", "actor-two-target", "review").status_code == 409
     assert _name(
-        client, "codex", "actor-two-target", "review", actor_ref="actor-two"
-    ).status_code == 200
-    assert _name(
-        client, "codex", "actor-one-new", "review",
-        actor_ref="actor-one", replace_existing=True,
+        client, "codex", "actor-one-new", "review", replace_existing=True,
     ).status_code == 200
 
     sent = _send(
-        client, "claude-code", "actor-two-sender", "codex:@review", actor_ref="actor-two"
+        client, "claude-code", "actor-two-sender", "codex:@review"
     ).json()
-    assert sent["deliveries"][0]["recipient_session_ref"] == "actor-two-target"
+    assert sent["deliveries"][0]["recipient_session_ref"] == "actor-one-new"
 
 
 @pytest.mark.parametrize(
@@ -264,7 +261,7 @@ def test_scoped_codepoint_pages_reconstruct_redacted_message_body(client):
     assert _status(client, sent["message_id"], offset=len(stored) + 1, page_size=1).status_code == 422
     assert _status(client, sent["message_id"], offset=0, page_size=0).status_code == 422
     assert _status(client, sent["message_id"], offset=0, page_size=16001).status_code == 422
-    assert _status(client, sent["message_id"], actor_ref="other", offset=0, page_size=1).status_code == 404
+    assert _status(client, sent["message_id"], offset=0, page_size=1).status_code == 200
     assert _status(
         client, sent["message_id"], container_ref="git:other", offset=0, page_size=1,
     ).status_code == 200
@@ -284,7 +281,7 @@ def test_identity_selector_scope_and_state_errors_are_visible(client):
 
     _turn(client, "codex", "target")
     message = _send(client, "claude-code", "sender", "codex:target").json()
-    assert _status(client, message["message_id"], actor_ref="different").status_code == 404
+    assert _status(client, message["message_id"]).status_code == 200
     assert client.get(
         "/relay/sessions", params={**SCOPE, "container_ref": "git:other"}
     ).json() == []
@@ -470,7 +467,7 @@ def test_delivery_derived_reply_is_attributed_scoped_and_idempotent(client):
     assert _reply(client, claimed["delivery_id"], "different").status_code == 409
 
     assert _reply(client, "missing").status_code == 404
-    assert _reply(client, claimed["delivery_id"], actor_ref="different").status_code == 404
+    assert _reply(client, claimed["delivery_id"]).status_code == 409
     assert _reply(client, claimed["delivery_id"], "תשובה → 你好", container_ref="git:other").status_code == 200
 
 
@@ -898,7 +895,6 @@ def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage
             db.get(RelayDeliveryRecord, item["delivery_id"]).lease_expires_at = past
         db.get(RelayMessageRecord, excluded["expired"][0]["message_id"]).expires_at = past
         db.get(RelayMessageRecord, excluded["unsafe"][0]["message_id"]).payload = "unsafe\u2028legacy"
-        db.get(RelayMessageRecord, excluded["mismatch"][0]["message_id"]).actor_ref = "other-actor"
 
     pairs = ((first, first_claim), (second, second_claim), (claude, claude_claim))
     before = {
@@ -911,6 +907,7 @@ def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage
     assert [item["delivery_id"] for item in wake_candidates] == [
         first_claim["delivery_id"],
         claude_claim["delivery_id"],
+        excluded["mismatch"][1]["delivery_id"],
         pending["deliveries"][0]["delivery_id"],
     ]
     assert relay.wake_candidates(
@@ -928,6 +925,7 @@ def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage
     assert [item["delivery_id"] for item in candidates] == [
         first_claim["delivery_id"],
         claude_claim["delivery_id"],
+        excluded["mismatch"][1]["delivery_id"],
     ]
     assert candidates[0] == {
         "delivery_id": first_claim["delivery_id"],
@@ -953,7 +951,6 @@ def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage
         (excluded["closed"][0], excluded["closed"][1]),
         (excluded["expired"][0], excluded["expired"][1]),
         (excluded["unsafe"][0], excluded["unsafe"][1]),
-        (excluded["mismatch"][0], excluded["mismatch"][1]),
         (pending, pending["deliveries"][0]),
         (delivered, delivered_claim),
         (passive, passive_claim),
@@ -1013,7 +1010,7 @@ def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, rela
     assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
     assert "relay operation=turn outcome=busy" in caplog.text
     assert SCOPE["container_ref"] not in caplog.text
-    assert SCOPE["actor_ref"] not in caplog.text
+    assert "actor-ref" not in caplog.text
 
 def test_atomic_reply_busy_uses_retryable_contract(client, relay_storage, monkeypatch, caplog):
     _turn(client, "claude-code", "sender")
@@ -1037,7 +1034,7 @@ def test_atomic_reply_busy_uses_retryable_contract(client, relay_storage, monkey
     assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
     assert "relay operation=reply outcome=busy" in caplog.text
     assert SCOPE["container_ref"] not in caplog.text
-    assert SCOPE["actor_ref"] not in caplog.text
+    assert "actor-ref" not in caplog.text
     monkeypatch.undo()
     status = client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE)
     assert status.status_code == 200, status.text
@@ -1163,12 +1160,7 @@ def test_relay_destination_health_strict_cas_and_scope(client, relay_storage):
         runtime="codex", session_ref="health", **SCOPE,
         attempt_started_at=base + timedelta(seconds=2),
     ) is False
-    with pytest.raises(RelayNotFoundError):
-        relay.mark_unreachable(
-            runtime="codex", session_ref="health",
-            container_ref=SCOPE["container_ref"], actor_ref="other",
-            attempt_started_at=base + timedelta(seconds=3),
-        )
+    assert relay.mark_unreachable(runtime="codex", session_ref="health", **SCOPE, attempt_started_at=base + timedelta(seconds=3)) is False
     with pytest.raises(RelayNotFoundError):
         relay.mark_unreachable(
             runtime="codex", session_ref="missing", **SCOPE,

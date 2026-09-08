@@ -211,7 +211,6 @@ class TestRelay:
         assert result == {"sessions": []}
         assert mock_get.call_args.kwargs["params"] == {
             "container_ref": "test-container",
-            "actor_ref": "test-actor",
             "runtime": "קלוד",
             "include_inactive": True,
         }
@@ -235,7 +234,6 @@ class TestRelay:
             "sender_runtime": "codex",
             "sender_session_ref": "session-1",
             "container_ref": "test-container",
-            "actor_ref": "test-actor",
         }
 
     @pytest.mark.asyncio
@@ -270,7 +268,6 @@ class TestRelay:
             "payload": "ack ✓",
             "expires_in_seconds": 60,
             "container_ref": "test-container",
-            "actor_ref": "test-actor",
         }
 
     @pytest.mark.asyncio
@@ -281,7 +278,6 @@ class TestRelay:
         assert result["state"] == "delivered"
         assert mock_get.call_args.kwargs["params"] == {
             "container_ref": "test-container",
-            "actor_ref": "test-actor",
             "offset": 7,
             "page_size": 99,
         }
@@ -301,7 +297,6 @@ class TestRelay:
             "max_response_chars": 2000,
             "max_messages": 1,
             "container_ref": "test-container",
-            "actor_ref": "test-actor",
         }
 
     @pytest.mark.asyncio
@@ -453,5 +448,4 @@ class TestRelay:
             "runtime": "codex",
             "session_ref": "session-1",
             "container_ref": "test-container",
-            "actor_ref": "test-actor",
         }

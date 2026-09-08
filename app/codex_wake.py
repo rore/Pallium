@@ -21,7 +21,7 @@ _DEBOUNCE_SECONDS = 1.0
 _TIMEOUT_SECONDS = 300
 _QUEUE_TIMEOUT_SECONDS = 30
 _LaunchOutcome = Literal["exec_completed", "queued", "ambiguous", "failed"]
-_WakeKey = tuple[str, str, str]
+_WakeKey = tuple[str, str]
 _scheduled_delivery_ids: set[str] = set()
 _scheduled_session_generations: dict[_WakeKey, int] = {}
 _generation_counter = 0
@@ -54,7 +54,6 @@ def schedule_codex_relay_wake(
     session_ref = delivery.get("recipient_session_ref")
     recipient = result.get("recipient")
     container_ref = scope.get("container_ref")
-    actor_ref = scope.get("actor_ref")
     selector = recipient.removeprefix("codex:") if isinstance(recipient, str) else ""
     valid_selector = selector == session_ref or bool(
         re.fullmatch(r"@[a-z0-9][a-z0-9_-]{0,31}", selector)
@@ -69,12 +68,10 @@ def schedule_codex_relay_wake(
         or not session_ref.isprintable()
         or not isinstance(container_ref, str)
         or not container_ref
-        or not isinstance(actor_ref, str)
-        or not actor_ref
         or not valid_selector
     ):
         return
-    wake_key = (session_ref, container_ref, actor_ref)
+    wake_key = (session_ref, container_ref)
     with _scheduled_lock:
         if wake_key in _scheduled_session_generations:
             return
@@ -152,10 +149,9 @@ def _wake(session_ref: str) -> _LaunchOutcome:
 def mark_codex_relay_wake_admitted(
     session_ref: str,
     container_ref: str,
-    actor_ref: str,
 ) -> None:
     with _scheduled_lock:
-        _clear_schedule_locked((session_ref, container_ref, actor_ref))
+        _clear_schedule_locked((session_ref, container_ref))
 
 
 def _launch(session_ref: str, prompt: str) -> _LaunchOutcome:

@@ -15,7 +15,6 @@ PAYLOAD = {
     "runtime": "claude-code",
     "session_ref": "session-α",
     "container_ref": "git:example/repo",
-    "actor_ref": "local",
     "socket_path": "/missing/claude.sock",
     "token": "test-token",
     "idle": True,
@@ -26,10 +25,9 @@ def _intent_path(
     root: Path,
     session_ref: str,
     container_ref: str = PAYLOAD["container_ref"],
-    actor_ref: str = PAYLOAD["actor_ref"],
 ) -> Path:
     identity = json.dumps(
-        ["claude-code", session_ref, container_ref, actor_ref],
+        ["claude-code", session_ref, container_ref],
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -39,7 +37,7 @@ def _intent_path(
 
 
 def _write_intent(root: Path, payload: dict, intent_id: str) -> None:
-    path = _intent_path(root, payload["session_ref"], payload["container_ref"], payload["actor_ref"])
+    path = _intent_path(root, payload["session_ref"], payload["container_ref"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({**payload, "intent_id": intent_id}), encoding="utf-8")
 
@@ -57,7 +55,7 @@ def test_compare_before_apply_rejects_delayed_intent_and_restart_uses_latest(tmp
     assert not registry.register(**PAYLOAD, intent_id="A")
     restarted = ClaudeWakeRegistry(state_dir=tmp_path)
     observed: list[str] = []
-    assert restarted.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=lambda _path, token: observed.append(token) or True)
+    assert restarted.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], transport=lambda _path, token: observed.append(token) or True)
     assert observed == ["new-token"]
 
 
@@ -66,7 +64,7 @@ def test_startup_recovers_pre_http_write_ahead_intent_without_relay_mutation(tmp
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     registry.recover_intents()
     observed: list[bool] = []
-    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=lambda *_: observed.append(True) or True)
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], transport=lambda *_: observed.append(True) or True)
     assert observed == [True]
 
 
@@ -74,11 +72,11 @@ def test_busy_persistence_failure_fences_stale_idle_across_restart(tmp_path: Pat
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     assert _register(registry, tmp_path, PAYLOAD, "idle")
     monkeypatch.setattr(registry, "_write_canonical_locked", lambda *_: False)
-    assert registry.mark_busy(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"])
+    assert registry.mark_busy(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"])
     assert (tmp_path / "store-unusable").exists() or (tmp_path / "capabilities.unusable").exists()
     restarted = ClaudeWakeRegistry(state_dir=tmp_path)
     assert restarted.recovery_candidates() == []
-    assert not restarted.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=lambda *_: pytest.fail("stale idle must not rehydrate"))
+    assert not restarted.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], transport=lambda *_: pytest.fail("stale idle must not rehydrate"))
 
 
 def test_capacity_keeps_live_endpoint_without_admitting_transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -110,7 +108,7 @@ def test_hook_writes_intent_before_loopback_and_keeps_it_after_ambiguous_failure
         raise TimeoutError("ambiguous")
 
     monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_request))
-    assert not common.register_claude_wake("session-hook", "git:example/repo", "local", idle=True)
+    assert not common.register_claude_wake("session-hook", "git:example/repo", idle=True)
     saved = json.loads(_intent_path(tmp_path, "session-hook").read_text(encoding="utf-8"))
     assert saved["idle"] is True and isinstance(saved["intent_id"], str)
 
@@ -130,7 +128,7 @@ def test_hook_replace_failure_cleans_credentials_before_loopback(tmp_path: Path,
 
     monkeypatch.setattr(common.os, "replace", fail_replace)
     monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: opener_calls.append(True) or pytest.fail("write-ahead failure must not loop back"))
-    assert not common.register_claude_wake("replace-failure", "git:example/repo", "local", idle=True)
+    assert not common.register_claude_wake("replace-failure", "git:example/repo", idle=True)
     assert opener_calls == [] and list((tmp_path / "intents").glob("*.tmp")) == []
     assert not _intent_path(tmp_path, "replace-failure").exists()
     restarted = ClaudeWakeRegistry(state_dir=tmp_path)
@@ -143,12 +141,12 @@ def test_closed_intent_removes_capability_after_outage(tmp_path: Path) -> None:
     assert _register(registry, tmp_path, PAYLOAD, "open")
     closed = {
         "runtime": "claude-code", "session_ref": PAYLOAD["session_ref"],
-        "container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"],
+        "container_ref": PAYLOAD["container_ref"],
         "intent_id": "close", "closed": True,
     }
     path = _intent_path(tmp_path, PAYLOAD["session_ref"])
     path.write_text(json.dumps(closed), encoding="utf-8")
-    assert registry.close(**{key: closed[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
+    assert registry.close(**{key: closed[key] for key in ("runtime", "session_ref", "container_ref", "intent_id")})
     assert ClaudeWakeRegistry(state_dir=tmp_path).recovery_candidates() == []
 
 
@@ -156,7 +154,7 @@ def test_pending_candidate_is_read_only_at_the_real_relay_surface(client) -> Non
     from core.relay import RelayService
 
     relay = RelayService(client.app.state.pallium_service._storage)
-    scope = {"container_ref": "git:example/repo", "actor_ref": "local"}
+    scope = {"container_ref": "git:example/repo"}
     relay.turn(runtime="codex", session_ref="sender", **scope)
     relay.turn(runtime="claude-code", session_ref="target", **scope)
     sent = relay.send(sender_runtime="codex", sender_session_ref="sender", recipient="claude-code:target", payload="pending", **scope)
@@ -199,7 +197,7 @@ def test_inflight_write_failure_never_transports_or_claims_relay(
 
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     assert _register(registry, tmp_path, PAYLOAD, "idle")
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     relay = RelayService(client.app.state.pallium_service._storage)
     relay.turn(runtime="codex", session_ref="sender", **scope)
     relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
@@ -209,7 +207,7 @@ def test_inflight_write_failure_never_transports_or_claims_relay(
     monkeypatch.setattr(registry, "_write_canonical_locked", lambda *_: False)
     assert not registry.probe(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        container_ref=PAYLOAD["container_ref"],
         delivery_id=before["delivery_id"], transport=lambda path, token: calls.append((path, token)) or "accepted",
     )
     assert calls == []
@@ -229,7 +227,7 @@ def test_post_transport_write_failure_rearms_durable_inflight_for_later_retry(
     wall = [100.0]
     registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     assert _register(registry, tmp_path, PAYLOAD, "idle")
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     relay = RelayService(client.app.state.pallium_service._storage)
     relay.turn(runtime="codex", session_ref="sender", **scope)
     relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
@@ -247,7 +245,7 @@ def test_post_transport_write_failure_rearms_durable_inflight_for_later_retry(
     monkeypatch.setattr(registry, "_write_canonical_locked", write_through_inflight_then_fail)
     assert not registry.probe(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        container_ref=PAYLOAD["container_ref"],
         delivery_id=delivery_id, transport=lambda path, token: initial_calls.append((path, token)) or outcome,
     )
     assert writes == 2 and initial_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
@@ -263,13 +261,13 @@ def test_post_transport_write_failure_rearms_durable_inflight_for_later_retry(
     wall[0] = 101.0
     assert restarted.rearm_inflight(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        container_ref=PAYLOAD["container_ref"],
         delivery_id=delivery_id, grace_seconds=1,
     )
     later_calls: list[tuple[str, str]] = []
     assert restarted.probe(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        container_ref=PAYLOAD["container_ref"],
         delivery_id=delivery_id, transport=lambda path, token: later_calls.append((path, token)) or "accepted",
     )
     assert later_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
@@ -277,8 +275,8 @@ def test_post_transport_write_failure_rearms_durable_inflight_for_later_retry(
 
 
 @pytest.mark.parametrize("item", [
-    {"runtime": "claude-code", "session_ref": "s", "container_ref": "c", "actor_ref": "a", "socket_path": "p", "token": "t", "generation": "bad", "idle": True, "state": "idle", "delivery_id": None, "attempted_at": None, "expires_at": 1},
-    {"runtime": "claude-code", "session_ref": "s", "container_ref": "c", "actor_ref": "a", "socket_path": "p", "token": "t", "generation": 1, "idle": True, "state": "wake_inflight", "delivery_id": None, "attempted_at": None, "expires_at": 1},
+    {"runtime": "claude-code", "session_ref": "s", "container_ref": "c", "socket_path": "p", "token": "t", "generation": "bad", "idle": True, "state": "idle", "delivery_id": None, "attempted_at": None, "expires_at": 1},
+    {"runtime": "claude-code", "session_ref": "s", "container_ref": "c", "socket_path": "p", "token": "t", "generation": 1, "idle": True, "state": "wake_inflight", "delivery_id": None, "attempted_at": None, "expires_at": 1},
 ])
 def test_corrupt_persisted_records_fail_closed(tmp_path: Path, item: dict) -> None:
     (tmp_path / "capabilities.json").write_text(json.dumps({"version": 1, "registrations": [item]}), encoding="utf-8")
@@ -289,7 +287,7 @@ def test_stale_closed_intent_cannot_remove_newer_intent(tmp_path: Path) -> None:
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     newer = {**PAYLOAD, "token": "new-token"}
     _write_intent(tmp_path, newer, "new")
-    assert not registry.close(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], intent_id="old")
+    assert not registry.close(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], intent_id="old")
     assert registry.register(**newer, intent_id="new")
 
 
@@ -305,33 +303,33 @@ def test_accepted_inflight_rehydrates_and_rearms_after_grace(tmp_path: Path) -> 
     wall = [100.0]
     registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     assert _register(registry, tmp_path, PAYLOAD, "idle")
-    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
     restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     assert restarted.recovery_candidates()[0]["attempted_at"] == 100.0
-    assert not restarted.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", grace_seconds=1)
+    assert not restarted.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", grace_seconds=1)
     wall[0] = 101.0
-    assert restarted.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", grace_seconds=1)
+    assert restarted.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", grace_seconds=1)
 
 
 def test_wall_clock_rollback_rearms_inflight_for_eventual_wake(tmp_path: Path) -> None:
     wall = [100.0]
     registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     assert _register(registry, tmp_path, PAYLOAD, "idle")
-    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
     wall[0] = 1.0
-    assert registry.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", grace_seconds=1)
+    assert registry.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", grace_seconds=1)
 
 def test_unreachable_transport_retains_capability_but_preserves_newer_intent(tmp_path: Path) -> None:
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     assert _register(registry, tmp_path, PAYLOAD, "idle")
     _write_intent(tmp_path, {**PAYLOAD, "token": "new"}, "new")
-    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="d", transport=lambda *_: "unreachable")
+    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="d", transport=lambda *_: "unreachable")
     assert registry.recovery_candidates() == []
     restarted = ClaudeWakeRegistry(state_dir=tmp_path)
     assert restarted.recovery_candidates() == []
     assert json.loads((tmp_path / "capabilities.json").read_text(encoding="utf-8"))["registrations"][0]["state"] == "unreachable"
     assert registry.register(**{**PAYLOAD, "token": "new"}, intent_id="new")
-    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=lambda _path, token: token == "new")
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], transport=lambda _path, token: token == "new")
 
 
 def test_busy_persistence_failure_reports_degradation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -339,21 +337,21 @@ def test_busy_persistence_failure_reports_degradation(tmp_path: Path, monkeypatc
     assert _register(registry, tmp_path, PAYLOAD, "idle")
     monkeypatch.setattr(registry, "_write_canonical_locked", lambda *_: False)
     monkeypatch.setattr(registry, "_quarantine_or_mark_unusable_locked", lambda: False)
-    assert registry.mark_busy(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"])
+    assert registry.mark_busy(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"])
     assert registry.durability_degraded
 
 def test_close_preserves_intent_replaced_after_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     assert _register(registry, tmp_path, PAYLOAD, "open")
-    closed = {"runtime": "claude-code", "session_ref": PAYLOAD["session_ref"], "container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"], "intent_id": "close", "closed": True}
+    closed = {"runtime": "claude-code", "session_ref": PAYLOAD["session_ref"], "container_ref": PAYLOAD["container_ref"], "intent_id": "close", "closed": True}
     path = _intent_path(tmp_path, PAYLOAD["session_ref"])
     path.write_text(json.dumps(closed), encoding="utf-8")
     original = registry._delete_intent_locked
-    def replace_then_delete(runtime, session_ref, container_ref, actor_ref, expected_intent_id) -> bool:
+    def replace_then_delete(runtime, session_ref, container_ref, expected_intent_id) -> bool:
         path.write_text(json.dumps({**PAYLOAD, "token": "new", "intent_id": "new"}), encoding="utf-8")
-        return original(runtime, session_ref, container_ref, actor_ref, expected_intent_id)
+        return original(runtime, session_ref, container_ref, expected_intent_id)
     monkeypatch.setattr(registry, "_delete_intent_locked", replace_then_delete)
-    assert registry.close(**{key: closed[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")})
+    assert registry.close(**{key: closed[key] for key in ("runtime", "session_ref", "container_ref", "intent_id")})
     assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "new"
 
 def test_recovery_retries_rollback_inflight_once_without_relay_mutation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -361,7 +359,7 @@ def test_recovery_retries_rollback_inflight_once_without_relay_mutation(tmp_path
     wall = [100.0]
     registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     assert _register(registry, tmp_path, PAYLOAD, "idle")
-    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
     restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     calls = []
     relay = SimpleNamespace(pending_candidate=lambda **kwargs: calls.append(kwargs) or {"delivery_id": "delivery", "state": "pending"})
@@ -390,7 +388,7 @@ def test_expired_claim_recovery_retries_without_mutating_relay(
         return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
 
     monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     relay = RelayService(client.app.state.pallium_service._storage)
     relay.turn(runtime="codex", session_ref="sender", **scope)
     relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
@@ -407,7 +405,7 @@ def test_expired_claim_recovery_retries_without_mutating_relay(
     assert _register(registry, tmp_path, PAYLOAD, "idle")
     assert registry.probe(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        container_ref=PAYLOAD["container_ref"],
         delivery_id=claimed["delivery_id"], transport=lambda *_: "accepted",
     )
     restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
@@ -450,7 +448,7 @@ def test_reconciler_retries_pending_wake_until_native_transport_accepts(
     from app.claude_wake import ClaudeWakeReconciler
     from core.relay import RelayService
 
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     relay = RelayService(client.app.state.pallium_service._storage)
     relay.turn(runtime="codex", session_ref="sender", **scope)
     relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
@@ -490,7 +488,7 @@ def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
     from app import claude_wake
     from core.relay import RelayService
 
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     relay = RelayService(client.app.state.pallium_service._storage)
     relay.turn(runtime="codex", session_ref="sender", **scope)
     relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
@@ -567,7 +565,7 @@ def test_recovery_clears_terminal_inflight_and_reschedules_exact_scope(
 
     monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
     monkeypatch.setattr(relay_module, "datetime", SimpleNamespace(now=lambda _tz: clock[0]))
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     relay = RelayService(client.app.state.pallium_service._storage)
     relay.turn(runtime="codex", session_ref="sender", **scope)
     relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
@@ -597,7 +595,7 @@ def test_recovery_clears_terminal_inflight_and_reschedules_exact_scope(
     assert _register(registry, tmp_path, PAYLOAD, "idle")
     assert registry.probe(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        container_ref=PAYLOAD["container_ref"],
         delivery_id=before["delivery_id"], transport=lambda *_: "accepted",
     )
     restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
@@ -646,13 +644,13 @@ def test_online_close_removes_only_exact_durable_capability_and_intent(tmp_path:
     assert _register(registry, tmp_path, other, "other-open")
     closed = {
         "runtime": "claude-code", "session_ref": PAYLOAD["session_ref"],
-        "container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"],
+        "container_ref": PAYLOAD["container_ref"],
         "intent_id": "closed", "closed": True,
     }
     path = _intent_path(tmp_path, PAYLOAD["session_ref"])
     path.write_text(json.dumps(closed), encoding="utf-8")
     http = _client(registry)
-    close_request = {key: closed[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref", "intent_id")}
+    close_request = {key: closed[key] for key in ("runtime", "session_ref", "container_ref", "intent_id")}
     mismatch = http.post("/internal/claude-wake/close", json={**close_request, "intent_id": "stale"})
     assert mismatch.status_code == 400
     assert path.exists()
@@ -676,7 +674,6 @@ def test_session_end_outage_preserves_newer_registration_intent(tmp_path: Path, 
     common = sys.modules["common"]
     monkeypatch.setattr(session_end, "read_hook_input", lambda: {"session_id": PAYLOAD["session_ref"], "cwd": str(tmp_path)})
     monkeypatch.setattr(session_end, "resolve_container_ref", lambda *_: PAYLOAD["container_ref"])
-    monkeypatch.setattr(session_end, "derive_actor_ref", lambda *_: PAYLOAD["actor_ref"])
     monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError())))
     session_end.main()
     closed_path = _intent_path(state_dir, PAYLOAD["session_ref"])
@@ -687,9 +684,9 @@ def test_session_end_outage_preserves_newer_registration_intent(tmp_path: Path, 
     newer = {**PAYLOAD, "token": "new-token"}
     original_delete = restarted._delete_intent_locked
 
-    def replace_closed_intent(runtime, session_ref, container_ref, actor_ref, expected_intent_id) -> bool:
+    def replace_closed_intent(runtime, session_ref, container_ref, expected_intent_id) -> bool:
         _write_intent(state_dir, newer, "newer")
-        return original_delete(runtime, session_ref, container_ref, actor_ref, expected_intent_id)
+        return original_delete(runtime, session_ref, container_ref, expected_intent_id)
 
     monkeypatch.setattr(restarted, "_delete_intent_locked", replace_closed_intent)
     restarted.recover_intents()
@@ -742,7 +739,7 @@ def test_unreachable_feedback_precedes_registry_transition(tmp_path: Path, monke
     assert _register(registry, root, PAYLOAD, "success")
     assert not registry.probe(
         runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        container_ref=PAYLOAD["container_ref"],
         transport=lambda *_: "unreachable", on_unreachable=lambda: events.append("unreachable"),
     )
     assert events == ["unreachable"]
@@ -752,7 +749,7 @@ def test_unreachable_feedback_precedes_registry_transition(tmp_path: Path, monke
     assert _register(retry_registry, retry_root, PAYLOAD, "retry")
     assert not retry_registry.probe(
         runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        container_ref=PAYLOAD["container_ref"],
         transport=lambda *_: "retryable", on_unreachable=lambda: events.append("retryable"),
     )
     assert events == ["unreachable"]
@@ -771,7 +768,7 @@ def test_unreachable_feedback_precedes_registry_transition(tmp_path: Path, monke
     monkeypatch.setattr(failed_registry, "_write_canonical_locked", fail_unreachable_persist)
     assert not failed_registry.probe(
         runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        container_ref=PAYLOAD["container_ref"],
         transport=lambda *_: "unreachable", on_unreachable=lambda: events.append("failed"),
     )
     assert events == ["unreachable", "failed"]
@@ -789,7 +786,7 @@ def test_restart_recovery_persists_unreachable_relay_health(
     from core.relay import RelayService
 
     relay = RelayService(client.app.state.pallium_service._storage)
-    scope = {"container_ref": PAYLOAD["container_ref"], "actor_ref": PAYLOAD["actor_ref"]}
+    scope = {"container_ref": PAYLOAD["container_ref"]}
     relay.turn(runtime="codex", session_ref="sender", **scope)
     relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
@@ -829,7 +826,7 @@ def test_recovery_health_callbacks_bind_each_exact_candidate(
     from app import claude_wake
 
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
-    second = {**PAYLOAD, "session_ref": "session-β", "actor_ref": "other-local"}
+    second = {**PAYLOAD, "session_ref": "session-β"}
     assert _register(registry, tmp_path, PAYLOAD, "first")
     assert _register(registry, tmp_path, second, "second")
     callbacks = []
@@ -844,7 +841,7 @@ def test_recovery_health_callbacks_bind_each_exact_candidate(
             "state": "pending",
         },
         mark_unreachable=lambda **kwargs: marked.append((
-            str(kwargs["session_ref"]), str(kwargs["actor_ref"])
+            str(kwargs["session_ref"]), str(kwargs["container_ref"])
         )) or True,
     )
     monkeypatch.setattr(claude_wake, "schedule_claude_relay_wake", schedule)
@@ -852,8 +849,8 @@ def test_recovery_health_callbacks_bind_each_exact_candidate(
     assert len(callbacks) == 2
     for callback in callbacks:
         callback(datetime.now(timezone.utc))
-    assert marked == [(PAYLOAD["session_ref"], PAYLOAD["actor_ref"]),
-                      (second["session_ref"], second["actor_ref"])]
+    assert marked == [(PAYLOAD["session_ref"], PAYLOAD["container_ref"]),
+                      (second["session_ref"], second["container_ref"])]
 
 
 def test_expired_claim_recovery_rechecks_and_isolates_candidate_errors(
@@ -869,7 +866,6 @@ def test_expired_claim_recovery_rechecks_and_isolates_candidate_errors(
             "recipient_runtime": "codex",
             "recipient_session_ref": "target",
             "container_ref": "git:example/repo",
-            "actor_ref": "local",
         }
 
     broken, stale, current = (candidate(name) for name in ("broken", "stale", "current"))
@@ -894,7 +890,6 @@ def test_expired_claim_recovery_rechecks_and_isolates_candidate_errors(
     assert [item[0]["deliveries"][0]["delivery_id"] for item in dispatched] == ["current"]
     assert dispatched[0][1] == {
         "container_ref": current["container_ref"],
-        "actor_ref": current["actor_ref"],
     }
 
 
@@ -954,11 +949,11 @@ def test_persistent_registry_keeps_duplicate_native_sessions_per_scope(
 
     restarted = ClaudeWakeRegistry(state_dir=tmp_path)
     assert {
-        (item["session_ref"], item["container_ref"], item["actor_ref"])
+        (item["session_ref"], item["container_ref"])
         for item in restarted.recovery_candidates()
     } == {
-        ("duplicate", "container-a", PAYLOAD["actor_ref"]),
-        ("duplicate", "container-b", PAYLOAD["actor_ref"]),
+        ("duplicate", "container-a"),
+        ("duplicate", "container-b"),
     }
     observed: list[tuple[str, str]] = []
     for payload in (first, second):
@@ -966,7 +961,6 @@ def test_persistent_registry_keeps_duplicate_native_sessions_per_scope(
             runtime="claude-code",
             session_ref="duplicate",
             container_ref=payload["container_ref"],
-            actor_ref=payload["actor_ref"],
             transport=lambda socket, token: observed.append((socket, token)) or "accepted",
         )
     assert observed == [("socket-a", "token-a"), ("socket-b", "token-b")]
@@ -984,7 +978,6 @@ def test_legacy_intent_fences_existing_idle_capability_on_upgrade(
             "runtime": PAYLOAD["runtime"],
             "session_ref": PAYLOAD["session_ref"],
             "container_ref": PAYLOAD["container_ref"],
-            "actor_ref": PAYLOAD["actor_ref"],
             "intent_id": "legacy-close",
             "closed": True,
         }),
@@ -998,7 +991,6 @@ def test_legacy_intent_fences_existing_idle_capability_on_upgrade(
         runtime=PAYLOAD["runtime"],
         session_ref=PAYLOAD["session_ref"],
         container_ref=PAYLOAD["container_ref"],
-        actor_ref=PAYLOAD["actor_ref"],
         transport=lambda *_: pytest.fail("legacy close must fence wake"),
     )
     assert not legacy_path.exists()
@@ -1016,7 +1008,6 @@ def test_legacy_intent_fences_memory_when_canonical_removal_fails(
             "runtime": PAYLOAD["runtime"],
             "session_ref": PAYLOAD["session_ref"],
             "container_ref": PAYLOAD["container_ref"],
-            "actor_ref": PAYLOAD["actor_ref"],
             "intent_id": "legacy-close",
             "closed": True,
         }),
@@ -1041,7 +1032,6 @@ def test_legacy_intent_fences_memory_when_canonical_removal_fails(
         runtime=PAYLOAD["runtime"],
         session_ref=PAYLOAD["session_ref"],
         container_ref=PAYLOAD["container_ref"],
-        actor_ref=PAYLOAD["actor_ref"],
         transport=lambda *_: pytest.fail("failed persistence must still fence memory"),
     )
 
@@ -1063,7 +1053,6 @@ def test_corrupt_scoped_intent_cannot_suppress_valid_legacy_fence(
             "runtime": PAYLOAD["runtime"],
             "session_ref": PAYLOAD["session_ref"],
             "container_ref": PAYLOAD["container_ref"],
-            "actor_ref": PAYLOAD["actor_ref"],
             "intent_id": "legacy-close",
             "closed": True,
         }),
@@ -1080,6 +1069,5 @@ def test_corrupt_scoped_intent_cannot_suppress_valid_legacy_fence(
         runtime=PAYLOAD["runtime"],
         session_ref=PAYLOAD["session_ref"],
         container_ref=PAYLOAD["container_ref"],
-        actor_ref=PAYLOAD["actor_ref"],
         transport=lambda *_: pytest.fail("corrupt scoped intent must not suppress fence"),
     )

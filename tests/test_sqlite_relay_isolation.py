@@ -37,11 +37,11 @@ def test_sqlite_lifecycle_and_writer_isolation(tmp_path: Path) -> None:
 
     # A main-file writer must not prevent a short Relay write on its own file.
     import sqlite3
-    provider.relay_turn(runtime="codex", session_ref="target", container_ref="c", actor_ref="u", title=None, max_chars=1000, max_messages=3, lease_seconds=60)
+    provider.relay_turn(runtime="codex", session_ref="target", container_ref="c", title=None, max_chars=1000, max_messages=3, lease_seconds=60)
     blocker = sqlite3.connect(main, timeout=0)
     try:
         blocker.execute("BEGIN IMMEDIATE")
-        result = provider.relay_turn(runtime="codex", session_ref="second", container_ref="c", actor_ref="u", title=None, max_chars=1000, max_messages=3, lease_seconds=60)
+        result = provider.relay_turn(runtime="codex", session_ref="second", container_ref="c", title=None, max_chars=1000, max_messages=3, lease_seconds=60)
         assert result["session"]["session_ref"] == "second"
     finally:
         blocker.rollback()
@@ -64,7 +64,7 @@ def test_bounded_multi_agent_relay_fan_in_has_no_lost_deliveries(tmp_path: Path)
         f"sqlite:///{tmp_path / 'main.db'}",
         relay_database_url=f"sqlite:///{tmp_path / 'relay.db'}",
     )
-    common = {"container_ref": "c", "actor_ref": "u"}
+    common = {"container_ref": "c",}
     provider.relay_turn(runtime="codex", session_ref="target", title=None, max_chars=10000, max_messages=20, lease_seconds=60, **common)
     for index in range(8):
         provider.relay_turn(runtime="claude-code", session_ref=f"sender-{index}", title=None, max_chars=1000, max_messages=1, lease_seconds=60, **common)
@@ -102,7 +102,7 @@ def test_http_relay_remains_available_during_main_writer(tmp_path: Path, monkeyp
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda _: None)
     app = create_app(AppConfig(storage_backend="sqlite", sqlite_url=f"sqlite:///{main}", relay_sqlite_url=f"sqlite:///{relay}", default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(enabled=False)))
     with TestClient(app) as client:
-        scope = {"container_ref": "c", "actor_ref": "u"}
+        scope = {"container_ref": "c",}
         for session in ("sender", "target"):
             assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope, "max_chars": 1000, "max_messages": 3, "lease_seconds": 60}).status_code == 200
         blocker = sqlite3.connect(main, timeout=0)
@@ -335,7 +335,6 @@ def test_dormant_legacy_relay_tables_in_main_do_not_block_active_pair(
         runtime="codex",
         session_ref="target",
         container_ref="c",
-        actor_ref="u",
         title=None,
         max_chars=100,
         max_messages=1,
@@ -360,7 +359,7 @@ def test_current_relay_rows_alias_removal_unresolved_binding_and_claim_survive_r
 ) -> None:
     main = tmp_path / "main.db"
     relay = tmp_path / "relay.db"
-    scope = {"container_ref": "c", "actor_ref": "u"}
+    scope = {"container_ref": "c",}
     provider = SQLiteStorageProvider(
         f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
     )
@@ -450,3 +449,15 @@ def test_current_relay_rows_alias_removal_unresolved_binding_and_claim_survive_r
         **scope,
     )["deliveries"] == []
     reopened.close()
+
+def test_actor_bearing_relay_schema_is_rejected_without_migration(tmp_path: Path) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    provider = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    provider.close()
+    with sqlite3.connect(relay) as connection:
+        connection.execute("ALTER TABLE relay_sessions ADD COLUMN actor_ref TEXT")
+    before = relay.read_bytes()
+    with pytest.raises(RuntimeError, match="column|schema|current"):
+        SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    assert relay.read_bytes() == before

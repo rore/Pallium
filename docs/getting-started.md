@@ -89,7 +89,7 @@ separately addressable.
 
 ## 3. Try Relay
 
-In the second session, give it a Relay alias:
+In the second session, give it a Relay name:
 
 > Use Pallium Relay to name this session `review`.
 
@@ -97,12 +97,12 @@ In the first session, ask:
 
 > List Pallium Relay recipients.
 
-Confirm that the `review` alias points to the intended session, then send a
+Confirm that the `review` name points to the intended session, then send a
 small message. Use the target runtime shown by recipient discovery
-(`codex:@review` or `claude-code:@review`). An exact session or alias is safer
+(`@review`). An exact session or name is safer
 than a runtime-wide send when several sessions are open:
 
-> Use Pallium Relay to send `codex:@review`: "Please check whether the API change
+> Use Pallium Relay to send `@review`: "Please check whether the API change
 > preserves the old response field."
 
 On qualified Windows and Linux paths for Claude Code and Codex, Pallium can
@@ -112,7 +112,7 @@ paths keep the message pending until the next normal recipient turn.
 The recipient can reply using the received delivery. Pallium derives the return
 address; the recipient does not need to look up the sender again.
 
-See [Relay](agent-relay.md) for aliases, delivery limits, recovery tools, and
+See [Relay](agent-relay.md) for names, delivery limits, recovery tools, and
 current wake status.
 
 ## 4. Try Session History

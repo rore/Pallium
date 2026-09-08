@@ -1064,7 +1064,7 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0, remaining_count:
     return output, rendered
 
 
-def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: str) -> None:
+def acknowledge_relay(deliveries: list[dict], *, container_ref: str) -> None:
     for delivery in deliveries:
         delivery_id = delivery.get("delivery_id")
         claim_token = delivery.get("claim_token")
@@ -1077,7 +1077,6 @@ def acknowledge_relay(deliveries: list[dict], *, container_ref: str, actor_ref: 
                 "delivery_id": delivery_id,
                 "claim_token": claim_token,
                 "container_ref": container_ref,
-                "actor_ref": actor_ref,
             },
             timeout=0.5,
         )

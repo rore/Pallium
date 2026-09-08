@@ -43,7 +43,7 @@ def main() -> None:
         transcript_path = payload.get("transcript_path", "")
         container_ref = resolve_container_ref(cwd, session_id)
         actor_ref = derive_actor_ref(cwd, session_id)
-        register_claude_wake(session_id, container_ref, actor_ref, idle=True)
+        register_claude_wake(session_id, container_ref, idle=True)
 
         if payload.get("stop_hook_active") is not True and isinstance(session_id, str) and session_id:
             try:
@@ -60,7 +60,6 @@ def main() -> None:
                             "runtime": "claude-code",
                             "session_ref": session_id,
                             "container_ref": container_ref,
-                            "actor_ref": actor_ref,
                             "max_chars": RELAY_TURN_BUDGET,
                         },
                         timeout=0.75,
@@ -76,12 +75,12 @@ def main() -> None:
                 if rendered:
                     _emit_relay("\n\n".join((rendered, relay_scope)))
                     acknowledge_relay(
-                        claimed, container_ref=container_ref, actor_ref=actor_ref,
+                        claimed, container_ref=container_ref,
                     )
                     raise SystemExit(2)
             except Exception:
                 pass
-            register_claude_wake(session_id, container_ref, actor_ref, idle=True)
+            register_claude_wake(session_id, container_ref, idle=True)
         if not transcript_path:
             return
 

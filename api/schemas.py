@@ -806,7 +806,6 @@ class RelayTurnRequest(BaseModel):
     runtime: RelayRuntime
     session_ref: str = Field(min_length=1, max_length=255)
     container_ref: str = Field(min_length=1, max_length=512)
-    actor_ref: str = Field(min_length=1, max_length=255)
     title: str | None = Field(default=None, min_length=1, max_length=255)
     max_chars: int = Field(default=0, ge=0)
     max_response_chars: int = Field(
@@ -821,7 +820,6 @@ class RelaySessionMutationRequest(BaseModel):
     runtime: RelayRuntime
     session_ref: str = Field(min_length=1, max_length=255)
     container_ref: str = Field(min_length=1, max_length=512)
-    actor_ref: str = Field(min_length=1, max_length=255)
 
 
 class RelaySessionNameRequest(RelaySessionMutationRequest):
@@ -835,7 +833,6 @@ class RelaySendRequest(BaseModel):
     recipient: str = Field(min_length=1, max_length=320)
     payload: str = Field(min_length=1, max_length=RELAY_MESSAGE_MAX_CHARS)
     container_ref: str = Field(min_length=1, max_length=512)
-    actor_ref: str = Field(min_length=1, max_length=255)
     expires_in_seconds: int | None = Field(default=None, ge=60, le=604800)
     in_reply_to: str | None = Field(default=None, min_length=1, max_length=128)
     message_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -846,7 +843,6 @@ class RelayReplyRequest(BaseModel):
     receipt: str | None = Field(default=None, max_length=64)
     payload: str = Field(min_length=1, max_length=RELAY_MESSAGE_MAX_CHARS)
     container_ref: str = Field(min_length=1, max_length=512)
-    actor_ref: str = Field(min_length=1, max_length=255)
     expires_in_seconds: int | None = Field(default=None, ge=60, le=604800)
 
 
@@ -854,7 +850,6 @@ class RelayAckRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)
     claim_token: str = Field(min_length=1, max_length=128)
     container_ref: str = Field(min_length=1, max_length=512)
-    actor_ref: str = Field(min_length=1, max_length=255)
 
 
 class RelaySessionResponse(BaseModel):
@@ -936,4 +931,3 @@ class RelayMcpAckRequest(BaseModel):
     delivery_id: str = Field(min_length=1, max_length=128)
     receipt: str = Field(min_length=1, max_length=64)
     container_ref: str = Field(min_length=1, max_length=512)
-    actor_ref: str = Field(min_length=1, max_length=255)

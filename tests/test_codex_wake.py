@@ -26,7 +26,6 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 SCOPE = {
     "container_ref": "git:example.test/wake",
-    "actor_ref": "wake-user",
 }
 
 
@@ -175,14 +174,9 @@ def test_duplicate_and_non_codex_do_not_start_child() -> None:
 def test_same_session_in_two_scopes_has_independent_ownership() -> None:
     other_scope = {
         "container_ref": "git:example.test/other-wake",
-        "actor_ref": "other-user",
     }
-    first_key = ("target-session", SCOPE["container_ref"], SCOPE["actor_ref"])
-    other_key = (
-        "target-session",
-        other_scope["container_ref"],
-        other_scope["actor_ref"],
-    )
+    first_key = ("target-session", SCOPE["container_ref"])
+    other_key = ("target-session", other_scope["container_ref"])
     with patch("app.codex_wake.threading.Thread") as thread:
         _schedule(_delivery())
         codex_wake.schedule_codex_relay_wake(_delivery("delivery-2"), other_scope)
@@ -383,7 +377,6 @@ def test_http_route_persists_before_one_callback(client) -> None:
             "runtime": "codex",
             "session_ref": "target-session",
             "container_ref": "git:example.test/wake",
-            "actor_ref": "wake-user",
         },
     ).status_code == 200
     assert route_client.post(
@@ -392,7 +385,6 @@ def test_http_route_persists_before_one_callback(client) -> None:
             "runtime": "claude-code",
             "session_ref": "sender",
             "container_ref": "git:example.test/wake",
-            "actor_ref": "wake-user",
         },
     ).status_code == 200
     sent = route_client.post(
@@ -403,7 +395,6 @@ def test_http_route_persists_before_one_callback(client) -> None:
             "recipient": "codex:target-session",
             "payload": "wake",
             "container_ref": "git:example.test/wake",
-            "actor_ref": "wake-user",
         },
     )
     assert sent.status_code == 200
@@ -413,7 +404,7 @@ def test_http_route_persists_before_one_callback(client) -> None:
     assert seen[0][0]["deliveries"][0]["delivery_id"] == sent.json()["deliveries"][0]["delivery_id"]
     assert route_client.get(
         f"/relay/messages/{sent.json()['message_id']}",
-        params={"container_ref": "git:example.test/wake", "actor_ref": "wake-user"},
+        params={"container_ref": "git:example.test/wake"},
     ).json()["deliveries"][0]["delivery_id"] == seen[0][0]["deliveries"][0]["delivery_id"]
 
 
@@ -485,7 +476,7 @@ def test_create_app_keeps_real_wake_wiring(test_db_url: str) -> None:
         )
     )
     route_client = TestClient(app)
-    scope = {"container_ref": "git:example.test/real-wake", "actor_ref": "wake-user"}
+    scope = {"container_ref": "git:example.test/real-wake"}
     for runtime, session in (("codex", "target"), ("claude-code", "sender")):
         assert route_client.post(
             "/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}
@@ -512,7 +503,6 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
 
     scope = {
         "container_ref": "git:example.test/no-hook",
-        "actor_ref": hook.derive_actor_ref(str(tmp_path)),
     }
     monkeypatch.setattr(
         "app.dependencies.schedule_codex_relay_wake",
@@ -560,7 +550,7 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: scope["actor_ref"])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(
         hook,
         "pallium_request",
@@ -668,7 +658,7 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
     assert ambiguous_status["attempts"] == 0
     assert not contexts
     assert (
-        "target", scope["container_ref"], scope["actor_ref"]
+        "target", scope["container_ref"]
     ) in codex_wake._scheduled_session_generations
     with patch("app.codex_wake.threading.Thread") as thread:
         duplicate = route.post("/relay/messages", json={
@@ -707,7 +697,7 @@ def test_http_reply_uses_the_same_post_persistence_callback(client) -> None:
         )
     )
     route_client = TestClient(app)
-    scope = {"container_ref": "git:example.test/reply-wake", "actor_ref": "wake-user"}
+    scope = {"container_ref": "git:example.test/reply-wake"}
     for runtime, session in (("codex", "original"), ("claude-code", "responder")):
         assert route_client.post(
             "/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}
@@ -741,7 +731,6 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
 
     scope = {
         "container_ref": "git:example.test/wake",
-        "actor_ref": hook.derive_actor_ref(str(tmp_path)),
     }
     state_dir = tmp_path / "hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
@@ -804,7 +793,7 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
         assert exited.value.code == 0
 
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: scope["actor_ref"])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(hook, "relay_request", relay_request)
     monkeypatch.setattr(hook._common, "relay_request", relay_request)
 
@@ -859,12 +848,12 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
         "thread_ref": "target-session",
         "agent_ref": "codex",
         "visibility": "private",
+        "actor_ref": scope["container_ref"],
     }
     reply_body = {
         "delivery_id": delivery["delivery_id"],
         "payload": "handled once",
         "container_ref": injected_scope["container_ref"],
-        "actor_ref": injected_scope["actor_ref"],
     }
     assert client.post(
         "/relay/replies", json={**reply_body, "container_ref": "git:example.test/other"}
@@ -887,7 +876,6 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
 
     scope = {
         "container_ref": "git:example.test/overtaken-wake",
-        "actor_ref": hook.derive_actor_ref(str(tmp_path)),
     }
     state_dir = tmp_path / "overtaken-hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
@@ -1014,7 +1002,6 @@ def test_redaction_expansion_is_compacted_and_internal_wake_delivers_once(
 
     scope = {
         "container_ref": "git:example.test/oversized-wake",
-        "actor_ref": hook.derive_actor_ref(str(tmp_path)),
     }
     sender = "s" * 255
     target = "oversized-target"
@@ -1090,7 +1077,7 @@ def test_actual_codex_hook_drains_bounded_backlog_and_arrival_once(
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
 
-    scope = {"container_ref": SCOPE["container_ref"], "actor_ref": hook.derive_actor_ref(str(tmp_path))}
+    scope = {"container_ref": SCOPE["container_ref"]}
     state_dir = tmp_path / "drain-hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
@@ -1180,7 +1167,6 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
 
     scope = {
         "container_ref": SCOPE["container_ref"],
-        "actor_ref": hook.derive_actor_ref(str(tmp_path)),
     }
     state_dir = tmp_path / "maximum-hook-state"
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
@@ -1397,8 +1383,8 @@ def test_build_router_normalizes_endpoint_send_for_codex_wake(client) -> None:
         relay_storage=client.app.state.pallium_service._storage,
     ))
     route = TestClient(app)
-    target_scope = {"container_ref": "git:example.test/target", "actor_ref": "wake-user"}
-    source_scope = {"container_ref": "git:example.test/source", "actor_ref": "wake-user"}
+    target_scope = {"container_ref": "git:example.test/target"}
+    source_scope = {"container_ref": "git:example.test/source"}
     target = route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target-session", **target_scope})
     assert target.status_code == 200
     endpoint_id = target.json()["session"]["endpoint_id"]
@@ -1456,7 +1442,6 @@ def test_build_router_turn_rearms_actual_codex_wake_state(client, monkeypatch) -
             "runtime": "codex",
             "session_ref": "target-session",
             "container_ref": "git:example.test/wrong",
-            "actor_ref": SCOPE["actor_ref"],
         }).status_code == 200
         assert codex_wake._scheduled_session_generations
         assert route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target-session", **SCOPE}).status_code == 200
@@ -1467,7 +1452,7 @@ def test_build_router_turn_rearms_actual_codex_wake_state(client, monkeypatch) -
 
 
 def test_failed_old_generation_cannot_clear_replacement(monkeypatch) -> None:
-    wake_key = ("target-session", SCOPE["container_ref"], SCOPE["actor_ref"])
+    wake_key = ("target-session", SCOPE["container_ref"])
     codex_wake._scheduled_session_generations[wake_key] = 2
     codex_wake._scheduled_session_delivery_ids[wake_key] = "delivery-new"
     codex_wake._scheduled_delivery_ids.add("delivery-new")
@@ -1490,7 +1475,7 @@ def test_old_scheduled_worker_cannot_clear_new_schedule(monkeypatch) -> None:
         old_args = thread.call_args.kwargs["args"]
         codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
         _schedule(_delivery("delivery-new"))
-        wake_key = ("target-session", SCOPE["container_ref"], SCOPE["actor_ref"])
+        wake_key = ("target-session", SCOPE["container_ref"])
         new_generation = codex_wake._scheduled_session_generations[wake_key]
 
     assert old_args[2] != new_generation
@@ -1575,7 +1560,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: SCOPE["actor_ref"])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: SCOPE["container_ref"])
     monkeypatch.setattr(
         hook,
         "pallium_request",
@@ -1634,7 +1619,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
-    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: SCOPE["actor_ref"])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: SCOPE["container_ref"])
     monkeypatch.setattr(
         hook,
         "pallium_request",
@@ -1747,7 +1732,7 @@ def test_pending_and_expired_codex_work_rewakes_after_real_app_restart(
         monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
         monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
         monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
-        monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: SCOPE["actor_ref"])
+        monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: SCOPE["container_ref"])
         monkeypatch.setattr(
             hook,
             "pallium_request",

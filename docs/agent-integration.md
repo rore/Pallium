@@ -123,9 +123,9 @@ Useful query filters:
 
 - `container_ref`
 - `thread_ref`
-- `actor_ref` — pass the current user's identity to scope results to their
-  personal memories plus shared evidence. When omitted, no actor filtering is
-  applied.
+- `actor_ref` — pass the current user's identity for derived-memory visibility.
+  For `source_only=true` Session History, omit it normally to search all eligible
+  actors; supply it only as an exact metadata filter.
 - `artifact_kind`
 - `work_refs` — external work identifiers (e.g. ticket IDs, PR numbers) for
   cross-thread work continuity
@@ -367,10 +367,13 @@ routine cases):
 | `pallium_forget(memory_id, reason)` | Soft-delete. Retrieval hides it; audit trail preserved. Idempotent. Agent-decisive; use `pallium_flag_memory` when you're one voter among many. |
 | `pallium_record_outcome(procedure_id, outcome, ...)` | Record `success` / `failure` / `inconclusive` for an `operational_fact` procedure. Confidence and counter values are audit-only — they do not boost retrieval ranking. |
 
-All tools accept optional scope parameters (`container_ref`, `thread_ref`,
-`actor_ref`, `visibility`) for filtering. When omitted, defaults come from
-environment variables (`PALLIUM_CONTAINER_REF`, `PALLIUM_THREAD_REF`,
-`PALLIUM_ACTOR_REF`, `PALLIUM_VISIBILITY`).
+Tools accept optional scope parameters (`container_ref`, `thread_ref`,
+`actor_ref`, `visibility`) for filtering. When omitted, defaults generally come
+from environment variables (`PALLIUM_CONTAINER_REF`, `PALLIUM_THREAD_REF`,
+`PALLIUM_ACTOR_REF`, `PALLIUM_VISIBILITY`). Raw Session History search and
+expansion intentionally do not inherit `PALLIUM_ACTOR_REF`: omission searches
+every otherwise-eligible actor, while an explicit value is an exact metadata
+filter.
 
 Note: when using the embedded HTTP transport (`/mcp`), the MCP server runs
 in the Pallium process, not the agent process. Environment variables set in

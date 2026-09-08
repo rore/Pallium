@@ -104,7 +104,7 @@ def _events(client: TestClient, event_type: str) -> list[dict]:
     with storage._engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT id, session_id, container_ref, parent_lookup_id, exposed_json, request_source_item_id "
+                "SELECT id, session_id, container_ref, actor_ref, parent_lookup_id, exposed_json, request_source_item_id "
                 "FROM historical_lookup_reuse_event WHERE event_type = :et"
             ),
             {"et": event_type},
@@ -125,7 +125,10 @@ def test_full_funnel_chain_audit_off(monkeypatch, test_db_url: str) -> None:
             client, source_id="u1", content=_USER, role="user",
             artifact_kind="message", actor_ref="actor:test",
         )
-        _ingest(client, source_id="a1", content=_WORK, role="assistant", artifact_kind="assistant_output")
+        _ingest(
+            client, source_id="a1", content=_WORK, role="assistant",
+            artifact_kind="assistant_output", actor_ref="actor:test",
+        )
 
         # search_history (source_only). Audit is OFF, so a non-null minted id
         # here proves the persistence is audit-independent.
@@ -224,7 +227,6 @@ def test_invalid_request_links_fail_uniformly_before_retrieval(
             {**base, "request_source_item_id": forgotten_id},
             {**base, "request_source_item_id": user_id, "container_ref": "chat:other"},
             {**base, "request_source_item_id": user_id, "thread_ref": "thread:other"},
-            {**base, "request_source_item_id": user_id, "actor_ref": "actor:other"},
             {**base, "request_source_item_id": user_id, "visibility": "container"},
             {**base, "request_source_item_id": user_id, "source_only": False},
         ]
@@ -239,6 +241,34 @@ def test_invalid_request_links_fail_uniformly_before_retrieval(
 
         assert _events(client, "lookup") == []
 
+
+def test_request_link_actor_is_optional_metadata(
+    monkeypatch, test_db_url: str,
+) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        request_id = _ingest(
+            client,
+            source_id="actor-metadata-request",
+            content="Please find the cross actor history marker.",
+            role="user",
+            artifact_kind="message",
+            actor_ref="操作员甲",
+        )
+
+        for actor_ref in (None, "操作员乙"):
+            result = _search_history(
+                client,
+                actor_ref=actor_ref,
+                request_source_item_id=request_id,
+            )
+            assert result["decision_reason"] == "source_only_search"
+
+        assert {
+            (event["actor_ref"], event["request_source_item_id"])
+            for event in _events(client, "lookup")
+        } == {
+            (None, request_id), ("操作员乙", request_id),
+        }
 
 # ---------------------------------------------------------------------------
 # Governance invariants (visibility-enforcing plugin)
@@ -312,7 +342,10 @@ def test_chain_depth_greater_than_two_persistence_only(monkeypatch, test_db_url:
     """
     with _build_client(monkeypatch, test_db_url) as client:
         _ingest(client, source_id="u1", content=_USER, role="user", artifact_kind="message")
-        _ingest(client, source_id="a1", content=_WORK, role="assistant", artifact_kind="assistant_output")
+        _ingest(
+            client, source_id="a1", content=_WORK, role="assistant",
+            artifact_kind="assistant_output", actor_ref="actor:test",
+        )
 
         result = _search_history(client)
         lookup_id = result["lookup_event_id"]
@@ -375,7 +408,10 @@ def test_status_events_recorded_increments(monkeypatch, test_db_url: str) -> Non
     """
     with _build_client(monkeypatch, test_db_url) as client:
         _ingest(client, source_id="u1", content=_USER, role="user", artifact_kind="message")
-        _ingest(client, source_id="a1", content=_WORK, role="assistant", artifact_kind="assistant_output")
+        _ingest(
+            client, source_id="a1", content=_WORK, role="assistant",
+            artifact_kind="assistant_output", actor_ref="actor:test",
+        )
 
         before = _events_recorded(client)
 

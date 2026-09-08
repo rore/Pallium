@@ -694,7 +694,6 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
         "runtime": "codex",
         "session_ref": "cache-session",
         "container_ref": "git:example.test/repo",
-        "actor_ref": "Other Actor",
     }]
     assert prompt._common.get_pinned_container("cache-session") == "git:example.test/other"
     assert prompt._common.get_pending_relay_closes("cache-session") == []

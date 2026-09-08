@@ -13,7 +13,7 @@ The dashboard is a local, read-only administrative surface for the product as sh
 | Historical lookup/reuse activity and usefulness evidence | Operations → offline evidence | **Session History**; preserve retrieval-vs-benefit distinction. |
 | Existing Memory Browser, query activity, injection/skip feedback, query debug | Operations → optional capability | **Derived Memory**; preserve existing tooling and keep retrieval diagnostics distinct from benefit. |
 | Relay summary tiles and runtime status | Operations summary + Relay | **Relay ops**; summary is a nudge, workspace is the bounded detail. |
-| Sessions, messages, deliveries, reply chains, endpoint graph, aliases | Relay | **Relay ops**; observational only. |
+| Sessions, messages, deliveries, reply chains, endpoint graph, names | Relay | **Relay ops**; observational only. |
 | How-memory-helps reports and judge/eval diagnostics | Operations → offline evidence | **Experimental/eval**; last-written, timestamped, denominators and uncertainty visible. |
 | Preserved derived outputs and processing state | Operations → optional capability | **Derived Memory**; disabled/enabled/preserved states remain honest. |
 | Old memory-centric overview, package-dependent container/actor claims, illustrative mock-only controls | — | **Obsolete**; remove or relocate rather than preserve misleading affordances. |
@@ -23,21 +23,21 @@ The dashboard is a local, read-only administrative surface for the product as sh
 | Datum / surface | Decision | Contract and honesty rule |
 |---|---|---|
 | Existing health, metrics, activity, feedback, query-debug, Relay summary, report readers | Reuse | Keep existing read endpoints and renderers; never turn refresh into a write or lookup. |
-| SourceItem list/detail, filters, counts | New app-local projection | `/dashboard/api/*`; caller must provide `container_ref`, `actor_ref`, typed `query_visibility`; omitted/invalid scope is 422. Apply visibility/shared-item actor/forgotten gates before count/order/limit, then per-record defense and shared redaction. |
+| SourceItem list/detail, filters, counts | New app-local projection | `/dashboard/api/*`; caller must provide `container_ref` and typed `query_visibility`; `actor_ref` is an optional exact metadata filter; omitted required/invalid scope is 422. Apply visibility/shared-item actor/forgotten gates before count/order/limit, then per-record defense and shared redaction. |
 | Source context | Shipped contract reused explicitly | Detail is telemetry-free. “Surrounding context” alone calls `/source/{id}/context` with identical scope; inaccessible/forgotten content is unavailable, not inferred. |
 | History rollups | Shipped file-backed contract | Read allowlisted last-written measurement/judge JSON only. Show generated time, evaluated window, eligible/selected/sample/rated/failed/missing counts, completeness, versions, uncertainty; absent fields stay unavailable. |
 | Reuse events and labels | New app-local projection | Bounded scoped event list contains IDs, redacted query text, linkage/rank/score, label/rationale only; no cached SourceItem content. Live detail/context resolves evidence. It is current operational evidence, not exact aggregate-report membership. |
-| Relay sessions/messages/deliveries | New app-local projection over shipped Relay records | Read with `_relay_session_factory`; allowlisted scalars only, no claim token/receipt. Actor-domain across containers; no core/storage/API contract changes. |
-| Relay aliases | Shipped naming route reused through explicit dashboard action | View is read-only until an explicit save/remove; conflict returns 409 and requires a separate user-confirmed retry against the selected endpoint identity. |
+| Relay sessions/messages/deliveries | New app-local projection over shipped Relay records | Read with `_relay_session_factory`; allowlisted scalars only, no claim token/receipt. Service-global across containers; Relay records are read through the actor-free dashboard contract. |
+| Relay names | Shipped naming route reused through explicit dashboard action | View is read-only until an explicit save/remove; conflict returns 409 and requires a separate user-confirmed retry against the selected endpoint identity. |
 | Runtime discovery, wake-outcome telemetry, new graph aggregate backend | Unavailable / follow-up | Say “not recorded” or “not available”; do not infer from container, delivery admission, or partial data. |
 
 ## Information architecture and journeys
 
 Operations opens with a compact status line, actionable alert strip, capability cards, then recent Session History and progressive-disclosure diagnostics/evidence. Cards deep-link to the owning panel. Source browsing is a compact master/detail surface: filtered list → selected governed detail → explicit bounded context → no mutation. The useful journey is ingest → scoped list/search/filter → detail → context → forget → absence, with refresh producing no context event.
 
-Relay is a two-pane workspace: session filter/list on the left, selected session/pair/all view on the right. Map and Messages are equivalent views over one bounded message window. Select a node/edge to filter messages; select a message to inspect delivery/reply detail; parent links navigate reply chains. Alias management lives in the selected endpoint detail. The expired-delivery alert deep-links to Relay with the expired filter selected.
+Relay is a two-pane workspace: session filter/list on the left, selected session/pair/all view on the right. Map and Messages are equivalent views over one bounded message window. Select a node/edge to filter messages; select a message to inspect delivery/reply detail; parent links navigate reply chains. Name management lives in the selected endpoint detail. The expired-delivery alert deep-links to Relay with the expired filter selected.
 
-Everyday journeys are: (1) confirm service/history/Relay health in one glance; (2) inspect one recorded turn and deliberately open its context; (3) explain a pending/expired/delivered exchange without claiming recipient action; (4) follow a cross-container exchange and resolve a canonical alias conflict; (5) distinguish an offline evaluation result from real-task benefit; (6) browse preserved memories while processing is disabled.
+Everyday journeys are: (1) confirm service/history/Relay health in one glance; (2) inspect one recorded turn and deliberately open its context; (3) explain a pending/expired/delivered exchange without claiming recipient action; (4) follow a cross-container exchange and resolve a canonical name conflict; (5) distinguish an offline evaluation result from real-task benefit; (6) browse preserved memories while processing is disabled.
 
 ## State contract
 
@@ -53,7 +53,7 @@ Every panel has explicit **loading** (stable skeleton/“Loading…”; controls
 
 ## SourceItem scope, governance, and evidence
 
-Dashboard reads are not an authorization boundary on localhost, but every caller surface still requires explicit container, actor, and visibility scope. SQL filters visibility, shared-item actor rules, lifecycle/forgotten state, and filters before pagination/counts; deterministic ordering is `(effective timestamp, id)`. A per-record visibility/filter defense and shared ingest redactor protect legacy content and metadata, with the intentional note carve-out preserved. No list refresh expands context or creates a lookup event. Evidence links carry the same scope; if the item is inaccessible, forgotten, or deleted, render an unavailable link and no excerpt. Retrieval, judge calibration, candidate recovery, injection precision, and downstream-task effect remain separate claims; no dashboard wording equates retrieval with benefit.
+Dashboard reads are not an authorization boundary on localhost, but every caller surface still requires explicit container and visibility scope, with actor as an optional exact metadata filter for governed memory/history reads. SQL filters visibility, shared-item actor rules, lifecycle/forgotten state, and filters before pagination/counts; deterministic ordering is `(effective timestamp, id)`. A per-record visibility/filter defense and shared ingest redactor protect legacy content and metadata, with the intentional note carve-out preserved. No list refresh expands context or creates a lookup event. Evidence links carry the same scope; if the item is inaccessible, forgotten, or deleted, render an unavailable link and no excerpt. Retrieval, judge calibration, candidate recovery, injection precision, and downstream-task effect remain separate claims; no dashboard wording equates retrieval with benefit.
 
 ## Relay semantics and graph/list consistency
 
@@ -61,9 +61,9 @@ Relay reads use the Relay-specific database factory and expose only safe post-re
 
 The list and graph consume the same bounded message/delivery projection, with the same filters, reply IDs, redaction, ordering, and fixed `until` boundary. The graph caption reports the window and says partial until all pages are loaded; it never invents missing edges. Delivery detail includes state, send-time selector, endpoint identity, lifecycle timing, and parent link, never claim tokens or receipts.
 
-## Alias confirmation flow
+## Name confirmation flow
 
-Saving/removing an alias is an explicit action on the selected endpoint. On a 409 conflict, preserve the typed value, identify the current owner, and require a separate confirmation/retry; do not silently transfer. A confirmed transfer uses the selected endpoint’s persisted container/runtime/session identity and the existing canonical naming route. Duplicate names remain rejected; empty alias means unnamed. Success and conflict are announced in a live status region.
+Saving/removing a name is an explicit action on the selected endpoint. On a 409 conflict, preserve the typed value, identify the current owner, and require a separate confirmation/retry; do not silently transfer. A confirmed transfer uses the selected endpoint’s persisted container/runtime/session identity and the existing canonical naming route. Duplicate names remain rejected; empty name means unnamed. Success and conflict are announced in a live status region.
 
 ## Accessibility and responsive behavior
 

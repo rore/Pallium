@@ -23,7 +23,6 @@ from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 from core.claude_wake import (
     ClaudeWakeRegistry,
-    MAX_ACTOR_CHARS,
     MAX_CONTAINER_CHARS,
     MAX_REGISTRATIONS,
     MAX_RUNTIME_CHARS,
@@ -40,7 +39,6 @@ PAYLOAD = {
     "runtime": "claude-code",
     "session_ref": "session-α",
     "container_ref": "git:example/repo",
-    "actor_ref": "local",
     "socket_path": r"\\.\pipe\claude",
     "token": "test-token",
     "idle": True,
@@ -61,7 +59,7 @@ def test_registration_keeps_intent_when_store_unusable_marker_cannot_clear(
     marker.parent.mkdir()
     marker.write_text('{"unusable":true}', encoding="utf-8")
     payload = {**PAYLOAD, "intent_id": "marker-recovery"}
-    intent = state_dir / "intents" / _safe_session_file(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"], PAYLOAD["actor_ref"])
+    intent = state_dir / "intents" / _safe_session_file(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])
     intent.parent.mkdir()
     intent.write_text(json.dumps(payload), encoding="utf-8")
     registry = ClaudeWakeRegistry(state_dir=state_dir)
@@ -91,7 +89,7 @@ def test_close_endpoint_write_failure_preserves_exact_intent_for_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_closed_intent: bool,
 ) -> None:
     state_dir = tmp_path / "wake"
-    intent = state_dir / "intents" / _safe_session_file(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"], PAYLOAD["actor_ref"])
+    intent = state_dir / "intents" / _safe_session_file(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])
 
     def write_intent(payload: dict[str, object]) -> None:
         intent.parent.mkdir(parents=True, exist_ok=True)
@@ -102,7 +100,7 @@ def test_close_endpoint_write_failure_preserves_exact_intent_for_recovery(
     write_intent(opened)
     client = _client(registry)
     assert client.post("/internal/claude-wake/register", json=opened).status_code == 204
-    closed = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref")}
+    closed = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}
     closed.update(intent_id="closed", closed=True)
     write_intent(closed)
     original_write = registry._write_canonical_locked
@@ -125,7 +123,7 @@ def test_close_endpoint_write_failure_preserves_exact_intent_for_recovery(
     observed: list[str] = []
     assert restarted.probe(
         runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+        container_ref=PAYLOAD["container_ref"],
         transport=lambda _socket_path, token: observed.append(token) or "accepted",
     )
     assert observed == ["new-token"]
@@ -143,7 +141,6 @@ def test_loopback_registration_is_secret_free_and_scope_bound() -> None:
         runtime=PAYLOAD["runtime"],
         session_ref=PAYLOAD["session_ref"],
         container_ref=PAYLOAD["container_ref"],
-        actor_ref=PAYLOAD["actor_ref"],
         transport=lambda socket_path, token: observed.append((socket_path, token)) or True,
     )
     assert observed == [(PAYLOAD["socket_path"], secret)]
@@ -151,7 +148,6 @@ def test_loopback_registration_is_secret_free_and_scope_bound() -> None:
         runtime=PAYLOAD["runtime"],
         session_ref=PAYLOAD["session_ref"],
         container_ref="git:other/repo",
-        actor_ref=PAYLOAD["actor_ref"],
         transport=lambda *_: pytest.fail("scope mismatch must not transport"),
     )
 
@@ -202,7 +198,6 @@ def test_replace_expiry_and_callback_reentry_are_generation_safe() -> None:
         runtime=PAYLOAD["runtime"],
         session_ref=PAYLOAD["session_ref"],
         container_ref=PAYLOAD["container_ref"],
-        actor_ref=PAYLOAD["actor_ref"],
         transport=transport,
     )
     assert completed.is_set()
@@ -210,7 +205,6 @@ def test_replace_expiry_and_callback_reentry_are_generation_safe() -> None:
         runtime=PAYLOAD["runtime"],
         session_ref=PAYLOAD["session_ref"],
         container_ref=PAYLOAD["container_ref"],
-        actor_ref=PAYLOAD["actor_ref"],
         transport=None,
     )
     now[0] += TTL_SECONDS + 1
@@ -218,7 +212,6 @@ def test_replace_expiry_and_callback_reentry_are_generation_safe() -> None:
         runtime=PAYLOAD["runtime"],
         session_ref=PAYLOAD["session_ref"],
         container_ref=PAYLOAD["container_ref"],
-        actor_ref=PAYLOAD["actor_ref"],
         transport=lambda *_: pytest.fail("expired credentials must not transport"),
     )
 
@@ -236,7 +229,7 @@ def test_session_start_and_stop_refresh_before_early_return(monkeypatch: pytest.
     with pytest.raises(SystemExit) as exit_info:
         start.main()
     assert exit_info.value.code == 0
-    assert start_calls == [(('session-1', 'git:example/repo', 'local'), {'idle': False})]
+    assert start_calls == [(('session-1', 'git:example/repo'), {'idle': False})]
 
     stop = _load_claude_hook("stop", monkeypatch)
     stop_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
@@ -245,7 +238,7 @@ def test_session_start_and_stop_refresh_before_early_return(monkeypatch: pytest.
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(stop, "register_claude_wake", lambda *args, **kwargs: stop_calls.append((args, kwargs)))
     stop.main()
-    assert stop_calls == [(('session-1', 'git:example/repo', 'local'), {'idle': True})] * 2
+    assert stop_calls == [(('session-1', 'git:example/repo'), {'idle': True})] * 2
 
 
 def test_hook_registration_suppresses_credential_on_transport_failure(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -254,7 +247,7 @@ def test_hook_registration_suppresses_credential_on_transport_failure(monkeypatc
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", secret)
     monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=lambda *_a, **_k: (_ for _ in ()).throw(OSError(secret))))
-    assert not common.register_claude_wake("session", "git:example/repo", "local")
+    assert not common.register_claude_wake("session", "git:example/repo")
     captured = capsys.readouterr()
     assert secret not in captured.out
     assert secret not in captured.err
@@ -314,7 +307,6 @@ def test_session_start_subprocess_registers_through_loopback_without_secret_outp
         runtime="claude-code",
         session_ref="subprocess-session",
         container_ref=received[0]["container_ref"],
-        actor_ref=received[0]["actor_ref"],
         transport=lambda socket_path, token: socket_path == r"\\.\pipe\claude" and token == secret,
     )
 
@@ -375,7 +367,7 @@ def test_streaming_close_rejects_declared_or_streamed_oversize_and_accepts_valid
     registry = ClaudeWakeRegistry()
     monkeypatch.setattr(registry, "close", lambda **_kwargs: True)
     endpoint = _close_endpoint(registry)
-    payload = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref", "actor_ref")}
+    payload = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}
     payload["intent_id"] = "close"
 
     async def invoke(chunks: list[bytes], *, content_length: str | None = None):
@@ -398,6 +390,47 @@ def test_streaming_close_rejects_declared_or_streamed_oversize_and_accepts_valid
         asyncio.run(invoke([b"x" * 16_000, b"x" * 1_000]))
     assert streamed.value.status_code == 400
 
+def test_registration_rejects_legacy_actor_field() -> None:
+    response = _client(ClaudeWakeRegistry()).post(
+        "/internal/claude-wake/register", json={**PAYLOAD, "actor_ref": "legacy"},
+    )
+    assert response.status_code == 400
+
+
+def test_recovery_ignores_legacy_actor_bearing_intent(tmp_path: Path) -> None:
+    state_dir = tmp_path / "wake"
+    intent_dir = state_dir / "intents"
+    intent_dir.mkdir(parents=True)
+    intent = intent_dir / "legacy.json"
+    intent.write_text(json.dumps({**PAYLOAD, "intent_id": "legacy", "actor_ref": "legacy"}), encoding="utf-8")
+    registry = ClaudeWakeRegistry(state_dir=state_dir)
+    registry.recover_intents()
+    assert registry.recovery_candidates() == []
+    assert intent.exists()
+
+
+def test_restart_rejects_actor_bearing_canonical_state_without_mutation(tmp_path: Path) -> None:
+    state_dir = tmp_path / "wake"
+    state_dir.mkdir()
+    canonical = state_dir / "capabilities.json"
+    legacy = {
+        "version": 1,
+        "registrations": [{
+            **PAYLOAD,
+            "actor_ref": "legacy",
+            "generation": 1,
+            "expires_at": float("inf"),
+            "state": "idle",
+            "delivery_id": None,
+            "attempted_at": None,
+        }],
+    }
+    canonical.write_text(json.dumps(legacy), encoding="utf-8")
+    before = canonical.read_bytes()
+
+    assert ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates() == []
+    assert canonical.read_bytes() == before
+
 @pytest.mark.parametrize("body", [b"{", b"[]", b'{"runtime":"claude-code"}', b'{"extra":true}'])
 def test_registration_malformed_wrong_shape_missing_or_extra_is_secret_free(body: bytes) -> None:
     secret = "shape-secret"
@@ -412,7 +445,6 @@ def test_registration_malformed_wrong_shape_missing_or_extra_is_secret_free(body
         ("runtime", MAX_RUNTIME_CHARS),
         ("session_ref", MAX_SESSION_CHARS),
         ("container_ref", MAX_CONTAINER_CHARS),
-        ("actor_ref", MAX_ACTOR_CHARS),
         ("socket_path", MAX_SOCKET_CHARS),
         ("token", MAX_TOKEN_CHARS),
     ],
@@ -449,7 +481,6 @@ def test_concurrent_expiry_is_safe() -> None:
             runtime=PAYLOAD["runtime"],
             session_ref=PAYLOAD["session_ref"],
             container_ref=PAYLOAD["container_ref"],
-            actor_ref=PAYLOAD["actor_ref"],
             transport=lambda *_: pytest.fail("expired credentials must not transport"),
         ))
 
@@ -477,7 +508,6 @@ def test_registry_capacity_prunes_expired_and_preserves_existing_updates() -> No
         runtime=PAYLOAD["runtime"],
         session_ref="after-expiry",
         container_ref=PAYLOAD["container_ref"],
-        actor_ref=PAYLOAD["actor_ref"],
         transport=lambda *_: True,
     )
 
@@ -490,7 +520,7 @@ def test_hook_helpers_use_persistent_loopback_register_and_close_routes(
     registry = ClaudeWakeRegistry(state_dir=wake_dir)
     http = _client(registry)
     session_ref = "session-✓"
-    scope = {"container_ref": "git:répo/π", "actor_ref": "actor-α"}
+    scope = {"container_ref": "git:répo/π"}
     socket_path = r"\\.\pipe\claude-✓"
     token = "transport-secret-✓"
     monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
@@ -502,7 +532,7 @@ def test_hook_helpers_use_persistent_loopback_register_and_close_routes(
     def open_request(request, **_kwargs):
         path = urlsplit(request.full_url).path
         body = json.loads(request.data.decode("utf-8"))
-        intent = json.loads(common._wake_intent_path("claude-code", session_ref, scope["container_ref"], scope["actor_ref"]).read_text(encoding="utf-8"))
+        intent = json.loads(common._wake_intent_path("claude-code", session_ref, scope["container_ref"]).read_text(encoding="utf-8"))
         assert intent == (body if path.endswith("/register") else {**body, "closed": True})
         response = http.request(request.get_method(), path, content=request.data)
         responses.append(response)
@@ -510,16 +540,16 @@ def test_hook_helpers_use_persistent_loopback_register_and_close_routes(
         return nullcontext(response)
 
     monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=open_request))
-    assert common.register_claude_wake(session_ref, idle=True, **scope)
-    assert not common._wake_intent_path("claude-code", session_ref, scope["container_ref"], scope["actor_ref"]).exists()
+    assert common.register_claude_wake(session_ref, **scope, idle=True)
+    assert not common._wake_intent_path("claude-code", session_ref, scope["container_ref"]).exists()
     reloaded = ClaudeWakeRegistry(state_dir=wake_dir)
     candidate = next(iter(reloaded.recovery_candidates()))
-    assert {key: candidate[key] for key in ("session_ref", "container_ref", "actor_ref", "state")} == {
+    assert {key: candidate[key] for key in ("session_ref", "container_ref", "state")} == {
         "session_ref": session_ref, **scope, "state": "idle",
     }
 
     assert common.close_claude_wake(session_ref, **scope)
-    assert not common._wake_intent_path("claude-code", session_ref, scope["container_ref"], scope["actor_ref"]).exists()
+    assert not common._wake_intent_path("claude-code", session_ref, scope["container_ref"]).exists()
     assert ClaudeWakeRegistry(state_dir=wake_dir).recovery_candidates() == []
     captured = capsys.readouterr()
     assert token not in captured.out + captured.err
@@ -539,8 +569,8 @@ def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatc
         "build_opener",
         lambda *_args: opener_calls.append(True) or pytest.fail("oversized encoded body must not open"),
     )
-    assert not common.register_claude_wake("session", "git:example/repo", "local")
-    assert opener_calls == [] and not common._wake_intent_path("claude-code", "session", "git:example/repo", "local").exists()
+    assert not common.register_claude_wake("session", "git:example/repo")
+    assert opener_calls == [] and not common._wake_intent_path("claude-code", "session", "git:example/repo").exists()
     assert list((wake_dir / "intents").glob("*.tmp")) == []
     restarted = ClaudeWakeRegistry(state_dir=wake_dir)
     restarted.recover_intents()
@@ -551,12 +581,12 @@ def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatc
 
     def open_request(request, **_kwargs):
         body = json.loads(request.data.decode("utf-8"))
-        assert common._wake_intent_path("claude-code", "session-✓", "git:é/repo", "actor-α").exists()
+        assert common._wake_intent_path("claude-code", "session-✓", "git:é/repo").exists()
         assert body["session_ref"] == "session-✓" and body["container_ref"] == "git:é/repo"
         return nullcontext()
 
     monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=open_request))
-    assert common.register_claude_wake("session-✓", "git:é/repo", "actor-α")
+    assert common.register_claude_wake("session-✓", "git:é/repo")
 
 def test_hook_disables_proxies_and_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
     common = _load_claude_hook("common", monkeypatch)
@@ -569,7 +599,7 @@ def test_hook_disables_proxies_and_redirects(monkeypatch: pytest.MonkeyPatch) ->
         return SimpleNamespace(open=lambda *_args, **_kwargs: nullcontext())
 
     monkeypatch.setattr(common.urllib.request, "build_opener", build_opener)
-    assert common.register_claude_wake("session", "git:example/repo", "local")
+    assert common.register_claude_wake("session", "git:example/repo")
     assert any(isinstance(handler, common.urllib.request.ProxyHandler) and handler.proxies == {} for handler in handlers)
     redirect_handler = next(handler for handler in handlers if isinstance(handler, common._RejectCredentialRedirects))
     assert redirect_handler.redirect_request(None, None, 307, None, {}, "https://example.invalid") is None
@@ -591,7 +621,7 @@ def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest
     elif case == "oversized":
         monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(assistant_text="x" * 20_001, tool_calls=[]))
     stop.main()
-    assert calls == [(('session-1', 'git:example/repo', 'local'), {'idle': True})] * 2
+    assert calls == [(('session-1', 'git:example/repo'), {'idle': True})] * 2
 
 
 
@@ -600,7 +630,6 @@ def test_stop_refreshes_before_every_early_return(case: str, monkeypatch: pytest
     [
         ("session_ref", MAX_SESSION_CHARS),
         ("container_ref", MAX_CONTAINER_CHARS),
-        ("actor_ref", MAX_ACTOR_CHARS),
         ("socket_path", MAX_SOCKET_CHARS),
         ("token", MAX_TOKEN_CHARS),
     ],
@@ -618,7 +647,7 @@ def test_hook_timeout_or_http_failure_is_silent(failure: Exception, monkeypatch:
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "transport-secret")
     monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_args: SimpleNamespace(open=lambda *_a, **_k: (_ for _ in ()).throw(failure)))
-    assert not common.register_claude_wake("session", "git:example/repo", "local")
+    assert not common.register_claude_wake("session", "git:example/repo")
     captured = capsys.readouterr()
     assert "transport-secret" not in captured.out + captured.err
     assert not caplog.records
@@ -657,10 +686,10 @@ def test_explicit_idle_state_is_one_shot_and_scope_bound() -> None:
     def transport(*_: object) -> str:
         return "accepted"
 
-    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
+    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], transport=transport)
     registry.register(**{**PAYLOAD, "idle": True})
-    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
-    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"], transport=transport)
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], transport=transport)
+    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], transport=transport)
 
 @pytest.mark.parametrize("idle, expected", [(None, 204), ("false", 400), (1, 400)])
 def test_registration_idle_boundary_is_fail_closed(idle, expected) -> None:
@@ -673,7 +702,7 @@ def test_registration_idle_boundary_is_fail_closed(idle, expected) -> None:
     if idle is None:
         assert not registry.probe(
             runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
-            container_ref=PAYLOAD["container_ref"], actor_ref=PAYLOAD["actor_ref"],
+            container_ref=PAYLOAD["container_ref"],
             transport=lambda *_: True,
         )
 
@@ -735,12 +764,11 @@ def test_session_start_delivers_and_acks_relay_before_orientation(
     }
     assert relay_calls == [("POST", "/relay/turn", {
         "runtime": "claude-code", "session_ref": "session-1",
-        "container_ref": "git:example/repo", "actor_ref": "local",
+        "container_ref": "git:example/repo",
         "max_chars": 2360,
     })]
     assert acknowledgements == [([delivery], {
         "container_ref": "git:example/repo",
-        "actor_ref": "local",
     })]
 
 
@@ -756,7 +784,8 @@ def test_claude_reconciler_is_lifespan_owned_and_stops_on_repeated_apps(tmp_path
         assert not reconciler._thread.is_alive()
 
 def _seed_cached_actor(hook, monkeypatch: pytest.MonkeyPatch, cwd: Path, session_id: str) -> object:
-    common = sys.modules[hook.derive_actor_ref.__module__]
+    symbol = next(getattr(hook, name) for name in ("pallium_request", "resolve_container_ref", "close_claude_wake", "derive_actor_ref") if hasattr(hook, name))
+    common = sys.modules[symbol.__module__]
     monkeypatch.setattr(common, "SESSIONS_DIR", cwd / "hook-state" / "sessions")
     monkeypatch.setattr(common, "_HOOK_DEADLINE", None)
     context = common._identity_context(str(cwd))
@@ -817,7 +846,6 @@ def test_session_end_closes_old_cached_actor_capability_over_new_configuration(
         **PAYLOAD,
         "session_ref": session_id,
         "container_ref": container_ref,
-        "actor_ref": "old-pinned-actor",
         "intent_id": "stable-end-register",
     })
     http = _client(registry)

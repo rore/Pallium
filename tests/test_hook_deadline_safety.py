@@ -219,9 +219,9 @@ def test_claude_wake_control_request_cannot_outlive_deadline(operation, monkeypa
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
 
     if operation == "register":
-        result = common.register_claude_wake("session", "container", "actor")
+        result = common.register_claude_wake("session", "container")
     else:
-        result = common.close_claude_wake("session", "container", "actor")
+        result = common.close_claude_wake("session", "container")
 
     assert not result
     assert joined == [1.5]

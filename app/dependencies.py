@@ -580,10 +580,9 @@ def dispatch_relay_wake(
     runtime = delivery.get("recipient_runtime")
     session_ref = delivery.get("recipient_session_ref")
     container_ref = delivery.get("recipient_container_ref")
-    actor_ref = scope.get("actor_ref")
-    if not all(isinstance(value, str) and value for value in (runtime, session_ref, container_ref, actor_ref)):
+    if not all(isinstance(value, str) and value for value in (runtime, session_ref, container_ref)):
         return
-    target_scope = {"container_ref": container_ref, "actor_ref": actor_ref}
+    target_scope = {"container_ref": container_ref}
     target_result = {**result, "recipient": f"{runtime}:{session_ref}"}
     if runtime == "claude-code":
         registry.signal_reconcile()
@@ -595,7 +594,6 @@ def dispatch_relay_wake(
                 runtime="claude-code",
                 session_ref=session_ref,
                 container_ref=container_ref,
-                actor_ref=actor_ref,
                 attempt_started_at=attempt_started_at,
             ),
         )
@@ -607,7 +605,6 @@ def dispatch_relay_wake(
                 runtime="codex",
                 session_ref=session_ref,
                 container_ref=container_ref,
-                actor_ref=actor_ref,
                 attempt_started_at=attempt_started_at,
             ),
         )
@@ -641,7 +638,6 @@ def recover_expired_relay_wakes(
                 },
                 {
                     "container_ref": candidate["container_ref"],
-                    "actor_ref": candidate["actor_ref"],
                 },
                 relay_service=relay_service,
                 registry=registry,
@@ -687,7 +683,6 @@ def build_router(
             runtime="codex",
             session_ref=session_ref,
             container_ref=container_ref,
-            actor_ref=scope.get("actor_ref"),
         )
         if candidate is not None:
             _relay_wake_dispatch(
@@ -702,7 +697,7 @@ def build_router(
                         "recipient_container_ref": container_ref,
                     }],
                 },
-                {"container_ref": container_ref, "actor_ref": scope.get("actor_ref")},
+                {"container_ref": container_ref},
             )
 
     def _relay_turn_admission(request: object) -> None:
@@ -715,14 +710,12 @@ def build_router(
             mark_codex_relay_wake_admitted(
                 session_ref,
                 request.get("container_ref", ""),
-                request.get("actor_ref", ""),
             )
         elif request.get("runtime") == "claude-code":
             registry.mark_busy(
                 runtime="claude-code",
                 session_ref=session_ref,
                 container_ref=request.get("container_ref", ""),
-                actor_ref=request.get("actor_ref", ""),
             )
 
     return create_router(
