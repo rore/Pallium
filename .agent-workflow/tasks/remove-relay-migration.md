@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -60,4 +60,6 @@
 
 ## Result review
 
-- Pending.
+- First clean-context smart result review verdict: request changes. A reproduced fresh-start race showed pair validation was not serialized with two-file initialization; a second process could see main created before Relay and reject healthy startup. Add one shared pair lock around validation plus both existing per-file initialization locks and prove concurrent fresh startup.
+- Test finding: the dormant-main regression seeded only ignored marker metadata and could not catch renewed validation of actual dormant Relay tables. Seed incomplete legacy Relay data tables and assert their schema and rows remain unchanged while the active Relay file works.
+- No other correctness, snapshot, status, path/URI, or public-contract finding was reported. Return to implementation for these two bounded corrections, then repeat clean-context result review.
