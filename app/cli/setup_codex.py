@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -74,24 +75,16 @@ def _codex_skill_dir() -> Path:
 
 
 def _install_skill() -> None:
-    """Copy the pallium-memory SKILL.md into Codex's skill-discovery dir.
-
-    Idempotent: overwrites on reinstall so the deployed guidance always
-    matches the shipped skill.
-    """
+    """Replace the Pallium-managed skill with the complete shipped tree."""
     dest_dir = _codex_skill_dir()
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    (dest_dir / "SKILL.md").write_text(
-        _codex_skill_src().read_text(encoding="utf-8"), encoding="utf-8"
-    )
+    shutil.rmtree(dest_dir, ignore_errors=True)
+    shutil.copytree(_codex_skill_src().parent, dest_dir)
 
 
 def _remove_skill() -> None:
     """Remove the deployed pallium-memory skill directory (if present)."""
     skill_dir = _codex_skill_dir()
     if skill_dir.exists():
-        import shutil
-
         shutil.rmtree(skill_dir, ignore_errors=True)
 
 

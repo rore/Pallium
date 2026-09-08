@@ -44,18 +44,24 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Established `feat/upstream-field-feedback-loop` from current `origin/main` and completed focused discovery plus clean-context Redline classification before implementation edits.
-- Redline result: gray integration skills, watch-only setup scripts, blue tests/roadmap, no boundary or contract-class surface; workflow mapping is Elevated/Moderate.
-
+- Added a 192-character field-feedback pointer to the byte-identical Codex, Claude Code, and OpenCode skills; detailed filters, privacy rules, approval, duplicate handling, bounds, and fallbacks live only in byte-identical `references/field-feedback.md` files.
+- Updated Codex and Claude setup to replace the Pallium-managed skill tree from the complete source directory, removing stale nested artifacts on reinstall.
+- Added exact tree lifecycle tests, three-runtime lazy/content/parity contracts, and a real OpenCode npm dry-run package-manifest test.
+- Added and completed the distinct upstream-defect minimap feature, cross-linked to the existing memory-quality feedback/replay lane.
 ## Evidence
 
 - Base revision: `19f500ac8b6125fd7f58914f4eb74bbf4cea8b85`.
-
+- Skill normalized size: 2,529 characters (2,337 before); all three skill copies and all three references are byte-identical.
+- Focused contracts: `tests/test_guidance_budget.py` — 6 passed.
+- Installer lifecycle nodes: Codex + Claude — 2 passed.
+- Affected Python files: 51 passed.
+- OpenCode `npm test`: 49 passed, 7 platform skips; `npm pack --dry-run --json` includes `skills/pallium-memory/references/field-feedback.md`.
+- Full pre-PR suite: 4,643 passed, 32 skipped, 2 xfailed, 4 existing warnings in 249.14 seconds.
 ## Plan review
 
 Approved after two clean-context reviews. The first review blocked on runtime-resolution evidence, external-write approval, exact targets, full installer lifecycle, privacy/negative/Unicode cases, and minimap separation. The second caught incorrect installer test names and unnamed runtime sources. The structured record now addresses all findings; the reviewer approved implementation with no remaining blockers.

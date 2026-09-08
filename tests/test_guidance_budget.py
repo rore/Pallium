@@ -10,8 +10,9 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     assert len(module.get_claude_md_block("base")) <= 3736
     assert len(module.get_claude_md_block("strong")) <= 3962
     assert len(Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")) <= 3620
-    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2337
-    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2337
+    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2530
+    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2530
+    assert len(Path("integrations/opencode/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2530
     tree = ast.parse(Path("app/mcp/server.py").read_text(encoding="utf-8"))
     names = {node.name for node in ast.walk(tree)
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -102,3 +103,47 @@ def test_history_guidance_distinguishes_modes_without_dropping_safety() -> None:
             "pallium_record_outcome",
         ):
             assert f"`{tool}`" in rendered
+
+
+def test_field_feedback_guidance_is_lazy_aligned_and_safe() -> None:
+    skill_paths = [
+        Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md")
+        for runtime in ("codex", "claude-code", "opencode")
+    ]
+    reference_paths = [path.parent / "references" / "field-feedback.md" for path in skill_paths]
+    skills = [path.read_bytes() for path in skill_paths]
+    references = [path.read_bytes() for path in reference_paths]
+
+    assert skills[1:] == skills[:-1]
+    assert references[1:] == references[:-1]
+    for path in skill_paths:
+        rendered = path.read_text(encoding="utf-8")
+        assert "[field feedback](references/field-feedback.md)" in rendered
+        assert (path.parent / "references" / "field-feedback.md").is_file()
+        assert "200 words" not in rendered
+        assert "gh issue create" not in rendered
+
+    detail = reference_paths[0].read_text(encoding="utf-8")
+    for required in (
+        "only when all are true",
+        "another agent, task, or supported runtime can repeat",
+        "upstream change in `rore/Pallium`",
+        "Drop one-off environment, tool, or network failures",
+        "A memory-quality miss",
+        "`pallium_query_debug`",
+        "`pallium_flag_memory`",
+        "`pallium_rate_memory`",
+        "Never include raw prompts, transcripts",
+        "credentials",
+        "local paths",
+        "organization instructions",
+        "200 words and 2,000 Unicode characters",
+        "ask for explicit approval",
+        "Only after approval, search for duplicates",
+        "If a duplicate exists",
+        "do not create or comment unless separately approved",
+        "`gh` is missing or unauthenticated",
+        "## Field feedback (unsent)",
+        "Do not add telemetry, service APIs, or feedback storage",
+    ):
+        assert required in detail
