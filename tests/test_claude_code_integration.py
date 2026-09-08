@@ -321,7 +321,6 @@ def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monk
 def test_session_end_is_fail_safe(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, failure: str) -> None:
     session_end = _load_claude_hook("session_end", monkeypatch)
     monkeypatch.setattr(session_end, "read_hook_input", lambda: {} if failure == "missing" else {"session_id": "session", "cwd": "bad"})
-    monkeypatch.setattr(session_end, "derive_actor_ref", lambda *_: "actor")
     if failure == "invalid_cwd":
         monkeypatch.setattr(session_end, "resolve_container_ref", lambda *_args: (_ for _ in ()).throw(OSError("invalid cwd")))
     else:
