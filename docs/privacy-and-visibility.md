@@ -13,8 +13,8 @@ authorization.
 
 - **Session History:** search and every neighboring turn returned by expansion
   must be visible to the requesting context.
-- **Relay:** session discovery, addressing, messages, and replies are service-global
-  for the local single-user service; container and actor values are only metadata.
+- **Relay:** known endpoint IDs and names route service-wide in the local
+  single-user service; ordinary recipient discovery stays container-local.
 - **Derived memory:** retrieval filters source evidence and derived objects before
   ranking, then preserves visibility through derivation.
 

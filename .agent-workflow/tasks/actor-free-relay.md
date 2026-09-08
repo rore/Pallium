@@ -23,13 +23,13 @@
 
 **Verification plan:** Actor variation cannot affect Relay, `@name` works across containers, and address-book discovery stays container-local -> `tests/test_cross_container_relay_e2e.py`, `tests/test_agent_relay_e2e.py`, MCP pagination, and dashboard Relay tests. Targeted-only/name-takeover without pending-message retargeting, duplicate native session IDs across containers, lifecycle/expiry/stale-claim/idempotence/concurrency/Unicode/error contracts remain intact -> `tests/test_agent_relay_e2e.py`, `tests/test_sqlite_relay_isolation.py`, `tests/test_relay_mcp_tools.py`, and `tests/test_relay_mcp_lifecycle.py`. Wake registration, rejected old payload non-mutation, delivery, busy/inflight fencing, and restart recovery remain correct without actor -> `tests/test_claude_wake_registration.py`, `tests/test_claude_wake_durability.py`, `tests/test_claude_wake_dispatch.py`, `tests/test_codex_wake.py`, and hook E2E tests. Session History omission/null returns eligible records from all actors; explicit actor filtering is exact across different/null/empty/Unicode actor metadata; broad and blank/nonblank exact-work searches agree; mixed-actor expansion does not inherit anchor identity; dashboard totals match rows; request linkage accepts omitted/different actor while still rejecting missing, forgotten, wrong-role/container/thread/visibility, and non-history requests; audit attribution never uses the retrieved author; and derived-memory/public/global behavior is unchanged -> `tests/test_search_history_tool.py`, `tests/test_work_history_contract.py`, `tests/test_decouple_session_history_e2e.py`, `tests/test_historical_lookup_funnel_e2e.py`, `tests/test_source_context_visibility.py`, `tests/test_dashboard.py`, `tests/test_actor_scoped_memory.py`, and `tests/test_visibility_scope.py`. Retired Relay schemas fail before mutation and fresh actor-free schemas initialize -> `tests/test_sqlite_relay_isolation.py` current-format startup cases. Whole result -> complete non-slow suite, import linter, agent-workflow, redline, and PR CI. Installed state is preserved and operational -> pre/post field-level relational audit of both DBs and wake JSON/intents, SQLite quick-check, required service health endpoints, installed integration path verification, and live cross-repository ACK.
 
-**Plan review:** Original Relay plan approved by clean-context smart reviewer `/root/actor_free_relay_plan_review` after the initial P1/P2 findings were addressed. The Session History extension was reviewed by clean-context smart reviewer `/root/history_actor_plan_review`; its P1/P2 findings are incorporated into the plan and require re-review after implementation.
+**Plan review:** Original Relay plan approved by clean-context smart reviewer `/root/actor_free_relay_plan_review` after the initial P1/P2 findings were addressed. The Session History extension was reviewed by clean-context smart reviewer `/root/history_actor_plan_review`; its initial findings were addressed with exact-work and supported-global-memory caller-surface E2E coverage plus corrected discovery documentation, and the revised result received APPROVE with no remaining findings.
 
 **Approvals:** Approved by user 2026-09-08: "yes, relay doesn't need the actor. it just created a whole lot of trouble" and "we need local migration if needed but since no one else is using pallium we don't need migrations code". Session History extension approved by user 2026-09-08: "make actor non required. so by default search is across all actors, and you can filter by actor only if you want" and "actor becomes just a metadata"
 
 **Exceptions:** -
 
-**State:** In progress
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -49,6 +49,8 @@
 ## Result review
 
 2026-09-08 — Clean-context smart review by `/root/actor_free_relay_result_review` found no production correctness or architecture defect. Its P2 coverage findings (tautological wake candidates, weakened MCP scope assertions, missing direct actor-independence lifecycle) and P3 roadmap drift were corrected; the reviewer re-read the revised diff and returned APPROVE with no remaining actionable issues.
+
+2026-09-08 — Smart result review of the Session History extension by `/root/history_actor_plan_review` initially found missing exact-work cross-actor E2E, missing direct supported-global-memory fallback protection, and one Relay discovery wording error. All were corrected; the two new caller-surface regressions passed, the four affected files passed 48 tests, and the reviewer returned APPROVE with no remaining actionable findings.
 
 ## Plan review
 

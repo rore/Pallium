@@ -194,13 +194,30 @@ async def test_search_history_actor_is_optional_exact_metadata_filter(
         (actor_b, "history-actor-b"),
         (actor_none, "history-no-actor"),
     ):
-        await scoped.ingest(
-            content=f"cross actor history marker {source_id}",
-            source_type="chat_message",
-            source_id=source_id,
-            artifact_kind="message",
-            role="user",
-        )
+        await scoped._post("/items", [{
+            "source_type": "chat_message",
+            "source_id": source_id,
+            "content_type": "text/plain",
+            "content": f"cross actor history marker {source_id}",
+            "artifact_kind": "message",
+            "role": "user",
+            "container_ref": "test-container",
+            "actor_ref": scoped._ctx.actor_ref,
+            "visibility": "private",
+            "metadata": {"pallium_work_refs": ["CASE-42"]},
+        }])
+    await actor_b._post("/items", [{
+        "source_type": "chat_message",
+        "source_id": "history-other-work",
+        "content_type": "text/plain",
+        "content": "completely separate evidence",
+        "artifact_kind": "message",
+        "role": "user",
+        "container_ref": "test-container",
+        "actor_ref": "操作员乙",
+        "visibility": "private",
+        "metadata": {"pallium_work_refs": ["OTHER-7"]},
+    }])
     asgi_app.state.pallium_service.drain_processing_queue(worker_id="history-actor-test")
 
     unfiltered = await actor_a.search_history("cross actor history marker", limit=10)
@@ -217,3 +234,18 @@ async def test_search_history_actor_is_optional_exact_metadata_filter(
         "cross actor history marker", limit=10, actor_ref="",
     )
     assert empty_actor["results"] == []
+
+    for query in (None, "cross actor history marker"):
+        exact_unfiltered = await actor_a.search_history_by_work_ref(
+            "case-42", query, limit=10,
+        )
+        assert {item["source_id"] for item in exact_unfiltered["results"]} == {
+            "history-actor-a", "history-actor-b", "history-no-actor",
+        }
+
+        exact_filtered = await actor_a.search_history_by_work_ref(
+            "case-42", query, limit=10, actor_ref="操作员乙",
+        )
+        assert [item["source_id"] for item in exact_filtered["results"]] == [
+            "history-actor-b",
+        ]

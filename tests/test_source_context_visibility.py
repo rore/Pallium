@@ -421,6 +421,38 @@ def test_global_replacement_requires_caller_actor(client: TestClient) -> None:
     assert with_actor["current_memory_object_id"] == current.id
 
 
+def test_global_supported_memory_requires_explicit_caller_actor(client: TestClient) -> None:
+    from core.models import MemoryObject, Relation
+
+    anchor = _ingest(
+        client, source_id="global-supported-anchor", content="actor-owned anchor",
+        actor_ref="actor-A",
+    )
+    storage = client.app.state.pallium_service._storage
+    supported = MemoryObject(
+        id="global-supported-memory", type="decision", schema_id="test",
+        schema_version="v1", payload={"decision": "Actor-wide"},
+        container_ref="other-container", visibility="global", actor_ref="actor-A",
+    )
+    storage.create_memory_object(supported)
+    storage.create_relation(Relation(
+        from_kind="memory_object", from_id=supported.id, relation_type="supported_by",
+        to_kind="source_item", to_id=anchor,
+    ))
+
+    no_actor = _context(client, anchor, include_supported_memories=True)
+    assert no_actor.status_code == 200, no_actor.text
+    assert no_actor.json()["supported_memories"] == []
+
+    matching_actor = _context(
+        client, anchor, include_supported_memories=True, query_actor_ref="actor-A",
+    )
+    assert matching_actor.status_code == 200, matching_actor.text
+    assert [item["memory_object_id"] for item in matching_actor.json()["supported_memories"]] == [
+        supported.id,
+    ]
+
+
 @pytest.mark.parametrize("mode", ["conflict", "cycle"])
 def test_source_context_marks_ambiguous_supersession_unavailable(
     client: TestClient,
