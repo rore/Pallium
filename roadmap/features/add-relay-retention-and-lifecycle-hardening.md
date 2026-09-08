@@ -1,7 +1,7 @@
 ---
 id: add-relay-retention-and-lifecycle-hardening
 title: Harden Relay session and message lifecycle
-status: queued
+status: active
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -31,6 +31,20 @@ entered the recipient's context and was acknowledged; it does not promise that t
 agent replied or completed the request. Undelivered messages must remain durable
 for next-turn fallback until expiry, while acknowledged messages must never be
 resent merely because no reply followed.
+
+## Value-first execution
+
+Current main already keeps dormant sessions routable, rejects proven-unreachable
+recipients before persistence, preserves pending deliveries, and separates
+delivery from reply. The first observed usability gap is smaller: a known,
+explicitly closed recipient looks like a typo because send and reply return a
+generic 404.
+
+The first slice changes only that terminal result to stable
+`409 recipient session is closed`, still before persistence. Retention cleanup
+and concrete windows remain deferred until database growth or dashboard diagnosis
+creates measurable operational pain; age alone still cannot invalidate a
+resumable session or durable pending delivery.
 
 ## In Scope
 
@@ -88,7 +102,9 @@ resent merely because no reply followed.
 ## Notes
 
 This is R1 operational hardening immediately after wake-first delivery, not
-evidence for moving to R2. Choose concrete inactivity and retention windows when
-implementation starts, based on observed wake recovery and dashboard diagnostic
-needs. A future explicit response-deadline contract can be considered separately
-if real usage needs it; ordinary Relay must not infer one.
+evidence for moving to R2. Implementation starts with the closed-recipient error
+because it removes a concrete sender ambiguity without adding lifecycle machinery.
+Choose inactivity and retention windows only after observed storage growth or
+dashboard diagnostic needs justify them. A future explicit response-deadline
+contract can be considered separately if real usage needs it; ordinary Relay must
+not infer one.

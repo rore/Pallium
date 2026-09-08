@@ -114,6 +114,12 @@ dormant after 24 hours without a turn but remains exactly addressable. A close
 event marks it closed and releases its name; a later turn reactivates the same
 session ID.
 
+Sending to a known closed endpoint or unambiguous exact runtime/session returns
+`409 recipient session is closed` before a message or delivery is stored. The
+same error applies when replying after the original sender closes. A released
+name and an unknown selector remain not found; an unreachable destination keeps
+its existing `409 recipient session is unreachable` result.
+
 ## Limits and scope
 
 - message and reply text: at most 16,000 Unicode code points

@@ -378,7 +378,8 @@ def test_atomic_reply_failure_rolls_back_delivery_claim(client: TestClient, rela
     )
     assert close.status_code == 200
     response = _reply(client, delivery["delivery_id"], delivery["receipt"], "cannot deliver")
-    assert response.status_code == 404
+    assert response.status_code == 409
+    assert response.json()["detail"] == "recipient session is closed"
 
     from sqlalchemy import select
     from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord
