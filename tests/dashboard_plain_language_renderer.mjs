@@ -217,6 +217,10 @@ assert.equal(operationalElements['operational-summary'].hidden, false);
 assert.equal(operationalElements['operational-summary'].open, false);
 assert.match(operationalElements['ops-title'].textContent, /warnings/i);
 
+renderOperational(cleanStatus, { status_counts_24h: { failed: 1 } }, cleanRelay);
+assert.match(operationalElements['ops-title'].textContent, /warnings/i);
+assert.doesNotMatch(operationalElements['ops-title'].textContent, /needs attention/i);
+
 renderOperational({ ...cleanStatus, ingestion: { status: 'degraded', issues: [{}] } }, cleanQueue, cleanRelay);
 assert.equal(operationalElements['operational-summary'].hidden, false);
 assert.equal(operationalElements['operational-summary'].open, false);
@@ -251,10 +255,10 @@ assert.equal(relaySelection.renders(), 1);
 const pairStart = html.indexOf('function relayPairSummaries(');
 const pairEnd = html.indexOf('function selectRelayNode(', pairStart);
 assert.ok(pairStart >= 0 && pairEnd > pairStart);
-const { relayPairSummaries, relayConnectionSummaries, relayEdgeGeometry } = new Function(`
+const { relayPairSummaries, relayConnectionSummaries, relayEdgeGeometry, relayLayout, relayPositions, relayClampPoint } = new Function(`
   function rdeliveries(message) { return message.edges; }
   ${html.slice(pairStart, pairEnd)}
-  return { relayPairSummaries, relayConnectionSummaries, relayEdgeGeometry };
+  return { relayPairSummaries, relayConnectionSummaries, relayEdgeGeometry, relayLayout, relayPositions, relayClampPoint };
 `)();
 const pairRows = relayPairSummaries([
   { edges: [{ from: 'a', to: 'b', state: 'pending' }, { from: 'a', to: 'c', state: 'delivered' }] },
@@ -270,6 +274,23 @@ assert.equal(abConnection.backward, 3);
 assert.deepEqual(abConnection.forwardStates, { pending: 1, delivered: 1 });
 assert.deepEqual(abConnection.backwardStates, { delivered: 3 });
 assert.doesNotMatch(relayEdgeGeometry({ x: 50, y: 50 }, { x: 50, y: 50 }, false).path, /NaN/);
+const twoNodeLayout = relayLayout(['a', 'b'], []);
+assert.equal(twoNodeLayout.positions.a.y, twoNodeLayout.height / 2);
+assert.equal(twoNodeLayout.positions.b.y, twoNodeLayout.height / 2);
+const tenNodeLayout = relayLayout(Array.from({ length: 10 }, (_, index) => 'n' + index), []);
+const tenPositions = Object.values(tenNodeLayout.positions);
+for (let i = 0; i < tenPositions.length; i++) for (let j = i + 1; j < tenPositions.length; j++) assert.ok(Math.abs(tenPositions[i].x - tenPositions[j].x) >= 156 || Math.abs(tenPositions[i].y - tenPositions[j].y) >= 68);
+const savedPositions = {}, movedNodes = new Set();
+relayPositions(['a', 'b'], relayLayout(['a', 'b'], []), savedPositions, movedNodes);
+const pagedLayout = relayLayout(['a', 'b', 'c'], []);
+relayPositions(['a', 'b', 'c'], pagedLayout, savedPositions, movedNodes);
+const pagedPositions = Object.values(pagedLayout.positions);
+for (let i = 0; i < pagedPositions.length; i++) for (let j = i + 1; j < pagedPositions.length; j++) assert.ok(Math.abs(pagedPositions[i].x - pagedPositions[j].x) >= 156 || Math.abs(pagedPositions[i].y - pagedPositions[j].y) >= 68);
+movedNodes.add('a'); savedPositions.a = { x: 123, y: 123 };
+const manualLayout = relayLayout(['a', 'b', 'c', 'd'], []);
+relayPositions(['a', 'b', 'c', 'd'], manualLayout, savedPositions, movedNodes);
+assert.deepEqual(manualLayout.positions.a, { x: 123, y: 123 });
+assert.deepEqual(relayClampPoint({ x: -50, y: 900 }, 760, 430), { x: 78, y: 396 });
 
 const ownerResetStart = html.indexOf('function resetRelayData(');
 const ownerResetEnd = html.indexOf('function relaySessionParams(', ownerResetStart);
@@ -335,4 +356,15 @@ assert.ok(html.indexOf("relay.id='relay-health-panel'") < html.indexOf("history.
 assert.ok(html.indexOf("history.id='session-history-panel'") < html.indexOf("derived.id='derived-memory-panel'"));
 assert.match(html, /source-results-grid/);
 assert.match(html, /source-evidence/);
+assert.match(html, /align-items:start/);
+assert.match(html, /relay-map-hint[^>]*>Drag background to pan · drag boxes to arrange/);
+assert.match(html, /overflow:hidden[^}]*cursor:grab/);
+assert.match(html, /mapFitPending/);
+assert.match(html, /nodePositions/);
+assert.match(html, /onpointerdown=event=>/);
+assert.match(html, /relayUpdateMapPositions\(svg\)/);
+assert.match(html, /point=\{\.\.\.\(_relay\.nodePositions\[item\.dataset\.rnode\]/);
+assert.doesNotMatch(html, /_relay\.nodePositions\[dragging\.id\][^;]*;renderMap\(messages,false\)/);
+assert.match(html, /if\(_relay\.message\).*relay-session-detail/);
+assert.match(html, /class=\"time\">.*time/);
 console.log('plain-language dashboard renderers: all cases passed');

@@ -434,7 +434,7 @@ class TestDashboardTwoViewShell:
         assert "How memory helps" in html
         assert 'id="funnel-pill"' in html
         assert "fetchEffectivenessReports" in html
-        assert "Did pulled-up history help the next task?" in html
+        assert "Functional outcome evidence" in html
         assert "We do not know yet whether pulled-up history helped." in html
         assert "does not show that Pallium improved real work." in html
         assert "hand-reviewed examples" in html

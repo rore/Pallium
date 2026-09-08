@@ -195,10 +195,10 @@
 
   /* ── System Health row ─────────────────────── */
   .sh-row {
-    display: grid; grid-template-columns: 0.95fr 1.2fr 1fr; gap: 10px;
-    align-items: stretch;
+    display: grid; grid-template-columns: minmax(280px,.8fr) minmax(0,1.35fr); gap: 10px;
+    align-items: start;
   }
-  .sh-row .card { min-height: 116px; }
+  .sh-row .card { min-height: 0; }
 
   /* ── Query Activity row ────────────────────── */
   .qa-row {
@@ -556,7 +556,8 @@
   .ops-system.warn { border-color:rgba(255,204,0,.45); }
   .ops-system.bad { border-color:rgba(255,102,102,.55); }
   .ops-issues { margin-top:10px; display:grid; gap:5px; }
-  .ops-issue { color:var(--text); font-size:11.5px; line-height:1.45; }
+  .ops-issue { color:var(--text); font-size:11.5px; line-height:1.45; text-align:left; width:100%; }
+  .health-facts{display:grid;gap:0;margin-top:6px}.health-fact{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid rgba(42,42,74,.7);color:var(--muted);font-size:10.5px}.health-fact strong{color:var(--text);text-align:right}.health-foot{margin-top:10px;color:var(--muted);font-size:10px;line-height:1.5}.health-details{margin-top:10px;border-top:1px solid var(--border);padding-top:8px}.health-details>summary{cursor:pointer;color:var(--muted);font-size:10.5px}.health-details .fail-list{margin-top:8px}.ok-text{color:var(--green)!important}.bad-text{color:var(--red)!important}.session-kpis .hh-grid{grid-template-columns:repeat(2,minmax(190px,280px));justify-content:start}
   .ops-issue:before { content:"!"; color:var(--yellow); font-weight:bold; margin-right:8px; }
   .ops-summary.error .ops-issue:before { color:var(--red); }
   .relay-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
@@ -604,12 +605,12 @@
   .capability{margin:18px 0;border:1px solid var(--border);border-radius:var(--radius);background:rgba(15,15,32,.35)}
   .capability-static{margin:18px 0}.capability-static>.section-title{margin-top:0}.section-title .btn{margin-left:auto;text-transform:none;letter-spacing:0}
   .source-intro{color:var(--muted);line-height:1.55;margin:4px 0 10px}.source-intro strong{color:var(--text)}.source-scope-note{font-size:10.5px;color:var(--muted);line-height:1.5;padding:8px 10px;border-left:2px solid var(--blue);background:rgba(102,170,255,.05)}.source-advanced{margin:8px 0}.source-advanced>summary{cursor:pointer;color:var(--muted);font-size:10.5px}.source-results-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,.8fr);gap:10px;align-items:start}.source-list-scroll{max-height:460px;overflow:auto}.source-detail-pane{position:sticky;top:10px;max-height:500px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:10px;background:rgba(10,13,29,.45)}.source-detail-pane .relay-detail-grid label{display:block;color:var(--muted);font-size:10px}.source-detail-pane .relay-detail-grid div,.source-detail-pane code{overflow-wrap:anywhere}.source-evidence{margin-top:12px}.source-evidence>summary{cursor:pointer;color:var(--text);font-size:11px}.source-evidence .scope-tag{color:var(--muted);font-size:10px;font-weight:normal}
-  .capability>summary{cursor:pointer;padding:12px 14px;color:var(--text);font-weight:bold;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:10px}.capability>summary::-webkit-details-marker{display:none}.capability>summary:before{content:'▸';color:var(--blue)}.capability[open]>summary:before{content:'▾'}.capability-body{padding:0 12px 14px}.capability .section-title:first-child{margin-top:4px}
+  .capability>summary{cursor:pointer;padding:12px 14px;color:var(--text);font-weight:bold;list-style:none;display:flex;align-items:center;justify-content:flex-start;gap:10px}.capability>summary .scope-tag{margin-left:auto}.capability>summary::-webkit-details-marker{display:none}.capability>summary:before{content:'▸';color:var(--blue)}.capability[open]>summary:before{content:'▾'}.capability-body{padding:0 12px 14px}.capability .section-title:first-child{margin-top:4px}
   .capability-jumps{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}.capability-jumps button{font:inherit}
   .source-controls,.relay-filter-bar{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:12px 0}.source-controls label,.relay-filter-bar label{display:grid;gap:3px;color:var(--muted);font-size:10px;text-transform:uppercase}.source-controls input,.source-controls select,.relay-filter-bar input,.relay-filter-bar select,.relay-session-pane input{background:#0f0f20;border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font:inherit;min-width:115px}.source-controls input{min-width:210px}.source-status,.relay-status{font-size:11px;color:var(--muted);margin:7px 0}.source-detail{margin-top:8px;border-top:1px solid var(--border);padding-top:10px}.source-detail pre{white-space:pre-wrap;max-height:240px;overflow:auto}.source-table button,.relay-session,.relay-message{font:inherit;color:inherit;background:transparent;border:0;text-align:left;cursor:pointer}.source-table button{color:var(--blue);text-decoration:underline}.source-table td{overflow-wrap:anywhere}.source-table{min-width:700px}
-  .relay-workspace-head{display:flex;justify-content:space-between;align-items:end;gap:12px}.relay-workspace{display:grid;grid-template-columns:minmax(210px,.72fr) minmax(0,2.3fr);gap:12px;margin-top:12px}.relay-session-pane,.relay-main-pane{border:1px solid var(--border);border-radius:var(--radius);background:rgba(15,15,32,.35);padding:10px;min-width:0}.relay-session-pane input{width:100%;margin-bottom:8px}.relay-sessions{display:grid;gap:5px;max-height:70vh;overflow:auto}.relay-session{border:1px solid var(--border);border-radius:5px;padding:8px;width:100%}.relay-session[aria-pressed="true"]{border-color:var(--blue);background:rgba(102,170,255,.1)}.relay-session small{display:block;color:var(--muted);overflow-wrap:anywhere}.relay-toolbar{display:flex;justify-content:space-between;gap:8px;align-items:center}.relay-map-scroll{overflow:auto;max-width:100%;border:1px solid var(--border);margin-top:10px;background:#10142a}.relay-map{min-width:0;min-height:300px;padding:12px;position:relative}.relay-map svg{width:100%;min-height:290px}.relay-node,.relay-edge{cursor:pointer}.relay-node rect{fill:#16213e;stroke:#66aaff;stroke-width:2}.relay-node.selected rect,.relay-edge.selected .edge-line{stroke:#00ff33;stroke-width:3}.relay-node text{fill:#ccd6f6;font:12px var(--font)}.relay-node .sub{fill:#7a8ab2;font-size:10px}.relay-edge .edge-line{stroke:#66aaff;stroke-width:2;fill:none}.relay-messages{display:grid;gap:6px;margin-top:10px}.relay-message{border:1px solid var(--border);border-radius:5px;padding:9px;width:100%}.relay-message[aria-pressed="true"]{border-color:var(--blue);background:rgba(102,170,255,.08)}.relay-message span{display:block}.relay-message .meta{color:var(--muted);font-size:10px}.relay-detail{margin-top:10px}.relay-detail:not(:empty){border-top:1px solid var(--border);padding-top:10px}.relay-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.relay-detail-grid div{overflow-wrap:anywhere}.relay-detail label{display:block;color:var(--muted);font-size:10px}.relay-alias{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:10px}.relay-alias label{display:grid;gap:3px}.relay-alias input{background:#0f0f20;border:1px solid var(--border);color:var(--text);padding:6px;border-radius:4px;font:inherit}.relay-alias-status{color:var(--muted);font-size:11px;margin-top:5px}
+  .relay-workspace-head{display:flex;justify-content:space-between;align-items:end;gap:12px}.relay-workspace{display:grid;grid-template-columns:minmax(210px,.72fr) minmax(0,2.3fr);gap:12px;margin-top:12px;align-items:start}.relay-session-pane,.relay-main-pane{border:1px solid var(--border);border-radius:var(--radius);background:rgba(15,15,32,.35);padding:10px;min-width:0}.relay-session-pane input{width:100%;margin-bottom:8px}.relay-sessions{display:grid;gap:5px;max-height:70vh;overflow:auto}.relay-session{border:1px solid var(--border);border-radius:5px;padding:8px;width:100%}.relay-session[aria-pressed="true"]{border-color:var(--blue);background:rgba(102,170,255,.1)}.relay-session small{display:block;color:var(--muted);overflow-wrap:anywhere}.relay-toolbar{display:flex;justify-content:space-between;gap:8px;align-items:center}.relay-map-scroll{overflow:hidden;max-width:100%;height:440px;border:1px solid var(--border);margin-top:10px;background:#10142a;cursor:grab;touch-action:none;user-select:none}.relay-map-scroll.is-panning{cursor:grabbing}.relay-map{min-width:0;min-height:300px;padding:12px;position:relative;transform-origin:0 0}.relay-map svg{width:100%;min-height:290px}.relay-map-hint{color:var(--muted);font-size:10px;margin-top:5px}.relay-node,.relay-edge{cursor:pointer}.relay-node{cursor:grab}.relay-node:active{cursor:grabbing}.relay-node rect{fill:#16213e;stroke:#66aaff;stroke-width:2}.relay-node.selected rect,.relay-edge.selected .edge-line{stroke:#00ff33;stroke-width:3}.relay-node text{fill:#ccd6f6;font:12px var(--font);pointer-events:none}.relay-node .sub{fill:#7a8ab2;font-size:10px}.relay-edge .edge-line{stroke:#66aaff;stroke-width:2;fill:none}.relay-messages{display:grid;gap:6px;margin-top:10px}.relay-message{border:1px solid var(--border);border-radius:5px;padding:9px;width:100%}.relay-message[aria-pressed="true"]{border-color:var(--blue);background:rgba(102,170,255,.08)}.relay-message span{display:block}.relay-message .time{color:var(--text);font-weight:700;font-size:12px}.relay-message .meta{color:var(--muted);font-size:10px}.relay-detail{margin-top:10px}.relay-detail:not(:empty){border-top:1px solid var(--border);padding-top:10px}.relay-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.relay-detail-grid div{overflow-wrap:anywhere}.relay-detail label{display:block;color:var(--muted);font-size:10px}.relay-alias{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:10px}.relay-alias label{display:grid;gap:3px}.relay-alias input{background:#0f0f20;border:1px solid var(--border);color:var(--text);padding:6px;border-radius:4px;font:inherit}.relay-alias-status{color:var(--muted);font-size:11px;margin-top:5px}
   @media(max-width:980px){.source-results-grid{grid-template-columns:1fr}.source-detail-pane{position:static;max-height:none}.relay-workspace{grid-template-columns:1fr}.relay-sessions{max-height:240px;grid-template-columns:repeat(2,minmax(0,1fr))}.relay-workspace-head{align-items:start}.relay-activity-grid{grid-template-columns:1fr}.relay-detail-pane{position:static;max-height:none}.source-controls input{min-width:0;width:100%}}
-  @media(max-width:520px){.relay-filter-bar,.source-controls{display:grid;grid-template-columns:1fr}.relay-filter-bar label,.source-controls label{width:100%}.relay-filter-bar select,.relay-filter-bar input,.source-controls select,.source-controls input{width:100%}.relay-sessions{grid-template-columns:1fr}.relay-detail-grid{grid-template-columns:1fr}.relay-workspace-head{display:grid}.relay-map{min-width:0}.table-scroll:after,.relay-map-scroll:after{content:'↔ scroll';display:block;color:var(--muted);font-size:10px;padding:3px}}</style>
+  @media(max-width:520px){.relay-filter-bar,.source-controls{display:grid;grid-template-columns:1fr}.relay-filter-bar label,.source-controls label{width:100%}.relay-filter-bar select,.relay-filter-bar input,.source-controls select,.source-controls input{width:100%}.relay-sessions{grid-template-columns:1fr}.relay-detail-grid{grid-template-columns:1fr}.relay-workspace-head{display:grid}.relay-map{min-width:0}.table-scroll:after{content:'↔ scroll';display:block;color:var(--muted);font-size:10px;padding:3px}}</style>
 </head>
 <body>
 
@@ -648,21 +649,21 @@
   <div class="metrics-row">
 
     <div class="card">
-      <div class="metric-label">Derived Memory objects</div>
+      <div class="metric-label">Memory objects</div>
       <div class="dual">
         <span id="m-memory" class="v24 purple">—</span><span class="sep">total ·</span><span id="m-memory-active" class="vall">—</span><span class="sep">active</span>
       </div>
       <svg id="spark-memory" class="metric-spark" hidden viewBox="0 0 240 22" preserveAspectRatio="none"></svg>
-      <div class="metric-sub">optional generated summaries, separate from recorded history <span id="m-created-24h" hidden>—</span></div>
+      <div class="metric-sub">stored and generated knowledge, separate from original SourceItems <span id="m-created-24h" hidden>—</span></div>
     </div>
 
     <div class="card">
       <div class="metric-label">Session History source items</div>
       <div class="dual">
-        <span id="m-source" class="v24 blue">—</span><span class="sep">total ·</span><span id="m-source-24h" class="vall">—</span><span class="sep">processed in 24h</span>
+        <span id="m-source" class="v24 blue">—</span><span class="sep">total ·</span><span id="m-source-24h" class="vall">—</span><span class="sep">completed in 24h</span>
       </div>
       <svg id="spark-source" class="metric-spark" hidden viewBox="0 0 240 22" preserveAspectRatio="none"></svg>
-      <div class="metric-sub">original recorded work · <span id="m-pending-mini" class="v" style="color:var(--text)">0</span> pending · <span id="m-processing-mini" class="v" style="color:var(--text)">0</span> processing</div>
+      <div class="metric-sub">original prompts, responses, tool results, and notes · <span id="m-pending-mini" class="v" style="color:var(--text)">0</span> pending · <span id="m-processing-mini" class="v" style="color:var(--text)">0</span> processing</div>
     </div>
 
     <div class="card" hidden>
@@ -691,17 +692,17 @@
 
   <!-- ── Historical Lookups (agent pull path — operational) ─── -->
   <div class="section-title">Historical Lookups <span class="scope-tag">the pull path: are agents fetching past work, and is tracking on</span></div>
-  <div class="card">
+  <div class="card session-kpis">
     <div class="hh-grid">
       <div>
-        <div class="tile-label">tracking</div>
+        <div class="tile-label">capture tracking</div>
         <div class="dual"><span id="op-lookup-armed" class="v24 muted">—</span></div>
         <div class="tile-sub">whether pull activity is being recorded</div>
       </div>
       <div>
-        <div class="tile-label">lookups recorded</div>
+        <div class="tile-label">lookups recorded · all-time</div>
         <div class="dual"><span id="op-lookup-events" class="v24 blue">—</span></div>
-        <div class="tile-sub">times an agent pulled up its own past work</div>
+        <div class="tile-sub">usage count only · not a success or usefulness score</div>
       </div>
     </div>
     <div id="op-lookup-nudge" class="hh-empty" style="display:none">
@@ -710,78 +711,34 @@
     </div>
   </div>
 
-  <!-- ── System Health (Storage · Ingestion · Extraction Health) ─── -->
-  <div class="section-title">System Health</div>
+  <!-- ── System Health: readiness + Session History processing ─── -->
+  <div class="section-title">System Health <span class="scope-tag">readiness, processing, and storage</span></div>
   <div class="sh-row">
     <div class="card" id="storage-panel">
-      <div class="storage-item">
-        <div class="storage-label"><span>SQLite Database</span><span class="v" id="s-sqlite">—</span></div>
-        <div class="storage-bar-wrap"><div id="s-sqlite-bar" class="storage-bar sqlite" style="width:0%"></div></div>
+      <div class="queue-section-header"><span>Service &amp; search</span><span id="system-search-state" class="scope-tag">checking</span></div>
+      <div class="health-facts">
+        <div class="health-fact"><span>Semantic search</span><strong id="s-vector-status">—</strong></div>
+        <div class="health-fact"><span>Embedding configuration</span><strong id="s-embedding-status">—</strong></div>
+        <div class="health-fact"><span>Session History database</span><strong id="s-sqlite">—</strong></div>
+        <div class="health-fact"><span>Relay database</span><strong id="s-relay">—</strong></div>
+        <div class="health-fact"><span>Vector index</span><strong id="s-vector">—</strong></div>
       </div>
-      <div class="storage-item">
-        <div class="storage-label"><span>Vector Index</span><span class="v" id="s-vector">—</span></div>
-        <div class="storage-bar-wrap"><div id="s-vector-bar" class="storage-bar vector" style="width:0%"></div></div>
-      </div>
-      <div style="margin-top:auto; padding-top:6px; font-size:11px; color:var(--muted)">
-        Vector index: <span style="color:var(--text)" id="s-vector-status">—</span>
-        &nbsp;·&nbsp; Retention: <span id="r-enabled">—</span>
-      </div>
+      <div class="health-foot">Retention <span id="r-enabled">—</span> · absolute sizes are inventory, not capacity limits.</div>
     </div>
-
-    <div class="card">
-      <div class="queue-section-header">
-        <span>Ingestion Queue</span>
-        <span style="text-transform:none;color:var(--muted);font-size:10px">last 24h <span style="color:var(--text)">prominent</span> · total <span style="color:var(--muted)">muted</span></span>
-      </div>
+    <div class="card" id="history-processing-panel">
+      <div class="queue-section-header"><span>Session History processing</span><span style="text-transform:none;color:var(--muted);font-size:10px">current state + last 24h</span></div>
       <div class="iq-grid">
-        <div>
-          <div class="tile-label">pending</div>
-          <div class="dual">
-            <span id="qs-pending" class="v24 yellow">—</span>
-          </div>
-          <div class="tile-sub"><span id="qs-processing" class="v" style="color:var(--text)">0</span> processing</div>
-        </div>
-        <div>
-          <div class="tile-label"><span class="l24">done 24h</span> · <span class="lall">total</span></div>
-          <div class="dual">
-            <span id="qs-completed-24h" class="v24 green">—</span>
-            <span class="sep">·</span>
-            <span id="qs-completed" class="vall">—</span>
-          </div>
-        </div>
-        <div>
-          <div class="tile-label"><span class="l24">failed 24h</span> · <span class="lall">total</span></div>
-          <div class="dual">
-            <span id="qs-failed-24h" class="v24 green">—</span>
-            <span class="sep">·</span>
-            <span id="qs-failed" class="vall">—</span>
-          </div>
-          <div class="tile-sub"><span id="qs-failed-detail">all clear</span></div>
-        </div>
-        <div>
-          <div class="tile-label"><span class="l24">skipped 24h</span> · <span class="lall">total</span></div>
-          <div class="dual">
-            <span id="qs-skipped-24h" class="v24 muted">—</span>
-            <span class="sep">·</span>
-            <span id="qs-skipped" class="vall">—</span>
-          </div>
-        </div>
+        <div><div class="tile-label">completed in 24h</div><div class="dual"><span id="qs-completed-24h" class="v24 green">—</span></div><div class="tile-sub">newly processed source items</div></div>
+        <div><div class="tile-label">waiting now</div><div class="dual"><span id="qs-pending" class="v24 yellow">—</span></div><div class="tile-sub"><span id="qs-processing" class="v">0</span> processing</div></div>
+        <div><div class="tile-label">failed in 24h</div><div class="dual"><span id="qs-failed-24h" class="v24 green">—</span></div><div id="qs-failed-detail" class="tile-sub">all clear</div></div>
+        <div><div class="tile-label">oldest wait</div><div class="dual"><span id="qs-oldest" class="v24 muted">—</span></div><div class="tile-sub">only meaningful while items are waiting</div></div>
       </div>
-      <div class="retention-info" id="retention-info">
-        Retention last run: <span id="r-last-run">—</span>
-        &nbsp;·&nbsp; Deleted source: <span id="r-del-src">—</span>
-        &nbsp;·&nbsp; Deleted memory: <span id="r-del-mem">—</span>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="queue-section-header">
-        <span>Extraction Health</span>
-        <span style="text-transform:none;color:var(--muted);font-size:10px">recent failures</span>
-      </div>
-      <div id="extraction-fail-list" class="fail-list">
-        <div style="color:var(--muted);font-size:11px">Loading…</div>
-      </div>
+      <div id="queue-total-summary" class="health-foot">Loading all-time processing totals…</div>
+      <details id="processing-diagnostics" class="health-details">
+        <summary>Maintenance and recent failure detail <span id="qs-failure-state" class="scope-tag">Loading…</span></summary>
+        <div id="extraction-fail-list" class="fail-list"><div style="color:var(--muted);font-size:11px">Loading…</div></div>
+        <div class="retention-info" id="retention-info">Retention last run: <span id="r-last-run">—</span> &nbsp;·&nbsp; Deleted source: <span id="r-del-src">—</span> &nbsp;·&nbsp; Deleted memory: <span id="r-del-mem">—</span></div>
+      </details>
     </div>
   </div>
 
@@ -789,11 +746,11 @@
   <div class="section-title">Agent Relay <span class="scope-tag">cross-agent delivery - waiting is normal until the recipient's next turn</span></div>
   <div class="card">
     <div class="relay-grid">
-      <div><div class="tile-label">messages</div><div class="dual"><span id="relay-messages-24h" class="v24 blue">&mdash;</span><span class="sep">&middot;</span><span id="relay-messages-total" class="vall">&mdash;</span></div><div class="tile-sub">24h - total</div></div>
-      <div><div class="tile-label">delivered</div><div class="dual"><span id="relay-delivered-24h" class="v24 green">&mdash;</span><span class="sep">&middot;</span><span id="relay-delivered-total" class="vall">&mdash;</span></div><div class="tile-sub">24h - total</div></div>
+      <div><div class="tile-label">messages · 24h</div><div class="dual"><span id="relay-messages-24h" class="v24 blue">&mdash;</span></div><div class="tile-sub">all-time <span id="relay-messages-total">&mdash;</span></div></div>
+      <div><div class="tile-label">deliveries completed · 24h</div><div class="dual"><span id="relay-delivered-24h" class="v24 green">&mdash;</span></div><div class="tile-sub">all-time <span id="relay-delivered-total">&mdash;</span></div></div>
       <div><div class="tile-label">waiting now</div><div class="dual"><span id="relay-pending" class="v24">&mdash;</span></div><div id="relay-pending-sub" class="tile-sub">next recipient turn</div></div>
-      <div><div class="tile-label">expired</div><div class="dual"><span id="relay-expired-24h" class="v24">&mdash;</span><span class="sep">&middot;</span><span id="relay-expired-total" class="vall">&mdash;</span></div><div class="tile-sub">24h - total</div></div>
-      <div><div class="tile-label">delivery time</div><div class="dual"><span id="relay-latency" class="v24">&mdash;</span></div><div id="relay-latency-sub" class="tile-sub">median - 24h</div></div>
+      <div><div class="tile-label">expired · 24h</div><div class="dual"><span id="relay-expired-24h" class="v24">&mdash;</span></div><div class="tile-sub">all-time <span id="relay-expired-total">&mdash;</span></div></div>
+      <div><div class="tile-label">median delivery time · 24h</div><div class="dual"><span id="relay-latency" class="v24">&mdash;</span></div><div id="relay-latency-sub" class="tile-sub">p95 and sample size</div></div>
     </div>
     <div id="relay-runtimes" class="relay-runtime-row"></div>
     <div id="relay-note" class="relay-note">Loading Relay activity...</div>
@@ -987,7 +944,7 @@
           <div class="tile-sub">is reuse tracking switched on</div>
         </div>
         <div>
-          <div class="tile-label">lookups recorded</div>
+          <div class="tile-label">lookups recorded · all-time</div>
           <div class="dual"><span id="hh-funnel-events" class="v24 blue">—</span></div>
           <div class="tile-sub">historical-lookup reuse events captured</div>
         </div>
@@ -1001,7 +958,7 @@
 
     <!-- ── 2 · Reuse KPI rungs (RETROSPECTIVE) ────────────────── -->
     <div class="section-title">
-      Did pulled-up history help the next task? <span class="framing-tag retrospective">looks back at completed work</span>
+      Functional outcome evidence <span class="framing-tag retrospective">evaluation, not live health</span>
       <span class="scope-tag">what we know today — and what we still need to measure</span>
     </div>
     <div class="card">
@@ -1052,7 +1009,7 @@
     <div class="relay-workspace-head"><div><div class="section-title">Relay workspace <span class="scope-tag">recorded communication, never a workflow</span></div><div id="relay-window-note" class="relay-note">Loading owner activity…</div></div><button class="btn" type="button" onclick="fetchRelay(true)">Refresh</button></div>
     <div id="relay-owner-overview" class="relay-owner-overview" aria-live="polite">Loading owner activity…</div>
     <div id="relay-filter-bar" class="relay-filter-bar" aria-label="Relay filters" hidden><label>Owner <select id="relay-actor-filter"><option value="">All owners</option></select></label><label>Active containers <select id="relay-container-filter"><option value="">All ranked containers</option></select></label><label>Find container <input id="relay-container-search" type="search" placeholder="Repository or path" autocomplete="off"></label><label>Sessions <select id="relay-lifecycle-filter"><option value="recent">Recent in 24h</option><option value="dormant">Dormant</option><option value="closed">Closed</option><option value="all">All history</option></select></label><label>Runtime <select id="relay-runtime-filter"><option value="">All runtimes</option><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="opencode">OpenCode</option></select></label><label>Delivery <select id="relay-state-filter"><option value="">All states</option><option value="pending">Pending</option><option value="delivered">Delivered</option><option value="expired">Expired</option><option value="claimed">Claimed</option></select></label><div class="relay-scope-help">Containers come from Relay session check-ins. They are ranked by active sessions; dormant and test scopes stay available through search.</div></div>
-    <div id="relay-workspace" class="relay-workspace" hidden><aside class="relay-session-pane"><label class="sr-only" for="relay-session-search">Find a Relay session</label><input id="relay-session-search" type="search" placeholder="Filter sessions" autocomplete="off"><div class="relay-session-tools"><button id="relay-session-discovery" class="btn" type="button">Browse all active</button></div><div id="relay-sessions" class="relay-sessions" role="list" aria-live="polite">Loading sessions…</div><button id="relay-sessions-more" class="btn" type="button" hidden onclick="loadMoreRelaySessions()">Load more sessions</button></aside><section class="relay-main-pane"><div class="relay-toolbar"><strong>Communication map</strong><span><span class="relay-zoom" aria-label="Map zoom"><button id="relay-zoom-out" class="btn" type="button" aria-label="Zoom out">&minus;</button><button id="relay-zoom-in" class="btn" type="button" aria-label="Zoom in">+</button><button id="relay-zoom-fit" class="btn" type="button">Fit</button></span> <button id="relay-clear" class="btn" type="button">Clear selection</button><button id="relay-more" class="btn" type="button" hidden onclick="loadMoreRelayMessages()">Load more messages</button></span></div><div id="relay-map-wrap" class="relay-map-scroll" tabindex="0" aria-label="Relay communication map"><div id="relay-map" class="relay-map">Loading messages…</div></div><div class="relay-activity-grid"><section class="relay-message-pane" aria-label="Recorded messages"><h3>Recorded messages</h3><div id="relay-messages" class="relay-messages" aria-live="polite"></div></section><aside class="relay-detail-pane" aria-label="Selection detail"><div id="relay-message-detail" class="relay-detail" aria-live="polite"><p class="relay-note">Select a message to inspect delivery detail.</p></div><div id="relay-session-detail" class="relay-detail" aria-live="polite"></div></aside></div></section></div>
+    <div id="relay-workspace" class="relay-workspace" hidden><aside class="relay-session-pane"><label class="sr-only" for="relay-session-search">Find a Relay session</label><input id="relay-session-search" type="search" placeholder="Filter sessions" autocomplete="off"><div class="relay-session-tools"><button id="relay-session-discovery" class="btn" type="button">Browse all active</button></div><div id="relay-sessions" class="relay-sessions" role="list" aria-live="polite">Loading sessions…</div><button id="relay-sessions-more" class="btn" type="button" hidden onclick="loadMoreRelaySessions()">Load more sessions</button></aside><section class="relay-main-pane"><div class="relay-toolbar"><strong>Communication map</strong><span><span class="relay-zoom" aria-label="Map zoom"><button id="relay-zoom-out" class="btn" type="button" aria-label="Zoom out">&minus;</button><button id="relay-zoom-in" class="btn" type="button" aria-label="Zoom in">+</button><button id="relay-zoom-fit" class="btn" type="button">Fit</button></span> <button id="relay-clear" class="btn" type="button">Clear selection</button><button id="relay-more" class="btn" type="button" hidden onclick="loadMoreRelayMessages()">Load more messages</button></span></div><div id="relay-map-wrap" class="relay-map-scroll" tabindex="0" aria-label="Relay communication map"><div id="relay-map" class="relay-map">Loading messages…</div></div><p class="relay-map-hint">Drag background to pan · drag boxes to arrange</p><div class="relay-activity-grid"><section class="relay-message-pane" aria-label="Recorded messages"><h3>Recorded messages</h3><div id="relay-messages" class="relay-messages" aria-live="polite"></div></section><aside class="relay-detail-pane" aria-label="Selection detail"><div id="relay-message-detail" class="relay-detail" aria-live="polite"><p class="relay-note">Select a message to inspect delivery detail.</p></div><div id="relay-session-detail" class="relay-detail" aria-live="polite"></div></aside></div></section></div>
   </div><!-- /view-relay -->
 </div><!-- /content-wrap -->
 
@@ -1450,33 +1407,23 @@ async function fetchExtractionFailures() {
     if (!r.ok) return;
     const data = await r.json();
     const failures = data.recent_failures || [];
-    const el = document.getElementById('extraction-fail-list');
+    const el = document.getElementById('extraction-fail-list'), state = document.getElementById('qs-failure-state'), details = document.getElementById('processing-diagnostics');
     if (failures.length === 0) {
       el.innerHTML = '<div style="color:var(--green);font-size:11px">No recent failures</div>';
+      if (state) { state.textContent = 'none'; state.className = 'scope-tag ok-text'; }
       return;
     }
+    if (state) { state.textContent = failures.length + ' recent'; state.className = 'scope-tag bad-text'; }
+    if (details) details.open = true;
     const groups = {};
     for (const failure of failures) {
       const label = friendlyFailure(failure.processing_error);
       const key = (failure.failure_category || 'unknown') + '|' + label;
-      if (!groups[key]) groups[key] = {
-        category: failure.failure_category || 'unknown',
-        label: label,
-        count: 0,
-        attempts: failure.processing_attempts || 0,
-      };
+      if (!groups[key]) groups[key] = { category: failure.failure_category || 'unknown', label, count: 0, attempts: failure.processing_attempts || 0 };
       groups[key].count += 1;
       groups[key].attempts = Math.max(groups[key].attempts, failure.processing_attempts || 0);
     }
-    el.innerHTML = Object.values(groups).slice(0, 3).map(group =>
-      '<div class="item">' +
-        '<span class="cat">' + escapeHtml(group.category) + '</span> ' +
-        '<span style="color:var(--text)">' + escapeHtml(group.label) + '</span>' +
-        '<div style="color:var(--muted);font-size:9.5px">' +
-          group.count + ' of ' + failures.length + ' recent failures - up to ' + group.attempts + ' attempts' +
-        '</div>' +
-      '</div>'
-    ).join('');
+    el.innerHTML = Object.values(groups).slice(0, 3).map(group => '<div class="item"><span class="cat">' + escapeHtml(group.category) + '</span> <span style="color:var(--text)">' + escapeHtml(group.label) + '</span><div style="color:var(--muted);font-size:9.5px">' + group.count + ' of ' + failures.length + ' recent failures - up to ' + group.attempts + ' attempts</div></div>').join('');
   } catch (e) { /* non-fatal */ }
 }
 
@@ -1632,12 +1579,12 @@ function renderOperationalSummary() {
     const hint = first.api_key_env ? ' - configure ' + first.api_key_env : '';
     issues.push({text:'Memory extraction is not operating: provider credential is missing' + hint + '.',target:'derived-memory-panel'});
   }
-  if (_statusData.embedding_provider_ok === false) issues.push({text:'Semantic search is not operating: the embedding provider is unavailable.',target:'derived-memory-panel'});
-  if ((sc24.failed || 0) > 0) issues.push({text:fmtNum(sc24.failed) + ' source items reached terminal failure in the last 24 hours.',target:'derived-memory-panel'});
-  if ((_statusData.pending_items || 0) > 0 && oldest != null && oldest > 3600) issues.push({text:'The oldest pending ingestion has waited ' + formatUptime(oldest) + '.',target:'derived-memory-panel'});
+  if (_statusData.vector_expected === true && (_statusData.vector_index_ready !== true || _statusData.embedding_provider_ok !== true)) issues.push({text:'Semantic search is not operating: ' + (_statusData.embedding_provider_ok !== true ? 'the embedding provider is unavailable.' : 'the vector index is unavailable.'),target:'overview-panel'});
+  if ((sc24.failed || 0) > 0) issues.push({text:fmtNum(sc24.failed) + ' source items reached terminal failure in the last 24 hours.',target:'overview-panel'});
+  if ((_statusData.pending_items || 0) > 0 && oldest != null && oldest > 3600) issues.push({text:'The oldest pending Session History item has waited ' + formatUptime(oldest) + '.',target:'overview-panel'});
   if ((relayDeliveries.expired_last_24h || 0) > 0) issues.push({text:fmtNum(relayDeliveries.expired_last_24h) + ' Relay delivery' + (relayDeliveries.expired_last_24h === 1 ? ' has' : 's have') + ' expired in the last 24 hours.',target:'relay-health-panel'});
 
-  const critical = ingestion.status !== 'ok' || _statusData.embedding_provider_ok === false || (sc24.failed || 0) > 0;
+  const critical = ingestion.status !== 'ok' || (_statusData.vector_expected === true && (_statusData.vector_index_ready !== true || _statusData.embedding_provider_ok !== true));
   const attention = critical || issues.length > 0;
   const summary = document.getElementById('operational-summary');
   summary.hidden = false;
@@ -1647,10 +1594,10 @@ function renderOperationalSummary() {
 
   const system = (name, state, css) => '<span class="ops-system ' + css + '"><strong>' + escapeHtml(name) + '</strong> - ' + escapeHtml(state) + '</span>';
   const relayState = _relayData.status === 'attention' ? 'delivery issue' : (_relayData.status === 'idle' ? 'ready, no activity' : 'operating');
-  const searchState = _statusData.vector_expected ? (_statusData.vector_index_ready ? 'operating' : 'not ready') : 'lexical only';
-  const searchClass = !_statusData.vector_expected || _statusData.vector_index_ready ? 'ok' : 'bad';
+  const searchState = _statusData.vector_expected ? (_statusData.vector_index_ready === true && _statusData.embedding_provider_ok === true ? 'semantic ready' : 'semantic unavailable') : 'lexical only';
+  const searchClass = !_statusData.vector_expected || (_statusData.vector_index_ready === true && _statusData.embedding_provider_ok === true) ? 'ok' : 'bad';
   document.getElementById('ops-systems').innerHTML = [
-    system('Service', 'operating', 'ok'),
+    system('API', 'responding', 'ok'),
     system('Ingestion', ingestion.status === 'ok' ? 'operating' : 'credential missing', ingestion.status === 'ok' ? 'ok' : 'bad'),
     system('Search', searchState, searchClass),
     system('Relay', relayState, _relayData && _relayData.status === 'attention' ? 'warn' : 'ok')
@@ -1722,8 +1669,8 @@ function renderStatus(data) {
   const packages = Array.isArray(derived.packages) ? derived.packages.length : (derived.packages && typeof derived.packages === 'object' ? Object.keys(derived.packages).length : Number(derived.packages) || 0);
   const preserved = fmtNum(data.total_memory_objects || 0);
   const derivedText = derived.enabled === true
-    ? 'Enabled · ' + packages + ' packages · ' + preserved + ' derived objects'
-    : 'Disabled · ' + preserved + ' derived objects remain inspectable';
+    ? 'Enabled · ' + packages + ' packages · ' + preserved + ' memory objects'
+    : 'Disabled · ' + preserved + ' memory objects remain inspectable';
   if (derivedState) derivedState.textContent = derivedText;
   const derivedSummary = document.getElementById('derived-capability-summary');
   if (derivedSummary) derivedSummary.textContent = derived.enabled === true ? 'Enabled · ' + preserved + ' objects' : 'Disabled · ' + preserved + ' objects';
@@ -1742,34 +1689,28 @@ function renderStatus(data) {
   document.getElementById('header-uptime').textContent =
     'uptime: ' + formatUptime(data.uptime_seconds);
 
-  // Memory Objects (active / total) — naturally dual
+  // Inventory: SourceItems are original records; memory objects are a separate stored/derived layer.
   document.getElementById('m-memory').textContent = fmtNum(data.total_memory_objects);
-  if (data.active_memory_objects != null) {
-    document.getElementById('m-memory-active').textContent = fmtNum(data.active_memory_objects);
-  }
-
-  // Source Items: 24h prominent (filled in by renderQueue) / total ingested
+  document.getElementById('m-memory-active').textContent = fmtNum(data.active_memory_objects || 0);
   document.getElementById('m-source').textContent = fmtNum(data.total_source_items);
-
-  // Pending sub-line on Failed card
   const pending = data.pending_items || 0;
-  const oldest  = data.oldest_pending_age_seconds;
-  const oldestStr = pending === 0
-    ? 'pending: 0'
-    : 'pending: ' + pending + (oldest != null ? ' · oldest ' + formatUptime(oldest) : '');
-  document.getElementById('m-pending-detail').textContent = oldestStr;
+  const oldest = data.oldest_pending_age_seconds;
+  document.getElementById('m-pending-detail').textContent = pending === 0 ? 'pending: 0' : 'pending: ' + pending + (oldest != null ? ' · oldest ' + formatUptime(oldest) : '');
   document.getElementById('m-pending-mini').textContent = fmtNum(pending);
-
-  // Storage (absolute thresholds so vector index isn't dwarfed)
+  // Absolute storage sizes are facts, not capacity gauges.
   const stor = data.storage || {};
-  const sqlMb = stor.sqlite_mb || 0;
-  const vecMb = stor.vector_index_mb || 0;
-  document.getElementById('s-sqlite').textContent = fmtMb(sqlMb);
-  document.getElementById('s-vector').textContent = fmtMb(vecMb);
-  document.getElementById('s-sqlite-bar').style.width = Math.min(100, (sqlMb / 200) * 100) + '%';
-  document.getElementById('s-vector-bar').style.width = Math.min(100, (vecMb / 50)  * 100) + '%';
-  document.getElementById('s-vector-status').textContent =
-    data.vector_index_ready ? 'ready' : 'initializing…';
+  document.getElementById('s-sqlite').textContent = fmtMb(stor.sqlite_mb || 0);
+  document.getElementById('s-relay').textContent = fmtMb(stor.relay_sqlite_mb || 0);
+  document.getElementById('s-vector').textContent = stor.vector_index_mb == null ? 'not built' : fmtMb(stor.vector_index_mb);
+  const semanticExpected = data.vector_expected === true;
+  const semanticReady = semanticExpected && data.vector_index_ready === true && data.embedding_provider_ok === true;
+  const searchState = semanticExpected ? (semanticReady ? 'ready' : 'unavailable') : 'lexical only';
+  const searchEl = document.getElementById('s-vector-status');
+  searchEl.textContent = searchState; searchEl.className = semanticReady || !semanticExpected ? 'ok-text' : 'bad-text';
+  document.getElementById('s-embedding-status').textContent = semanticExpected ? (data.embedding_provider_ok === true ? 'available' : data.embedding_provider_ok === false ? 'unavailable' : 'unknown') : 'not required';
+  const systemSearch = document.getElementById('system-search-state');
+  systemSearch.textContent = semanticExpected ? ('semantic ' + searchState) : 'lexical search';
+  systemSearch.className = 'scope-tag ' + (semanticReady || !semanticExpected ? 'ok-text' : 'bad-text');
 
   // last query timestamp from since-restart payload
   const q = data.query || {};
@@ -1822,58 +1763,30 @@ function renderFunnel(funnel) {
 // Render: queue (Ingestion Queue dual-time tiles + Source 24h)
 // ──────────────────────────────────────────────────
 function renderQueue(data) {
-  const sc   = data.status_counts || {};
-  const sc24 = data.status_counts_24h || {};
-
-  // Active now
-  const pending = sc.pending || 0;
-  document.getElementById('qs-pending').textContent    = fmtNum(pending);
+  const sc = data.status_counts || {}, sc24 = data.status_counts_24h || {};
+  const pending = sc.pending || 0, processing = sc.processing || 0, done24 = sc24.completed || 0, failed24 = sc24.failed || 0, failed = sc.failed || 0;
+  document.getElementById('qs-pending').textContent = fmtNum(pending);
   document.getElementById('qs-pending').className = 'v24 ' + (pending === 0 ? 'green' : 'yellow');
-  document.getElementById('qs-processing').textContent = fmtNum(sc.processing || 0);
-  document.getElementById('m-processing-mini').textContent = fmtNum(sc.processing || 0);
-
-  // Done 24h / total
-  const done24 = sc24.completed || 0;
+  document.getElementById('qs-processing').textContent = fmtNum(processing);
+  document.getElementById('m-processing-mini').textContent = fmtNum(processing);
   document.getElementById('qs-completed-24h').textContent = fmtNum(done24);
-  document.getElementById('qs-completed').textContent     = fmtNum(sc.completed || 0);
-
-  // Failed 24h / total — drives BOTH Ingestion and Overview tiles
-  const failed24 = sc24.failed || 0;
-  const failed   = sc.failed   || 0;
   const f24 = document.getElementById('qs-failed-24h');
-  f24.textContent = fmtNum(failed24);
-  f24.className = 'v24 ' + (failed24 === 0 ? 'green' : 'red');
-  document.getElementById('qs-failed').textContent = fmtNum(failed);
-  document.getElementById('qs-failed-detail').textContent =
-    failed24 === 0 ? 'all clear' : (failed24 + ' in last 24h');
-  document.getElementById('qs-failed-detail').style.color =
-    failed24 === 0 ? 'var(--muted)' : 'var(--red)';
-
-  // Mirror to Overview "Failed" card (same 24h vs total)
+  f24.textContent = fmtNum(failed24); f24.className = 'v24 ' + (failed24 === 0 ? 'green' : 'red');
+  document.getElementById('qs-failed-detail').textContent = failed24 === 0 ? 'no processing failures' : failed24 + ' processing failures';
+  document.getElementById('qs-failed-detail').style.color = failed24 === 0 ? 'var(--muted)' : 'var(--red)';
+  document.getElementById('qs-oldest').textContent = pending === 0 || data.oldest_pending_age_seconds == null ? 'none' : formatUptime(data.oldest_pending_age_seconds);
+  document.getElementById('qs-oldest').className = 'v24 ' + (pending === 0 ? 'muted' : 'yellow');
+  document.getElementById('queue-total-summary').textContent = 'All-time: ' + fmtNum(sc.completed || 0) + ' completed · ' + fmtNum(failed) + ' failed · ' + fmtNum(sc.skipped || 0) + ' skipped. These are counts, not success rates.';
   const omf24 = document.getElementById('m-failed-24h');
-  omf24.textContent = fmtNum(failed24);
-  omf24.className = 'v24 ' + (failed24 === 0 ? 'green' : 'red');
+  omf24.textContent = fmtNum(failed24); omf24.className = 'v24 ' + (failed24 === 0 ? 'green' : 'red');
   document.getElementById('m-failed-all').textContent = fmtNum(failed);
-  // Failed sparkline: empty for now (we don't have hourly per-status yet);
-  // baseline keeps the card height stable.
   renderSparkline(document.getElementById('spark-failed'), [], { stroke: '#ff6666', fill: true });
-
-  // Skipped 24h / total
-  document.getElementById('qs-skipped-24h').textContent = fmtNum(sc24.skipped || 0);
-  document.getElementById('qs-skipped').textContent     = fmtNum(sc.skipped   || 0);
-
-  // Source 24h prominent — done24 is a fair proxy (each completed item ≈ one ingested)
   document.getElementById('m-source-24h').textContent = fmtNum(done24);
-
-  // Retention
   const ret = data.retention || {};
-  document.getElementById('r-enabled').innerHTML =
-    ret.enabled
-      ? '<span style="color:var(--green)">on</span>'
-      : '<span style="color:var(--muted)">off</span>';
+  document.getElementById('r-enabled').innerHTML = ret.enabled ? '<span class="ok-text">on</span>' : '<span style="color:var(--muted)">off</span>';
   document.getElementById('r-last-run').textContent = timeAgo(ret.last_run_completed_at);
-  document.getElementById('r-del-src').textContent  = fmtNum(ret.last_deleted_source_items || 0);
-  document.getElementById('r-del-mem').textContent  = fmtNum(ret.last_deleted_memory_objects || 0);
+  document.getElementById('r-del-src').textContent = fmtNum(ret.last_deleted_source_items || 0);
+  document.getElementById('r-del-mem').textContent = fmtNum(ret.last_deleted_memory_objects || 0);
 }
 
 // ──────────────────────────────────────────────────
@@ -2675,7 +2588,7 @@ function renderDerivationFidelity(entry) {
 // Top-level view switch (CSS display toggle; both views stay in the DOM)
 // ──────────────────────────────────────────────────
 // Operations ownership, governed SourceItems, and bounded Relay workspace.
-let _sourceOffset=0,_reuseOffset=0,_reuseTotal=null,_sourceSelected=null,_relay={sessions:[],sessionOffset:0,sessionTotal:null,sessionLimit:100,messages:[],selected:null,pair:null,message:null,next:null,until:null,generation:0,facetGeneration:0,zoom:1,showAllSessions:false,overview:null,owners:[],containers:[],ownerNext:null,ownerLoadKey:null,sessionLoadKey:null,messageLoadKey:null};const _sourcePage=25;
+let _sourceOffset=0,_reuseOffset=0,_reuseTotal=null,_sourceSelected=null,_relay={sessions:[],sessionOffset:0,sessionTotal:null,sessionLimit:100,messages:[],selected:null,pair:null,message:null,next:null,until:null,generation:0,facetGeneration:0,zoom:1,showAllSessions:false,overview:null,owners:[],containers:[],ownerNext:null,ownerLoadKey:null,sessionLoadKey:null,messageLoadKey:null,nodePositions:{},movedNodes:new Set(),panX:0,panY:0,dragging:null,suppressClick:false,mapFitPending:true};const _sourcePage=25;
 function cap(id,label,nodes,open){const first=nodes.find(Boolean);if(!first)return;const d=document.createElement('details');d.id=id;d.className='capability';d.open=localStorage.getItem('pallium.'+id)==null?open:localStorage.getItem('pallium.'+id)==='true';d.innerHTML='<summary>'+label+'</summary><div class="capability-body"></div>';first.before(d);const body=d.lastElementChild;nodes.filter(Boolean).forEach(x=>body.append(x));d.addEventListener('toggle',()=>localStorage.setItem('pallium.'+id,d.open));return body}
 function opHead(name){return [...document.querySelectorAll('#view-operational>.section-title')].find(x=>x.textContent.trim().startsWith(name))}
 function setupOperations(){
@@ -2723,7 +2636,7 @@ function setupOperations(){
 
   const derived=document.createElement('details');
   derived.id='derived-memory-panel';derived.className='capability';derived.open=false;
-  derived.innerHTML='<summary>Derived Memory -- optional generated summaries <span id="derived-capability-summary" class="scope-tag">Loading...</span></summary><div class="capability-body"></div>';
+  derived.innerHTML='<summary>Derived Memory — optional summaries and stored memory objects <span id="derived-capability-summary" class="scope-tag">Loading...</span></summary><div class="capability-body"></div>';
   const derivedBody=derived.lastElementChild;
   derivedBody.append(Object.assign(document.createElement('p'),{id:'derived-capability-state',className:'relay-note',textContent:'Checking Derived Memory state...'}));
   [queryHeading,queryCards,memoryHeading,memoryPanel,debugHeading,debugCards,...legacyNodes.slice(4)].filter(Boolean).forEach(node=>derivedBody.append(node));
@@ -2769,7 +2682,7 @@ function relayLifecycle(){const value=scoped('relay-lifecycle-filter');return va
 function relayScopeSnapshot(){return JSON.stringify([relayActor(),scoped('relay-container-filter'),scoped('relay-runtime-filter'),scoped('relay-state-filter'),relayLifecycle()])}
 function resetRelaySelection(){_relay.selected=null;_relay.pair=null;_relay.message=null}
 function resetRelayData(note){
-  resetRelaySelection();_relay.sessions=[];_relay.sessionOffset=0;_relay.sessionTotal=null;_relay.messages=[];_relay.next=null;_relay.until=null;_relay.showAllSessions=false;_relay.zoom=1;_relay.sessionLoadKey=null;_relay.messageLoadKey=null;_relay.ownerLoadKey=null;
+  resetRelaySelection();_relay.sessions=[];_relay.sessionOffset=0;_relay.sessionTotal=null;_relay.messages=[];_relay.next=null;_relay.until=null;_relay.showAllSessions=false;_relay.zoom=1;_relay.panX=0;_relay.panY=0;_relay.nodePositions={};_relay.movedNodes=new Set();_relay.mapFitPending=true;_relay.sessionLoadKey=null;_relay.messageLoadKey=null;_relay.ownerLoadKey=null;
   document.getElementById('relay-window-note').textContent=note||'Loading Relay activity…';
   document.getElementById('relay-sessions').textContent='Loading sessions…';
   document.getElementById('relay-map').textContent='Loading messages…';
@@ -2855,7 +2768,7 @@ function setupRelay(){
   document.getElementById('relay-clear').onclick=()=>{resetRelaySelection();renderRelay()};
   document.getElementById('relay-zoom-out').onclick=()=>zoomRelay(.8);
   document.getElementById('relay-zoom-in').onclick=()=>zoomRelay(1.25);
-  document.getElementById('relay-zoom-fit').onclick=()=>zoomRelay(1,true);
+  document.getElementById('relay-zoom-fit').onclick=()=>zoomRelay(1,true);const mapWrap=document.getElementById('relay-map-wrap');let panStart=null;mapWrap.onpointerdown=event=>{if(event.target.closest('[data-rnode],[data-rfrom]'))return;panStart={x:event.clientX,y:event.clientY,px:_relay.panX,py:_relay.panY};mapWrap.classList.add('is-panning');mapWrap.setPointerCapture?.(event.pointerId)};mapWrap.onpointermove=event=>{if(!panStart)return;_relay.panX=panStart.px+event.clientX-panStart.x;_relay.panY=panStart.py+event.clientY-panStart.y;document.getElementById('relay-map').style.transform='translate('+_relay.panX+'px,'+_relay.panY+'px)'};mapWrap.onpointerup=()=>{panStart=null;mapWrap.classList.remove('is-panning')};mapWrap.onpointercancel=mapWrap.onpointerup;
   refreshScopes()
 }
 async function fetchRelay(reset=true,generation=null){
@@ -2875,7 +2788,7 @@ async function fetchRelay(reset=true,generation=null){
     if(request!==_relay.generation||scope!==relayScopeSnapshot())return;
     _relay.overview=overview;relayOwnerOverview(overview,actor);if(facetRequest===_relay.facetGeneration&&containerSearch===scoped('relay-container-search'))relayFacets(overview);
     _relay.sessions=sessions.sessions||sessions.items||[];_relay.sessionOffset=_relay.sessions.length;_relay.sessionTotal=sessions.total??null;
-    _relay.messages=messages.messages||messages.items||[];_relay.next=messages.has_more&&messages.next_before_created_at&&messages.next_before_id?{created_at:messages.next_before_created_at,id:messages.next_before_id}:null;_relay.until=messages.until||messages.as_of||null;
+    _relay.messages=messages.messages||messages.items||[];_relay.mapFitPending=true;_relay.next=messages.has_more&&messages.next_before_created_at&&messages.next_before_id?{created_at:messages.next_before_created_at,id:messages.next_before_id}:null;_relay.until=messages.until||messages.as_of||null;
     renderRelay()
   }catch(error){
     if(request!==_relay.generation)return;
@@ -2894,7 +2807,7 @@ async function loadMoreRelaySessions(){
 async function loadMoreRelayMessages(){
   if(!_relay.next||_relay.messageLoadKey)return;
   const generation=_relay.generation,scope=relayScopeSnapshot(),next={..._relay.next},key=generation+':'+JSON.stringify(next)+':'+scope;_relay.messageLoadKey=key;
-  try{const data=await relayJson('/dashboard/api/relay/messages?'+relayMessageParams(next));if(generation!==_relay.generation||scope!==relayScopeSnapshot()||_relay.messageLoadKey!==key)return;const ids=new Set(_relay.messages.map((item,index)=>rf(item,['id','message_id'],'message-'+index)));_relay.messages.push(...(data.messages||data.items||[]).filter((item,index)=>!ids.has(rf(item,['id','message_id'],'new-message-'+index))));_relay.next=data.has_more&&data.next_before_created_at&&data.next_before_id?{created_at:data.next_before_created_at,id:data.next_before_id}:null;renderRelay()}
+  try{const data=await relayJson('/dashboard/api/relay/messages?'+relayMessageParams(next));if(generation!==_relay.generation||scope!==relayScopeSnapshot()||_relay.messageLoadKey!==key)return;const ids=new Set(_relay.messages.map((item,index)=>rf(item,['id','message_id'],'message-'+index)));_relay.messages.push(...(data.messages||data.items||[]).filter((item,index)=>!ids.has(rf(item,['id','message_id'],'new-message-'+index))));_relay.mapFitPending=true;_relay.next=data.has_more&&data.next_before_created_at&&data.next_before_id?{created_at:data.next_before_created_at,id:data.next_before_id}:null;renderRelay()}
   catch(error){if(generation===_relay.generation&&scope===relayScopeSnapshot())document.getElementById('relay-window-note').textContent='Could not load more messages: '+error.message}
   finally{if(_relay.messageLoadKey===key)_relay.messageLoadKey=null}
 }
@@ -2923,12 +2836,13 @@ function relayConnectionSummaries(pairs){
 }
 function relayLayout(ids,pairs){
   const degree=new Map(ids.map(id=>[id,0]));for(const pair of pairs){degree.set(pair.from,(degree.get(pair.from)||0)+pair.count);degree.set(pair.to,(degree.get(pair.to)||0)+pair.count)}
-  const ordered=[...ids].sort((a,b)=>(degree.get(b)||0)-(degree.get(a)||0)||String(a).localeCompare(String(b))),positions={},n=ordered.length,width=n>12?1100:900,height=n>12?680:410,cx=width/2,cy=height/2;
+  const ordered=[...ids].sort((a,b)=>(degree.get(b)||0)-(degree.get(a)||0)||String(a).localeCompare(String(b))),positions={},n=ordered.length,columns=Math.min(6,Math.max(1,Math.ceil(Math.sqrt(n*1.6)))),rows=Math.max(1,Math.ceil(n/columns)),width=Math.max(760,columns*210+120),height=Math.max(430,rows*145+120),cx=width/2,cy=height/2;
   if(n===1)positions[ordered[0]]={x:cx,y:cy};
-  else if(n===2){positions[ordered[0]]={x:260,y:cy};positions[ordered[1]]={x:width-260,y:cy}}
-  else{positions[ordered[0]]={x:cx,y:cy};const rest=ordered.slice(1),inner=rest.slice(0,Math.min(rest.length,10)),outer=rest.slice(inner.length);inner.forEach((id,index)=>positions[id]={x:cx+Math.cos(2*Math.PI*index/inner.length-Math.PI/2)*(n>12?300:320),y:cy+Math.sin(2*Math.PI*index/inner.length-Math.PI/2)*(n>12?190:145)});outer.forEach((id,index)=>positions[id]={x:cx+Math.cos(2*Math.PI*index/outer.length-Math.PI/2)*455,y:cy+Math.sin(2*Math.PI*index/outer.length-Math.PI/2)*285})}
+  else ordered.forEach((id,index)=>{positions[id]={x:columns===1?cx:90+(index%columns)*((width-180)/(columns-1)),y:rows===1?cy:80+Math.floor(index/columns)*((height-160)/(rows-1))}});
   return{positions,width,height}
 }
+function relayPositions(ids,layout,saved,moved){for(const id of ids){layout.positions[id]=moved.has(id)&&saved[id]?saved[id]:{...layout.positions[id]};saved[id]={...layout.positions[id]}}return layout.positions}
+function relayClampPoint(point,width,height){return{x:Math.max(78,Math.min(width-78,point.x)),y:Math.max(34,Math.min(height-34,point.y))}}
 function relayEdgeGeometry(from,to,curved){
   if(from.x===to.x&&from.y===to.y)return{path:'M'+(from.x+28)+' '+(from.y-30)+' C'+(from.x+105)+' '+(from.y-120)+' '+(from.x-105)+' '+(from.y-120)+' '+(from.x-28)+' '+(from.y-30),label:{x:from.x,y:from.y-103}};
   const dx=to.x-from.x,dy=to.y-from.y,startScale=1/Math.max(Math.abs(dx)/78,Math.abs(dy)/34),start={x:from.x+dx*startScale,y:from.y+dy*startScale},end={x:to.x-dx*startScale,y:to.y-dy*startScale},length=Math.max(1,Math.hypot(dx,dy)),normal={x:-dy/length,y:dx/length},bend=curved?24:0,control={x:(start.x+end.x)/2+normal.x*bend,y:(start.y+end.y)/2+normal.y*bend};
@@ -2937,24 +2851,26 @@ function relayEdgeGeometry(from,to,curved){
 function relayFocus(selector,match){const item=[...document.querySelectorAll(selector)].find(match);if(item)item.focus()}
 function selectRelayNode(id){_relay.selected=id;_relay.pair=null;_relay.message=null;renderRelay();relayFocus('[data-rnode]',item=>item.dataset.rnode===id)}
 function selectRelayPair(from,to){_relay.pair=[from,to];_relay.selected=null;_relay.message=null;renderRelay();relayFocus('[data-rfrom][data-rto]',item=>item.dataset.rfrom===from&&item.dataset.rto===to)}
-function renderMap(messages){
+function relayUpdateMapPositions(svg){
+  if(!svg)return;
+  svg.querySelectorAll('[data-rnode]').forEach(node=>{const point=_relay.nodePositions[node.dataset.rnode];if(!point)return;const rect=node.querySelector('rect'),texts=node.querySelectorAll('text');rect.setAttribute('x',point.x-78);rect.setAttribute('y',point.y-34);if(texts[0])texts[0].setAttribute('x',point.x-68),texts[0].setAttribute('y',point.y-11);if(texts[1])texts[1].setAttribute('x',point.x-68),texts[1].setAttribute('y',point.y+6);if(texts[2])texts[2].setAttribute('x',point.x-68),texts[2].setAttribute('y',point.y+22)});
+  svg.querySelectorAll('[data-rfrom][data-rto]').forEach(edge=>{const from=_relay.nodePositions[edge.dataset.rfrom],to=_relay.nodePositions[edge.dataset.rto];if(!from||!to)return;const geometry=relayEdgeGeometry(from,to,false),paths=edge.querySelectorAll('path'),badge=edge.querySelector('.edge-count'),label=edge.querySelector('text');paths.forEach(path=>path.setAttribute('d',geometry.path));if(badge){const width=Number(badge.getAttribute('width'))||25;badge.setAttribute('x',geometry.label.x-width/2);badge.setAttribute('y',geometry.label.y-9)}if(label){label.setAttribute('x',geometry.label.x);label.setAttribute('y',geometry.label.y+3)}});
+}
+function renderMap(messages,fit=true){
   const directed=relayPairSummaries(messages),connections=relayConnectionSummaries(directed),ids=[...new Set(connections.flatMap(connection=>[connection.a,connection.b]))],element=document.getElementById('relay-map');
   if(!connections.length){element.textContent='No recorded exchange matches this loaded selection.';return}
-  const layoutEdges=connections.map(connection=>({from:connection.a,to:connection.b,count:connection.forward+connection.backward})),layout=relayLayout(ids,layoutEdges),e=esc;
+  const layoutEdges=connections.map(connection=>({from:connection.a,to:connection.b,count:connection.forward+connection.backward})),layout=relayLayout(ids,layoutEdges);relayPositions(ids,layout,_relay.nodePositions,_relay.movedNodes);const e=esc;
   const edgeHtml=connections.map(connection=>{const geometry=relayEdgeGeometry(layout.positions[connection.a],layout.positions[connection.b],false),selected=_relay.pair&&_relay.pair.includes(connection.a)&&_relay.pair.includes(connection.b),forwardStates=Object.entries(connection.forwardStates).map(([state,count])=>state+' '+count).join(', '),backwardStates=Object.entries(connection.backwardStates).map(([state,count])=>state+' '+count).join(', '),label=connection.a===connection.b?String(connection.forward):connection.forward&&connection.backward?connection.forward+'↔'+connection.backward:connection.forward?connection.forward+'→':'←'+connection.backward,total=connection.forward+connection.backward,width=1.4+Math.min(1.8,Math.log2(total+1)*.55),badgeWidth=Math.max(25,label.length*7+10),description=rname(connection.a)+' to '+rname(connection.b)+': '+connection.forward+' ('+(forwardStates||'none')+'); reverse '+connection.backward+' ('+(backwardStates||'none')+')';return'<g class="relay-edge'+(selected?' selected':'')+'" role="button" tabindex="0" data-rfrom="'+e(connection.a)+'" data-rto="'+e(connection.b)+'" aria-label="'+e(description)+'"><title>'+e(description)+'</title><path d="'+geometry.path+'" stroke="transparent" stroke-width="16" fill="none"/><path class="edge-line" d="'+geometry.path+'" stroke-width="'+width+'"'+(connection.backward?' marker-start="url(#relay-arrow)"':'')+(connection.forward?' marker-end="url(#relay-arrow)"':'')+'/><rect class="edge-count" x="'+(geometry.label.x-badgeWidth/2)+'" y="'+(geometry.label.y-9)+'" width="'+badgeWidth+'" height="18" rx="9"/><text x="'+geometry.label.x+'" y="'+(geometry.label.y+3)+'" text-anchor="middle">'+label+'</text></g>'}).join('');
   const nodeHtml=ids.map(id=>{const point=layout.positions[id],session=rsession(id),selected=_relay.selected===id;return'<g class="relay-node'+(selected?' selected':'')+(session?'':' unresolved')+'" role="button" tabindex="0" data-rnode="'+e(id)+'" aria-label="'+e(rname(id))+', '+e(rcontainer(id))+'"><rect x="'+(point.x-78)+'" y="'+(point.y-34)+'" width="156" height="68" rx="8"/><text x="'+(point.x-68)+'" y="'+(point.y-11)+'">'+e(rname(id)).slice(0,24)+'</text><text class="sub" x="'+(point.x-68)+'" y="'+(point.y+6)+'">'+e(rshort(id,25))+'</text><text class="sub" x="'+(point.x-68)+'" y="'+(point.y+22)+'">'+e(rcontainer(id)).slice(0,25)+'</text></g>'}).join('');
-  element.innerHTML='<svg viewBox="0 0 '+layout.width+' '+layout.height+'" data-base-width="'+layout.width+'" data-base-height="'+layout.height+'" role="group" aria-label="Relay graph"><defs><marker id="relay-arrow" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto-start-reverse"><path d="M0,0L6,3L0,6Z" fill="#66aaff"/></marker></defs>'+edgeHtml+nodeHtml+'</svg>';
-  element.querySelectorAll('[data-rnode],[data-rfrom][data-rto]').forEach(item=>{const activate=()=>item.dataset.rnode?selectRelayNode(item.dataset.rnode):selectRelayPair(item.dataset.rfrom,item.dataset.rto);item.onclick=activate;item.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();activate()}}});
-  zoomRelay(1,false,true)
+  element.innerHTML='<svg viewBox="0 0 '+layout.width+' '+layout.height+'" data-base-width="'+layout.width+'" data-base-height="'+layout.height+'" role="group" aria-label="Relay graph"><defs><marker id="relay-arrow" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto-start-reverse"><path d="M0,0L6,3L0,6Z" fill="#66aaff"/></marker></defs>'+edgeHtml+nodeHtml+'</svg>';element.style.transform='translate('+_relay.panX+'px,'+_relay.panY+'px)';
+  let dragging=null;const activate=item=>{if(_relay.suppressClick){_relay.suppressClick=false;return}item.dataset.rnode?selectRelayNode(item.dataset.rnode):selectRelayPair(item.dataset.rfrom,item.dataset.rto)};
+  element.querySelectorAll('[data-rnode],[data-rfrom][data-rto]').forEach(item=>{item.onclick=()=>activate(item);item.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();item.dataset.rnode?selectRelayNode(item.dataset.rnode):selectRelayPair(item.dataset.rfrom,item.dataset.rto)}};if(item.dataset.rnode)item.onpointerdown=event=>{if(event.button!==0)return;event.preventDefault();const svg=item.ownerSVGElement,point={...(_relay.nodePositions[item.dataset.rnode]||layout.positions[item.dataset.rnode])},start={x:event.clientX,y:event.clientY},matrix=svg.getScreenCTM(),scale=matrix?matrix.a||1:1;dragging={id:item.dataset.rnode,moved:false};const move=moveEvent=>{const dx=(moveEvent.clientX-start.x)/scale,dy=(moveEvent.clientY-start.y)/scale;if(Math.abs(dx)+Math.abs(dy)>3){dragging.moved=true;_relay.suppressClick=true;_relay.movedNodes.add(dragging.id)}_relay.nodePositions[dragging.id]=relayClampPoint({x:point.x+dx,y:point.y+dy},layout.width,layout.height);relayUpdateMapPositions(svg)};const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);const moved=dragging&&dragging.moved;if(moved)_relay.suppressClick=true;dragging=null;if(moved)setTimeout(()=>{_relay.suppressClick=false},0)};document.addEventListener('pointermove',move);document.addEventListener('pointerup',up)}});
+  if(fit)zoomRelay(1,true);else zoomRelay(1,false,true)
 }function relayFitScale(baseWidth,baseHeight,width,height){return Math.max(.1,Math.min(1,(width-24)/baseWidth,(height-24)/baseHeight))}
 function relayZoomScale(current,factor){return Math.max(.1,Math.min(2,current*factor))}
 function zoomRelay(factor=1,fit=false,preserve=false){
-  const svg=document.querySelector('#relay-map svg');if(!svg)return;
-  const baseWidth=Number(svg.dataset.baseWidth),baseHeight=Number(svg.dataset.baseHeight),wrap=document.getElementById('relay-map-wrap');
-  if(!preserve)_relay.zoom=fit?relayFitScale(baseWidth,baseHeight,wrap.clientWidth,wrap.clientHeight):relayZoomScale(_relay.zoom,factor);
-  svg.style.width=Math.round(baseWidth*_relay.zoom)+'px';svg.style.height=Math.round(baseHeight*_relay.zoom)+'px';
-  if(fit){wrap.scrollLeft=0;wrap.scrollTop=0}
-}
+  const svg=document.querySelector('#relay-map svg');if(!svg)return;const baseWidth=Number(svg.dataset.baseWidth),baseHeight=Number(svg.dataset.baseHeight),wrap=document.getElementById('relay-map-wrap');
+  if(!preserve)_relay.zoom=fit?relayFitScale(baseWidth,baseHeight,wrap.clientWidth,wrap.clientHeight):relayZoomScale(_relay.zoom,factor);svg.style.width=Math.round(baseWidth*_relay.zoom)+'px';svg.style.height=Math.round(baseHeight*_relay.zoom)+'px';document.getElementById('relay-map').style.transform='translate('+_relay.panX+'px,'+_relay.panY+'px)';if(fit){_relay.panX=0;_relay.panY=0;document.getElementById('relay-map').style.transform='translate(0,0)'}}
 function relayVisibleSessions(){
   const query=scoped('relay-session-search').toLowerCase();
   if(_relay.showAllSessions||query)return _relay.sessions.filter(session=>JSON.stringify(session).toLowerCase().includes(query));
@@ -2974,16 +2890,16 @@ function renderRelay(){
   const messages=rfiltered(),partial=!!_relay.next,selection=_relay.selected?' for '+rname(_relay.selected):_relay.pair?' for '+rname(_relay.pair[0])+' ↔ '+rname(_relay.pair[1]):'';
   document.getElementById('relay-window-note').textContent=(partial?'Partial':'Complete loaded')+' message window: '+messages.length+' shown'+selection+' from '+_relay.messages.length+' loaded.'+(partial?' Load more before treating it as complete.':'');
   document.getElementById('relay-more').hidden=!partial;document.getElementById('relay-clear').disabled=!(_relay.selected||_relay.pair||_relay.message);
-  renderMap(_relay.messages);renderMessages(messages);renderRDetail();renderRSession()
+  renderMap(_relay.messages,!!_relay.mapFitPending);_relay.mapFitPending=false;renderMessages(messages);renderRDetail();if(_relay.message){document.getElementById('relay-session-detail').innerHTML=''}else renderRSession()
 }
 function renderMessages(messages){
   const element=document.getElementById('relay-messages');
-  element.innerHTML=messages.length?messages.map((message,index)=>{const id=rf(message,['id','message_id'],'message-'+index),edges=rdeliveries(message),recipients=edges.map(edge=>rname(edge.to)+' · '+edge.state).join(' · '),payload=message.payload==null?'Payload not exposed':typeof message.payload==='string'?message.payload:JSON.stringify(message.payload);return'<button type="button" class="relay-message" aria-pressed="'+(_relay.message===id)+'" data-rmsg="'+esc(id)+'"><span><strong>'+esc(rname(rid(message,'from')))+' → '+esc(recipients)+'</strong></span><span>'+esc(payload)+'</span><span class="meta">'+esc(formatDate(message.created_at||message.sent_at))+'</span></button>'}).join(''):'No messages in this loaded window match the selection.';
-  element.querySelectorAll('[data-rmsg]').forEach(button=>button.onclick=()=>{_relay.message=button.dataset.rmsg;element.querySelectorAll('[data-rmsg]').forEach(row=>row.setAttribute('aria-pressed',String(row===button)));document.getElementById('relay-clear').disabled=false;renderRDetail();button.focus()})
+  element.innerHTML=messages.length?messages.map((message,index)=>{const id=rf(message,['id','message_id'],'message-'+index),edges=rdeliveries(message),recipients=edges.map(edge=>rname(edge.to)+' · '+edge.state).join(' · '),time=formatDate(message.created_at||message.sent_at),payload=message.payload==null?'Payload not exposed':typeof message.payload==='string'?message.payload:JSON.stringify(message.payload);return'<button type="button" class="relay-message" aria-pressed="'+(_relay.message===id)+'" data-rmsg="'+esc(id)+'"><span class="time">'+esc(time)+'</span><span class="meta">'+esc(rname(rid(message,'from')))+' → '+esc(recipients)+'</span><span>'+esc(payload)+'</span></button>'}).join(''):'No messages in this loaded window match the selection.';
+  element.querySelectorAll('[data-rmsg]').forEach(button=>button.onclick=()=>{_relay.message=button.dataset.rmsg;element.querySelectorAll('[data-rmsg]').forEach(row=>row.setAttribute('aria-pressed',String(row===button)));document.getElementById('relay-clear').disabled=false;renderRDetail();document.getElementById('relay-session-detail').innerHTML='';button.focus()})
 }
 function renderRDetail(){
   const element=document.getElementById('relay-message-detail'),message=_relay.messages.find((item,index)=>rf(item,['id','message_id'],'message-'+index)===_relay.message);
-  if(!message){element.innerHTML='<p class="relay-note">Select a message to inspect delivery detail.</p>';return}
+  if(!message){element.innerHTML=(_relay.selected||_relay.pair)?'':'<p class="relay-note">Select a message to inspect delivery detail.</p>';return}
   const edges=rdeliveries(message),parent=rf(message,['in_reply_to','reply_to_id','parent_message_id'],''),parentLoaded=parent&&_relay.messages.some((item,index)=>rf(item,['id','message_id'],'message-'+index)===parent),deliveryHtml=edges.map(edge=>{const delivery=edge.delivery||{},timing=[delivery.claimed_at&&'claimed '+formatDate(delivery.claimed_at),delivery.lease_expires_at&&'lease '+formatDate(delivery.lease_expires_at),delivery.delivered_at&&'delivered '+formatDate(delivery.delivered_at)].filter(Boolean).join(' · ');return'<div><label>Recipient / state</label><code>'+esc(rname(edge.to))+'</code> · '+esc(edge.state)+(delivery.attempts!=null?' · '+esc(delivery.attempts)+' attempts':'')+(timing?'<br><small>'+esc(timing)+'</small>':'')+'</div>'}).join(''),states=edges.map(edge=>edge.state),expiry=message.effective_expired===true?'Effectively expired.':message.expires_at?'Expires '+formatDate(message.expires_at)+'.':'No practical expiry recorded.',parentHtml=!parent?'':parentLoaded?'<button class="btn" id="rparent" type="button">Open parent message</button>':'<p class="relay-note">Parent message '+esc(parent)+' is unavailable or outside this loaded message window.</p>';
   element.innerHTML='<h3>Recorded delivery detail</h3><div class="relay-detail-grid"><div><label>Sent selector</label><code>'+esc(rf(message,['selector','recipient_selector','address'],'not recorded'))+'</code></div>'+deliveryHtml+'<div><label>Recorded</label>'+esc(formatDate(message.created_at||message.sent_at))+'</div></div><p class="relay-note">'+expiry+' '+(states.includes('delivered')?'Delivered means admitted to the recipient session, not that it acted.':states.includes('pending')?'Retained for an eligible recipient turn; wake outcome is not recorded.':'Recorded state only; no delivery-control secret is shown.')+'</p>'+parentHtml;
   const button=document.getElementById('rparent');if(button)button.onclick=()=>{_relay.message=parent;renderMessages(rfiltered());renderRDetail();relayFocus('[data-rmsg]',item=>item.dataset.rmsg===parent)}
