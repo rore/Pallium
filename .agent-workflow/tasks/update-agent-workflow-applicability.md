@@ -43,7 +43,7 @@ Approved by user 2026-09-08T11:34:44+03:00: "approve. what about docs and readme
 Approved applicability expansion by user 2026-09-08T11:38:08+03:00: "ok"
 
 **Exceptions:**
-Non-blocking workrecord.commit_order advisory: the first plan commit updated a pre-existing completed record with the reused slug before the corrected branch-specific record was added; no implementation preceded the plan.
+—
 
 **State:** Ready for review
 <!-- agent-workflow:end -->
@@ -57,6 +57,7 @@ Non-blocking workrecord.commit_order advisory: the first plan commit updated a p
 - Mechanical refresh complete from source `0a5cb06`: full skill tree, four vendored executables, hook helpers, OpenCode plugin, schema, Redline references, and the new checkpoint-doc layout. The upstream installers preserved existing settings/guarded paths and changed only the AGENTS marker block.
 - Semantic alignment complete: checker-emitted applicability fragment installed for the exact approved allowlist; CI now shares trusted NUL merge-base evidence and fails closed on invalid output; AGENTS direct-main guidance, README blue coverage, policy self-protection, and roadmap state were reconciled.
 - Verification completed against `7732e6bc1e1831504d414f9a880905947df7418d`. Skill-feedback trigger 5 fired for copied consumer-doc links; external issue creation was unavailable under current authorization, so the filtered report is recorded below and the three local links were corrected.
+- Independent result review found one P2 in the repo-level applicability wording: allowlist membership alone was described as sufficient. AGENTS now requires a passing whole-change applicability decision and a separate fresh protection result for direct-main work; re-review approved with no unresolved findings.
 
 ## Evidence
 
@@ -66,7 +67,8 @@ Non-blocking workrecord.commit_order advisory: the first plan commit updated a p
 - Pallium regression verification: `tests/test_agent_workflow_ci.py` passed; full `tests/` suite 4,646 passed, 32 skipped, 2 xfailed.
 - Artifact verification: installed skill/source hashes, manifest sizes, vendored executables, schema, packaged checkpoint/Redline references, hook installers, Python/shell/plugin syntax and plugin behavior passed. Consumer docs match the package except three corrected consumer-relative link destinations; all their relative links resolve.
 - Applicability probes: exact README/user-doc/roadmap paths exempt; unapproved docs, mixed code, workflow governance, and Redline policy paths fail closed. Redline self-protection reports RED with `architecture-review`.
-- Local gates at `7732e6bc1e1831504d414f9a880905947df7418d`: Redline reports RED with zero boundary violations; the checker has only the documented non-blocking commit-order advisory. Optional history tuner attempted twice and timed out without output; no calibration data or configuration was changed.
+- Local gates at `7732e6bc1e1831504d414f9a880905947df7418d`: Redline reports RED with zero boundary violations; the checker has only the documented non-blocking commit-order advisory (the first plan commit touched a pre-existing completed record with the reused slug before the corrected branch-specific record was added; no implementation preceded the plan). Optional history tuner attempted twice and timed out without output; no calibration data or configuration was changed.
+- Clean-context result review approved 5ce176b plus the AGENTS fail-closed correction; no unresolved findings, scope expansion, risk change, or implementation assumptions.
 
 ## Plan review
 
@@ -111,4 +113,8 @@ Approved for implementation. Updated Scope and Constraints explicitly permit onl
 
 ## Result review
 
-Pending.
+Clean-context result review approved the final implementation with Risk remaining High. The reviewer verified source/package and executable/schema parity, the exact applicability allowlist and governance exclusions, Pallium-specific CI preservation, the documentation migration, Redline self-protection, and the adequacy of the recorded tests and probes.
+
+One P2 was found and resolved: AGENTS had described allowlist membership as sufficient for exemption. It now requires a passing whole-change applicability decision, with fresh protection evidence additionally required for direct-main work. Re-review found no unresolved findings, unintended scope expansion, or open assumptions.
+
+Residual limitations are explicit: PR-time checkpoint satisfaction remains separate from plan approval; direct pushes depend on the runtime gate and fresh protection evidence; the commit-order advisory is non-blocking; optional tuning timed out; and the actionable upstream consumer-link report remains unsent under current external-write authorization.
