@@ -3,7 +3,7 @@
 
 **Target:** Pallium Claude Code integration.
 
-**Scope:** Claude hook timeout registration and reconciliation, focused regression coverage, operations/roadmap evidence.
+**Scope:** Claude hook timeout registration and reconciliation, focused regression coverage, and Relay roadmap evidence.
 
 **Constraints:** Normal hook work remains bounded to its existing seven-second safe budget; fail-open behavior, Relay ACK ordering, public APIs, and other hook timeouts remain unchanged; tests add no wall-clock sleep.
 
@@ -39,7 +39,9 @@
 
 ## Implementation
 
-- Context/discovery complete. Clean-context plan review approved the revised 12-second outer-window and exact reconciliation plan; no code edits started.
+- Context/discovery complete. Clean-context plan review approved the revised 12-second outer-window and exact reconciliation plan.
+- Regression-first implementation: both new tests failed before the fix (`8 - 7 == 1`, and existing timeouts remained 8/7), then passed after changing only setup registration/reconciliation. The hook runtime and seven-second active budget were not changed.
+- RW-023 records the installed dogfood incident and correction.
 
 ## Evidence
 
