@@ -40,7 +40,7 @@
 
 ## Evidence
 
-2026-09-08 — Changed-surface regression: 558 passed, 2 platform skips, 4 existing Pydantic forward-reference warnings. Earlier focused runs: core/API/MCP/dashboard 164 passed; wake/hook 236 passed, 2 skips. Import-linter report has zero violations; full Python compile and `git diff --check` pass. E2E evidence includes changing legacy actor values across register/name/send/receive/ACK/reply/status/container-local discovery and takeover, actor-bearing Relay DB startup rejection, and actor-bearing wake intent/canonical restart rejection without mutation.
+2026-09-08 — Full Python suite: 4,644 passed, 32 skipped, 2 expected failures, and 4 existing Pydantic forward-reference warnings. Changed-surface regression: 558 passed, 2 platform skips. Earlier focused runs: core/API/MCP/dashboard 164 passed; wake/hook 236 passed, 2 skips. Import-linter report has zero violations; full Python compile and `git diff --check` pass. E2E evidence includes changing legacy actor values across register/name/send/receive/ACK/reply/status/container-local discovery and takeover, actor-bearing Relay DB startup rejection, and actor-bearing wake intent/canonical restart rejection without mutation.
 
 ## Result review
 
