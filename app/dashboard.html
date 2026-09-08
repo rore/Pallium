@@ -2595,7 +2595,7 @@ function renderDerivationFidelity(entry) {
 // ──────────────────────────────────────────────────
 // Operations ownership, governed SourceItems, and bounded Relay workspace.
 const DASHBOARD_ROI_ENABLED=document.body.dataset.roiEnabled==='true';
-let _sourceOffset=0,_sourceSelected=null,_sourceSelectedScope=null,_sourceFacets={containers:[],actors:[]},_sourceGeneration=0,_sourceDetailGeneration=0,_relay={actorRef:null,sessions:[],sessionOffset:0,sessionTotal:null,sessionLimit:100,messages:[],selected:null,pair:null,message:null,next:null,until:null,generation:0,facetGeneration:0,zoom:1,showAllSessions:false,overview:null,containers:[],sessionLoadKey:null,messageLoadKey:null,nodePositions:{},movedNodes:new Set(),panX:0,panY:0,dragging:null,suppressClick:false,mapFitPending:true};const _sourcePage=25;
+let _sourceOffset=0,_sourceSelected=null,_sourceSelectedScope=null,_sourceFacets={containers:[],actors:[]},_sourceGeneration=0,_sourceDetailGeneration=0,_relay={actorRef:null,endpointSessions:{},sessions:[],sessionOffset:0,sessionTotal:null,sessionLimit:100,messages:[],selected:null,pair:null,message:null,next:null,until:null,generation:0,facetGeneration:0,zoom:1,showAllSessions:false,overview:null,containers:[],sessionLoadKey:null,messageLoadKey:null,nodePositions:{},movedNodes:new Set(),panX:0,panY:0,dragging:null,suppressClick:false,mapFitPending:true};const _sourcePage=25;
 function opHead(name){return [...document.querySelectorAll('#view-operational>.section-title')].find(x=>x.textContent.trim().startsWith(name))}
 function setupOperations(){
   const overviewHeading=opHead('Overview'),metrics=overviewHeading&&overviewHeading.nextElementSibling;
@@ -2651,7 +2651,7 @@ function relayActor(){return _relay.actorRef||''}
 function relayLifecycle(){const value=scoped('relay-lifecycle-filter');return value==='all'?'':(value||'recent')}
 function relayScopeSnapshot(){return JSON.stringify([relayActor(),scoped('relay-container-filter'),scoped('relay-runtime-filter'),scoped('relay-state-filter'),relayLifecycle()])}function resetRelaySelection(){_relay.selected=null;_relay.pair=null;_relay.message=null}
 function resetRelayData(note){
-  resetRelaySelection();_relay.sessions=[];_relay.sessionOffset=0;_relay.sessionTotal=null;_relay.messages=[];_relay.next=null;_relay.until=null;_relay.showAllSessions=false;_relay.zoom=1;_relay.panX=0;_relay.panY=0;_relay.nodePositions={};_relay.movedNodes=new Set();_relay.mapFitPending=true;_relay.sessionLoadKey=null;_relay.messageLoadKey=null;
+  resetRelaySelection();_relay.endpointSessions={};_relay.sessions=[];_relay.sessionOffset=0;_relay.sessionTotal=null;_relay.messages=[];_relay.next=null;_relay.until=null;_relay.showAllSessions=false;_relay.zoom=1;_relay.panX=0;_relay.panY=0;_relay.nodePositions={};_relay.movedNodes=new Set();_relay.mapFitPending=true;_relay.sessionLoadKey=null;_relay.messageLoadKey=null;
   document.getElementById('relay-window-note').textContent=note||'Loading Relay activity…';
   document.getElementById('relay-sessions').textContent='Loading sessions…';
   document.getElementById('relay-map').textContent='Loading messages…';
@@ -2673,6 +2673,7 @@ function relayMessageParams(next){
   return params
 }
 async function relayJson(url){const response=await fetch(url);if(!response.ok)throw Error('Relay read returned '+response.status);return response.json()}
+function rememberRelayEndpoints(data){for(const session of data.endpoint_sessions||[]){const id=rf(session,['id','endpoint_id'],'');if(id)_relay.endpointSessions[id]=session}for(const message of data.messages||data.items||[]){const from=rid(message,'from');if(from!=='unknown'&&!_relay.endpointSessions[from])_relay.endpointSessions[from]={id:from,runtime:rf(message,['sender_runtime'],'runtime unknown'),session_ref:rf(message,['sender_session_ref'],from),container_ref:rf(message,['container_ref'],'container unknown'),actor_ref:rf(message,['actor_ref'],relayActor()),lifecycle:'historical',destination_health:null,_snapshot:true};for(const delivery of message.deliveries||[]){const to=rf(delivery,['recipient_endpoint_id'],'unknown');if(to!=='unknown'&&!_relay.endpointSessions[to])_relay.endpointSessions[to]={id:to,runtime:rf(delivery,['recipient_runtime'],'runtime unknown'),session_ref:rf(delivery,['recipient_session_ref'],to),container_ref:rf(delivery,['recipient_container_ref'],'container unknown'),actor_ref:rf(message,['actor_ref'],relayActor()),lifecycle:'historical',destination_health:null,_snapshot:true}}}}
 function relayContainerLabel(row,rows){
   const ref=String(row.container_ref||'unknown'),short=shortContainer(ref),duplicate=rows.filter(item=>shortContainer(item.container_ref)===short).length>1;
   return(duplicate?short+' · …'+ref.slice(-18):short)+' · '+fmtNum(row.active_session_count||0)+' active · '+fmtNum(row.session_count||0)+' total'
@@ -2714,7 +2715,7 @@ async function fetchRelay(reset=true,generation=null){
     if(request!==_relay.generation||scope!==relayScopeSnapshot())return;
     _relay.overview=overview;if(facetRequest===_relay.facetGeneration&&containerSearch===scoped('relay-container-search'))relayFacets(overview);
     _relay.sessions=sessions.sessions||sessions.items||[];_relay.sessionOffset=_relay.sessions.length;_relay.sessionTotal=sessions.total??null;
-    _relay.messages=messages.messages||messages.items||[];_relay.mapFitPending=true;_relay.next=messages.has_more&&messages.next_before_created_at&&messages.next_before_id?{created_at:messages.next_before_created_at,id:messages.next_before_id}:null;_relay.until=messages.until||messages.as_of||null;
+    _relay.messages=messages.messages||messages.items||[];rememberRelayEndpoints(messages);_relay.mapFitPending=true;_relay.next=messages.has_more&&messages.next_before_created_at&&messages.next_before_id?{created_at:messages.next_before_created_at,id:messages.next_before_id}:null;_relay.until=messages.until||messages.as_of||null;
     document.getElementById('relay-window-note').textContent='Recorded Relay activity · '+fmtNum(_relay.sessionTotal||0)+' sessions · newest messages first.';renderRelay()
   }catch(error){
     if(request!==_relay.generation)return;document.getElementById('relay-window-note').textContent='Relay workspace unavailable: '+error.message;document.getElementById('relay-sessions').textContent='Could not load Relay sessions.';document.getElementById('relay-map').textContent='Could not load recorded communication.'
@@ -2729,7 +2730,7 @@ async function fetchRelay(reset=true,generation=null){
 async function loadMoreRelayMessages(){
   if(!_relay.next||_relay.messageLoadKey)return;
   const generation=_relay.generation,scope=relayScopeSnapshot(),next={..._relay.next},key=generation+':'+JSON.stringify(next)+':'+scope;_relay.messageLoadKey=key;
-  try{const data=await relayJson('/dashboard/api/relay/messages?'+relayMessageParams(next));if(generation!==_relay.generation||scope!==relayScopeSnapshot()||_relay.messageLoadKey!==key)return;const ids=new Set(_relay.messages.map((item,index)=>rf(item,['id','message_id'],'message-'+index)));_relay.messages.push(...(data.messages||data.items||[]).filter((item,index)=>!ids.has(rf(item,['id','message_id'],'new-message-'+index))));_relay.mapFitPending=true;_relay.next=data.has_more&&data.next_before_created_at&&data.next_before_id?{created_at:data.next_before_created_at,id:data.next_before_id}:null;renderRelay()}
+  try{const data=await relayJson('/dashboard/api/relay/messages?'+relayMessageParams(next));if(generation!==_relay.generation||scope!==relayScopeSnapshot()||_relay.messageLoadKey!==key)return;rememberRelayEndpoints(data);const ids=new Set(_relay.messages.map((item,index)=>rf(item,['id','message_id'],'message-'+index)));_relay.messages.push(...(data.messages||data.items||[]).filter((item,index)=>!ids.has(rf(item,['id','message_id'],'new-message-'+index))));_relay.mapFitPending=true;_relay.next=data.has_more&&data.next_before_created_at&&data.next_before_id?{created_at:data.next_before_created_at,id:data.next_before_id}:null;renderRelay()}
   catch(error){if(generation===_relay.generation&&scope===relayScopeSnapshot())document.getElementById('relay-window-note').textContent='Could not load more messages: '+error.message}
   finally{if(_relay.messageLoadKey===key)_relay.messageLoadKey=null}
 }
@@ -2737,8 +2738,8 @@ function rf(value,names,fallback='unknown'){for(const name of names)if(value&&va
 function rid(message,side){return rf(message,side==='from'?['sender_endpoint_id','from_endpoint_id','sender_id','from_session_id','source_endpoint_id']:['recipient_endpoint_id','to_endpoint_id','recipient_id','to_session_id','target_endpoint_id'])}
 function rshort(value,max=20){const text=String(value||'unknown');return text.length>max?text.slice(0,9)+'…'+text.slice(-8):text}
 function rsessionName(session){const explicit=rf(session,['alias','title'],'');return explicit||rf(session,['runtime'],'runtime')+':'+rshort(rf(session,['session_ref','session_id','id']))}
-function rsession(id){return _relay.sessions.find(item=>rf(item,['endpoint_id','id','session_id'])===id)}
-function rname(id){const session=rsession(id);if(session)return rsessionName(session);if(id==='unrouted')return'Unknown / unrouted';if(id==='unknown')return'Unknown / legacy endpoint';return'Unresolved session · '+rshort(id)}
+function rsession(id){return _relay.sessions.find(item=>rf(item,['endpoint_id','id','session_id'])===id)||_relay.endpointSessions[id]}
+function rname(id){const session=rsession(id);if(session)return rsessionName(session);if(id==='unrouted')return'Unknown / unrouted';if(id==='unknown')return'Unknown / legacy endpoint';return'Recorded session · '+rshort(id)}
 function rcontainer(id){const session=rsession(id);return session?shortContainer(rf(session,['container_ref'],'container unknown')):'metadata not loaded'}
 function rdeliveries(message){
   const from=rid(message,'from'),deliveries=Array.isArray(message.deliveries)?message.deliveries:[];
@@ -2794,14 +2795,14 @@ function zoomRelay(factor=1,fit=false,preserve=false){
   const svg=document.querySelector('#relay-map svg');if(!svg)return;const baseWidth=Number(svg.dataset.baseWidth),baseHeight=Number(svg.dataset.baseHeight),wrap=document.getElementById('relay-map-wrap');
   if(!preserve)_relay.zoom=fit?relayFitScale(baseWidth,baseHeight,wrap.clientWidth,wrap.clientHeight):relayZoomScale(_relay.zoom,factor);svg.style.width=Math.round(baseWidth*_relay.zoom)+'px';svg.style.height=Math.round(baseHeight*_relay.zoom)+'px';document.getElementById('relay-map').style.transform='translate('+_relay.panX+'px,'+_relay.panY+'px)';if(fit){_relay.panX=0;_relay.panY=0;document.getElementById('relay-map').style.transform='translate(0,0)'}}
 function relayVisibleSessions(){
-  const query=scoped('relay-session-search').toLowerCase();
-  if(_relay.showAllSessions||query)return _relay.sessions.filter(session=>JSON.stringify(session).toLowerCase().includes(query));
-  const ids=[...new Set(redges(_relay.messages).flatMap(edge=>[edge.from,edge.to]))];
-  return ids.length?ids.map(id=>rsession(id)||{id,_unresolved:true}):_relay.sessions
+  const query=scoped('relay-session-search').toLowerCase(),participantIds=[...new Set(redges(_relay.messages).flatMap(edge=>[edge.from,edge.to]))],participants=participantIds.map(id=>rsession(id)||{id,_metadataMissing:true});
+  if(!_relay.showAllSessions&&!query)return participants.length?participants:_relay.sessions;
+  const seen=new Set(),all=[..._relay.sessions,...participants].filter(session=>{const id=rf(session,['endpoint_id','id','session_id']);if(seen.has(id))return false;seen.add(id);return true});
+  return all.filter(session=>JSON.stringify(session).toLowerCase().includes(query))
 }
 function renderRelaySessions(){
   const sessions=relayVisibleSessions(),list=document.getElementById('relay-sessions');
-  list.innerHTML=sessions.length?sessions.map(session=>{const id=rf(session,['endpoint_id','id','session_id']),unresolved=session._unresolved;return'<button type="button" class="relay-session" role="listitem" aria-pressed="'+(_relay.selected===id)+'" data-rsession="'+esc(id)+'" title="'+esc(id)+'"><strong>'+esc(unresolved?rname(id):rsessionName(session))+'</strong><small>'+(unresolved?'Session metadata is outside this loaded page.':esc(rf(session,['runtime','agent_ref'],'runtime unknown'))+' · '+esc(shortContainer(rf(session,['container_ref'],'container unknown'))))+'</small><small>'+esc(unresolved?rshort(id):formatDate(session.last_seen_at))+'</small></button>'}).join(''):'No sessions match this loaded scope.';
+  list.innerHTML=sessions.length?sessions.map(session=>{const id=rf(session,['endpoint_id','id','session_id']),missing=session._metadataMissing;return'<button type="button" class="relay-session" role="listitem" aria-pressed="'+(_relay.selected===id)+'" data-rsession="'+esc(id)+'" title="'+esc(id)+'"><strong>'+esc(missing?rname(id):rsessionName(session))+'</strong><small>'+(missing?'Session metadata is missing from Relay storage.':esc(rf(session,['runtime','agent_ref'],'runtime unknown'))+' · '+esc(shortContainer(rf(session,['container_ref'],'container unknown'))))+'</small><small>'+esc(missing?rshort(id):formatDate(session.last_seen_at))+'</small></button>'}).join(''):'No sessions match this loaded scope.';
   list.querySelectorAll('[data-rsession]').forEach(button=>button.onclick=()=>{const id=button.dataset.rsession;_relay.selected=id;_relay.pair=null;_relay.message=null;renderRelay();relayFocus('[data-rsession]',item=>item.dataset.rsession===id)});
   const partial=_relay.sessionTotal!=null&&_relay.sessionOffset<_relay.sessionTotal,more=document.getElementById('relay-sessions-more'),toggle=document.getElementById('relay-session-discovery');
   more.hidden=!(_relay.showAllSessions&&partial);more.textContent='Load more sessions ('+_relay.sessionOffset+' of '+_relay.sessionTotal+')';
@@ -2829,7 +2830,8 @@ function renderRDetail(){
 function renderRSession(){
   const element=document.getElementById('relay-session-detail'),session=rsession(_relay.selected);
   if(!_relay.selected){element.innerHTML='';return}
-  if(!session){element.innerHTML='<h3>'+esc(rname(_relay.selected))+'</h3><p class="relay-note">This endpoint participates in the loaded messages, but its session metadata is outside the loaded session page.</p>';return}
+  if(!session){element.innerHTML='<h3>'+esc(rname(_relay.selected))+'</h3><p class="relay-note">Relay storage has no metadata for this historical endpoint.</p>';return}
+  if(session._snapshot){const id=rf(session,['endpoint_id','id','session_id']);element.innerHTML='<h3>'+esc(rsessionName(session))+'</h3><div class="relay-detail-grid"><div><label>Container</label>'+esc(rf(session,['container_ref']))+'</div><div><label>Runtime</label>'+esc(rf(session,['runtime','agent_ref']))+'</div><div><label>Endpoint identity</label><code>'+esc(id)+'</code></div></div><p class="relay-note">Recorded message metadata only. The current Relay session record is unavailable, so alias changes are disabled.</p>';return}
   const id=rf(session,['endpoint_id','id','session_id']),alias=rf(session,['alias'],''),selector=rf(session,['canonical_selector','selector'],id),aliasSelector=alias?'<div><label>Alias selector</label><code id="raliasselector">@'+esc(alias)+'</code><button id="raliascopy" class="copy-btn" type="button">copy</button></div>':'';
   element.innerHTML='<h3>'+esc(rsessionName(session))+'</h3><div class="relay-detail-grid"><div><label>Canonical selector</label><code id="rselector">'+esc(selector)+'</code><button id="rcopy" class="copy-btn" type="button">copy</button></div>'+aliasSelector+'<div><label>Container</label>'+esc(rf(session,['container_ref']))+'</div><div><label>Runtime</label>'+esc(rf(session,['runtime','agent_ref']))+'</div><div><label>Lifecycle</label>'+esc(rf(session,['lifecycle','lifecycle_state'],'not recorded'))+'</div><div><label>Destination health</label>'+esc(rf(session,['destination_health','health'],'not recorded'))+'</div><div><label>Endpoint identity</label><code>'+esc(id)+'</code></div></div><form class="relay-alias" id="ralias"><label>Alias<input id="raliasinput" maxlength="32" value="'+esc(alias)+'"></label><button class="btn primary" type="submit">Save alias</button><button id="rremove" class="btn" type="button">Remove</button></form><div id="raliasstatus" class="relay-alias-status" role="status">Names are optional; changes target this canonical endpoint.</div>';
   document.getElementById('rcopy').onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('rselector').textContent);const aliasCopy=document.getElementById('raliascopy');if(aliasCopy)aliasCopy.onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('raliasselector').textContent);document.getElementById('ralias').onsubmit=event=>{event.preventDefault();saveAlias(id,false)};document.getElementById('rremove').onclick=()=>{if(confirm('Remove this alias?'))saveAlias(id,true)}

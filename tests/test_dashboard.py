@@ -738,10 +738,14 @@ class TestDashboardSourceAndRelayProjections:
                 assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, **scope}).status_code == 200
             sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "one",
                 "recipient": "claude-code:two", "payload": "AKIA1234567890ABCDEF", **scope}).json()
-            sessions = client.get("/dashboard/api/relay/sessions?").json()["sessions"]
+            session_page = client.get("/dashboard/api/relay/sessions?limit=1").json()
+            sessions = client.get("/dashboard/api/relay/sessions").json()["sessions"]
+            assert session_page["total"] == 2 and len(session_page["sessions"]) == 1
             assert {session["session_ref"] for session in sessions} == {"one", "two"}
             page = client.get("/dashboard/api/relay/messages?limit=1").json()
             assert page["total"] == 1 and page["messages"][0]["id"] == sent["message_id"]
+            endpoints = {page["messages"][0]["sender_endpoint_id"], page["messages"][0]["deliveries"][0]["recipient_endpoint_id"]}
+            assert {session["id"] for session in page["endpoint_sessions"]} == endpoints
             assert "claim_token" not in str(page) and "receipt" not in str(page)
             assert "AKIA1234567890ABCDEF" not in str(page)
             assert page["messages"][0]["expires_at"] is None

@@ -284,6 +284,42 @@ relayPositions(['a', 'b', 'c', 'd'], manualLayout, savedPositions, movedNodes);
 assert.deepEqual(manualLayout.positions.a, { x: 123, y: 123 });
 assert.deepEqual(relayClampPoint({ x: -50, y: 900 }, 760, 430), { x: 78, y: 396 });
 
+const endpointMergeStart = html.indexOf('function rememberRelayEndpoints(');
+const endpointMergeEnd = html.indexOf('function relayContainerLabel(', endpointMergeStart);
+assert.ok(endpointMergeStart >= 0 && endpointMergeEnd > endpointMergeStart);
+const endpointState = { endpointSessions: {} };
+const endpointMerge = new Function('state', `
+  let _relay = state;
+  function relayActor() { return 'owner'; }
+  function rf(value, names, fallback = 'unknown') { for (const name of names) if (value && value[name] != null && value[name] !== '') return String(value[name]); return fallback; }
+  function rid(message, side) { return rf(message, side === 'from' ? ['sender_endpoint_id'] : ['recipient_endpoint_id']); }
+  ${html.slice(endpointMergeStart, endpointMergeEnd)}
+  return rememberRelayEndpoints;
+`)(endpointState);
+endpointMerge({
+  endpoint_sessions: [{ id: 'known', runtime: 'codex', session_ref: 'one' }],
+  messages: [{ sender_endpoint_id: 'known', actor_ref: 'owner', deliveries: [{ recipient_endpoint_id: 'paged', recipient_runtime: 'claude-code', recipient_session_ref: 'two', recipient_container_ref: 'workspace' }] }],
+});
+assert.equal(endpointState.endpointSessions.known.session_ref, 'one');
+assert.equal(endpointState.endpointSessions.paged.session_ref, 'two');
+assert.doesNotMatch(html, /Unresolved session/);
+assert.match(html, /if\(session\._snapshot\).*alias changes are disabled/);
+const visibleSessionsStart = html.indexOf('function rsessionName(');
+const visibleSessionsEnd = html.indexOf('function renderRelaySessions(', visibleSessionsStart);
+const visibleSessions = new Function('state', 'search', `
+  let _relay = state;
+  function scoped() { return search; }
+  function rf(value, names, fallback = 'unknown') { for (const name of names) if (value && value[name] != null && value[name] !== '') return String(value[name]); return fallback; }
+  function rid(message, side) { return rf(message, side === 'from' ? ['sender_endpoint_id'] : ['recipient_endpoint_id']); }
+  ${html.slice(visibleSessionsStart, visibleSessionsEnd)}
+  return relayVisibleSessions();
+`)({
+  sessions: [{ id: 'known', runtime: 'codex', session_ref: 'one' }],
+  endpointSessions: endpointState.endpointSessions,
+  messages: [{ sender_endpoint_id: 'known', deliveries: [{ recipient_endpoint_id: 'paged', state: 'delivered' }] }],
+  showAllSessions: false,
+}, 'two');
+assert.deepEqual(visibleSessions.map(session => session.id), ['paged']);
 const fitStart = html.indexOf('function relayFitScale(');
 const fitEnd = html.indexOf('function zoomRelay(', fitStart);
 assert.ok(fitStart >= 0 && fitEnd > fitStart);
