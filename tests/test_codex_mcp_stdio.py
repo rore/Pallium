@@ -242,7 +242,7 @@ def test_codex_stdio_metadata_identity() -> None:
     assert all(
         payload["runtime"] == "codex"
         and payload["container_ref"] == "git:test/codex-mcp"
-        and payload["actor_ref"] == "test-actor"
+        and "actor_ref" not in payload
         for path, payload in _RelayHandler.calls
         if path == "/relay/turn"
     )
