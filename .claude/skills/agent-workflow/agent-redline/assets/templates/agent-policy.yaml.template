@@ -86,6 +86,14 @@ modes:
 #   exemptPaths:
 #     - "**/tests/**"
 
-# excludes:
+# The agent-workflow bookkeeping folder is excluded by default by the redline
+# reporter (it's the review artifact, not a review surface). This explicit
+# entry documents that and covers standalone-redline installs running an older
+# reporter without the built-in default. Work Record *content* is still
+# validated by the agent-workflow checker's own predicates. If you relocate
+# Work Records outside `.agent-workflow/` (a non-default taskPath), add that
+# path here too — the default only covers the conventional folder.
+excludes:
+  - ".agent-workflow/**"
 #   - src/main/generated/**
 #   - build/**

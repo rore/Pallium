@@ -58,15 +58,20 @@ jobs:
           echo "--- import-linter-report.json ---"
           cat build/import-linter-report.json
 
-      - name: Compute changed-files list from PR base→head
+      - name: Compute PR changed-files list from merge base→head
         id: changed
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > changed-files.txt
-          echo "--- changed-files.txt ---"
-          cat changed-files.txt
+          MERGE_BASE=$(git merge-base "${BASE_SHA}" "${HEAD_SHA}") || {
+            echo "Could not resolve the PR merge base; refusing incomplete applicability evidence."
+            exit 1
+          }
+          git diff --name-only -z --no-renames "${MERGE_BASE}" "${HEAD_SHA}" > changed-files.z
+          echo "merge_base=${MERGE_BASE}" >> "$GITHUB_OUTPUT"
+          echo "--- changed-files.z ---"
+          python -c 'import sys; print(open(sys.argv[1], "rb").read().split(b"\0"))' changed-files.z
 
       - name: Compute PR labels and CODEOWNER approvals
         id: review_inputs
@@ -122,7 +127,7 @@ jobs:
           fi
           python scripts/agent-redline-report.py \
             --policy agent-redline-policy.yaml \
-            --changed-files changed-files.txt \
+            --changed-files-z changed-files.z \
             --pr-labels "${{ steps.review_inputs.outputs.labels }}" \
             --codeowner-approvals "${{ steps.review_inputs.outputs.codeowner_approvals }}" \
             $BOUNDARY_ARG \
@@ -187,8 +192,12 @@ jobs:
       - name: Enforce reporter exit code
         run: |
           EXIT="${{ steps.report.outputs.exit_code }}"
-          if [[ "$EXIT" == "2" ]]; then
-            echo "redline exited 2 (boundary violation); failing CI."
+          if [[ ! -s redline-verdict.json ]] || ! python -c 'import json; json.load(open("redline-verdict.json"))'; then
+            echo "redline did not produce valid verdict JSON; failing CI."
+            exit 1
+          fi
+          if [[ "$EXIT" != "0" && "$EXIT" != "1" ]]; then
+            echo "redline exited $EXIT (blocking or unexpected); failing CI."
             exit 1
           fi
           echo "redline exited $EXIT — non-blocking."
@@ -215,15 +224,20 @@ jobs:
           name: redline-verdict
           path: .
 
-      - name: Compute changed-files list from PR base→head
+      - name: Compute PR changed-files list from merge base→head
         id: changed
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > changed-files.txt
-          echo "--- changed-files.txt ---"
-          cat changed-files.txt
+          MERGE_BASE=$(git merge-base "${BASE_SHA}" "${HEAD_SHA}") || {
+            echo "Could not resolve the PR merge base; refusing incomplete applicability evidence."
+            exit 1
+          }
+          git diff --name-only -z --no-renames "${MERGE_BASE}" "${HEAD_SHA}" > changed-files.z
+          echo "merge_base=${MERGE_BASE}" >> "$GITHUB_OUTPUT"
+          echo "--- changed-files.z ---"
+          python -c 'import sys; print(open(sys.argv[1], "rb").read().split(b"\0"))' changed-files.z
 
       - name: Derive task slug from the PR's source branch
         id: slug
@@ -251,7 +265,7 @@ jobs:
           fi
           python scripts/agent-workflow-check.py \
             --repo-root . \
-            --changed-files changed-files.txt \
+            --changed-files-z changed-files.z \
             --slug "${{ steps.slug.outputs.slug }}" \
             --base-ref "$BASE_SHA" \
             --head-ref "$HEAD_SHA" \
@@ -275,8 +289,12 @@ jobs:
       - name: Enforce checker exit code
         run: |
           EXIT="${{ steps.check.outputs.exit_code }}"
-          if [[ "$EXIT" == "2" ]]; then
-            echo "checker exited 2 (blocking); failing CI."
+          if [[ ! -s verdict.json ]] || ! python -c 'import json; json.load(open("verdict.json"))'; then
+            echo "checker did not produce valid verdict JSON; failing CI."
+            exit 1
+          fi
+          if [[ "$EXIT" != "0" && "$EXIT" != "1" ]]; then
+            echo "checker exited $EXIT (blocking or unexpected); failing CI."
             exit 1
           fi
           echo "checker exited $EXIT — non-blocking."

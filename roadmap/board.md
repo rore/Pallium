@@ -40,7 +40,6 @@
 - idea-contamination-detector-negation-robustness
 - idea-contamination-differential-paired-inference
 - idea-retrieval-source-fetch-batching
-- fix-redline-self-protection-path-mismatch
 - fix-add-limit-to-injection-replay-simulation
 - fix-work-resumption-benchmark-scenario-count-drift
 - fix-slow-suite-contract-drift

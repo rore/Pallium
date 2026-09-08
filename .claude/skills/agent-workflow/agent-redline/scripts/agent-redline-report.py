@@ -190,6 +190,36 @@ def _zone_paths(zone_entries: list[dict[str, Any]] | None) -> list[str]:
     return [e["path"] for e in (zone_entries or [])]
 
 
+# The agent-workflow harness bookkeeping folder is never a review surface:
+# it holds the Work Records (`.agent-workflow/tasks/{slug}.md`) plus any
+# harness state. Classifying a task's own Work Record would be circular —
+# it's the *artifact* of the review, not a subject of it — and because an
+# unclassified path falls into the `gray` catch-all (see `classify_files`),
+# leaving it in would force `detected_risk >= Elevated` on every workflow
+# PR and make the Routine tier unreachable. Excluding it here does NOT
+# weaken Work Record validation: the checker validates WR *content* through
+# its own predicates (`workrecord.exists`, `markers_present`, …), which are
+# independent of redline zone classification. Safe no-op for standalone
+# redline users who have no such folder.
+#
+# Caveat: this is keyed on the conventional folder, not on the resolved
+# `workRecord.taskPath` from agent-workflow.yaml (the reporter only sees the
+# redline policy, not that config). A repo that relocates its Work Records
+# OUTSIDE `.agent-workflow/` must add its own path to `policy.excludes`
+# (which merges additively with this default) or the bug reappears.
+_DEFAULT_EXCLUDES: tuple[str, ...] = (".agent-workflow/**",)
+
+
+def _effective_excludes(policy: dict[str, Any]) -> list[str]:
+    """Built-in default excludes merged with the policy's own `excludes`.
+
+    Additive, not a replacement: a repo's `policy.excludes` still apply on
+    top of `_DEFAULT_EXCLUDES`. Both `classify_files` and `_pr_size_status`
+    source their exclude list from here so the two never diverge.
+    """
+    return [*_DEFAULT_EXCLUDES, *(policy.get("excludes") or [])]
+
+
 def classify_files(
     files: list[str],
     policy: dict[str, Any],
@@ -202,12 +232,16 @@ def classify_files(
     gray+watch. Watch never affects the verdict on its own — it only
     surfaces the path in the PR comment regardless of how the file is
     otherwise classified.
+
+    The exclude list is `_effective_excludes(policy)` — the built-in
+    `_DEFAULT_EXCLUDES` (the agent-workflow bookkeeping folder) merged with
+    the policy's own `excludes`.
     """
     zones = policy.get("zones", {}) or {}
     red = _zone_paths(zones.get("red"))
     blue = _zone_paths(zones.get("blue"))
     watch = _zone_paths(zones.get("watch"))
-    excludes = policy.get("excludes", []) or []
+    excludes = _effective_excludes(policy)
 
     classified: dict[str, list[str]] = {
         "red": [],
@@ -1152,9 +1186,10 @@ def _is_architecture_test_file(path: str) -> bool:
 def _pr_size_status(diff: Diff, policy: dict[str, Any]) -> dict[str, Any]:
     """Compute size verdict.
 
-    When `diff.lines_by_file` is available AND `policy.excludes` is set,
-    files matching any excludes glob are excluded from both the file
-    count and the line count. Without per-file line counts the reporter
+    When `diff.lines_by_file` is available, files matching any exclude glob
+    (`_effective_excludes(policy)` — the built-in defaults merged with the
+    policy's own `excludes`) are excluded from both the file count and the
+    line count. Without per-file line counts the reporter
     falls back to the scalar `diff.lines_changed` (which already
     represents the full unfiltered diff) and the file count is filtered
     only on the changed-files list (file count IS excludes-aware in the
@@ -1176,7 +1211,7 @@ def _pr_size_status(diff: Diff, policy: dict[str, Any]) -> dict[str, Any]:
     fail_lines = lines_rule.get("fail", 2000)
     warn_lines = lines_rule.get("warn", 1000)
 
-    excludes = policy.get("excludes", []) or []
+    excludes = _effective_excludes(policy)
     excluded_paths = [f for f in diff.changed_files if matches_any(f, excludes)]
     included_paths = [f for f in diff.changed_files if f not in excluded_paths]
 
@@ -1684,8 +1719,20 @@ def load_diff_from_files(
     lines_changed: int = 0,
     lines_per_file_path: Path | None = None,
     diff_unified_path: Path | None = None,
+    nul_delimited: bool = False,
 ) -> Diff:
-    files = [line.strip() for line in changed_files_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if nul_delimited:
+        raw = changed_files_path.read_bytes()
+        if not raw:
+            return Diff([], 0, lines_changed)
+        if not raw.endswith(b"\0"):
+            raise ValueError("NUL-delimited changed-files input is incomplete")
+        raw_paths = raw.split(b"\0")
+        if raw_paths[-1] != b"" or any(path == b"" for path in raw_paths[:-1]):
+            raise ValueError("NUL-delimited changed-files input contains an empty path")
+        files = [path.decode("utf-8") for path in raw_paths[:-1]]
+    else:
+        files = [line.strip() for line in changed_files_path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     lines_by_file: dict[str, int] | None = None
     if lines_per_file_path is not None and lines_per_file_path.exists():
@@ -1817,8 +1864,11 @@ def _load_api_spec_diff(base: Path | None, head: Path | None) -> dict[str, Any] 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="agent-redline reporter")
     p.add_argument("--policy", required=True, type=Path, help="Path to agent-redline-policy.yaml")
-    p.add_argument("--changed-files", type=Path,
-                   help="Path to a newline-separated list of changed files (overrides --base/--head)")
+    changed = p.add_mutually_exclusive_group()
+    changed.add_argument("--changed-files", type=Path,
+                         help="Legacy newline-separated changed paths")
+    changed.add_argument("--changed-files-z", type=Path,
+                         help="Lossless NUL-separated changed paths from `git diff --name-only -z --no-renames`")
     p.add_argument("--lines-changed", type=int, default=0,
                    help="Total lines changed (size check). Used as the fallback "
                         "when --lines-per-file is not given. The scalar is "
@@ -1883,15 +1933,17 @@ def main(argv: list[str] | None = None) -> int:
         policy["modes"] = {}
     policy["modes"].setdefault("default", default_mode)
 
-    if args.changed_files is None:
-        sys.stderr.write("error: --changed-files required in v0.1 (git-driven mode is roadmap)\n")
+    changed_files_path = args.changed_files_z or args.changed_files
+    if changed_files_path is None:
+        sys.stderr.write("error: --changed-files or --changed-files-z is required\n")
         return 1
 
     diff = load_diff_from_files(
-        args.changed_files,
+        changed_files_path,
         args.lines_changed,
         lines_per_file_path=args.lines_per_file,
         diff_unified_path=args.diff_unified,
+        nul_delimited=args.changed_files_z is not None,
     )
 
     if args.archunit_xml is not None:

@@ -1,9 +1,9 @@
 ---
 id: fix-redline-self-protection-path-mismatch
 title: Fix the redline self-protection path so the policy file is actually protected
-status: queued
+status: done
 priority: medium
-commitment: uncommitted
+commitment: committed
 ---
 
 ## Summary
@@ -51,3 +51,10 @@ Surfaced during `blue-list-agent-workflow-path` (#27); the clean-context reviewe
 the mismatch (`agent-redline-policy.yaml` lines 65-67 self-protection vs the real filename).
 Editing this file is itself governance-sensitive → the fix PR should expect the
 architecture-review checkpoint once the path is corrected.
+
+
+## Result
+
+Completed with the agent-workflow refresh on 2026-09-08. The policy header and
+self-protection entry now use `agent-redline-policy.yaml`; focused classification
+verification proves edits to that file are red and require architecture review.

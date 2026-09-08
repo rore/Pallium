@@ -9,7 +9,7 @@ set +e
 # break the hook. Keep the wording to plain punctuation. The hook is
 # intentionally dependency-free (no python3/jq), so we do not JSON-encode at
 # runtime; this constraint is the trade-off for that.
-CTX="Project rule: every engineering task is recorded in a Work Record, created via the agent-workflow skill. This applies to any change that is part of a task — NOT only changes under guarded paths. (Guarded paths are simply the subset the plan-mode gate enforces automatically; a change outside them still needs a Work Record if it is a task.) Any implementation plan must include, as its FIRST implementation step, invoking the /agent-workflow skill (which writes the Work Record and classifies risk) before any code edit."
+CTX="Project rule: invoke the agent-workflow skill before planning or editing. It first evaluates any configured applicability policy. Only an explicit whole-change exemption may skip the Work Record; otherwise every engineering task is recorded. Any implementation plan for a non-exempt task must include, as its FIRST implementation step, invoking /agent-workflow to create the Work Record and classify risk before any code edit."
 # Static JSON; printf keeps it dependency-free and stdout-clean.
 printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}\n' "\"$CTX\"" 2>/dev/null
 exit 0

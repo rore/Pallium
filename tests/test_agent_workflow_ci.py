@@ -18,7 +18,10 @@ def test_changed_file_jobs_use_pr_head_and_merge_base(tmp_path: Path) -> None:
     assert "HEAD_SHA: ${{ github.sha }}" not in workflow
     assert workflow.count("HEAD_SHA: ${{ github.event.pull_request.head.sha }}") == 3
     assert workflow.count(
-        'git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > changed-files.txt'
+        'MERGE_BASE=$(git merge-base "${BASE_SHA}" "${HEAD_SHA}")'
+    ) == 2
+    assert workflow.count(
+        'git diff --name-only -z --no-renames "${MERGE_BASE}" "${HEAD_SHA}" > changed-files.z'
     ) == 2
 
     repo = tmp_path / "repo"
@@ -44,9 +47,11 @@ def test_changed_file_jobs_use_pr_head_and_merge_base(tmp_path: Path) -> None:
     _git(repo, "merge", "--no-ff", head, "-m", "synthetic merge")
     synthetic_merge = _git(repo, "rev-parse", "HEAD")
 
-    assert _git(repo, "diff", "--name-only", f"{event_base}...{head}").splitlines() == [
-        "head-only.txt"
-    ]
+    merge_base = _git(repo, "merge-base", event_base, head)
+    assert merge_base == event_base
+    assert _git(
+        repo, "diff", "--name-only", "--no-renames", merge_base, head,
+    ).splitlines() == ["head-only.txt"]
     assert set(_git(repo, "diff", "--name-only", event_base, synthetic_merge).splitlines()) == {
         "base-only.txt",
         "head-only.txt",

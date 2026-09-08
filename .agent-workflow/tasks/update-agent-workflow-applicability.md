@@ -53,12 +53,19 @@ Approved applicability expansion by user 2026-09-08T11:38:08+03:00: "ok"
 - Established the isolated branch, inspected the current/source installs, and completed a clean-context pre-edit Redline classification. No implementation files changed.
 - The user approved the reviewed High-risk plan, the `roadmap/` Work Record exemption, and roadmap-only direct-default eligibility.
 - The user approved the exact nine-file README/user-facing documentation allowlist and extending shared direct-default eligibility to those paths; the required AGENTS and exact README Redline alignments passed final delta architecture review.
-- Implementation targets: `.claude/skills/agent-workflow/**`, `scripts/{agent-workflow-check,format-verdict-comment,agent-redline-report,run-import-linter}.py`, `.claude/hooks/**`, `.claude/settings.json`, `.opencode/plugins/agent-workflow.mjs`, `.agent-redline/agent-policy.schema.json`, `docs/agent-workflow/**`, `docs/agent-redline/skills/**`, `AGENTS.md`, `agent-workflow.yaml`, `agent-redline-policy.yaml`, `.github/workflows/agent-workflow.yml`, `roadmap/board.md`, and `roadmap/ideas/fix-redline-self-protection-path-mismatch.md`.
+- Implementation targets: `.claude/skills/agent-workflow/**`, `scripts/{agent-workflow-check,format-verdict-comment,agent-redline-report,run-import-linter}.py`, `.claude/hooks/**`, `.claude/settings.json`, `.opencode/plugins/agent-workflow.mjs`, `.agent-redline/agent-policy.schema.json`, `docs/agent-workflow/**`, `docs/agent-redline/skills/**`, `AGENTS.md`, `agent-workflow.yaml`, `agent-redline-policy.yaml`, `.github/workflows/agent-workflow.yml`, `tests/test_agent_workflow_ci.py`, `roadmap/board.md`, and `roadmap/ideas/fix-redline-self-protection-path-mismatch.md`.
+- Mechanical refresh complete from source `0a5cb06`: full skill tree, four vendored executables, hook helpers, OpenCode plugin, schema, Redline references, and the new checkpoint-doc layout. The upstream installers preserved existing settings/guarded paths and changed only the AGENTS marker block.
+- Semantic alignment complete: checker-emitted applicability fragment installed for the exact approved allowlist; CI now shares trusted NUL merge-base evidence and fails closed on invalid output; AGENTS direct-main guidance, README blue coverage, policy self-protection, and roadmap state were reconciled. Verification remains.
 
 ## Evidence
 
 - Source revision: `0a5cb066a735b7ca6634c6c5ccb87fa1b28d86b5`.
 - Target base: `9c11b5375f0703cafe6d69c32bd134508a4cf371`.
+- Source applicability/schema verification: 66 passed.
+- Pallium regression verification: `tests/test_agent_workflow_ci.py` passed; full `tests/` suite 4,646 passed, 32 skipped, 2 xfailed.
+- Artifact verification: skill/source hashes, manifest sizes, vendored executables, schema, checkpoint/Redline docs, hook installers, Python/shell/plugin syntax and plugin behavior passed.
+- Applicability probes: exact README/user-doc/roadmap paths exempt; unapproved docs, mixed code, workflow governance, and Redline policy paths fail closed. Redline self-protection reports RED with `architecture-review`.
+- Optional history tuner attempted twice and timed out without output; no calibration data or configuration was changed.
 
 ## Plan review
 

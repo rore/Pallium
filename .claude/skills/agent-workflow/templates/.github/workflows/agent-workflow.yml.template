@@ -10,11 +10,7 @@
 #                           checker on every Work Record changed in the
 #                           PR (multi-record aware since slice 0).
 #
-# Two stickies (distinct `header:`) keep the verdicts independently
-# legible in the PR conversation. Either job can fail; the second runs
-# unconditionally so the compliance verdict still surfaces when redline
-# blocked.
-#
+
 # Consumer prerequisites (drop alongside this workflow):
 #   - scripts/agent-redline-report.py     (vendored redline reporter)
 #   - scripts/agent-workflow-check.py     (vendored agent-workflow checker)
@@ -28,11 +24,7 @@ name: agent-workflow
 on:
   pull_request:
     branches: [main]
-    # Slice G: include label events so applying a satisfying label
-    # (e.g. `architecture-reviewed`) re-runs CI and updates the
-    # review.checkpoints_satisfied predicate without requiring a
-    # follow-up commit. `opened`, `synchronize`, `reopened` are the
-    # default-set triggers; we add the label events explicitly.
+
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
@@ -41,7 +33,7 @@ permissions:
 
 jobs:
   redline:
-    runs-on: [self-hosted]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,17 +47,22 @@ jobs:
 
       - run: pip install pyyaml jsonschema
 
-      - name: Compute changed-files list from PR base→head
+      - name: Compute PR changed-files list from merge base→head
         id: changed
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # Single newline-delimited file path per line. The reporter's
-          # --changed-files consumer parses this format directly.
-          git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" > changed-files.txt
-          echo "--- changed-files.txt ---"
-          cat changed-files.txt
+          # NUL-delimited paths preserve every valid Git filename. The reporter's
+          # --changed-files-z consumer parses this format directly.
+          MERGE_BASE=$(git merge-base "${BASE_SHA}" "${HEAD_SHA}") || {
+            echo "Could not resolve the PR merge base; refusing incomplete applicability evidence."
+            exit 1
+          }
+          git diff --name-only -z --no-renames "${MERGE_BASE}" "${HEAD_SHA}" > changed-files.z
+          echo "merge_base=${MERGE_BASE}" >> "$GITHUB_OUTPUT"
+          echo "--- changed-files.z ---"
+          python -c 'import sys; print(open(sys.argv[1], "rb").read().split(b"\0"))' changed-files.z
 
       - name: Compute PR labels and CODEOWNER approvals (slice G)
         id: review_inputs
@@ -160,7 +157,7 @@ jobs:
           fi
           python scripts/agent-redline-report.py \
             --policy agent-redline-policy.yaml \
-            --changed-files changed-files.txt \
+            --changed-files-z changed-files.z \
             --pr-labels "${{ steps.review_inputs.outputs.labels }}" \
             --codeowner-approvals "${{ steps.review_inputs.outputs.codeowner_approvals }}" \
             $BOUNDARY_ARG \
@@ -231,12 +228,16 @@ jobs:
 
       - name: Enforce reporter exit code
         # Reporter exits 2 on boundary violation, 1 on shadow warnings,
-        # 0 clean. Block on 2 only; advisory results stay green and
+        # 0 clean. Block on 2 or any unexpected code; advisory stays green and
         # surface via the sticky.
         run: |
           EXIT="${{ steps.report.outputs.exit_code }}"
-          if [[ "$EXIT" == "2" ]]; then
-            echo "redline exited 2 (boundary violation); failing CI."
+          if [[ ! -s redline-verdict.json ]] || ! python -c 'import json; json.load(open("redline-verdict.json"))'; then
+            echo "redline did not produce valid verdict JSON; failing CI."
+            exit 1
+          fi
+          if [[ "$EXIT" != "0" && "$EXIT" != "1" ]]; then
+            echo "redline exited $EXIT (blocking or unexpected); failing CI."
             exit 1
           fi
           echo "redline exited $EXIT — non-blocking."
@@ -247,7 +248,7 @@ jobs:
     # useful (it names the missing-verdict case explicitly via the
     # risk.redline_findings_available predicate).
     if: always()
-    runs-on: [self-hosted]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -274,19 +275,24 @@ jobs:
           name: redline-verdict
           path: .
 
-      - name: Compute changed-files list from PR base→head
+      - name: Compute PR changed-files list from merge base→head
         id: changed
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # Newline-delimited paths; the checker's --changed-files
+          # NUL-delimited, no-rename paths; the checker's --changed-files-z
           # consumer parses this format directly. Diff against the
           # pull_request base SHA so PRs targeting a release branch
           # are diffed against their real base.
-          git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" > changed-files.txt
-          echo "--- changed-files.txt ---"
-          cat changed-files.txt
+          MERGE_BASE=$(git merge-base "${BASE_SHA}" "${HEAD_SHA}") || {
+            echo "Could not resolve the PR merge base; refusing incomplete applicability evidence."
+            exit 1
+          }
+          git diff --name-only -z --no-renames "${MERGE_BASE}" "${HEAD_SHA}" > changed-files.z
+          echo "merge_base=${MERGE_BASE}" >> "$GITHUB_OUTPUT"
+          echo "--- changed-files.z ---"
+          python -c 'import sys; print(open(sys.argv[1], "rb").read().split(b"\0"))' changed-files.z
 
       - name: Derive task slug from the PR's source branch
         id: slug
@@ -327,11 +333,11 @@ jobs:
             VERDICT_ARG="--redline-verdict redline-verdict.json"
           fi
           # The checker discovers each Work Record changed in the PR
-          # via --changed-files. The branch-derived --slug is the
+          # via --changed-files-z. The branch-derived --slug is the
           # explicit fallback for PRs that touched no Work Records.
           python scripts/agent-workflow-check.py \
             --repo-root . \
-            --changed-files changed-files.txt \
+            --changed-files-z changed-files.z \
             --slug "${{ steps.slug.outputs.slug }}" \
             --base-ref "$BASE_SHA" \
             --head-ref "$HEAD_SHA" \
@@ -358,8 +364,12 @@ jobs:
         # so the comment surfaces the warning without blocking merge.
         run: |
           EXIT="${{ steps.check.outputs.exit_code }}"
-          if [[ "$EXIT" == "2" ]]; then
-            echo "checker exited 2 (blocking); failing CI."
+          if [[ ! -s verdict.json ]] || ! python -c 'import json; json.load(open("verdict.json"))'; then
+            echo "checker did not produce valid verdict JSON; failing CI."
+            exit 1
+          fi
+          if [[ "$EXIT" != "0" && "$EXIT" != "1" ]]; then
+            echo "checker exited $EXIT (blocking or unexpected); failing CI."
             exit 1
           fi
           echo "checker exited $EXIT — non-blocking."

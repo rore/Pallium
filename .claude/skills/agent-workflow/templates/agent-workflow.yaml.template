@@ -40,6 +40,15 @@ redline: required
 # writes to a different path.
 redlineVerdictPath: build/redline-verdict.json
 
+# Optional; bootstrap emits this block only after the human approves the
+# discovered paths and direct-default setting.
+# applicability:
+#   documentationOnly:
+#     paths:
+#       - "docs/"
+#       - "README.md"
+#     workflowRequired: false
+#     directDefaultBranchAllowed: false
 # Claude Code accelerator hooks (optional; a turn-time nudge, not the
 # enforcement floor — CI stays that). The plan-mode gate requires a plan
 # to include the Work Record step when it touches guarded code. Bootstrap

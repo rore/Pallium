@@ -79,6 +79,32 @@
         }
       },
       "additionalProperties": true
+    },
+    "applicability": {
+      "type": "object",
+      "required": ["documentationOnly"],
+      "properties": {
+        "documentationOnly": {
+          "type": "object",
+          "required": ["paths", "workflowRequired", "directDefaultBranchAllowed"],
+          "properties": {
+            "paths": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*[*?\\[\\]{}])[^/]+(?:/[^/]+)*/?$"
+              }
+            },
+            "workflowRequired": { "type": "boolean" },
+            "directDefaultBranchAllowed": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": true

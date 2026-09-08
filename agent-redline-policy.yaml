@@ -1,4 +1,4 @@
-# agent-policy.yaml — Pallium
+# agent-redline-policy.yaml — Pallium
 #
 # Bootstrapped by agent-redline (https://github.com/rore/agent-redline).
 # See AGENTS.md for the framing and known import-graph smells.
@@ -62,7 +62,7 @@ zones:
       checkpoint: security-review
 
     # --- Self-protection
-    - path: "agent-policy.yaml"
+    - path: "agent-redline-policy.yaml"
       reason: governance source of truth
       checkpoint: architecture-review
     - path: "pyproject.toml"
@@ -115,6 +115,8 @@ zones:
       reason: pytest config
     - path: "evals/**"
       reason: eval harness — diagnostic, not production
+    - path: "README.md"
+      reason: root documentation
     - path: "docs/**"
       reason: documentation
     - path: "roadmap/**"
