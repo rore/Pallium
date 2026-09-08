@@ -5,18 +5,26 @@ import logging
 import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import and_, func, or_, select
 
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
+from core.filters import source_item_matches_filters
+from core.models import QueryFilters, SourceItem
+from core.service import _redact_ingest_value
 from core.subject import subject_text_for_payload
+from core.visibility import is_visible
+from redaction import redact_sensitive
 from storage.sqlite_schema import (
+    HistoricalLookupReuseEventRecord, HistoricalLookupReuseLabelRecord,
     MemoryFeedbackRecord, MemoryFlagRecord, MemoryObjectRecord,
     RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord,
+    SourceItemRecord,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,7 +51,79 @@ _EFFECTIVENESS_REPORT_PATHS: dict[str, Path] = {
     # Judge-vs-gold calibration for the reuse KPI (evals/reuse_judge_calibration.py).
     # Drives the "calibrated vs uncalibrated" affordance on the reuse-KPI panel.
     "reuse_judge_calibration": Path(".local") / "research" / "reuse_judge_calibration.json",
+    "historical_lookup_measurement": Path(".local") / "research" / "historical_lookup_measurement.json",
+    "historical_lookup_judge": Path(".local") / "research" / "historical_lookup_judge.json",
 }
+
+
+def _dashboard_utc(value: datetime | None) -> datetime | None:
+    return value if value is None else (value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc))
+
+
+def _dashboard_time(value: datetime | None) -> str | None:
+    value = _dashboard_utc(value)
+    return value.isoformat() if value else None
+
+
+def _dashboard_source_item(record: SourceItemRecord) -> SourceItem:
+    try:
+        metadata = json.loads(record.metadata_json) if record.metadata_json else None
+    except (TypeError, json.JSONDecodeError):
+        metadata = None
+    return SourceItem(
+        id=record.id, source_type=record.source_type, source_id=record.source_id,
+        content_type=record.content_type, content=record.content, metadata=metadata if isinstance(metadata, dict) else None,
+        occurred_at=record.occurred_at, actor_ref=record.actor_ref, agent_ref=record.agent_ref,
+        role=record.role, container_ref=record.container_ref, thread_ref=record.thread_ref,
+        source_ref=record.source_ref, artifact_kind=record.artifact_kind,
+        visibility=record.visibility or "private", use_case=record.use_case,
+        processing_status=record.processing_status, processing_attempts=record.processing_attempts,
+        thread_position=record.thread_position, forgotten_at=record.forgotten_at,
+        forgotten_by=record.forgotten_by, forgotten_reason=record.forgotten_reason,
+        created_at=record.created_at,
+    )
+
+
+def _dashboard_source_visible(record: SourceItemRecord, *, container_ref: str, actor_ref: str,
+                              query_visibility: str, filters: QueryFilters) -> bool:
+    item = _dashboard_source_item(record)
+    return not item.forgotten and is_visible(
+        item.visibility, item.container_ref, container_ref, item.actor_ref,
+        query_visibility=query_visibility, query_actor_ref=actor_ref,
+    ) and source_item_matches_filters(item, filters)
+
+
+def _dashboard_source_view(record: SourceItemRecord) -> dict:
+    item = _dashboard_source_item(record)
+    content, metadata = item.content, item.metadata
+    if item.artifact_kind != "note":
+        content = redact_sensitive(content) if content else content
+        metadata = _redact_ingest_value(metadata) if metadata else metadata
+    return {
+        "id": item.id, "source_type": item.source_type, "source_id": item.source_id,
+        "content_type": item.content_type, "content": content, "metadata": metadata,
+        "occurred_at": _dashboard_time(item.occurred_at), "created_at": _dashboard_time(item.created_at),
+        "actor_ref": item.actor_ref, "agent_ref": item.agent_ref, "role": item.role,
+        "container_ref": item.container_ref, "thread_ref": item.thread_ref, "source_ref": item.source_ref,
+        "artifact_kind": item.artifact_kind, "visibility": item.visibility, "use_case": item.use_case,
+        "processing_status": item.processing_status, "thread_position": item.thread_position,
+    }
+
+
+def _dashboard_source_scope_clause(*, container_ref: str, actor_ref: str, query_visibility: str):
+    visibility = func.coalesce(SourceItemRecord.visibility, "private")
+    actor_matches = or_(SourceItemRecord.actor_ref.is_(None), SourceItemRecord.actor_ref == actor_ref)
+    global_same_actor = and_(visibility == "global", SourceItemRecord.actor_ref == actor_ref)
+    public = and_(visibility == "public", SourceItemRecord.actor_ref.is_(None))
+    if query_visibility == "public":
+        accessible = or_(global_same_actor, public)
+    elif query_visibility == "container":
+        accessible = or_(global_same_actor, public, and_(
+            SourceItemRecord.container_ref == container_ref, visibility != "private", actor_matches,
+        ))
+    else:
+        accessible = or_(global_same_actor, public, and_(SourceItemRecord.container_ref == container_ref, actor_matches))
+    return and_(SourceItemRecord.forgotten_at.is_(None), accessible)
 
 
 def _sanitize_non_finite(obj):
@@ -113,68 +193,55 @@ def mount_dashboard(app: FastAPI) -> None:
 
     @app.get("/dashboard/api/containers")
     def dashboard_containers() -> JSONResponse:
-        service = app.state.pallium_service
-        storage = service._storage
+        storage = app.state.pallium_service._storage
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
-
         with storage._session_factory() as session:
-            rows = session.execute(
-                select(MemoryObjectRecord.container_ref)
-                .where(MemoryObjectRecord.container_ref.isnot(None))
-                .distinct()
-                .order_by(MemoryObjectRecord.container_ref)
-            ).scalars().all()
-
-        return JSONResponse(content={"containers": list(rows)})
-
+            values = set(session.scalars(select(MemoryObjectRecord.container_ref).where(MemoryObjectRecord.container_ref.isnot(None)).distinct()))
+            values.update(session.scalars(select(SourceItemRecord.container_ref).where(SourceItemRecord.container_ref.isnot(None)).distinct()))
+        factory = getattr(storage, "_relay_session_factory", storage._session_factory)
+        with factory() as session:
+            values.update(session.scalars(select(RelaySessionRecord.container_ref).where(RelaySessionRecord.container_ref.isnot(None)).distinct()))
+        return JSONResponse(content={"containers": sorted(values)})
     @app.get("/dashboard/api/actors")
     def dashboard_actors() -> JSONResponse:
-        service = app.state.pallium_service
-        storage = service._storage
+        storage = app.state.pallium_service._storage
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
-
         with storage._session_factory() as session:
-            rows = session.execute(
-                select(MemoryObjectRecord.actor_ref)
-                .where(MemoryObjectRecord.actor_ref.isnot(None))
-                .distinct()
-                .order_by(MemoryObjectRecord.actor_ref)
-            ).scalars().all()
-
-        return JSONResponse(content={"actors": list(rows)})
-
+            values = set(session.scalars(select(MemoryObjectRecord.actor_ref).where(MemoryObjectRecord.actor_ref.isnot(None)).distinct()))
+            values.update(session.scalars(select(SourceItemRecord.actor_ref).where(SourceItemRecord.actor_ref.isnot(None)).distinct()))
+        factory = getattr(storage, "_relay_session_factory", storage._session_factory)
+        with factory() as session:
+            values.update(session.scalars(select(RelaySessionRecord.actor_ref).where(RelaySessionRecord.actor_ref.isnot(None)).distinct()))
+        return JSONResponse(content={"actors": sorted(values)})
     @app.get("/dashboard/api/activity")
     def dashboard_activity(limit: int = Query(10, ge=1, le=50)) -> JSONResponse:
-        service = app.state.pallium_service
-        storage = service._storage
+        storage = app.state.pallium_service._storage
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
-
         with storage._session_factory() as session:
-            records = session.scalars(
-                select(MemoryObjectRecord)
-                .order_by(MemoryObjectRecord.created_at.desc())
-                .limit(limit)
-            ).all()
-
+            memories = session.scalars(select(MemoryObjectRecord).order_by(MemoryObjectRecord.created_at.desc()).limit(limit)).all()
+            sources = session.scalars(select(SourceItemRecord).order_by(SourceItemRecord.created_at.desc()).limit(limit)).all()
         items = []
-        for rec in records:
-            payload = json.loads(rec.payload_json) if rec.payload_json else {}
-            created_at = rec.created_at
-            if created_at and created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
-            items.append({
-                "event": "memory_created",
-                "type": rec.type,
-                "display_text": _extract_display_text(payload),
-                "container_ref": rec.container_ref,
-                "created_at": created_at.isoformat() if created_at else None,
-            })
-
-        return JSONResponse(content={"items": items})
-
+        for record in memories:
+            payload = json.loads(record.payload_json) if record.payload_json else {}
+            items.append({"event": "memory_created", "type": record.type, "display_text": _extract_display_text(payload),
+                          "container_ref": record.container_ref, "created_at": _dashboard_time(record.created_at), "_at": record.created_at})
+        for record in sources:
+            items.append({"event": "source_ingested", "type": record.source_type,
+                          "display_text": record.artifact_kind or record.content_type,
+                          "container_ref": record.container_ref, "created_at": _dashboard_time(record.created_at), "_at": record.created_at})
+        factory = getattr(storage, "_relay_session_factory", storage._session_factory)
+        with factory() as session:
+            messages = session.scalars(select(RelayMessageRecord).order_by(RelayMessageRecord.created_at.desc()).limit(limit)).all()
+        for record in messages:
+            items.append({"event": "relay_sent", "type": record.sender_runtime, "display_text": None,
+                          "container_ref": record.container_ref, "created_at": _dashboard_time(record.created_at), "_at": record.created_at})
+        items.sort(key=lambda item: _dashboard_time(item["_at"]) or "", reverse=True)
+        for item in items:
+            item.pop("_at")
+        return JSONResponse(content={"items": items[:limit]})
     @app.get("/dashboard/api/relay/summary")
     def dashboard_relay_summary() -> JSONResponse:
         service = app.state.pallium_service
@@ -346,6 +413,281 @@ def mount_dashboard(app: FastAPI) -> None:
             "sessions": runtimes,
         })
 
+    @app.get("/dashboard/api/sources")
+    def dashboard_sources(
+        container_ref: str = Query(..., min_length=1), actor_ref: str = Query(..., min_length=1),
+        query_visibility: Literal["public", "container", "private", "global"] = Query(...),
+        source_type: str | None = Query(None), role: str | None = Query(None),
+        artifact_kind: str | None = Query(None), thread_ref: str | None = Query(None),
+        agent_ref: str | None = Query(None), search: str | None = Query(None), limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+    ) -> JSONResponse:
+        storage = app.state.pallium_service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+        filters = QueryFilters(container_ref=container_ref, actor_ref=actor_ref, source_type=source_type,
+                               role=role, artifact_kind=artifact_kind, thread_ref=thread_ref)
+        clause = _dashboard_source_scope_clause(container_ref=container_ref, actor_ref=actor_ref,
+                                                query_visibility=query_visibility)
+        with storage._session_factory() as session:
+            stmt = select(SourceItemRecord).where(clause)
+            count_stmt = select(func.count()).select_from(SourceItemRecord).where(clause)
+            for column, value in ((SourceItemRecord.source_type, source_type), (SourceItemRecord.role, role),
+                                  (SourceItemRecord.artifact_kind, artifact_kind), (SourceItemRecord.thread_ref, thread_ref),
+                                  (SourceItemRecord.agent_ref, agent_ref)):
+                if value is not None:
+                    stmt, count_stmt = stmt.where(column == value), count_stmt.where(column == value)
+            if search and search.strip():
+                match = f"%{search.strip()}%"
+                predicate = or_(SourceItemRecord.content.ilike(match), SourceItemRecord.metadata_json.ilike(match))
+                stmt, count_stmt = stmt.where(predicate), count_stmt.where(predicate)
+            total = session.scalar(count_stmt) or 0
+            effective_at = func.coalesce(SourceItemRecord.occurred_at, SourceItemRecord.created_at)
+            records = session.scalars(stmt.order_by(effective_at.desc(), SourceItemRecord.id.desc()).offset(offset).limit(limit)).all()
+        visible = [record for record in records if (agent_ref is None or record.agent_ref == agent_ref) and _dashboard_source_visible(
+            record, container_ref=container_ref, actor_ref=actor_ref, query_visibility=query_visibility, filters=filters,
+        )]
+        return JSONResponse(content={"sources": [_dashboard_source_view(record) for record in visible],
+                                     "total": total, "offset": offset, "limit": limit})
+
+    @app.get("/dashboard/api/sources/{source_item_id}")
+    def dashboard_source_detail(
+        source_item_id: str, container_ref: str = Query(..., min_length=1), actor_ref: str = Query(..., min_length=1),
+        query_visibility: Literal["public", "container", "private", "global"] = Query(...),
+    ) -> JSONResponse:
+        storage = app.state.pallium_service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+        filters = QueryFilters(container_ref=container_ref, actor_ref=actor_ref)
+        with storage._session_factory() as session:
+            record = session.get(SourceItemRecord, source_item_id)
+        if record is None or not _dashboard_source_visible(record, container_ref=container_ref, actor_ref=actor_ref,
+                                                            query_visibility=query_visibility, filters=filters):
+            raise HTTPException(status_code=404, detail="source item not found")
+        return JSONResponse(content={"source": _dashboard_source_view(record)})
+
+    @app.get("/dashboard/api/history/reuse-events")
+    def dashboard_reuse_events(
+        container_ref: str = Query(..., min_length=1), actor_ref: str = Query(..., min_length=1),
+        query_visibility: Literal["public", "container", "private", "global"] = Query(...),
+        limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
+    ) -> JSONResponse:
+        storage = app.state.pallium_service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+        visibility = func.coalesce(HistoricalLookupReuseEventRecord.visibility, "private")
+        actor_matches = or_(HistoricalLookupReuseEventRecord.actor_ref.is_(None), HistoricalLookupReuseEventRecord.actor_ref == actor_ref)
+        public = and_(visibility == "public", HistoricalLookupReuseEventRecord.actor_ref.is_(None))
+        global_same_actor = and_(visibility == "global", HistoricalLookupReuseEventRecord.actor_ref == actor_ref)
+        local = HistoricalLookupReuseEventRecord.container_ref == container_ref
+        if query_visibility == "public":
+            clause = or_(public, global_same_actor)
+        elif query_visibility == "container":
+            clause = or_(public, global_same_actor, and_(local, visibility != "private", actor_matches))
+        else:
+            clause = or_(public, global_same_actor, and_(local, actor_matches))
+        with storage._session_factory() as session:
+            total = session.scalar(select(func.count()).select_from(HistoricalLookupReuseEventRecord).where(clause)) or 0
+            events = session.scalars(select(HistoricalLookupReuseEventRecord).where(clause).order_by(
+                HistoricalLookupReuseEventRecord.created_at.desc(), HistoricalLookupReuseEventRecord.id.desc()).offset(offset).limit(limit)).all()
+            event_ids = [event.id for event in events]
+            labels = session.scalars(select(HistoricalLookupReuseLabelRecord).where(
+                HistoricalLookupReuseLabelRecord.lookup_event_id.in_(event_ids)).order_by(
+                HistoricalLookupReuseLabelRecord.created_at.desc(), HistoricalLookupReuseLabelRecord.id.desc())).all() if event_ids else []
+            source_ids = {event.request_source_item_id for event in events if event.request_source_item_id}
+            exposed = {}
+            for event in events:
+                try:
+                    exposed[event.id] = json.loads(event.exposed_json or "[]")
+                except (TypeError, json.JSONDecodeError):
+                    exposed[event.id] = []
+                source_ids.update(entry.get("source_item_id") for entry in exposed[event.id] if isinstance(entry, dict) and entry.get("source_item_id"))
+            records = {record.id: record for record in session.scalars(select(SourceItemRecord).where(SourceItemRecord.id.in_(source_ids))).all()} if source_ids else {}
+        filters = QueryFilters(container_ref=container_ref, actor_ref=actor_ref)
+        readable = {source_id for source_id, record in records.items() if _dashboard_source_visible(
+            record, container_ref=container_ref, actor_ref=actor_ref, query_visibility=query_visibility, filters=filters)}
+        event_text_allowed: dict[str, bool] = {}
+        for event in events:
+            references = ([event.request_source_item_id] if event.request_source_item_id else []) + [
+                entry.get("source_item_id") for entry in exposed[event.id]
+                if isinstance(entry, dict) and entry.get("source_item_id")
+            ]
+            event_text_allowed[event.id] = bool(references) and all(source_id in readable for source_id in references)
+        labels_by_event: dict[str, list[dict]] = {}
+        for label in labels:
+            allowed = event_text_allowed.get(label.lookup_event_id, False)
+            labels_by_event.setdefault(label.lookup_event_id, []).append({"id": label.id, "rung": label.rung,
+                "rationale": redact_sensitive(label.rationale) if allowed and label.rationale else None,
+                "created_at": _dashboard_time(label.created_at)})
+        items = []
+        for event in events:
+            request_id = event.request_source_item_id
+            text_allowed = event_text_allowed[event.id]
+            item = {"id": event.id, "event_type": event.event_type, "created_at": _dashboard_time(event.created_at),
+                    "session_id": event.session_id, "parent_lookup_id": event.parent_lookup_id,
+                    "source_session_ref": event.source_session_ref,
+                    "query_text": redact_sensitive(event.query_text) if text_allowed and event.query_text else None,
+                    "text_available": text_allowed,
+                    "request_source_item": {"id": request_id if request_id in readable else None, "available": request_id in readable},
+                    "labels": labels_by_event.get(event.id, []), "exposed": []}
+            for entry in exposed[event.id]:
+                if not isinstance(entry, dict):
+                    continue
+                source_id = entry.get("source_item_id")
+                item["exposed"].append({"source_item_id": source_id if source_id in readable else None,
+                                        "available": source_id in readable, "role": entry.get("role"), "raw_rank": entry.get("raw_rank"), "score": entry.get("score")})
+            items.append(item)
+        return JSONResponse(content={"events": items, "total": total, "offset": offset, "limit": limit})
+
+    @app.get("/dashboard/api/relay/sessions")
+    def dashboard_relay_sessions(
+        actor_ref: str = Query(..., min_length=1), runtime: str | None = Query(None),
+        container_ref: str | None = Query(None),
+        lifecycle: Literal["recent", "dormant", "closed"] | None = Query(None),
+        destination_health: Literal["active", "unreachable"] | None = Query(None), limit: int = Query(100, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+    ) -> JSONResponse:
+        storage = app.state.pallium_service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+        as_of = datetime.now(timezone.utc)
+        cutoff = as_of - timedelta(hours=24)
+        clause = RelaySessionRecord.actor_ref == actor_ref
+        if runtime is not None:
+            clause = and_(clause, RelaySessionRecord.runtime == runtime)
+        if container_ref is not None:
+            clause = and_(clause, RelaySessionRecord.container_ref == container_ref)
+        if destination_health is not None:
+            clause = and_(clause, RelaySessionRecord.state == destination_health, RelaySessionRecord.state != "closed")
+        if lifecycle == "closed":
+            clause = and_(clause, RelaySessionRecord.state == "closed")
+        elif lifecycle == "recent":
+            clause = and_(clause, RelaySessionRecord.state != "closed", RelaySessionRecord.last_seen_at >= cutoff)
+        elif lifecycle == "dormant":
+            clause = and_(clause, RelaySessionRecord.state != "closed", RelaySessionRecord.last_seen_at < cutoff)
+        factory = getattr(storage, "_relay_session_factory", storage._session_factory)
+        with factory() as session:
+            total = session.scalar(select(func.count()).select_from(RelaySessionRecord).where(clause)) or 0
+            records = session.scalars(select(RelaySessionRecord).where(clause).order_by(
+                RelaySessionRecord.last_seen_at.desc(), RelaySessionRecord.id.desc()).offset(offset).limit(limit)).all()
+        sessions = []
+        for record in records:
+            item_lifecycle = "closed" if record.state == "closed" else (
+                "recent" if (record.last_seen_at if record.last_seen_at.tzinfo else record.last_seen_at.replace(tzinfo=timezone.utc)) >= cutoff else "dormant"
+            )
+            sessions.append({"id": record.id, "runtime": record.runtime, "session_ref": record.session_ref,
+                "container_ref": record.container_ref, "actor_ref": record.actor_ref, "title": record.title,
+                "alias": record.alias, "state": item_lifecycle, "lifecycle": item_lifecycle,
+                "destination_health": None if item_lifecycle == "closed" else record.state,
+                "first_seen_at": _dashboard_time(record.first_seen_at), "last_seen_at": _dashboard_time(record.last_seen_at),
+                "closed_at": _dashboard_time(record.closed_at)})
+        return JSONResponse(content={"sessions": sessions, "total": total, "offset": offset, "limit": limit,
+                                     "as_of": _dashboard_time(as_of)})
+    @app.get("/dashboard/api/relay/messages")
+    def dashboard_relay_messages(
+        actor_ref: str = Query(..., min_length=1), limit: int = Query(50, ge=1, le=200),
+        until: datetime | None = Query(None), before_created_at: datetime | None = Query(None), before_id: str | None = Query(None),
+        since: datetime | None = Query(None), runtime: str | None = Query(None), container_ref: str | None = Query(None),
+        endpoint_id: str | None = Query(None), peer_endpoint_id: str | None = Query(None),
+        delivery_state: Literal["pending", "claimed", "delivered", "expired"] | None = Query(None),
+    ) -> JSONResponse:
+        if (before_created_at is None) != (before_id is None):
+            raise HTTPException(status_code=422, detail="before_created_at and before_id must be supplied together")
+        if peer_endpoint_id is not None and endpoint_id is None:
+            raise HTTPException(status_code=422, detail="peer_endpoint_id requires endpoint_id")
+        storage = app.state.pallium_service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+        as_of = _dashboard_utc(until) or datetime.now(timezone.utc)
+        since = _dashboard_utc(since)
+        before_created_at = _dashboard_utc(before_created_at)
+        clause = and_(RelayMessageRecord.actor_ref == actor_ref, RelayMessageRecord.created_at <= as_of)
+        if since is not None:
+            clause = and_(clause, RelayMessageRecord.created_at >= since)
+        if runtime is not None:
+            clause = and_(clause, RelayMessageRecord.sender_runtime == runtime)
+        if container_ref is not None:
+            clause = and_(clause, RelayMessageRecord.container_ref == container_ref)
+        delivery_filter = select(RelayDeliveryRecord.id).where(RelayDeliveryRecord.message_id == RelayMessageRecord.id)
+        if endpoint_id is not None:
+            endpoint_match = or_(RelayMessageRecord.sender_endpoint_id == endpoint_id,
+                                 delivery_filter.where(RelayDeliveryRecord.recipient_endpoint_id == endpoint_id).exists())
+            clause = and_(clause, endpoint_match)
+            if peer_endpoint_id is not None:
+                pair_match = or_(and_(RelayMessageRecord.sender_endpoint_id == endpoint_id,
+                                      delivery_filter.where(RelayDeliveryRecord.recipient_endpoint_id == peer_endpoint_id).exists()),
+                                 and_(RelayMessageRecord.sender_endpoint_id == peer_endpoint_id,
+                                      delivery_filter.where(RelayDeliveryRecord.recipient_endpoint_id == endpoint_id).exists()))
+                clause = and_(clause, pair_match)
+        if delivery_state is not None:
+            effective_delivery_state = (
+                or_(RelayDeliveryRecord.state == "expired", and_(
+                    RelayDeliveryRecord.state.in_(("pending", "claimed")), RelayMessageRecord.expires_at <= as_of,
+                )) if delivery_state == "expired" else (
+                    and_(RelayDeliveryRecord.state == delivery_state, RelayMessageRecord.expires_at > as_of)
+                    if delivery_state in ("pending", "claimed") else RelayDeliveryRecord.state == delivery_state
+                )
+            )
+            clause = and_(clause, delivery_filter.where(effective_delivery_state).exists())
+        if before_created_at is not None:
+            clause = and_(clause, or_(RelayMessageRecord.created_at < before_created_at,
+                                      and_(RelayMessageRecord.created_at == before_created_at, RelayMessageRecord.id < before_id)))
+        factory = getattr(storage, "_relay_session_factory", storage._session_factory)
+        with factory() as session:
+            total_clause = and_(RelayMessageRecord.actor_ref == actor_ref, RelayMessageRecord.created_at <= as_of)
+            if since is not None:
+                total_clause = and_(total_clause, RelayMessageRecord.created_at >= since)
+            if runtime is not None:
+                total_clause = and_(total_clause, RelayMessageRecord.sender_runtime == runtime)
+            if container_ref is not None:
+                total_clause = and_(total_clause, RelayMessageRecord.container_ref == container_ref)
+            if endpoint_id is not None:
+                endpoint_match = or_(RelayMessageRecord.sender_endpoint_id == endpoint_id,
+                                     delivery_filter.where(RelayDeliveryRecord.recipient_endpoint_id == endpoint_id).exists())
+                total_clause = and_(total_clause, endpoint_match)
+                if peer_endpoint_id is not None:
+                    pair_match = or_(and_(RelayMessageRecord.sender_endpoint_id == endpoint_id,
+                                          delivery_filter.where(RelayDeliveryRecord.recipient_endpoint_id == peer_endpoint_id).exists()),
+                                     and_(RelayMessageRecord.sender_endpoint_id == peer_endpoint_id,
+                                          delivery_filter.where(RelayDeliveryRecord.recipient_endpoint_id == endpoint_id).exists()))
+                    total_clause = and_(total_clause, pair_match)
+            if delivery_state is not None:
+                total_clause = and_(total_clause, delivery_filter.where(effective_delivery_state).exists())
+            total = session.scalar(select(func.count()).select_from(RelayMessageRecord).where(total_clause)) or 0
+            page = session.scalars(select(RelayMessageRecord).where(clause).order_by(
+                RelayMessageRecord.created_at.desc(), RelayMessageRecord.id.desc()).limit(limit + 1)).all()
+            has_more, messages = len(page) > limit, page[:limit]
+            message_ids = [message.id for message in messages]
+            delivery_query = select(RelayDeliveryRecord).where(RelayDeliveryRecord.message_id.in_(message_ids)).order_by(RelayDeliveryRecord.id)
+            deliveries = session.scalars(delivery_query).all() if message_ids else []
+        deliveries_by_message: dict[str, list[dict]] = {}
+        message_by_id = {message.id: message for message in messages}
+        for delivery in deliveries:
+            expires = _dashboard_utc(message_by_id[delivery.message_id].expires_at)
+            effective_state = "expired" if delivery.state in ("pending", "claimed") and expires <= as_of else delivery.state
+            if delivery_state is not None and effective_state != delivery_state:
+                continue
+            deliveries_by_message.setdefault(delivery.message_id, []).append({"id": delivery.id,
+                "recipient_runtime": delivery.recipient_runtime, "recipient_session_ref": delivery.recipient_session_ref,
+                "recipient_endpoint_id": delivery.recipient_endpoint_id, "recipient_container_ref": delivery.recipient_container_ref,
+                "state": effective_state, "claimed_at": _dashboard_time(delivery.claimed_at),
+                "lease_expires_at": _dashboard_time(delivery.lease_expires_at), "delivered_at": _dashboard_time(delivery.delivered_at),
+                "attempts": delivery.attempts})
+        items = []
+        for message in messages:
+            expires = _dashboard_utc(message.expires_at)
+            durable = expires.year >= 9999
+            items.append({"id": message.id, "sender_runtime": message.sender_runtime, "sender_session_ref": message.sender_session_ref,
+                "sender_endpoint_id": message.sender_endpoint_id, "recipient_selector": message.recipient_selector,
+                "container_ref": message.container_ref, "actor_ref": message.actor_ref,
+                "payload": redact_sensitive(message.payload) if message.payload else message.payload, "redacted": bool(message.redacted),
+                "in_reply_to": message.in_reply_to, "created_at": _dashboard_time(message.created_at),
+                "expires_at": None if durable else _dashboard_time(expires), "effective_expired": not durable and expires <= as_of,
+                "deliveries": deliveries_by_message.get(message.id, [])})
+        return JSONResponse(content={"messages": items, "total": total, "limit": limit, "until": _dashboard_time(as_of),
+                                     "as_of": _dashboard_time(as_of), "has_more": has_more,
+                                     "next_before_created_at": _dashboard_time(messages[-1].created_at) if has_more else None,
+                                     "next_before_id": messages[-1].id if has_more else None})
     @app.get("/dashboard/api/memories")
     def dashboard_memories(
         type: str | None = Query(None),
