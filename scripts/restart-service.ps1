@@ -7,7 +7,7 @@
 #>
 
 param(
-    [double]$ReadinessTimeoutSeconds = 120
+    [double]$ReadinessTimeoutSeconds = 180
 )
 
 $ErrorActionPreference = "Stop"
