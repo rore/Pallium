@@ -17,13 +17,13 @@
 
 **Discovery:** Current main stores work refs only on immutable SourceItem metadata (`pallium_work_refs`, normalized/deduplicated, maximum five). Hooks discover bare `git-branch:*` and `agent-workflow:*` refs, choose the first structural ref for scalar current-work injection, and independently rediscover at user/assistant ingestion. Relay persists endpoint identity/lifecycle/alias but no work refs; container-local recipient listing and the service-global dashboard are separate projections. Alias release/transfer does not replace endpoint identity, close retains the endpoint, and a turn reopens that exact endpoint. Minimap has no reusable identity helper yet; its queued companion explicitly makes Minimap the producer of a repository-plus-roadmap-root-qualified item ref and Pallium the association owner. Pre-edit redline classification is API_CHANGE plus SCHEMA_CHANGE, Risk High / Complexity Large, with API and persistence review required and no existing boundary violation.
 
-**Material assumptions:** (1) The association identity can be a generic tuple of readable `scope_ref` plus existing-normalized `local_ref`, with fixed-length `work:v1:<sha256>` as its advanced exact key; if Minimap cannot reproduce that function, return to contract review. (2) Existing bare branch/Work Record refs remain the scalar/history representation while their registry rows carry repository scope; no implicit search union or migration is needed. (3) The first slice has exactly the two structural sources shipped today plus at most three explicit refs, so every successful explicit association fits the unchanged five-ref history projection. (4) Existing Relay endpoint IDs remain the sole association owner; alias transfer never moves rows. (5) Trusted hook/MCP identity seams resolve the current endpoint without model-supplied runtime/session arguments; unsupported runtimes fail closed. (6) Dashboard correction remains trusted-local administration on one exact endpoint ID. (7) No physical endpoint deletion/pruning exists today; retained rows cascade on future deletion and tests dispose only the isolated database.
+**Material assumptions:** (1) A generic readable `scope_ref` plus NFC-preserved `local_ref`, hashed into fixed-length `work:v1:<sha256>`, is reproducible in Python and JavaScript without changing legacy work-ref normalization; shared vectors are a stop condition. (2) Existing bare structural scalar/history refs and caller-supplied `pallium_work_refs` keep their current precedence; registry explicit keys enrich only remaining per-turn slots with visible overflow and no search union. (3) The registry slice is the two structural sources shipped today plus at most three explicit associations; registry membership and per-turn history coverage are reported separately. (4) Existing Relay endpoint IDs remain the sole association owner; alias transfer never moves rows. (5) Trusted hook/MCP identity seams resolve the current endpoint without model-supplied runtime/session arguments; unsupported runtimes fail closed. (6) Dashboard correction remains trusted-local administration on one exact endpoint ID. (7) Close/reopen retention is in scope; physical endpoint deletion/pruning does not exist and cascade behavior is explicitly deferred.
 
 **Plan:** Pending architect design review. After approval: (1) add the Work Record's reviewed API/persistence checkpoints and get clean-context smart plan review; (2) add one endpoint-owned origin table and generic qualification/validation helper; (3) extend Relay core/HTTP with atomic structural refresh, current-session explicit attach/detach/read, and exact-ref participant lookup; (4) expose four narrow MCP tools using the receive path's runtime-owned identity resolver; (5) make supported hooks refresh at turn admission and capture immutable post-refresh/current snapshots for user/assistant ingestion; (6) extend the existing dependency-free dashboard with exact-ref filtering and exact-endpoint explicit correction; (7) add focused persistence/API/MCP/hook/dashboard tests, then the required public-surface E2E, isolated synthetic demo, docs, screenshots, full suite, workflow/redline gates, and independent smart result review. Stop and return to planning on identity weakening, silent history overflow, container/history access widening, or a required tracker/runtime-specific Relay abstraction.
 
-**Verification plan:** Public-surface E2E will cover register -> structural refresh -> explicit attach -> plural cross-container lookup -> exact send/reply -> work switch -> detach -> close/include-inactive -> reopen -> isolated cleanup. Boundary cases cover empty/duplicate/max/over-max, origin overlap, concurrent refresh/attach/detach, alias transfer, restart, Unicode and escaped refs, invalid/unqualified/secret-bearing refs, missing/current-vs-other endpoint mutation, unavailable snapshot service, delayed ingestion after detach, stable same-repo worktree scope, distinct repository/roadmap/tracker scopes, exact non-transitive lookup, and no message/claim/history-permission side effects. Dashboard browser tests and screenshots cover loading/empty/error/overflow/inactive states and keyboard access. Run focused nodes, affected files, `--lf`, full `tests/ -x -q`, import/workflow/redline checks, then a clean-context smart review before PR handoff.
+**Verification plan:** Public contract → E2E maps separately to HTTP registry/lifecycle/concurrency, runtime-owned MCP attach/find/send/reply, hook capture/History exact search, and dashboard filtering/correction. It covers valid and malformed non-blocking structural refresh, two structural plus three registry explicit associations, fourth-attach conflict, mixed legacy caller refs/duplicates/visible overflow, concurrent attach at capacity, origin overlap, alias transfer, restart, dormant/default and closed/opt-in participants, pagination plus container-filter intersections, closed mutation, missing/conflicting MCP identity, Unicode and cross-language canonical vectors, credential/local-remote fallback, unavailable association service with unchanged structural ingestion/delivery, early-return user turns, delayed prebuilt payload after detach, same-payload duplicate after lost response, and exact non-transitive/no-permission-side-effect lookup. Existing and separate Relay databases get schema-init coverage. Browser tests/screenshots cover readable inputs, advanced key, loading/empty/error/overflow/closed states, failed correction, and keyboard access. Run focused nodes, affected files, `--lf`, full `tests/ -x -q`, import/workflow/redline checks, then independent smart result review.
 
-**Plan review:** Pre-edit classifier: MIXED -> API_CHANGE + SCHEMA_CHANGE, High/Large; API and persistence review required. Architect rejected the first opaque-input/current-work-migration design in Relay message `relay-reply-b7c2c94869bde6853c9b1f7ed0537cd73fe580132f8575220cfaaab8ade151b5`. Corrected architect review and a fresh clean-context smart design/implementation-plan review are pending; the rejected design is not review evidence.
+**Plan review:** Pre-edit classifier: MIXED -> API_CHANGE + SCHEMA_CHANGE, High/Large; API and persistence review required. Architect rejected the first opaque-input/current-work-migration design in Relay message `relay-reply-b7c2c94869bde6853c9b1f7ed0537cd73fe580132f8575220cfaaab8ade151b5`. Fresh clean-context review of corrected commit `f42c5fc8` returned REVISE: legacy caller-ref overflow, cross-runtime canonical bytes, retry ownership, and unenforced cascade. This packet addresses those findings; architect re-review remains pending. Neither rejected review is human approval.
 
 **Approvals:** Approved by user 2026-09-09: "you're about to get assigned work from the architect agent, i approve this work and doing PRs"
 
@@ -32,88 +32,99 @@
 **State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
-## Corrected design review packet
+## Corrected design review packet (revision 2)
 
-### Exact workspace and gates
+### Exact workspace and required gates
 
 - Worktree: `C:\Dev\rore\Pallium\.worktrees\relay-session-work-associations`
 - Branch: `feat/relay-session-work-associations`
 - Work Record: `.agent-workflow/tasks/relay-session-work-associations.md`
 - Base: `origin/main` `0dbb0691d60a98dda06702d6107645af8e842a08`
-- Work Record creation: `0b543f3e`; rejected packet: `72e609cc`
-- Classification: API_CHANGE + SCHEMA_CHANGE, Risk High / Complexity Large. Before production editing, the corrected plan requires architect contract approval, fresh clean-context smart plan review, and recorded API-review plus persistence-review checkpoints. The human approval is only the user's verbatim 2026-09-09 statement already in `Approvals`; architect/manager review does not substitute for it.
+- Commits: Work Record `0b543f3e`; rejected first packet `72e609cc`; first correction `f42c5fc8`
+- Classification: API_CHANGE + SCHEMA_CHANGE, Risk High / Complexity Large. Production remains blocked on architect contract approval, a clean corrected smart review, and recorded API-review plus persistence-review checkpoints. Only the user's verbatim statement in `Approvals` is human authorization; architect/manager/agent reviews do not substitute for it.
 
-### Smallest product slice
+### Smallest product slice and persistence
 
-Current behavior remains intact: hook discovery continues to emit bare `git-branch:*` and `agent-workflow:*` refs, scalar current-work remains the first structural ref, and immutable History keeps the same exact bare refs and five-ref cap. Relay gains endpoint-owned associations with readable identity, plural exact participant lookup, explicit correction, and captured explicit-ref history enrichment. There is no current-work migration, old-source rewrite, search union, backfill, tracker integration, producer service, role/ownership model, transitive expansion, deep link, or composer.
+Existing bare branch/Work Record scalar and History behavior stays unchanged. Relay adds endpoint-owned readable associations, exact plural participant discovery, current-session explicit correction, and best-effort explicit association enrichment of future turns. No current-work migration, old-source rewrite, implicit search union, backfill, tracker integration, producer service, ownership/role model, semantic expansion, deep link, or composer.
 
-One SQLite table is sufficient. Each `(endpoint_id, work_ref, origin)` row also stores the normalized readable `scope_ref` and `local_ref`, structural position, first-associated time, and last-confirmed time. `origin` is `explicit` or `structural`; one exact ref may have both. Endpoint identity owns rows, aliases never do. Structural refresh atomically replaces only structural rows; explicit attach/detach touches only explicit origin. Close retains rows; reopen of the same endpoint retains them; future physical endpoint deletion cascades.
+One new Relay table is sufficient. Each `(endpoint_id, work_ref, origin)` row also stores canonical readable `scope_ref`, `local_ref`, structural position, first-associated time, and last-confirmed time. `origin` is `explicit` or `structural`; the same exact ref may have both. Structural refresh atomically replaces only structural rows. Explicit attach/detach changes only explicit origin. Endpoint identity owns rows; alias transfer does not. Close retains rows and reopen of the same endpoint retains them.
 
-### Readable identity and Minimap contract
+Physical endpoint deletion/pruning does not exist today and cascade is not promised in this slice: SQLite connections do not enable foreign-key enforcement. A future deletion feature must remove association rows in its own transaction before deleting an endpoint. Schema implementation must add the table to `_RELAY_TABLE_NAMES` and `_initialize_relay_schema`'s explicit Relay list, and tests initialize both an existing upgraded database and a separate Relay database. Test cleanup removes only its isolated database.
 
-Normal inputs and primary UI text are two understandable values:
+### Reproducible readable identity
 
-- `scope_ref`: where this identifier is meaningful.
-- `local_ref`: the ordinary identifier inside that scope.
+Normal tool inputs and primary dashboard text are two values:
 
-Examples:
+- `scope_ref`: the canonical place where an identifier is meaningful.
+- `local_ref`: the ordinary identifier in that scope.
 
-- roadmap scope `roadmap:v1:git:github.com/rore/pallium#roadmap` plus local ref `feature:add-relay-session-work-associations`
-- tracker scope `tracker:v1:jira.example.test#pallium` plus local ref `ticket:PAL-412`
-- repository structural scope `git:github.com/rore/pallium` plus local ref `git-branch:feat/relay-session-work-associations`
+The generic boundary validates these inputs and produces the advanced exact key:
 
-The boundary normalizes/validates both and deterministically forms the advanced exact key:
+`work:v1:` + lowercase SHA-256 hex of `UTF8(NFC(scope_ref)) + 0x00 + UTF8(NFC(local_ref))`
 
-`work:v1:` + lowercase SHA-256 hex of `normalized_scope_ref + NUL + normalized_local_ref`
+Inputs containing NUL, C0/C1 controls, U+2028/U+2029, redaction markers, detected secrets, or leading/trailing ASCII whitespace are rejected rather than repaired. `scope_ref` is 1..512 UTF-8 bytes after NFC. `local_ref` is 1..128 Unicode code points and at most 512 UTF-8 bytes after NFC. Case and non-ASCII characters are preserved exactly; producers own semantic casing. The final 72-character lowercase-hex key alone passes through existing `_normalize_work_ref`, so legacy casefold/separator behavior is unchanged and JavaScript does not need Python `casefold`.
 
-The key is fixed at 72 characters, so a currently valid 128-code-point local ref is never shortened or rejected merely to fit a prefix. Responses include all three fields. Dashboard chips and ordinary MCP input show `local_ref` with `scope_ref`; the hash is expandable/copyable for exact HTTP consumers and diagnostics.
+Repository identity gets one published Python/JavaScript contract rather than reusing today's inconsistent helpers:
 
-Pallium does not parse feature, ticket, Minimap, Jira, branch, or Work Record semantics. Producers define canonical readable scopes. The shared Minimap rule is `roadmap:v1:<canonical-repository-ref>#<normalized-repository-relative-roadmap-root>`; its local ref is `<kind>:<item-id>`. The same repo/root/item therefore hashes identically across worktrees, while another repo or roadmap root differs. Repository identity reuses the credential-free container rules (`git:` remote; `repo:` root-commit fallback). Tracker producers supply a credential-free canonical authority/project scope. Absolute checkout paths, URL userinfo/secrets, NUL, redaction markers, and over-bound input fail validation.
+1. Accept HTTPS/SSH URL and SCP-style Git remotes; reject local/file remotes and any password/token-bearing URL.
+2. Remove scheme, safe SSH username, query/fragment, trailing slash, and final `.git`; lowercase the ASCII DNS host.
+3. For `github.com` only, lowercase owner/repository path. For other hosts, preserve path case.
+4. Emit `git:<host>/<path>`. With no usable remote, emit `repo:<lowercase-root-commit-hex>`. With neither, repository-scoped automatic association is unavailable and explicit non-repository scope remains usable.
+5. Roadmap roots are repository-relative: convert `\` to `/`, reject absolute/empty/`.`/`..` traversal segments, NFC-normalize each segment, and percent-encode UTF-8 bytes outside RFC 3986 unreserved characters with uppercase hex. Repository root is represented by `.`. Emit `roadmap:v1:<repository-ref>#<encoded-root>`.
 
-Normal attach/find requires both `scope_ref` and `local_ref`. If the agent supplies only `PAL-412`, the tool asks for the missing tracker scope and changes nothing; it never guesses current repo or Jira authority. Pallium works standalone because a developer or agent can supply the current repository/roadmap scope and ordinary item identifier without Minimap. Minimap later uses the same published function. No independent producer service is required.
+Normal examples:
 
-Existing recorded bare refs remain unchanged and exactly searchable. Structural registry rows use `(repository scope, existing bare structural local ref)`, but scalar injection and History continue storing that bare structural ref under today's container-scoped History contract. There is no automatic relation or widened search between the bare value and hashed registry key. Explicit feature/ticket associations add their fixed exact `work:v1:<hash>` keys to subsequent History metadata, after the independently discovered bare structural refs.
+- scope `roadmap:v1:git:github.com/rore/pallium#roadmap`, local `feature:add-relay-session-work-associations`, exact key `work:v1:4e012e357683c4d5202c658947097e4a1effcf0c4f0e075d450874f89f40b652`
+- scope `tracker:v1:jira.example.test#pallium`, local `ticket:PAL-412`, exact key `work:v1:50123c19c18153c5f77c954a37ef6257b27b57b11660e62f9e0980ab73132616`
+- structural scope `git:github.com/rore/pallium`, local `git-branch:feat/relay-session-work-associations`
 
-### Bounds and overflow
+Pallium never parses feature/ticket/Jira/Minimap semantics. The Minimap contract is the roadmap scope rule above plus local `<kind>:<item-id>`. Same repo/root/item is stable across worktrees; another repo/root differs. A tracker producer supplies a credential-free canonical authority/project scope. If an agent supplies only `PAL-412`, attach/find asks for `scope_ref` and changes nothing; it never guesses current repository or tracker.
 
-The first slice matches the actual journey and the existing cap: at most two distinct structural refs (the only shipped sources: branch and Work Record) plus at most three explicit refs per endpoint. The combined bound is five; origin overlap counts once. No successful attach can be omitted from a normal subsequent history snapshot.
+Shared Python/JavaScript golden vectors are required before implementation proceeds: HTTPS/SSH/SCP GitHub remotes; non-GitHub path-case distinction; composed/decomposed Unicode equivalence; distinct non-ASCII case; `/` versus `\` roadmap roots; escaped Unicode/space; root-commit fallback; credential-bearing and local remotes; missing identity; 128/129 code-point local refs; and 512/513-byte scope/local boundaries.
 
-- A fourth distinct explicit attach returns `409 association_limit` with the current readable refs and “detach one explicit reference first”; it writes nothing.
-- Structural refresh accepts at most the two known sources and replaces them atomically. Over-limit/malformed refresh leaves prior registry structural rows unchanged and returns a warning, but local hook discovery still supplies the current bare structural refs to History.
-- History composition is unchanged structural discovery order followed by confirmed explicit exact keys. It deduplicates and stays within five by construction. The response still reports included refs and capacity (`explicit_used: n`, `explicit_limit: 3`) so the user sees remaining room.
-- A branch/Work Record switch replaces registry structural rows without touching explicit refs. No temporary old/new overlap is persisted and no explicit ref is evicted.
+### Compatibility, bounds, and visible overflow
 
-A broader association registry or migration of qualified structural refs into History is a separate product decision, not bundled here.
+Registry membership is bounded to the two structural sources shipped today plus three explicit associations per endpoint. The union is at most five; origin overlap counts once. A fourth distinct explicit attach returns `409 association_limit`, writes nothing, and says which readable explicit ref must be detached first. Structural refresh accepts at most branch and Work Record and never evicts explicit rows.
 
-### Corrected HTTP contract
+Per-turn History has three input classes, with existing behavior first:
 
-- Extend `POST /relay/turn` with optional ordered `structural_work_refs: [{scope_ref, local_ref}] | null`. `null` preserves old-client registry behavior; `[]` clears structural rows. Relay admission/claim happens independently from the best-effort association refresh. Response adds `work_associations: {status, refs, explicit_used, explicit_limit}`; refresh failure never blocks delivery.
-- `GET /relay/sessions/work-refs?runtime=<r>&session_ref=<s>&container_ref=<c>` returns the exact endpoint's grouped readable snapshot without liveness/message side effects.
-- `POST /relay/sessions/work-refs/attach` and `/detach` accept `{runtime, session_ref, container_ref, scope_ref, local_ref}` on the trusted integration boundary and return post-state. Attach confirms freshness, detach is idempotent and reports when structural origin keeps the association, and neither creates/reopens a session.
-- `GET /relay/work-refs/participants` accepts either normal `scope_ref` + `local_ref` or the advanced exact `work_ref`, never both. It performs one service-global exact match and returns `contract: relay-session-work-associations/v1`, readable fields, canonical endpoint selector, alias/runtime/container, grouped origins/freshness, and the existing raw `state`, `lifecycle`, `destination_health`, and `last_seen_at`. Dormant active sessions remain in default results with honest age; only closed sessions require `include_closed=true`. No new inferred `available` field is added.
-- Pagination defaults to 50 and caps at the existing dashboard maximum 200. Older services return route-not-found (unsupported); a consumer separately distinguishes unreachable, timeout, malformed, over-limit, successful empty, and success.
-- Dashboard trusted-local correction uses one exact endpoint route with `{action, scope_ref, local_ref}` and the same RelayService operations. API/dashboard do not import storage.
+1. current locally discovered bare structural refs in current order (also supplies unchanged scalar current-work);
+2. existing caller/event `pallium_work_refs` in caller order;
+3. confirmed registry explicit exact keys in association confirmation order.
 
-### Corrected MCP contract
+The existing normalizer/deduplicator takes the first five. New merge code additionally returns every omitted ref and its source. SourceItem metadata records bounded `pallium_work_refs_omitted` and `pallium_relay_work_refs_status: complete|partial|unavailable`. UserPrompt injection tells the agent which associated refs were not searchable on that user turn; Stop emits the same bounded non-secret warning. Dashboard/current-session reads describe registry persistence separately from latest per-turn History coverage. Attach results say `association: persisted; history: evaluated per turn` and never claim guaranteed searchability.
 
-Current-session tools reuse the receive path's hidden runtime-owned request/environment resolver. The model supplies no runtime/session identity; optional `container_ref` is only the injected Relay scope and resolution fails closed.
+Thus the normal four-ref journey (branch, Work Record, feature, ticket) is complete with one spare only when legacy caller refs do not consume it. Mixed legacy/registry overflow is truthful rather than silently evicting established inputs. Duplicates across classes consume one slot. A branch switch atomically replaces structural registry rows and local discovery immediately records the new bare branch; explicit associations survive. Full qualified-structural History migration is a separate decision.
+
+### HTTP and MCP contract
+
+HTTP:
+
+- `POST /relay/turn` adds optional ordered `structural_work_refs: [{scope_ref, local_ref}] | null`; `null` leaves registry structural rows unchanged and `[]` clears them. Relay admission/claim commits independently; association refresh follows and can return a warning without blocking delivery.
+- `GET /relay/sessions/work-refs?runtime=&session_ref=&container_ref=` returns one exact endpoint's grouped readable snapshot without liveness/message side effects.
+- `POST /relay/sessions/work-refs/attach` and `/detach` accept trusted-integration `{runtime, session_ref, container_ref, scope_ref, local_ref}` and return post-state. They do not create/reopen a missing or closed agent session. Dashboard administration may correct a closed exact endpoint explicitly.
+- `GET /relay/work-refs/participants` accepts either readable `scope_ref` + `local_ref` or advanced exact `work_ref`, never both. It performs one service-global exact match and returns `contract: relay-session-work-associations/v1`, readable fields, canonical endpoint selector, alias/runtime/container, origins/freshness, and existing raw `state`, `lifecycle`, `destination_health`, `last_seen_at`. Dormant active sessions remain visible by default; only closed sessions require `include_closed=true`. No inferred availability field.
+- Pagination defaults to 50 and caps at 200. Older route-not-found means unsupported; consumers distinguish it from unreachable, timeout, malformed, over-limit, successful empty, and success.
+- Dashboard trusted-local correction posts `{action, scope_ref, local_ref}` to one exact endpoint route and calls RelayService; API/dashboard never import storage.
+
+MCP current-session tools hide `request_ctx` and reuse receive's runtime-owned identity resolution; no model-supplied runtime/session. Optional `container_ref` is only injected scope and resolution fails closed:
 
 - `pallium_relay_work_refs(container_ref=None)`
 - `pallium_relay_attach_work_ref(scope_ref, local_ref, container_ref=None)`
 - `pallium_relay_detach_work_ref(scope_ref, local_ref, container_ref=None)`
 - `pallium_relay_participants(scope_ref, local_ref, include_closed=False, container_ref=None, offset=0)`
 
-A missing/ambiguous scope returns an actionable error and no mutation. Bounded participants return plural exact selectors and never choose, send, wake, claim, or broadcast. Normal Relay send/reply remains unchanged.
+Missing/conflicting scope or identity yields an actionable no-op. Participant reads are bounded, plural, and have no wake/claim/send/broadcast side effect. Normal exact send/reply is unchanged.
 
-### Failure-safe immutable snapshots
+### Capture owner, delay, and failure
 
-At user-prompt admission the hook discovers current bare structural refs first. Those refs are retained locally for scalar injection and SourceItem metadata regardless of Relay availability. It submits readable repository-scoped structural pairs in `/relay/turn`; on success, confirmed explicit exact keys from the returned snapshot are appended to the same user SourceItem. On refresh/read failure, the SourceItem still carries the unchanged bare structural refs plus `pallium_relay_work_refs_status: unavailable`; only unconfirmed explicit enrichment is omitted.
+Each hook callback invocation owns one snapshot and one constructed SourceItem payload. It discovers bare structural refs before any Relay request, merges caller refs, and keeps them even when Relay fails. Successful association lookup adds confirmed registry explicit keys. Once the payload and source ID are constructed, a delayed submission or resubmission of those same bytes keeps the same snapshot. No durable retry queue or callback-spanning snapshot is added.
 
-Immediately before constructing the assistant SourceItem, Stop repeats local structural discovery and performs the read-only current-association call. An attach/detach during the turn can therefore affect the assistant item but never the already captured user item. Delayed/retried ingestion resubmits captured metadata; ingestion never queries today's registry and never rewrites older turns. Failure tests assert ordinary Relay delivery and both user/assistant ingestion continue with their known structural context.
+A later callback is a new event with a new source ID and captures current associations; it is not called a retry. A lost response after successful persistence can be checked through the existing SourceItem read/status path; resubmitting the identical ID/body returns the existing duplicate/conflict contract and cannot mutate the stored metadata. Tests assert the first stored item retains its captured refs after detach. The guarantee does not claim that today's Python/OpenCode hooks automatically retry.
 
-### Lightweight local UX mock and walkthrough
+UserPrompt callbacks that take the existing Relay-delivery early-return path create no user SourceItem, so there is no user snapshot to preserve; this is documented and covered. Stop still captures the assistant item normally. On association refresh/read failure, ordinary delivery and ingestion continue with bare structural plus caller refs and `pallium_relay_work_refs_status: unavailable`; only unconfirmed registry enrichment is omitted.
 
-Agent input, Session A in the Pallium worktree:
+### Lightweight standalone UX mock
 
 ```text
 Developer: Associate this session with roadmap feature add-relay-session-work-associations.
@@ -121,49 +132,59 @@ Agent -> pallium_relay_attach_work_ref(
   scope_ref="roadmap:v1:git:github.com/rore/pallium#roadmap",
   local_ref="feature:add-relay-session-work-associations"
 )
-Result: Attached
+Attached
   Feature: add-relay-session-work-associations
   Scope: github.com/rore/pallium / roadmap
   Origin: explicit · confirmed just now
-  History: included · Explicit capacity 1/3
-  Exact key: work:v1:4e012e357683c4d5202c658947097e4a1effcf0c4f0e075d450874f89f40b652
+  Registry capacity: 1/3 explicit
+  History: evaluated per turn; latest capture complete
+  Advanced exact key: work:v1:4e012e357683c4d5202c658947097e4a1effcf0c4f0e075d450874f89f40b652
 ```
 
-For the ticket, the agent calls with tracker scope `tracker:v1:jira.example.test#pallium` and local `ticket:PAL-412`; the exact key is `work:v1:bd4582cb3df958d50ca2d1db77e327976d4f3d562b2d03fed339a6598b328dd4`. If only `PAL-412` is supplied, the tool responds `Missing scope_ref; provide the tracker authority/project shown with the ticket. Nothing was attached.`
-
-Session B in another worktree/container attaches the same readable roadmap scope/local pair. Its automatic branch and Work Record pairs differ. The dashboard Relay view contains:
+A ticket uses tracker scope `tracker:v1:jira.example.test#pallium` plus local `ticket:PAL-412`. A missing scope returns “Provide the tracker/repository scope; nothing was attached.” Session B in another worktree/container supplies the same readable feature pair while retaining its own structural branch/Work Record pairs.
 
 ```text
-Work reference filter
+Relay > Work reference
 Scope      [ github.com/rore/pallium / roadmap ]
 Reference  [ feature:add-relay-session-work-associations ] [Apply] [Clear]
 Advanced exact key ▸
 
 2 associated sessions
-Codex · RelayDev       Pallium container   recent   destination health unknown
-  explicit · confirmed 2m ago             relay-session-...
-Codex · reviewer       Minimap container   dormant  last seen 43m ago
-  explicit · confirmed 39m ago            relay-session-...
+Codex · RelayDev    Pallium container   recent   destination health unknown
+  explicit · confirmed 2m ago          relay-session-...
+Codex · reviewer    Minimap container   dormant  last seen 43m ago
+  explicit · confirmed 39m ago         relay-session-...
 [ ] Include closed sessions
 ```
 
-Selecting a session shows readable structural and explicit chips. Explicit rows have Remove; structural rows say “Updated automatically from branch/Work Record” and cannot be removed optimistically. Removing an explicit origin that overlaps structural returns “Still associated: structural origin remains.” A failed request leaves the chip unchanged and shows a retryable error. A fourth explicit attach shows “3 of 3 explicit references used; remove one before adding another.” A failed refresh banner says “Relay association refresh unavailable; branch and Work Record were still recorded in Session History.”
+Session detail shows readable chips. Explicit rows have Remove; structural rows say “Updated automatically from branch/Work Record.” Origin overlap removal says structural remains. Failed correction leaves the chip unchanged. A fourth explicit attach says “3 of 3 explicit references used; detach one first.” Mixed-input overflow says “This turn recorded 5 refs; associated ticket:PAL-412 was omitted and is not searchable from this turn.” Association-service failure says “Branch, Work Record, and supplied refs were still recorded; Relay association enrichment was unavailable.”
 
-An agent finds participants with the same scope/local pair, receives both exact endpoint selectors including the dormant reviewer, chooses one, and uses normal `pallium_relay_send`; the reviewer uses normal reply. No broadcast occurs. On work switch the next prompt replaces only Session A's structural rows. On leaving, explicit feature/ticket detach removes them from new snapshots while prior History stays unchanged. Closed participants appear only after Include closed.
+The agent queries participants with the same readable scope/local pair, sees both exact endpoint selectors including dormant B, chooses one, and uses normal send; B replies normally. Work switch replaces A's structural rows only. Detach changes new captures; older History is immutable. Closed participants appear only when requested.
 
-### Shared files and review surface
+### Explicit public verification map
 
-Persistence/API: `storage/sqlite_schema.py`, `storage/sqlite_relay.py`, `core/relay.py`, `api/schemas.py`, `api/routes.py`.
+- HTTP E2E: register; valid/empty/malformed structural refresh while delivery still claims; attach/read/detach; origin overlap; two-container plural lookup; dormant/default and closed/opt-in; missing/closed agent mutation versus dashboard correction; pagination/filter intersections; concurrent third/fourth attach at capacity; alias transfer; restart; upgraded and separate Relay DB.
+- MCP E2E: hidden current identity for Codex metadata and Claude/OpenCode environment; missing/conflicting identity fail closed; readable attach/list/find; plural exact selector; normal send/reply; no read side effects.
+- Hook/History E2E: structural + legacy caller + registry merge order, cross-source duplicate, every overflow source, user warning/status metadata, exact search only for included refs, Relay unavailable with unchanged structural/caller ingestion, delivery early return, attach/detach between user and assistant captures.
+- Snapshot E2E: build payload, detach, submit later; resubmit identical ID after simulated lost response and assert duplicate/conflict plus unchanged first item; later callback is a new snapshot.
+- Identity contract tests: shared Python/JavaScript vectors listed above; unrelated repo/roadmap/tracker separation; same worktree-independent repo/root/item key; Unicode and secret/local-remote rejection.
+- Dashboard browser E2E/screenshots: understandable fields, advanced key, filter/container intersection, long/escaped text, keyboard access, loading/empty/unsupported/error/overflow/dormant/closed states, correction failure/no optimistic mutation.
 
-Search/current-work coordination hotspots: `core/work_ref.py`, `core/service.py`, `app/mcp/client.py`, `app/mcp/server.py`, Codex and Claude `common.py`/`user_prompt_submit.py`/`stop.py`, `integrations/opencode/.opencode/plugins/pallium.mjs`, `tests/test_work_ref.py`, `tests/test_structural_work_refs_e2e.py`, `tests/test_exact_work_ref_search.py`, `tests/test_search_history_tool.py`, and hook parity tests. The correction deliberately leaves bare structural scalar/history semantics untouched; coordinate with `@pall-arc` only if implementation discovery finds an unavoidable core/history overlap.
+### Files and coordination hotspots
 
-Dashboard: `app/dashboard.py`, `app/dashboard.html`, `tests/test_dashboard.py`, `tests/dashboard_plain_language_renderer.mjs`. No new dependency or Minimap code.
+Persistence/API: `storage/sqlite_schema.py`, `storage/sqlite_relay.py`, `core/relay.py`, `api/schemas.py`, `api/routes.py`. `storage/sqlite.py` is read/test context only because foreign-key enablement and cascade are deliberately not added.
+
+Identity/search/history: additive helpers in `core/work_ref.py`; metadata merge/status in `core/service.py` only if the ingestion boundary requires it; `app/mcp/client.py`, `app/mcp/server.py`; Codex and Claude `common.py`/`user_prompt_submit.py`/`stop.py`; `integrations/opencode/.opencode/plugins/pallium.mjs`; and exact-search/structural/hook parity tests. Existing `_normalize_work_ref`, search visibility, scalar selection, and caller-ref precedence do not change. Coordinate this additive shared-file work with `@pall-arc`; stop on a conflicting implementation.
+
+Dashboard: `app/dashboard.py`, `app/dashboard.html`, `tests/test_dashboard.py`, `tests/dashboard_plain_language_renderer.mjs`. No new dependency or Minimap implementation.
 ## Implementation
 
 2026-09-09 — Created isolated worktree `C:\Dev\rore\Pallium\.worktrees\relay-session-work-associations` on branch `feat/relay-session-work-associations` from `origin/main` `0dbb0691`; design discovery is in progress and no production file has been edited.
 
 2026-09-09 — Architect rejected the first packet before production approval. Revised to readable scope/local inputs, fixed-length exact keys, unchanged bare structural current-work/history, five total refs (two structural plus three explicit), structural-history fallback on Relay failure, dormant-by-default discovery, and raw lifecycle/health facts. No production file has been edited.
 
+2026-09-09 — Fresh smart review of 42c5fc8 returned REVISE. Revision 2 now preserves legacy caller-ref precedence with visible per-turn overflow, publishes exact cross-runtime identity bytes/vectors, bounds retry guarantees to an already-built payload, removes unenforced cascade claims, and maps the missing E2E cases. No production file has been edited.
+
 ## Plan review
 
-Corrected architect design review and subsequent fresh clean-context smart plan review pending. The rejected first packet is not review evidence.
+Architect re-review and a new clean-context smart review of revision 2 are pending. Both earlier rejected designs remain findings, not approval evidence.
