@@ -1,7 +1,7 @@
 ---
 id: add-relay-retention-and-lifecycle-hardening
 title: Harden Relay session and message lifecycle
-status: active
+status: paused
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -40,11 +40,17 @@ delivery from reply. The first observed usability gap is smaller: a known,
 explicitly closed recipient looks like a typo because send and reply return a
 generic 404.
 
-The first slice changes only that terminal result to stable
-`409 recipient session is closed`, still before persistence. Retention cleanup
-and concrete windows remain deferred until database growth or dashboard diagnosis
-creates measurable operational pain; age alone still cannot invalidate a
-resumable session or durable pending delivery.
+The first slice shipped in PR #148 (`48f568a4`): send/reply to a known closed
+recipient return stable `409 recipient session is closed` before persistence,
+with caller-surface regression coverage. Do not implement that slice again.
+
+Status reconciled 2026-09-09: this umbrella is paused, not complete. Retention
+cleanup and concrete windows remain deferred until measured database growth or a
+specific dashboard diagnosis need justifies them. Record that evidence and choose
+a bounded cleanup slice before resuming. Age alone still cannot invalidate a
+resumable session or durable pending delivery. This deferred work does not block
+activation capabilities, delivery traces, work associations, or workflow validation;
+trace retention remains part of the trace feature.
 
 ## In Scope
 
@@ -109,9 +115,9 @@ attempt evidence and its cleanup through the existing cleaner. Do not expand thi
 active correctness slice into a second activation engine or event archive, and do
 not delay the closed-recipient fix for either follow-on.
 
-This is R1 operational hardening immediately after wake-first delivery, not
-evidence for moving to R2. Implementation starts with the closed-recipient error
-because it removes a concrete sender ambiguity without adding lifecycle machinery.
+This is R1 operational hardening, not evidence for moving to R2. The immediate
+closed-recipient error correction is shipped; only the deferred remainder stays
+open.
 Choose inactivity and retention windows only after observed storage growth or
 dashboard diagnostic needs justify them. A future explicit response-deadline
 contract can be considered separately if real usage needs it; ordinary Relay must

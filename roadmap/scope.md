@@ -168,13 +168,20 @@ Relay has two design invariants:
 
 R1 explicit runtime/session Relay is shipped. Wake-first delivery with deterministic
 next-turn fallback is qualified for Claude Code and Codex on Windows/Linux.
-The active wake-first item owns the remaining Codex lifecycle and
-first-run setup gates, macOS Claude/Codex qualification, and
-OpenCode activation. Keep immediate correctness work first. Next,
+As reconciled on 2026-09-09, first-run setup, MCP recovery, and the no-ping
+reply/remediation journey are shipped. Wake-first is a queued qualification
+follow-up for still-unproven interruption/restart combinations, demand-driven
+macOS qualification, and OpenCode activation. The closed-recipient correction
+shipped in PR #148; remaining retention cleanup is paused pending operational
+need. Neither umbrella blocks the next product slices. Any newly confirmed
+correctness incident still takes priority. Next,
 `add-relay-activation-capability-contract` makes each session's qualified activation
 behavior and attempt outcomes explicit; `add-relay-delivery-trace` then exposes
-bounded diagnostic evidence through message detail, HTTP, and MCP. Both precede
-Copilot adapter expansion. Existing lifecycle hardening retains ownership of
+bounded diagnostic evidence through message detail, HTTP, and MCP. Then
+`add-relay-session-work-associations` joins existing sessions to multiple explicit
+work references for agents, the Relay dashboard, and optional Minimap integration.
+All three precede Copilot adapter expansion, which also requires OpenCode wake
+qualification. Existing lifecycle hardening retains ownership of
 delivery/session state and retention; trace recording never becomes delivery
 authority. Dependency-workflow validation remains parallel and drives public
 positioning and usage guidance. Add only further extensions repeatedly

@@ -1,6 +1,4 @@
 # Next · Agent Relay
-- add-wake-first-relay-delivery
-- add-relay-retention-and-lifecycle-hardening
 - add-relay-activation-capability-contract
 - add-relay-delivery-trace
 - add-relay-session-work-associations
@@ -12,6 +10,9 @@
 
 # Parallel · Agent Relay
 - validate-relay-dependency-workflows
+
+# Follow-up · Relay Qualification
+- add-wake-first-relay-delivery
 
 # P1 · Reuse Measurement
 - idea-pull-real-corpus-validation
@@ -29,6 +30,7 @@
 - add-cross-container-bounded-memory
 
 # Paused
+- add-relay-retention-and-lifecycle-hardening
 - idea-authenticated-principal-for-mutation-authz
 - investigate-thread-level-interest-and-threadless-aggregation
 - milestone-shaped-memory-contract
@@ -47,6 +49,8 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-dashboard-operations-and-relay-workspace
+- investigate-cross-repository-relay-coordination
 - add-context-conscious-upstream-field-feedback
 - optimize-developer-test-loop
 - stabilize-test-health-and-ci-cost

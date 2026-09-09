@@ -28,6 +28,12 @@ next-turn fallback, and replies across those two runtimes. Add OpenCode coverage
 after its wake adapter is qualified. Findings may produce focused bugs, but must
 not silently expand Relay into orchestration.
 
+The Windows/Linux Claude/Codex wake foundation now permits this work to start.
+Reuse the completed 2026-09-08 Codex no-ping reply/remediation witness; the remaining
+work is the three reusable scenarios and cross-runtime value evidence below, not
+re-proving all wake plumbing. MacOS, OpenCode, traces, and work associations do not
+block the initial qualified-runtime scenarios.
+
 ## Research Result Preserved
 
 Observed practice is narrower than “agents chat”:
@@ -48,10 +54,10 @@ documented workflows, official runtime guidance, and individual community report
 It establishes credible use cases, not market size or product-market fit.
 
 Wake-first delivery raises the cost of poor message selection: an irrelevant
-message can start a paid model turn. Runtime-wide fan-out is a shipped R1 behavior,
-not the target product surface. Do not add new broadcast scenarios or promote it
-in public guidance: `investigate-cross-repository-relay-coordination` owns
-removing bare-runtime sends, and any future broadcast requires the separate
+message can start a paid model turn. Cross-container exact-endpoint and global
+alias routing have shipped; regular sends already reject bare-runtime selectors
+and broadcast. Do not add broadcast scenarios or promote fan-out in public
+guidance. Any future broadcast requires the separate
 `idea-explicit-relay-broadcast` contract.
 
 ## Why These Three Scenarios

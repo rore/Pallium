@@ -1,12 +1,34 @@
 ---
 id: add-wake-first-relay-delivery
 title: Add wake-first Relay delivery
-status: active
+status: queued
 priority: high
 commitment: committed
 milestone: pallium-relay
 lane: capability
 ---
+
+## Current execution status (reconciled 2026-09-09)
+
+The Windows/Linux Claude and Codex wake foundation, Codex first-run setup,
+MCP recovery integration, and live no-manual-turn reply/remediation journey are
+shipped. This umbrella remains queued for residual qualification, not active
+reimplementation of those milestones. The board's next feature is activation
+capabilities; no confirmed wake incident currently blocks it.
+
+Remaining work:
+- Qualify still-unproven interrupted/restart combinations with a bounded matrix
+  of runtime, platform, interruption, existing evidence, and missing witness.
+  Reuse passed recovery tests and live witnesses; do not repeat them without cause.
+- Qualify Claude/Codex on macOS when that platform is needed.
+- Implement and qualify OpenCode automatic activation. Its existing Relay
+  integration and claim-timeout fix do not establish automatic wake support.
+
+OpenCode wake remains a dependency of Copilot expansion. These residual gates do
+not block activation capabilities, traces, work associations, or Claude/Codex
+workflow validation. A new correctness incident takes priority if one is found.
+The milestone and incident history below preserves evidence; it is not a list of
+new implementation tasks.
 
 ## Summary
 
@@ -139,10 +161,11 @@ complete; only installed UDS qualification on macOS remains for that adapter.
 
 2. **Claude Code production gates:** Windows S1A+S1B and installed Linux UDS
    live journeys are proven. Installed UDS qualification on macOS remains S4.
-3. **MCP receive lifecycle foundation — code complete, runtime qualification pending:**
-   `fix-relay-receive-mcp-lifecycle` is merged. The MCP path remains fail-closed
-   and unqualified on Codex Desktop until a runtime-owned session handoff reaches
-   the MCP child; hook-delivery wake does not depend on this recovery path.
+3. **MCP receive lifecycle foundation — shipped and Windows-qualified:**
+   PR #99 provides runtime-owned per-call task identity and integration reload;
+   the S2 evidence below records the completed recovery gate. It remains a
+   separate fail-closed recovery path and must not be mixed with hook delivery.
+   Qualification on another runtime/platform requires its own evidence.
 
 ### Next execution order (updated 2026-09-08)
 
@@ -152,11 +175,12 @@ diagnostic/restart readiness are merged and Windows-qualified. No confirmed
 dogfood defect remains open. The 2026-09-08 live gate completed sender-side
 reply admission and the no-ping remediation journey. Correlation telemetry is
 deferred until a concrete failure cannot be diagnosed with existing evidence.
-The next value item is `add-relay-retention-and-lifecycle-hardening`: preserve
-idle-session routing while making terminal, expired, and provably unreachable
-recipient outcomes deterministic. Within wake-first, only first-run setup and
-interrupted/restart reliability remain immediate usability gates; macOS is
-demand-driven and OpenCode stays later.
+The closed-recipient lifecycle slice subsequently shipped in PR #148 and
+first-run setup qualification completed on 2026-09-08. Retention cleanup is paused
+pending operational evidence. The next value item is now
+`add-relay-activation-capability-contract`, followed by delivery traces and work
+associations. Wake-first retains the residual qualification listed at the top of
+this file; macOS is demand-driven and OpenCode activation precedes Copilot.
 
 1. **S2 contract gate — complete in PR #98.** Delivery lifecycle
    (`pending`, `claimed`, `delivered`, `expired`; `failed` only on separate
