@@ -59,6 +59,34 @@ target-assisted query, current moving corpus rather than historical replay, and
 checkout MCP formatting rather than a complete installed-agent journey. No overall
 accuracy or downstream benefit claim follows from it.
 
+## Completed investigation: fixed-candidate density window
+
+The 2026-09-09 [Session History search-quality study](../../docs/reports/session-history-search-quality-study.md)
+completed one bounded hypothesis test without changing production behavior. It held candidate
+membership and order fixed, compared the existing excerpt with one deterministic query-density
+window, and stopped before opening the reserved holdout.
+
+The density window is rejected. Across 23 judgeable development lookups it produced 11 wins,
+9 ties, and 3 losses, but the wins remained partial and it lost required facts in 16 results
+and qualifiers in 3. Its adversarial 50,021-character candidate case also missed the frozen
+5 ms p95 latency gate. The strict rubric measured whether one excerpt contained every fact and
+qualifier needed to answer the request; zero fully sufficient excerpts is not a relevance or
+expandability score. Baseline-helper latency was not measured, so no incremental-overhead claim
+is available.
+
+A follow-through traced the 20 empty replay excerpts to the existing 2,000-character MCP
+compactor: four 10-result responses kept every source ID but emptied five excerpts each after
+optional work references and session cues were removed. Inputs and responses with six or fewer
+results had no empty excerpt. The broader feature remains queued because ranking, query repair,
+expansion/navigation, telemetry coverage, multilingual prevalence, and independent-task evidence
+remain unresolved.
+
+The next evidence-backed question is narrow: for high-count responses under the fixed MCP budget,
+can per-stage instrumentation identify a bounded allocation or explicit expansion/navigation flow
+that keeps every retained hit recognizable while preserving source/lookup IDs, essential
+provenance, exact-work scope, result count, and the historical-state warning? Start with the generic
+10-results-by-160-characters reproduction; do not repeat or tune the rejected density window.
+
 ## Exact-work scope contract
 
 Exact-work search must remain exact. Never silently broaden, mix outside-work hits,
@@ -83,12 +111,11 @@ Cross-container Relay does not widen Session History visibility.
    configuration actually serve requests. Call out code/docs/skill/roadmap drift.
    Reuse public search/debug/expansion surfaces and existing eval seams rather than
    creating a parallel retrieval stack.
-2. Freeze a modest research budget, sampling method, and stopping conditions before
-   replay. Default to zero paid model calls. Suggested first pass: a bounded recent
-   metadata inventory, 30–50 diverse usable lookups if available, and deeper manual
-   inspection of 10–15 ambiguous cases. Adjust down when independent tasks are
-   scarce; report exclusions. Any paid step needs an explicit call/token ceiling
-   and a reason local checks cannot resolve it. Reuse reliable prior evidence.
+2. Reuse the completed bounded inventory and density-window study rather than repeating
+   it. Freeze a modest budget, sampling method, and stopping conditions for each remaining
+   question. Default to zero paid model calls and reduce samples when independent tasks are
+   scarce; report exclusions. Any paid step needs an explicit call/token ceiling and a reason
+   local checks cannot resolve it. Reuse reliable prior evidence.
 3. Include successes, failures, no-answer cases, misleading near-matches, and several
    tasks/sessions/projects/runtimes and languages where available. Separate actual
    agent queries from user prompts used as queries; exact from broad; same-session

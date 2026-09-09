@@ -4,13 +4,13 @@
 
 ## Outcome
 
-Do not ship the tested query-density excerpt window. It found more partial evidence in some results, but it produced no fully sufficient excerpts, lost required facts or qualifiers in other results, and missed the frozen worst-case latency gate. The holdout stayed unopened because the candidate had already failed the development gates.
+Do not ship the tested query-density excerpt window. It found more partial evidence in some results, but under the frozen answer-completeness rubric neither variant produced a single excerpt containing every fact and qualifier needed to answer its request. The candidate also lost required facts or qualifiers in other results and missed the frozen worst-case latency gate. The holdout stayed unopened because the candidate had already failed the development gates. This does not imply that search is useless: a short excerpt can still identify a relevant source worth expanding.
 
 This is a report-only result. No retrieval, ranking, API, MCP, skill, integration, storage, or injection behavior changed.
 
 ## Serving baseline and cost
 
-The study used a validated SQLite-backup snapshot of the healthy installed service. The service ran from clean `C:\Dev\rore\Pallium-installed` at `94934667`; the study branch started at `0dbb0691`, and the relevant history-search files were identical. Vector search was ready, the embedding provider and queue were healthy, and derived-memory packages were disabled.
+The study used a validated SQLite-backup snapshot of the healthy installed service. The service ran from the clean dedicated installed checkout at `94934667`; the study branch started at `0dbb0691`, and the relevant history-search files were identical. Vector search was ready, the embedding provider and queue were healthy, and derived-memory packages were disabled.
 
 The snapshot contained 336 delivered history lookups from 94 requesting sessions, 13 containers, and 296 distinct recorded query texts, plus 230 linked or unlinked expansions. Fourteen lookups were exact-work searches and 61 returned no answer. There were 749 distinct exposed sources; 707 exceeded 240 characters. That last number is truncation exposure, not an excerpt-failure rate.
 
@@ -30,6 +30,8 @@ For each judgeable development lookup, a clean-context reviewer recorded require
 - `partial`: some required evidence, but a necessary fact or qualifier is missing;
 - `insufficient`: none of the required evidence is present;
 - `misleading`: omission or framing supports a wrong or falsely current inference.
+
+The frozen rubric measured answer completeness within one excerpt. It did not grade source relevance, recognizability, or whether the excerpt provided a useful lead for expansion. The original grades remain unchanged; zero fully sufficient excerpts means only that neither 160-character variant could complete the frozen requests by itself.
 
 Only after blind grades were sealed was the candidate key opened. An initial grading pass was discarded when review found that anonymized 64-character identifiers had been compacted in place of real identifiers. The corrected replay compacted with real private identifiers first, checked the actual response budget, then anonymized the already-compacted payload.
 
@@ -54,7 +56,7 @@ The predeclared promotion gates required at least 10 judgeable holdout lookups, 
 
 The result wins/ties/losses cover 110 graded pairs; five of the 115 emitted rows belonged to excluded lookups. A lookup is a loss when its worst changed result loses an ordinal rubric level, even if another result improves.
 
-The candidate met the net-win threshold but failed the sufficient-rate and zero-regression gates. Its wins were partial: clustered query terms sometimes moved a useful fragment into view, but no tested 160-character excerpt contained all frozen evidence requirements. Distributed facts and qualifiers were the counterexample: concentrating terms in one window removed other necessary evidence.
+The candidate met the net-win threshold but failed the sufficient-rate and zero-regression gates. Its wins were partial under the answer-completeness rubric: clustered query terms sometimes moved a useful fragment into view, but no tested 160-character excerpt contained all frozen evidence requirements. Distributed facts and qualifiers were the counterexample: concentrating terms in one window removed other necessary evidence. These grades do not measure whether an excerpt was relevant or sufficient to choose a source for expansion.
 
 Ten no-answer development lookups remained descriptive preservation cases. Result IDs, order, and count were identical in every baseline/candidate pair.
 
@@ -72,9 +74,22 @@ Ten no-answer development lookups remained descriptive preservation cases. Resul
 | Compact MCP JSON whitespace-token proxy | 2,975 | 2,858 |
 | Maximum compact MCP JSON characters | 3,158 | 3,158 |
 
+The MCP JSON size rows measure the anonymized research packets after real compaction; replacing private UUIDs with longer hashes inflated those stored packets beyond the live 2,000-character limit. The corrected replay separately asserted the pre-anonymization live budget.
+
+The bounded follow-through measured those pre-anonymization compactor outputs by input result count:
+
+| Input results | Responses | Baseline output characters | Candidate output characters | Empty excerpts per response |
+|---:|---:|---:|---:|---:|
+| 0 | 12 | 110–255 | 110–255 | 0 |
+| 2 | 2 | 916–970 | 915–970 | 0 |
+| 3 | 10 | 1,116–1,505 | 1,118–1,504 | 0 |
+| 5 | 7 | 1,766–2,000 | 1,767–1,995 | 0 |
+| 6 | 1 | 1,814 | 1,811 | 0 |
+| 10 | 4 | 1,998–1,999 | 1,999 | 5 |
+
 Whitespace splitting is only a token proxy; no tokenizer-specific token count was claimed. Expansion content was not replayed because the candidate did not alter expansion. The existing expansion contract remained capped at 4,000 characters.
 
-Observed source/query p50, p90, and max cases stayed under the 5 ms p95 limit. The 50,021-character adversarial case reached 6.244 ms p95 and 9.568 ms maximum over 2,000 calls, failing the p95 gate despite passing the 20 ms maximum. The aggregate p95 was 4.155 ms.
+Latency timing covered only the candidate density helper; the baseline helper was not timed, so incremental overhead was not measured. No new benchmark run was made for this correction. Observed source/query p50, p90, and max candidate cases stayed under the 5 ms p95 limit. The 50,021-character adversarial candidate case reached 6.244 ms p95 and 9.568 ms maximum over 2,000 calls, failing the p95 gate despite passing the 20 ms maximum. The aggregate candidate p95 was 4.155 ms.
 
 ### Additional failure taxonomy
 
@@ -83,7 +98,7 @@ The wider inventory and earlier diagnostic support several distinct classes; the
 1. **Unjudgeable telemetry.** Fifteen recorded lookups lacked query text, and many lacked a directly linked request. Missing context cannot establish evidence sufficiency.
 2. **Valid no-answer and exact-scope boundaries.** Sixty-one lookups returned no answer. Older untagged sources can be broad-search candidates while correctly absent from exact-work results. Exact search must not silently broaden.
 3. **Truncation exposure.** Most exposed sources were longer than the excerpt budget, but length alone does not prove that answer evidence was hidden.
-4. **Response-budget starvation.** In this replay, 20 of 115 rows had empty excerpts after real MCP compaction in both variants. This is a presentation-limit issue separate from ranking and deserves a focused experiment before changing budgets or result count.
+4. **Response-budget compaction.** A bounded follow-up traced all 20 empty excerpts to the unchanged 2,000-character MCP response compactor, not either excerpt helper: pre-compaction empties were 0, while each of four 10-result responses retained all 10 hits but trimmed five excerpts to empty in both variants. The 20 responses with two to six results had no empty excerpt. On the empty rows, all 20 source IDs and roles survived, as did each parent lookup-event ID, so expansion handles remained usable; 15 rows that originally carried work references and all 20 original session cues lost those optional fields in earlier compaction passes. A generic 10-by-160-character synthetic response reproduced the same five empty excerpts at 1,999 serialized characters. This is separate from ranking and does not justify changing budgets or result count.
 5. **Selective query-repair effects.** Earlier cases showed that focused query repair or expansion can recover evidence, while other rewrites lose qualification anchors. There is no supported universal rewrite.
 6. **Candidate/ranking failures.** Earlier traces included an eligible lexical candidate outside the displayed top results. The fixed-candidate experiment did not test fusion, overfetch, or ranking changes.
 7. **Coverage gaps.** Current recorded queries contained no non-ASCII text; linked Claude evidence was sparse and OpenCode was absent. Unicode behavior remains covered by generic tests and adversarial checks, not real-query prevalence.
@@ -95,7 +110,7 @@ Keep the existing excerpt behavior. Do not change the shared `build_excerpt` hel
 
 The smallest worthwhile follow-ups are separate investigations, not bundled implementation:
 
-1. measure why real MCP compaction produced empty excerpts at high returned counts and compare bounded allocation strategies without increasing the response budget;
+1. instrument per-stage payload length and field retention for high-count responses, then compare whether bounded allocation or explicit expansion/navigation can keep every retained hit recognizable without increasing the response budget, changing result count, or dropping identity and essential provenance; use the generic 10-by-160-character case as the minimum reproduction;
 2. evaluate explicit source expansion or on-demand navigation when a short excerpt is incomplete, preserving the current scope and stale-history cautions;
 3. study candidate-pool, fusion, and query-repair failures on a genuinely task-independent set, reporting candidate recovery separately from excerpt sufficiency.
 
@@ -109,6 +124,7 @@ The ignored harness used only repository code and the Python standard library ar
 - corrected blind variants: `3C1659887D3908F6292952982F0524A033A11B6662A6191B96D17B981ACE67D2`;
 - pre-variant requirements: `D98C57B4126218C5444F6B5ECFFC109BCCE7DB2386935C84FB8DD899FD98DE41`;
 - final aggregate grade summary: 2D3B0EBA231E1481DD6D0276258C5F10B95089B4441627A3CC3874148B510815;
-- aggregate-only public-claim verification: 59008D205FAAF6CDC5DA9DD56A04EC02BE4356CB14DD5ED9B113019DFA390C76.
+- aggregate-only public-claim verification: 59008D205FAAF6CDC5DA9DD56A04EC02BE4356CB14DD5ED9B113019DFA390C76;
+- compaction follow-through aggregate: E7A95705E39311B516E336952E62C144BB58D72372FC67754D1782A2EA551590.
 
 The replay used current snapshotted source rows with historical exposed IDs, not an atomic historical vector-index snapshot. It cannot estimate ranking changes, past source contents, downstream task effect, or population-level accuracy. Development lookups are dependent within components, and the reserved holdout is one independent component rather than 12 independent tasks. These limits strengthen the no-change conclusion and prevent a broader product claim.
