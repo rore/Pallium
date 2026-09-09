@@ -147,7 +147,13 @@ def resolve_relay_context(
 
     if container_ref is None:
         if configured_container is None:
-            return None, "Error: Relay scope requires container_ref."
+            return None, (
+                "Error: Relay scope requires container_ref. Copy the injected "
+                "container_ref exactly. If none was injected, check that Pallium "
+                "hooks are enabled and trusted, or configure PALLIUM_CONTAINER_REF "
+                "for an intentional hookless MCP integration. Do not infer Relay "
+                "scope from the working directory or session IDs."
+            )
         return resolve_context(container_ref=configured_container), None
 
     requested_container = _canonicalize_container_ref(supplied_container)

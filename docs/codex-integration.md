@@ -58,8 +58,10 @@ deferred until existing evidence cannot diagnose a concrete failure.
 ```
 
 Pallium runs as an always-on local service independent of Codex's lifecycle.
-Multiple Codex sessions (same or different repos) share one Pallium instance,
-isolated by `container_ref` (derived from the git remote URL).
+Multiple Codex sessions (same or different repos) share one Pallium instance.
+Relay routes exact endpoint IDs and service-global `@name` addresses across
+containers on that service. Session History and configured derived memory stay
+scoped by `container_ref` (derived from the git remote URL).
 
 ## Prerequisites
 
@@ -116,6 +118,13 @@ wake is not ready because Codex will not run the hooks.
 Do not use `--dangerously-bypass-hook-trust` as an installation shortcut. Hook
 review and its persisted hashes are owned by Codex.
 
+Standard setup registers one user-level MCP server for tasks across projects, so
+it deliberately does not set a global `PALLIUM_CONTAINER_REF`. Hooks inject the
+current task's trusted `container_ref` into each turn for Relay callers to copy.
+An intentional hookless MCP integration may configure a trusted
+`PALLIUM_CONTAINER_REF`; never infer one from the working directory or session
+identifiers.
+
 To remove the integration:
 
 ```bash
@@ -161,7 +170,8 @@ through hooks.
 
 ### Scoping
 
-Each repo gets its own Pallium container, derived from the git remote URL:
+Each repo gets its own Pallium container for Session History and configured
+derived memory, derived from the git remote URL:
 
 | Scenario | Container |
 |----------|-----------|
@@ -169,8 +179,12 @@ Each repo gets its own Pallium container, derived from the git remote URL:
 | Git repo, no remote | `repo:<root-commit-hash>` |
 | Not a git repo | `path:<hash-of-cwd>` |
 
-Multiple Codex tasks in the same repo share the container but keep distinct
-threads.
+Relay also requires the sender's trusted container scope, but exact endpoint IDs
+and service-global `@name` addresses route across containers connected to the
+same local service. Ordinary recipient discovery remains container-local.
+
+Multiple Codex tasks in the same repo share the History and memory container but
+keep distinct threads.
 
 ### Shared Session History
 
@@ -198,13 +212,14 @@ duplicate prompts (within 5 minutes) are filtered. Assistant responses over
 
 ## Verify It's Working
 
-After setup, open two Codex tasks in the same Git repository.
+After setup, open two Codex tasks connected to the same local Pallium service.
+They may use different Git repositories.
 
 ### Verify Relay
 
 1. In the second task, ask: “Use Pallium Relay to name this session `review`.”
 2. In the first task, ask it to list Relay recipients and send a short message
-   to `codex:@review`.
+   to `@review`.
 3. Confirm that the second task receives the attributed message and can reply.
 
 Qualified Windows and Linux paths can start a new turn in the exact Codex task.
@@ -232,11 +247,12 @@ outcome when Pallium abstains; use `pallium_query_debug` to inspect why.
 | Symptom | Check |
 |---|---|
 | Pallium tools are unavailable | Run `pallium service status`, then re-run `pallium setup codex`. |
-| Relay recipient is missing | Make a normal turn in both tasks, confirm they use the same repository, then list recipients again. |
+| Relay recipient is missing | Make a normal turn in both tasks and confirm they use the same local Pallium service. Ordinary discovery is container-local; use a known exact endpoint ID or service-global `@name` for cross-container routing. |
 | Relay message remains pending | Make a normal recipient turn or inspect `pallium_relay_status`; active wake is not qualified on every path. |
 | Session History search is empty | Confirm hooks exist in `~/.codex/hooks.json` and search for a distinctive phrase from the earlier turn. |
 | MCP tools are missing | Check `[mcp_servers.pallium]` in `~/.codex/config.toml` and re-run setup. |
-| Hooks do not run | Ensure `hooks = true` under `[features]` in `~/.codex/config.toml`. |
+| Hooks do not run | Ensure `hooks = true` under `[features]` in `~/.codex/config.toml`, and approve the Pallium hooks if Codex asks you to review new or changed hook commands. |
+| MCP reports “Relay scope requires container_ref” | Copy the injected `container_ref` exactly. If none was injected, check that hooks are enabled and trusted; an intentional hookless MCP integration may configure a trusted `PALLIUM_CONTAINER_REF`. Never infer scope from the working directory or session IDs. |
 | Derived memory is absent or irrelevant | Derived memory is optional. Use `pallium_query_debug` before changing prompts or policy. |
 | MCP reports “Pallium not configured” | Re-run setup; it supplies `PALLIUM_BASE_URL` automatically. |
 
@@ -286,10 +302,12 @@ For testing the plugin path:
 
 ## Concurrent Sessions
 
-Multiple Codex sessions on the same repo work correctly:
+Multiple Codex sessions on the same local Pallium service work correctly:
 
 - Each task has its own thread (from `session_id`)
-- Tasks in the same repo share Relay addressing and Session History
+- Exact endpoint IDs and service-global `@name` addresses route Relay across
+  containers; ordinary recipient discovery remains container-local
+- Tasks in the same repo share Session History
 - Configured derived memory follows the same container scope
 - Thread-level state doesn't leak between tasks
 - SQLite WAL mode handles concurrent reads safely

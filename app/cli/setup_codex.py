@@ -169,6 +169,12 @@ def _toml_inline_string(value: str) -> str:
 
 
 def _mcp_env_toml(port: int) -> str:
+    """Render process-wide MCP settings without pinning one project scope.
+
+    Standard setup serves Codex tasks across projects. Hooks inject each task's
+    trusted container scope into its turn for Relay callers to copy; an
+    intentional hookless integration may configure PALLIUM_CONTAINER_REF.
+    """
     values = {
         "PALLIUM_MCP_TRANSPORT": "stdio",
         "PALLIUM_BASE_URL": f"http://localhost:{port}",

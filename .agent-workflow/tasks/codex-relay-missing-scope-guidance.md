@@ -29,5 +29,19 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
+
+## Implementation
+
+2026-09-09 — Replaced only the shared missing-container branch in `resolve_relay_context` with actionable, non-diagnostic guidance; all other validation branches and every Relay caller remain unchanged.
+
+2026-09-09 — Documented that standard Codex setup deliberately leaves project scope dynamic, corrected cross-container Relay versus History/memory scope guidance, and added all-seven-tool caller-surface coverage for missing, invalid-configured, explicit blank, and conflicting scope without HTTP.
+
+2026-09-09 — `apply_patch` failed with the documented Windows `CreateProcessWithLogonW failed: 1327`; the change used deterministic exact replacements limited to the five planned files.
+
+## Evidence
+
+2026-09-09 — Focused validation/setup nodes: 30 passed. Complete affected files: 90 passed. Last-failed check: no selected failures. The first full run exposed two unrelated tests inheriting live `PALLIUM_HOOK_ACTOR_REF=Rotem Hermon`; both passed when that override was removed, and the clean full suite then passed 4,687 tests with 32 skips and 2 expected failures.
+
+2026-09-09 — Import-boundary adapter passed with no violations; fresh redline verdict is GRAY/watch with no checkpoint or boundary violation; agent-workflow checker exits 0; `git diff --check` and Python compile checks pass. Ruff was unavailable in the existing repository environment.
