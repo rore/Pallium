@@ -3,6 +3,7 @@
 - add-relay-retention-and-lifecycle-hardening
 - add-relay-activation-capability-contract
 - add-relay-delivery-trace
+- add-relay-session-work-associations
 - add-copilot-relay-integration
 
 # Parallel · Session History
