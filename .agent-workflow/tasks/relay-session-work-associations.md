@@ -23,13 +23,13 @@
 
 **Verification plan:** Public contract → E2E maps separately to HTTP registry/lifecycle/concurrency, runtime-owned MCP attach/find/send/reply, hook capture/History exact search, and dashboard filtering/correction. It covers valid and malformed non-blocking structural refresh, two structural plus three registry explicit associations, fourth-attach conflict, mixed legacy caller refs/duplicates/visible overflow, concurrent attach at capacity, origin overlap, alias transfer, restart, dormant/default and closed/opt-in participants, pagination plus container-filter intersections, closed mutation, missing/conflicting MCP identity, Unicode and cross-language canonical vectors, credential/local-remote fallback, unavailable association service with unchanged structural ingestion/delivery, early-return user turns, delayed prebuilt payload after detach, same-payload duplicate after lost response, and exact non-transitive/no-permission-side-effect lookup. Existing and separate Relay databases get schema-init coverage. Browser tests/screenshots cover readable inputs, advanced key, loading/empty/error/overflow/closed states, failed correction, and keyboard access. Run focused nodes, affected files, `--lf`, full `tests/ -x -q`, import/workflow/redline checks, then independent smart result review.
 
-**Plan review:** Pre-edit classifier: MIXED -> API_CHANGE + SCHEMA_CHANGE, High/Large; API and persistence review required. Architect rejected the first design; smart reviews returned actionable findings on `f42c5fc8` and `0fdbf21e`. Fresh clean-context review of revision 3 found one authority-port wording issue; remediation commit `60b1aeae` was verified APPROVE by the same smart reviewer with no remaining design blockers. Architect re-review remains pending. Agent/manager review is not human approval.
+**Plan review:** Pre-edit classifier: MIXED -> API_CHANGE + SCHEMA_CHANGE, High/Large. Fresh smart review of revision 3 found one authority-port wording issue; remediation `60b1aeae` was verified APPROVE. Architect technical review approved implementation in Relay message `relay-reply-05b483e577024c416b6f42a4d71bdef950560a9a2bbdf99b8321da076843c066` with caller-selection, exact-key History guidance, existing repository-identity ownership, frozen-scope, and final-demo clarifications recorded below. Agent/manager approval is not human authorization; the user approval remains separately recorded. PR-time `api-reviewed` and `persistence-reviewed` labels or CODEOWNER approval remain required before merge.
 
 **Approvals:** Approved by user 2026-09-09: "you're about to get assigned work from the architect agent, i approve this work and doing PRs"
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Corrected design review packet (revision 3)
@@ -191,4 +191,22 @@ Dashboard: `app/dashboard.py`, `app/dashboard.html`, `tests/test_dashboard.py`, 
 
 ## Plan review
 
-Architect re-review is pending. Revision 3 plus `60b1aeae` has clean-context smart APPROVE; earlier rejected designs remain findings, not approval evidence.
+Architect technical review APPROVED revision 3 for implementation in Relay message `relay-reply-05b483e577024c416b6f42a4d71bdef950560a9a2bbdf99b8321da076843c066`. Acceptance clarifications: diagnostic inspection must not change legacy caller-ref selection; every read and successful attach returns the exact key plus readable fields and existing History-search guidance; repository identity additions stay at the existing owning boundary and do not change container identity; scope stays four tools, one table, simple UI; final evidence is a working isolated HTTP/MCP/send/reply/detach/History and browser journey, not the text mock. Stop before merge/live install.
+
+## Checkpoint: api-review
+What is changing: Add four Relay session-work HTTP operations, one optional ordered structural field and additive response projection on `/relay/turn`, plus four MCP wrappers. Existing request fields, scalar work refs, recipient/send/reply routes, and status codes remain unchanged.
+Why: Sessions need readable explicit association mutation and exact plural participant discovery through existing caller surfaces.
+Affected contract / model / boundary: `api/schemas.py`, `api/routes.py`, `app/mcp/client.py`, `app/mcp/server.py`; additive HTTP/MCP surface and validation only. Existing consumers are Codex/Claude/OpenCode hooks, MCP agents, dashboard, and future Minimap HTTP read-through. No committed OpenAPI artifact exists; generated schema diff will be inspected.
+Compatibility / migration risk: low — new endpoints and optional fields are additive; legacy caller-ref selection and scalar/history semantics are frozen. New malformed structural input degrades association refresh without blocking Relay admission.
+Verification plan: HTTP/MCP contract E2E, generated OpenAPI comparison, old-client `/relay/turn` tests, invalid/missing/conflicting identity tests, pagination/empty/unsupported behavior, and redline `api-review` satisfaction on the PR.
+
+## Checkpoint: persistence-review
+What is changing: Add one Relay association table and exact-key index to schema-as-code; no existing row changes.
+Why: Endpoint-owned explicit/structural origins need durable atomic membership and exact lookup across sessions.
+Affected contract / model / boundary: `storage/sqlite_schema.py` and `storage/sqlite_relay.py`; table initialization must be included in both primary and separate Relay database paths. No foreign-key/cascade or retention behavior is added.
+Compatibility / migration risk: low — schema-only forward addition on an initially empty table, no data rewrite or information loss. Rollback can drop the new table/index; existing Relay/history data is untouched. Index creation is on the new empty table, so no deployed-table lock scan. This installation is not multi-tenant.
+Verification plan: fresh database, existing upgraded database, separate Relay database, restart, atomic concurrent origin/capacity tests, import boundaries, and redline `persistence-review` satisfaction on the PR.
+
+## Approved implementation file list
+
+Primary agent owns the high-risk persistence/core/API contract: `core/relay.py`, `storage/sqlite_schema.py`, `storage/sqlite_relay.py`, `api/schemas.py`, `api/routes.py`, plus this Work Record and roadmap/docs. Bounded delegated changes may touch `core/work_ref.py` with new identity tests; supported integration hook files and parity tests; and `app/dashboard.py`/`app/dashboard.html` with dashboard tests. MCP changes are `app/mcp/client.py`, `app/mcp/server.py`, and Relay MCP tests. Synthetic demonstration may add one file under `examples/` or `tests/fixtures/`. Any production path outside this list or any change to existing container identity, `_normalize_work_ref`, visibility, retention, roles, or orchestration returns to review.
