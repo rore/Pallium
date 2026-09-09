@@ -153,9 +153,10 @@ recipient's next applicable natural turn. The committed wake-first extension now
 attempts immediate activation by default on qualified runtime/OS combinations and
 retains that R1 path when wake is unsupported, unsafe, or unavailable.
 
-Pallium currently integrates with **Claude Code, Codex, and OpenCode**. R1 supports
-runtime-wide fan-out plus exact-session and Relay-alias delivery within the same
-repository/container. Extracted `work_refs` are retrieval hints, not reliable
+Pallium currently integrates with **Claude Code, Codex, and OpenCode**. Relay supports
+service-global exact-endpoint and global-alias targeting across containers;
+regular sends reject bare runtimes and do not broadcast. History and memory scope
+remain separate. Extracted `work_refs` are retrieval hints, not reliable
 delivery addresses, and must not be used to route Relay messages. Future-recipient
 addressing remains an investigation until a reliable shared identity source exists.
 
@@ -169,8 +170,14 @@ R1 explicit runtime/session Relay is shipped. Wake-first delivery with determini
 next-turn fallback is qualified for Claude Code and Codex on Windows/Linux.
 The active wake-first item owns the remaining Codex lifecycle and
 first-run setup gates, macOS Claude/Codex qualification, and
-OpenCode activation. Three dependency-workflow E2E scenarios follow and drive
-public positioning and usage guidance. Add only further extensions repeatedly
+OpenCode activation. Keep immediate correctness work first. Next,
+`add-relay-activation-capability-contract` makes each session's qualified activation
+behavior and attempt outcomes explicit; `add-relay-delivery-trace` then exposes
+bounded diagnostic evidence through message detail, HTTP, and MCP. Both precede
+Copilot adapter expansion. Existing lifecycle hardening retains ownership of
+delivery/session state and retention; trace recording never becomes delivery
+authority. Dependency-workflow validation remains parallel and drives public
+positioning and usage guidance. Add only further extensions repeatedly
 demanded by real use. See `roadmap/ideas/idea-agent-relay.md`.
 
 Paused or parked work is listed explicitly in `roadmap/board.md`; completed

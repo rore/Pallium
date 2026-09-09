@@ -1,6 +1,9 @@
 # Next · Agent Relay
 - add-wake-first-relay-delivery
 - add-relay-retention-and-lifecycle-hardening
+- add-relay-activation-capability-contract
+- add-relay-delivery-trace
+- add-copilot-relay-integration
 
 # Parallel · Session History
 - improve-session-history-search-quality
@@ -8,7 +11,6 @@
 
 # Parallel · Agent Relay
 - validate-relay-dependency-workflows
-- add-copilot-relay-integration
 
 # P1 · Reuse Measurement
 - idea-pull-real-corpus-validation

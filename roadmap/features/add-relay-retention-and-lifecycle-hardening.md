@@ -101,6 +101,14 @@ resumable session or durable pending delivery.
 
 ## Notes
 
+Operational follow-ons are queued separately as
+`add-relay-activation-capability-contract` and `add-relay-delivery-trace`. This
+feature continues to own delivery/session lifecycle and retention. The activation
+feature normalizes existing S2 outcomes; the trace feature owns bounded diagnostic
+attempt evidence and its cleanup through the existing cleaner. Do not expand this
+active correctness slice into a second activation engine or event archive, and do
+not delay the closed-recipient fix for either follow-on.
+
 This is R1 operational hardening immediately after wake-first delivery, not
 evidence for moving to R2. Implementation starts with the closed-recipient error
 because it removes a concrete sender ambiguity without adding lifecycle machinery.

@@ -25,6 +25,15 @@ Do not start this item until the three primary runtime integrations satisfy
 than changing it. Reuse the dependency, decision-round-trip, and cross-model
 review journeys from `validate-relay-dependency-workflows` when judging value.
 
+Before implementing the Copilot adapter, consume
+`add-relay-activation-capability-contract` and `add-relay-delivery-trace`: register
+the exact session/integration's proven capabilities, map activation outcomes
+without upgrading transport acceptance to admission, and emit bounded diagnostic
+attempt evidence. Reuse their common projections instead of inventing Copilot-only
+capability flags or an independent attempt ledger. Protocol research may proceed
+in parallel; these dependencies do not require expanding qualification claims for
+other platforms or moving workflow-validation work behind this integration.
+
 ## Integration Strategy
 
 Try the supported VS Code Agent Host / Agent Host Protocol (AHP) first. It exposes
