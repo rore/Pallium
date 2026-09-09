@@ -23,7 +23,7 @@
 
 **Verification plan:** Public contract → E2E maps separately to HTTP registry/lifecycle/concurrency, runtime-owned MCP attach/find/send/reply, hook capture/History exact search, and dashboard filtering/correction. It covers valid and malformed non-blocking structural refresh, two structural plus three registry explicit associations, fourth-attach conflict, mixed legacy caller refs/duplicates/visible overflow, concurrent attach at capacity, origin overlap, alias transfer, restart, dormant/default and closed/opt-in participants, pagination plus container-filter intersections, closed mutation, missing/conflicting MCP identity, Unicode and cross-language canonical vectors, credential/local-remote fallback, unavailable association service with unchanged structural ingestion/delivery, early-return user turns, delayed prebuilt payload after detach, same-payload duplicate after lost response, and exact non-transitive/no-permission-side-effect lookup. Existing and separate Relay databases get schema-init coverage. Browser tests/screenshots cover readable inputs, advanced key, loading/empty/error/overflow/closed states, failed correction, and keyboard access. Run focused nodes, affected files, `--lf`, full `tests/ -x -q`, import/workflow/redline checks, then independent smart result review.
 
-**Plan review:** Pre-edit classifier: MIXED -> API_CHANGE + SCHEMA_CHANGE, High/Large; API and persistence review required. Architect rejected the first opaque-input/current-work-migration design in Relay message `relay-reply-b7c2c94869bde6853c9b1f7ed0537cd73fe580132f8575220cfaaab8ade151b5`. Fresh clean-context review of corrected commit `f42c5fc8` returned REVISE: legacy caller-ref overflow, cross-runtime canonical bytes, retry ownership, and unenforced cascade. This packet addresses those findings; architect re-review remains pending. Neither rejected review is human approval.
+**Plan review:** Pre-edit classifier: MIXED -> API_CHANGE + SCHEMA_CHANGE, High/Large; API and persistence review required. Architect rejected the first design; smart review rejected `f42c5fc8` for legacy overflow/canonical bytes/retry/cascade. Fresh smart review rejected `0fdbf21e` for authority ports, malformed Unicode, unowned latest-capture claims, bounded omission detail, and roadmap pruning drift. Revision 3 addresses all listed findings; architect and a new clean-context review remain pending. Rejected reviews are findings, never human approval.
 
 **Approvals:** Approved by user 2026-09-09: "you're about to get assigned work from the architect agent, i approve this work and doing PRs"
 
@@ -32,7 +32,7 @@
 **State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
-## Corrected design review packet (revision 2)
+## Corrected design review packet (revision 3)
 
 ### Exact workspace and required gates
 
@@ -62,12 +62,12 @@ The generic boundary validates these inputs and produces the advanced exact key:
 
 `work:v1:` + lowercase SHA-256 hex of `UTF8(NFC(scope_ref)) + 0x00 + UTF8(NFC(local_ref))`
 
-Inputs containing NUL, C0/C1 controls, U+2028/U+2029, redaction markers, detected secrets, or leading/trailing ASCII whitespace are rejected rather than repaired. `scope_ref` is 1..512 UTF-8 bytes after NFC. `local_ref` is 1..128 Unicode code points and at most 512 UTF-8 bytes after NFC. Case and non-ASCII characters are preserved exactly; producers own semantic casing. The final 72-character lowercase-hex key alone passes through existing `_normalize_work_ref`, so legacy casefold/separator behavior is unchanged and JavaScript does not need Python `casefold`.
+Before NFC, both runtimes reject any input containing an isolated UTF-16 surrogate; only well-formed Unicode scalar values proceed. Inputs containing NUL, C0/C1 controls, U+2028/U+2029, redaction markers, detected secrets, or leading/trailing ASCII whitespace are rejected rather than repaired. `scope_ref` is 1..512 UTF-8 bytes after NFC. `local_ref` is 1..128 Unicode scalar values and at most 512 UTF-8 bytes after NFC. Case and non-ASCII characters are preserved exactly; producers own semantic casing. The final 72-character lowercase-hex key alone passes through existing `_normalize_work_ref`, so legacy casefold/separator behavior is unchanged and JavaScript does not need Python `casefold`.
 
 Repository identity gets one published Python/JavaScript contract rather than reusing today's inconsistent helpers:
 
 1. Accept HTTPS/SSH URL and SCP-style Git remotes; reject local/file remotes and any password/token-bearing URL.
-2. Remove scheme, safe SSH username, query/fragment, trailing slash, and final `.git`; lowercase the ASCII DNS host.
+2. Remove scheme, safe SSH username, query/fragment, trailing slash, and final `.git`; lowercase the ASCII DNS host. Remove the default port (`443` for HTTPS, `22` for SSH/SCP) and preserve any explicit non-default port in the authority. Reject missing, malformed, out-of-range, or scheme-ambiguous ports.
 3. For `github.com` only, lowercase owner/repository path. For other hosts, preserve path case.
 4. Emit `git:<host>/<path>`. With no usable remote, emit `repo:<lowercase-root-commit-hex>`. With neither, repository-scoped automatic association is unavailable and explicit non-repository scope remains usable.
 5. Roadmap roots are repository-relative: convert `\` to `/`, reject absolute/empty/`.`/`..` traversal segments, NFC-normalize each segment, and percent-encode UTF-8 bytes outside RFC 3986 unreserved characters with uppercase hex. Repository root is represented by `.`. Emit `roadmap:v1:<repository-ref>#<encoded-root>`.
@@ -80,7 +80,7 @@ Normal examples:
 
 Pallium never parses feature/ticket/Jira/Minimap semantics. The Minimap contract is the roadmap scope rule above plus local `<kind>:<item-id>`. Same repo/root/item is stable across worktrees; another repo/root differs. A tracker producer supplies a credential-free canonical authority/project scope. If an agent supplies only `PAL-412`, attach/find asks for `scope_ref` and changes nothing; it never guesses current repository or tracker.
 
-Shared Python/JavaScript golden vectors are required before implementation proceeds: HTTPS/SSH/SCP GitHub remotes; non-GitHub path-case distinction; composed/decomposed Unicode equivalence; distinct non-ASCII case; `/` versus `\` roadmap roots; escaped Unicode/space; root-commit fallback; credential-bearing and local remotes; missing identity; 128/129 code-point local refs; and 512/513-byte scope/local boundaries.
+Shared Python/JavaScript golden vectors are required before implementation proceeds: HTTPS/SSH/SCP GitHub remotes; default-port equivalence and distinct non-default ports; malformed/out-of-range ports; non-GitHub path-case distinction; composed/decomposed Unicode equivalence; distinct non-ASCII case; lone high/low surrogate rejection, a supplementary scalar, and literal U+FFFD; `/` versus `\` roadmap roots; escaped Unicode/space; root-commit fallback; credential-bearing and local remotes; missing identity; 128/129-scalar local refs; and 512/513-byte scope/local boundaries.
 
 ### Compatibility, bounds, and visible overflow
 
@@ -92,7 +92,7 @@ Per-turn History has three input classes, with existing behavior first:
 2. existing caller/event `pallium_work_refs` in caller order;
 3. confirmed registry explicit exact keys in association confirmation order.
 
-The existing normalizer/deduplicator takes the first five. New merge code additionally returns every omitted ref and its source. SourceItem metadata records bounded `pallium_work_refs_omitted` and `pallium_relay_work_refs_status: complete|partial|unavailable`. UserPrompt injection tells the agent which associated refs were not searchable on that user turn; Stop emits the same bounded non-secret warning. Dashboard/current-session reads describe registry persistence separately from latest per-turn History coverage. Attach results say `association: persisted; history: evaluated per turn` and never claim guaranteed searchability.
+The existing normalizer/deduplicator still selects the first five. New merge reporting examines at most the first 20 caller entries and never echoes rejected/secret input. It records at most five safe normalized omitted refs with source, plus `omitted_valid_count`, `invalid_count`, `caller_input_count`, `caller_examined_count`, and `caller_input_truncated`; counts and flags remain available when the omitted list is truncated. Invalid values are distinct from valid capacity omissions. SourceItem metadata uses bounded `pallium_work_refs_omitted` and `pallium_relay_work_refs_status: complete|partial|unavailable`. UserPrompt injection tells the agent which listed associated refs were not searchable and the additional omitted/unexamined counts; Stop emits the same bounded non-secret warning. Relay dashboard/current-session reads report registry persistence only and do not claim a latest History capture. Attach results say `association: persisted; history: evaluated per turn` and never claim guaranteed searchability.
 
 Thus the normal four-ref journey (branch, Work Record, feature, ticket) is complete with one spare only when legacy caller refs do not consume it. Mixed legacy/registry overflow is truthful rather than silently evicting established inputs. Duplicates across classes consume one slot. A branch switch atomically replaces structural registry rows and local discovery immediately records the new bare branch; explicit associations survive. Full qualified-structural History migration is a separate decision.
 
@@ -120,7 +120,7 @@ Missing/conflicting scope or identity yields an actionable no-op. Participant re
 
 Each hook callback invocation owns one snapshot and one constructed SourceItem payload. It discovers bare structural refs before any Relay request, merges caller refs, and keeps them even when Relay fails. Successful association lookup adds confirmed registry explicit keys. Once the payload and source ID are constructed, a delayed submission or resubmission of those same bytes keeps the same snapshot. No durable retry queue or callback-spanning snapshot is added.
 
-A later callback is a new event with a new source ID and captures current associations; it is not called a retry. A lost response after successful persistence can be checked through the existing SourceItem read/status path; resubmitting the identical ID/body returns the existing duplicate/conflict contract and cannot mutate the stored metadata. Tests assert the first stored item retains its captured refs after detach. The guarantee does not claim that today's Python/OpenCode hooks automatically retry.
+A later callback is a new event with a new source ID and captures current associations; it is not called a retry. A lost response after successful persistence can be checked through the existing SourceItem read/status path; resubmitting the identical ID/body returns the existing duplicate/conflict contract and cannot mutate the stored metadata. No Relay association table stores or orders capture outcomes. Tests assert the first stored item retains its captured refs after detach. The guarantee does not claim that today's Python/OpenCode hooks automatically retry.
 
 UserPrompt callbacks that take the existing Relay-delivery early-return path create no user SourceItem, so there is no user snapshot to preserve; this is documented and covered. Stop still captures the assistant item normally. On association refresh/read failure, ordinary delivery and ingestion continue with bare structural plus caller refs and `pallium_relay_work_refs_status: unavailable`; only unconfirmed registry enrichment is omitted.
 
@@ -137,7 +137,7 @@ Attached
   Scope: github.com/rore/pallium / roadmap
   Origin: explicit · confirmed just now
   Registry capacity: 1/3 explicit
-  History: evaluated per turn; latest capture complete
+  History: evaluated separately on each captured turn
   Advanced exact key: work:v1:4e012e357683c4d5202c658947097e4a1effcf0c4f0e075d450874f89f40b652
 ```
 
@@ -165,9 +165,9 @@ The agent queries participants with the same readable scope/local pair, sees bot
 
 - HTTP E2E: register; valid/empty/malformed structural refresh while delivery still claims; attach/read/detach; origin overlap; two-container plural lookup; dormant/default and closed/opt-in; missing/closed agent mutation versus dashboard correction; pagination/filter intersections; concurrent third/fourth attach at capacity; alias transfer; restart; upgraded and separate Relay DB.
 - MCP E2E: hidden current identity for Codex metadata and Claude/OpenCode environment; missing/conflicting identity fail closed; readable attach/list/find; plural exact selector; normal send/reply; no read side effects.
-- Hook/History E2E: structural + legacy caller + registry merge order, cross-source duplicate, every overflow source, user warning/status metadata, exact search only for included refs, Relay unavailable with unchanged structural/caller ingestion, delivery early return, attach/detach between user and assistant captures.
+- Hook/History E2E: structural + legacy caller + registry merge order, cross-source duplicate, caller lists at 20/over-20, safe omitted-list cap/count/truncation, secret/invalid counts without echo, every capacity-overflow source, user warning/status metadata, exact search only for included refs, Relay unavailable with unchanged structural/caller ingestion, delivery early return, attach/detach between user and assistant captures.
 - Snapshot E2E: build payload, detach, submit later; resubmit identical ID after simulated lost response and assert duplicate/conflict plus unchanged first item; later callback is a new snapshot.
-- Identity contract tests: shared Python/JavaScript vectors listed above; unrelated repo/roadmap/tracker separation; same worktree-independent repo/root/item key; Unicode and secret/local-remote rejection.
+- Identity contract tests: shared Python/JavaScript vectors listed above, including authority ports and malformed Unicode; unrelated repo/roadmap/tracker separation; same worktree-independent repo/root/item key; secret/local-remote rejection.
 - Dashboard browser E2E/screenshots: understandable fields, advanced key, filter/container intersection, long/escaped text, keyboard access, loading/empty/unsupported/error/overflow/dormant/closed states, correction failure/no optimistic mutation.
 
 ### Files and coordination hotspots
@@ -183,8 +183,10 @@ Dashboard: `app/dashboard.py`, `app/dashboard.html`, `tests/test_dashboard.py`, 
 
 2026-09-09 — Architect rejected the first packet before production approval. Revised to readable scope/local inputs, fixed-length exact keys, unchanged bare structural current-work/history, five total refs (two structural plus three explicit), structural-history fallback on Relay failure, dormant-by-default discovery, and raw lifecycle/health facts. No production file has been edited.
 
-2026-09-09 — Fresh smart review of 42c5fc8 returned REVISE. Revision 2 now preserves legacy caller-ref precedence with visible per-turn overflow, publishes exact cross-runtime identity bytes/vectors, bounds retry guarantees to an already-built payload, removes unenforced cascade claims, and maps the missing E2E cases. No production file has been edited.
+2026-09-09 — Fresh smart review of `f42c5fc8` returned REVISE. Revision 2 now preserves legacy caller-ref precedence with visible per-turn overflow, publishes exact cross-runtime identity bytes/vectors, bounds retry guarantees to an already-built payload, removes unenforced cascade claims, and maps the missing E2E cases. No production file has been edited.
+
+2026-09-09 — Fresh smart review of `0fdbf21e` returned REVISE. Revision 3 now preserves non-default repository ports, rejects isolated surrogates, removes unowned latest-capture state, bounds omission lists/counts, and aligns the canonical roadmap with deferred product deletion/pruning. No production file has been edited.
 
 ## Plan review
 
-Architect re-review and a new clean-context smart review of revision 2 are pending. Both earlier rejected designs remain findings, not approval evidence.
+Architect re-review and a new clean-context smart review of revision 3 are pending. All rejected designs remain findings, not approval evidence.

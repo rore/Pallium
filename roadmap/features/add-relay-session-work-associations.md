@@ -180,7 +180,9 @@ and Minimap UI implementation (owned by the companion feature).
    same repo across worktrees, alias transfer, legacy refs, Unicode, malformed and
    secret-bearing refs, empty/max/over-max, duplicates, and missing endpoints.
 3. Lifecycle tests cover explicit/discovered overlap, branch/cwd change, concurrent
-   mutations, stale registrations, restart, delayed/retried ingestion, and pruning.
+   mutations, stale registrations, restart, delayed/retried ingestion, and isolated
+   test cleanup. Physical endpoint deletion/pruning is deferred because no such
+   product lifecycle exists; close/reopen retains associations.
    Old history stays unchanged; new refs retrieve new turns under existing scope.
 4. Boundary tests prove no unauthorized cross-session mutation, no history scope
    expansion, no message/wake side effects on reads, and graceful storage/integration
