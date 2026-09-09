@@ -23,7 +23,7 @@
 
 **Verification plan:** Public contract → E2E maps separately to HTTP registry/lifecycle/concurrency, runtime-owned MCP attach/find/send/reply, hook capture/History exact search, and dashboard filtering/correction. It covers valid and malformed non-blocking structural refresh, two structural plus three registry explicit associations, fourth-attach conflict, mixed legacy caller refs/duplicates/visible overflow, concurrent attach at capacity, origin overlap, alias transfer, restart, dormant/default and closed/opt-in participants, pagination plus container-filter intersections, closed mutation, missing/conflicting MCP identity, Unicode and cross-language canonical vectors, credential/local-remote fallback, unavailable association service with unchanged structural ingestion/delivery, early-return user turns, delayed prebuilt payload after detach, same-payload duplicate after lost response, and exact non-transitive/no-permission-side-effect lookup. Existing and separate Relay databases get schema-init coverage. Browser tests/screenshots cover readable inputs, advanced key, loading/empty/error/overflow/closed states, failed correction, and keyboard access. Run focused nodes, affected files, `--lf`, full `tests/ -x -q`, import/workflow/redline checks, then independent smart result review.
 
-**Plan review:** Pre-edit classifier: MIXED -> API_CHANGE + SCHEMA_CHANGE, High/Large; API and persistence review required. Architect rejected the first design; smart review rejected `f42c5fc8` for legacy overflow/canonical bytes/retry/cascade. Fresh smart review rejected `0fdbf21e` for authority ports, malformed Unicode, unowned latest-capture claims, bounded omission detail, and roadmap pruning drift. Revision 3 addresses all listed findings; architect and a new clean-context review remain pending. Rejected reviews are findings, never human approval.
+**Plan review:** Pre-edit classifier: MIXED -> API_CHANGE + SCHEMA_CHANGE, High/Large; API and persistence review required. Architect rejected the first design; smart reviews returned actionable findings on `f42c5fc8` and `0fdbf21e`. Fresh clean-context review of revision 3 found one authority-port wording issue; remediation commit `60b1aeae` was verified APPROVE by the same smart reviewer with no remaining design blockers. Architect re-review remains pending. Agent/manager review is not human approval.
 
 **Approvals:** Approved by user 2026-09-09: "you're about to get assigned work from the architect agent, i approve this work and doing PRs"
 
@@ -187,6 +187,8 @@ Dashboard: `app/dashboard.py`, `app/dashboard.html`, `tests/test_dashboard.py`, 
 
 2026-09-09 — Fresh smart review of `0fdbf21e` returned REVISE. Revision 3 now preserves non-default repository ports, rejects isolated surrogates, removes unowned latest-capture state, bounds omission lists/counts, and aligns the canonical roadmap with deferred product deletion/pruning. No production file has been edited.
 
+2026-09-09 — Remediation `60b1aeae` changed the repository output grammar to port-bearing authority and added default/non-default expected vectors. Smart remediation verification returned APPROVE with no remaining design blockers. No production file has been edited.
+
 ## Plan review
 
-Architect re-review and a new clean-context smart review of revision 3 are pending. All rejected designs remain findings, not approval evidence.
+Architect re-review is pending. Revision 3 plus `60b1aeae` has clean-context smart APPROVE; earlier rejected designs remain findings, not approval evidence.
