@@ -69,7 +69,7 @@ Repository identity gets one published Python/JavaScript contract rather than re
 1. Accept HTTPS/SSH URL and SCP-style Git remotes; reject local/file remotes and any password/token-bearing URL.
 2. Remove scheme, safe SSH username, query/fragment, trailing slash, and final `.git`; lowercase the ASCII DNS host. Remove the default port (`443` for HTTPS, `22` for SSH/SCP) and preserve any explicit non-default port in the authority. Reject missing, malformed, out-of-range, or scheme-ambiguous ports.
 3. For `github.com` only, lowercase owner/repository path. For other hosts, preserve path case.
-4. Emit `git:<host>/<path>`. With no usable remote, emit `repo:<lowercase-root-commit-hex>`. With neither, repository-scoped automatic association is unavailable and explicit non-repository scope remains usable.
+4. Emit `git:<authority>/<path>`, where authority is the lowercase host plus any preserved non-default port. For example, `ssh://git@git.example.test:2222/team/repo.git` emits `git:git.example.test:2222/team/repo`, while port 22 emits `git:git.example.test/team/repo`. With no usable remote, emit `repo:<lowercase-root-commit-hex>`. With neither, repository-scoped automatic association is unavailable and explicit non-repository scope remains usable.
 5. Roadmap roots are repository-relative: convert `\` to `/`, reject absolute/empty/`.`/`..` traversal segments, NFC-normalize each segment, and percent-encode UTF-8 bytes outside RFC 3986 unreserved characters with uppercase hex. Repository root is represented by `.`. Emit `roadmap:v1:<repository-ref>#<encoded-root>`.
 
 Normal examples:
