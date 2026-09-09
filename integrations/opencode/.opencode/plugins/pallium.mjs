@@ -383,7 +383,7 @@ export default async ({ client, directory, worktree } = {}) => {
             session_ref: sessionId,
             container_ref: containerRef,
             max_chars: RELAY_TURN_BUDGET,
-          }, 750);
+          }, pallium.HTTP_TIMEOUT_MS);
           const deliveries = (relayResponse && relayResponse.deliveries) || [];
           const remainingCount = relayResponse?.has_more === true && Number.isInteger(relayResponse.remaining_count)
             ? relayResponse.remaining_count : 0;

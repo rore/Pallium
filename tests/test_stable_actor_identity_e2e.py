@@ -109,7 +109,7 @@ process.stdout.write(JSON.stringify({actor,sessions,status,cachedActor,text:tran
     assert [(row["runtime"], row["session_ref"]) for row in observed["sessions"]] == [
         ("opencode", "oc-target")
     ]
-    assert "real service delivery" in observed["text"]
+    assert "real service delivery" in observed["text"], observed["status"]
     assert observed["status"]["deliveries"][0]["state"] == "delivered"
     assert next(
         row for row in observed["inactive"] if row["session_ref"] == "oc-target"

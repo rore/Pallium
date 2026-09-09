@@ -27,27 +27,31 @@
 
 **Verification plan:** When a persisted Relay message is fetched during a real OpenCode user turn, the model-bound text shall contain it and the delivery shall be delivered → repeat `test_opencode_public_relay_lifecycle_uses_configured_actor_against_real_service`. When OpenCode hook behavior changes only in deadline tolerance, existing injection, ACK, fail-safe, and lifecycle contracts shall remain intact → OpenCode Node suite and affected Relay hook tests. When the branch is ready for review, governance and regression checks shall pass → redline/workflow checks and full pytest suite.
 
-**Plan review:** Pending clean-context review.
+**Plan review:** Clean-context review recorded under `## Plan review`; no blocking gap found.
 
 **Approvals:** Not required at this risk level.
 
 **Exceptions:** —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Discovery and pre-edit redline classification complete; implementation waits for clean-context plan review.
+- Discovery, pre-edit redline classification, and clean-context plan review complete. Plan is ready to implement.
+- Implemented the reviewed slice: /relay/turn now reuses OpenCode's existing 6 s HTTP deadline; the real-service assertion reports delivery status on recurrence. Deterministic exact replacement was used after the local patch helper failed to launch.
 
 ## Evidence
 
 - GitHub Actions runs 34276917061 and 34251320954; source inspection of the OpenCode `/relay/turn` call and shared request deadlines.
+- Exact Windows real-service E2E: 10 consecutive passes.
+- OpenCode Node suite: 49 passed, 7 skipped.
+- Affected Python files: 45 passed.
 
 ## Plan review
 
-Pending.
+Clean-context reviewer confirmed that the two-version Windows reproduction, the unique 750 ms OpenCode deadline, and null-on-timeout behavior support the root-cause assumption. Reusing the existing 6 s `HTTP_TIMEOUT_MS` is the smallest safe fix and preserves claim-before-injection, post-transform acknowledgement, fail-safe behavior, and other Relay deadlines. Status is diagnostic rather than proof because it can race a late claim. If repeated runs still fail, investigate loopback or server transaction timing and do not retry an ambiguous claim.
 
 ## Result review
 
