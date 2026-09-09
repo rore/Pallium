@@ -29,7 +29,13 @@ Using development data only, prototype one deterministic query-density window ov
 
 Advance only a candidate that passes the same sufficiency, zero-regression, budget, and latency gates on development. If it passes, freeze it, open and grade the holdout once, and never tune afterward. A production hypothesis is supportable only if the holdout has at least 10 judgeable lookups, candidate recovery IDs/order/count are identical, sufficient-rate improves by at least 10 absolute percentage points, there are at least two more lookup wins than losses overall, no slice regresses, no excerpt becomes misleading or loses a required fact/qualifier, actual MCP output remains within budgets, the latency limits pass, and development adversarial cases have zero truth/bounds regressions. A failed development gate stops before holdout with report-only/no-change; every tie, underpowered/unjudgeable holdout, or failed holdout gate has the same result. Report wins/ties/losses by slice, candidate recovery, sufficiency, UTF-8 byte counts plus whitespace-token counts as an explicitly labeled token proxy, latency, expansion character limits, and downstream-task-effect as unmeasured. No production edit is permitted in this task.
 
-**Verification plan:** Validate snapshot manifests and database integrity, then hash the private study inputs and blind requirements. Verify metadata component separation and report residual overlaps. Assert exact result ID/order/count equality and unchanged 160/240/response budgets for every paired replay. Apply the rubric and shipping thresholds to development first; open holdout once only if those gates pass, otherwise record the early stop. Exercise the adversarial matrix and 2,000-repetition latency benchmark. Measure actual `_compact_history` JSON, UTF-8 bytes, whitespace-token proxy, and existing bounded expansion characters separately. Review the public report against roadmap Done When 1–4, private-data exclusions, and the retrieval/downstream-effect labels. Finish with diff inspection, redline classification, the agent-workflow checker, and smart clean-context result review; no production test suite is required for a docs-only diff.
+**Verification plan:**
+- Snapshot integrity and serving provenance → `app.snapshot.create_snapshot`, SQLite `quick_check`, and read-only `/health`, `/status`, and `/debug/queue/health` evidence.
+- Independent sampling and privacy → component-overlap assertions, prior-case holdout exclusion, ignored-artifact status, and smart private-data review.
+- Candidate recovery and response contracts → exact ID/order/count equality plus actual `_compact_history` checks at unchanged 160/240/response budgets.
+- Agent-visible evidence sufficiency → pre-variant requirements, blind paired grades, rubric thresholds, per-slice wins/ties/losses, and recorded early stop before holdout.
+- Cost and performance → UTF-8 byte/whitespace-token proxies, expansion contract, adversarial checks, and 2,000-repetition observed/adversarial latency benchmark.
+- Governance and publication → report checklist, clean-context result review, import-boundary backend, fresh BLUE redline verdict, `git diff --check`, and `agent-workflow-check`.
 
 **Plan review:** Second clean-context review on 2026-09-09 approves the report-only fixed-candidate study; all four prior blockers are resolved. See the dated second review in the Plan review section.
 
@@ -37,7 +43,7 @@ Advance only a candidate that passes the same sufficiency, zero-regression, budg
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -47,6 +53,7 @@ Advance only a candidate that passes the same sufficiency, zero-regression, budg
 - 2026-09-09: First clean-context review disproved the presentation-only shared-helper assumption. Scope was narrowed to a report-only fixed-candidate study; any production hypothesis now requires a new Work Record and review.
 - 2026-09-09: Built an ignored staged replay harness, created and integrity-checked an API-backed SQLite snapshot, grouped metadata into disjoint components, and selected 36 development plus 12 reserved holdout lookups. Corrected a pre-compaction anonymization fidelity defect before final blind grading.
 - 2026-09-09: Smart blind development review found 11 wins, 9 ties, and 3 losses across 23 judgeable lookups, but zero sufficient excerpts, 16 required-fact losses, 3 qualifier losses, and a failed 50,021-character p95 latency gate. Stopped before freeze/holdout and wrote the public no-change report.
+- 2026-09-09: Trigger 3 fired because the documented direct redline-reporter path omitted its configured boundary-backend prerequisite. Public issue creation required separate authorization, so the would-be issue is recorded below as unsent feedback.
 
 ## Evidence
 
@@ -67,4 +74,18 @@ The roadmap remains broader than this proposed excerpt hypothesis. The final rep
 
 ## Result review
 
-- Pending.
+2026-09-09 smart clean-context result review: **PASS.** The report-only diff satisfies the reconciled completion criteria and preserves the justified no-change outcome. Aggregate-only evidence validates every published inventory, serving-health, grading, size/token-proxy, budget, latency, and hash claim without opening private packets or holdout. Measurement labels distinguish fixed candidate recovery, agent-visible evidence sufficiency, unmeasured injection precision, and unmeasured downstream-task effect. The reviewer found no private leakage, unintended scope expansion, unresolved material assumption, or need for production tests. Final classification is BLUE / Routine with no watch paths, checkpoints, boundary violations, or API/schema/security/config flags.
+
+Verification ran against report commit `5d7fcc34`: snapshot/SQLite integrity passed; 36/12 component-separated selection had zero cross-partition overlap; corrected compaction preserved IDs/order/count and budgets; blind grading supported no-change; adversarial assertions passed while the frozen 50,021-character p95 gate correctly failed the candidate; import boundaries passed; fresh redline verdict was BLUE. The initial workflow check was advisory only because this Verification field lacked arrow mappings; this closure commit fixes that structure and changes only the Work Record.
+
+## Skill feedback (unsent)
+
+**Trigger fired:** 3 — a skill instruction told me to do something that did not work.
+
+**What the skill said (or failed to say):** `agent-redline/operating-mode.md` §Step 5 says to run the reporter with changed files when the wrapper is absent, but does not say to run the configured boundary backend first when `policy.boundaryAdapter.outputPath` is present.
+
+**What happened:** The documented reporter command failed because `build/import-linter-report.json` did not exist. Running the Python extension's `run-import-linter.py` first produced the required artifact; the reporter then passed. Public issue creation was not authorized for the external source repository.
+
+**Suggested fix:** Add a conditional Step 5 instruction to read `boundaryAdapter`, run the active extension backend, and pass its fresh output to the reporter.
+
+**Work Record:** Pallium report commit `5d7fcc34`, `.agent-workflow/tasks/improve-session-history-search-quality.md`; vendored skill copy at Pallium base `0dbb0691`.
