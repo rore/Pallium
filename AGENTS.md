@@ -3,6 +3,8 @@
 Treat `roadmap/` as the canonical repo-local roadmap workspace for humans and agents.
 Use `docs/context/` for broader design context, but keep roadmap state and queue changes in the minimap files.
 
+If `AGENTS.local.md` exists at the repository root, read it as supplemental machine-local instructions; it is intentionally not versioned.
+
 Repo-level non-negotiables:
 
 - use `README.md`, `docs/context/*`, relevant `docs/designs/*`, and `roadmap/*` as the source of truth
