@@ -1,7 +1,7 @@
 # Next · Agent Relay
+- add-relay-session-work-associations
 - add-relay-activation-capability-contract
 - add-relay-delivery-trace
-- add-relay-session-work-associations
 - add-copilot-relay-integration
 
 # Parallel · Session History

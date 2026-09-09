@@ -13,8 +13,8 @@ lane: capability
 The Windows/Linux Claude and Codex wake foundation, Codex first-run setup,
 MCP recovery integration, and live no-manual-turn reply/remediation journey are
 shipped. This umbrella remains queued for residual qualification, not active
-reimplementation of those milestones. The board's next feature is activation
-capabilities; no confirmed wake incident currently blocks it.
+reimplementation of those milestones. The board's next feature is session-to-work
+associations; no confirmed wake incident currently blocks it.
 
 Remaining work:
 - Qualify still-unproven interrupted/restart combinations with a bounded matrix
@@ -178,8 +178,8 @@ deferred until a concrete failure cannot be diagnosed with existing evidence.
 The closed-recipient lifecycle slice subsequently shipped in PR #148 and
 first-run setup qualification completed on 2026-09-08. Retention cleanup is paused
 pending operational evidence. The next value item is now
-`add-relay-activation-capability-contract`, followed by delivery traces and work
-associations. Wake-first retains the residual qualification listed at the top of
+`add-relay-session-work-associations`, followed by activation capabilities and
+delivery traces. Wake-first retains the residual qualification listed at the top of
 this file; macOS is demand-driven and OpenCode activation precedes Copilot.
 
 1. **S2 contract gate — complete in PR #98.** Delivery lifecycle

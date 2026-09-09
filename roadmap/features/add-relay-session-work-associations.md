@@ -27,10 +27,17 @@ also avoids writing transient session addresses into divergent Minimap documents
 
 ## Priority and Dependencies
 
-Place after the active wake/lifecycle fixes and the queued activation-capability
-and delivery-trace slices, before further runtime expansion. Reuse their public
-availability facts where shipped; this feature does not require a trace to attach
-or query an association. It does not block existing workflow validation.
+First in the Relay product queue (user priority, 2026-09-09): connecting sessions
+to real work provides the clearest visible product value and demonstrates the
+collection's integration. Implement before activation-capability normalization,
+delivery traces, and further runtime expansion.
+
+Use the existing session registry, routing, and public availability facts. Neither
+the activation-capability feature nor delivery traces are prerequisites for
+attaching, querying, or displaying associations. Preserve unknown availability
+honestly and consume richer facts later when shipped; do not implement those
+features inside this one. Confirmed delivery correctness incidents still take
+priority. Existing workflow validation remains independently executable.
 
 Minimap's companion feature is `add-pallium-work-item-participants` in the
 [Minimap roadmap](https://github.com/rore/minimap/tree/main/roadmap/features).

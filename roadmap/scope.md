@@ -175,11 +175,13 @@ macOS qualification, and OpenCode activation. The closed-recipient correction
 shipped in PR #148; remaining retention cleanup is paused pending operational
 need. Neither umbrella blocks the next product slices. Any newly confirmed
 correctness incident still takes priority. Next,
-`add-relay-activation-capability-contract` makes each session's qualified activation
-behavior and attempt outcomes explicit; `add-relay-delivery-trace` then exposes
-bounded diagnostic evidence through message detail, HTTP, and MCP. Then
-`add-relay-session-work-associations` joins existing sessions to multiple explicit
-work references for agents, the Relay dashboard, and optional Minimap integration.
+`add-relay-session-work-associations` is first: join existing sessions to multiple
+explicit work references for agents, the Relay dashboard, and optional Minimap
+integration. This is the clearest visible product-value slice and uses existing
+session/routing facts; activation-capability normalization and traces are not
+prerequisites. Next, `add-relay-activation-capability-contract` makes qualified
+activation behavior and outcomes explicit, followed by `add-relay-delivery-trace`
+for bounded diagnostic evidence through message detail, HTTP, and MCP.
 All three precede Copilot adapter expansion, which also requires OpenCode wake
 qualification. Existing lifecycle hardening retains ownership of
 delivery/session state and retention; trace recording never becomes delivery
