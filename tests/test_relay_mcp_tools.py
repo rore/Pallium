@@ -29,6 +29,12 @@ _SCOPE = {
 }
 _RUNTIME = "claude-code"
 _SESSION = "mcp-tool-session"
+_MISSING_SCOPE_ERROR = (
+    "Error: Relay scope requires container_ref. Copy the injected container_ref "
+    "exactly. If none was injected, check that Pallium hooks are enabled and trusted, "
+    "or configure PALLIUM_CONTAINER_REF for an intentional hookless MCP integration. "
+    "Do not infer Relay scope from the working directory or session IDs."
+)
 
 
 @pytest.fixture()
@@ -471,6 +477,20 @@ async def test_long_mcp_preview_status_pages_and_ack_reconstruct_stored_body(
 
 
 _RELAY_SCOPE_TOOL_METHODS = {
+    "pallium_relay_recipients": ("relay_recipients", {}),
+    "pallium_relay_name": (
+        "relay_name",
+        {"current_runtime": _RUNTIME, "current_session_ref": _SESSION, "name": "review"},
+    ),
+    "pallium_relay_send": (
+        "relay_send",
+        {
+            "message": "hello",
+            "recipient": "@review",
+            "sender_runtime": _RUNTIME,
+            "sender_session_ref": _SESSION,
+        },
+    ),
     "pallium_relay_status": ("relay_status", {"message_id": "message"}),
     "pallium_relay_receive": ("relay_receive", {}),
     "pallium_relay_ack": ("relay_mcp_ack", {"delivery_id": "delivery", "receipt": "receipt"}),
@@ -491,19 +511,51 @@ async def test_configured_relay_scope_accepts_matching_pair(monkeypatch, tool):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool", _RELAY_SCOPE_TOOL_METHODS)
+async def test_missing_relay_scope_is_actionable_and_never_calls_http(monkeypatch, tool):
+    monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
+    client_method, arguments = _RELAY_SCOPE_TOOL_METHODS[tool]
+    http_call = AsyncMock(return_value={})
+    with patch.object(PalliumMcpClient, client_method, new=http_call):
+        content, _ = await create_server().call_tool(tool, arguments)
+    assert content[0].text.startswith(_MISSING_SCOPE_ERROR)
+    http_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", _RELAY_SCOPE_TOOL_METHODS)
+async def test_invalid_configured_relay_scope_never_calls_http(monkeypatch, tool):
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", " ")
+    client_method, arguments = _RELAY_SCOPE_TOOL_METHODS[tool]
+    http_call = AsyncMock(return_value={})
+    with patch.object(PalliumMcpClient, client_method, new=http_call):
+        content, _ = await create_server().call_tool(tool, arguments)
+    assert content[0].text.startswith("Error: Configured Relay scope is invalid.")
+    http_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", _RELAY_SCOPE_TOOL_METHODS)
 @pytest.mark.parametrize(
-    "scope",
+    ("scope", "expected"),
     [
-        {"container_ref": " "},
-        {"container_ref": "git:example.test/other"},
+        (
+            {"container_ref": " "},
+            "Error: Relay scope requires a non-blank container_ref.",
+        ),
+        (
+            {"container_ref": "git:example.test/other"},
+            "Error: Relay scope conflicts with configured trusted scope.",
+        ),
     ],
 )
-async def test_partial_or_conflicting_relay_scope_never_calls_http(monkeypatch, tool, scope):
+async def test_partial_or_conflicting_relay_scope_never_calls_http(
+    monkeypatch, tool, scope, expected,
+):
     client_method, arguments = _RELAY_SCOPE_TOOL_METHODS[tool]
     http_call = AsyncMock(return_value={})
     with patch.object(PalliumMcpClient, client_method, new=http_call):
         content, _ = await create_server().call_tool(tool, {**arguments, **scope})
-    assert "Relay scope" in content[0].text
+    assert content[0].text.startswith(expected)
     http_call.assert_not_awaited()
 
 
