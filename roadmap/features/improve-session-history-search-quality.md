@@ -76,8 +76,10 @@ is available.
 
 A follow-through traced the 20 empty replay excerpts to the existing 2,000-character MCP
 compactor: four 10-result responses kept every source ID but emptied five excerpts each after
-optional work references and session cues were removed. Inputs and responses with six or fewer
-results had no empty excerpt. The broader feature remains queued because ranking, query repair,
+optional work references and session cues were removed. These were empty-text hits, not omitted
+results. Separately, 12 replay inputs had no result: the 10 sampled no-answer lookups and two linked
+lookups whose single exposed source was absent from the snapshot source join. Responses with two to
+six results had no empty excerpt. The broader feature remains queued because ranking, query repair,
 expansion/navigation, telemetry coverage, multilingual prevalence, and independent-task evidence
 remain unresolved.
 
