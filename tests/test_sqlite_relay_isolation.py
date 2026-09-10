@@ -1,10 +1,12 @@
 from pathlib import Path
 import multiprocessing
 import sqlite3
+import threading
 from queue import Empty
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 
 from storage.sqlite import SQLiteStorageProvider
 
@@ -214,7 +216,89 @@ def test_concurrent_fresh_separate_pair_startup_is_serialized(tmp_path: Path) ->
         second.join(timeout=15)
     assert first.exitcode == 0
     assert second.exitcode == 0
-    SQLiteStorageProvider(main_url, relay_database_url=relay_url).close()
+    provider = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    try:
+        for path in (main, relay):
+            assert _pragma(path, "auto_vacuum") == 2
+            assert _pragma(path, "journal_mode").lower() == "wal"
+    finally:
+        _dispose(provider)
+
+
+def test_startup_waits_for_transient_main_database_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    initial = SQLiteStorageProvider(
+        f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
+    )
+    _dispose(initial)
+
+    lock_acquired = threading.Event()
+    pragma_started = threading.Event()
+    release_lock = threading.Event()
+    startup = None
+    observed_timeouts: list[int] = []
+    result: list[object] = []
+
+    original_exec_driver_sql = Connection.exec_driver_sql
+
+    def observe_startup_pragma(self, statement, *args, **kwargs):
+        if statement == "PRAGMA auto_vacuum=INCREMENTAL":
+            observed_timeouts.append(
+                int(original_exec_driver_sql(self, "PRAGMA busy_timeout").scalar() or 0)
+            )
+            pragma_started.set()
+        return original_exec_driver_sql(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(Connection, "exec_driver_sql", observe_startup_pragma)
+
+    def hold_main_lock() -> None:
+        holder = sqlite3.connect(main, timeout=0)
+        try:
+            holder.execute("BEGIN EXCLUSIVE")
+            lock_acquired.set()
+            release_lock.wait(15)
+        finally:
+            holder.rollback()
+            holder.close()
+
+    def initialize_pair() -> None:
+        try:
+            result.append(
+                SQLiteStorageProvider(
+                    f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
+                )
+            )
+        except Exception as exc:  # pragma: no cover - assertion below reports it
+            result.append(exc)
+
+    try:
+        holder_thread = threading.Thread(target=hold_main_lock)
+        holder_thread.start()
+        assert lock_acquired.wait(15)
+        startup = threading.Thread(target=initialize_pair)
+        startup.start()
+        assert pragma_started.wait(15)
+        assert observed_timeouts[0] == 15000
+        release_lock.set()
+        startup.join(15)
+        assert not startup.is_alive()
+        assert len(result) == 1
+        assert not isinstance(result[0], Exception), result[0]
+        provider = result[0]
+        for path in (main, relay):
+            assert _pragma(path, "auto_vacuum") == 2
+            assert _pragma(path, "journal_mode").lower() == "wal"
+    finally:
+        release_lock.set()
+        if startup is not None:
+            startup.join(15)
+        if 'holder_thread' in locals():
+            holder_thread.join(15)
+        if result and isinstance(result[0], SQLiteStorageProvider):
+            _dispose(result[0])
 
 @pytest.mark.parametrize("missing", ["main", "relay"])
 def test_existing_one_file_only_pair_fails_without_creating_other(
