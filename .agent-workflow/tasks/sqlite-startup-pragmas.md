@@ -57,4 +57,5 @@
 
 ## Result review
 
-- Pending clean-context smart review.
+- First clean-context smart review approved the production deletion but found one P2 test flaw: the sleep-based release could let delayed startup miss the lock. Replaced the sleep with operation-entry synchronization on Connection.exec_driver_sql and asserted busy_timeout=15000 at the exact persistent PRAGMA.
+- Smart re-review approved HEAD 497fc407 with no remaining actionable findings. Reviewer repeated the old-initializer mutation with a 0.4-second scheduling delay; the synchronized regression still failed the buggy implementation.
