@@ -1,0 +1,43 @@
+{
+  "canonical_remotes": [
+    {"input": "https://github.com/User/Repo.git", "expected": "git:github.com/user/repo"},
+    {"input": "https://github.com:443/User/Repo.git", "expected": "git:github.com/user/repo"},
+    {"input": "ssh://git@github.com:22/User/Repo.git", "expected": "git:github.com/user/repo"},
+    {"input": "git@github.com:User/Repo.git", "expected": "git:github.com/user/repo"},
+    {"input": "git@source.example.test:Systems/Repo.git", "expected": "git:source.example.test/Systems/Repo"},
+    {"input": "https://git.example.test/Team/café.git", "expected": "git:git.example.test/Team/café"},
+    {"input": "https://git.example.test/Team/cafe%CC%81.git", "expected": "git:git.example.test/Team/café"},
+    {"input": "ssh://builder@git.example.test:2222/Team/Repo.git", "expected": "git:git.example.test:2222/Team/Repo"},
+    {"input": "https://git.example.test:8443/Team/Repo.git", "expected": "git:git.example.test:8443/Team/Repo"},
+    {"input": "https://git.example.test/Team/Repo.git?ref=main#ignored", "expected": "git:git.example.test/Team/Repo"}
+  ],
+  "invalid_remotes": [
+    "",
+    "file:///tmp/repo",
+    "C:/repo",
+    "../repo",
+    "https://user:password@example.test/repo.git",
+    "https://user@example.test/repo.git",
+    "https://example.test:0/repo.git",
+    "https://example.test:65536/repo.git",
+    "https://example.test:ambiguous/repo.git",
+    "https://example.test/repo.git?token=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "https://example.test/repo/../other.git",
+    "https://git.example.test/Team/%2e%2e/Repo.git",
+    "https://git.example.test/Team/%2E./Repo.git",
+    "https://git.example.test:/Team/Repo.git",
+    "https://git.example.test/Team/%ZZ/Repo.git",
+    "git@source example.test:Systems/Repo.git",
+    "git@example.test:",
+    "example.test:repo",
+    "https://münich.example/repo.git",
+    "https://git%2eexample.test/Team/Repo.git",
+    "https://git.example.test/Team\\Repo.git"
+  ],
+  "roadmap_roots": [
+    {"input": "roadmap\\é space", "expected": "roadmap/%C3%A9%20space"},
+    {"input": ".", "expected": "."},
+    {"input": "roadmap/子", "expected": "roadmap/%E5%AD%90"}
+  ],
+  "invalid_roadmap_roots": ["", "/roadmap", "a/../b", "a//b", "C:/roadmap"]
+}

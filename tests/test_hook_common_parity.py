@@ -568,3 +568,108 @@ def test_format_injection_omits_only_unsafe_work_ref(module, work_ref):
     )
     scope = json.loads(rendered[rendered.index("{") : rendered.rindex("}") + 1])
     assert scope == {"container_ref": "git:repo", "thread_ref": "session"}
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_work_ref_warning_is_bounded_truthful_and_secret_safe(module):
+    registry = ["work:v1:" + character * 64 for character in ("a", "b", "c")]
+    metadata = {
+        "pallium_work_refs": ["one", "two", "three", "four", "five", *registry],
+        "pallium_work_ref_sources": ["caller"] * 5 + ["registry"] * 3,
+        "pallium_relay_work_refs_status": "complete",
+    }
+    warning = module.work_ref_warning(metadata)
+    assert all(key in warning for key in registry)
+    assert "not searchable from this turn" in warning
+    assert len(warning) < 400
+
+    unavailable = module.work_ref_warning({
+        "pallium_work_refs": ["ghp_abcdefghijklmnopqrstuvwxyz1234567890"],
+        "pallium_work_ref_sources": ["caller"],
+        "pallium_relay_work_refs_status": "unavailable",
+    })
+    assert "association enrichment was unavailable" in unavailable
+    assert "ghp_" not in unavailable
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_work_ref_warning_uses_full_selection_but_bounded_diagnostics(module):
+    registry = "work:v1:" + "a" * 64
+    callers = ["same"] * 20 + ["two", "three", "four", "five"]
+    warning = module.work_ref_warning({
+        "pallium_work_refs": [*callers, registry],
+        "pallium_work_ref_sources": ["caller"] * len(callers) + ["registry"],
+        "pallium_relay_work_refs_status": "complete",
+    })
+    assert registry in warning
+    assert "not searchable from this turn" in warning
+    assert "4 caller ref(s) beyond the 20-item diagnostic bound" in warning
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_empty_and_failed_relay_enrichment_preserve_status(monkeypatch, module):
+    metadata = module.build_work_refs_metadata(
+        "", discovery=module.WorkRefDiscovery(), relay_status="unavailable"
+    )
+    assert metadata == {
+        "pallium_work_ref_sources": [],
+        "pallium_relay_work_refs_status": "unavailable",
+    }
+    assert "association enrichment was unavailable" in module.work_ref_warning(metadata)
+    monkeypatch.setattr(module, "relay_request", lambda *_args, **_kwargs: None)
+    assert module.fetch_confirmed_work_refs("codex", "session", "container") == (
+        [],
+        "unavailable",
+    )
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_relay_get_encodes_query_without_body(monkeypatch, module):
+    observed = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return b'{"work_refs":[]}'
+
+    def open_request(request, timeout):
+        observed["request"] = request
+        observed["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", open_request)
+    result = module.relay_request(
+        "GET",
+        "/relay/sessions/work-refs",
+        {"runtime": "codex", "session_ref": "session / one", "container_ref": "git:repo"},
+        timeout=0.5,
+    )
+    request = observed["request"]
+    assert result == {"work_refs": []}
+    assert request.data is None
+    query = module.urllib.parse.parse_qs(module.urllib.parse.urlsplit(request.full_url).query)
+    assert query == {
+        "runtime": ["codex"],
+        "session_ref": ["session / one"],
+        "container_ref": ["git:repo"],
+    }
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_repository_scope_fallback_uses_full_root_hash(monkeypatch, module):
+    root = "A" * 40
+
+    class Result:
+        def __init__(self, returncode, stdout=""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    def run(args, **_kwargs):
+        if args[1:3] == ["remote", "get-url"]:
+            return Result(2)
+        return Result(0, root + "\n")
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    assert module.repository_scope_ref("checkout") == "repo:" + root.lower()

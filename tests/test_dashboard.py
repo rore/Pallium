@@ -254,6 +254,12 @@ class TestDashboardIntegration:
         assert "Agent Relay" in html
         assert 'class="table-scroll"' in html
         assert "@media (max-width: 600px)" in html
+        assert 'id="relay-work-ref-panel"' in html
+        assert 'id="relay-work-ref-clear"' in html
+        assert "workRefGeneration" in html
+        assert "Load more sessions" in html
+        assert "params.set('container_ref',lookup.container)" in html
+        assert '/dashboard/api/relay/sessions/' in html
 
     def test_dashboard_html_has_dual_time_endpoints_wired(self, tmp_path: Path) -> None:
         """Regression guard: the dashboard must call the new /metrics/totals
@@ -981,3 +987,63 @@ class TestDashboardRelayOverview:
             second = client.get("/dashboard/api/relay/overview", params={"limit": 1, "offset": 1}).json()
         assert first["containers"][0]["container_ref"] == "git:tie-a"
         assert second["containers"][0]["container_ref"] == "git:tie-b"
+
+
+def test_dashboard_exact_endpoint_work_ref_correction_includes_closed(tmp_path: Path) -> None:
+    app = create_app(_test_config(tmp_path))
+    feature = {
+        "scope_ref": "roadmap:v1:git:example.test/team/relay#roadmap",
+        "local_ref": "feature:dashboard-correction",
+    }
+    with TestClient(app) as client:
+        turn = client.post(
+            "/relay/turn",
+            json={
+                "runtime": "codex",
+                "session_ref": "closed-admin",
+                "container_ref": "git:example.test/team/relay",
+                "structural_work_refs": [feature],
+            },
+        ).json()
+        endpoint_id = turn["session"]["endpoint_id"]
+        assert client.post(
+            "/relay/sessions/close",
+            json={
+                "runtime": "codex",
+                "session_ref": "closed-admin",
+                "container_ref": "git:example.test/team/relay",
+            },
+        ).status_code == 200
+        attached = client.post(
+            f"/dashboard/api/relay/sessions/{endpoint_id}/work-refs",
+            json={"action": "attach", **feature},
+        )
+        assert attached.status_code == 200, attached.text
+        assert {row["origin"] for row in attached.json()["work_refs"]} == {
+            "explicit", "structural"
+        }
+        detached = client.post(
+            f"/dashboard/api/relay/sessions/{endpoint_id}/work-refs",
+            json={"action": "detach", **feature},
+        )
+        assert detached.status_code == 200, detached.text
+        assert detached.json()["structural_remains"] is True
+        assert client.post(
+            "/dashboard/api/relay/sessions/relay-session-00000000000000000000000000000000/work-refs",
+            json={"action": "attach", **feature},
+        ).status_code == 404
+
+def test_work_reference_ui_executes_shipped_javascript() -> None:
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the dashboard work-reference UI contract test")
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [node, str(Path(__file__).with_name("dashboard_work_ref_ui.mjs")), str(repo_root / "app" / "dashboard.html")],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "all cases passed" in result.stdout

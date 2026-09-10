@@ -8,6 +8,7 @@ explicit overrides with env var defaults) is the server layer's responsibility.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from typing import Any
@@ -15,6 +16,7 @@ from typing import Any
 import httpx
 
 from app.mcp.context import PalliumContext
+from redaction import redact_sensitive
 
 
 class PalliumMcpClient:
@@ -255,11 +257,16 @@ class PalliumMcpClient:
                 response.raise_for_status()
                 return response.json()
         except httpx.HTTPStatusError as exc:
+            raw = redact_sensitive(exc.response.text)
             try:
-                body = exc.response.json()
+                body = json.loads(raw)
             except Exception:
-                body = exc.response.text
-            return {"error": str(exc), "status_code": exc.response.status_code, "detail": body}
+                body = raw
+            return {
+                "error": f"HTTP {exc.response.status_code} from {path}",
+                "status_code": exc.response.status_code,
+                "detail": body,
+            }
         except Exception as exc:
             return {"error": str(exc)}
 
@@ -285,6 +292,74 @@ class PalliumMcpClient:
             payload["replace_existing"] = True
         return await self._post_or_error("/relay/sessions/name", payload)
 
+    async def relay_work_refs(
+        self, *, current_runtime: str, current_session_ref: str
+    ) -> Any:
+        return await self._get_or_error(
+            "/relay/sessions/work-refs",
+            {
+                "runtime": current_runtime,
+                "session_ref": current_session_ref,
+                **self._relay_scope_params(),
+            },
+        )
+
+    async def relay_attach_work_ref(
+        self,
+        *,
+        current_runtime: str,
+        current_session_ref: str,
+        scope_ref: str,
+        local_ref: str,
+    ) -> Any:
+        return await self._post_or_error(
+            "/relay/sessions/work-refs/attach",
+            {
+                "runtime": current_runtime,
+                "session_ref": current_session_ref,
+                "scope_ref": scope_ref,
+                "local_ref": local_ref,
+                **self._relay_scope_params(),
+            },
+        )
+
+    async def relay_detach_work_ref(
+        self,
+        *,
+        current_runtime: str,
+        current_session_ref: str,
+        scope_ref: str,
+        local_ref: str,
+    ) -> Any:
+        return await self._post_or_error(
+            "/relay/sessions/work-refs/detach",
+            {
+                "runtime": current_runtime,
+                "session_ref": current_session_ref,
+                "scope_ref": scope_ref,
+                "local_ref": local_ref,
+                **self._relay_scope_params(),
+            },
+        )
+
+    async def relay_work_ref_participants(
+        self,
+        *,
+        scope_ref: str,
+        local_ref: str,
+        include_closed: bool,
+        offset: int,
+        limit: int = 5,
+    ) -> Any:
+        params: dict[str, Any] = {
+            "scope_ref": scope_ref,
+            "local_ref": local_ref,
+            "offset": offset,
+            "limit": limit,
+        }
+        if include_closed:
+            params["include_closed"] = True
+        return await self._get_or_error("/relay/work-refs/participants", params)
     async def relay_send(
         self,
         *,

@@ -307,6 +307,8 @@ test("deriveContainerRef returns repo:<hash12> for a git repo with no remote", (
   run(["add", "f.txt"]);
   run(["commit", "-m", "init"]);
   const ref = P.deriveContainerRef(repo);
+  const root = run(["rev-list", "--max-parents=0", "HEAD"]).toString().trim().toLowerCase();
+  assert.equal(P.repositoryScopeRef(repo), "repo:" + root);
   assert.match(ref, /^repo:[0-9a-f]{12}$/, `expected repo:<hash12>, got ${ref}`);
 });
 
@@ -568,4 +570,39 @@ test("injectedWorkRef selects first safe structural ref and ignores explicit-onl
   assert.equal(P.injectedWorkRef({ structuralRefs: [] }), null);
   assert.deepEqual(P.buildWorkRefsMetadata("", ["EXPLICIT-REF"], { structuralRefs: [] }), { pallium_work_refs: ["EXPLICIT-REF"] });
   assert.equal(P.injectedWorkRef({ structuralRefs: ["[REDACTED]", "x".repeat(129)] }), null);
+});
+
+test("canonical repository and roadmap identity matches Python vectors", async () => {
+  assert.equal(P.canonicalGitRemote("https://github.com/User/Repo.git"), "git:github.com/user/repo");
+  assert.equal(P.canonicalGitRemote("ssh://git@git.example.test:22/team/Repo.git"), "git:git.example.test/team/Repo");
+  assert.equal(P.canonicalGitRemote("ssh://git@git.example.test:2222/team/Repo.git"), "git:git.example.test:2222/team/Repo");
+  assert.equal(P.canonicalGitRemote("git@github.com:User/Repo.git"), "git:github.com/user/repo");
+  assert.equal(P.canonicalGitRemote("https://git.example.test/Team/Repo.git"), "git:git.example.test/Team/Repo");
+  assert.equal(P.canonicalGitRemote("https://user:password@example.test/repo.git"), null);
+  assert.equal(P.canonicalGitRemote("https://example.test:65536/repo.git"), null);
+  assert.equal(P.roadmapScopeRef("git:github.com/owner/repo", "roadmap\\é space"), "roadmap:v1:git:github.com/owner/repo#roadmap/%C3%A9%20space");
+  assert.deepEqual(P.structuralWorkRefsPayload("git:wrong/container", ["git-branch:feature/x", "agent-workflow:item"], "git:github.com/owner/repo"), [
+    { scope_ref: "git:github.com/owner/repo", local_ref: "git-branch:feature/x" },
+    { scope_ref: "roadmap:v1:git:github.com/owner/repo#roadmap", local_ref: "agent-workflow:item" },
+  ]);
+});
+
+test("shared repository and roadmap vectors stay aligned with Python", () => {
+  const vectors = JSON.parse(fs.readFileSync(
+    path.resolve("..", "..", "tests", "fixtures", "relay_work_identity_vectors.json"),
+    "utf8",
+  ));
+  for (const row of vectors.canonical_remotes) {
+    assert.equal(P.canonicalGitRemote(row.input), row.expected);
+  }
+  for (const remote of vectors.invalid_remotes) {
+    assert.equal(P.canonicalGitRemote(remote), null);
+  }
+  const repository = "git:github.com/owner/repo";
+  for (const row of vectors.roadmap_roots) {
+    assert.equal(P.roadmapScopeRef(repository, row.input), "roadmap:v1:" + repository + "#" + row.expected);
+  }
+  for (const root of vectors.invalid_roadmap_roots) {
+    assert.throws(() => P.roadmapScopeRef(repository, root));
+  }
 });

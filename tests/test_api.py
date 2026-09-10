@@ -871,6 +871,107 @@ def test_item_and_query_returns_source_item_id_and_query_result(client) -> None:
     assert "injectable_blocks" in data
 
 
+def test_item_responses_never_reflect_caller_authored_work_ref_diagnostics(client) -> None:
+    secret = "ghp_" + "A" * 36
+    cases = [
+        {
+            "pallium_work_refs_omitted_registry": [secret],
+            "pallium_work_refs_diagnostics": {"omitted_valid_count": 100_000},
+        },
+        {
+            "pallium_work_refs": "malformed",
+            "pallium_relay_work_refs_status": "partial",
+            "pallium_work_refs_omitted_registry": ["x" * 100_000],
+        },
+        {
+            "pallium_work_refs": [
+                "ONE",
+                "TWO",
+                "THREE",
+                "FOUR",
+                "FIVE",
+                "SIX",
+                "REGISTRY",
+            ],
+            "pallium_work_ref_sources": ["caller"] * 6 + ["registry"],
+            "pallium_relay_work_refs_status": "complete",
+            "pallium_work_refs_omitted_registry": [secret],
+            "pallium_work_refs_diagnostics": {"omitted_valid_count": 100_000},
+        },
+    ]
+
+    for index, metadata in enumerate(cases):
+        payload = {
+            "source_type": "chat_message",
+            "source_id": f"diagnostic-reflection-{index}",
+            "content_type": "text/plain",
+            "content": "Verify bounded server-authored work reference diagnostics.",
+            "artifact_kind": "message",
+            "role": "user",
+            "visibility": "public",
+            "metadata": metadata,
+        }
+        for path in ("/items", "/item-and-query"):
+            response = client.post(path, json=[payload] if path == "/items" else payload)
+            assert response.status_code == 200, response.text
+            body = response.json()[0] if path == "/items" else response.json()
+            returned = body["work_ref_metadata"]
+            assert secret not in str(returned)
+            assert len(str(returned)) < 2_000
+            if index < 2:
+                assert returned is None
+            else:
+                assert returned["pallium_work_refs"] == [
+                    "one",
+                    "two",
+                    "three",
+                    "four",
+                    "five",
+                ]
+                assert returned["pallium_work_refs_omitted_registry"] == [
+                    "registry"
+                ]
+                assert returned["pallium_work_refs_diagnostics"][
+                    "omitted_valid_count"
+                ] == 2
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        {
+            "pallium_work_refs": ["ONE"],
+            "pallium_work_ref_sources": ["caller"],
+            "pallium_relay_work_refs_status": {},
+        },
+        {
+            "pallium_work_refs": ["ONE"],
+            "pallium_work_ref_sources": [{}],
+            "pallium_relay_work_refs_status": "complete",
+        },
+        {
+            "pallium_work_refs": ["ONE"],
+            "pallium_work_ref_sources": [[]],
+            "pallium_relay_work_refs_status": "complete",
+        },
+    ],
+)
+def test_item_endpoints_discard_malformed_work_ref_diagnostics(client, malformed) -> None:
+    for path in ("/items", "/item-and-query"):
+        payload = {
+            "source_type": "chat_message",
+            "source_id": f"malformed-work-ref-diagnostics-{path}",
+            "content_type": "text/plain",
+            "content": "Malformed diagnostics must not break ingestion.",
+            "artifact_kind": "message",
+            "role": "user",
+            "visibility": "public",
+            "metadata": malformed,
+        }
+        response = client.post(path, json=[payload] if path == "/items" else payload)
+        assert response.status_code == 200, response.text
+        body = response.json()[0] if path == "/items" else response.json()
+        assert body["work_ref_metadata"] == {"pallium_work_refs": ["one"]}
 @pytest.mark.parametrize("path", ("/item-and-query", "/item-and-query/debug"))
 def test_assistant_item_and_query_enqueues_usage_audit_after_query_audit(client, monkeypatch, path) -> None:
     import api.routes as api_routes

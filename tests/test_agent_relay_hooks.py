@@ -159,6 +159,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
             "session_ref": "target-session",
             "container_ref": "git:example/repo",
             "max_chars": 2360,
+            "structural_work_refs": [],
         },
         0.75,
     )
@@ -320,7 +321,9 @@ def test_short_turn_without_delivery_still_exposes_current_relay_identity(
     with pytest.raises(SystemExit):
         hook.main()
     assert len(outputs) == 1
-    scope = json.loads(outputs[0].removeprefix("[Pallium scope — ").removesuffix("]"))
+    scope_line = outputs[0].splitlines()[0]
+    scope = json.loads(scope_line.removeprefix("[Pallium scope — ").removesuffix("]"))
+    assert "association enrichment was unavailable" in outputs[0]
     assert scope == {
         "container_ref": "git:example/repo",
         "thread_ref": "target-session",

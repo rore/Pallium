@@ -265,7 +265,7 @@ def test_claude_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     monkeypatch.setattr(
         hook,
         "build_work_refs_metadata",
-        lambda *_args: {"pallium_work_refs": ["git-branch:feature/demo"]},
+        lambda *_args, **_kwargs: {"pallium_work_refs": ["git-branch:feature/demo"]},
     )
 
     def request(_method: str, _path: str, body: dict) -> dict:
@@ -303,7 +303,7 @@ def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monk
     monkeypatch.setattr(
         stop,
         "build_work_refs_metadata",
-        lambda *_args: {"pallium_work_refs": ["git-branch:feature/demo"]},
+        lambda *_args, **_kwargs: {"pallium_work_refs": ["git-branch:feature/demo"]},
     )
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")

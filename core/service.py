@@ -41,22 +41,39 @@ from redaction import redact_sensitive
 from storage.base import QueueHealthSnapshot, RetentionLeaseLostError, RetentionRunStats, StorageProvider, ThreadProcessingLease
 from storage.vector_index import VectorIndex
 from core.text import normalize_for_index as _normalize_for_index
-from core.work_ref import _normalize_work_refs
+from core.work_ref import _normalize_work_ref, _normalize_work_refs
 
 _WORK_REFS_METADATA_KEY = "pallium_work_refs"
 _ANY_CONTAINER = object()
 
 def _sanitize_work_ref_metadata(metadata: dict | None) -> dict | None:
-    """Keep only safe, list-valued structural work references."""
-    if not isinstance(metadata, dict) or _WORK_REFS_METADATA_KEY not in metadata:
+    """Keep safe work refs and bounded diagnostics without changing selection."""
+    if not isinstance(metadata, dict):
         return metadata
     sanitized = dict(metadata)
+    for key in (
+        "pallium_work_ref_sources",
+        "pallium_relay_work_refs_status",
+        "pallium_work_refs_omitted",
+        "pallium_work_refs_omitted_registry",
+        "pallium_work_refs_diagnostics",
+    ):
+        sanitized.pop(key, None)
+    sources = metadata.get("pallium_work_ref_sources")
+    status = metadata.get("pallium_relay_work_refs_status")
+    if _WORK_REFS_METADATA_KEY not in metadata:
+        if sources == [] and isinstance(status, str) and status in {"complete", "partial", "unavailable"}:
+            sanitized["pallium_relay_work_refs_status"] = status
+        return sanitized
+
     raw = metadata[_WORK_REFS_METADATA_KEY]
     if not isinstance(raw, list):
         sanitized.pop(_WORK_REFS_METADATA_KEY, None)
         return sanitized
+
     candidates = [
-        value for value in raw
+        value
+        for value in raw
         if isinstance(value, str)
         and redact_sensitive(value) == value
         and "[REDACTED" not in value
@@ -66,8 +83,81 @@ def _sanitize_work_ref_metadata(metadata: dict | None) -> dict | None:
         sanitized[_WORK_REFS_METADATA_KEY] = list(refs)
     else:
         sanitized.pop(_WORK_REFS_METADATA_KEY, None)
-    return sanitized
 
+    if (
+        not isinstance(sources, list)
+        or len(sources) != len(raw)
+        or any(
+            not isinstance(source, str)
+            or source not in {"structural", "caller", "registry"}
+            for source in sources
+        )
+        or not isinstance(status, str)
+        or status not in {"complete", "partial", "unavailable"}
+    ):
+        return sanitized
+
+    sanitized["pallium_relay_work_refs_status"] = status
+    selected = set(refs)
+    caller_seen = 0
+    caller_input_count = sum(source == "caller" for source in sources)
+    caller_examined_count = min(caller_input_count, 20)
+    caller_input_truncated = caller_input_count > 20
+    invalid_count = 0
+    omitted_valid_count = 0
+    omitted_seen: set[str] = set()
+    omitted_registry_seen: set[str] = set()
+    omitted: list[dict[str, str]] = []
+    omitted_registry: list[str] = []
+    for value, source in zip(raw, sources):
+        if source == "caller":
+            caller_seen += 1
+            if caller_seen > 20:
+                continue
+        elif not isinstance(source, str) or source not in {"structural", "registry"}:
+            source = "unknown"
+        safe = (
+            isinstance(value, str)
+            and redact_sensitive(value) == value
+            and "[REDACTED" not in value
+        )
+        normalized = _normalize_work_ref(value) if safe else None
+        if normalized is None:
+            invalid_count += 1
+            continue
+        if normalized in selected:
+            continue
+        if (
+            source == "registry"
+            and normalized not in omitted_registry_seen
+            and len(omitted_registry) < 3
+        ):
+            omitted_registry_seen.add(normalized)
+            omitted_registry.append(normalized)
+        if normalized in omitted_seen:
+            continue
+        omitted_seen.add(normalized)
+        omitted_valid_count += 1
+        if len(omitted) < 5:
+            omitted.append({"work_ref": normalized, "source": source})
+
+    if omitted:
+        sanitized["pallium_work_refs_omitted"] = omitted
+    if omitted_registry:
+        sanitized["pallium_work_refs_omitted_registry"] = omitted_registry
+    sanitized["pallium_work_refs_diagnostics"] = {
+        "omitted_valid_count": omitted_valid_count,
+        "invalid_count": invalid_count,
+        "caller_input_count": caller_input_count,
+        "caller_examined_count": caller_examined_count,
+        "caller_input_truncated": caller_input_truncated,
+        "counts_complete": not caller_input_truncated,
+    }
+    if status != "unavailable" and (
+        omitted_valid_count or invalid_count or caller_input_truncated
+    ):
+        sanitized["pallium_relay_work_refs_status"] = "partial"
+    return sanitized
 
 def _build_workstream_capability(storage) -> WorkstreamCapability | None:
     """Wire a SQLite-backed WorkstreamCapability when the storage exposes a

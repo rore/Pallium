@@ -64,6 +64,20 @@ def asgi_post(relay_app):
     return _post
 
 
+@pytest.fixture()
+def asgi_get(relay_app):
+    async def _get(path, params):
+        transport = httpx.ASGITransport(app=relay_app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            timeout=30.0,
+        ) as http:
+            response = await http.get(path, params=params)
+            response.raise_for_status()
+            return response.json()
+    return _get
+
 def bind_asgi_post(monkeypatch: pytest.MonkeyPatch, asgi_post) -> None:
     async def _post(_client, path, payload, **_kwargs):
         try:
@@ -76,6 +90,21 @@ def bind_asgi_post(monkeypatch: pytest.MonkeyPatch, asgi_post) -> None:
             }
 
     monkeypatch.setattr(PalliumMcpClient, "_post_or_error", _post)
+
+def bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get) -> None:
+    bind_asgi_post(monkeypatch, asgi_post)
+
+    async def _get(_client, path, params):
+        try:
+            return await asgi_get(path, params)
+        except httpx.HTTPStatusError as exc:
+            return {
+                "error": str(exc),
+                "status_code": exc.response.status_code,
+                "detail": exc.response.json(),
+            }
+
+    monkeypatch.setattr(PalliumMcpClient, "_get_or_error", _get)
 
 @pytest.fixture(autouse=True)
 def base_env(monkeypatch: pytest.MonkeyPatch):
@@ -476,8 +505,77 @@ async def test_long_mcp_preview_status_pages_and_ack_reconstruct_stored_body(
     assert json.loads(ack[0].text)["state"] == "delivered"
 
 
+class TestRelayWorkRefTools:
+    @pytest.mark.asyncio
+    async def test_attach_list_participants_detach_lifecycle(
+        self, monkeypatch, asgi_post, asgi_get
+    ):
+        bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+        await asgi_post(
+            "/relay/turn",
+            {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE},
+        )
+        server = create_server()
+        value = {
+            "scope_ref": "roadmap:v1:git:example.test/relay-tools#roadmap",
+            "local_ref": "feature:relay-work-refs",
+        }
+
+        attached, _ = await server.call_tool(
+            "pallium_relay_attach_work_ref", value
+        )
+        attached_body = json.loads(attached[0].text)
+        assert attached_body["attached"]["scope_ref"] == value["scope_ref"]
+        assert attached_body["attached"]["work_ref"].startswith("work:v1:")
+
+        listed, _ = await server.call_tool("pallium_relay_work_refs", {})
+        listed_body = json.loads(listed[0].text)
+        assert listed_body["work_refs"][0]["local_ref"] == value["local_ref"]
+
+        found, _ = await server.call_tool(
+            "pallium_relay_participants", value
+        )
+        found_body = json.loads(found[0].text)
+        assert found_body["participants"][0]["session_ref"] == _SESSION
+        assert found_body["next_offset"] is None
+
+        detached, _ = await server.call_tool(
+            "pallium_relay_detach_work_ref", value
+        )
+        assert json.loads(detached[0].text)["detached"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tool,args",
+        [
+            ("pallium_relay_work_refs", {}),
+            (
+                "pallium_relay_attach_work_ref",
+                {"scope_ref": "scope", "local_ref": "local"},
+            ),
+            (
+                "pallium_relay_detach_work_ref",
+                {"scope_ref": "scope", "local_ref": "local"},
+            ),
+        ],
+    )
+    async def test_current_session_tools_fail_closed_without_thread_identity(
+        self, monkeypatch, tool, args
+    ):
+        monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
+        with patch.object(
+            PalliumMcpClient, "relay_work_refs", new_callable=AsyncMock
+        ) as request:
+            content, _ = await create_server().call_tool(tool, args)
+        assert "PALLIUM_THREAD_REF" in content[0].text
+        request.assert_not_awaited()
+
 _RELAY_SCOPE_TOOL_METHODS = {
     "pallium_relay_recipients": ("relay_recipients", {}),
+    "pallium_relay_work_refs": ("relay_work_refs", {}),
+    "pallium_relay_attach_work_ref": ("relay_attach_work_ref", {"scope_ref": "scope", "local_ref": "local"}),
+    "pallium_relay_detach_work_ref": ("relay_detach_work_ref", {"scope_ref": "scope", "local_ref": "local"}),
+    "pallium_relay_participants": ("relay_work_ref_participants", {"scope_ref": "scope", "local_ref": "local"}),
     "pallium_relay_name": (
         "relay_name",
         {"current_runtime": _RUNTIME, "current_session_ref": _SESSION, "name": "review"},
@@ -873,3 +971,82 @@ async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
         "container_ref": _SCOPE["container_ref"],
     })
     assert json.loads(other_actor[0].text)["recipients"]
+
+
+@pytest.mark.asyncio
+async def test_participant_pages_trim_to_budget_with_truthful_continuation():
+    rows = [
+        {
+            "endpoint_id": f"relay-session-{index:032x}",
+            "session_ref": '"' * 3_000 + str(index),
+        }
+        for index in range(5)
+    ]
+
+    async def page(_client, *, offset, limit, **_kwargs):
+        return {
+            "contract": "relay-session-work-associations/v1",
+            "participants": rows[offset:offset + limit],
+        }
+
+    seen = []
+    offset = 0
+    with patch.object(PalliumMcpClient, "relay_work_ref_participants", new=page):
+        server = create_server()
+        while True:
+            content, _ = await server.call_tool(
+                "pallium_relay_participants",
+                {"scope_ref": "scope", "local_ref": "local", "offset": offset},
+            )
+            assert len(content[0].text) <= 12_000
+            body = json.loads(content[0].text)
+            page_rows = body["participants"]
+            seen.extend(row["endpoint_id"] for row in page_rows)
+            if body["next_offset"] is None:
+                break
+            assert body["next_offset"] == offset + len(page_rows)
+            offset = body["next_offset"]
+
+    assert seen == [row["endpoint_id"] for row in rows]
+@pytest.mark.asyncio
+async def test_participant_secret_is_rejected_before_transport():
+    secret = "ghp_" + "A" * 36
+    with patch.object(
+        PalliumMcpClient, "relay_work_ref_participants", new_callable=AsyncMock
+    ) as request:
+        content, _ = await create_server().call_tool(
+            "pallium_relay_participants",
+            {"scope_ref": "tracker:v1:example.test#project", "local_ref": secret},
+        )
+    assert secret not in content[0].text
+    assert "invalid readable work reference" in content[0].text
+    request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_transport_redacts_secret_from_http_error(monkeypatch):
+    from app.mcp.context import PalliumContext
+
+    secret = "ghp_" + "A" * 36
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            422,
+            json={"detail": [{"input": secret}]},
+            request=request,
+        )
+    )
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: real_client(*args, transport=transport, **kwargs),
+    )
+    result = await PalliumMcpClient(
+        PalliumContext(base_url="http://testserver")
+    )._get_or_error(
+        "/relay/work-refs/participants",
+        {"scope_ref": "scope", "local_ref": secret},
+    )
+    rendered = json.dumps(result)
+    assert secret not in rendered
+    assert result["error"] == "HTTP 422 from /relay/work-refs/participants"

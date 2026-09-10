@@ -70,6 +70,32 @@ Legacy runtime-qualified forms apply to other supported runtimes.
 
 `pallium_relay_name(name="…")` assigns or transfers a name. First try without takeover; if occupied, fail and ask the user. Retry with `replace_existing=true` only after explicit approval, or immediately when the original request explicitly says to take over. Transferring a name affects future sends; messages already queued remain addressed to the original session.
 
+## Associate sessions with exact work
+
+A session can retain up to three explicit work references alongside the two
+structural references discovered from its branch and Agent Workflow record. Use
+`pallium_relay_attach_work_ref(scope_ref, local_ref)` and
+`pallium_relay_detach_work_ref(scope_ref, local_ref)` for the current session.
+`pallium_relay_work_refs()` reads the current snapshot, and
+`pallium_relay_participants(scope_ref, local_ref)` finds every active participant
+for one exact reference; pass `include_closed=true` only when closed sessions matter.
+
+Normal inputs are a readable `scope_ref` and `local_ref`. Pallium returns their
+fixed-length `work:v1:<sha256>` exact key for advanced lookup and exact Session
+History search. Repository-scoped producers use a credential-free canonical Git
+identity, so the same repository is stable across worktrees and unrelated
+repositories do not collide. Bare tracker keys are ambiguous: supply their tracker
+project scope instead of letting an agent guess.
+
+Association is not ownership, activity, completion, wake, routing permission, or
+History access. Participant discovery never sends, claims, or wakes. Alias transfer
+does not transfer associations; close/reopen retains them. Structural refresh
+replaces only structural origins, while explicit references survive branch changes.
+Future hook turns capture the then-current bounded snapshot into immutable History
+metadata; detaching later never relabels older turns. If caller or structural refs
+already fill History's five-reference cap, hook output reports which registry refs
+were omitted rather than claiming they are searchable.
+
 ## Replies
 
 A received message includes a `delivery_id`. `pallium_relay_reply` uses that ID

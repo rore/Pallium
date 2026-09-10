@@ -105,6 +105,91 @@ export function pathContainer(cwd) {
   return `path:${h}`;
 }
 
+export function canonicalGitRemote(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const raw = value.trim();
+  const unsafeCodePoint = char => {
+    const code = char.codePointAt(0);
+    return (code >= 0xD800 && code <= 0xDFFF) || code < 0x20 || (code >= 0x7F && code <= 0x9F);
+  };
+  if ([...raw].some(unsafeCodePoint) || raw.includes("\\")) return null;
+
+  let scheme, host, port, repoPath;
+  const scp = /^([^/@:]+)@([^/:]+):(.+)$/.exec(raw);
+  if (scp) {
+    if ([...(scp[1] + scp[2])].some(char => char.trim() === "")) return null;
+    scheme = "ssh"; host = scp[2]; port = null; repoPath = scp[3];
+  } else {
+    const schemeEnd = raw.indexOf("://");
+    if (schemeEnd < 0) return null;
+    const afterScheme = raw.slice(schemeEnd + 3);
+    const authority = afterScheme.split("/")[0].split("?")[0].split("#")[0];
+    if (!authority || authority.endsWith(":")) return null;
+    const rawPath = afterScheme.slice(authority.length).split("?")[0].split("#")[0];
+    if ([...authority].some(char => char.codePointAt(0) > 0x7F) || authority.includes("%")) return null;
+    for (const part of rawPath.split("/")) {
+      let decoded;
+      try { decoded = decodeURIComponent(part); } catch { return null; }
+      if (decoded === "." || decoded === "..") return null;
+    }
+
+    let parsed;
+    try { parsed = new URL(raw); } catch { return null; }
+    if (!(parsed.protocol === "https:" || parsed.protocol === "ssh:") || !parsed.hostname) return null;
+    if (parsed.password || (parsed.username && parsed.protocol !== "ssh:")) return null;
+    if (parsed.username && !/^[A-Za-z0-9._-]+$/.test(parsed.username)) return null;
+    let suffix;
+    try { suffix = decodeURIComponent([parsed.search.slice(1), parsed.hash.slice(1)].filter(Boolean).join("&")); } catch { return null; }
+    if (suffix && (redactSensitive(suffix) !== suffix || /(?:token|password|secret|api[_-]?key)=/i.test(suffix))) return null;
+    try { repoPath = decodeURIComponent(parsed.pathname); } catch { return null; }
+    scheme = parsed.protocol.slice(0, -1); host = parsed.hostname; port = parsed.port || null;
+  }
+  if (!host || [...host].some(char => char.codePointAt(0) > 0x7F) || !repoPath || [...repoPath].some(unsafeCodePoint)) return null;
+  if (port !== null && (!/^[0-9]+$/.test(port) || Number(port) < 1 || Number(port) > 65535)) return null;
+  const defaultPort = scheme === "ssh" ? "22" : "443";
+  let authority = host.toLowerCase();
+  if (port !== null && port !== defaultPort) authority += ":" + Number(port);
+  repoPath = repoPath.normalize("NFC").replace(/^[/]+|[/]+$/g, "");
+  if (repoPath.endsWith(".git")) repoPath = repoPath.slice(0, -4);
+  if (!repoPath || repoPath.split("/").some(part => !part || part === "." || part === "..")) return null;
+  if (host.toLowerCase() === "github.com") repoPath = repoPath.toLowerCase();
+  return "git:" + authority + "/" + repoPath;
+}
+export function roadmapScopeRef(repositoryRef, root = "roadmap") {
+  if (typeof root !== "string" || !root) throw new Error("roadmap root is required");
+  root = root.replaceAll("\\", "/");
+  let encoded;
+  if (root === ".") encoded = ".";
+  else {
+    if (root.startsWith("/") || /^[A-Za-z]:\//.test(root)) throw new Error("roadmap root must be repository-relative");
+    const parts = root.split("/");
+    if (parts.some(part => !part || part === "." || part === "..")) throw new Error("roadmap root contains an invalid segment");
+    encoded = parts.map(part => encodeURIComponent(part.normalize("NFC")).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)).join("/");
+  }
+  return `roadmap:v1:${repositoryRef}#${encoded}`;
+}
+
+export function repositoryScopeRef(cwd) {
+  const remote = _runGit(["remote", "get-url", "origin"], cwd);
+  if (remote.ok) {
+    const value = canonicalGitRemote(remote.stdout.trim());
+    if (value) return value;
+  }
+  const root = _runGit(["rev-list", "--max-parents=0", "HEAD"], cwd);
+  if (root.ok) {
+    const value = root.stdout.trim().split(/\r?\n/)[0];
+    if (/^[0-9a-f]{40,64}$/i.test(value)) return `repo:${value.toLowerCase()}`;
+  }
+  return null;
+}
+export function structuralWorkRefsPayload(containerRef, structuralRefs, repositoryRef = null) {
+  const repo = repositoryRef || containerRef;
+  const roadmap = roadmapScopeRef(repo, "roadmap");
+  return (Array.isArray(structuralRefs) ? structuralRefs : []).map(localRef => ({
+    scope_ref: String(localRef).startsWith("agent-workflow:") ? roadmap : repo,
+    local_ref: localRef,
+  }));
+}
 export function deriveContainerRef(cwd) {
   const remote = _runGit(["remote", "get-url", "origin"], cwd);
   if (remote.spawnError) return pathContainer(cwd);
@@ -378,11 +463,15 @@ export async function relayRequest(method, reqPath, payload, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const resp = await fetch(`${PALLIUM_BASE_URL}${reqPath}`, {
+    const isGet = method === "GET";
+    const query = isGet ? "?" + new URLSearchParams(payload).toString() : "";
+    const resp = await fetch(`${PALLIUM_BASE_URL}${reqPath}${query}`, {
       method,
       signal: controller.signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      ...(isGet ? {} : {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
     });
     if (!resp.ok) {
       try { await resp.body?.cancel(); } catch { /* ignore */ }

@@ -102,6 +102,102 @@ class TestIngestWorkRefSanitization:
         assert result == {"pallium_work_refs": ["proj-1"], "other": {"keep": "value"}}
         assert metadata["other"] == {"keep": "value"}
 
+    def test_bounded_diagnostics_do_not_change_legacy_selection_or_echo_secrets(self):
+        secret = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
+        callers = [secret, *[f"CALLER-{index}" for index in range(21)]]
+        refs = ["BRANCH", "WORK-RECORD", *callers, "REGISTRY-1", "REGISTRY-2"]
+        result = _sanitize_work_ref_metadata({
+            "pallium_work_refs": refs,
+            "pallium_work_ref_sources": (
+                ["structural", "structural"]
+                + ["caller"] * len(callers)
+                + ["registry", "registry"]
+            ),
+            "pallium_relay_work_refs_status": "complete",
+        })
+
+        assert result["pallium_work_refs"] == [
+            "branch", "work-record", "caller-0", "caller-1", "caller-2"
+        ]
+        assert result["pallium_relay_work_refs_status"] == "partial"
+        assert result["pallium_work_refs_diagnostics"] == {
+            "omitted_valid_count": 18,
+            "invalid_count": 1,
+            "caller_input_count": 22,
+            "caller_examined_count": 20,
+            "caller_input_truncated": True,
+            "counts_complete": False,
+        }
+        assert len(result["pallium_work_refs_omitted"]) == 5
+        assert result["pallium_work_refs_omitted_registry"] == [
+            "registry-1",
+            "registry-2",
+        ]
+        assert all(secret not in str(value) for value in result.values())
+        assert "pallium_work_ref_sources" not in result
+
+    def test_selection_diagnostics_use_authoritative_casefold_and_separators(self):
+        refs = [
+            "s",
+            "S",
+            "white space",
+            "white_space",
+            "Straße",
+            "STRASSE",
+            "one",
+            "two",
+            "three",
+            "four",
+            "REGISTRY-1",
+            "REGISTRY-2",
+        ]
+        result = _sanitize_work_ref_metadata({
+            "pallium_work_refs": refs,
+            "pallium_work_ref_sources": ["caller"] * 10 + ["registry"] * 2,
+            "pallium_relay_work_refs_status": "complete",
+        })
+
+        assert result["pallium_work_refs"] == [
+            "s",
+            "white-space",
+            "strasse",
+            "one",
+            "two",
+        ]
+        assert result["pallium_work_refs_diagnostics"]["omitted_valid_count"] == 4
+        assert result["pallium_work_refs_omitted_registry"] == [
+            "registry-1",
+            "registry-2",
+        ]
+
+    def test_empty_unavailable_capture_preserves_only_validated_status(self):
+        result = _sanitize_work_ref_metadata({
+            "pallium_work_ref_sources": [],
+            "pallium_relay_work_refs_status": "unavailable",
+            "pallium_work_refs_omitted_registry": ["forged"],
+            "pallium_work_refs_diagnostics": {"omitted_valid_count": 99},
+        })
+        assert result == {"pallium_relay_work_refs_status": "unavailable"}
+        assert _sanitize_work_ref_metadata({
+            "pallium_work_ref_sources": [],
+            "pallium_relay_work_refs_status": {},
+        }) == {}
+        assert _sanitize_work_ref_metadata({
+            "pallium_work_ref_sources": [],
+            "pallium_relay_work_refs_status": [],
+        }) == {}
+
+    def test_unavailable_status_survives_partial_diagnostics(self):
+        result = _sanitize_work_ref_metadata({
+            "pallium_work_refs": ["one", "two", "three", "four", "five", "six"],
+            "pallium_work_ref_sources": ["caller"] * 6,
+            "pallium_relay_work_refs_status": "unavailable",
+        })
+        assert result["pallium_work_refs"] == ["one", "two", "three", "four", "five"]
+        assert result["pallium_relay_work_refs_status"] == "unavailable"
+        assert result["pallium_work_refs_omitted"] == [
+            {"work_ref": "six", "source": "caller"}
+        ]
     def test_invalid_work_ref_key_is_removed_without_touching_note_metadata(self):
         metadata = {"pallium_work_refs": "PROJ-1", "content_hint": "verbatim"}
         assert _sanitize_work_ref_metadata(metadata) == {"content_hint": "verbatim"}

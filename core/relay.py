@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.container_ref import validate_explicit_container_ref
+from core.work_ref import readable_work_ref, validate_work_ref_key
 from redaction import redact_sensitive
 
 
@@ -16,6 +17,7 @@ RELAY_MESSAGE_MAX_CHARS = 16000
 RELAY_MESSAGE_PAGE_DEFAULT_CHARS = 2000
 RELAY_TURN_MAX_CHARS = 2400
 RELAY_TURN_MAX_MESSAGES = 3
+RELAY_MAX_STRUCTURAL_WORK_REFS = 2
 
 RELAY_DEFAULT_EXPIRY_SECONDS: int | None = None
 RELAY_MIN_EXPIRY_SECONDS = 60
@@ -141,6 +143,7 @@ class RelayService:
         max_response_chars: int = 0,
         max_messages: int = RELAY_TURN_MAX_MESSAGES,
         register_session: bool = True,
+        structural_work_refs: Any = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container = self._scope(container_ref)
@@ -150,9 +153,11 @@ class RelayService:
             raise ValueError("max_response_chars must be >= 0 (0 = no limit)")
         if max_messages < 0:
             raise ValueError("max_messages must be >= 0 (0 = no limit)")
-        return self._store.relay_turn(
-            runtime=validate_runtime(runtime),
-            session_ref=_opaque(session_ref, "session_ref"),
+        runtime = validate_runtime(runtime)
+        session_ref = _opaque(session_ref, "session_ref")
+        result = self._store.relay_turn(
+            runtime=runtime,
+            session_ref=session_ref,
             container_ref=container,
             title=None if title is None else _opaque(title, "title", maximum=255),
             max_chars=max_chars,
@@ -162,7 +167,213 @@ class RelayService:
             register_session=register_session,
             now=now,
         )
+        if structural_work_refs is None:
+            result["structural_work_refs_status"] = "unchanged"
+            return result
+        try:
+            if (
+                not isinstance(structural_work_refs, list)
+                or len(structural_work_refs) > RELAY_MAX_STRUCTURAL_WORK_REFS
+            ):
+                raise ValueError(
+                    "structural_work_refs must contain at most 2 readable work references"
+                )
+            normalized = []
+            for item in structural_work_refs:
+                value = self._work_ref_input(item["scope_ref"], item["local_ref"])
+                if not any(row["work_ref"] == value["work_ref"] for row in normalized):
+                    normalized.append(value)
+            operation = getattr(self._store, "relay_refresh_structural_work_refs", None)
+            if not callable(operation):
+                raise RelayUnavailableError(
+                    "relay work associations are not supported by configured storage"
+                )
+            result["work_refs"] = operation(
+                runtime=runtime,
+                session_ref=session_ref,
+                container_ref=container,
+                work_refs=normalized,
+                now=now,
+            )
+            result["structural_work_refs_status"] = "complete"
+        except Exception:
+            result["structural_work_refs_status"] = "unavailable"
+            result["structural_work_refs_error"] = "structural work-reference refresh failed"
+        return result
 
+    @staticmethod
+    def _work_ref_input(scope_ref: str, local_ref: str) -> dict[str, str]:
+        value = readable_work_ref(scope_ref, local_ref)
+        return {
+            "work_ref": value.key,
+            "scope_ref": value.scope_ref,
+            "local_ref": value.local_ref,
+        }
+
+    @staticmethod
+    def _work_ref_guidance(work_ref: str) -> str:
+        return (
+            f'Copy exact key "{work_ref}" into the existing exact History work_ref search; '
+            "the persisted association is evaluated independently on each turn."
+        )
+
+    def session_work_refs(
+        self, *, runtime: str, session_ref: str, container_ref: str
+    ) -> dict[str, Any]:
+        operation = getattr(self._store, "relay_session_work_refs", None)
+        if not callable(operation):
+            raise RelayUnavailableError(
+                "relay work associations are not supported by configured storage"
+            )
+        result = operation(
+            runtime=validate_runtime(runtime),
+            session_ref=_opaque(session_ref, "session_ref"),
+            container_ref=self._scope(container_ref),
+        )
+        for item in result["work_refs"]:
+            item["history_guidance"] = self._work_ref_guidance(item["work_ref"])
+        return result
+
+    def attach_work_ref(
+        self,
+        *,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        scope_ref: str,
+        local_ref: str,
+    ) -> dict[str, Any]:
+        operation = getattr(self._store, "relay_attach_work_ref", None)
+        if not callable(operation):
+            raise RelayUnavailableError(
+                "relay work associations are not supported by configured storage"
+            )
+        value = self._work_ref_input(scope_ref, local_ref)
+        result = operation(
+            runtime=validate_runtime(runtime),
+            session_ref=_opaque(session_ref, "session_ref"),
+            container_ref=self._scope(container_ref),
+            work_ref=value,
+        )
+        result["history_guidance"] = self._work_ref_guidance(value["work_ref"])
+        return result
+
+    def detach_work_ref(
+        self,
+        *,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        scope_ref: str,
+        local_ref: str,
+    ) -> dict[str, Any]:
+        operation = getattr(self._store, "relay_detach_work_ref", None)
+        if not callable(operation):
+            raise RelayUnavailableError(
+                "relay work associations are not supported by configured storage"
+            )
+        value = self._work_ref_input(scope_ref, local_ref)
+        result = operation(
+            runtime=validate_runtime(runtime),
+            session_ref=_opaque(session_ref, "session_ref"),
+            container_ref=self._scope(container_ref),
+            work_ref=value["work_ref"],
+        )
+        result.update(
+            work_ref=value["work_ref"],
+            scope_ref=value["scope_ref"],
+            local_ref=value["local_ref"],
+            history_guidance=self._work_ref_guidance(value["work_ref"]),
+        )
+        return result
+
+    def administer_work_ref(
+        self,
+        *,
+        endpoint_id: str,
+        action: str,
+        scope_ref: str,
+        local_ref: str,
+    ) -> dict[str, Any]:
+        endpoint_id = _opaque(endpoint_id, "endpoint_id", maximum=46)
+        if not _ENDPOINT_ID_RE.fullmatch(endpoint_id):
+            raise ValueError("endpoint_id must be a canonical Relay endpoint")
+        if action not in {"attach", "detach"}:
+            raise ValueError("action must be attach or detach")
+        resolve = getattr(self._store, "relay_session_scope_by_endpoint", None)
+        if not callable(resolve):
+            raise RelayUnavailableError(
+                "relay work associations are not supported by configured storage"
+            )
+        scope = resolve(endpoint_id)
+        value = self._work_ref_input(scope_ref, local_ref)
+        if action == "attach":
+            result = self._store.relay_attach_work_ref(
+                **scope, work_ref=value, allow_closed=True
+            )
+            result["history_guidance"] = self._work_ref_guidance(value["work_ref"])
+            return result
+        result = self._store.relay_detach_work_ref(
+            **scope, work_ref=value["work_ref"], allow_closed=True
+        )
+        result.update(
+            work_ref=value["work_ref"],
+            scope_ref=value["scope_ref"],
+            local_ref=value["local_ref"],
+            history_guidance=self._work_ref_guidance(value["work_ref"]),
+        )
+        return result
+    def work_ref_participants(
+        self,
+        *,
+        scope_ref: str | None = None,
+        local_ref: str | None = None,
+        work_ref: str | None = None,
+        container_ref: str | None = None,
+        include_closed: bool = False,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        readable_supplied = scope_ref is not None or local_ref is not None
+        if (work_ref is None) == (not readable_supplied):
+            raise ValueError(
+                "provide either readable scope_ref/local_ref or one advanced work_ref key"
+            )
+        if work_ref is None:
+            if scope_ref is None or local_ref is None:
+                raise ValueError("scope_ref and local_ref are required together")
+            readable = self._work_ref_input(scope_ref, local_ref)
+        else:
+            if readable_supplied:
+                raise ValueError(
+                    "advanced work_ref cannot be combined with scope_ref/local_ref"
+                )
+            readable = {"work_ref": validate_work_ref_key(work_ref)}
+        if offset < 0:
+            raise ValueError("offset must be >= 0")
+        if not 1 <= limit <= 200:
+            raise ValueError("limit must be between 1 and 200")
+        container = self._scope(container_ref) if container_ref is not None else None
+        operation = getattr(self._store, "relay_work_ref_participants", None)
+        if not callable(operation):
+            raise RelayUnavailableError(
+                "relay work associations are not supported by configured storage"
+            )
+        participants = operation(
+            work_ref=readable["work_ref"],
+            include_closed=include_closed,
+            container_ref=container,
+            offset=offset,
+            limit=limit,
+        )
+        return {
+            "contract": "relay-session-work-associations/v1",
+            **readable,
+            "history_guidance": self._work_ref_guidance(readable["work_ref"]),
+            "participants": participants,
+            "offset": offset,
+            "limit": limit,
+        }
     def close_session(self, **scope: Any) -> dict[str, Any]:
         container = self._scope(scope["container_ref"])
         return self._store.relay_close_session(

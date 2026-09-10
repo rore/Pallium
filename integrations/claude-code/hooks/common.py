@@ -17,6 +17,7 @@ import time
 import unicodedata
 import uuid
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -344,16 +345,327 @@ def discover_work_refs(cwd: object) -> WorkRefDiscovery:
         return WorkRefDiscovery()
 
 
+def structural_work_refs_payload(
+    container_ref: str, discovery: WorkRefDiscovery, cwd: str | None = None
+) -> list[dict[str, str]]:
+    repository_ref = repository_scope_ref(cwd) if cwd else None
+    if cwd and not repository_ref:
+        return []
+    repository_ref = repository_ref or container_ref
+    roadmap_ref = roadmap_scope_ref(repository_ref, "roadmap")
+    return [{"scope_ref": roadmap_ref if ref.startswith("agent-workflow:") else repository_ref, "local_ref": ref} for ref in discovery.structural_refs]
+
+
+def canonical_git_remote(url: str) -> str | None:
+    if not isinstance(url, str) or not url.strip():
+        return None
+    raw = url.strip()
+    if "\\" in raw:
+        return None
+    if any(
+        0xD800 <= ord(char) <= 0xDFFF
+        or ord(char) < 0x20
+        or 0x7F <= ord(char) <= 0x9F
+        for char in raw
+    ):
+        return None
+
+    scp = re.fullmatch(
+        r"(?P<user>[^/@:]+)@(?P<host>[^/:]+):(?P<path>.+)", raw
+    )
+    if scp:
+        if any(char.isspace() for char in scp.group("user") + scp.group("host")):
+            return None
+        scheme, host, port, path = (
+            "ssh",
+            scp.group("host"),
+            None,
+            scp.group("path"),
+        )
+    else:
+        try:
+            parsed = urllib.parse.urlsplit(raw)
+            if parsed.netloc.rsplit("@", 1)[-1].endswith(":"):
+                return None
+            if parsed.scheme not in {"https", "ssh"} or not parsed.hostname:
+                return None
+            if parsed.password is not None or (
+                parsed.username is not None and parsed.scheme != "ssh"
+            ):
+                return None
+            if parsed.username is not None and not re.fullmatch(
+                r"[A-Za-z0-9._-]+", parsed.username
+            ):
+                return None
+            if re.search(
+                r"%(?![0-9A-Fa-f]{2})",
+                parsed.path + parsed.query + parsed.fragment,
+            ):
+                return None
+            suffix = urllib.parse.unquote(
+                "&".join(part for part in (parsed.query, parsed.fragment) if part),
+                errors="strict",
+            )
+            if suffix and (
+                redact_sensitive(suffix) != suffix
+                or re.search(r"(?i)(?:token|password|secret|api[_-]?key)=", suffix)
+            ):
+                return None
+            scheme, host, port, path = (
+                parsed.scheme,
+                parsed.hostname,
+                parsed.port,
+                urllib.parse.unquote(parsed.path, errors="strict"),
+            )
+            port = str(port) if port is not None else None
+        except (ValueError, UnicodeError):
+            return None
+
+    if (
+        not host
+        or not host.isascii()
+        or "%" in host
+        or not path
+        or any(ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F for char in path)
+    ):
+        return None
+    try:
+        if port is not None and not 1 <= int(port) <= 65535:
+            return None
+        default = "22" if scheme == "ssh" else "443"
+    except ValueError:
+        return None
+    authority = host.lower()
+    if port is not None and port != default:
+        authority += f":{int(port)}"
+    path = unicodedata.normalize("NFC", path).strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    if not path or any(part in {"", ".", ".."} for part in path.split("/")):
+        return None
+    if host.lower() == "github.com":
+        path = path.lower()
+    return f"git:{authority}/{path}"
+
+def repository_scope_ref(cwd: str) -> str | None:
+    try:
+        remote = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True, cwd=cwd, timeout=_bounded_timeout(SUBPROCESS_TIMEOUT))
+        if remote.returncode == 0:
+            value = canonical_git_remote(remote.stdout.strip())
+            if value:
+                return value
+        root = subprocess.run(["git", "rev-list", "--max-parents=0", "HEAD"], capture_output=True, text=True, cwd=cwd, timeout=_bounded_timeout(SUBPROCESS_TIMEOUT))
+        if root.returncode == 0:
+            value = root.stdout.strip().splitlines()[0]
+            if re.fullmatch(r"[0-9a-fA-F]{40,64}", value):
+                return f"repo:{value.lower()}"
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, IndexError):
+        pass
+    return None
+
+
+def roadmap_scope_ref(repository_ref: str, root: str = "roadmap") -> str:
+    if not isinstance(root, str) or not root:
+        raise ValueError("roadmap root is required")
+    root = root.replace("\\", "/")
+    if root == ".":
+        encoded = "."
+    else:
+        if root.startswith("/") or re.match(r"^[A-Za-z]:/", root):
+            raise ValueError("roadmap root must be repository-relative")
+        parts = root.split("/")
+        if any(not part or part in {".", ".."} for part in parts):
+            raise ValueError("roadmap root contains an invalid segment")
+        encoded = "/".join(urllib.parse.quote(unicodedata.normalize("NFC", part), safe="-._~") for part in parts)
+    return f"roadmap:v1:{repository_ref}#{encoded}"
+
+
+def _confirmed_work_ref(value: object) -> bool:
+    return isinstance(value, str) and bool(
+        re.fullmatch(r"work:v1:[0-9a-f]{64}", value)
+    )
+
+
+def confirmed_registry_work_refs(response: object) -> list[str]:
+    if not isinstance(response, dict):
+        return []
+    rows = response.get("work_refs")
+    if not isinstance(rows, list):
+        return []
+    result = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("origin") != "explicit":
+            continue
+        key = row.get("work_ref")
+        if _confirmed_work_ref(key) and key not in result:
+            result.append(key)
+        if len(result) == 3:
+            break
+    return result
+
+
 def build_work_refs_metadata(
     cwd: str,
     explicit_refs: object = None,
     discovery: WorkRefDiscovery | None = None,
+    confirmed_refs: object = None,
+    relay_status: str | None = None,
 ) -> dict[str, object]:
-    refs = _explicit_work_refs(explicit_refs)
+    callers = _explicit_work_refs(explicit_refs)
     found = discovery if discovery is not None else discover_work_refs(cwd)
-    refs = list(found.structural_refs) + refs
-    return {"pallium_work_refs": refs} if refs else {}
+    structural = list(found.structural_refs)
+    confirmed = []
+    if isinstance(confirmed_refs, list):
+        for ref in confirmed_refs:
+            if _confirmed_work_ref(ref) and ref not in confirmed:
+                confirmed.append(ref)
+    refs = structural + callers
+    for ref in confirmed:
+        if ref not in refs:
+            refs.append(ref)
+    metadata: dict[str, object] = {}
+    if refs:
+        metadata["pallium_work_refs"] = refs
+    if relay_status in {"complete", "partial", "unavailable"}:
+        metadata["pallium_work_ref_sources"] = (
+            ["structural"] * len(structural)
+            + ["caller"] * len(callers)
+            + ["registry"] * (len(refs) - len(structural) - len(callers))
+        )
+        metadata["pallium_relay_work_refs_status"] = relay_status
+    return metadata
 
+
+def _warning_work_ref(value: object) -> str | None:
+    if not isinstance(value, str) or redact_sensitive(value) != value or "[REDACTED" in value:
+        return None
+    normalized = value.strip().casefold()
+    if not normalized or len(normalized) > 128:
+        return None
+    normalized = re.sub(r"[\s_-]+", "-", normalized).strip("-")
+    return normalized or None
+
+def work_ref_warning(metadata: object) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    status = metadata.get("pallium_relay_work_refs_status")
+    if status == "unavailable":
+        return (
+            "[Pallium work refs: Relay association enrichment was unavailable; "
+            "branch, Work Record, and supplied refs were still recorded.]"
+        )
+
+    diagnostics = metadata.get("pallium_work_refs_diagnostics")
+    if isinstance(diagnostics, dict):
+        omitted_registry = metadata.get("pallium_work_refs_omitted_registry", [])
+        if not isinstance(omitted_registry, list):
+            omitted_registry = []
+        omitted_valid_count = diagnostics.get("omitted_valid_count", 0)
+        invalid_count = diagnostics.get("invalid_count", 0)
+        caller_input_count = diagnostics.get("caller_input_count", 0)
+        caller_examined_count = diagnostics.get("caller_examined_count", 0)
+        if not all(
+            isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            for value in (
+                omitted_valid_count,
+                invalid_count,
+                caller_input_count,
+                caller_examined_count,
+            )
+        ):
+            return ""
+        registry = [
+            value
+            for value in omitted_registry[:3]
+            if isinstance(value, str)
+        ]
+        unexamined = max(0, caller_input_count - caller_examined_count)
+        if not omitted_valid_count and not invalid_count and not unexamined:
+            return ""
+        details = []
+        if registry:
+            details.append(
+                "associated "
+                + ", ".join(registry)
+                + " not searchable from this turn"
+            )
+        additional = max(0, omitted_valid_count - len(registry))
+        if additional:
+            details.append(f"{additional} additional valid ref(s) omitted")
+        if invalid_count:
+            details.append(f"{invalid_count} invalid ref(s) ignored")
+        if unexamined:
+            details.append(
+                f"{unexamined} caller ref(s) beyond the 20-item diagnostic bound"
+            )
+        return "[Pallium work refs: " + "; ".join(details) + ".]"
+
+    refs = metadata.get("pallium_work_refs")
+    sources = metadata.get("pallium_work_ref_sources")
+    if status not in {"complete", "partial"} or not isinstance(refs, list) or not isinstance(sources, list) or len(refs) != len(sources):
+        return ""
+
+    selected: list[str] = []
+    for value in refs:
+        normalized = _warning_work_ref(value)
+        if normalized is not None and normalized not in selected and len(selected) < 5:
+            selected.append(normalized)
+
+    normalized_rows: list[tuple[str, str]] = []
+    invalid_count = 0
+    caller_seen = 0
+    caller_unexamined = 0
+    for value, source in zip(refs, sources):
+        if source == "caller":
+            caller_seen += 1
+            if caller_seen > 20:
+                caller_unexamined += 1
+                continue
+        normalized = _warning_work_ref(value)
+        if normalized is None:
+            invalid_count += 1
+            continue
+        normalized_rows.append((normalized, source if isinstance(source, str) else "unknown"))
+
+    omitted = []
+    for normalized, _source in normalized_rows:
+        if normalized not in selected and normalized not in omitted:
+            omitted.append(normalized)
+    omitted_registry = [
+        normalized for normalized, source in normalized_rows
+        if source == "registry" and normalized in omitted
+    ][:3]
+    if not omitted and not invalid_count and not caller_unexamined:
+        return ""
+    details = []
+    if omitted_registry:
+        details.append("associated " + ", ".join(omitted_registry) + " not searchable from this turn")
+    if len(omitted) > len(omitted_registry):
+        details.append(f"{len(omitted) - len(omitted_registry)} additional valid ref(s) omitted")
+    if invalid_count:
+        details.append(f"{invalid_count} invalid ref(s) ignored")
+    if caller_unexamined:
+        details.append(f"{caller_unexamined} caller ref(s) beyond the 20-item diagnostic bound")
+    return "[Pallium work refs: " + "; ".join(details) + ".]"
+
+def fetch_confirmed_work_refs(
+    runtime: str, session_ref: str, container_ref: str
+) -> tuple[list[str], str | None]:
+    response = relay_request(
+        "GET",
+        "/relay/sessions/work-refs",
+        {
+            "runtime": runtime,
+            "session_ref": session_ref,
+            "container_ref": container_ref,
+        },
+        timeout=0.5,
+    )
+    if not isinstance(response, dict) or not isinstance(
+        response.get("work_refs"), list
+    ):
+        return [], "unavailable"
+    return confirmed_registry_work_refs(response), "complete"
 
 def _safe_injected_work_ref(ref: object) -> bool:
     if not isinstance(ref, str) or not ref or len(ref) > 128:
@@ -1078,12 +1390,16 @@ def relay_request(
 ) -> dict | None:
     """Short-deadline Relay request; failures never block a host turn."""
     url = f"{PALLIUM_BASE_URL}{path}"
-    body = json.dumps(payload).encode("utf-8")
+    body = None
+    if method == "GET":
+        url = f"{url}?{urllib.parse.urlencode(payload)}"
+    else:
+        body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
         method=method,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json"} if body else {},
     )
     request_timeout = _bounded_timeout(timeout, deadline)
     if request_timeout <= 0:

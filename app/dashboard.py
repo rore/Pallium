@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import and_, case, func, or_, select
@@ -15,6 +15,9 @@ from sqlalchemy import and_, case, func, or_, select
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
 from core.filters import source_item_matches_filters
+from core.relay import (
+    RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError,
+)
 from core.models import QueryFilters, SourceItem
 from core.service import _redact_ingest_value
 from core.subject import subject_text_for_payload
@@ -194,7 +197,9 @@ def _read_effectiveness_report(path: Path) -> dict:
         return {"available": False, "last_modified": None, "error": "unreadable"}
 
 
-def mount_dashboard(app: FastAPI, *, show_roi: bool = False) -> None:
+def mount_dashboard(
+    app: FastAPI, *, show_roi: bool = False, relay_service: RelayService | None = None
+) -> None:
     assets_dir = Path(__file__).resolve().parent.parent / "assets"
     app.mount("/static", StaticFiles(directory=str(assets_dir)), name="static")
 
@@ -661,6 +666,34 @@ def mount_dashboard(app: FastAPI, *, show_roi: bool = False) -> None:
         sessions = [_dashboard_relay_session(record, cutoff) for record in records]
         return JSONResponse(content={"sessions": sessions, "total": total, "offset": offset, "limit": limit,
                                      "as_of": _dashboard_time(as_of)})
+    @app.post("/dashboard/api/relay/sessions/{endpoint_id}/work-refs")
+    def dashboard_relay_work_ref(
+        endpoint_id: str,
+        action: Literal["attach", "detach"] = Body(),
+        scope_ref: str = Body(min_length=1, max_length=512),
+        local_ref: str = Body(min_length=1, max_length=512),
+    ) -> JSONResponse:
+        if relay_service is None:
+            return JSONResponse(
+                content={"error": "relay is not supported by the configured storage"},
+                status_code=501,
+            )
+        try:
+            result = relay_service.administer_work_ref(
+                endpoint_id=endpoint_id,
+                action=action,
+                scope_ref=scope_ref,
+                local_ref=local_ref,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RelayNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RelayConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RelayUnavailableError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        return JSONResponse(content=result)
     @app.get("/dashboard/api/relay/messages")
     def dashboard_relay_messages(
         limit: int = Query(50, ge=1, le=200),

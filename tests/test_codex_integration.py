@@ -283,7 +283,7 @@ def test_codex_stop_hook_ingests_quietly(monkeypatch: pytest.MonkeyPatch) -> Non
         has_productive_action=False,
     ))
     monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _: None)
-    monkeypatch.setattr(stop, "build_work_refs_metadata", lambda *_: {})
+    monkeypatch.setattr(stop, "build_work_refs_metadata", lambda *_, **_kwargs: {})
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session_id: "git:github.com/rore/pallium")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "Rotem")
 
@@ -634,7 +634,7 @@ def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     monkeypatch.setattr(
         hook,
         "build_work_refs_metadata",
-        lambda *_args: {"pallium_work_refs": ["git-branch:feature/demo"]},
+        lambda *_args, **_kwargs: {"pallium_work_refs": ["git-branch:feature/demo"]},
     )
 
     def request(_method: str, _path: str, body: dict) -> dict:
@@ -746,7 +746,7 @@ def test_codex_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monke
     monkeypatch.setattr(
         stop,
         "build_work_refs_metadata",
-        lambda *_args: {"pallium_work_refs": ["git-branch:feature/demo"]},
+        lambda *_args, **_kwargs: {"pallium_work_refs": ["git-branch:feature/demo"]},
     )
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session: "git:example/repo")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")

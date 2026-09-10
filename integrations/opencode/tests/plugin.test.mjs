@@ -100,7 +100,8 @@ test("chat.message ingests the user prompt and queues memory for the system prom
   assert.match(system[0], /"request_source_item_id":"request-opencode-1"/);
   assert.match(system[0], /\[Pallium memory — container: path:/);
   assert.match(system[0], /ref:ref-xyz\]/);
-  assert.match(system[0], /\[End Pallium memory\]$/);
+assert.match(system[0], /[End Pallium memory]/);
+  assert.match(system[0], /Relay association enrichment was unavailable/);
 });
 
 test("chat.message skips short prompts, slash-commands, and duplicates", async () => {
@@ -540,4 +541,43 @@ test("Relay scope carries the first structural OpenCode work_ref when supported"
     const modelMessage = await messagesTransform(hooks, output.message, output.parts);
     assert.match(modelMessage.parts[0].text, /"work_ref":"git-branch:fix\/relay"/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("chat.message warns when associated refs exceed the five-ref History limit", async () => {
+  const associated = ["work:v1:" + "a".repeat(64), "work:v1:" + "b".repeat(64)];
+  installFetch({
+    "/relay/turn": {
+      deliveries: [], has_more: false, remaining_count: 0,
+      structural_work_refs_status: "complete",
+      work_refs: associated.map((work_ref) => ({ origin: "explicit", work_ref })),
+    },
+    "/item-and-query": {
+      ...oneBlock,
+      work_ref_metadata: {
+        pallium_relay_work_refs_status: "partial",
+        pallium_work_refs: ["s", "white-space", "strasse", "one", "two"],
+        pallium_work_refs_omitted_registry: associated,
+        pallium_work_refs_diagnostics: {
+          omitted_valid_count: 4,
+          invalid_count: 0,
+          caller_input_count: 10,
+          caller_examined_count: 10,
+          caller_input_truncated: false,
+          counts_complete: true,
+        },
+      },
+    },
+  });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  await hooks["chat.message"](
+    { metadata: { pallium_work_refs: ["s", "S", "white space", "white_space", "Straße", "STRASSE", "one", "two", "three", "four"] } },
+    {
+      message: { sessionID: "sesWorkRefWarning", role: "user" },
+      parts: [{ type: "text", text: "Continue this substantial associated task safely" }],
+    },
+  );
+  const system = (await systemTransform(hooks, "sesWorkRefWarning")).join("\n");
+  assert.match(system, /not searchable from this turn/);
+  assert.ok(associated.every((key) => system.includes(key)));
+  assert.ok([...system].length <= 2400);
 });
