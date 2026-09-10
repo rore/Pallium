@@ -24,19 +24,19 @@ Moderate
 Redline classifies the new `.agents` install plus hook, settings, plugin, and AGENTS integration surfaces as gray; scripts/docs are blue and `.claude/skills/**` is excluded. The task spans two upstream packages and several runtime integrations, with no application boundary risk.
 
 **Discovery:**
-Pallium is clean at current `main`; its last recorded agent-workflow source was `0a5cb06` and Minimap source was `06ac46d`. Agent-workflow `main` is clean at `8b428af` and adds native runtime guards, dual Claude/Codex skill discovery, three root runtime adapters, and revised hook/settings behavior. Minimap stable `main` is `b21e0a5`, a descendant of `06ac46d`; its checkout also has an unmerged `e9bae35` commit that is intentionally excluded. Current Pallium has only the Claude agent-workflow skill install and stale Claude-shaped registrations in `.codex/hooks.json`.
+Pallium is clean at current `main`; its last recorded agent-workflow source was `0a5cb06` and Minimap source was `06ac46d`. Agent-workflow `main` is clean at `8b428af` and adds native runtime guards, dual Claude/Codex skill discovery, three root runtime adapters, and revised hook/settings behavior. Minimap stable `main` is `b21e0a5`, a descendant of `06ac46d`; its checkout also has an unmerged `e9bae35` commit that is intentionally excluded. Current Pallium has only the Claude agent-workflow skill install; tracked `.claude/settings.json` contains the three prior plan-mode hooks and tracked `guarded-paths.json`, while `.codex/hooks.json` is absent and must be created by the new installer.
 
 **Material assumptions:**
 Committed upstream `main` distributions are the authoritative stable install sources; if either manifest/package is inconsistent or target tests expose a source defect, stop and fix upstream rather than patching vendored code. Existing Pallium configuration, policy, CI workflow, and non-owned hook entries remain authoritative; any required semantic change to them returns the task to planning.
 
 **Plan:**
-1. Copy the complete agent-workflow distribution from `8b428af` into both `.claude/skills/agent-workflow/` and `.agents/skills/agent-workflow/`; refresh the checker, three runtime adapters, changed root Claude hook helpers, OpenCode plugin, consumer checkpoint docs, and only the marker-owned AGENTS section. Preserve configuration, policy, CI, historical records, and consumer-relative doc links. 2. Run the new settings installer for Claude and Codex, preserving third-party entries and removing only the obsolete agent-workflow Claude commands currently misplaced in `.codex/hooks.json`; verify a second run is a no-op. 3. Replace `.claude/skills/minimap-roadmap/` from Minimap stable `main` at `b21e0a5`; do not include the unmerged list-card ordering commit. 4. Verify manifest sizes and byte parity, JSON and script syntax, installer idempotence, Minimap package parity, focused Pallium workflow tests, local Redline/workflow checks, then the required full Pallium test run. Stop on source-package inconsistency, unexpected non-owned settings changes, application paths, or config/policy/CI drift.
+1. Use explicit source→destination maps pinned to agent-workflow `8b428af`: copy `dist/agent-workflow/**` byte-for-byte to both `.claude/skills/agent-workflow/**` and `.agents/skills/agent-workflow/**`; copy its checker and three runtime adapters to root `scripts/`; copy changed hook helpers to `.claude/hooks/`, the OpenCode plugin to `.opencode/plugins/`, checkpoint docs to `docs/agent-workflow/`, and reconcile only the marker-owned AGENTS section. Verify both install manifests independently and against the pinned source; preserve config, policy, CI, historical records, and consumer-relative doc links. 2. Run the pinned settings installer against explicit `.claude/settings.json` and new `.codex/hooks.json` targets. Preserve unrelated entries, assert the Claude sidecar still equals `agent-workflow.yaml` guarded paths, assert Codex creation does not affect that sidecar, and rerun both installers to a zero-diff state. Cover missing/malformed-config degradation with the upstream installer tests rather than adding consumer-only logic. 3. Export only `package/minimap/skills/minimap-roadmap/**` from the pinned Minimap tree object `b21e0a5`, replace the target skill, and compare it recursively to that exported tree; never copy from the source checkout's current `e9bae35` HEAD. 4. Verify JSON and script syntax; exercise representative seed/guard payloads through the copied runtime adapters including the Windows PowerShell wrapper; assert root hook commands target root runtime scripts; run focused Pallium workflow tests, local Redline/workflow checks, then the required full Pallium test run. Stop on source-package inconsistency, unexpected non-owned settings changes, application paths, or config/policy/CI drift.
 
 **Verification plan:**
-When installed, both agent-workflow skill trees shall match the `8b428af` manifest and each other → manifest inventory plus byte comparison. When hooks are reconciled, Claude and Codex shall contain the new runtime registrations without losing unrelated entries → JSON inspection, installer rerun, and runtime-focused tests. When Minimap is refreshed, Pallium's roadmap skill shall match `b21e0a5` exactly → recursive byte comparison and syntax/package checks. When the branch is ready, governance and application behavior shall remain intact → Redline/checker, focused `tests/test_agent_workflow_ci.py`, then `python -m pytest tests/ -x -q`.
+When installed, both agent-workflow skill trees shall match the pinned `8b428af` manifest and each other → per-target manifest inventory and recursive byte comparison. When hooks are reconciled, explicit Claude/Codex installer targets shall contain portable seed/guard registrations without losing unrelated entries → before/after semantic comparison, guarded-path sidecar assertion, upstream degradation tests, and zero-diff second runs. When runtime hooks execute, root adapters shall handle representative seed/guard payloads on Python, shell, and Windows surfaces → upstream runtime-guard tests plus direct copied-adapter probes and command-target inspection. When Minimap is refreshed, Pallium's roadmap skill shall match the exported `b21e0a5` tree exactly → recursive byte comparison and syntax/package checks. When the branch is ready, governance and application behavior shall remain intact → Redline/checker, focused `tests/test_agent_workflow_ci.py`, then `python -m pytest tests/ -x -q`.
 
 **Plan review:**
-Pending clean-context review.
+Clean-context review approved after the six initial blockers were resolved; recorded below.
 
 **Approvals:**
 Not required at this risk level.
@@ -44,7 +44,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -59,7 +59,7 @@ Not required at this risk level.
 
 ## Plan review
 
-Pending.
+Initial clean-context review blocked on six gaps: correct the absent-versus-stale Codex baseline; specify additive installer preservation and idempotence; map every pinned source to each destination; cover Claude guarded-path sidecar behavior; exercise actual runtime adapter contracts including Windows; and export Minimap from `b21e0a5` rather than the checkout's unmerged HEAD. The revised Discovery, Plan, and Verification plan address all six without expanding into application, policy, CI, roadmap, installed-service, or unmerged Minimap scope. Clean-context re-review approved the amended plan with no remaining blockers.
 
 ## Result review
 
