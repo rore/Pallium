@@ -41,6 +41,7 @@
 - Clean-context Elevated-risk plan review completed; its catalog-preservation finding was incorporated before implementation.
 - Implemented the shared base-config fix and regression assertions in the approved two-file scope.
 - Verification exposed developer-profile leakage in unrelated hook tests; diagnosed it, delegated a separate isolated repair, and reran this branch in a clean CI-like home.
+- Skill-feedback trigger 1 passed the actionability filter, but external issue creation was not authorized; recorded the redacted report under `## Skill feedback (unsent)`.
 
 ## Plan review
 
@@ -54,6 +55,18 @@ A clean-context smart-model review approved the revised two-file plan after requ
 - Affected Codex integration file: 29 passed in 2.90s.
 - Initial full suite: 2 unrelated deterministic failures caused by inherited `PALLIUM_HOOK_ACTOR_REF` and real `~/.pallium/hooks/state/sessions/session-test.json`; no changed code was implicated.
 - Clean-home full suite: 4786 passed, 33 skipped, 2 xfailed in 241.78s. Tested code revision: `6035ddfe803bc8aaa2e3d4b346f06eefea271d33`.
+
+## Skill feedback (unsent)
+
+**Trigger fired:** 1 — retried a gate at least twice for the same predicate.
+
+**What the skill said (or failed to say):** The local workflow guidance names `agent-workflow-check`, but does not give the prerequisite local sequence for repositories with `redline: required`. File: `operating-mode.md` local handoff guidance.
+
+**What happened:** The local checker twice reported `risk.redline_findings_available` missing. The redline reporter then required the configured boundary artifact.
+
+**Suggested fix:** Document one canonical local sequence: generate diff inputs, run the configured boundary backend, generate the redline verdict, then run the workflow checker.
+
+**Work Record:** `.agent-workflow/tasks/relay-mcp-required.md` in the consumer repository.
 
 ## Result review
 
