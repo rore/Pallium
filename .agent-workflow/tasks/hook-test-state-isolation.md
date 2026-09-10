@@ -32,4 +32,6 @@ Run the two specified failing pytest nodes with inherited actor present; inspect
 
 Implementation: Added the autouse fixture cleanup for inherited PALLIUM_HOOK_ACTOR_REF and redirected dynamically loaded hook common state to a sibling of the isolated wake directory.
 
-Evidence: Focused pytest invocation was blocked before collection because the available Python environment lacks fastapi. Exact diff was inspected with git diff --check.
+Evidence: Parent verification found the hook loader used os without importing it; added the missing stdlib import. The original focused invocation was blocked before collection because the bundled Python lacked fastapi. Rerun with the shared repository venv: one node passed; the second exposed that `_load_claude_hook("common")` needs to use the loaded module itself, which is now corrected.
+
+Final evidence: Shared-venv exact command passed with inherited actor: 2 passed in 1.82s.
