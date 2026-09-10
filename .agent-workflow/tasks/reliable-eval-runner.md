@@ -72,7 +72,7 @@ Not required at this risk level. Architect design approval and later pilot verif
 —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -89,4 +89,4 @@ Focused acceptance passed 20 tests in 59.43s. Independent affected-path verifica
 
 ## Result review
 
-Independent Sol review found five blockers in be57bc1; the correction review confirmed deferred/finalized production parity, Windows persistence separation, collision rejection, and durable budget-skipped reconciliation, then identified artifact-kind and non-finite number validation edges. All findings have focused regressions and are addressed in the current implementation. Final no-findings confirmation is pending. Scope remains the approved eval/test/docs/roadmap slice, assumptions now match the production surfaces, and Routine/Moderate classification is unchanged.
+Independent Sol review found five blockers in be57bc1; the correction review confirmed deferred/finalized production parity, Windows persistence separation, collision rejection, and durable budget-skipped reconciliation, then identified artifact-kind and non-finite number validation edges. All findings have focused regressions and are addressed in the current implementation. Final Sol closure review at `4adad34b` reported no findings and confirmed all completion criteria satisfied. Scope remains the approved eval/test/docs/roadmap slice, assumptions now match the production surfaces, and Routine/Moderate classification is unchanged.
