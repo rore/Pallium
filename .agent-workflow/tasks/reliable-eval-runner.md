@@ -81,6 +81,8 @@ Architect approval received 2026-09-10. Implementation is limited to `evals/reli
 
 The bounded Luna worker was stopped after producing no usable runner and an incompatible partial test draft; direct implementation avoided further coordination cost. The runner now uses an isolated persistent SQLite database, real ASGI search/expansion routes, direct production formatters, atomic per-step and per-attempt records, pair-first input/output reservations, explicit indeterminate crash recovery, and a minimal interactive UTF-8 subprocess protocol. The test module doubles as the independent scripted pilot/driver. Focused acceptance: 20 passed in 59.34s. Fresh pilot artifacts: .local/reliable-pair-pilot-v2/state/report.json; one usable scripted pair, zero invalid pairs, two completed attempts, 40 charged input tokens, 10 charged output tokens, USD 0.00. This qualifies infrastructure only.
 
+A cheap deletion audit found only cosmetic helper inlining, which would not materially reduce the state machine, and one real crash-accounting gap. Search and expansion steps now persist started/completed attempts and convert a prior started step to indeterminate before safe read-only replay; driver reservations still begin only immediately before driver dispatch, avoiding false model charges for pre-dispatch tool work. Expanded acceptance remains 20 passed in 59.43s.
+
 ## Evidence
 
 No pilot/model evidence yet. The prior failed trial is discovery evidence only and reported zero valid pairs.

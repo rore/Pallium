@@ -243,6 +243,30 @@ def _pair_path(run_dir: Path, case_id: str) -> Path:
     return run_dir / "pairs" / f"{_safe_name(case_id)}.json"
 
 
+def _start_step(path: Path, base: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    if path.exists():
+        row = _read_json(path)
+        if row.get("status") == "completed":
+            return row, row
+        if row.get("status") != "started" or not row.get("attempts"):
+            raise PackError(f"invalid durable step state: {path}")
+        row["attempts"][-1]["status"] = "indeterminate"
+    else:
+        row = {**base, "attempts": []}
+    row["attempts"].append({"attempt": len(row["attempts"]) + 1, "status": "started"})
+    row["status"] = "started"
+    _atomic_json(path, row)
+    return None, row
+
+
+def _finish_step(path: Path, row: dict[str, Any], **values: Any) -> dict[str, Any]:
+    row.update(values)
+    row["status"] = "completed"
+    row["attempts"][-1]["status"] = "completed"
+    _atomic_json(path, row)
+    return row
+
+
 def _recover_indeterminate(run_dir: Path, case_id: str, variant: str) -> None:
     for path in _attempt_paths(run_dir, case_id, variant):
         row = _read_json(path)
@@ -374,8 +398,20 @@ async def _search(
     variant: str,
 ) -> dict[str, Any]:
     path = run_dir / "steps" / _safe_name(case["id"]) / variant / "search.json"
-    if path.exists():
-        return _read_json(path)
+    request = {"query": case["query"], "limit": case["limit"], "work_refs": case.get("work_refs")}
+    completed, row = _start_step(
+        path,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "pack_hash": manifest["pack_hash"],
+            "case_id": case["id"],
+            "variant": variant,
+            "kind": "search",
+            "request": request,
+        },
+    )
+    if completed is not None:
+        return completed
     raw = await client.search_history(
         case["query"], limit=case["limit"], work_refs=case.get("work_refs")
     )
@@ -389,21 +425,14 @@ async def _search(
         requested_work_ref=case["work_refs"][0] if case.get("work_refs") else None,
     )
     text = _json_text(formatted)
-    row = {
-        "schema_version": SCHEMA_VERSION,
-        "pack_hash": manifest["pack_hash"],
-        "case_id": case["id"],
-        "variant": variant,
-        "kind": "search",
-        "status": "completed",
-        "request": {"query": case["query"], "limit": case["limit"], "work_refs": case.get("work_refs")},
-        "raw_response": raw,
-        "tool_text": text,
-        "tool_text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-        "lookup_event_id": formatted.get("lookup_event_id"),
-    }
-    _atomic_json(path, row)
-    return row
+    return _finish_step(
+        path,
+        row,
+        raw_response=raw,
+        tool_text=text,
+        tool_text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        lookup_event_id=formatted.get("lookup_event_id"),
+    )
 
 
 async def _expand(
@@ -423,12 +452,6 @@ async def _expand(
         / variant
         / f"expand-{_safe_name(source_item_id)}.json"
     )
-    if path.exists():
-        row = _read_json(path)
-        if row.get("parent_lookup_id") != search.get("lookup_event_id"):
-            raise PackError("cached expansion lookup lineage mismatch")
-        return row
-
     search_payload = json.loads(search["tool_text"])
     visible = {item["source_item_id"] for item in search_payload.get("results", [])}
     if source_item_id not in visible:
@@ -446,6 +469,23 @@ async def _expand(
         "max_chars": config["expansion_max_chars"],
         "parent_lookup_id": parent,
     }
+    completed, row = _start_step(
+        path,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "pack_hash": manifest["pack_hash"],
+            "case_id": case["id"],
+            "variant": variant,
+            "kind": "expansion",
+            "source_item_id": source_item_id,
+            "parent_lookup_id": parent,
+            "request": params,
+        },
+    )
+    if completed is not None:
+        if completed.get("parent_lookup_id") != parent:
+            raise PackError("cached expansion lookup lineage mismatch")
+        return completed
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://runner", timeout=30
     ) as http:
@@ -454,22 +494,13 @@ async def _expand(
         raw = response.json()
     formatted = _bounded_expansion(raw, config["expansion_max_chars"])
     text = _json_text(formatted)
-    row = {
-        "schema_version": SCHEMA_VERSION,
-        "pack_hash": manifest["pack_hash"],
-        "case_id": case["id"],
-        "variant": variant,
-        "kind": "expansion",
-        "status": "completed",
-        "source_item_id": source_item_id,
-        "parent_lookup_id": parent,
-        "request": params,
-        "raw_response": raw,
-        "tool_text": text,
-        "tool_text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-    }
-    _atomic_json(path, row)
-    return row
+    return _finish_step(
+        path,
+        row,
+        raw_response=raw,
+        tool_text=text,
+        tool_text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    )
 
 
 async def _stop_process(process: asyncio.subprocess.Process) -> None:
