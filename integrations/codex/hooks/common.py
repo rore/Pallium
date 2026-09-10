@@ -2457,16 +2457,6 @@ def relay_turn(
                 return invalid_response
 
             if isinstance(source, str) and source != confirmed_container:
-                pending = state.get("pending_relay_closes")
-                state["pending_relay_closes"] = [
-                    ref for ref in dict.fromkeys([
-                        *(pending if isinstance(pending, list) else []), source,
-                    ]) if ref != confirmed_container
-                ]
-                close_generation = state.get("container_generation", 0)
-                state["container_generation"] = (
-                    close_generation + 1 if isinstance(close_generation, int) else 1
-                )
                 for key in ("identity_cwd", "repo_config_fingerprint", "actor_ref", "provisional_identity_context"):
                     state.pop(key, None)
             state["last_confirmed_container_ref"] = confirmed_container

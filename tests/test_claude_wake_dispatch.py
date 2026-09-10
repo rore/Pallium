@@ -1022,6 +1022,7 @@ def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
     transport.assert_not_called()
 
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
+    monkeypatch.setitem(prompt.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
@@ -1094,6 +1095,7 @@ def test_empty_stop_rearms_claude_wake_after_turn_admission(client, monkeypatch,
     http = TestClient(app, client=("127.0.0.1", 50000))
     scope = {"container_ref": PAYLOAD["container_ref"]}
     stop = _load_claude_hook("stop", monkeypatch)
+    monkeypatch.setitem(stop.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     def register(session, container, **kwargs):
@@ -1265,6 +1267,7 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         registry = app_b.state.claude_wake_registry
         registry.set_reconcile_signal(None)
         stop = _load_claude_hook("stop", monkeypatch)
+        monkeypatch.setitem(stop.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
         monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
         monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
         monkeypatch.setattr(stop, "read_hook_input", lambda: {
@@ -1466,6 +1469,7 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
     http = TestClient(app, client=("127.0.0.1", 50000))
     relay = RelayService(client.app.state.pallium_service._storage)
     stop = _load_claude_hook("stop", monkeypatch)
+    monkeypatch.setitem(stop.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
     def register(session, container, **kwargs):
         response = http.post("/internal/claude-wake/register", json={
             **PAYLOAD,

@@ -575,20 +575,6 @@ def test_non_registering_hook_probe_omits_persisted_transition_fields(
     }.intersection(calls[0])
 
 
-def test_codex_confirmed_scope_moves_update_pending_closes(
-    monkeypatch, tmp_path: Path,
-) -> None:
-    common = _load("codex_pending_closes", "integrations/codex/hooks/common.py")
-    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
-    responses = [
-        _turn_response(container_ref=scope, endpoint_id="e1", scope_generation=index)
-        for index, scope in enumerate(("git:a", "git:b", "git:a", "git:c"))
-    ]
-    monkeypatch.setattr(common, "relay_request", lambda *_a, **_k: responses.pop(0))
-    for destination in ("git:a", "git:b", "git:a", "git:c"):
-        assert common.relay_turn("codex", "roundtrip", destination)
-    assert common.get_pending_relay_closes("roundtrip") == ["git:b", "git:a"]
-
 
 @pytest.mark.parametrize((
     "runtime", "relative",

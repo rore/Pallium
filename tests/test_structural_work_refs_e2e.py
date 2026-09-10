@@ -779,6 +779,7 @@ def test_python_hook_registry_association_round_trips_through_http_history(
         Path("integrations") / relative / "user_prompt_submit.py",
         monkeypatch,
     )
+    monkeypatch.setitem(prompt.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "sessions")
     monkeypatch.setattr(
         prompt,
         "read_hook_input",
