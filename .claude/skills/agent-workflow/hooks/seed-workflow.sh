@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # agent-workflow UserPromptSubmit hook — "seed".
 # Injects the Work-Record rule as factual project context so it is present while
-# the model plans. Reliable transport, not enforcement (the gate enforces).
+# the model plans. Reliable transport; supported structured mutations use the shared runtime guard.
 # FAIL OPEN: on any error, emit nothing (exit 0) — never disrupt a prompt.
 set +e
 # CTX is interpolated bare into the printf JSON below, so it MUST NOT contain

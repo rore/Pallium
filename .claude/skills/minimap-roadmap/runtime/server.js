@@ -7,6 +7,8 @@ import {
   initializeWorkspace,
   loadWorkspace,
   readItemById,
+  reorderLensField,
+  reorderMetadataItem,
   saveBoardByGroups,
   saveItemById,
   saveScopeText,
@@ -334,10 +336,23 @@ async function handleInitialize(request, response) {
 async function handleBoard(request, response) {
   const repoRoot = await resolveRoadmapRepo(request);
   const body = await withJsonBody(request);
-  const workspace = await saveBoardByGroups(repoRoot, body.groups);
+  const workspace = await saveBoardByGroups(repoRoot, body.groups, body.expectedRevision);
   sendJson(response, 200, workspace);
 }
 
+async function handleMetadataOrder(request, response) {
+  const repoRoot = await resolveRoadmapRepo(request);
+  const body = await withJsonBody(request);
+  const workspace = await reorderMetadataItem(repoRoot, body);
+  sendJson(response, 200, workspace);
+}
+
+async function handleLensOrder(request, response, ctx) {
+  const repoRoot = await resolveRoadmapRepo(request);
+  const body = await withJsonBody(request);
+  const workspace = await reorderLensField(repoRoot, decodeURIComponent(ctx.params[0]), body);
+  sendJson(response, 200, workspace);
+}
 async function handleScope(request, response) {
   const repoRoot = await resolveRoadmapRepo(request);
   const body = await withJsonBody(request);
@@ -393,6 +408,8 @@ const routes = [
   { method: "GET",    pattern: /^\/api\/workspace$/, handler: handleWorkspace },
   { method: "POST",   pattern: /^\/api\/setup\/initialize$/, handler: handleInitialize },
   { method: "POST",   pattern: /^\/api\/board$/, handler: handleBoard },
+  { method: "POST",   pattern: /^\/api\/metadata-order$/, handler: handleMetadataOrder },
+  { method: "POST",   pattern: /^\/api\/lenses\/([^/]+)\/order$/, handler: handleLensOrder },
   { method: "POST",   pattern: /^\/api\/scope$/, handler: handleScope },
   { method: "GET",    pattern: /^\/api\/items\/([^/]+)$/, handler: handleGetItem },
   { method: "POST",   pattern: /^\/api\/items\/([^/]+)$/, handler: handleSaveItem },

@@ -23,6 +23,7 @@ function makeInitial() {
     activeFilters: {},
     filtersExpanded: false,
     collapsedGroups: new Set(),
+    columnScrollTops: new Map(),
     scopeCollapsed: false,
     scopeWidth: 272,
     editorMode: "preview",

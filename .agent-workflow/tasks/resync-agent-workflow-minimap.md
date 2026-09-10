@@ -49,13 +49,22 @@ Not required at this risk level.
 
 ## Implementation
 
-- Established the isolated branch and completed read-only discovery. No implementation files changed.
+- Established the isolated branch and completed read-only discovery.
 - Clean-context Redline classification: gray overall, no boundary risk or policy checkpoint; mapped to Elevated/Moderate.
+- Replaced both agent-workflow skill trees from the pinned distribution, installed the new root runtime adapters, refreshed owned hooks/plugin/docs, and reconciled only the owned AGENTS marker.
+- Ran the upstream settings installer for Claude and Codex. Existing Claude hooks and guarded-path sidecar remained intact; `.codex/hooks.json` was created; second runs were byte-for-byte no-ops.
+- Replaced Minimap only from the pinned stable tree, excluding the source checkout's unmerged branch.
+- `apply_patch` failed once with machine-local error 1327; subsequent Work Record edits used a deterministic replacement limited to this file, as required by local instructions.
 
 ## Evidence
 
-- Agent-workflow source: `8b428afbe51003bf1e7ac9f7ed8ba08821a03376`.
-- Minimap stable source: `b21e0a5a8f7cedb96d3e64ef6b44cb4b42d87bc8`.
+- Agent-workflow source: `8b428afbe51003bf1e7ac9f7ed8ba08821a03376`; both installed skill trees and mapped root assets match the pinned source byte-for-byte.
+- Minimap stable source: `b21e0a5a8f7cedb96d3e64ef6b44cb4b42d87bc8`; the installed skill matches the exported tree byte-for-byte.
+- JSON/script syntax and direct Python/PowerShell runtime probes passed.
+- `tests/test_agent_workflow_ci.py`: 1 passed.
+- Upstream hook E2E (`bash tests/hooks/run.sh`): passed, including settings merge/idempotence, fail-closed guards, Codex Windows commands, packaged hooks, and OpenCode denial.
+- Pinned Minimap focused suite: 169 passed, 0 failed, 2 Windows signal-test skips.
+- Upstream `test_runtime_guard.py` assertions advanced successfully but its Windows child-process teardown did not exit; bounded runs were terminated. Equivalent packaged-hook and direct copied-adapter probes passed. Trigger 3 dropped: the teardown hang is not confirmed repeatable or upstream-owned.
 
 ## Plan review
 

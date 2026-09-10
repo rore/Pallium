@@ -31,7 +31,7 @@ Testing and eval conventions: see `docs/testing-conventions.md`.
 <!-- agent-workflow:agents-section:start -->
 # agent-workflow
 
-This repository uses [agent-workflow](https://github.com/rore/agent-workflow) — a workflow harness for engineering tasks. Bundled with agent-redline for path-based risk classification.
+This repository uses [agent-workflow](https://github.com/rore/agent-workflow) — a workflow harness for engineering tasks. Includes agent-redline risk classification.
 
 **Where things live:**
 
@@ -41,14 +41,14 @@ This repository uses [agent-workflow](https://github.com/rore/agent-workflow) �
 | `agent-redline-policy.yaml` | Per-repo redline policy (zones, boundaries, checkpoints). Architecture-review required. |
 | `.agent-redline/suppressions.yaml` | Suppression markers for redline. |
 | `.agent-workflow/tasks/<slug>.md` | One Work Record per non-exempt task. Slug derives from branch name. |
-| `scripts/agent-workflow-check.py` | Vendored CI checker. |
-| `scripts/agent-redline-report.py` | Vendored redline reporter. |
+| `scripts/agent-workflow-check.py` | CI checker; `scripts/agent-workflow-runtime.py/.sh/.ps1` are runtime adapters. |
 | `docs/agent-workflow/` | Per-checkpoint reference docs. |
 | `docs/agent-redline/skills/` | Redline's per-checkpoint reference docs. |
-| `.github/workflows/agent-workflow.yml` | Combined CI workflow (redline + agent-workflow gates). |
 | `.claude/hooks/` | Claude Code hooks that keep the workflow engaged in plan mode (see below). |
+| `.codex/hooks.json` | Codex hooks for the seed and structured-mutation guard; project trust is required. |
+| `.opencode/plugins/agent-workflow.mjs` | Stable OpenCode 1.x guard; OpenCode 2 beta unsupported. |
 
-**To start a task:** invoke the `/agent-workflow` slash command. The skill walks the checkpoints and validates the Work Record at each transition. If the runtime does not expose `/agent-workflow`, read `.claude/skills/agent-workflow/SKILL.md` directly and follow it, resolving referenced resources relative to that directory.
+**Start:** invoke `/agent-workflow` or the runtime's native command. If unavailable, read `.claude/skills/agent-workflow/SKILL.md` or `.agents/skills/agent-workflow/SKILL.md`.
 
 **Plan mode:** for every non-exempt task, the plan's **first implementation step must be** *"Invoke the `/agent-workflow` skill to create the Work Record and classify risk, before any code edit."* Do that first on approval. The hook checks plans that touch configured `hooks.guardedPaths` (default `src/`) as supplemental enforcement; it is a nudge, not the applicability decision or CI gate.
 
@@ -60,7 +60,7 @@ python scripts/agent-workflow-check.py --repo-root . --slug <slug>
 
 Exit codes: `0` clean, `1` advisory, `2` blocking. CI runs the same check on PR open and posts a sticky verdict comment.
 
-**Re-bootstrap:** delete `agent-workflow.yaml` and re-run `/agent-workflow`. The skill detects the absence and walks the install conversation.
+Native mutation coverage is version/surface/tool-specific: verified requires a denied operation with unchanged target; installation, trust, or a direct evaluator pass is insufficient. Record every other combination as degraded. Shell mutations bypass the guard; CI validates final artifacts/applicability, not pre-edit ordering or direct pushes. Evaluator failure returns deny; native prevention requires that evidence.
 <!-- agent-workflow:agents-section:end -->
 
 ### Known import-graph smells (not enforced as layer contracts)

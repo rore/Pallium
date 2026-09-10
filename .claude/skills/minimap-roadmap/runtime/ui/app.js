@@ -610,6 +610,31 @@ function normalizeLensKey(value, workspace = state.workspace) {
   return getAvailableLenses(workspace).some((lens) => lens.key === normalized) ? normalized : DEFAULT_LENS_KEY;
 }
 
+function applyLensRouteChoice(workspace, route) {
+  const available = getAvailableLenses(workspace);
+  const requested = String(route.lens || "").trim();
+  workspace.warnings = workspace.warnings || [];
+  if (route.lensSpecified) {
+    workspace.warnings = workspace.warnings.filter((warning) => warning.code !== "unknown_url_lens");
+  }
+
+  if (route.lensSpecified && available.some((lens) => lens.key === requested)) {
+    state.activeLens = requested;
+    state.lensExplicit = true;
+    return;
+  }
+
+  state.activeLens = normalizeLensKey(workspace.defaultLens, workspace);
+  state.lensExplicit = false;
+  if (route.lensSpecified) {
+    workspace.warnings.push({
+      code: "unknown_url_lens",
+      lens: requested,
+      message: `URL grouping "${requested || "(empty)"}" is unavailable. Showing ${getActiveLensDefinition(workspace)?.label || "Board"} instead.`,
+    });
+  }
+}
+
 function getActiveLensDefinition(workspace = state.workspace) {
   const activeKey = normalizeLensKey(state.activeLens, workspace);
   return getAvailableLenses(workspace).find((lens) => lens.key === activeKey) || getAvailableLenses(workspace)[0];
@@ -703,7 +728,7 @@ function getVisibleBoardGroups(workspace = state.workspace) {
     defaultLensKey: DEFAULT_LENS_KEY,
     unassignedKey: UNASSIGNED_GROUP_KEY,
     unassignedLabel: UNASSIGNED_GROUP_LABEL,
-    showEmptyGroups: isColumnsLayoutActive() && Array.isArray(activeLens.values) && activeLens.values.length > 0,
+    showEmptyGroups: Array.isArray(activeLens.values) && activeLens.values.length > 0,
   });
 }
 
@@ -1107,7 +1132,8 @@ function readRouteState() {
     specFile: params.get("file") || "",
     itemId: params.get("item") || "",
     mode: normalizeEditorMode(params.get("mode") || "preview"),
-    lens: params.get("lens") || DEFAULT_LENS_KEY,
+    lens: params.get("lens") || "",
+    lensSpecified: params.has("lens"),
     layout: normalizeBoardLayout(params.get("layout") || DEFAULT_BOARD_LAYOUT),
     query: normalizeSearchQuery(params.get("q") || ""),
     filters: parseRouteFilters(params),
@@ -1142,7 +1168,7 @@ function buildRouteHash(itemId = state.selectedItemId, mode = state.editorMode) 
   }
 
   const lensKey = normalizeLensKey(state.activeLens);
-  if (lensKey !== DEFAULT_LENS_KEY) {
+  if (state.lensExplicit) {
     params.set("lens", lensKey);
   }
 
@@ -1344,6 +1370,7 @@ function renderLensControls() {
   for (const button of boardLensSwitcherElement.querySelectorAll("[data-lens-key]")) {
     button.addEventListener("click", () => {
       state.activeLens = button.dataset.lensKey || DEFAULT_LENS_KEY;
+      state.lensExplicit = true;
       state.lensesExpanded = false;
       void syncVisibleSelection({ replaceRoute: true });
     });
@@ -1375,7 +1402,7 @@ function renderSearchControls() {
     ? facets.map((facet) => {
         const activeValues = new Set(state.activeFilters[facet.key] || []);
         const chips = facet.values.map((value) => `
-          <button class="filter-chip${activeValues.has(value) ? " is-active" : ""}" data-filter-key="${escapeHtml(facet.key)}" data-filter-value="${escapeHtml(value)}" type="button" ${state.boardEditMode ? "disabled" : ""}>${escapeHtml(value)}</button>
+          <button class="filter-chip${activeValues.has(value) ? " is-active" : ""}" data-filter-key="${escapeHtml(facet.key)}" data-filter-value="${escapeHtml(value)}" type="button" title="${escapeHtml(value)}" ${state.boardEditMode ? "disabled" : ""}>${escapeHtml(value)}</button>
         `).join("");
 
         return `
@@ -1446,6 +1473,7 @@ function renderScopeChrome() {
   scopeSubtitleElement.textContent = "";
   scopeSubtitleElement.hidden = true;
   scopeEditButton.hidden = setupMode || state.scopeEditMode || state.scopeCollapsed;
+  scopeEditButton.disabled = !state.workspace;
   scopeSaveButton.hidden = setupMode || !state.scopeEditMode;
   scopeCancelButton.hidden = setupMode || !state.scopeEditMode;
   scopeSaveButton.disabled = !state.scopeDirty;
@@ -1653,14 +1681,50 @@ function beginBoardEditorResize(event) {
   window.addEventListener("pointercancel", stop);
 }
 
+function collapsedGroupKey(name) {
+  return `${state.repoPath}\n${normalizeLensKey(state.activeLens)}\n${name}`;
+}
+
+function isGroupCollapsed(name) {
+  return state.collapsedGroups.has(collapsedGroupKey(name));
+}
+
 function toggleGroup(name) {
-  if (state.collapsedGroups.has(name)) {
-    state.collapsedGroups.delete(name);
+  const key = collapsedGroupKey(name);
+  if (state.collapsedGroups.has(key)) {
+    state.collapsedGroups.delete(key);
   } else {
-    state.collapsedGroups.add(name);
+    state.collapsedGroups.add(key);
   }
 
   renderBoard();
+}
+
+function toggleColumn(name) {
+  const columns = boardGroupsElement.querySelector(".board-columns");
+  const scrollLeft = columns?.scrollLeft || 0;
+  for (const column of columns?.querySelectorAll(".board-column") || []) {
+    const groupName = column.querySelector("[data-group-toggle]")?.dataset.groupToggle;
+    const list = column.querySelector(".board-column-list");
+    if (groupName && list && !list.hidden) {
+      state.columnScrollTops.set(collapsedGroupKey(groupName), list.scrollTop);
+    }
+  }
+
+  toggleGroup(name);
+
+  const nextColumns = boardGroupsElement.querySelector(".board-columns");
+  if (nextColumns) nextColumns.scrollLeft = scrollLeft;
+  for (const column of nextColumns?.querySelectorAll(".board-column") || []) {
+    const groupName = column.querySelector("[data-group-toggle]")?.dataset.groupToggle;
+    const list = column.querySelector(".board-column-list");
+    const storedScrollTop = groupName ? state.columnScrollTops.get(collapsedGroupKey(groupName)) : null;
+    if (list && storedScrollTop != null) list.scrollTop = storedScrollTop;
+  }
+
+  const nextToggle = [...boardGroupsElement.querySelectorAll("[data-group-toggle]")]
+    .find((button) => button.dataset.groupToggle === name);
+  nextToggle?.focus({ preventScroll: true });
 }
 
 function reorderGroups(groups, fromIndex, toIndex) {
@@ -1775,7 +1839,7 @@ function cancelBoardEditMode(force = false) {
 }
 
 async function persistImmediateBoardOrder(groups) {
-  const workspace = await api.saveBoard(groups);
+  const workspace = await api.saveBoard(groups, state.workspace?.boardRevision);
 
   state.workspace = workspace;
   syncWorkspaceChrome();
@@ -1821,7 +1885,7 @@ async function saveBoardDraft() {
   setBanner("Saving board...");
 
   try {
-    const workspace = await api.saveBoard(state.boardDraft);
+    const workspace = await api.saveBoard(state.boardDraft, state.workspace?.boardRevision);
 
     state.workspace = workspace;
     state.boardEditMode = false;
@@ -2119,7 +2183,7 @@ async function persistBoardColumnMove(itemId, targetGroupIndex) {
   setBanner("Updating board group...");
 
   try {
-    const workspace = await api.saveBoard(groups);
+    const workspace = await api.saveBoard(groups, state.workspace?.boardRevision);
 
     const keepItemOpen = !shouldUseEditorOverlay() || (state.editorOverlayOpen && state.selectedItemId === itemId);
     state.workspace = workspace;
@@ -2151,7 +2215,7 @@ async function persistBoardItemPlacement(itemId, targetGroupIndex, beforeItemId 
   setBanner("Updating board order...");
 
   try {
-    const workspace = await api.saveBoard(groups);
+    const workspace = await api.saveBoard(groups, state.workspace?.boardRevision);
 
     const keepItemOpen = !shouldUseEditorOverlay() || (state.editorOverlayOpen && state.selectedItemId === itemId);
     state.workspace = workspace;
@@ -2182,8 +2246,9 @@ async function persistDerivedLensMove(itemId, targetValue) {
   try {
     await api.saveItem(itemId, {
       metadata: {
-        [activeLens.key]: targetValue,
+        [activeLens.key]: targetValue === UNASSIGNED_GROUP_KEY ? null : targetValue,
       },
+      expectedRevision: state.workspace?.items?.[itemId]?.revision,
     });
 
     const keepItemOpen = !shouldUseEditorOverlay() || (state.editorOverlayOpen && state.selectedItemId === itemId);
@@ -2202,6 +2267,77 @@ async function persistDerivedLensMove(itemId, targetValue) {
   }
 }
 
+function canReorderRelative(itemId, anchorItemId) {
+  return getBoardGroupIndexForItem(itemId) === getBoardGroupIndexForItem(anchorItemId);
+}
+
+function restoreOrderActionFocus(kind, key, placement) {
+  const buttons = [...boardGroupsElement.querySelectorAll(kind === "item" ? "[data-item-id-order]" : "[data-move-lens-group]")]
+    .filter((button) => (kind === "item" ? button.dataset.itemIdOrder : button.dataset.lensGroupValue) === key);
+  const target = buttons.find((button) => button.dataset.placement === placement && !button.disabled)
+    || buttons.find((button) => !button.disabled)
+    || buttons[0];
+  target?.focus();
+}
+
+function bindItemOrderShortcuts() {
+  for (const button of boardGroupsElement.querySelectorAll("[data-item-id-order]")) {
+    button.addEventListener("keydown", (event) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      const placement = event.key === "ArrowUp" ? "before" : event.key === "ArrowDown" ? "after" : "";
+      const anchorItemId = placement === "before" ? button.dataset.orderPreviousId : button.dataset.orderNextId;
+      if (!placement || !anchorItemId) return;
+      event.preventDefault();
+      void persistMetadataOrder(button.dataset.itemIdOrder, anchorItemId, placement, button);
+    });
+  }
+}
+
+async function persistMetadataOrder(itemId, anchorItemId, placement, triggerButton) {
+  const item = state.workspace?.items?.[itemId];
+  if (!state.workspace || !item || !anchorItemId) return;
+
+  setBanner("Updating shared item order...");
+  try {
+    const workspace = await api.reorderMetadata({
+      itemId,
+      anchorItemId,
+      placement,
+      expectedBoardRevision: state.workspace.boardRevision,
+    });
+    const restoreFocus = document.activeElement === triggerButton;
+    state.workspace = workspace;
+    syncWorkspaceChrome();
+    renderBoard();
+    if (restoreFocus) restoreOrderActionFocus("item", itemId, placement);
+    setBanner("Shared item order saved.", "success");
+  } catch (error) {
+    setBanner(error.message, "error");
+  }
+}
+
+async function persistLensGroupOrder(value, anchorValue, placement, triggerButton) {
+  const lens = getActiveLensDefinition();
+  if (!state.workspace || !lens || lens.kind !== "derived" || !value || !anchorValue) return;
+
+  setBanner(`Updating ${lens.label.toLowerCase()} group order...`);
+  try {
+    const workspace = await api.reorderLensGroup(lens.key, {
+      value,
+      anchorValue,
+      placement,
+      expectedConfigRevision: state.workspace.configRevision,
+    });
+    const restoreFocus = document.activeElement === triggerButton;
+    state.workspace = workspace;
+    syncWorkspaceChrome();
+    renderBoard();
+    if (restoreFocus) restoreOrderActionFocus("group", value, placement);
+    setBanner(`${lens.label} group order saved.`, "success");
+  } catch (error) {
+    setBanner(error.message, "error");
+  }
+}
 function renderBoardColumnsMode() {
   if (!state.workspace) {
     boardGroupsElement.innerHTML = "";
@@ -2213,6 +2349,10 @@ function renderBoardColumnsMode() {
   const allowColumnDrag = canDragItemsInColumnLayout();
   const allowColumnReorder = canReorderColumnsInColumnLayout();
   const boardGrouping = activeLens?.key === DEFAULT_LENS_KEY;
+  const allowItemReorder = activeLens?.kind === "derived";
+  const metadataGroups = allowItemReorder
+    ? visibleGroups.filter((group) => activeLens.values.includes(group.groupKey))
+    : [];
 
   if (visibleGroups.length === 0) {
     boardGroupsElement.innerHTML = `
@@ -2226,6 +2366,7 @@ function renderBoardColumnsMode() {
   }
 
   const columnsHtml = visibleGroups.map((group) => {
+    const collapsed = isGroupCollapsed(group.name);
     const dropAttributes = allowColumnDrag
       ? (boardGrouping
         ? `data-board-drop-group-index="${group.originalIndex}"`
@@ -2233,13 +2374,20 @@ function renderBoardColumnsMode() {
       : "";
     const reorderAttributes = allowColumnReorder ? `data-board-column-drop-index="${group.originalIndex}"` : "";
 
-    const cardsHtml = group.items.map((item) => {
+    const cardsHtml = group.items.map((item, itemIndex) => {
       if (isMissingBoardItem(item)) {
         return renderMissingBoardCardColumn(item);
       }
       const activeClass = item.id === state.selectedItemId && state.editorOverlayOpen ? " board-column-card-active" : "";
       const dragHandle = allowColumnDrag
-        ? `<span class="board-column-card-drag" data-drag-item-id="${escapeHtml(item.id)}" draggable="true" role="button" tabindex="0" aria-label="Move ${escapeHtml(item.title)}" title="Drag to move ${escapeHtml(item.title)}">::</span>`
+        ? `<span class="board-column-card-drag" data-drag-item-id="${escapeHtml(item.id)}" draggable="true" aria-label="Move ${escapeHtml(item.title)}" title="Drag to move ${escapeHtml(item.title)}${allowItemReorder ? ". Keyboard: Alt+Up or Alt+Down." : ""}">::</span>`
+        : "";
+      const previous = group.items[itemIndex - 1];
+      const next = group.items[itemIndex + 1];
+      const canMoveUp = Boolean(previous && canReorderRelative(item.id, previous.id));
+      const canMoveDown = Boolean(next && canReorderRelative(item.id, next.id));
+      const orderAttributes = allowItemReorder
+        ? `data-item-id-order="${escapeHtml(item.id)}" data-order-previous-id="${escapeHtml(canMoveUp ? previous.id : "")}" data-order-next-id="${escapeHtml(canMoveDown ? next.id : "")}" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-description="Press Alt+ArrowUp or Alt+ArrowDown to reorder."`
         : "";
       const placementAttributes = boardGrouping && allowColumnDrag
         ? `data-board-drop-group-index="${group.originalIndex}" data-board-drop-before-id="${escapeHtml(item.id)}"`
@@ -2251,7 +2399,7 @@ function renderBoardColumnsMode() {
             ${buildBoardCardBodyMarkup(item, activeLens?.key)}
           </div>
           <div class="board-column-card-actions">
-            <button class="ghost-button board-column-card-open" data-item-open="${escapeHtml(item.id)}" type="button" aria-label="Open ${escapeHtml(item.title)}">Open</button>
+            <button class="ghost-button board-column-card-open" data-item-open="${escapeHtml(item.id)}" type="button" aria-label="Open ${escapeHtml(item.title)}" ${orderAttributes}>Open</button>
             ${dragHandle}
           </div>
         </article>
@@ -2259,17 +2407,27 @@ function renderBoardColumnsMode() {
     }).join("");
 
     return `
-      <section class="board-column${group.items.length >= 10 ? " board-column-dense" : ""}${allowColumnReorder ? " board-column-reorderable" : ""}${reorderAttributes ? " board-column-reorder-dropzone" : ""}" ${reorderAttributes}>
+      <section class="board-column${collapsed ? " board-column-collapsed" : ""}${group.items.length >= 10 ? " board-column-dense" : ""}${allowColumnReorder ? " board-column-reorderable" : ""}${reorderAttributes ? " board-column-reorder-dropzone" : ""}" ${reorderAttributes}>
         <div class="board-column-header">
           <div class="board-column-heading">
+            <button class="order-button board-column-collapse-toggle" data-group-toggle="${escapeHtml(group.name)}" type="button" aria-expanded="${collapsed ? "false" : "true"}" aria-label="${collapsed ? "Expand" : "Collapse"} ${escapeHtml(group.name)} column" title="${collapsed ? "Expand" : "Collapse"} ${escapeHtml(group.name)} column"><span aria-hidden="true">${collapsed ? "+" : "−"}</span></button>
             <span class="board-column-name" title="${escapeHtml(group.name)}">${escapeHtml(group.name)}</span>
             <span class="group-count">${group.items.length}</span>
           </div>
           ${allowColumnReorder
             ? `<button class="board-column-reorder-handle" data-drag-column-index="${group.originalIndex}" draggable="true" type="button" aria-label="Reorder ${escapeHtml(group.name)} column" title="Drag to reorder ${escapeHtml(group.name)}">::</button>`
-            : ""}
+            : (() => {
+                const index = metadataGroups.indexOf(group);
+                if (index < 0) return "";
+                const previousGroup = metadataGroups[index - 1];
+                const nextGroup = metadataGroups[index + 1];
+                return `<div class="board-column-order-actions">
+                  <button class="order-button" data-move-lens-group="up" data-lens-group-value="${escapeHtml(group.groupKey)}" data-lens-group-anchor="${escapeHtml(previousGroup?.groupKey || "")}" data-placement="before" type="button" aria-label="Move ${escapeHtml(group.name)} group left" ${previousGroup ? "" : "disabled"}>←</button>
+                  <button class="order-button" data-move-lens-group="down" data-lens-group-value="${escapeHtml(group.groupKey)}" data-lens-group-anchor="${escapeHtml(nextGroup?.groupKey || "")}" data-placement="after" type="button" aria-label="Move ${escapeHtml(group.name)} group right" ${nextGroup ? "" : "disabled"}>→</button>
+                </div>`;
+              })()}
         </div>
-        <div class="board-column-list${dropAttributes ? " board-column-dropzone" : ""}" ${dropAttributes}>
+        <div class="board-column-list${dropAttributes ? " board-column-dropzone" : ""}" ${collapsed ? "hidden" : ""} ${dropAttributes}>
           ${cardsHtml || '<div class="board-column-empty">No visible items.</div>'}
         </div>
       </section>
@@ -2290,6 +2448,17 @@ function renderBoardColumnsMode() {
   }
 
   bindMissingItemCopyButtons();
+  for (const button of boardGroupsElement.querySelectorAll("[data-group-toggle]")) {
+    button.addEventListener("click", () => toggleColumn(button.dataset.groupToggle));
+  }
+
+  bindItemOrderShortcuts();
+
+  for (const button of boardGroupsElement.querySelectorAll("[data-move-lens-group]")) {
+    button.addEventListener("click", () => {
+      void persistLensGroupOrder(button.dataset.lensGroupValue, button.dataset.lensGroupAnchor, button.dataset.placement, button);
+    });
+  }
 
   for (const panel of boardGroupsElement.querySelectorAll("[data-item-dblopen]")) {
     panel.addEventListener("dblclick", async () => {
@@ -2488,21 +2657,43 @@ function renderBoardReadMode() {
     return;
   }
 
+  const allowItemReorder = activeLens?.kind === "derived";
+  const metadataGroups = allowItemReorder
+    ? visibleGroups.filter((group) => activeLens.values.includes(group.groupKey))
+    : [];
+  const restrictionHtml = allowItemReorder && state.workspace.boardGroups.length > 1
+    ? '<div class="board-order-note">Priority moves stay inside each board.md group. Use one neutral Items group for full cross-lane ordering.</div>'
+    : "";
+
   const html = visibleGroups.map((group) => {
-    const collapsed = state.collapsedGroups.has(group.name);
-    const items = group.items.map((item) => {
+    const collapsed = isGroupCollapsed(group.name);
+    const items = group.items.map((item, itemIndex) => {
       if (isMissingBoardItem(item)) {
         return renderMissingBoardCardRead(item);
       }
       const active = item.id === state.selectedItemId ? " board-item-active" : "";
-      const dragHint = allowDerivedDrag ? '<span class="board-item-drag">Move</span>' : "";
+      const dragHandle = allowDerivedDrag
+        ? `<span class="board-column-card-drag" data-drag-item-id="${escapeHtml(item.id)}" draggable="true" aria-label="Move ${escapeHtml(item.title)}" title="Drag to move ${escapeHtml(item.title)}${allowItemReorder ? ". Keyboard: Alt+Up or Alt+Down." : ""}">::</span>`
+        : "";
+      const previous = group.items[itemIndex - 1];
+      const next = group.items[itemIndex + 1];
+      const canMoveUp = Boolean(previous && canReorderRelative(item.id, previous.id));
+      const canMoveDown = Boolean(next && canReorderRelative(item.id, next.id));
+      const orderAttributes = allowItemReorder
+        ? `data-item-id-order="${escapeHtml(item.id)}" data-order-previous-id="${escapeHtml(canMoveUp ? previous.id : "")}" data-order-next-id="${escapeHtml(canMoveDown ? next.id : "")}" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-description="Press Alt+ArrowUp or Alt+ArrowDown to reorder."`
+        : "";
       return `
-        <button class="board-item${active}${allowDerivedDrag ? " board-item-draggable" : ""}" data-item-id="${escapeHtml(item.id)}" type="button" title="${escapeHtml(item.title)}" aria-label="Open ${escapeHtml(item.title)}" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}" ${allowDerivedDrag ? 'draggable="true"' : ""}>
-          ${buildBoardCardBodyMarkup(item, activeLens?.key, dragHint)}
-        </button>
+        <div class="board-item-row">
+          <button class="board-item${active}" data-item-id="${escapeHtml(item.id)}" type="button" title="${escapeHtml(item.title)}" aria-label="Open ${escapeHtml(item.title)}" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}" ${orderAttributes}>
+            ${buildBoardCardBodyMarkup(item, activeLens?.key, dragHandle)}
+          </button>
+        </div>
       `;
     }).join("");
 
+    const metadataGroupIndex = metadataGroups.indexOf(group);
+    const previousGroup = metadataGroups[metadataGroupIndex - 1];
+    const nextGroup = metadataGroups[metadataGroupIndex + 1];
     const groupActions = allowGroupReorder
       ? `
           <div class="group-actions">
@@ -2510,7 +2701,12 @@ function renderBoardReadMode() {
             <button class="order-button" data-move-group="down" data-group-index="${group.originalIndex}" type="button" ${(filtered || group.originalIndex === state.workspace.boardGroups.length - 1) ? "disabled" : ""}>Down</button>
           </div>
         `
-      : "";
+      : (metadataGroupIndex >= 0 ? `
+          <div class="group-actions" aria-label="${escapeHtml(activeLens.label)} group order">
+            <button class="order-button" data-move-lens-group="up" data-lens-group-value="${escapeHtml(group.groupKey)}" data-lens-group-anchor="${escapeHtml(previousGroup?.groupKey || "")}" data-placement="before" type="button" aria-label="Move ${escapeHtml(group.name)} group up" ${previousGroup ? "" : "disabled"}>Up</button>
+            <button class="order-button" data-move-lens-group="down" data-lens-group-value="${escapeHtml(group.groupKey)}" data-lens-group-anchor="${escapeHtml(nextGroup?.groupKey || "")}" data-placement="after" type="button" aria-label="Move ${escapeHtml(group.name)} group down" ${nextGroup ? "" : "disabled"}>Down</button>
+          </div>
+        ` : "");
 
     return `
       <section class="board-group${collapsed ? " board-group-collapsed" : ""}${allowDerivedDrag && group.dropValue ? " board-group-droppable" : ""}" data-group-index="${group.originalIndex}">
@@ -2526,8 +2722,7 @@ function renderBoardReadMode() {
       </section>
     `;
   }).join("");
-
-  boardGroupsElement.innerHTML = html;
+  boardGroupsElement.innerHTML = restrictionHtml + html;
   syncMobileNavigation();
 
   for (const button of boardGroupsElement.querySelectorAll("[data-item-id]")) {
@@ -2560,13 +2755,20 @@ function renderBoardReadMode() {
     });
   }
 
+  bindItemOrderShortcuts();
+
+  for (const button of boardGroupsElement.querySelectorAll("[data-move-lens-group]")) {
+    button.addEventListener("click", () => {
+      void persistLensGroupOrder(button.dataset.lensGroupValue, button.dataset.lensGroupAnchor, button.dataset.placement, button);
+    });
+  }
   if (!allowDerivedDrag) {
     return;
   }
 
-  for (const button of boardGroupsElement.querySelectorAll("[data-item-id]")) {
-    button.addEventListener("dragstart", (event) => {
-      const itemId = button.dataset.itemId || "";
+  for (const handle of boardGroupsElement.querySelectorAll("[data-drag-item-id]")) {
+    handle.addEventListener("dragstart", (event) => {
+      const itemId = handle.dataset.dragItemId || "";
       if (!itemId) {
         event.preventDefault();
         return;
@@ -2579,7 +2781,7 @@ function renderBoardReadMode() {
 
       state.dragItemId = itemId;
       state.dragClickSuppressUntil = Date.now() + 350;
-      button.classList.add("is-dragging");
+      handle.classList.add("is-dragging");
       event.dataTransfer?.setData("text/plain", itemId);
       event.dataTransfer?.setData("application/x-minimap-item-id", itemId);
       if (event.dataTransfer) {
@@ -2587,10 +2789,10 @@ function renderBoardReadMode() {
       }
     });
 
-    button.addEventListener("dragend", () => {
-      button.classList.remove("is-dragging");
+    handle.addEventListener("dragend", () => {
+      handle.classList.remove("is-dragging");
       state.dragClickSuppressUntil = Date.now() + 350;
-      if (!state.dragItemId || state.dragItemId === button.dataset.itemId) {
+      if (!state.dragItemId || state.dragItemId === handle.dataset.dragItemId) {
         clearBoardDragState();
       }
     });
@@ -3680,7 +3882,9 @@ async function applyRouteStateFromLocation() {
 
   state.appMode = "roadmap";
   applyAppMode();
-  state.activeLens = normalizeLensKey(route.lens);
+  if (!repoChanged && state.workspace) {
+    applyLensRouteChoice(state.workspace, route);
+  }
   state.boardLayout = normalizeBoardLayout(route.layout);
   state.editorOverlayOpen = route.layout === "columns" && Boolean(route.itemId);
   state.searchQuery = route.query;
@@ -3700,7 +3904,12 @@ async function applyRouteStateFromLocation() {
   // the user was in spec mode, so the badge counts in workspace.specSessionsByItemId
   // need a refresh.
   if (repoChanged || exitedSpecMode) {
-    await loadWorkspace(route.itemId || "", { syncRoute: false });
+    await loadWorkspace(route.itemId || "", {
+      syncRoute: false,
+      preferredLens: route.lens,
+      routeLensSpecified: route.lensSpecified,
+      preferredLayout: route.layout,
+    });
     return;
   }
 
@@ -3708,6 +3917,7 @@ async function applyRouteStateFromLocation() {
     preferredItemId: route.itemId || state.selectedItemId,
     replaceRoute: true,
   });
+  clearTransientBanner();
 }
 async function loadWorkspace(preferredItemId = state.selectedItemId, options = {}) {
   try {
@@ -3715,7 +3925,14 @@ async function loadWorkspace(preferredItemId = state.selectedItemId, options = {
     resetAncillaryEditModes();
     state.setupState = null;
     state.workspace = workspace;
-    state.activeLens = normalizeLensKey(options.preferredLens ?? state.activeLens, workspace);
+    if (Object.hasOwn(options, "routeLensSpecified")) {
+      applyLensRouteChoice(workspace, {
+        lens: options.preferredLens,
+        lensSpecified: options.routeLensSpecified,
+      });
+    } else {
+      state.activeLens = normalizeLensKey(options.preferredLens ?? state.activeLens, workspace);
+    }
     state.boardLayout = normalizeBoardLayout(options.preferredLayout ?? state.boardLayout);
     state.editorMode = normalizeEditorMode(options.preferredMode ?? state.editorMode);
     roadmapPathElement.textContent = workspace.roadmapPath;
@@ -3945,12 +4162,12 @@ async function saveCurrentItem() {
       : -1;
     const currentBoardGroupIndex = getBoardGroupIndexForItem(state.selectedItemId);
 
-    await api.saveItem(state.selectedItemId, payload);
+    await api.saveItem(state.selectedItemId, { ...payload, expectedRevision: state.currentItem?.revision });
 
     if (state.editorMode === "structured" && Number.isInteger(nextBoardGroupIndex) && nextBoardGroupIndex >= 0 && nextBoardGroupIndex !== currentBoardGroupIndex) {
       const groups = buildBoardGroupsWithMovedItem(state.selectedItemId, nextBoardGroupIndex);
       if (groups) {
-        await api.saveBoard(groups);
+        await api.saveBoard(groups, state.workspace?.boardRevision);
       }
     }
 
@@ -4900,7 +5117,8 @@ state.appMode = initialRoute.view === "spec" ? "spec" : "roadmap";
 state.spec.selectedPath = initialRoute.specFile;
 applyAppMode();
 renderSpecCommentAnchorMode();
-state.activeLens = initialRoute.lens;
+state.activeLens = initialRoute.lens || DEFAULT_LENS_KEY;
+state.lensExplicit = initialRoute.lensSpecified;
 state.boardLayout = initialRoute.layout;
 state.editorMode = initialRoute.mode;
 state.searchQuery = initialRoute.query;
@@ -4910,6 +5128,7 @@ renderScopeChrome();
 applyEditorMode();
 void loadWorkspace(state.appMode === "spec" ? "" : (initialRoute.itemId || state.selectedItemId), {
   preferredLens: initialRoute.lens,
+  routeLensSpecified: initialRoute.lensSpecified,
   preferredLayout: initialRoute.layout,
   preferredMode: initialRoute.mode,
   syncRoute: false,
@@ -4919,7 +5138,7 @@ void loadWorkspace(state.appMode === "spec" ? "" : (initialRoute.itemId || state
     return;
   }
 
-  if (initialRoute.itemId || initialRoute.mode !== "preview" || initialRoute.lens !== DEFAULT_LENS_KEY || initialRoute.layout !== DEFAULT_BOARD_LAYOUT || initialRoute.query || Object.keys(initialRoute.filters).length > 0) {
+  if (initialRoute.itemId || initialRoute.mode !== "preview" || initialRoute.lensSpecified || initialRoute.layout !== DEFAULT_BOARD_LAYOUT || initialRoute.query || Object.keys(initialRoute.filters).length > 0) {
     void applyRouteStateFromLocation();
     return;
   }

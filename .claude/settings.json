@@ -19,6 +19,15 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-plan.sh\""
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/agent-workflow-runtime.sh\" claude guard"
+          }
+        ],
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|apply_patch"
       }
     ],
     "PostToolUse": [

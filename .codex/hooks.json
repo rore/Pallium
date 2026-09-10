@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/scripts/agent-workflow-runtime.sh\" codex seed",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand JgAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAoAGcAaQB0ACAAcgBlAHYALQBwAGEAcgBzAGUAIAAtAC0AcwBoAG8AdwAtAHQAbwBwAGwAZQB2AGUAbAApACAAJwBzAGMAcgBpAHAAdABzAC8AYQBnAGUAbgB0AC0AdwBvAHIAawBmAGwAbwB3AC0AcgB1AG4AdABpAG0AZQAuAHAAcwAxACcAKQAgAGMAbwBkAGUAeAAgAHMAZQBlAGQAOwAgAGUAeABpAHQAIAAkAEwAQQBTAFQARQBYAEkAVABDAE8ARABFAA=="
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/scripts/agent-workflow-runtime.sh\" codex guard",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand JgAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAoAGcAaQB0ACAAcgBlAHYALQBwAGEAcgBzAGUAIAAtAC0AcwBoAG8AdwAtAHQAbwBwAGwAZQB2AGUAbAApACAAJwBzAGMAcgBpAHAAdABzAC8AYQBnAGUAbgB0AC0AdwBvAHIAawBmAGwAbwB3AC0AcgB1AG4AdABpAG0AZQAuAHAAcwAxACcAKQAgAGMAbwBkAGUAeAAgAGcAdQBhAHIAZAA7ACAAZQB4AGkAdAAgACQATABBAFMAVABFAFgASQBUAEMATwBEAEUA"
+          }
+        ],
+        "matcher": "Edit|Write|apply_patch"
+      }
+    ]
+  }
+}

@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 export const REQUIRED_FRONTMATTER_KEYS = ["id", "title", "status", "priority", "commitment"];
@@ -27,6 +28,7 @@ const DEFAULT_LENS_FIELD_ORDER = {
   status: ["queued", "in-progress", "blocked", "done"],
 };
 const DEFAULT_DRAGGABLE_LENS_FIELDS = new Set(["status", "commitment", "priority", "kind"]);
+const DEFAULT_FILTER_FIELDS = new Set(["commitment", "kind", "labels", "lane", "milestone", "priority", "status"]);
 const FILTER_FACET_EXCLUDED_KEYS = new Set(["id", "title"]);
 const LENS_EXCLUDED_KEYS = new Set(["id", "title", "labels"]);
 const MAX_FILTER_VALUES = 8;
@@ -48,6 +50,23 @@ function detectEol(text) {
 
 function stripUtf8Bom(text) {
   return String(text ?? "").replace(/^\uFEFF/, "");
+}
+
+function contentRevision(text) {
+  return createHash("sha256").update(String(text ?? ""), "utf8").digest("hex");
+}
+
+const repoWriteQueues = new Map();
+
+function withRepoWriteLock(repoRoot, operation) {
+  const resolved = path.resolve(repoRoot);
+  const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  const previous = repoWriteQueues.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  repoWriteQueues.set(key, current);
+  return current.finally(() => {
+    if (repoWriteQueues.get(key) === current) repoWriteQueues.delete(key);
+  });
 }
 
 function escapeRegExp(value) {
@@ -328,6 +347,7 @@ function makeItemSummary(itemRecord) {
     milestone: itemRecord.parsed.frontmatter.milestone ?? "",
     kind: itemRecord.kind,
     filePath: itemRecord.filePath,
+    revision: contentRevision(itemRecord.parsed.rawText),
     metadata,
     overviewHeading: overview.heading,
     overviewExcerpt: overview.excerpt,
@@ -345,6 +365,7 @@ function makeBoardItemSummary(itemSummary) {
     milestone: itemSummary.milestone,
     kind: itemSummary.kind,
     metadata: { ...itemSummary.metadata },
+    revision: itemSummary.revision,
     overviewHeading: itemSummary.overviewHeading,
     overviewExcerpt: itemSummary.overviewExcerpt,
   };
@@ -371,7 +392,8 @@ function makeMissingBoardItemSummary(itemId, groupName) {
   };
 }
 
-function buildAvailableFilters(itemSummaries) {
+function buildAvailableFilters(itemSummaries, workspaceConfig) {
+  const configuredFields = new Set(workspaceConfig?.filters?.fields || []);
   const facets = new Map();
 
   for (const summary of Object.values(itemSummaries)) {
@@ -397,7 +419,13 @@ function buildAvailableFilters(itemSummaries) {
       key,
       values: Array.from(values).sort((left, right) => left.localeCompare(right)),
     }))
-    .filter((facet) => facet.values.length > 1 && facet.values.length <= MAX_FILTER_VALUES && !FILTER_FACET_EXCLUDED_KEYS.has(facet.key))
+    .filter((facet) => {
+      const configured = configuredFields.has(facet.key) || Boolean(getConfiguredLensField(workspaceConfig, facet.key));
+      return facet.values.length > 1
+        && (DEFAULT_FILTER_FIELDS.has(facet.key) || configured)
+        && (facet.values.length <= MAX_FILTER_VALUES || configured)
+        && !FILTER_FACET_EXCLUDED_KEYS.has(facet.key);
+    })
     .sort((left, right) => left.key.localeCompare(right.key));
 }
 
@@ -445,6 +473,19 @@ function normalizeLensConfig(config) {
   return {
     fields: normalizeLensFieldConfig(config?.lenses?.fields),
   };
+}
+
+function normalizeFilterConfig(config) {
+  const fields = Array.isArray(config?.filters?.fields)
+    ? uniqueValuesInOrder(config.filters.fields)
+      .filter((field) => isFrontmatterKeyName(field) && !FILTER_FACET_EXCLUDED_KEYS.has(field))
+    : [];
+
+  return { fields };
+}
+
+function normalizeDefaultLens(config) {
+  return typeof config?.defaultLens === "string" ? config.defaultLens.trim() : "";
 }
 
 function getConfiguredLensField(workspaceConfig, field) {
@@ -677,11 +718,16 @@ export function serializeItem(parsedItem, updates) {
   const metadata = { ...parsedItem.metadataValues, ...(updates.metadata || {}) };
   const sections = { ...parsedItem.sections, ...(updates.sections || {}) };
   const updatedMetadataNames = new Set(Object.keys(updates.metadata || {}).filter((key) => key !== "kind"));
+  const removedMetadataNames = new Set(updates.removedMetadataKeys || []);
   const updatedSectionNames = new Set(Object.keys(updates.sections || {}));
   const seenKeys = new Set();
   const frontmatterLines = [];
 
   for (const entry of parsedItem.frontmatterEntries) {
+    if (removedMetadataNames.has(entry.key) && !REQUIRED_FRONTMATTER_KEYS.includes(entry.key)) {
+      seenKeys.add(entry.key);
+      continue;
+    }
     if (REQUIRED_FRONTMATTER_KEYS.includes(entry.key)) {
       frontmatterLines.push(`${entry.key}: ${formatScalar(metadata[entry.key])}`);
     } else if (OPTIONAL_FRONTMATTER_KEYS.includes(entry.key)) {
@@ -709,7 +755,7 @@ export function serializeItem(parsedItem, updates) {
   }
 
   for (const key of updatedMetadataNames) {
-    if (seenKeys.has(key) || !isFrontmatterKeyName(key) || !isScalarLikeValue(metadata[key])) {
+    if (seenKeys.has(key) || removedMetadataNames.has(key) || !isFrontmatterKeyName(key) || !isScalarLikeValue(metadata[key])) {
       continue;
     }
     // OPTIONAL keys are only written when they carry a non-empty value —
@@ -790,6 +836,71 @@ async function fileExists(filePath) {
   }
 }
 
+async function assertFileSnapshot(filePath, expectedContent, conflictMessage) {
+  if (expectedContent === undefined) return;
+  if (expectedContent === null) {
+    if (await fileExists(filePath)) throw new AppError(conflictMessage, 409, "conflict");
+    return;
+  }
+  let currentContent;
+  try {
+    currentContent = await fs.readFile(filePath, "utf8");
+  } catch {
+    throw new AppError(conflictMessage, 409, "conflict");
+  }
+  if (currentContent !== expectedContent) {
+    throw new AppError(conflictMessage, 409, "conflict");
+  }
+}
+
+async function writeFileAtomic(filePath, content, expectedContent, conflictMessage = "File changed on disk. Reload before saving.") {
+  const tmpPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    await fs.writeFile(tmpPath, content, "utf8");
+    await assertFileSnapshot(filePath, expectedContent, conflictMessage);
+    await fs.rename(tmpPath, filePath);
+  } finally {
+    await fs.rm(tmpPath, { force: true }).catch(() => {});
+  }
+}
+
+async function writeFilesTransactionally(entries) {
+  const suffix = `${process.pid}-${randomUUID()}`;
+  const staged = entries.map((entry) => ({
+    ...entry,
+    tmpPath: `${entry.path}.tmp-${suffix}`,
+    backupPath: `${entry.path}.bak-${suffix}`,
+    backedUp: false,
+    promoted: false,
+  }));
+
+  try {
+    for (const entry of staged) {
+      await fs.writeFile(entry.tmpPath, entry.content, "utf8");
+    }
+    for (const entry of staged) {
+      await assertFileSnapshot(entry.path, entry.expectedContent, entry.conflictMessage || "File changed on disk. Reload before saving.");
+    }
+    for (const entry of staged) {
+      await fs.rename(entry.path, entry.backupPath);
+      entry.backedUp = true;
+      await fs.rename(entry.tmpPath, entry.path);
+      entry.promoted = true;
+    }
+  } catch (error) {
+    for (const entry of [...staged].reverse()) {
+      if (entry.backedUp) {
+        if (entry.promoted) await fs.rm(entry.path, { force: true }).catch(() => {});
+        await fs.rename(entry.backupPath, entry.path).catch(() => {});
+      }
+      await fs.rm(entry.tmpPath, { force: true }).catch(() => {});
+    }
+    throw error;
+  }
+
+  // Backup cleanup is post-commit and best-effort: failure must never trigger rollback.
+  await Promise.allSettled(staged.map((entry) => fs.rm(entry.backupPath, { force: true })));
+}
 async function safeStat(targetPath) {
   try {
     return await fs.stat(targetPath);
@@ -848,6 +959,7 @@ async function readRoadmapConfig(repoRoot) {
   const configPath = path.join(resolvedRepoRoot, "roadmap.config.json");
   let configuredPath = "roadmap";
   let parsedConfig = null;
+  let configText = "";
   const hasConfig = await fileExists(configPath);
 
   if (hasConfig) {
@@ -855,6 +967,7 @@ async function readRoadmapConfig(repoRoot) {
 
     try {
       rawConfig = await fs.readFile(configPath, "utf8");
+      configText = rawConfig;
     } catch {
       throw new AppError("Could not read roadmap.config.json.", 500, "config_error", buildConfigErrorDetails(resolvedRepoRoot, configPath));
     }
@@ -888,6 +1001,10 @@ async function readRoadmapConfig(repoRoot) {
     roadmapPath: configuredPath,
     resolvedPath,
     lenses: normalizeLensConfig(parsedConfig),
+    filters: normalizeFilterConfig(parsedConfig),
+    defaultLens: normalizeDefaultLens(parsedConfig),
+    configText,
+    configRevision: hasConfig ? contentRevision(configText) : null,
   };
 }
 
@@ -1103,15 +1220,32 @@ export async function loadWorkspace(repoRoot) {
     });
   }
 
+  const availableLenses = deriveAvailableLenses(itemSummaries, workspace);
+  const configuredDefaultLens = workspace.defaultLens;
+  const defaultLens = configuredDefaultLens && availableLenses.some((lens) => lens.key === configuredDefaultLens)
+    ? configuredDefaultLens
+    : "board";
+
+  if (configuredDefaultLens && defaultLens === "board" && configuredDefaultLens !== "board") {
+    warnings.push({
+      code: "unknown_default_lens",
+      lens: configuredDefaultLens,
+      message: `Configured default grouping "${configuredDefaultLens}" is unavailable. Showing Board instead.`,
+    });
+  }
+
   return {
     repoName: path.basename(path.resolve(repoRoot)),
     roadmapPath: workspace.roadmapPath,
     resolvedPath: workspace.resolvedPath,
     boardGroups,
+    boardRevision: contentRevision(boardText),
+    configRevision: workspace.configRevision,
+    defaultLens,
     scopeText,
     items: itemSummaries,
-    availableFilters: buildAvailableFilters(itemSummaries),
-    availableLenses: deriveAvailableLenses(itemSummaries, workspace),
+    availableFilters: buildAvailableFilters(itemSummaries, workspace),
+    availableLenses,
     warnings,
   };
 }
@@ -1169,16 +1303,21 @@ export async function readItemById(repoRoot, id) {
     extraSections,
     extraSectionOrder: Object.keys(extraSections),
     rawText: item.parsed.rawText,
+    revision: contentRevision(item.parsed.rawText),
   };
 }
 
-export async function saveItemById(repoRoot, id, payload) {
+async function saveItemByIdUnlocked(repoRoot, id, payload) {
   const workspace = await resolveRoadmapRoot(repoRoot);
   const itemIndex = await loadItemIndex(workspace.resolvedPath);
   const item = itemIndex.get(id);
 
   if (!item) {
     throw new AppError(`Roadmap item "${id}" was not found.`, 404, "not_found");
+  }
+
+  if (typeof payload.expectedRevision === "string" && payload.expectedRevision !== contentRevision(item.parsed.rawText)) {
+    throw new AppError(`Roadmap item "${id}" changed on disk. Reload before saving.`, 409, "conflict");
   }
 
   if (typeof payload.rawText === "string") {
@@ -1188,14 +1327,20 @@ export async function saveItemById(repoRoot, id, payload) {
       throw new AppError("Raw item edits must preserve the item id.", 400, "bad_request");
     }
 
-    await fs.writeFile(item.filePath, payload.rawText, "utf8");
+    await writeFileAtomic(item.filePath, payload.rawText, item.parsed.rawText, `Roadmap item "${id}" changed on disk. Reload before saving.`);
     return readItemById(repoRoot, id);
   }
 
   const metadata = payload.metadata || {};
+  for (const key of REQUIRED_FRONTMATTER_KEYS) {
+    if (Object.hasOwn(metadata, key) && (metadata[key] === null || String(metadata[key]).trim() === "")) {
+      throw new AppError(`Required metadata field "${key}" cannot be cleared.`, 400, "bad_request");
+    }
+  }
   const sections = payload.sections || {};
   const nextMetadata = { ...item.parsed.metadataValues };
   const nextSections = { ...item.parsed.sections };
+  const removedMetadataKeys = [];
 
   for (const key of REQUIRED_FRONTMATTER_KEYS) {
     nextMetadata[key] = key === "id" ? item.id : (metadata[key] ?? item.parsed.frontmatter[key]);
@@ -1209,7 +1354,11 @@ export async function saveItemById(repoRoot, id, payload) {
     if (key === "id" || key === "kind" || !isFrontmatterKeyName(key) || !isScalarLikeValue(value)) {
       continue;
     }
-
+    if (!REQUIRED_FRONTMATTER_KEYS.includes(key) && (value === null || String(value).trim() === "")) {
+      delete nextMetadata[key];
+      removedMetadataKeys.push(key);
+      continue;
+    }
     nextMetadata[key] = value;
   }
 
@@ -1220,6 +1369,7 @@ export async function saveItemById(repoRoot, id, payload) {
   const serialized = serializeItem(item.parsed, {
     metadata: nextMetadata,
     sections: nextSections,
+    removedMetadataKeys,
   });
 
   const nextKind = metadata.kind === "feature" || metadata.kind === "idea" ? metadata.kind : item.kind;
@@ -1231,13 +1381,196 @@ export async function saveItemById(repoRoot, id, payload) {
     throw new AppError(`Roadmap item "${id}" already exists at the target kind path.`, 400, "bad_request");
   }
 
-  await fs.writeFile(item.filePath, serialized, "utf8");
+  await writeFileAtomic(item.filePath, serialized, item.parsed.rawText, `Roadmap item "${id}" changed on disk. Reload before saving.`);
 
   if (destinationPath !== item.filePath) {
     await fs.rename(item.filePath, destinationPath);
   }
 
   return readItemById(repoRoot, id);
+}
+
+export function saveItemById(repoRoot, id, payload) {
+  return withRepoWriteLock(repoRoot, () => saveItemByIdUnlocked(repoRoot, id, payload));
+}
+
+function normalizeRelativePlacement(value) {
+  if (value !== "before" && value !== "after") {
+    throw new AppError('Placement must be "before" or "after".', 400, "bad_request");
+  }
+  return value;
+}
+
+function locateBoardItem(groups, itemId) {
+  const matches = [];
+  groups.forEach((group, groupIndex) => {
+    group.itemIds.forEach((id, itemIndex) => {
+      if (id === itemId) matches.push({ groupIndex, itemIndex, groupName: group.name });
+    });
+  });
+  if (matches.length === 0) {
+    throw new AppError(`Roadmap item "${itemId}" is not listed in board.md.`, 422, "unlisted_item");
+  }
+  if (matches.length > 1) {
+    throw new AppError(`Board item "${itemId}" is listed more than once.`, 409, "board_conflict");
+  }
+  return matches[0];
+}
+
+export function moveBoardItemRelative(groups, itemId, anchorItemId, placement) {
+  const normalizedPlacement = normalizeRelativePlacement(placement);
+  if (!itemId || !anchorItemId || itemId === anchorItemId) {
+    throw new AppError("Metadata ordering requires different item and anchor ids.", 400, "bad_request");
+  }
+
+  const source = locateBoardItem(groups, itemId);
+  const anchor = locateBoardItem(groups, anchorItemId);
+  if (source.groupIndex !== anchor.groupIndex) {
+    throw new AppError(
+      `Cannot reorder across board.md groups "${source.groupName}" and "${anchor.groupName}". Use one neutral Items group for full metadata prioritization.`,
+      409,
+      "board_group_conflict",
+      { sourceGroup: source.groupName, anchorGroup: anchor.groupName },
+    );
+  }
+
+  const nextGroups = groups.map((group) => ({ ...group, itemIds: [...group.itemIds] }));
+  const itemIds = nextGroups[source.groupIndex].itemIds;
+  itemIds.splice(source.itemIndex, 1);
+  const anchorIndex = itemIds.indexOf(anchorItemId);
+  itemIds.splice(normalizedPlacement === "before" ? anchorIndex : anchorIndex + 1, 0, itemId);
+  return nextGroups;
+}
+
+function moveValueRelative(values, value, anchorValue, placement) {
+  const normalizedPlacement = normalizeRelativePlacement(placement);
+  if (!value || !anchorValue || value === anchorValue) {
+    throw new AppError("Group ordering requires different value and anchor names.", 400, "bad_request");
+  }
+  if (!values.includes(value) || !values.includes(anchorValue)) {
+    throw new AppError("Group ordering references a value that is no longer available. Reload before saving.", 409, "conflict");
+  }
+  const nextValues = values.filter((entry) => entry !== value);
+  const anchorIndex = nextValues.indexOf(anchorValue);
+  nextValues.splice(normalizedPlacement === "before" ? anchorIndex : anchorIndex + 1, 0, value);
+  return nextValues;
+}
+
+async function reorderMetadataItemUnlocked(repoRoot, payload) {
+  if (!payload || typeof payload !== "object") {
+    throw new AppError("Metadata ordering requires a request body.", 400, "bad_request");
+  }
+  if (typeof payload.expectedBoardRevision !== "string") {
+    throw new AppError("Metadata ordering requires the current board revision.", 400, "bad_request");
+  }
+
+  const workspace = await resolveRoadmapRoot(repoRoot);
+  const boardPath = path.join(workspace.resolvedPath, "board.md");
+  const boardText = await readUtf8(boardPath, "Missing roadmap board.md file.");
+  if (contentRevision(boardText) !== payload.expectedBoardRevision) {
+    throw new AppError("Roadmap board changed on disk. Reload before reordering.", 409, "conflict");
+  }
+
+  const groups = parseBoardText(boardText, boardPath);
+  const itemIndex = await loadItemIndex(workspace.resolvedPath);
+  for (const referencedId of [payload.itemId, payload.anchorItemId]) {
+    if (!itemIndex.has(referencedId)) {
+      throw new AppError(`Roadmap item "${referencedId}" was not found.`, 404, "not_found");
+    }
+  }
+  const nextGroups = moveBoardItemRelative(groups, payload.itemId, payload.anchorItemId, payload.placement);
+  const nextBoardText = serializeBoard(nextGroups, detectEol(boardText));
+  const writes = [];
+
+  const hasMetadataChange = typeof payload.field === "string" && Object.hasOwn(payload, "value");
+  if (hasMetadataChange) {
+    const field = payload.field.trim();
+    if (!isFrontmatterKeyName(field) || field === "id" || field === "title" || field === "kind") {
+      throw new AppError("Metadata ordering field is not editable through this operation.", 400, "bad_request");
+    }
+    if (typeof payload.expectedItemRevision !== "string") {
+      throw new AppError("Combined metadata ordering requires the current item revision.", 400, "bad_request");
+    }
+    if (payload.value !== null && !isScalarLikeValue(payload.value)) {
+      throw new AppError("Metadata grouping values must be scalar text.", 400, "bad_request");
+    }
+
+    const item = itemIndex.get(payload.itemId);
+    if (contentRevision(item.parsed.rawText) !== payload.expectedItemRevision) {
+      throw new AppError(`Roadmap item "${payload.itemId}" changed on disk. Reload before saving.`, 409, "conflict");
+    }
+
+    const clearing = payload.value === null || String(payload.value).trim() === "";
+    if (clearing && REQUIRED_FRONTMATTER_KEYS.includes(field)) {
+      throw new AppError(`Required metadata field "${field}" cannot be cleared.`, 400, "bad_request");
+    }
+    const serializedItem = serializeItem(item.parsed, clearing
+      ? { removedMetadataKeys: [field] }
+      : { metadata: { [field]: payload.value } });
+    if (serializedItem !== item.parsed.rawText) {
+      writes.push({ path: item.filePath, content: serializedItem, expectedContent: item.parsed.rawText, conflictMessage: `Roadmap item "${payload.itemId}" changed on disk. Reload before saving.` });
+    }
+  }
+
+  if (nextBoardText !== boardText) {
+    writes.push({ path: boardPath, content: nextBoardText, expectedContent: boardText, conflictMessage: "Roadmap board changed on disk. Reload before reordering." });
+  }
+
+  if (writes.length === 1) {
+    await writeFileAtomic(writes[0].path, writes[0].content, writes[0].expectedContent, writes[0].conflictMessage);
+  } else if (writes.length > 1) {
+    await writeFilesTransactionally(writes);
+  }
+  return loadWorkspace(repoRoot);
+}
+
+export function reorderMetadataItem(repoRoot, payload) {
+  return withRepoWriteLock(repoRoot, () => reorderMetadataItemUnlocked(repoRoot, payload));
+}
+
+async function reorderLensFieldUnlocked(repoRoot, field, payload) {
+  const cleanField = String(field || "").trim();
+  if (!isFrontmatterKeyName(cleanField) || !payload || typeof payload !== "object") {
+    throw new AppError("Lens group ordering requires a valid field and request body.", 400, "bad_request");
+  }
+  if (!Object.hasOwn(payload, "expectedConfigRevision")) {
+    throw new AppError("Lens group ordering requires the current config revision.", 400, "bad_request");
+  }
+
+  const loaded = await loadWorkspace(repoRoot);
+  if (loaded.configRevision !== payload.expectedConfigRevision) {
+    throw new AppError("roadmap.config.json changed on disk. Reload before saving group order.", 409, "conflict");
+  }
+  const lens = loaded.availableLenses.find((entry) => entry.key === cleanField && entry.kind === "derived");
+  if (!lens) {
+    throw new AppError(`Grouping field "${cleanField}" is not available.`, 422, "unknown_lens");
+  }
+
+  const nextOrder = moveValueRelative(lens.values, String(payload.value || ""), String(payload.anchorValue || ""), payload.placement);
+  const workspace = await readRoadmapConfig(repoRoot);
+  if (workspace.configRevision !== payload.expectedConfigRevision) {
+    throw new AppError("roadmap.config.json changed on disk. Reload before saving group order.", 409, "conflict");
+  }
+  const parsed = workspace.configText ? JSON.parse(stripUtf8Bom(workspace.configText)) : { roadmapPath: workspace.roadmapPath };
+  const lenses = parsed.lenses && typeof parsed.lenses === "object" && !Array.isArray(parsed.lenses) ? parsed.lenses : {};
+  const fields = lenses.fields && typeof lenses.fields === "object" && !Array.isArray(lenses.fields) ? lenses.fields : {};
+  const options = fields[cleanField] && typeof fields[cleanField] === "object" && !Array.isArray(fields[cleanField]) ? fields[cleanField] : {};
+  const nextConfig = {
+    ...parsed,
+    lenses: {
+      ...lenses,
+      fields: {
+        ...fields,
+        [cleanField]: { ...options, order: nextOrder },
+      },
+    },
+  };
+  const configPath = path.join(path.resolve(repoRoot), "roadmap.config.json");
+  await writeFileAtomic(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, workspace.configPath ? workspace.configText : null, "roadmap.config.json changed on disk. Reload before saving group order.");
+  return loadWorkspace(repoRoot);
+}
+export function reorderLensField(repoRoot, field, payload) {
+  return withRepoWriteLock(repoRoot, () => reorderLensFieldUnlocked(repoRoot, field, payload));
 }
 
 export async function saveScopeText(repoRoot, scopeText) {
@@ -1252,10 +1585,13 @@ export async function saveScopeText(repoRoot, scopeText) {
   return loadWorkspace(repoRoot);
 }
 
-export async function saveBoardByGroups(repoRoot, groupsPayload) {
+async function saveBoardByGroupsUnlocked(repoRoot, groupsPayload, expectedRevision = null) {
   const workspace = await resolveRoadmapRoot(repoRoot);
   const boardPath = path.join(workspace.resolvedPath, "board.md");
   const existingBoardText = await readUtf8(boardPath, "Missing roadmap board.md file.");
+  if (typeof expectedRevision === "string" && expectedRevision !== contentRevision(existingBoardText)) {
+    throw new AppError("Roadmap board changed on disk. Reload before saving.", 409, "conflict");
+  }
   const eol = detectEol(existingBoardText);
   const itemIndex = await loadItemIndex(workspace.resolvedPath);
 
@@ -1297,6 +1633,9 @@ export async function saveBoardByGroups(repoRoot, groupsPayload) {
   });
 
   const serialized = serializeBoard(normalizedGroups, eol);
-  await fs.writeFile(boardPath, serialized, "utf8");
+  await writeFileAtomic(boardPath, serialized, existingBoardText, "Roadmap board changed on disk. Reload before saving.");
   return loadWorkspace(repoRoot);
+}
+export function saveBoardByGroups(repoRoot, groupsPayload, expectedRevision = null) {
+  return withRepoWriteLock(repoRoot, () => saveBoardByGroupsUnlocked(repoRoot, groupsPayload, expectedRevision));
 }
