@@ -260,7 +260,7 @@ Only three pressure cases were answerable or partial and therefore capable of im
 
 Decision: **REJECT** the 4,000-character budget. Production remains at 2,000 characters. No replacement sampling, prompt tuning, affected-pair rerun, code edit, install, service restart, or merge occurred.
 
-The enforcing experiment-payload ledger recorded 129,951 input and 12,331 output tokens against caps of 175,000 and 25,000. Counts use `o200k_base` for explicit repeated prompts, files, tool responses, and results plus framing reserves; provider-hidden runtime instructions are excluded because counters were unavailable. Private snapshots, evidence, cards, responses, logs, and the ledger remain ignored under `.local/history-budget-4000-trial/`.
+The enforcing experiment-payload ledger recorded 144,083 input and 12,483 output tokens against caps of 175,000 and 25,000. Counts use `o200k_base` for explicit repeated prompts, files, tool responses, and results plus framing reserves; provider-hidden runtime instructions are excluded because counters were unavailable. Private snapshots, evidence, cards, responses, logs, and the ledger remain ignored under `.local/history-budget-4000-trial/`.
 ## Recommendation
 
 Keep the existing 2,000-character agent-facing search response budget and current excerpt/response-packaging behavior. Do not change the shared `build_excerpt` helper: normal retrieval also feeds derived-memory routing, work-signal classification, and disclaimer suppression, so a global window change is not presentation-only. Do not add the tested history-specific density window or the tested 24-character-floor/rank-allocation policy based on this evidence.
