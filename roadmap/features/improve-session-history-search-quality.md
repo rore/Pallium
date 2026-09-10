@@ -123,6 +123,31 @@ work, or that guidance/product behavior needs no improvement. The live calls wer
 a paired same-input replay, so the omitted timestamp fields are not claimed to fully
 explain the five-to-nine difference.
 
+A development-only follow-up then compared the complete caller-parity forms of 10
+results / 2,000 characters, 5 / 2,000, and 10 / 4,000 on exactly the same four cases.
+Before grading, the architect clarified that one case with no useful source should be
+kept as a negative control rather than treated as a feasibility failure. Three
+isolated low-cost graders each saw one opaque variant per query. On the three positive
+cases, first-choice usefulness / best-source-first was 2/3 / 0/3 for 10 / 2,000,
+3/3 / 3/3 for 5 / 2,000, and 3/3 / 2/3 for 10 / 4,000. No selected first choice was
+wrong; under the current variant, the grader abstained in one case. The five-result
+variant removed all
+three uniquely useful below-rank-five sources across two cases. Both ten-result
+variants retained them, but graders selected one under 2,000 characters and none
+under 4,000. The negative control produced abstention under the current response and
+tentative inspection—not a support claim—under both alternatives.
+
+Actual response sizes were 1,999 characters for 10 / 2,000, 1,950–1,979 for
+5 / 2,000, and 3,947–3,992 for 10 / 4,000. Every variant still raised qualifier
+concerns on all three positive cases, and one case's required deadline, timeout,
+usage-audit, and full acceptance details were absent from all sources. This tiny,
+dependent development comparison therefore supports no rollout: this sample showed
+poorer source selection under 2,000 characters, five results discard unique evidence
+by truncation, and 4,000
+characters roughly doubles response size without resolving qualifier adequacy.
+Latency, holdout behavior, adaptive-agent behavior, injection precision, and
+downstream task effect were not measured.
+
 Do not tune this allocation on the same development split or open its reserved
 holdout. The unresolved question is how agents choose a useful source when multiple
 retained hits have empty or insufficient previews; the three rank-1 expansions do not

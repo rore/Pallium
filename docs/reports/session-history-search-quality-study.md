@@ -197,6 +197,48 @@ the live calls were not a paired replay of the same complete inputs, the omitted
 `recorded_at` fields are a fidelity defect but are not claimed to fully explain the
 change from five to nine empty previews.
 
+## Exploratory result-count and response-budget comparison
+
+An architect clarification made before grading accepted “none of these sources is
+useful” as valid gold for a separately scored negative control. This changed the
+earlier feasibility interpretation, which had stopped on that case; it did not change
+the four cases, variants, or frozen source evidence. Gold was fixed from complete
+expanded content before three isolated low-cost graders each saw one opaque variant
+per query. The replay queried only the 36 frozen development event IDs and used
+production historical-metadata assembly plus the current MCP compactor. All 40 input
+rows included `recorded_at` and `recorded_at_source`; none had a historical update.
+
+| Variant | Actual response chars (rough chars/4 tokens) | First useful / best first, 3 positive cases | Unique useful ranks >5 visible | Negative control |
+|---|---:|---:|---:|---|
+| 10 results / 2,000 chars | 1,999 (500) | 2/3 / 0/3 | 3/3; one selected | abstained |
+| 5 results / 2,000 chars | 1,950–1,979 (488–495) | 3/3 / 3/3 | 0/3 | tentative inspection |
+| 10 results / 4,000 chars | 3,947–3,992 (987–998) | 3/3 / 2/3 | 3/3; none selected | tentative inspection |
+
+No positive first choice was wrong. Under 10 results / 2,000 characters, the
+grader abstained in one case and never put the best source first. Under five
+results, the grader put the best source first in all three positive cases, while
+truncation removed three uniquely useful lower-ranked sources across two cases. Four thousand characters retained those
+sources and improved first-choice success, but approximately doubled response size
+without causing the grader to select them.
+
+Every variant drew qualifier concerns on all three positive cases. One case was only
+partially answerable even from full sources: its deadline, timeout policy, usage-audit
+details, and complete acceptance thresholds were absent. Fixed, non-adaptive expansion
+choices totaled 4 calls / 8,696 characters for the current variant, 6 / 14,400 for
+each alternative across the positive cases. On the negative control, the current
+variant made no call; each alternative proposed two tentative inspections totaling
+4,800 characters. Tentative inspection is not a false relevance claim, and no grader
+asserted that the negative sources supported the request.
+
+This four-case development comparison does not show that 2,000 characters is clearly
+sensible or that either alternative should ship. It exposes a direct tradeoff:
+this sample showed poorer selection under current packaging; five results lose
+uniquely useful evidence; and 4,000 characters costs roughly twice as much while
+leaving qualifier adequacy
+unresolved. The cards are dependent development cases with one judgment per
+case/variant; latency, holdout generalization, adaptive agent behavior, injection
+precision, and downstream task effect remain unmeasured.
+
 ## Recommendation
 
 Keep the existing excerpt and response-packaging behavior. Do not change the shared `build_excerpt` helper: normal retrieval also feeds derived-memory routing, work-signal classification, and disclaimer suppression, so a global window change is not presentation-only. Do not add the tested history-specific density window or the tested 24-character-floor/rank-allocation policy based on this evidence.
@@ -218,5 +260,6 @@ The ignored harness used only repository code and the Python standard library ar
 - final aggregate grade summary: 2D3B0EBA231E1481DD6D0276258C5F10B95089B4441627A3CC3874148B510815;
 - aggregate-only public-claim verification: 59008D205FAAF6CDC5DA9DD56A04EC02BE4356CB14DD5ED9B113019DFA390C76;
 - compaction follow-through aggregate: 07846FF802969BDAA2F7FEBBA6827471EF990641FE46BCC6C8AE3238E7564202.
+- exploratory result-count/budget aggregate: CE43A610E61490193E686AE76D3F5C4A9E8C33397A333A2D3DF6C1DA0948BBA2.
 
 The replay used current snapshotted source rows with historical exposed IDs, not an atomic historical vector-index snapshot, and omitted `recorded_at` plus `recorded_at_source` from the reconstructed caller payload. It cannot estimate ranking changes, past source contents, the complete current response shape, downstream task effect, or population-level accuracy. Development lookups are dependent within components, and the reserved holdout is one independent component rather than 12 independent tasks. These limits preserve the conservative rejection of the tested candidates but prevent a broader product or current-production claim.
