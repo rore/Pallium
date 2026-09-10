@@ -202,8 +202,12 @@ class SQLiteStorageProvider(
         try:
             with sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True) as connection:
                 tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-                relay_tables = set(required) & tables
-                if (relay_tables and relay_tables != set(required)) or (require_tables and not relay_tables):
+                relay_tables = (set(required) | set(optional)) & tables
+                required_relay_tables = set(required) & tables
+                if (
+                    (relay_tables and required_relay_tables != set(required))
+                    or (require_tables and not required_relay_tables)
+                ):
                     raise RuntimeError(f"Relay schema is incomplete in {path}; refusing startup")
                 for table, columns in {**required, **optional}.items():
                     if table not in tables:

@@ -141,14 +141,20 @@ def run_mcp_journey(client: TestClient, *, target_endpoint: str) -> dict[str, An
                 if destination != target_endpoint:
                     raise RuntimeError("MCP participant discovery omitted the intended destination")
                 captured = await post(None, "/item-and-query", {"source_type": "opencode", "source_id": "mcp-demo-capture", "content_type": "text/plain", "content": "MCP exact History capture", "role": "assistant", "artifact_kind": "message", "use_case": "demo_agent_memory", "container_ref": SOURCE_CONTAINER, "thread_ref": "relaydev", "visibility": "private", "metadata": {"pallium_work_refs": [feature_key]}})
-                sent = await call(server, "pallium_relay_send", {"message": "MCP review request", "recipient": destination, "sender_runtime": "opencode", "sender_session_ref": "relaydev", "container_ref": SOURCE_CONTAINER})
+                sent = require(await call(server, "pallium_relay_send", {"message": "MCP review request", "recipient": destination, "sender_runtime": "opencode", "sender_session_ref": "relaydev", "container_ref": SOURCE_CONTAINER}), "send")
                 os.environ.update(PALLIUM_THREAD_REF="architect", PALLIUM_CONTAINER_REF=TARGET_CONTAINER)
-                received = await call(server, "pallium_relay_receive", {"container_ref": TARGET_CONTAINER})
-                delivery = received["deliveries"][0]
-                reply = await call(server, "pallium_relay_reply", {"delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"], "message": "MCP review complete", "container_ref": TARGET_CONTAINER})
+                received = require(await call(server, "pallium_relay_receive", {"container_ref": TARGET_CONTAINER}), "receive")
+                deliveries = received.get("deliveries", [])
+                if not deliveries:
+                    raise RuntimeError("MCP receive failed: no deliveries")
+                delivery = deliveries[0]
+                reply = require(await call(server, "pallium_relay_reply", {"delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"], "message": "MCP review complete", "container_ref": TARGET_CONTAINER}), "reply")
                 os.environ.update(PALLIUM_THREAD_REF="relaydev", PALLIUM_CONTAINER_REF=SOURCE_CONTAINER)
-                returned = await call(server, "pallium_relay_receive", {"container_ref": SOURCE_CONTAINER})
-                if returned["deliveries"][0]["message_id"] != reply["message_id"]:
+                returned = require(await call(server, "pallium_relay_receive", {"container_ref": SOURCE_CONTAINER}), "reply receive")
+                returned_deliveries = returned.get("deliveries", [])
+                if not returned_deliveries:
+                    raise RuntimeError("MCP reply receive failed: no deliveries")
+                if returned_deliveries[0]["message_id"] != reply["message_id"]:
                     raise RuntimeError("MCP reply did not return to the sender")
                 detached = require(await call(server, "pallium_relay_detach_work_ref", {**FEATURE, "container_ref": SOURCE_CONTAINER}), "detach")
                 if not detached.get("detached"):

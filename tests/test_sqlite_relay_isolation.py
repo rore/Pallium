@@ -276,6 +276,28 @@ def test_existing_empty_relay_file_fails_without_initializing_or_mutating_it(
     assert _tables(relay) == {"unrelated"}
 
 
+def test_orphaned_optional_relay_table_fails_without_mutation(tmp_path: Path) -> None:
+    path = tmp_path / "relay.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """CREATE TABLE relay_session_work_refs (
+                endpoint_id TEXT NOT NULL,
+                work_ref TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                scope_ref TEXT NOT NULL,
+                local_ref TEXT NOT NULL,
+                position INTEGER,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (endpoint_id, work_ref, origin)
+            )"""
+        )
+    before = path.read_bytes()
+    with pytest.raises(RuntimeError, match="Relay schema is incomplete"):
+        SQLiteStorageProvider(f"sqlite:///{path}")
+    assert path.read_bytes() == before
+
+
 def test_dormant_legacy_relay_tables_in_main_do_not_block_active_pair(
     tmp_path: Path,
 ) -> None:
