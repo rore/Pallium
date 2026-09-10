@@ -8,6 +8,8 @@ Claude Code, Codex, and OpenCode.
 
 It connects sessions you already run; it does not create or manage them.
 
+> Part of the [Rore collection](https://github.com/rore/rore-collection): three local tools for developers working with coding agents.
+
 ## What it does
 
 ### Relay
