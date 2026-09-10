@@ -48,9 +48,9 @@ function installFetch(routes) {
   };
 }
 
-function makeClient(messages) {
+function makeClient(messages, logs = null) {
   return {
-    app: { log: async () => true },
+    app: { log: async (entry) => { if (logs) logs.push(entry); return true; } },
     session: {
       messages: async () => ({ data: messages }),
     },
@@ -100,10 +100,18 @@ test("chat.message ingests the user prompt and queues memory for the system prom
   assert.match(system[0], /"request_source_item_id":"request-opencode-1"/);
   assert.match(system[0], /\[Pallium memory — container: path:/);
   assert.match(system[0], /ref:ref-xyz\]/);
-assert.match(system[0], /[End Pallium memory]/);
+assert.match(system[0], /\[End Pallium memory\]/);
   assert.match(system[0], /Relay association enrichment was unavailable/);
 });
 
+test("chat.message treats empty response work-ref metadata as authoritative", async () => {
+  installFetch({ "/item-and-query": { ...oneBlock, work_ref_metadata: {} } });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  const output = { message: { sessionID: "sesAuthoritativeEmpty", role: "user" }, parts: [{ type: "text", text: "Explain this substantial work reference flow in detail" }] };
+  await hooks["chat.message"]({}, output);
+  const system = await systemTransform(hooks, "sesAuthoritativeEmpty");
+  assert.doesNotMatch(system.join("\n"), /Relay association enrichment was unavailable/);
+});
 test("chat.message skips short prompts, slash-commands, and duplicates", async () => {
   installFetch({ "/item-and-query": oneBlock });
   const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
@@ -154,8 +162,9 @@ test("event session.idle reads the last assistant message and ingests it via /it
       ],
     },
   ];
+  const logs = [];
   installFetch({ "/items": [{ source_item_id: "sid-1" }] });
-  const hooks = await loadPlugin({ client: makeClient(messages), directory: nonGitDir });
+  const hooks = await loadPlugin({ client: makeClient(messages, logs), directory: nonGitDir });
 
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "sesD" } } });
   const items = fetchCalls.find((c) => c.url.includes("/items"));
@@ -169,6 +178,7 @@ test("event session.idle reads the last assistant message and ingests it via /it
   assert.ok(item.metadata && item.metadata.agent_work_trace_turn, "attaches work-trace metadata");
   assert.deepEqual(item.metadata.agent_work_trace_turn.files_read, ["src/a.js"]);
   assert.deepEqual(item.metadata.agent_work_trace_turn.files_modified, ["src/b.js"]);
+  assert.equal(logs.some((entry) => /Relay association enrichment was unavailable/.test(entry.body?.message || "")), true);
 
   // Idempotent: a second session.idle for the same turn does not re-ingest.
   const before = fetchCalls.length;
@@ -176,6 +186,15 @@ test("event session.idle reads the last assistant message and ingests it via /it
   assert.equal(fetchCalls.length, before, "same assistant message must not be re-ingested");
 });
 
+test("assistant ingest treats empty response work-ref metadata as authoritative", async () => {
+  const logs = [];
+  const messages = [{ info: { role: "assistant", id: "aAuthoritativeEmpty" }, parts: [{ type: "text", text: "Recorded without a stale warning." }] }];
+  installFetch({ "/items": [{ source_item_id: "sid-authoritative-empty", work_ref_metadata: {} }] });
+  const hooks = await loadPlugin({ client: makeClient(messages, logs), directory: nonGitDir });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "sesAssistantAuthoritativeEmpty" } } });
+  assert.equal(fetchCalls.find((call) => call.url.includes("/items")).body[0].metadata.pallium_relay_work_refs_status, "unavailable");
+  assert.equal(logs.some((entry) => /Relay association enrichment was unavailable/.test(entry.body?.message || "")), false);
+});
 test("a failed /items ingest is retried on a later lifecycle event", async () => {
   const messages = [
     { info: { role: "assistant", id: "aRetry" }, parts: [{ type: "text", text: "Ingest me, please." }] },

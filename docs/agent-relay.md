@@ -169,6 +169,10 @@ Normal use:
 - `pallium_relay_send`
 - `pallium_relay_reply`
 - `pallium_relay_status`
+- `pallium_relay_work_refs`
+- `pallium_relay_attach_work_ref`
+- `pallium_relay_detach_work_ref`
+- `pallium_relay_participants`
 
 Normal hook delivery is automatic. `pallium_relay_receive` and
 `pallium_relay_ack` are recovery or non-hook integration tools. A runtime that

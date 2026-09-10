@@ -422,6 +422,8 @@ def canonical_git_remote(url: str) -> str | None:
         or not host.isascii()
         or "%" in host
         or not path
+        or redact_sensitive(path) != path
+        or _WORK_REF_SECRET_RE.search(path)
         or any(ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F for char in path)
     ):
         return None
@@ -445,12 +447,18 @@ def canonical_git_remote(url: str) -> str | None:
 
 def repository_scope_ref(cwd: str) -> str | None:
     try:
-        remote = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True, cwd=cwd, timeout=_bounded_timeout(SUBPROCESS_TIMEOUT))
+        timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
+        if timeout <= 0:
+            return None
+        remote = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True, cwd=cwd, timeout=timeout)
         if remote.returncode == 0:
             value = canonical_git_remote(remote.stdout.strip())
             if value:
                 return value
-        root = subprocess.run(["git", "rev-list", "--max-parents=0", "HEAD"], capture_output=True, text=True, cwd=cwd, timeout=_bounded_timeout(SUBPROCESS_TIMEOUT))
+        timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
+        if timeout <= 0:
+            return None
+        root = subprocess.run(["git", "rev-list", "--max-parents=0", "HEAD"], capture_output=True, text=True, cwd=cwd, timeout=timeout)
         if root.returncode == 0:
             value = root.stdout.strip().splitlines()[0]
             if re.fullmatch(r"[0-9a-fA-F]{40,64}", value):

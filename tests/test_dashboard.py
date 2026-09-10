@@ -1043,7 +1043,7 @@ def test_work_reference_ui_executes_shipped_javascript() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
         [node, str(Path(__file__).with_name("dashboard_work_ref_ui.mjs")), str(repo_root / "app" / "dashboard.html")],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, check=False, timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "all cases passed" in result.stdout

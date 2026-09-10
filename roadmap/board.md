@@ -1,4 +1,5 @@
 # Next · Agent Relay
+- add-relay-session-work-associations
 - add-relay-activation-capability-contract
 - add-relay-delivery-trace
 - add-copilot-relay-integration
@@ -48,7 +49,6 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
-- add-relay-session-work-associations
 - add-dashboard-operations-and-relay-workspace
 - investigate-cross-repository-relay-coordination
 - add-context-conscious-upstream-field-feedback

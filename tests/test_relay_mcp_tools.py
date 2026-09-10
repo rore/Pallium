@@ -546,26 +546,50 @@ class TestRelayWorkRefTools:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "tool,args",
+        "tool,method",
         [
-            ("pallium_relay_work_refs", {}),
+            ("pallium_relay_attach_work_ref", "relay_attach_work_ref"),
+            ("pallium_relay_detach_work_ref", "relay_detach_work_ref"),
+        ],
+    )
+    async def test_mutation_errors_strip_rejected_input(self, tool, method):
+        error = {
+            "error": "validation failed",
+            "status_code": 422,
+            "detail": {"detail": [{"loc": ["body"], "input": "secret", "url": "https://errors.test", "msg": "invalid"}]},
+        }
+        with patch.object(PalliumMcpClient, method, new=AsyncMock(return_value=error)):
+            content, _ = await create_server().call_tool(
+                tool, {"scope_ref": "scope", "local_ref": "local"}
+            )
+        body = json.loads(content[0].text)
+        assert body["status_code"] == 422
+        assert body["detail"]["detail"] == [{"loc": ["body"], "msg": "invalid"}]
+        assert "secret" not in content[0].text
+        assert "errors.test" not in content[0].text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tool,method,args",
+        [
+            ("pallium_relay_work_refs", "relay_work_refs", {}),
             (
                 "pallium_relay_attach_work_ref",
+                "relay_attach_work_ref",
                 {"scope_ref": "scope", "local_ref": "local"},
             ),
             (
                 "pallium_relay_detach_work_ref",
+                "relay_detach_work_ref",
                 {"scope_ref": "scope", "local_ref": "local"},
             ),
         ],
     )
     async def test_current_session_tools_fail_closed_without_thread_identity(
-        self, monkeypatch, tool, args
+        self, monkeypatch, tool, method, args
     ):
         monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
-        with patch.object(
-            PalliumMcpClient, "relay_work_refs", new_callable=AsyncMock
-        ) as request:
+        with patch.object(PalliumMcpClient, method, new_callable=AsyncMock) as request:
             content, _ = await create_server().call_tool(tool, args)
         assert "PALLIUM_THREAD_REF" in content[0].text
         request.assert_not_awaited()

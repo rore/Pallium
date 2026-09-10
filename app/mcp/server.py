@@ -922,6 +922,8 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             scope_ref=scope_ref,
             local_ref=local_ref,
         )
+        if isinstance(result, dict) and "error" in result:
+            result = _bounded_error(result, _MCP_RELAY_WORK_REFS_MAX_CHARS)
         rendered = _json_text(result)
         return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
             {"error": "relay work-reference response exceeds the response budget"}
@@ -951,6 +953,8 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             scope_ref=scope_ref,
             local_ref=local_ref,
         )
+        if isinstance(result, dict) and "error" in result:
+            result = _bounded_error(result, _MCP_RELAY_WORK_REFS_MAX_CHARS)
         rendered = _json_text(result)
         return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
             {"error": "relay work-reference response exceeds the response budget"}

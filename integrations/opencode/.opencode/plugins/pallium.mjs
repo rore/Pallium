@@ -281,7 +281,7 @@ export default async ({ client, directory, worktree } = {}) => {
       item.metadata = { ...buildWorkRefsMetadata(cwd, null, discovery, confirmedRefs, workRefsStatus), ...(workTrace ? { agent_work_trace_turn: workTrace, cwd } : {}) };      if (!Object.keys(item.metadata).length) delete item.metadata;
       const response = await pallium.palliumRequest("POST", "/items", [item]);
       const responseMetadata = Array.isArray(response) ? response[0]?.work_ref_metadata : null;
-      const workRefLog = workRefWarning(responseMetadata) || workRefWarning(item.metadata);
+      const workRefLog = responseMetadata != null ? workRefWarning(responseMetadata) : workRefWarning(item.metadata);
       if (workRefLog) log("warn", workRefLog);
       // palliumRequest returns null on any failure; drop the dedup key so the
       // turn is retried on a later session.idle / compaction rather than lost.
@@ -499,7 +499,7 @@ export default async ({ client, directory, worktree } = {}) => {
           metadata: workRefsMetadata,
         });
         if (!resp) { if (warning) enqueueInjection(sessionId, warning); return; }
-        warning = workRefWarning(resp.work_ref_metadata) || warning;
+        warning = Object.prototype.hasOwnProperty.call(resp, "work_ref_metadata") ? workRefWarning(resp.work_ref_metadata) : warning;
         const output_text = pallium.formatInjection(resp.injectable_blocks || [], containerRef, Math.max(0, USER_PROMPT_BUDGET - [...warning].length - (warning ? 2 : 0)), sessionId, actorRef, pallium.AGENT_REF, "private", resp.source_item_id, pendingRelay.has(sessionId) ? null : currentWorkRef);
         if (output_text || warning) enqueueInjection(sessionId, [output_text, warning].filter(Boolean).join("\n\n"));
       } catch (e) {

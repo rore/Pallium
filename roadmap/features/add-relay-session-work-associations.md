@@ -1,7 +1,7 @@
 ---
 id: add-relay-session-work-associations
 title: Associate Relay sessions with multiple work references
-status: done
+status: in_progress
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -194,4 +194,4 @@ and Minimap UI implementation (owned by the companion feature).
    consumer contract for Minimap. Tests use controlled sessions without paid turns;
    run focused coverage and repository-required checks before implementation review.
 
-Shipped in the implementation PR with endpoint-owned associations, HTTP/MCP/dashboard surfaces, immutable hook capture, cross-runtime identity vectors, public-surface E2E coverage, and an isolated runnable demonstration.
+Implemented in PR #157 with endpoint-owned associations, HTTP/MCP/dashboard surfaces, immutable hook capture, cross-runtime identity vectors, public-surface E2E coverage, and an isolated runnable demonstration. Manager acceptance remediation is in progress; the feature is not shipped or approved for merge until the dashboard journey and final review pass.

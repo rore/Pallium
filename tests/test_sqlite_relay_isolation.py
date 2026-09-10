@@ -239,6 +239,7 @@ def test_existing_one_file_only_pair_fails_without_creating_other(
         ("relay_messages", "sender_endpoint_id"),
         ("relay_deliveries", "recipient_endpoint_id"),
         ("relay_deliveries", "recipient_container_ref"),
+        ("relay_session_work_refs", "scope_ref"),
     ],
 )
 def test_missing_current_endpoint_column_fails_without_mutation(

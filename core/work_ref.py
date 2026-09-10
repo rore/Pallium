@@ -39,11 +39,11 @@ def _validate_readable_part(value: Any, *, local: bool) -> str:
         raise ValueError("work identity must not have leading or trailing ASCII whitespace")
     if any(ord(c) <= 0x1F or 0x7F <= ord(c) <= 0x9F or ord(c) in (0x2028, 0x2029) for c in value):
         raise ValueError("work identity contains a control character")
-    if "[REDACTED" in value or redact_sensitive(value) != value:
-        raise ValueError("work identity contains redacted or secret material")
     encoded = value.encode("utf-8")
     if len(encoded) > 512 or (local and len(value) > 128):
         raise ValueError("work identity exceeds its bound")
+    if "[REDACTED" in value or redact_sensitive(value) != value:
+        raise ValueError("work identity contains redacted or secret material")
     return value
 
 def readable_work_ref(scope_ref: str, local_ref: str) -> ReadableWorkRef:

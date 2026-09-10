@@ -144,7 +144,7 @@ export function canonicalGitRemote(value) {
     try { repoPath = decodeURIComponent(parsed.pathname); } catch { return null; }
     scheme = parsed.protocol.slice(0, -1); host = parsed.hostname; port = parsed.port || null;
   }
-  if (!host || [...host].some(char => char.codePointAt(0) > 0x7F) || !repoPath || [...repoPath].some(unsafeCodePoint)) return null;
+  if (!host || host.includes("%") || [...host].some(char => char.codePointAt(0) > 0x7F) || !repoPath || redactSensitive(repoPath) !== repoPath || WORK_REF_SECRET_RE.test(repoPath) || [...repoPath].some(unsafeCodePoint)) return null;
   if (port !== null && (!/^[0-9]+$/.test(port) || Number(port) < 1 || Number(port) > 65535)) return null;
   const defaultPort = scheme === "ssh" ? "22" : "443";
   let authority = host.toLowerCase();

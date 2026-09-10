@@ -174,8 +174,8 @@ follow-up for still-unproven interruption/restart combinations, demand-driven
 macOS qualification, and OpenCode activation. The closed-recipient correction
 shipped in PR #148; remaining retention cleanup is paused pending operational
 need. Neither umbrella blocks the next product slices. Any newly confirmed
-correctness incident still takes priority. The shipped
-`add-relay-session-work-associations` slice joins existing sessions to
+correctness incident still takes priority. The in-review
+`add-relay-session-work-associations` slice in PR #157 joins existing sessions to
 multiple exact work references for agents, the Relay dashboard, and optional
 Minimap integration. It uses endpoint-owned readable associations, preserves
 existing History scope, and never treats association as ownership or liveness.
