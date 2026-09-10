@@ -53,7 +53,7 @@ A clean-context smart-model review approved the revised two-file plan after requ
 - Focused regression: 1 passed in 0.13s.
 - Affected Codex integration file: 29 passed in 2.90s.
 - Initial full suite: 2 unrelated deterministic failures caused by inherited `PALLIUM_HOOK_ACTOR_REF` and real `~/.pallium/hooks/state/sessions/session-test.json`; no changed code was implicated.
-- Clean-home full suite: 4786 passed, 33 skipped, 2 xfailed in 241.78s.
+- Clean-home full suite: 4786 passed, 33 skipped, 2 xfailed in 241.78s. Tested code revision: `6035ddfe803bc8aaa2e3d4b346f06eefea271d33`.
 
 ## Result review
 
