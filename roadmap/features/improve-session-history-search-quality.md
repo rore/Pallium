@@ -74,22 +74,89 @@ qualifier needed to answer the request; zero fully sufficient excerpts is not a 
 expandability score. Baseline-helper latency was not measured, so no incremental-overhead claim
 is available.
 
-A follow-through traced the 20 empty replay excerpts to the existing 2,000-character MCP
-compactor: four 10-result responses kept every source ID but emptied five excerpts each after
-optional work references and session cues were removed. These were empty-text hits, not omitted
-results. Separately, 12 replay inputs had no result: the 10 sampled no-answer lookups and two linked
+A follow-through traced the 20 empty excerpts in the reconstructed payloads to the existing
+2,000-character MCP compactor: four 10-result responses kept every source ID but emptied five
+excerpts each after optional work references and session cues were removed. The reconstruction
+omitted `recorded_at` and `recorded_at_source`, although the production formatter conditionally
+retains both before excerpt trimming, so these counts do not establish the complete current
+production response shape or empty-preview rate. The associated blind grades likewise compare
+incomplete reconstructed inputs, not complete current-production caller payloads. These were
+empty-text hits, not omitted results.
+Separately, 12 replay inputs had no result: the 10 sampled no-answer lookups and two linked
 lookups whose single exposed source was absent from the snapshot source join. Responses with two to
 six results had no empty excerpt. The broader feature remains queued because ranking, query repair,
 expansion/navigation, telemetry coverage, multilingual prevalence, and independent-task evidence
 remain unresolved.
 
-The next evidence-backed question is narrow: for high-count responses under the fixed MCP budget,
+The next evidence-backed question was narrow and is evaluated in the following completed investigation: for high-count responses under the fixed MCP budget,
 can per-stage instrumentation identify a bounded allocation or explicit expansion/navigation flow
 that keeps every retained hit recognizable while preserving source/lookup IDs, essential
 provenance, exact-work scope, result count, and the historical-state warning? Start with the generic
 10-results-by-160-characters reproduction; do not repeat or tune the rejected density window.
 
-### Completed investigation: 4,000-character response budget
+## Completed investigation: high-count response packaging
+
+The 2026-09-10 development-only follow-up rejected one rank-prioritized minimum-preview
+allocation. On the four incomplete reconstructed 10-result replies it converted all 20 empty
+excerpts to
+nonempty text within the existing 2,000-character budget and preserved source/lookup
+identity, order, count, warnings, and expansion handles. Blind source-choice review
+found only 13 of those 20 new fragments useful, however, while the candidate caused
+17 useful-preview losses and at least 8 material context or qualifier losses. Row
+wins/ties/losses were 13/10/17 (net -4), below the required +8 with zero qualifier
+loss.
+
+The candidate also failed declared boundary cases. A 24-character floor fit with
+36-character IDs, but not with 64- or 128-character IDs or with a Unicode/escaped-text
+current-replacement fixture. The 128-character baseline could retain only seven hits,
+making the fixed-budget identity-versus-preview tradeoff explicit. Generic latency
+passed, but the broader predeclared latency matrix was not run after the decisive
+quality and boundary failures.
+
+A later live caller-flow check reran three existing development queries in one current
+session. Each returned ten source IDs with nine empty excerpts. Expanding rank 1 with
+the same search's lookup ID returned a nonempty anchor and matching parent lineage in
+all three cases for one additional MCP call capped at 2,400 characters. This proves
+only that rank-1 expansion worked for those examples. It does not establish that rank
+1 was the best source, that agents can choose among empty previews, that other ranks
+work, or that guidance/product behavior needs no improvement. The live calls were not
+a paired same-input replay, so the omitted timestamp fields are not claimed to fully
+explain the five-to-nine difference.
+
+A development-only follow-up then compared the complete caller-parity forms of 10
+results / 2,000 characters, 5 / 2,000, and 10 / 4,000 on exactly the same four cases.
+Before grading, the architect clarified that one case with no useful source should be
+kept as a negative control rather than treated as a feasibility failure. Three
+isolated low-cost graders each saw one opaque variant per query. On the three positive
+cases, first-choice usefulness / best-source-first was 2/3 / 0/3 for 10 / 2,000,
+3/3 / 3/3 for 5 / 2,000, and 3/3 / 2/3 for 10 / 4,000. No selected first choice was
+wrong; under the current variant, the grader abstained in one case. The five-result
+variant removed all
+three uniquely useful below-rank-five sources across two cases. Both ten-result
+variants retained them, but graders selected one under 2,000 characters and none
+under 4,000. The negative control produced abstention under the current response and
+tentative inspection—not a support claim—under both alternatives.
+
+Actual response sizes were 1,999 characters for 10 / 2,000, 1,950–1,979 for
+5 / 2,000, and 3,947–3,992 for 10 / 4,000. Every variant still raised qualifier
+concerns on all three positive cases, and one case's required deadline, timeout,
+usage-audit, and full acceptance details were absent from all sources. This tiny,
+dependent development comparison therefore supports no rollout: this sample showed
+poorer source selection under 2,000 characters, five results discard unique evidence
+by truncation, and 4,000
+characters roughly doubles response size without resolving qualifier adequacy.
+Latency, holdout behavior, adaptive-agent behavior, injection precision, and
+downstream task effect were not measured.
+
+Do not tune this allocation on the same development split or open its reserved
+holdout. The unresolved question is how agents choose a useful source when multiple
+retained hits have empty or insufficient previews; the three rank-1 expansions do not
+settle it. Any next representation work should use full caller-payload field parity
+or explicitly verify parity before comparing on-demand navigation, rather than
+redistribute the same fixed reply budget. Ranking, exact-work scope, visibility, and
+historical cautions remain unchanged.
+
+### Completed investigation: downstream 4,000-character response budget
 
 A 2026-09-10 bounded follow-up rejected increasing the agent-facing search response budget from 2,000 to 4,000 characters. It froze 15 broad fixed-candidate cases without replacement. Prior development, holdout, comparison-query, and retrievable-neighbor protection made six ungradable, leaving nine eligible cases: six answerable, one partial, and two negative. Frozen anchors were source-disjoint, but work/thread dependence remained.
 
