@@ -1,0 +1,858 @@
+"""Focused E2E coverage and deterministic subprocess pilot for the paired runner."""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import time
+from copy import deepcopy
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+pytestmark = pytest.mark.slow
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import evals.reliable_pair_runner as runner
+from app.mcp.client import PalliumMcpClient
+from app.mcp.server import _bounded_expansion, _compact_history, _json_text
+from evals.reliable_pair_runner import (
+    PackError,
+    PersistenceError,
+    StepRetryError,
+    _atomic_json,
+    run,
+    validate_pack,
+)
+
+
+PYTHON = sys.executable
+HERE = Path(__file__).resolve()
+
+
+def _pack(
+    *,
+    case_count: int = 1,
+    total_input: int = 1000,
+    total_output: int = 200,
+    retry_input: int = 200,
+    retry_output: int = 40,
+    max_attempts: int = 2,
+) -> dict[str, Any]:
+    cases = []
+    sources = []
+    gold = {}
+    for index in range(case_count):
+        case_id = f"case-{index + 1}"
+        query = f"résumé marker {index + 1}"
+        answer = "\u627e\u5230\u7b54\u6848" if index == 0 else f"\u7b54\u6848-{index + 1}"
+        cases.append({"id": case_id, "query": query, "limit": 5})
+        sources.append(
+            {
+                "source_id": f"source-{index + 1}",
+                "source_type": "chat_message",
+                "artifact_kind": "message",
+                "role": "assistant",
+                "thread_ref": f"history-{index + 1}",
+                "content": f"{query} \u2014 authoritative result: {answer} \u2705",
+            }
+        )
+        gold[case_id] = {"required_substring": answer, "allow_abstain": False}
+    return {
+        "schema_version": 1,
+        "config": {
+            "container_ref": "fixture:reliable-pair",
+            "thread_ref": "pilot-active-thread",
+            "visibility": "private",
+            "max_attempts": max_attempts,
+            "max_expansions": 2,
+            "attempt_input_tokens": 100,
+            "attempt_output_tokens": 20,
+            "retry_input_tokens": retry_input,
+            "retry_output_tokens": retry_output,
+            "total_input_tokens": total_input,
+            "total_output_tokens": total_output,
+            "expansion_before": 0,
+            "expansion_after": 0,
+            "expansion_max_chars": 2000,
+            "max_driver_line_bytes": 16384,
+            "driver_timeout_seconds": 4,
+        },
+        "variants": ["baseline", "candidate"],
+        "cases": cases,
+        "sources": sources,
+        "gold": gold,
+    }
+
+
+def _write_pack(root: Path, value: dict[str, Any]) -> Path:
+    path = root / "pack.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return path
+
+
+def _driver(mode: str, control: Path) -> list[str]:
+    return [PYTHON, str(HERE), "--driver", mode, str(control)]
+
+
+def _append(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(value + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _mark_once(control: Path, name: str) -> bool:
+    path = control / name
+    if path.exists():
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("used\n", encoding="utf-8")
+    return True
+
+
+def _send(value: dict[str, Any]) -> None:
+    sys.stdout.buffer.write(
+        json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8") + b"\n"
+    )
+    sys.stdout.buffer.flush()
+
+
+def _driver_main(mode: str, control: Path) -> int:
+    raw = sys.stdin.buffer.readline()
+    if not raw:
+        return 3
+    search = json.loads(raw.decode("utf-8", errors="strict"))
+    if search.get("type") != "search":
+        return 4
+    key = f"{search['case_id']}:{search['variant']}"
+    _append(control / "dispatch.log", key)
+
+    if mode == "indeterminate_once" and _mark_once(control, "indeterminate.used"):
+        _append(control / "external_execution.log", key)
+        (control / "blocked").write_text("ready\n", encoding="utf-8")
+        while sys.stdin.buffer.readline():
+            pass
+        return 0
+    if mode == "transient_once" and _mark_once(control, f"transient-{key}.used"):
+        _send({"type": "transport_error", "code": "connection_lost"})
+        return 0
+    if mode == "invalid_utf8_once" and _mark_once(control, f"utf8-{key}.used"):
+        sys.stdout.buffer.write(b"\xff\n")
+        sys.stdout.buffer.flush()
+        return 0
+    if mode == "permanent":
+        _send({"type": "transport_error", "code": "authentication_failed"})
+        return 0
+    if mode == "malformed":
+        sys.stdout.buffer.write(b"not-json\n")
+        sys.stdout.buffer.flush()
+        return 0
+    if mode == "missing":
+        return 0
+    if mode == "stdout_closed_stderr_open":
+        subprocess.Popen(
+            [PYTHON, "-c", "import time; time.sleep(2)"],
+            stdout=subprocess.DEVNULL,
+            stderr=sys.stderr,
+        )
+        return 0
+
+    _append(control / "external_execution.log", key)
+    search_payload = json.loads(search["tool_text"])
+    results = search_payload.get("results", [])
+    source_id = next(
+        item["source_item_id"]
+        for item in results
+        if "résumé marker" in item.get("excerpt", "")
+    )
+    _send({"type": "expand", "source_item_id": source_id})
+    expansion_raw = sys.stdin.buffer.readline()
+    if not expansion_raw:
+        return 5
+    expansion = json.loads(expansion_raw.decode("utf-8", errors="strict"))
+    if expansion.get("type") != "expansion":
+        return 6
+    tool_payload = json.loads(expansion["tool_text"])
+    assert tool_payload["parent_lookup_id"] == expansion["parent_lookup_id"]
+    content = "\n".join(item.get("content", "") for item in tool_payload.get("items", []))
+    if mode == "transient_after_expansion_once" and _mark_once(
+        control, f"after-expansion-{key}.used"
+    ):
+        _send({"type": "transport_error", "code": "connection_lost"})
+        return 0
+    if mode == "abstain":
+        _send(
+            {
+                "type": "result",
+                "outcome": "abstain",
+                "answer": "",
+                "usage": {"input_tokens": 20, "output_tokens": 2, "cost_usd": 0.0},
+            }
+        )
+        return 0
+    answer_match = re.search(r"(\u627e\u5230\u7b54\u6848|\u7b54\u6848-\d+)", content)
+    if not answer_match:
+        _send(
+            {
+                "type": "result",
+                "outcome": "abstain",
+                "answer": "",
+                "usage": {"input_tokens": 20, "output_tokens": 2, "cost_usd": 0.0},
+            }
+        )
+        return 0
+    output_tokens = 21 if mode == "usage_over" else 5
+    _send(
+        {
+            "type": "result",
+            "outcome": "answer",
+            "answer": answer_match.group(1),
+            "usage": {
+                "input_tokens": 20,
+                "output_tokens": output_tokens,
+                "cost_usd": float("nan") if mode == "cost_nan" else 0.0,
+            },
+        }
+    )
+    return 0
+
+
+def _attempts(state: Path) -> list[dict[str, Any]]:
+    return [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted((state / "attempts").glob("*/*/attempt-*.json"))
+    ]
+
+
+def _run(pack_path: Path, state: Path, mode: str, control: Path) -> dict[str, Any]:
+    return asyncio.run(run(pack_path, state, _driver(mode, control)))
+
+
+def test_pilot_real_surfaces_unicode_resume_and_pair_order(tmp_path: Path) -> None:
+    pack_path = _write_pack(tmp_path, _pack(case_count=2))
+    state, control = tmp_path / "state", tmp_path / "control"
+
+    report = _run(pack_path, state, "normal", control)
+
+    assert report["decision_status"] == "complete"
+    assert report["usable_pairs"] == 2
+    assert report["quality"] == {
+        "usable_pairs": 2,
+        "baseline_correct": 2,
+        "candidate_correct": 2,
+        "measurement": "scripted infrastructure pilot; not agent quality",
+    }
+    assert (state / "fixture.db").exists()
+    assert (state / "report.json").exists()
+    assert (control / "dispatch.log").read_text(encoding="utf-8").splitlines() == [
+        "case-1:baseline",
+        "case-1:candidate",
+        "case-2:baseline",
+        "case-2:candidate",
+    ]
+    expansion = json.loads(
+        next((state / "steps" / "case-1" / "baseline").glob("expand-*.json")).read_text(
+            encoding="utf-8"
+        )
+    )
+    search = json.loads(
+        (state / "steps" / "case-1" / "baseline" / "search.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "\u627e\u5230\u7b54\u6848" in expansion["tool_text"]
+    assert expansion["parent_lookup_id"] == search["lookup_event_id"]
+    assert "search_mode" not in json.loads(search["tool_text"])
+    expected_search = _compact_history(
+        search["raw_response"],
+        "résumé marker 1",
+        limit=5,
+        container_ref="fixture:reliable-pair",
+        thread_ref="pilot-active-thread",
+    )
+    expected_search["lookup_event_id"] = search["delivery_receipt"]["lookup_event_id"]
+    assert search["tool_text"] == _json_text(expected_search)
+    assert expansion["tool_text"] == _json_text(
+        _bounded_expansion(expansion["raw_response"], 2000)
+    )
+    with sqlite3.connect(state / "fixture.db") as db:
+        lookup = db.execute(
+            "SELECT event_type, exposed_json FROM historical_lookup_reuse_event WHERE id = ?",
+            (search["lookup_event_id"],),
+        ).fetchone()
+        expanded = db.execute(
+            "SELECT event_type, parent_lookup_id, exposed_json "
+            "FROM historical_lookup_reuse_event WHERE id = ?",
+            (expansion["delivery_receipt"]["lookup_event_id"],),
+        ).fetchone()
+    assert lookup == (
+        "lookup",
+        json.dumps(
+            [
+                {"source_item_id": item["source_item_id"], "role": "search_match"}
+                for item in json.loads(search["tool_text"])["results"]
+            ],
+            separators=(",", ":"),
+        ),
+    )
+    assert expanded[0:2] == ("expansion", search["lookup_event_id"])
+    assert json.loads(expanded[2]) == [
+        {
+            "source_item_id": item["source_item_id"],
+            "role": "anchor" if item["is_anchor"] else "neighbor",
+        }
+        for item in json.loads(expansion["tool_text"])["items"]
+    ]
+    rows = _attempts(state)
+    assert report["attempt_count"] == len(rows)
+    assert report["usage"]["charged_input_tokens"] == sum(
+        row["charged_usage"]["input_tokens"] for row in rows
+    )
+    assert json.loads((state / "report.json").read_text(encoding="utf-8")) == report
+    first_records_hash = report["records_hash"]
+
+    resumed = _run(pack_path, state, "normal", control)
+    assert resumed["records_hash"] == first_records_hash
+    assert len((control / "dispatch.log").read_text(encoding="utf-8").splitlines()) == 4
+
+
+@pytest.mark.parametrize("mode", ["transient_once", "invalid_utf8_once"])
+def test_safe_transport_failure_retries_with_reserved_budget(
+    tmp_path: Path, mode: str
+) -> None:
+    pack_path = _write_pack(tmp_path, _pack())
+    state, control = tmp_path / "state", tmp_path / "control"
+
+    report = _run(pack_path, state, mode, control)
+    rows = _attempts(state)
+
+    assert report["usable_pairs"] == 1
+    assert [row["status"] for row in rows] == [
+        "transport_invalid",
+        "completed",
+        "transport_invalid",
+        "completed",
+    ]
+    assert report["attempt_count"] == 4
+    assert report["usage"]["charged_input_tokens"] == 240
+
+
+@pytest.mark.parametrize("stage", ["search", "expansion"])
+def test_delivery_finalization_failure_is_durable_and_retried_on_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    original = PalliumMcpClient.finalize_historical_delivery
+    failed = False
+
+    async def fail_once(
+        client: PalliumMcpClient, attempt_id: str, *, items: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        nonlocal failed
+        roles = {item["role"] for item in items}
+        current = "search" if roles == {"search_match"} else "expansion"
+        if current == stage and not failed:
+            failed = True
+            return {"error": "transient finalization failure"}
+        return await original(client, attempt_id, items=items)
+
+    monkeypatch.setattr(PalliumMcpClient, "finalize_historical_delivery", fail_once)
+    pack_path = _write_pack(tmp_path, _pack())
+    state, control = tmp_path / "state", tmp_path / "control"
+
+    with pytest.raises(StepRetryError, match=f"{stage} delivery finalization failed"):
+        _run(pack_path, state, "normal", control)
+
+    step_path = (
+        state / "steps" / "case-1" / "baseline" / "search.json"
+        if stage == "search"
+        else next((state / "steps" / "case-1" / "baseline").glob("expand-*.json"))
+    )
+    failed_step = json.loads(step_path.read_text(encoding="utf-8"))
+    assert failed_step["status"] == "retryable_failure"
+    assert failed_step["attempts"][0]["attempt"] == 1
+    assert failed_step["attempts"][0]["status"] == "retryable_failure"
+    assert failed_step["attempts"][0]["error"] == "transient finalization failure"
+    assert failed_step["error"] == "transient finalization failure"
+
+    report = _run(pack_path, state, "normal", control)
+    completed_step = json.loads(step_path.read_text(encoding="utf-8"))
+    assert report["usable_pairs"] == 1
+    assert completed_step["status"] == "completed"
+    assert [item["status"] for item in completed_step["attempts"]] == [
+        "retryable_failure",
+        "completed",
+    ]
+    assert completed_step["attempts"][0]["error"] == "transient finalization failure"
+    assert completed_step["attempts"][0]["delivery_receipt"] == {
+        "error": "transient finalization failure"
+    }
+    assert "delivery_attempt_id" in completed_step["attempts"][0]["raw_response"]
+
+
+def test_closed_stdout_with_open_stderr_is_bounded(tmp_path: Path) -> None:
+    value = _pack(retry_input=0, retry_output=0)
+    value["config"]["driver_timeout_seconds"] = 0.2
+    pack_path = _write_pack(tmp_path, value)
+    started = time.monotonic()
+
+    report = _run(
+        pack_path,
+        tmp_path / "state",
+        "stdout_closed_stderr_open",
+        tmp_path / "control",
+    )
+
+    assert time.monotonic() - started < 5
+    assert report["invalid_pairs"] == 1
+    assert all(
+        row["error"]["code"] in {"missing_output", "timeout"}
+        for row in _attempts(tmp_path / "state")
+    )
+
+
+def test_completed_expansion_is_reused_after_transport_retry(tmp_path: Path) -> None:
+    pack_path = _write_pack(tmp_path, _pack())
+    state, control = tmp_path / "state", tmp_path / "control"
+
+    report = _run(pack_path, state, "transient_after_expansion_once", control)
+    rows = _attempts(state)
+
+    assert report["usable_pairs"] == 1
+    assert len(list((state / "steps" / "case-1" / "baseline").glob("expand-*.json"))) == 1
+    assert len(list((state / "steps" / "case-1" / "candidate").glob("expand-*.json"))) == 1
+    assert all(
+        any(
+            item["direction"] == "to_driver"
+            and item["message"].get("type") == "expansion"
+            for item in row["transcript"]
+        )
+        for row in rows
+    )
+
+
+def test_valid_abstention_is_a_product_result_not_transport_invalid(tmp_path: Path) -> None:
+    pack_path = _write_pack(tmp_path, _pack())
+    report = _run(pack_path, tmp_path / "state", "abstain", tmp_path / "control")
+
+    assert report["invalid_pairs"] == 0
+    assert report["usable_pairs"] == 1
+    assert report["quality"]["baseline_correct"] == 0
+    assert report["quality"]["candidate_correct"] == 0
+    assert report["attempt_statuses"] == {"completed": 2}
+
+
+@pytest.mark.parametrize(
+    "mode,code",
+    [
+        ("permanent", "authentication_failed"),
+        ("malformed", "malformed_output"),
+        ("missing", "missing_output"),
+    ],
+)
+def test_permanent_or_exhausted_transport_is_invalid_not_quality(
+    tmp_path: Path, mode: str, code: str
+) -> None:
+    pack_value = _pack(retry_input=0, retry_output=0)
+    pack_path = _write_pack(tmp_path, pack_value)
+    state, control = tmp_path / "state", tmp_path / "control"
+
+    report = _run(pack_path, state, mode, control)
+
+    assert report["usable_pairs"] == 0
+    assert report["invalid_pairs"] == 1
+    assert report["quality"] is None
+    assert report["decision_status"] == "complete"
+    assert report["usage"]["cost_usd_total"] is None
+    assert report["usage"]["cost_unknown_attempts"] == 2
+    assert all(row["error"]["code"] == code for row in _attempts(state))
+
+
+def test_exact_pair_budget_and_cannot_start_pair(tmp_path: Path) -> None:
+    exact = _pack(total_input=400, total_output=80)
+    pack_path = _write_pack(tmp_path / "exact", exact)
+    report = _run(pack_path, tmp_path / "exact-state", "normal", tmp_path / "exact-control")
+    assert report["usable_pairs"] == 1
+
+    short = _pack(total_input=399, total_output=80)
+    short_path = _write_pack(tmp_path / "short", short)
+    short_state = tmp_path / "short-state"
+    stopped = _run(short_path, short_state, "normal", tmp_path / "short-control")
+    assert stopped["cannot_start_pairs"] == 1
+    assert stopped["attempt_count"] == 0
+    assert stopped["quality"] is None
+
+
+def test_finalized_lookup_exposes_only_post_format_truncated_results(tmp_path: Path) -> None:
+    value = _pack()
+    query = value["cases"][0]["query"]
+    value["cases"][0]["limit"] = 50
+    value["sources"] = [
+        {
+            "source_id": f"crowded-{index}",
+            "source_type": "chat_message",
+            "artifact_kind": "message",
+            "role": "assistant-" + ("x" * 500),
+            "thread_ref": f"history-{index}",
+            "content": f"{query} result {index}",
+        }
+        for index in range(12)
+    ]
+    pack_path = _write_pack(tmp_path, value)
+    state = tmp_path / "state"
+
+    report = _run(pack_path, state, "permanent", tmp_path / "control")
+
+    assert report["invalid_pairs"] == 1
+    search = json.loads(
+        (state / "steps" / "case-1" / "baseline" / "search.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    raw_ids = [item["source_item_id"] for item in search["raw_response"]["results"]]
+    visible_ids = [item["source_item_id"] for item in json.loads(search["tool_text"])["results"]]
+    assert len(raw_ids) > len(visible_ids) > 0
+    with sqlite3.connect(state / "fixture.db") as db:
+        exposed = db.execute(
+            "SELECT exposed_json FROM historical_lookup_reuse_event WHERE id = ?",
+            (search["lookup_event_id"],),
+        ).fetchone()[0]
+    assert [item["source_item_id"] for item in json.loads(exposed)] == visible_ids
+
+def test_exact_work_uses_public_format_and_finalized_lookup(tmp_path: Path) -> None:
+    value = _pack()
+    value["cases"][0]["work_refs"] = ["FEATURE 42"]
+    value["sources"][0]["metadata"] = {"pallium_work_refs": ["feature-42"]}
+    pack_path = _write_pack(tmp_path, value)
+    state = tmp_path / "state"
+
+    report = _run(pack_path, state, "permanent", tmp_path / "control")
+
+    assert report["invalid_pairs"] == 1
+    search = json.loads(
+        (state / "steps" / "case-1" / "baseline" / "search.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload = json.loads(search["tool_text"])
+    assert payload["search_mode"] == "exact_work_ref"
+    assert payload["requested_work_ref"] == "feature-42"
+    expected = _compact_history(
+        search["raw_response"],
+        value["cases"][0]["query"],
+        limit=5,
+        container_ref=value["config"]["container_ref"],
+        thread_ref=value["config"]["thread_ref"],
+        search_mode="exact_work_ref",
+        requested_work_ref="feature-42",
+    )
+    expected["lookup_event_id"] = search["delivery_receipt"]["lookup_event_id"]
+    assert search["tool_text"] == _json_text(expected)
+    with sqlite3.connect(state / "fixture.db") as db:
+        row = db.execute(
+            "SELECT trigger_origin, exposed_json FROM historical_lookup_reuse_event "
+            "WHERE id = ?",
+            (search["lookup_event_id"],),
+        ).fetchone()
+    assert row[0] == "agent_pull_work"
+    assert [item["source_item_id"] for item in json.loads(row[1])] == [
+        item["source_item_id"] for item in payload["results"]
+    ]
+
+
+def test_mid_pair_budget_exhaustion_is_durable(tmp_path: Path) -> None:
+    value = _pack(total_output=40, retry_input=0, retry_output=0)
+    pack_path = _write_pack(tmp_path, value)
+    state = tmp_path / "state"
+
+    report = _run(pack_path, state, "usage_over", tmp_path / "control")
+    rows = _attempts(state)
+
+    assert [row["status"] for row in rows] == ["permanent_failure", "budget_skipped"]
+    assert report["variant_statuses"] == {
+        "budget_skipped": 1,
+        "permanent_failure": 1,
+    }
+    assert report["pairs"][0]["variants"]["candidate"]["status"] == "budget_skipped"
+    assert report["usage"]["charged_output_tokens"] == 21
+    resumed = _run(pack_path, state, "usage_over", tmp_path / "control")
+    assert resumed["records_hash"] == report["records_hash"]
+
+
+def test_output_overrun_is_terminal_and_reported(tmp_path: Path) -> None:
+    pack_path = _write_pack(tmp_path, _pack())
+    state = tmp_path / "state"
+
+    report = _run(pack_path, state, "usage_over", tmp_path / "control")
+
+    assert report["quality"] is None
+    assert all(row["status"] == "permanent_failure" for row in _attempts(state))
+    assert all(row["error"]["code"] == "usage_exceeds_reservation" for row in _attempts(state))
+    assert report["usage"]["charged_output_tokens"] == 42
+
+
+def test_resume_rejects_changed_config_sources_cases_or_gold(tmp_path: Path) -> None:
+    original = _pack()
+    pack_path = _write_pack(tmp_path, original)
+    state, control = tmp_path / "state", tmp_path / "control"
+    _run(pack_path, state, "normal", control)
+
+    changes = []
+    changed = deepcopy(original)
+    changed["config"]["max_expansions"] = 3
+    changes.append((changed, "config"))
+    changed = deepcopy(original)
+    changed["sources"][0]["content"] += " changed"
+    changes.append((changed, "sources"))
+    changed = deepcopy(original)
+    changed["cases"][0]["query"] += " changed"
+    changes.append((changed, "cases"))
+    changed = deepcopy(original)
+    changed["gold"]["case-1"]["required_substring"] = "changed"
+    changes.append((changed, "gold"))
+
+    for value, component in changes:
+        _write_pack(tmp_path, value)
+        with pytest.raises(PackError, match=f"incompatible resume: changed {component}"):
+            _run(pack_path, state, "normal", control)
+
+
+def test_resume_rejects_malformed_manifest_cleanly(tmp_path: Path) -> None:
+    pack_path = _write_pack(tmp_path, _pack())
+    state, control = tmp_path / "state", tmp_path / "control"
+    _run(pack_path, state, "normal", control)
+    (state / "manifest.json").write_text("[]\n", encoding="utf-8")
+
+    with pytest.raises(
+        PackError, match="incompatible resume: changed cases, config, gold, sources"
+    ):
+        _run(pack_path, state, "normal", control)
+
+
+@pytest.mark.parametrize(
+    "mutate,match",
+    [
+        (lambda value: value.__setitem__("schema_version", 2), "schema_version"),
+        (lambda value: value["config"].__setitem__("max_attempts", 0), "max_attempts"),
+        (lambda value: value["config"].__setitem__("max_attempts", True), "max_attempts"),
+        (lambda value: value["config"].__setitem__("max_attempts", 11), "max_attempts"),
+        (lambda value: value["config"].__setitem__("total_input_tokens", -1), "total_input_tokens"),
+        (lambda value: value["config"].__setitem__("attempt_output_tokens", "20"), "attempt_output_tokens"),
+        (lambda value: value["config"].__setitem__("driver_timeout_seconds", float("nan")), "driver_timeout_seconds"),
+        (lambda value: value["config"].__setitem__("driver_timeout_seconds", float("inf")), "driver_timeout_seconds"),
+        (lambda value: value["config"].__setitem__("visibility", "team"), "visibility"),
+        (
+            lambda value: value["config"].__setitem__("max_driver_line_bytes", 63),
+            "max_driver_line_bytes",
+        ),
+        (lambda value: value.pop("variants"), "variants"),
+        (
+            lambda value: value.__setitem__("variants", ["candidate", "baseline"]),
+            "variants",
+        ),
+        (
+            lambda value: value["sources"].append(deepcopy(value["sources"][0])),
+            "duplicate source_id",
+        ),
+        (
+            lambda value: value["cases"].append(deepcopy(value["cases"][0])),
+            "duplicate case id",
+        ),
+        (
+            lambda value: value["gold"]["case-1"].__setitem__("allow_abstain", "false"),
+            "allow_abstain",
+        ),
+        (lambda value: value["sources"][0].__setitem__("metadata", []), "metadata"),
+        (lambda value: value["sources"][0].__setitem__("artifact_kind", "bogus"), "artifact_kind"),
+        (lambda value: value["sources"][0].__setitem__("content", ""), "content"),
+        (lambda value: value["cases"][0].__setitem__("query", "  "), "non-blank"),
+        (lambda value: value["cases"][0].__setitem__("limit", 51), "limit"),
+        (lambda value: value["cases"][0].__setitem__("work_refs", []), "work_refs"),
+        (lambda value: value["gold"].__setitem__("extra", {}), "gold keys"),
+    ],
+)
+def test_pack_validation_rejects_invalid_types_and_bounds(mutate, match: str) -> None:
+    value = _pack()
+    mutate(value)
+    with pytest.raises(PackError, match=match):
+        validate_pack(value)
+
+
+def test_nonfinite_driver_cost_is_permanent_failure(tmp_path: Path) -> None:
+    pack_path = _write_pack(tmp_path, _pack(retry_input=0, retry_output=0))
+    state = tmp_path / "state"
+
+    report = _run(pack_path, state, "cost_nan", tmp_path / "control")
+
+    assert report["quality"] is None
+    assert report["attempt_statuses"] == {"permanent_failure": 2}
+    assert all(row["error"]["code"] == "invalid_cost" for row in _attempts(state))
+
+def test_pack_validation_rejects_filename_key_collisions() -> None:
+    cases = _pack(case_count=2)
+    first_gold, second_gold = cases["gold"].values()
+    cases["cases"][0]["id"] = "a/b"
+    cases["cases"][1]["id"] = "a-b"
+    cases["gold"] = {"a/b": first_gold, "a-b": second_gold}
+    with pytest.raises(PackError, match="case id filename collision"):
+        validate_pack(cases)
+
+    sources = _pack(case_count=2)
+    sources["sources"][0]["source_id"] = "a/b"
+    sources["sources"][1]["source_id"] = "a-b"
+    with pytest.raises(PackError, match="source_id filename collision"):
+        validate_pack(sources)
+
+
+def test_fixture_setup_failure_closes_owned_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_atomic = runner._atomic_json
+    original_close = runner._close_fixture
+    close_calls = 0
+
+    def fail_ready(path: Path, value: Any) -> None:
+        if path.name == "fixture.ready.json":
+            raise PersistenceError("forced ready-marker failure")
+        original_atomic(path, value)
+
+    def track_close(app: Any) -> None:
+        nonlocal close_calls
+        close_calls += 1
+        original_close(app)
+
+    monkeypatch.setattr(runner, "_atomic_json", fail_ready)
+    monkeypatch.setattr(runner, "_close_fixture", track_close)
+
+    with pytest.raises(PersistenceError, match="forced ready-marker failure"):
+        _run(
+            _write_pack(tmp_path, _pack()),
+            tmp_path / "state",
+            "normal",
+            tmp_path / "control",
+        )
+
+    assert close_calls == 1
+
+
+def test_persistence_failure_is_not_transport_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(_source: str, _destination: str) -> None:
+        raise PermissionError("locked")
+
+    monkeypatch.setattr("evals.reliable_pair_runner._replace_with_retry", fail)
+    with pytest.raises(PersistenceError, match="cannot persist"):
+        _atomic_json(tmp_path / "record.json", {"status": "started"})
+    assert not (tmp_path / "record.json").exists()
+
+
+def test_real_process_interruption_records_indeterminate_and_restores_lineage(
+    tmp_path: Path,
+) -> None:
+    pack_path = _write_pack(tmp_path, _pack())
+    state, control = tmp_path / "state", tmp_path / "control"
+    command = [
+        PYTHON,
+        "-m",
+        "evals.reliable_pair_runner",
+        "--pack",
+        str(pack_path),
+        "--run-dir",
+        str(state),
+        "--driver",
+        *_driver("indeterminate_once", control),
+    ]
+    process = subprocess.Popen(
+        command,
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    deadline = time.monotonic() + 15
+    while not (control / "blocked").exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    blocked = (control / "blocked").exists()
+    if process.poll() is None:
+        process.terminate()
+    _stdout, stderr = process.communicate(timeout=10)
+    assert blocked, stderr.decode("utf-8", errors="replace")
+
+    first = json.loads(
+        (state / "attempts" / "case-1" / "baseline" / "attempt-001.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert first["status"] == "started"
+    assert first["transcript"][0]["direction"] == "to_driver"
+    assert first["transcript"][0]["message"]["type"] == "search"
+
+    resumed = subprocess.run(
+        command,
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    report = json.loads(resumed.stdout.decode("utf-8", errors="strict"))
+    recovered = _attempts(state)
+
+    assert report["usable_pairs"] == 1
+    assert recovered[0]["status"] == "indeterminate"
+    assert recovered[0]["error"]["code"] == "crash_after_dispatch_unknown"
+    assert recovered[0]["charged_usage"] == {"input_tokens": 100, "output_tokens": 20}
+    assert (control / "external_execution.log").read_text(encoding="utf-8").splitlines() == [
+        "case-1:baseline",
+        "case-1:baseline",
+        "case-1:candidate",
+    ]
+    search = json.loads(
+        (state / "steps" / "case-1" / "baseline" / "search.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    expansion = json.loads(
+        next((state / "steps" / "case-1" / "baseline").glob("expand-*.json")).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert expansion["parent_lookup_id"] == search["lookup_event_id"]
+
+
+def _pilot(output: Path) -> int:
+    output.mkdir(parents=True, exist_ok=True)
+    pack_path = _write_pack(output, _pack())
+    report = _run(pack_path, output / "state", "normal", output / "control")
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    return 0 if report["usable_pairs"] == 1 else 1
+
+
+def _main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--driver", nargs=2, metavar=("MODE", "CONTROL"))
+    parser.add_argument("--pilot", type=Path)
+    args = parser.parse_args()
+    if args.driver:
+        return _driver_main(args.driver[0], Path(args.driver[1]))
+    if args.pilot:
+        return _pilot(args.pilot)
+    parser.error("use --driver or --pilot")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
