@@ -2,11 +2,11 @@ from pathlib import Path
 import multiprocessing
 import sqlite3
 import threading
-import time
 from queue import Empty
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 
 from storage.sqlite import SQLiteStorageProvider
 
@@ -225,7 +225,9 @@ def test_concurrent_fresh_separate_pair_startup_is_serialized(tmp_path: Path) ->
         _dispose(provider)
 
 
-def test_startup_waits_for_transient_main_database_lock(tmp_path: Path) -> None:
+def test_startup_waits_for_transient_main_database_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     main = tmp_path / "main.db"
     relay = tmp_path / "relay.db"
     initial = SQLiteStorageProvider(
@@ -234,9 +236,23 @@ def test_startup_waits_for_transient_main_database_lock(tmp_path: Path) -> None:
     _dispose(initial)
 
     lock_acquired = threading.Event()
+    pragma_started = threading.Event()
     release_lock = threading.Event()
     startup = None
+    observed_timeouts: list[int] = []
     result: list[object] = []
+
+    original_exec_driver_sql = Connection.exec_driver_sql
+
+    def observe_startup_pragma(self, statement, *args, **kwargs):
+        if statement == "PRAGMA auto_vacuum=INCREMENTAL":
+            observed_timeouts.append(
+                int(original_exec_driver_sql(self, "PRAGMA busy_timeout").scalar() or 0)
+            )
+            pragma_started.set()
+        return original_exec_driver_sql(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(Connection, "exec_driver_sql", observe_startup_pragma)
 
     def hold_main_lock() -> None:
         holder = sqlite3.connect(main, timeout=0)
@@ -264,7 +280,8 @@ def test_startup_waits_for_transient_main_database_lock(tmp_path: Path) -> None:
         assert lock_acquired.wait(15)
         startup = threading.Thread(target=initialize_pair)
         startup.start()
-        time.sleep(0.2)
+        assert pragma_started.wait(15)
+        assert observed_timeouts[0] == 15000
         release_lock.set()
         startup.join(15)
         assert not startup.is_alive()

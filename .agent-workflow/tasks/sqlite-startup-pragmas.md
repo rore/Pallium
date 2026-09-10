@@ -45,7 +45,8 @@
 ## Evidence
 
 - Main CI run 34386599635 and PR #162 both failed at PRAGMA auto_vacuum=INCREMENTAL in the same Python 3.13 concurrency E2E.
-- Focused lock and process E2Es: 2 passed in 3.11s.
+- Initial focused lock and process E2Es: 2 passed in 3.11s.
+- After smart-review synchronization fix, exact lock and process E2Es: 2 passed in 3.73s; affected file: 19 passed in 6.51s.
 - Affected tests/test_sqlite_relay_isolation.py: 19 passed in 6.76s.
 - Full serial suite under a disposable isolated home: 4589 passed, 49 skipped, 170 deselected, 2 xfailed in 576.76s.
 - Two earlier full-suite attempts stopped only on the known inherited hook actor/profile-state leaks fixed separately in PR #163; no source was changed for those failures.
