@@ -64,6 +64,10 @@ server operations log only the static operation name, outcome, and duration. Hoo
 client failures log method, fixed path, duration, and exception type; no payload or
 scope identifiers are logged.
 
+Relay MCP clients retry connection establishment failures and structured `relay_busy` responses within one bounded attempt/time budget for reads and explicitly idempotent send, reply, and acknowledgement operations. Read, write, protocol, cancellation, and ambiguous post-acceptance failures are not retried. Exhausted transport and HTTP failures are returned as bounded, redacted MCP tool errors (`isError=true`), not successful string payloads.
+
+Claude Code and Codex hooks persist each exact Relay scope-transition intent before HTTP and serialize registration under the existing per-session lock. `/relay/turn` moves only the supplied endpoint from the supplied source generation; retries recognize exactly one committed generation step. No global session inference or destination takeover occurs. Endpoint aliases, work references, pending/claimed deliveries, and delivery audit snapshots survive a confirmed move. ACK wake rearm resolves the endpoint's live scope rather than the delivery's historical scope snapshot.
+
 The service reconciliation loop scans eligible never-claimed pending deliveries and
 expired claims at startup and every 30 seconds, then dispatches through the existing
 runtime adapter without claiming early. Codex confirmed or ambiguous native wake

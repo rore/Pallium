@@ -22,15 +22,19 @@ SOURCE_TYPE = _common.SOURCE_TYPE
 acknowledge_relay = _common.acknowledge_relay
 check_dedup = _common.check_dedup
 complete_relay_closes = _common.complete_relay_closes
+
 derive_actor_ref = _common.derive_actor_ref
 emit_context = _common.emit_context
 emit_utf8 = _common.emit_utf8
 format_injection = _common.format_injection
 format_relay = _common.format_relay
 get_pending_relay_close_batch = _common.get_pending_relay_close_batch
+
 pallium_request = _common.pallium_request
 read_hook_input = _common.read_hook_input
 relay_request = _common.relay_request
+
+relay_turn = _common.relay_turn
 resolve_container_ref = _common.resolve_container_ref
 build_work_refs_metadata = _common.build_work_refs_metadata
 structural_work_refs_payload = _common.structural_work_refs_payload
@@ -64,27 +68,8 @@ def main() -> None:
         if not isinstance(prompt, str) or not prompt or prompt.startswith("/"):
             return
         has_session = isinstance(session_id, str) and bool(session_id)
-        container_ref = resolve_container_ref(cwd, session_id if has_session else None, True)
+        container_ref = resolve_container_ref(cwd, session_id if has_session else None, True, False)
         actor_ref = derive_actor_ref(cwd, session_id)
-        pending_closes, close_generation = get_pending_relay_close_batch(
-            session_id if has_session else None
-        )
-        if pending_closes:
-            completed = []
-            for previous_container in pending_closes:
-                closed = relay_request(
-                    "POST",
-                    "/relay/sessions/close",
-                    {
-                        "runtime": "codex",
-                        "session_ref": session_id,
-                        "container_ref": previous_container,
-                    },
-                    timeout=0.5,
-                )
-                if closed is not None:
-                    completed.append(previous_container)
-            complete_relay_closes(session_id, completed, close_generation)
         content = _strip_ide_context(prompt)
         if not content:
             return
@@ -108,19 +93,7 @@ def main() -> None:
             work_refs_status = "unavailable"
             relay_outcome = "unavailable"
             try:
-                relay_response = relay_request(
-                    "POST", "/relay/turn",
-                    {
-                        "runtime": "codex",
-                        "session_ref": session_id,
-                        "container_ref": container_ref,
-                        "max_chars": RELAY_TURN_BUDGET,
-                        "structural_work_refs": structural_work_refs_payload(
-                            container_ref, discovery, cwd
-                        ),
-                    },
-                    timeout=0.75,
-                )
+                relay_response = relay_turn("codex", session_id, container_ref, max_chars=RELAY_TURN_BUDGET, structural_work_refs=structural_work_refs_payload(container_ref, discovery, cwd), timeout=0.75, request=relay_request)
                 if isinstance(relay_response, dict):
                     confirmed_refs = confirmed_registry_work_refs(relay_response)
                     candidate_status = relay_response.get(

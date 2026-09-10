@@ -15,7 +15,7 @@ from app.claude_wake import schedule_claude_relay_wake
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.contracts import MemoryRetentionPolicy
 from core.observability import IntegrationDebugLogger, QueryStats
-from core.relay import RelayService, RelayUnavailableError
+from core.relay import RelayNotFoundError, RelayService, RelayUnavailableError
 from core.service import PalliumService
 from core.vector_index_holder import VectorIndexHolder
 from providers.embedding.base import EmbeddingProvider
@@ -675,10 +675,17 @@ def build_router(
             or result.get("recipient_runtime") != "codex"
         ):
             return
-        session_ref = result.get("recipient_session_ref")
-        container_ref = result.get("recipient_container_ref")
-        if not isinstance(session_ref, str) or not isinstance(container_ref, str):
+        endpoint_id = result.get("recipient_endpoint_id")
+        if not isinstance(endpoint_id, str):
             return
+        try:
+            live_scope = relay_service.session_scope_by_endpoint(endpoint_id)
+        except (RelayNotFoundError, RelayUnavailableError, ValueError):
+            return
+        if live_scope["runtime"] != "codex":
+            return
+        session_ref = live_scope["session_ref"]
+        container_ref = live_scope["container_ref"]
         candidate = relay_service.pending_candidate(
             runtime="codex",
             session_ref=session_ref,

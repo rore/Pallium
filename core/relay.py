@@ -144,6 +144,9 @@ class RelayService:
         max_messages: int = RELAY_TURN_MAX_MESSAGES,
         register_session: bool = True,
         structural_work_refs: Any = None,
+        previous_container_ref: str | None = None,
+        previous_endpoint_id: str | None = None,
+        previous_scope_generation: int | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container = self._scope(container_ref)
@@ -155,6 +158,18 @@ class RelayService:
             raise ValueError("max_messages must be >= 0 (0 = no limit)")
         runtime = validate_runtime(runtime)
         session_ref = _opaque(session_ref, "session_ref")
+        transition = (
+            previous_container_ref,
+            previous_endpoint_id,
+            previous_scope_generation,
+        )
+        if any(value is not None for value in transition) and not all(
+            value is not None for value in transition
+        ):
+            raise ValueError("Relay scope transition fields are required together")
+        if previous_container_ref is not None:
+            previous_container_ref = self._scope(previous_container_ref)
+            previous_endpoint_id = _opaque(previous_endpoint_id, "previous_endpoint_id")
         result = self._store.relay_turn(
             runtime=runtime,
             session_ref=session_ref,
@@ -165,6 +180,9 @@ class RelayService:
             max_messages=max_messages,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
             register_session=register_session,
+            previous_container_ref=previous_container_ref,
+            previous_endpoint_id=previous_endpoint_id,
+            previous_scope_generation=previous_scope_generation,
             now=now,
         )
         if structural_work_refs is None:
@@ -526,6 +544,16 @@ class RelayService:
             container_ref=container,
             delivery_id=None if delivery_id is None else _opaque(delivery_id, "delivery_id", maximum=128),
         )
+
+    def session_scope_by_endpoint(self, endpoint_id: str) -> dict[str, str]:
+        """Resolve an exact Relay endpoint's current scope."""
+        endpoint_id = _opaque(endpoint_id, "endpoint_id", maximum=46)
+        if not _ENDPOINT_ID_RE.fullmatch(endpoint_id):
+            raise ValueError("endpoint_id must be a canonical Relay endpoint")
+        resolve = getattr(self._store, "relay_session_scope_by_endpoint", None)
+        if not callable(resolve):
+            raise RelayUnavailableError("relay endpoint scope lookup is not supported")
+        return resolve(endpoint_id)
 
     def wake_candidates(
         self, *, delivery_id: str | None = None

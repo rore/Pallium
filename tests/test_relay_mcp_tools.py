@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 pytest.importorskip("mcp", reason="mcp[cli] not installed")
 
@@ -29,6 +30,18 @@ _SCOPE = {
 }
 _RUNTIME = "claude-code"
 _SESSION = "mcp-tool-session"
+async def assert_tool_error(server, tool, arguments):
+    with pytest.raises(ToolError) as raised:
+        await server.call_tool(tool, arguments)
+    text = str(raised.value)
+    assert len(text) <= 2000
+    return text
+
+
+def tool_error_payload(text: str) -> dict:
+    marker = ": "
+    return json.loads(text[text.index(marker, text.index("tool ")) + len(marker):])
+
 _MISSING_SCOPE_ERROR = (
     "Error: Relay scope requires container_ref. Copy the injected container_ref "
     "exactly. If none was injected, check that Pallium hooks are enabled and trusted, "
@@ -119,16 +132,14 @@ class TestIdentityGuard:
     @pytest.mark.asyncio
     async def test_receive_fails_without_agent_ref(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv("PALLIUM_AGENT_REF", raising=False)
-        server = create_server()
-        content, _ = await server.call_tool("pallium_relay_receive", {})
-        assert "PALLIUM_AGENT_REF" in content[0].text
+        text = await assert_tool_error(create_server(), "pallium_relay_receive", {})
+        assert "PALLIUM_AGENT_REF" in text
 
     @pytest.mark.asyncio
     async def test_receive_fails_without_thread_ref(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
-        server = create_server()
-        content, _ = await server.call_tool("pallium_relay_receive", {})
-        assert "PALLIUM_THREAD_REF" in content[0].text
+        text = await assert_tool_error(create_server(), "pallium_relay_receive", {})
+        assert "PALLIUM_THREAD_REF" in text
 
     @pytest.mark.asyncio
     async def test_receive_uses_codex_runtime_identity(self, monkeypatch: pytest.MonkeyPatch):
@@ -136,8 +147,8 @@ class TestIdentityGuard:
         monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
         monkeypatch.setenv("CODEX_THREAD_ID", "codex-runtime-session")
         with patch.object(PalliumMcpClient, "relay_receive", new_callable=AsyncMock) as receive:
-            content, _ = await create_server().call_tool("pallium_relay_receive", {})
-        assert "metadata" in content[0].text
+            text = await assert_tool_error(create_server(), "pallium_relay_receive", {})
+        assert "metadata" in text
         receive.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -146,9 +157,9 @@ class TestIdentityGuard:
         monkeypatch.delenv("PALLIUM_ACTOR_REF", raising=False)
         monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
         with patch.object(PalliumMcpClient, "relay_receive", new_callable=AsyncMock) as receive:
-            content, _ = await create_server().call_tool("pallium_relay_receive", {})
-        assert "requires container_ref" in content[0].text
-        assert "PALLIUM_THREAD_REF" not in content[0].text
+            text = await assert_tool_error(create_server(), "pallium_relay_receive", {})
+        assert "requires container_ref" in text
+        assert "PALLIUM_THREAD_REF" not in text
         receive.assert_not_awaited()
     @pytest.mark.asyncio
     async def test_codex_receive_fails_without_runtime_identity(self, monkeypatch: pytest.MonkeyPatch):
@@ -156,16 +167,14 @@ class TestIdentityGuard:
         monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
         monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
         monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
-        server = create_server()
-        content, _ = await server.call_tool("pallium_relay_receive", {})
-        assert "metadata" in content[0].text
+        text = await assert_tool_error(create_server(), "pallium_relay_receive", {})
+        assert "metadata" in text
 
     @pytest.mark.asyncio
     async def test_receive_fails_when_not_configured(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv("PALLIUM_BASE_URL", raising=False)
-        server = create_server()
-        content, _ = await server.call_tool("pallium_relay_receive", {})
-        assert "not configured" in content[0].text.lower()
+        text = await assert_tool_error(create_server(), "pallium_relay_receive", {})
+        assert "not configured" in text.lower()
 
 
 class TestClaimTokenSecrecy:
@@ -258,8 +267,8 @@ class TestBoundedReceive:
     async def test_receive_rejects_too_small_budget_before_claim(self, requested):
         receive = AsyncMock()
         with patch.object(PalliumMcpClient, "relay_receive", new=receive):
-            content, _ = await create_server().call_tool("pallium_relay_receive", {"max_chars": requested})
-        assert json.loads(content[0].text)["min_max_chars"] == 256
+            text = await assert_tool_error(create_server(), "pallium_relay_receive", {"max_chars": requested})
+        assert tool_error_payload(text)["min_max_chars"] == 256
         receive.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -324,11 +333,10 @@ class TestAck:
         recv, _ = await server.call_tool("pallium_relay_receive", {})
         d = json.loads(recv[0].text)["deliveries"][0]
 
-        bad_ack, is_error = await server.call_tool("pallium_relay_ack", {
+        text = await assert_tool_error(server, "pallium_relay_ack", {
             "delivery_id": d["delivery_id"], "receipt": "wrong-receipt",
         })
-        text = bad_ack[0].text
-        assert "conflict" in text.lower() or "409" in text or is_error
+        assert "conflict" in text.lower() or "409" in text
 
 
 class TestFullLifecycle:
@@ -405,11 +413,11 @@ class TestFullLifecycle:
         current = json.loads(redelivered[0].text)["deliveries"][0]
         assert current["receipt"] != first_delivery["receipt"]
 
-        stale, _ = await create_server().call_tool("pallium_relay_ack", {
+        stale = await assert_tool_error(create_server(), "pallium_relay_ack", {
             "delivery_id": current["delivery_id"],
             "receipt": first_delivery["receipt"],
         })
-        assert json.loads(stale[0].text)["status_code"] == 409
+        assert tool_error_payload(stale)["status_code"] == 409
         for _ in range(2):
             ack, _ = await create_server().call_tool("pallium_relay_ack", {
                 "delivery_id": current["delivery_id"],
@@ -559,14 +567,12 @@ class TestRelayWorkRefTools:
             "detail": {"detail": [{"loc": ["body"], "input": "secret", "url": "https://errors.test", "msg": "invalid"}]},
         }
         with patch.object(PalliumMcpClient, method, new=AsyncMock(return_value=error)):
-            content, _ = await create_server().call_tool(
-                tool, {"scope_ref": "scope", "local_ref": "local"}
-            )
-        body = json.loads(content[0].text)
+            text = await assert_tool_error(create_server(), tool, {"scope_ref": "scope", "local_ref": "local"})
+        body = tool_error_payload(text)
         assert body["status_code"] == 422
         assert body["detail"]["detail"] == [{"loc": ["body"], "msg": "invalid"}]
-        assert "secret" not in content[0].text
-        assert "errors.test" not in content[0].text
+        assert "secret" not in text
+        assert "errors.test" not in text
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -590,8 +596,8 @@ class TestRelayWorkRefTools:
     ):
         monkeypatch.delenv("PALLIUM_THREAD_REF", raising=False)
         with patch.object(PalliumMcpClient, method, new_callable=AsyncMock) as request:
-            content, _ = await create_server().call_tool(tool, args)
-        assert "PALLIUM_THREAD_REF" in content[0].text
+            text = await assert_tool_error(create_server(), tool, args)
+        assert "PALLIUM_THREAD_REF" in text
         request.assert_not_awaited()
 
 _RELAY_SCOPE_TOOL_METHODS = {
@@ -626,8 +632,12 @@ async def test_configured_relay_scope_accepts_matching_pair(monkeypatch, tool):
     client_method, arguments = _RELAY_SCOPE_TOOL_METHODS[tool]
     http_call = AsyncMock(return_value={})
     with patch.object(PalliumMcpClient, client_method, new=http_call):
-        content, _ = await create_server().call_tool(tool, {**arguments, **_SCOPE})
-    assert "Relay scope" not in content[0].text
+        if tool in {"pallium_relay_recipients", "pallium_relay_status", "pallium_relay_receive"}:
+            text = await assert_tool_error(create_server(), tool, {**arguments, **_SCOPE})
+            assert "Relay scope" not in text
+        else:
+            content, _ = await create_server().call_tool(tool, {**arguments, **_SCOPE})
+            assert "Relay scope" not in content[0].text
     http_call.assert_awaited_once()
 
 
@@ -638,8 +648,8 @@ async def test_missing_relay_scope_is_actionable_and_never_calls_http(monkeypatc
     client_method, arguments = _RELAY_SCOPE_TOOL_METHODS[tool]
     http_call = AsyncMock(return_value={})
     with patch.object(PalliumMcpClient, client_method, new=http_call):
-        content, _ = await create_server().call_tool(tool, arguments)
-    assert content[0].text.startswith(_MISSING_SCOPE_ERROR)
+        text = await assert_tool_error(create_server(), tool, arguments)
+    assert _MISSING_SCOPE_ERROR in text
     http_call.assert_not_awaited()
 
 
@@ -650,8 +660,8 @@ async def test_invalid_configured_relay_scope_never_calls_http(monkeypatch, tool
     client_method, arguments = _RELAY_SCOPE_TOOL_METHODS[tool]
     http_call = AsyncMock(return_value={})
     with patch.object(PalliumMcpClient, client_method, new=http_call):
-        content, _ = await create_server().call_tool(tool, arguments)
-    assert content[0].text.startswith("Error: Configured Relay scope is invalid.")
+        text = await assert_tool_error(create_server(), tool, arguments)
+    assert "Error: Configured Relay scope is invalid." in text
     http_call.assert_not_awaited()
 
 
@@ -676,8 +686,8 @@ async def test_partial_or_conflicting_relay_scope_never_calls_http(
     client_method, arguments = _RELAY_SCOPE_TOOL_METHODS[tool]
     http_call = AsyncMock(return_value={})
     with patch.object(PalliumMcpClient, client_method, new=http_call):
-        content, _ = await create_server().call_tool(tool, {**arguments, **scope})
-    assert content[0].text.startswith(expected)
+        text = await assert_tool_error(create_server(), tool, {**arguments, **scope})
+    assert expected in text
     http_call.assert_not_awaited()
 
 
@@ -691,8 +701,8 @@ async def test_configured_actor_is_irrelevant_to_relay_scope(monkeypatch):
         return {}
 
     with patch.object(PalliumMcpClient, "_post_or_error", new=capture):
-        content, _ = await create_server().call_tool("pallium_relay_receive", _SCOPE)
-    assert "invalid relay receive response" in content[0].text
+        text = await assert_tool_error(create_server(), "pallium_relay_receive", _SCOPE)
+    assert "invalid relay receive response" in text
     assert captured["path"] == "/relay/turn"
     assert captured["payload"]["container_ref"] == _SCOPE["container_ref"]
     assert "actor_ref" not in captured["payload"]
@@ -806,11 +816,11 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
             db.scalar(select(func.count()).select_from(RelayMessageRecord)),
             db.scalar(select(func.count()).select_from(RelayDeliveryRecord)),
         )
-    rejected, _ = await server.call_tool("pallium_relay_send", {
+    rejected = await assert_tool_error(server, "pallium_relay_send", {
         "message": "must not broadcast", "recipient": "codex",
         "sender_runtime": "codex", "sender_session_ref": "mcp-source", **source,
     })
-    assert "422" in rejected[0].text
+    assert "422" in rejected
     with relay_app.state.pallium_service._storage._relay_session_factory() as db:
         after = (
             db.scalar(select(func.count()).select_from(RelayMessageRecord)),
@@ -987,10 +997,10 @@ async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
     exact_delivery = json.loads(exact[0].text)["deliveries"][0]
     assert exact_delivery["recipient_session_ref"] == targets[0]
 
-    conflict, _ = await server.call_tool("pallium_relay_recipients", {
+    conflict = await assert_tool_error(server, "pallium_relay_recipients", {
         "container_ref": "git:example.test/other",
     })
-    assert "Relay scope conflicts" in conflict[0].text
+    assert "Relay scope conflicts" in conflict
     other_actor, _ = await server.call_tool("pallium_relay_recipients", {
         "container_ref": _SCOPE["container_ref"],
     })
@@ -1038,12 +1048,9 @@ async def test_participant_secret_is_rejected_before_transport():
     with patch.object(
         PalliumMcpClient, "relay_work_ref_participants", new_callable=AsyncMock
     ) as request:
-        content, _ = await create_server().call_tool(
-            "pallium_relay_participants",
-            {"scope_ref": "tracker:v1:example.test#project", "local_ref": secret},
-        )
-    assert secret not in content[0].text
-    assert "invalid readable work reference" in content[0].text
+        text = await assert_tool_error(create_server(), "pallium_relay_participants", {"scope_ref": "tracker:v1:example.test#project", "local_ref": secret})
+    assert secret not in text
+    assert "invalid readable work reference" in text
     request.assert_not_awaited()
 
 

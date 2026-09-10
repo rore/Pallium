@@ -15,6 +15,7 @@ from core.relay import RelayConflictError, RelayNotFoundError
 from storage.sqlite_schema import (
     RelayAliasRecord,
     RelayDeliveryRecord,
+    RelayEndpointGenerationRecord,
     RelayMessageRecord,
     RelaySessionRecord,
     RelaySessionWorkRefRecord,
@@ -50,7 +51,7 @@ def _expiry_iso(value: datetime) -> str | None:
     return None if _now(value) == _DURABLE_EXPIRY else _iso(value)
 
 
-def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int) -> dict[str, Any]:
+def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int, scope_generation: int = 0) -> dict[str, Any]:
     if row.state == "closed":
         lifecycle = "closed"
     else:
@@ -60,6 +61,7 @@ def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int) -
         "endpoint_id": row.id,
         "runtime": row.runtime,
         "session_ref": row.session_ref,
+        "container_ref": row.container_ref,
         "title": row.title,
         "alias": row.alias,
         "state": lifecycle,
@@ -67,6 +69,7 @@ def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int) -
         "first_seen_at": _iso(row.first_seen_at),
         "last_seen_at": _iso(row.last_seen_at),
         "closed_at": _iso(row.closed_at),
+        "scope_generation": scope_generation,
     }
 
 
@@ -244,6 +247,14 @@ class SQLiteRelayMixin:
         ).scalar_one_or_none()
 
     @staticmethod
+    def _relay_session_view(db, row: RelaySessionRecord, now: datetime, recent_seconds: int) -> dict[str, Any]:
+        generation = db.get(RelayEndpointGenerationRecord, row.id)
+        return _session_view(
+            row, now, recent_seconds,
+            int(generation.generation) if generation is not None else 0,
+        )
+
+    @staticmethod
     def _relay_session_by_endpoint(
         db, *, endpoint_id: str | None
     ) -> RelaySessionRecord | None:
@@ -311,6 +322,9 @@ class SQLiteRelayMixin:
         lease_seconds: int,
         max_response_chars: int = 0,
         register_session: bool = True,
+        previous_container_ref: str | None = None,
+        previous_endpoint_id: str | None = None,
+        previous_scope_generation: int | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
@@ -318,6 +332,41 @@ class SQLiteRelayMixin:
             registered = self._relay_session(
                 db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
             )
+            generation_row = (
+                db.get(RelayEndpointGenerationRecord, registered.id)
+                if registered is not None
+                else None
+            )
+            generation = int(generation_row.generation) if generation_row is not None else 0
+            if previous_container_ref is not None:
+                if previous_endpoint_id is None or previous_scope_generation is None:
+                    raise RelayConflictError("incomplete Relay scope transition")
+                generation_row = db.get(RelayEndpointGenerationRecord, previous_endpoint_id)
+                generation = int(generation_row.generation) if generation_row is not None else 0
+                source = self._relay_session(db, container_ref=previous_container_ref, runtime=runtime, session_ref=session_ref)
+                if container_ref == previous_container_ref:
+                    if registered is None or registered.state not in {"active", "unreachable"} or registered.id != previous_endpoint_id or generation != previous_scope_generation:
+                        raise RelayConflictError("stale or invalid Relay scope transition")
+                elif registered is not None:
+                    if registered.state != "active" or registered.id != previous_endpoint_id or generation != previous_scope_generation + 1:
+                        raise RelayConflictError("Relay scope destination is occupied or stale")
+                    if source is not None:
+                        raise RelayConflictError("Relay scope transition is ambiguous")
+                    generation = previous_scope_generation + 1
+                else:
+                    if source is None or source.id != previous_endpoint_id:
+                        raise RelayNotFoundError("Relay transition source not found")
+                    if source.state != "active":
+                        raise RelayConflictError("Relay transition source is not active")
+                    if generation != previous_scope_generation:
+                        raise RelayConflictError("stale Relay scope generation")
+                    source.container_ref = container_ref
+                    generation = previous_scope_generation + 1
+                    if generation_row is None:
+                        db.add(RelayEndpointGenerationRecord(endpoint_id=source.id, generation=generation))
+                    else:
+                        generation_row.generation = generation
+                    registered = source
             if registered is None and not register_session:
                 return {
                     "session": None,
@@ -341,7 +390,7 @@ class SQLiteRelayMixin:
             else:
                 if not register_session and registered.state != "active":
                     return {
-                        "session": _session_view(registered, current, 24 * 60 * 60),
+                        "session": self._relay_session_view(db, registered, current, 24 * 60 * 60),
                         "deliveries": [],
                         "has_more": False,
                         "remaining_count": 0,
@@ -388,7 +437,7 @@ class SQLiteRelayMixin:
                 for delivery, message in rows
                 if _delivery_render_safe(delivery, message)
             ]
-            session_view = _session_view(registered, current, 24 * 60 * 60)
+            session_view = _session_view(registered, current, 24 * 60 * 60, generation)
             selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, dict[str, Any], int, str]] = []
             used = 0
 
@@ -529,7 +578,7 @@ class SQLiteRelayMixin:
             if session is None:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             return {
-                "session": _session_view(session, _now(), 24 * 60 * 60),
+                "session": self._relay_session_view(db, session, _now(), 24 * 60 * 60),
                 "work_refs": self._relay_session_work_ref_views(db, session.id),
             }
 
@@ -584,7 +633,7 @@ class SQLiteRelayMixin:
                 row.updated_at = current
             db.flush()
             return {
-                "session": _session_view(session, current, 24 * 60 * 60),
+                "session": self._relay_session_view(db, session, current, 24 * 60 * 60),
                 "attached": _work_ref_view(row),
                 "work_refs": self._relay_session_work_ref_views(db, session.id),
             }
@@ -613,7 +662,7 @@ class SQLiteRelayMixin:
                 db.flush()
             remaining = self._relay_session_work_ref_views(db, session.id)
             return {
-                "session": _session_view(session, _now(), 24 * 60 * 60),
+                "session": self._relay_session_view(db, session, _now(), 24 * 60 * 60),
                 "detached": detached,
                 "structural_remains": any(
                     item["work_ref"] == work_ref and item["origin"] == "structural"
@@ -689,7 +738,7 @@ class SQLiteRelayMixin:
             result = []
             for session, associations in grouped:
                 association = associations[0]
-                session_view = _session_view(session, current, 24 * 60 * 60)
+                session_view = self._relay_session_view(db, session, current, 24 * 60 * 60)
                 result.append({
                     **session_view,
                     "state": session.state,
@@ -727,7 +776,7 @@ class SQLiteRelayMixin:
                 if binding is not None and binding.endpoint_id == row.id:
                     db.delete(binding)
             row.alias = None
-            return _session_view(row, current, 24 * 60 * 60)
+            return self._relay_session_view(db, row, current, 24 * 60 * 60)
     def relay_list_sessions(
         self,
         *,
@@ -754,7 +803,7 @@ class SQLiteRelayMixin:
             rows = db.execute(
                 statement.order_by(RelaySessionRecord.runtime, RelaySessionRecord.last_seen_at.desc())
             ).scalars().all()
-            return [_session_view(row, current, recent_seconds) for row in rows]
+            return [self._relay_session_view(db, row, current, recent_seconds) for row in rows]
 
         with self._relay_session_factory() as db:
             return run(db)
@@ -820,7 +869,7 @@ class SQLiteRelayMixin:
                             db.delete(binding)
                     row.alias = None
                 db.flush()
-                return _session_view(row, current, 24 * 60 * 60)
+                return self._relay_session_view(db, row, current, 24 * 60 * 60)
         except IntegrityError as exc:
             raise RelayConflictError(
                 "relay alias is already assigned; ask the user before retrying with replace_existing=true"

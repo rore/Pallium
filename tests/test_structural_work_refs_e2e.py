@@ -560,6 +560,13 @@ def test_python_relay_early_return_includes_structural_work_ref(
         module,
         "relay_request",
         lambda *_a, **_k: {
+            "session": {
+                "endpoint_id": "relay-session-00000000000000000000000000000000",
+                "runtime": "codex" if host == "codex" else "claude-code",
+                "session_ref": f"{host}-relay",
+                "container_ref": "git:example.test/repo",
+                "scope_generation": 0,
+            },
             "deliveries": [
                 {
                     "delivery_id": "d-1",
@@ -663,9 +670,15 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
 
     def relay_request(_method, path, body=None, **_kwargs):
         relay_calls.append((path, body))
-        if path == "/relay/sessions/close":
-            return {}
+        moved = body["container_ref"] == "git:example.test/other"
         return {
+            "session": {
+                "endpoint_id": "relay-session-00000000000000000000000000000001",
+                "runtime": "codex",
+                "session_ref": "cache-session",
+                "container_ref": body["container_ref"],
+                "scope_generation": 1 if moved else 0,
+            },
             "deliveries": [],
             "has_more": False,
             "remaining_count": 0,
@@ -720,15 +733,10 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
     assert [request["actor_ref"] for request in requests] == [
         "Actor", "Actor", "Other Actor",
     ]
-    close_calls = [
-        body for path, body in relay_calls
-        if path == "/relay/sessions/close"
-    ]
-    assert close_calls == [{
-        "runtime": "codex",
-        "session_ref": "cache-session",
-        "container_ref": "git:example.test/repo",
-    }]
+    assert all(path == "/relay/turn" for path, _body in relay_calls)
+    assert relay_calls[-1][1]["previous_container_ref"] == "git:example.test/repo"
+    assert relay_calls[-1][1]["previous_endpoint_id"] == "relay-session-00000000000000000000000000000001"
+    assert relay_calls[-1][1]["previous_scope_generation"] == 0
     assert prompt._common.get_pinned_container("cache-session") == "git:example.test/other"
     assert prompt._common.get_pending_relay_closes("cache-session") == []
 @pytest.mark.parametrize(

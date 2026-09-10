@@ -783,10 +783,10 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
             turns.append(body)
         return body
 
-    def run_hook(prompt: str) -> None:
+    def run_hook(session_id: str, prompt: str) -> None:
         monkeypatch.setattr(
             hook, "read_hook_input",
-            lambda: {"cwd": str(tmp_path), "session_id": "target-session", "prompt": prompt},
+            lambda: {"cwd": str(tmp_path), "session_id": session_id, "prompt": prompt},
         )
         with pytest.raises(SystemExit) as exited:
             hook.main()
@@ -813,9 +813,9 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     monkeypatch.setattr(hook, "emit_context", lambda text, _: contexts.append(text))
 
     # The production resolver's no-pin and wrong-pin paths fail closed.
-    run_hook(codex_wake._wake_prompt() + " missing scope")
-    hook._common.pin_container("target-session", "git:example.test/other")
-    run_hook(codex_wake._wake_prompt() + " wrong scope")
+    run_hook("probe-missing", codex_wake._wake_prompt() + " missing scope")
+    hook._common.pin_container("probe-wrong", "git:example.test/other")
+    run_hook("probe-wrong", codex_wake._wake_prompt() + " wrong scope")
     with client.app.state.pallium_service._storage._engine.begin() as connection:
         wrong_scope_items = connection.execute(
             text("SELECT id, content FROM source_items WHERE content LIKE :needle"),
@@ -829,7 +829,7 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     ).json()["deliveries"][0]["state"] == "pending"
 
     hook._common.pin_container("target-session", scope["container_ref"])
-    run_hook(codex_wake._wake_prompt())
+    run_hook("target-session", codex_wake._wake_prompt())
 
     assert len(turns) == 3
     delivery = turns[-1]["deliveries"][0]
@@ -1400,6 +1400,64 @@ def test_build_router_normalizes_endpoint_send_for_codex_wake(client) -> None:
     assert scope == target_scope
     assert wake["recipient"] == "codex:target-session"
 
+
+
+def test_ack_rearm_after_scope_transition_uses_live_container_and_historical_delivery_snapshot(client) -> None:
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+    ))
+    route = TestClient(app)
+    old = {"container_ref": "git:example.test/wake-old"}
+    new = {"container_ref": "git:example.test/wake-new"}
+    sender = {"container_ref": "git:example.test/wake-sender"}
+    with patch("app.dependencies.schedule_codex_relay_wake") as schedule:
+        assert route.post("/relay/turn", json={"runtime": "claude-code", "session_ref": "sender", **sender}).status_code == 200
+        registered = route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **old})
+        assert registered.status_code == 200
+        endpoint = registered.json()["session"]["endpoint_id"]
+        sent = []
+        for message_id in ("transition-batch-1", "transition-batch-2"):
+            response = route.post("/relay/messages", json={
+                "sender_runtime": "claude-code", "sender_session_ref": "sender",
+                "recipient": endpoint, "message_id": message_id,
+                "payload": "wake payload", **sender,
+            })
+            assert response.status_code == 200, response.text
+            sent.append(response.json())
+
+        schedule.reset_mock()
+        claimed = route.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", "max_messages": 1, **old,
+        }).json()["deliveries"][0]
+        moved = route.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", "max_chars": 1, "max_messages": 1,
+            "previous_container_ref": old["container_ref"],
+            "previous_endpoint_id": endpoint, "previous_scope_generation": 0, **new,
+        })
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["session"]["endpoint_id"] == endpoint
+        assert moved.json()["session"]["scope_generation"] == 1
+        assert moved.json()["deliveries"] == []
+
+        # ACK through the historical snapshot: the endpoint is now live in new.
+        ack = route.post("/relay/deliveries/ack", json={
+            "delivery_id": claimed["delivery_id"],
+            "claim_token": claimed["claim_token"],
+            **old,
+        })
+        assert ack.status_code == 200, ack.text
+        schedule.assert_called_once()
+        wake, live_scope = schedule.call_args.args
+        assert live_scope == new
+        assert wake["recipient"] == "codex:target"
+        assert wake["deliveries"][0]["delivery_id"] == sent[1]["deliveries"][0]["delivery_id"]
+        assert wake["deliveries"][0]["recipient_container_ref"] == new["container_ref"]
+
+        stored = route.get(f"/relay/messages/{sent[1]['message_id']}", params=old).json()["deliveries"][0]
+        assert stored["recipient_container_ref"] == old["container_ref"]
+        assert stored["state"] == "pending"
 
 def test_relay_turn_callback_rearms_only_after_success(client) -> None:
     callbacks = []

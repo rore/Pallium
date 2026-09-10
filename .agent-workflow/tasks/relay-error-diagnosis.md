@@ -30,14 +30,17 @@
 **Exceptions:** -
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Established context and completed focused discovery. Redline verdict: API_CHANGE/red, minimum High risk, Large complexity for the combined request; no boundary violation and no schema change intended.
-- apply_patch later failed with Windows CreateProcessWithLogonW error 1327; this file was deterministically replaced as the documented machine-local fallback.
-- Planned implementation files: api/schemas.py; core/relay.py; storage/sqlite_relay.py, storage/sqlite_schema.py, storage/sqlite.py; app/dependencies.py; app/mcp/client.py and server.py; Codex/Claude common.py plus Claude SessionStart, UserPromptSubmit, Stop and Codex UserPromptSubmit; focused E2E tests; docs/agent-relay.md and docs/context/operations.md.
+- Added endpoint-fenced scope transitions to `/relay/turn`, backed by an additive per-endpoint generation table and one immediate SQLite transaction. Exact replay is idempotent; stale, missing, closed, and occupied transitions fail without mutation.
+- Routed every Codex and Claude Code Relay registration through a bounded per-session lock with a persisted pre-HTTP transition intent. Confirmed endpoint/scope state advances only from well-formed server responses; malformed responses stay quarantined and outages retain the intent for replay. Confirmed moves preserve endpoint-owned aliases, work refs, pending/claimed deliveries, and reply routing.
+- Resolved ACK rearm from the recipient endpoint's live scope while keeping historical delivery snapshots unchanged.
+- Added bounded connect/busy retries to Relay reads and idempotent send/reply/ACK operations. Read/write/protocol/cancellation failures and non-Relay operations remain single-attempt. Relay failures now cross FastMCP as bounded, recursively redacted `ToolError` results with protocol `isError=true`.
+- Updated the Relay/operations docs and roadmap incident ledger. No new dependency or destructive migration was added.
+- `apply_patch` failed on this Windows host with `CreateProcessWithLogonW` error 1327; subsequent edits used narrowly scoped deterministic replacements, as allowed by `AGENTS.local.md`.
 
 ## Plan review
 
@@ -45,8 +48,12 @@
 
 ## Evidence
 
-Pending.
+Verified against the working tree based on `4dd5615f`:
 
+- Core Relay API/storage/work-ref/cross-container/lifecycle set: `135 passed`.
+- MCP client/server/protocol/lifecycle set: `211 passed`; client-only retry boundaries: `48 passed`.
+- Claude/Codex hook, wake, deadline, parity, and persisted-state set: `428 passed, 2 skipped`.
+- Full repository non-slow suite after result-review fixes, serial to avoid confirmed unrelated Windows/one-second parallel flakes: `4831 passed, 33 skipped, 170 deselected, 2 xfailed`.
 ## Result review
 
-Pending.
+Clean-context smart review found four hook recovery gaps, then three follow-up identity/wake-cleanup/protocol-budget gaps. All were fixed and covered. The final smart re-review passed with no actionable findings; its 11 focused checks passed. Residual risk: FastMCP error sizing depends on the SDK prefix format, guarded by real `tools/call` tests.

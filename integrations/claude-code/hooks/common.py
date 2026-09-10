@@ -996,8 +996,24 @@ def _cache_identity_context(
         if not _identity_context_matches(state, context):
             state.pop("actor_ref", None)
         state.update(context)
+        state.pop("provisional_identity_context", None)
         if actor_ref:
             state["actor_ref"] = actor_ref
+        return state
+
+    return _update_session_state(sid, update)
+
+
+def _cache_provisional_identity_context(
+    session_id: str | None,
+    context: dict[str, str] | None,
+) -> bool:
+    sid = _safe_session_id(session_id)
+    if sid is None or context is None:
+        return False
+
+    def update(state: dict[str, Any]) -> dict[str, Any]:
+        state["provisional_identity_context"] = dict(context)
         return state
 
     return _update_session_state(sid, update)
@@ -1148,6 +1164,7 @@ def resolve_container_ref(
     cwd: str,
     session_id: str | None,
     allow_project_switch: bool = False,
+    persist_switch: bool = True,
 ) -> str:
     """Keep transient cwd drift pinned; optionally follow a recognized Git project."""
     pinned = get_pinned_container(session_id)
@@ -1173,6 +1190,9 @@ def resolve_container_ref(
 
     current = derive_container_ref(cwd)
     if current.startswith(("git:", "repo:")) and current != pinned:
+        if not persist_switch:
+            _cache_provisional_identity_context(session_id, context)
+            return current
         updated = pin_container(session_id, current)
         if not updated:
             return pinned or current
@@ -1189,6 +1209,15 @@ def derive_actor_ref(
     context = _identity_context(cwd) if cwd is not None else None
     sid = _safe_session_id(session_id)
     state = _read_session_state(sid) if sid is not None else None
+    # A non-persisting project switch is provisional until Relay confirms it.
+    # Do not cache its identity context, or the next failed turn will make the
+    # old pin look current and bounce the provisional scope back.
+    provisional_context = state.get("provisional_identity_context") if state is not None else None
+    transient_scope = (
+        isinstance(provisional_context, dict)
+        and context is not None
+        and _identity_context_matches(provisional_context, context)
+    )
     if state is not None:
         cached = state.get("actor_ref")
         if (
@@ -1201,13 +1230,15 @@ def derive_actor_ref(
 
     actor_ref = os.environ.get("PALLIUM_HOOK_ACTOR_REF", "").strip()
     if actor_ref:
-        _cache_identity_context(session_id, context, actor_ref=actor_ref)
+        if not transient_scope:
+            _cache_identity_context(session_id, context, actor_ref=actor_ref)
         return actor_ref
 
     actor_ref = "local"
     timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
     if timeout <= 0:
-        _cache_identity_context(session_id, context, actor_ref=actor_ref)
+        if not transient_scope:
+            _cache_identity_context(session_id, context, actor_ref=actor_ref)
         return actor_ref
     try:
         result = subprocess.run(
@@ -1221,10 +1252,9 @@ def derive_actor_ref(
             actor_ref = result.stdout.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
-    _cache_identity_context(session_id, context, actor_ref=actor_ref)
+    if not transient_scope:
+        _cache_identity_context(session_id, context, actor_ref=actor_ref)
     return actor_ref
-
-
 def pallium_request(
     method: str,
     path: str,
@@ -2173,3 +2203,261 @@ def build_work_trace_metadata(turn_data: TurnData) -> dict | None:
     if patch_bodies:
         result["patch_bodies"] = patch_bodies
     return result
+
+def _write_session_state_locked(session_id: str, state: dict[str, Any]) -> bool:
+    """Atomically persist state while the caller owns the session lock."""
+    temporary: Path | None = None
+    try:
+        temporary = SESSIONS_DIR / f".{session_id}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        temporary.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporary, SESSIONS_DIR / f"{session_id}.json")
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def relay_turn(
+    runtime: str,
+    session_ref: object,
+    container_ref: object,
+    *,
+    max_chars: int = 0,
+    timeout: float = 0.75,
+    title: str | None = None,
+    structural_work_refs: object = None,
+    register_session: bool = True,
+    deadline: HookDeadline | None = None,
+    request: Callable[..., dict[str, Any] | None] | None = None,
+) -> dict[str, Any] | None:
+    """Serialize a turn, recover durable intent, and confirm its exact scope."""
+    sid = _safe_session_id(session_ref if isinstance(session_ref, str) else None)
+    if sid is None or not isinstance(runtime, str) or not runtime:
+        return None
+    if not isinstance(container_ref, str) or not container_ref or _safe_scope_value(container_ref) is None:
+        return None
+    lock_file = _acquire_session_lock(sid)
+    if lock_file is None:
+        return None
+    try:
+        state_path = SESSIONS_DIR / f"{sid}.json"
+        state = _read_session_state(sid)
+        if state_path.exists() and state is None:
+            return None
+        state = dict(state or {})
+        for key in ("container_ref", "last_confirmed_container_ref", "last_confirmed_endpoint_id"):
+            if key in state and state[key] is not None and (
+                not isinstance(state[key], str) or not state[key]
+            ):
+                return None
+        confirmed_generation = state.get("last_confirmed_scope_generation", 0)
+        if type(confirmed_generation) is not int or confirmed_generation < 0:
+            return None
+
+        intent = state.get("relay_turn_intent")
+        if intent is not None:
+            if not isinstance(intent, dict):
+                return None
+            required = (
+                "runtime", "source_container_ref", "destination_container_ref",
+                "endpoint_id", "scope_generation",
+            )
+            if any(key not in intent for key in required):
+                return None
+            if intent["runtime"] != runtime or not isinstance(
+                intent["destination_container_ref"], str
+            ):
+                return None
+            if intent["source_container_ref"] is not None and not isinstance(
+                intent["source_container_ref"], str
+            ):
+                return None
+            if intent["endpoint_id"] is not None and not isinstance(
+                intent["endpoint_id"], str
+            ):
+                return None
+            if type(intent["scope_generation"]) is not int or intent["scope_generation"] < 0:
+                return None
+
+        # Older hook state persisted only the pin. Read the live old endpoint
+        # without claiming messages so a later atomic move keeps its alias and
+        # queued deliveries attached to the same endpoint row.
+        source_candidate = (
+            intent.get("source_container_ref")
+            if isinstance(intent, dict)
+            else state.get("last_confirmed_container_ref")
+        ) or state.get("container_ref")
+        endpoint_candidate = (
+            intent.get("endpoint_id")
+            if isinstance(intent, dict)
+            else state.get("last_confirmed_endpoint_id")
+        ) or state.get("last_confirmed_endpoint_id")
+        if (
+            isinstance(source_candidate, str)
+            and source_candidate != container_ref
+            and endpoint_candidate is None
+        ):
+            bootstrap_payload: dict[str, Any] = {
+                "runtime": runtime,
+                "session_ref": sid,
+                "container_ref": source_candidate,
+                "max_chars": 1,
+                "max_messages": 1,
+                "register_session": False,
+            }
+            request_options = {"timeout": timeout}
+            if deadline is not None:
+                request_options["deadline"] = deadline
+            bootstrap = (request or relay_request)(
+                "POST", "/relay/turn", bootstrap_payload, **request_options
+            )
+            if not isinstance(bootstrap, dict):
+                return None
+            bootstrap_session = bootstrap.get("session")
+            if not isinstance(bootstrap_session, dict):
+                return None
+            bootstrap_endpoint = bootstrap_session.get("endpoint_id")
+            bootstrap_container = bootstrap_session.get("container_ref")
+            bootstrap_generation = bootstrap_session.get("scope_generation")
+            if not (
+                isinstance(bootstrap_endpoint, str)
+                and bootstrap_endpoint
+                and bootstrap_container == source_candidate
+                and type(bootstrap_generation) is int
+                and bootstrap_generation >= 0
+            ):
+                return None
+            source_candidate = bootstrap_container
+            endpoint_candidate = bootstrap_endpoint
+            confirmed_generation = bootstrap_generation
+            state["last_confirmed_container_ref"] = source_candidate
+            state["last_confirmed_endpoint_id"] = endpoint_candidate
+            state["last_confirmed_scope_generation"] = confirmed_generation
+            state["container_ref"] = source_candidate
+            if isinstance(intent, dict):
+                intent = dict(intent)
+                intent.update(
+                    source_container_ref=source_candidate,
+                    endpoint_id=endpoint_candidate,
+                    scope_generation=confirmed_generation,
+                )
+                state["relay_turn_intent"] = intent
+            if not _write_session_state_locked(sid, state):
+                return None
+
+        destinations = [intent] if intent is not None else [{
+            "runtime": runtime,
+            "source_container_ref": state.get("last_confirmed_container_ref"),
+            "destination_container_ref": container_ref,
+            "endpoint_id": state.get("last_confirmed_endpoint_id"),
+            "scope_generation": state.get("last_confirmed_scope_generation", confirmed_generation),
+        }]
+        for turn_intent in destinations:
+            destination = turn_intent["destination_container_ref"]
+            if not isinstance(destination, str) or _safe_scope_value(destination) is None:
+                return None
+            if state.get("relay_turn_intent") != turn_intent:
+                state["relay_turn_intent"] = dict(turn_intent)
+                if not _write_session_state_locked(sid, state):
+                    return None
+            intermediate = destination != container_ref
+            payload: dict[str, Any] = {
+                "runtime": runtime,
+                "session_ref": sid,
+                "container_ref": destination,
+                "max_chars": 1 if intermediate else max_chars,
+            }
+            if intermediate:
+                # Replaying an old destination only advances endpoint state.
+                # A one-character HTTP budget is below the smallest rendered delivery,
+                # so the final destination owns the single claim budget.
+                payload["max_messages"] = 1
+            if title is not None:
+                payload["title"] = title
+            if structural_work_refs is not None and not intermediate:
+                payload["structural_work_refs"] = structural_work_refs
+            if register_session is not True:
+                payload["register_session"] = register_session
+            source = turn_intent.get("source_container_ref")
+            endpoint = turn_intent.get("endpoint_id")
+            generation = turn_intent.get("scope_generation")
+            if source is not None or endpoint is not None or generation != 0:
+                if not (
+                    isinstance(source, str)
+                    and isinstance(endpoint, str)
+                    and type(generation) is int
+                ):
+                    return None
+                payload.update(
+                    previous_container_ref=source,
+                    previous_endpoint_id=endpoint,
+                    previous_scope_generation=generation,
+                )
+            request_options = {"timeout": timeout}
+            if deadline is not None:
+                request_options["deadline"] = deadline
+            response = (request or relay_request)(
+                "POST", "/relay/turn", payload, **request_options
+            )
+            if not isinstance(response, dict):
+                return None
+            invalid_response = {"error": "invalid relay turn response"}
+            session = response.get("session")
+            if not isinstance(session, dict):
+                return invalid_response
+            endpoint_id = session.get("endpoint_id")
+            confirmed_container = session.get("container_ref")
+            generation_value = session.get("scope_generation")
+            if not (
+                isinstance(endpoint_id, str)
+                and endpoint_id
+                and isinstance(confirmed_container, str)
+                and confirmed_container == destination
+                and type(generation_value) is int
+                and generation_value >= 0
+            ):
+                return invalid_response
+            if endpoint is not None and endpoint_id != endpoint:
+                return invalid_response
+            if source is not None and generation_value != (
+                generation if destination == source else generation + 1
+            ):
+                return invalid_response
+
+            if isinstance(source, str) and source != confirmed_container:
+                pending = state.get("pending_relay_closes")
+                state["pending_relay_closes"] = [
+                    ref for ref in dict.fromkeys([
+                        *(pending if isinstance(pending, list) else []), source,
+                    ]) if ref != confirmed_container
+                ]
+                for key in ("identity_cwd", "repo_config_fingerprint", "actor_ref", "provisional_identity_context"):
+                    state.pop(key, None)
+                close_generation = state.get("container_generation", 0)
+                state["container_generation"] = (
+                    close_generation + 1 if isinstance(close_generation, int) else 1
+                )
+            state["last_confirmed_container_ref"] = confirmed_container
+            state["last_confirmed_endpoint_id"] = endpoint_id
+            state["last_confirmed_scope_generation"] = generation_value
+            state["container_ref"] = confirmed_container
+            state.pop("relay_turn_intent", None)
+            if not _write_session_state_locked(sid, state):
+                return None
+            if not intermediate:
+                return response
+            destinations.append({
+                "runtime": runtime,
+                "source_container_ref": confirmed_container,
+                "destination_container_ref": container_ref,
+                "endpoint_id": endpoint_id,
+                "scope_generation": generation_value,
+            })
+        return None
+    finally:
+        _release_session_lock(lock_file)

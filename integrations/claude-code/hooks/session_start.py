@@ -30,7 +30,8 @@ from common import (
     RELAY_TURN_BUDGET,
     SUBPROCESS_TIMEOUT,
     derive_actor_ref,
-    derive_container_ref,
+    relay_turn,
+    resolve_container_ref,
     emit_utf8,
     format_injection,
     pallium_request,
@@ -167,8 +168,7 @@ def main() -> None:
         cwd = payload.get("cwd", ".")
         session_id = payload.get("session_id")
         source = payload.get("source", "")
-        container_ref = derive_container_ref(cwd)
-        pin_container(session_id, container_ref, source=source)
+        container_ref = resolve_container_ref(cwd, session_id, True, False)
         actor_ref = derive_actor_ref(cwd, session_id)
         register_claude_wake(session_id, container_ref, idle=False)
 
@@ -178,11 +178,7 @@ def main() -> None:
             agent_ref="claude-code", visibility="private",
         )
         relay_response = (
-            relay_request("POST", "/relay/turn", {
-                "runtime": "claude-code", "session_ref": session_id,
-                "container_ref": container_ref,
-                "max_chars": RELAY_TURN_BUDGET,
-            }, timeout=0.75) or {}
+            relay_turn("claude-code", session_id, container_ref, max_chars=RELAY_TURN_BUDGET, timeout=0.75, request=relay_request) or {}
         ) if relay_scope else {}
         relay_output, rendered = format_relay(
             relay_response.get("deliveries") or [],

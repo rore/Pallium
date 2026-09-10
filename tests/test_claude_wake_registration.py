@@ -220,7 +220,7 @@ def test_session_start_and_stop_refresh_before_early_return(monkeypatch: pytest.
     start = _load_claude_hook("session_start", monkeypatch)
     start_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(start, "read_hook_input", lambda: {"cwd": ".", "session_id": "session-1"})
-    monkeypatch.setattr(start, "derive_container_ref", lambda _cwd: "git:example/repo")
+    monkeypatch.setattr(start, "resolve_container_ref", lambda *_args: "git:example/repo")
     monkeypatch.setattr(start, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(start, "pin_container", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(start, "register_claude_wake", lambda *args, **kwargs: start_calls.append((args, kwargs)))
@@ -703,7 +703,7 @@ def test_prompt_cleanup_retries_real_wake_and_relay_transition(
 
     with pytest.raises(SystemExit):
         hook.main()
-    assert http.get("/relay/sessions", params={"container_ref": old_container, "include_inactive": "true"}).json()[0]["state"] == "closed"
+    assert http.get("/relay/sessions", params={"container_ref": old_container, "include_inactive": "true"}).json()[0]["state"] == "recent"
     assert any(row.container_ref == old_container for row in registry._registrations.values())
     assert any(row.container_ref == new_container for row in registry._registrations.values())
     assert common.get_pending_relay_closes(session_id) == [old_container]
@@ -794,14 +794,14 @@ def test_session_start_delivers_and_acks_relay_before_orientation(
         start, "read_hook_input",
         lambda: {"cwd": ".", "session_id": "session-1", "source": "startup"},
     )
-    monkeypatch.setattr(start, "derive_container_ref", lambda _cwd: "git:example/repo")
+    monkeypatch.setattr(start, "resolve_container_ref", lambda *_args: "git:example/repo")
     monkeypatch.setattr(start, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(start, "pin_container", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(start, "register_claude_wake", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         start, "relay_request",
         lambda method, path, body, **_kwargs: relay_calls.append((method, path, body))
-        or {"deliveries": [delivery], "has_more": True, "remaining_count": 2},
+        or {"session": {"endpoint_id": "relay-session-start", "runtime": "claude-code", "session_ref": "session-1", "container_ref": "git:example/repo", "scope_generation": 0}, "deliveries": [delivery], "has_more": True, "remaining_count": 2},
     )
     monkeypatch.setattr(
         start, "acknowledge_relay",

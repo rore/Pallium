@@ -584,6 +584,13 @@ class RelayDeliveryRecord(Base):
     )
 
 
+class RelayEndpointGenerationRecord(Base):
+    __tablename__ = "relay_endpoint_generations"
+
+    endpoint_id = Column(String, primary_key=True)
+    generation = Column(Integer, nullable=False, default=0)
+
+
 class RelayAliasRecord(Base):
     __tablename__ = "relay_aliases"
 
@@ -599,6 +606,7 @@ _RELAY_TABLE_NAMES = frozenset({
     RelayMessageRecord.__tablename__,
     RelayDeliveryRecord.__tablename__,
     RelayAliasRecord.__tablename__,
+    RelayEndpointGenerationRecord.__tablename__,
 })
 
 
@@ -1015,6 +1023,7 @@ class SQLiteSchemaMixin:
                     RelayMessageRecord.__table__,
                     RelayDeliveryRecord.__table__,
                     RelayAliasRecord.__table__,
+                    RelayEndpointGenerationRecord.__table__,
                 ],
             )
             with engine.begin() as connection:

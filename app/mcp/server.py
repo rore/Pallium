@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+from functools import wraps
 from typing import Annotated, Literal
 
 from pydantic import BeforeValidator
@@ -15,6 +16,7 @@ from pydantic import BeforeValidator
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
 from core.work_ref import readable_work_ref
+from redaction import redact_sensitive
 from retrieval.common import build_excerpt
 
 
@@ -120,7 +122,11 @@ def _strip_pydantic_input(detail: object) -> object:
 
 
 def _bounded_error(result: dict, budget: int) -> dict:
-    payload = {key: result[key] for key in ("error", "status_code", "detail") if key in result}
+    payload = {
+        key: result[key]
+        for key in ("error", "status_code", "detail", "min_max_chars")
+        if key in result
+    }
     if "detail" in payload:
         payload["detail"] = _strip_pydantic_input(payload["detail"])
     if len(_json_text(payload)) <= budget:
@@ -141,12 +147,32 @@ def _bounded_error(result: dict, budget: int) -> dict:
     return compact if len(_json_text(compact)) <= budget else {}
 
 
+def _redact_error_value(value: object) -> object:
+    if isinstance(value, str):
+        return redact_sensitive(value)
+    if isinstance(value, list):
+        return [_redact_error_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_error_value(item) for key, item in value.items()}
+    return value
+
+
+def _relay_error_text(result: object, budget: int = _MCP_RELAY_MAX_CHARS) -> str:
+    redacted = _redact_error_value(result)
+    payload = _bounded_error(redacted, budget) if isinstance(redacted, dict) else {
+        "error": redact_sensitive(str(result)),
+    }
+    return _json_text(payload)
+
+
 def _relay_text(result: object) -> str:
     """Serialize normal Relay responses compactly while keeping errors visible."""
+    if isinstance(result, dict) and "error" in result:
+        return _relay_error_text(result)
+    if not isinstance(result, dict):
+        return _relay_error_text({"error": "invalid relay response"})
     if len(_json_text(result)) <= _MCP_RELAY_MAX_CHARS:
         return _json_text(result)
-    if isinstance(result, dict) and "error" in result:
-        return _json_text(_bounded_error(result, _MCP_RELAY_MAX_CHARS))
     if isinstance(result, dict) and isinstance(result.get("deliveries"), list):
         states: dict[str, int] = {}
         for delivery in result["deliveries"]:
@@ -174,14 +200,14 @@ def _relay_text(result: object) -> str:
                         high = mid - 1
                 summary["payload"] = payload[:low] + marker
         return _json_text(summary)
-    return _json_text({"error": "relay response exceeds the response budget"})
+    return _relay_error_text({"error": "relay response exceeds the response budget"})
 
 
 def _relay_status_text(result: object, offset: int) -> str:
     if isinstance(result, dict) and "error" in result:
-        return _json_text(_bounded_error(result, _MCP_RELAY_MAX_CHARS))
+        return _relay_error_text(result)
     if not isinstance(result, dict) or not isinstance(result.get("payload"), str):
-        return _json_text({"error": "invalid relay status response"})
+        return _relay_error_text({"error": "invalid relay status response"})
 
     payload = result["payload"]
     payload_offset = result.get("payload_offset")
@@ -199,16 +225,16 @@ def _relay_status_text(result: object, offset: int) -> str:
         and truncated == (payload_offset != 0 or next_offset is not None)
     )
     if not valid:
-        return _json_text({"error": "invalid relay status pagination metadata", "offset": offset})
+        return _relay_error_text({"error": "invalid relay status pagination metadata", "offset": offset})
 
     deliveries = result.get("deliveries")
     if not isinstance(deliveries, list):
-        return _json_text({"error": "invalid relay status response"})
+        return _relay_error_text({"error": "invalid relay status response"})
     states: dict[str, int] = {}
     safe_deliveries = []
     for delivery in deliveries:
         if not isinstance(delivery, dict):
-            return _json_text({"error": "invalid relay status response"})
+            return _relay_error_text({"error": "invalid relay status response"})
         safe_delivery = {key: value for key, value in delivery.items() if key != "claim_token"}
         safe_deliveries.append(safe_delivery)
         state = str(safe_delivery.get("state", "unknown"))
@@ -249,18 +275,18 @@ def _relay_status_text(result: object, offset: int) -> str:
         else:
             high = middle - 1
     if low == 0 and total > payload_offset:
-        return _json_text({"error": "relay status metadata exceeds the response budget", "offset": offset})
+        return _relay_error_text({"error": "relay status metadata exceeds the response budget", "offset": offset})
     return _json_text(page(low))
 
 
 def _relay_recipients_text(result: object, offset: int = 0) -> str:
     """Serialize one deterministic recipient page within the MCP Relay budget."""
     if offset < 0:
-        return _json_text({"error": "offset must be non-negative"})
+        return _relay_error_text({"error": "offset must be non-negative"})
     if isinstance(result, dict) and "error" in result:
-        return _relay_text(result)
+        return _relay_error_text(result)
     if not isinstance(result, list) or not all(isinstance(row, dict) for row in result):
-        return _json_text({"error": "invalid relay recipients response"})
+        return _relay_error_text({"error": "invalid relay recipients response"})
 
     rows = [dict(row) for row in result]
     rows.sort(key=lambda row: str(row.get("session_ref", "")))
@@ -290,7 +316,7 @@ def _relay_recipients_text(result: object, offset: int = 0) -> str:
         page.append(row)
     payload = envelope(page)
     if not page and offset < total:
-        payload = {"error": "relay recipient entry exceeds the response budget", "offset": offset}
+        return _relay_error_text({"error": "relay recipient entry exceeds the response budget", "offset": offset})
     return _json_text(payload)
 
 def _compact_history(
@@ -497,12 +523,48 @@ NOT_CONFIGURED_MSG = (
 def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
     from mcp.server.fastmcp import Context, FastMCP
+    try:
+        from mcp.server.fastmcp.exceptions import ToolError
+    except ImportError:
+        from mcp.server.fastmcp import ToolError
     # stateless_http: every Pallium MCP tool is a single-shot RPC, so we don't
     # need server-side session affinity. Stateless mode survives server
     # restarts (sessions are otherwise in-process only) — without it, clients
     # holding a session id from before the restart get -32600 "Session not
     # found" and have to reinitialize.
     server = FastMCP("pallium", host=host, port=port, stateless_http=True)
+
+    def relay_tool(function):
+        @wraps(function)
+        async def wrapped(*args, **kwargs):
+            result = await function(*args, **kwargs)
+            if not isinstance(result, str):
+                return result
+            try:
+                payload = json.loads(result)
+            except (TypeError, ValueError):
+                payload = {"error": result}
+            if not isinstance(payload, dict):
+                payload = {"error": "invalid relay response"}
+            if "error" in payload:
+                budget = (
+                    _MCP_RELAY_WORK_REFS_MAX_CHARS
+                    if function.__name__ in {
+                        "pallium_relay_work_refs",
+                        "pallium_relay_attach_work_ref",
+                        "pallium_relay_detach_work_ref",
+                        "pallium_relay_participants",
+                    }
+                    else _MCP_RELAY_MAX_CHARS
+                )
+                if function.__name__ == "pallium_relay_receive":
+                    requested = kwargs.get("max_chars", args[0] if args else 0)
+                    if type(requested) is int and requested >= _MCP_RELAY_MIN_CHARS:
+                        budget = min(requested, _MCP_RELAY_MAX_CHARS)
+                prefix = f"Error executing tool {function.__name__}: "
+                raise ToolError(_relay_error_text(payload, max(2, budget - len(prefix))))
+            return result
+        return wrapped
 
     def current_relay_identity(ctx, request_ctx):
         runtime = ctx.agent_ref
@@ -835,6 +897,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         return json.dumps(result, indent=2, default=str)
 
     @server.tool()
+    @relay_tool
     async def pallium_relay_recipients(
         runtime: str | None = None,
         include_inactive: bool = False,
@@ -855,6 +918,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         return _relay_recipients_text(result, offset)
 
     @server.tool()
+    @relay_tool
     async def pallium_relay_name(
         current_runtime: str,
         current_session_ref: str,
@@ -893,13 +957,18 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             current_runtime=runtime,
             current_session_ref=session_ref,
         )
+        if isinstance(result, dict) and "error" in result:
+            return _relay_error_text(result, _MCP_RELAY_WORK_REFS_MAX_CHARS)
+        if not isinstance(result, dict):
+            return _relay_error_text({"error": "invalid relay work-reference response"}, _MCP_RELAY_WORK_REFS_MAX_CHARS)
         rendered = _json_text(result)
-        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
-            {"error": "relay work-reference response exceeds the response budget"}
+        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _relay_error_text(
+            {"error": "relay work-reference response exceeds the response budget"},
+            _MCP_RELAY_WORK_REFS_MAX_CHARS,
         )
 
     pallium_relay_work_refs.__annotations__["request_ctx"] = Context | None
-    server.tool()(pallium_relay_work_refs)
+    server.tool()(relay_tool(pallium_relay_work_refs))
 
     async def pallium_relay_attach_work_ref(
         scope_ref: str,
@@ -923,14 +992,17 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             local_ref=local_ref,
         )
         if isinstance(result, dict) and "error" in result:
-            result = _bounded_error(result, _MCP_RELAY_WORK_REFS_MAX_CHARS)
+            return _relay_error_text(result, _MCP_RELAY_WORK_REFS_MAX_CHARS)
+        if not isinstance(result, dict):
+            return _relay_error_text({"error": "invalid relay work-reference response"}, _MCP_RELAY_WORK_REFS_MAX_CHARS)
         rendered = _json_text(result)
-        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
-            {"error": "relay work-reference response exceeds the response budget"}
+        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _relay_error_text(
+            {"error": "relay work-reference response exceeds the response budget"},
+            _MCP_RELAY_WORK_REFS_MAX_CHARS,
         )
 
     pallium_relay_attach_work_ref.__annotations__["request_ctx"] = Context | None
-    server.tool()(pallium_relay_attach_work_ref)
+    server.tool()(relay_tool(pallium_relay_attach_work_ref))
 
     async def pallium_relay_detach_work_ref(
         scope_ref: str,
@@ -954,16 +1026,20 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             local_ref=local_ref,
         )
         if isinstance(result, dict) and "error" in result:
-            result = _bounded_error(result, _MCP_RELAY_WORK_REFS_MAX_CHARS)
+            return _relay_error_text(result, _MCP_RELAY_WORK_REFS_MAX_CHARS)
+        if not isinstance(result, dict):
+            return _relay_error_text({"error": "invalid relay work-reference response"}, _MCP_RELAY_WORK_REFS_MAX_CHARS)
         rendered = _json_text(result)
-        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
-            {"error": "relay work-reference response exceeds the response budget"}
+        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _relay_error_text(
+            {"error": "relay work-reference response exceeds the response budget"},
+            _MCP_RELAY_WORK_REFS_MAX_CHARS,
         )
 
     pallium_relay_detach_work_ref.__annotations__["request_ctx"] = Context | None
-    server.tool()(pallium_relay_detach_work_ref)
+    server.tool()(relay_tool(pallium_relay_detach_work_ref))
 
     @server.tool()
+    @relay_tool
     async def pallium_relay_participants(
         scope_ref: str,
         local_ref: str,
@@ -973,11 +1049,11 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     ) -> str:
         """Find a bounded service-global page of Relay sessions with one exact readable work reference. Dormant sessions are included; closed sessions require include_closed=true. Continue with next_offset when present."""
         if offset < 0:
-            return _json_text({"error": "offset must be non-negative"})
+            return _relay_error_text({"error": "offset must be non-negative"})
         try:
             readable_work_ref(scope_ref, local_ref)
         except ValueError:
-            return _json_text({"error": "invalid readable work reference"})
+            return _relay_error_text({"error": "invalid readable work reference"})
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
@@ -991,9 +1067,12 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             limit=5,
         )
         if not isinstance(result, dict) or not isinstance(result.get("participants"), list):
+            if isinstance(result, dict) and "error" in result:
+                return _relay_error_text(result, _MCP_RELAY_WORK_REFS_MAX_CHARS)
             rendered = _json_text(result)
-            return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
-                {"error": "relay participant response exceeds the response budget"}
+            return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _relay_error_text(
+                {"error": "relay participant response exceeds the response budget"},
+                _MCP_RELAY_WORK_REFS_MAX_CHARS,
             )
         result = dict(result)
         participants = list(result["participants"])
@@ -1012,10 +1091,12 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         result["participants"] = []
         result["next_offset"] = None
         rendered = _json_text(result)
-        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
-            {"error": "relay participant response exceeds the response budget"}
+        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _relay_error_text(
+            {"error": "relay participant response exceeds the response budget"},
+            _MCP_RELAY_WORK_REFS_MAX_CHARS,
         )
     @server.tool()
+    @relay_tool
     async def pallium_relay_send(
         message: str,
         recipient: str,
@@ -1040,6 +1121,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         return _relay_text(result)
 
     @server.tool()
+    @relay_tool
     async def pallium_relay_reply(
         delivery_id: str,
         message: str,
@@ -1061,6 +1143,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         )
         return _relay_text(result)
     @server.tool()
+    @relay_tool
     async def pallium_relay_status(
         message_id: str,
         offset: int = 0,
@@ -1068,7 +1151,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     ) -> str:
         """Read a bounded Relay body page and compact delivery status. Continue with next_offset until null."""
         if offset < 0:
-            return _json_text({"error": "offset must be non-negative"})
+            return _relay_error_text({"error": "offset must be non-negative"})
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
@@ -1106,26 +1189,29 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             runtime=runtime, session_ref=session_ref, max_response_chars=effective_max_chars,
         )
         if not isinstance(result, dict):
-            return _json_text({"error": "invalid relay receive response"})
+            return _relay_error_text({"error": "invalid relay receive response"})
         if "error" in result:
-            return _json_text(_bounded_error(result, effective_max_chars))
+            return _relay_error_text(result, effective_max_chars)
         deliveries = result.get("deliveries")
         if not isinstance(deliveries, list):
-            return _json_text({"error": "invalid relay receive response"})
+            return _relay_error_text({"error": "invalid relay receive response"})
         result.pop("session", None)  # storage sizes this larger superset; MCP does not expose session metadata
         for delivery in deliveries:
             if not isinstance(delivery, dict):
-                return _json_text({"error": "invalid relay receive response"})
+                return _relay_error_text({"error": "invalid relay receive response"})
             delivery.pop("claim_token", None)  # receipt stays; claim_token is never exposed
         rendered = _json_text(result)
         # The storage transaction sizes a superset before claim. If that invariant ever
         # regresses, returning the claimed body is safer than hiding it behind an error.
+        if len(rendered) > effective_max_chars:
+            return _relay_error_text({"error": "relay receive response exceeds the response budget"}, effective_max_chars)
         return rendered
 
     pallium_relay_receive.__annotations__["request_ctx"] = Context | None
-    server.tool()(pallium_relay_receive)
+    server.tool()(relay_tool(pallium_relay_receive))
 
     @server.tool()
+    @relay_tool
     async def pallium_relay_ack(
         delivery_id: str,
         receipt: str,

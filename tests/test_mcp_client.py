@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -386,18 +387,62 @@ class TestRelay:
         assert mock_post.call_count == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("error", [httpx.ConnectError("offline"), httpx.ReadTimeout("timeout")])
-    async def test_relay_transport_error_is_not_retried(self, ctx: PalliumContext, error: Exception) -> None:
-        with patch("httpx.AsyncClient.post", side_effect=error) as mock_post:
-            result = await PalliumMcpClient(ctx).relay_send(
-                message="handoff",
-                recipient="codex:session-1",
-                sender_runtime="codex",
-                sender_session_ref="sender",
-            )
-
+    @pytest.mark.parametrize("error", [httpx.ConnectError("offline"), httpx.ConnectTimeout("timeout")])
+    @pytest.mark.parametrize("method", ["relay_recipients", "relay_send", "relay_reply", "relay_mcp_ack"])
+    async def test_relay_connect_errors_retry_with_bounded_attempts(self, ctx: PalliumContext, error: Exception, method: str) -> None:
+        kwargs = {"relay_recipients": {}, "relay_send": {"message": "handoff", "recipient": "codex:session-1", "sender_runtime": "codex", "sender_session_ref": "sender"}, "relay_reply": {"delivery_id": "delivery-1", "message": "ack"}, "relay_mcp_ack": {"delivery_id": "delivery-1", "receipt": "receipt-1"}}[method]
+        with patch.object(PalliumMcpClient, "_RELAY_BUSY_ATTEMPTS", 3), patch("httpx.AsyncClient.post", side_effect=error) as post, patch("httpx.AsyncClient.get", side_effect=error) as get, patch("app.mcp.client.asyncio.sleep", new=AsyncMock()):
+            result = await getattr(PalliumMcpClient(ctx), method)(**kwargs)
         assert str(error) in result["error"]
-        assert mock_post.call_count == 1
+        assert (post if method != "relay_recipients" else get).call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_relay_send_retry_reuses_generated_message_id(self, ctx: PalliumContext) -> None:
+        error = httpx.ConnectError("offline")
+        success = _mock_response(json_data={"message_id": "relay-msg-stable"})
+        with patch.object(PalliumMcpClient, "_RELAY_BUSY_ATTEMPTS", 2), patch("httpx.AsyncClient.post", side_effect=[error, success]) as post, patch("app.mcp.client.asyncio.sleep", new=AsyncMock()):
+            await PalliumMcpClient(ctx).relay_send(message="handoff", recipient="codex:session-1", sender_runtime="codex", sender_session_ref="sender")
+        assert post.call_args_list[0].kwargs["json"]["message_id"] == post.call_args_list[1].kwargs["json"]["message_id"]
+
+    @pytest.mark.asyncio
+    async def test_non_relay_and_read_errors_are_not_retried(self, ctx: PalliumContext) -> None:
+        error = httpx.ConnectError("offline")
+        with patch("httpx.AsyncClient.post", side_effect=error) as post:
+            result = await PalliumMcpClient(ctx).query("memory")
+        assert post.call_count == 1 and "offline" in result["error"]
+        response = _mock_response(json_data={"ok": True})
+        response.json.side_effect = ValueError("invalid json")
+        with patch("httpx.AsyncClient.get", return_value=response) as get:
+            result = await PalliumMcpClient(ctx).relay_recipients()
+        assert get.call_count == 1 and "invalid json" in result["error"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("error", [httpx.ReadTimeout("read timeout"), httpx.WriteError("write failed"), httpx.ProtocolError("protocol failed")])
+    @pytest.mark.parametrize("method", ["relay_recipients", "relay_send"])
+    async def test_non_connect_relay_failures_are_not_retried(self, ctx: PalliumContext, error: Exception, method: str) -> None:
+        kwargs = {} if method == "relay_recipients" else {
+            "message": "handoff", "recipient": "codex:session-1",
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+        }
+        transport = "httpx.AsyncClient.get" if method == "relay_recipients" else "httpx.AsyncClient.post"
+        with patch(transport, side_effect=error) as request, patch(
+            "app.mcp.client.asyncio.sleep", new=AsyncMock(side_effect=AssertionError("must not retry"))
+        ):
+            result = await getattr(PalliumMcpClient(ctx), method)(**kwargs)
+        assert request.call_count == 1
+        assert str(error) in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_relay_cancellation_propagates_without_retry(self, ctx: PalliumContext) -> None:
+        with patch("httpx.AsyncClient.post", side_effect=asyncio.CancelledError) as request, patch(
+            "app.mcp.client.asyncio.sleep", new=AsyncMock(side_effect=AssertionError("must not retry"))
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await PalliumMcpClient(ctx).relay_send(
+                    message="handoff", recipient="codex:session-1",
+                    sender_runtime="codex", sender_session_ref="sender",
+                )
+        assert request.call_count == 1
     @pytest.mark.asyncio
     async def test_relay_retry_stops_at_aggregate_deadline(self, ctx: PalliumContext) -> None:
         body = {"detail": {"code": "relay_busy", "retryable": True}}

@@ -74,6 +74,238 @@ def test_empty_inbox(client: TestClient):
     assert result["has_more"] is False
 
 
+
+def test_scope_transition_preserves_endpoint_alias_work_refs_and_deliveries(client: TestClient):
+    """Moving A→B keeps the endpoint identity and all endpoint-owned state."""
+    a = {"container_ref": "git:example.test/transition-a"}
+    b = {"container_ref": "git:example.test/transition-b"}
+    sender = {"container_ref": "git:example.test/transition-sender"}
+    session = "transition-✓-日本語"
+
+    first = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **a})
+    assert first.status_code == 200, first.text
+    first_session = first.json()["session"]
+    endpoint = first_session["endpoint_id"]
+    assert first_session["scope_generation"] == 0
+
+    named = client.post("/relay/sessions/name", json={
+        "runtime": "codex", "session_ref": session, **a,
+        "alias": "transition-owner",
+    })
+    assert named.status_code == 200, named.text
+    attached = client.post("/relay/sessions/work-refs/attach", json={
+        "runtime": "codex", "session_ref": session, **a,
+        "scope_ref": "tracker:v1:example.test#transition",
+        "local_ref": "ticket:unicode-✓",
+    })
+    assert attached.status_code == 200, attached.text
+
+    client.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **sender})
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "sender",
+        "recipient": endpoint, "payload": "queued before move", **sender,
+    })
+    assert sent.status_code == 200, sent.text
+
+    moved = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": session, **b,
+        "previous_container_ref": a["container_ref"],
+        "previous_endpoint_id": endpoint,
+        "previous_scope_generation": 0,
+    })
+    assert moved.status_code == 200, moved.text
+    moved_session = moved.json()["session"]
+    assert moved_session["endpoint_id"] == endpoint
+    assert moved_session["scope_generation"] == 1
+    assert moved_session["container_ref"] == b["container_ref"]
+    assert moved.json()["deliveries"][0]["payload"] == "queued before move"
+
+    refs = client.get("/relay/sessions/work-refs", params={
+        "runtime": "codex", "session_ref": session, **b,
+    })
+    assert refs.status_code == 200, refs.text
+    assert any(row["local_ref"] == "ticket:unicode-✓" for row in refs.json()["work_refs"])
+    sessions = client.get("/relay/sessions", params={**b, "include_inactive": True})
+    assert sessions.status_code == 200
+    assert sessions.json()[0]["alias"] == "transition-owner"
+
+    back = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": session, **a,
+        "previous_container_ref": b["container_ref"],
+        "previous_endpoint_id": endpoint,
+        "previous_scope_generation": 1,
+    })
+    assert back.status_code == 200, back.text
+    assert back.json()["session"]["scope_generation"] == 2
+
+    stale = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": session, **b,
+        "previous_container_ref": a["container_ref"],
+        "previous_endpoint_id": endpoint,
+        "previous_scope_generation": 0,
+    })
+    assert stale.status_code == 409
+    missing = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": session, **sender,
+        "previous_container_ref": "git:example.test/no-such",
+        "previous_endpoint_id": endpoint,
+        "previous_scope_generation": 2,
+    })
+    assert missing.status_code == 404
+
+    close = client.post("/relay/sessions/close", json={"runtime": "codex", "session_ref": session, **a})
+    assert close.status_code == 200
+    closed = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": session, **b,
+        "previous_container_ref": a["container_ref"],
+        "previous_endpoint_id": endpoint,
+        "previous_scope_generation": 2,
+    })
+    assert closed.status_code == 409
+
+@pytest.mark.parametrize(
+    "transition_fields",
+    [
+        {"previous_container_ref": "git:example.test/a"},
+        {"previous_endpoint_id": "relay-session-00000000000000000000000000000000"},
+        {"previous_scope_generation": 0},
+        {"previous_container_ref": "git:example.test/a", "previous_endpoint_id": "relay-session-00000000000000000000000000000000"},
+        {"previous_container_ref": "git:example.test/a", "previous_scope_generation": 0},
+        {"previous_endpoint_id": "relay-session-00000000000000000000000000000000", "previous_scope_generation": 0},
+    ],
+)
+def test_scope_transition_fields_are_all_or_none(client: TestClient, transition_fields: dict) -> None:
+    response = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "partial-transition",
+        "container_ref": "git:example.test/b", **transition_fields,
+    })
+    assert response.status_code == 422
+
+
+def test_scope_transition_replay_and_same_scope_turn_are_idempotent(client: TestClient) -> None:
+    old = {"container_ref": "git:example.test/replay-old"}
+    new = {"container_ref": "git:example.test/replay-new"}
+    first = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "replay", **old}).json()["session"]
+    transition = {
+        "runtime": "codex", "session_ref": "replay", **new,
+        "previous_container_ref": old["container_ref"],
+        "previous_endpoint_id": first["endpoint_id"],
+        "previous_scope_generation": 0,
+    }
+    moved = client.post("/relay/turn", json=transition)
+    replayed = client.post("/relay/turn", json=transition)
+    assert moved.status_code == replayed.status_code == 200
+    assert {key: moved.json()["session"][key] for key in ("endpoint_id", "container_ref", "scope_generation")} == {key: replayed.json()["session"][key] for key in ("endpoint_id", "container_ref", "scope_generation")}
+    same_scope = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "replay", **new,
+        "previous_container_ref": new["container_ref"],
+        "previous_endpoint_id": first["endpoint_id"],
+        "previous_scope_generation": 1,
+    })
+    assert same_scope.status_code == 200
+    assert same_scope.json()["session"]["scope_generation"] == 1
+    assert client.get("/relay/sessions", params={**old, "include_inactive": True}).json() == []
+
+
+def test_same_scope_turn_recovers_unreachable_endpoint_with_fenced_identity(client: TestClient, relay_storage) -> None:
+    scope = {"container_ref": "git:example.test/unreachable-recovery"}
+    first = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "unreachable-recovery", **scope,
+    }).json()["session"]
+    assert relay_storage.relay_mark_unreachable(
+        runtime="codex",
+        session_ref="unreachable-recovery",
+        **scope,
+        attempt_started_at=datetime.now(timezone.utc) + timedelta(seconds=1),
+    ) is True
+
+    stale = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "unreachable-recovery", **scope,
+        "previous_container_ref": scope["container_ref"],
+        "previous_endpoint_id": first["endpoint_id"],
+        "previous_scope_generation": first["scope_generation"] + 1,
+    })
+    assert stale.status_code == 409
+    assert client.get("/relay/sessions", params={**scope, "include_inactive": True}).json()[0]["destination_health"] == "unreachable"
+
+    recovered = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "unreachable-recovery", **scope,
+        "previous_container_ref": scope["container_ref"],
+        "previous_endpoint_id": first["endpoint_id"],
+        "previous_scope_generation": first["scope_generation"],
+    })
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["session"]["endpoint_id"] == first["endpoint_id"]
+    assert recovered.json()["session"]["scope_generation"] == first["scope_generation"]
+    assert recovered.json()["session"]["destination_health"] == "active"
+
+    assert client.post("/relay/sessions/close", json={
+        "runtime": "codex", "session_ref": "unreachable-recovery", **scope,
+    }).status_code == 200
+    closed = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "unreachable-recovery", **scope,
+        "previous_container_ref": scope["container_ref"],
+        "previous_endpoint_id": first["endpoint_id"],
+        "previous_scope_generation": first["scope_generation"],
+    })
+    assert closed.status_code == 409
+
+def test_scope_transition_destination_conflicts_never_mutate_either_session(client: TestClient) -> None:
+    old = {"container_ref": "git:example.test/conflict-old"}
+    occupied = {"container_ref": "git:example.test/conflict-destination"}
+    session = "same-runtime-session"
+    source = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **old}).json()["session"]
+    destination = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **occupied}).json()["session"]
+    transition = {
+        "runtime": "codex", "session_ref": session, **occupied,
+        "previous_container_ref": old["container_ref"],
+        "previous_endpoint_id": source["endpoint_id"],
+        "previous_scope_generation": 0,
+    }
+    assert client.post("/relay/turn", json=transition).status_code == 409
+    assert client.post("/relay/sessions/close", json={"runtime": "codex", "session_ref": session, **occupied}).status_code == 200
+    assert client.post("/relay/turn", json=transition).status_code == 409
+    old_rows = client.get("/relay/sessions", params={**old, "include_inactive": True}).json()
+    occupied_rows = client.get("/relay/sessions", params={**occupied, "include_inactive": True}).json()
+    assert [(row["endpoint_id"], row["state"]) for row in old_rows] == [(source["endpoint_id"], "recent")]
+    assert [(row["endpoint_id"], row["state"]) for row in occupied_rows] == [(destination["endpoint_id"], "closed")]
+
+def test_reply_follows_sender_endpoint_after_sender_scope_transition(client: TestClient) -> None:
+    recipient_scope = {"container_ref": "git:example.test/reply-recipient"}
+    sender_old = {"container_ref": "git:example.test/reply-sender-old"}
+    sender_new = {"container_ref": "git:example.test/reply-sender-new"}
+    recipient = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "reply-recipient", **recipient_scope,
+    }).json()["session"]
+    sender = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "reply-sender", **sender_old,
+    }).json()["session"]
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "reply-sender",
+        "recipient": recipient["endpoint_id"], "payload": "request before move", **sender_old,
+    })
+    assert sent.status_code == 200, sent.text
+    claimed = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "reply-recipient", **recipient_scope,
+    }).json()["deliveries"][0]
+    moved = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "reply-sender", **sender_new,
+        "previous_container_ref": sender_old["container_ref"],
+        "previous_endpoint_id": sender["endpoint_id"],
+        "previous_scope_generation": 0,
+    })
+    assert moved.status_code == 200, moved.text
+    reply = client.post("/relay/replies", json={
+        "delivery_id": claimed["delivery_id"], "receipt": claimed["receipt"],
+        "payload": "reply after sender moved", **recipient_scope,
+    })
+    assert reply.status_code == 200, reply.text
+    received = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "reply-sender", **sender_new,
+    }).json()["deliveries"]
+    assert [delivery["payload"] for delivery in received] == ["reply after sender moved"]
+    assert received[0]["recipient_endpoint_id"] == sender["endpoint_id"]
+
 def test_receive_one_and_ack(client: TestClient):
     _register(client)
     _send(client, "payload-one")

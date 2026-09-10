@@ -17,6 +17,7 @@ from common import (
     close_claude_wake,
     complete_relay_closes,
     derive_actor_ref,
+    resolve_container_ref,
     emit_utf8,
     format_injection,
     format_relay,
@@ -24,7 +25,8 @@ from common import (
     pallium_request,
     read_hook_input,
     relay_request,
-    resolve_container_ref,
+    relay_turn,
+
     build_work_refs_metadata,
     structural_work_refs_payload,
     confirmed_registry_work_refs,
@@ -51,7 +53,7 @@ def main() -> None:
         cwd = payload.get("cwd", ".")
         prompt = payload.get("prompt", "")
         has_session = isinstance(session_id, str) and bool(session_id)
-        container_ref = resolve_container_ref(cwd, session_id if has_session else None, True)
+        container_ref = resolve_container_ref(cwd, session_id if has_session else None, True, False)
         actor_ref = derive_actor_ref(cwd, session_id)
         if has_session:
             register_claude_wake(session_id, container_ref, idle=False)
@@ -66,18 +68,10 @@ def main() -> None:
         if pending_closes:
             completed = []
             for previous_container in pending_closes:
+                if previous_container == container_ref:
+                    continue
                 wake_closed = close_claude_wake(session_id, previous_container)
-                closed = relay_request(
-                    "POST",
-                    "/relay/sessions/close",
-                    {
-                        "runtime": "claude-code",
-                        "session_ref": session_id,
-                        "container_ref": previous_container,
-                    },
-                    timeout=0.5,
-                )
-                if wake_closed and closed is not None:
+                if wake_closed:
                     completed.append(previous_container)
             complete_relay_closes(session_id, completed, close_generation)
         content = _strip_ide_context(prompt)
@@ -98,18 +92,7 @@ def main() -> None:
         ) if has_session else ""
         if relay_scope:
             work_refs_status = "unavailable"
-            relay_response = relay_request(
-                "POST",
-                "/relay/turn",
-                {
-                    "runtime": "claude-code",
-                    "session_ref": session_id,
-                    "container_ref": container_ref,
-                    "max_chars": RELAY_TURN_BUDGET,
-                    "structural_work_refs": structural_work_refs_payload(container_ref, discovery, cwd),
-                },
-                timeout=0.75,
-            )
+            relay_response = relay_turn("claude-code", session_id, container_ref, max_chars=RELAY_TURN_BUDGET, structural_work_refs=structural_work_refs_payload(container_ref, discovery, cwd), timeout=0.75, request=relay_request)
             relay_response = relay_response or {}
             confirmed_refs = confirmed_registry_work_refs(relay_response)
             candidate_status = relay_response.get("structural_work_refs_status")

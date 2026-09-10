@@ -25,6 +25,36 @@ DELIVERY = {
 }
 
 
+TURN_SESSION = {
+    "endpoint_id": "relay-session-test",
+    "container_ref": "git:example/repo",
+    "scope_generation": 0,
+}
+
+
+def _turn_response(deliveries=(), *, has_more=False, remaining_count=0, **session):
+    return {
+        "deliveries": list(deliveries),
+        "has_more": has_more,
+        "remaining_count": remaining_count,
+        "session": {**TURN_SESSION, **session},
+    }
+
+@pytest.fixture(autouse=True)
+def isolated_hook_state(monkeypatch, tmp_path):
+    profile = tmp_path / "profile"
+    monkeypatch.setenv("USERPROFILE", str(profile))
+    monkeypatch.setenv("HOME", str(profile))
+    sessions = tmp_path / "sessions"
+    state = tmp_path / "state"
+    for module in list(sys.modules.values()):
+        if module is None:
+            continue
+        if hasattr(module, "SESSIONS_DIR"):
+            monkeypatch.setattr(module, "SESSIONS_DIR", sessions, raising=False)
+        if hasattr(module, "STATE_DIR"):
+            monkeypatch.setattr(module, "STATE_DIR", state, raising=False)
+
 def _load(name: str, relative: str):
     path = ROOT / relative
     module_name = "relay_test_" + name
@@ -131,10 +161,10 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
 
     def relay(method, path, body, *, timeout):
         turn_calls.append((method, path, body, timeout))
-        return {"deliveries": [
+        return _turn_response([
             {**DELIVERY, "delivery_id": "skipped", "payload": "bad\x00value"},
             DELIVERY,
-        ]}
+        ])
 
     monkeypatch.setattr(hook, "relay_request", relay)
     monkeypatch.setattr(hook, "pallium_request", lambda *_args, **_kwargs: pytest.fail("short prompt must skip memory"))
@@ -195,9 +225,7 @@ def test_codex_confirmed_empty_internal_wake_blocks_before_model(monkeypatch, ca
     monkeypatch.setattr(
         hook,
         "relay_request",
-        lambda *_a, **_k: {
-            "deliveries": [], "has_more": False, "remaining_count": 0,
-        },
+        lambda *_a, **_k: _turn_response(),
     )
     monkeypatch.setattr(
         hook, "check_dedup", lambda *_: pytest.fail("empty wake must block before dedup"),
@@ -228,7 +256,7 @@ def test_codex_confirmed_empty_internal_wake_blocks_before_model(monkeypatch, ca
         ({}, "malformed"),
         ({"deliveries": None}, "malformed"),
         ({"deliveries": "invalid"}, "malformed"),
-        (["invalid"], "malformed"),
+        (["invalid"], "unavailable"),
         ({"deliveries": []}, "malformed"),
         ({"deliveries": [], "has_more": True, "remaining_count": 1}, "malformed"),
         ({"deliveries": [], "has_more": False, "remaining_count": False}, "malformed"),
@@ -286,6 +314,7 @@ def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):
     assert json.loads(captured.out)["decision"] == "block"
     assert captured.err == "pallium relay wake: outcome=invalid_scope\n"
 
+
 @pytest.mark.parametrize(
     ("relative", "runtime", "imported"),
     [
@@ -293,6 +322,7 @@ def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):
         ("integrations/codex/hooks/user_prompt_submit.py", "codex", True),
     ],
 )
+
 def test_short_turn_without_delivery_still_exposes_current_relay_identity(
     monkeypatch, relative, runtime, imported,
 ):
@@ -308,7 +338,7 @@ def test_short_turn_without_delivery_still_exposes_current_relay_identity(
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
-    monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: {"deliveries": []})
+    monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: _turn_response())
     monkeypatch.setattr(
         hook, "pallium_request",
         lambda *_a, **_k: pytest.fail("short prompt must skip memory"),
@@ -374,12 +404,12 @@ def test_claude_session_start_delivery_includes_exact_scope(monkeypatch, capsys)
         hook, "read_hook_input",
         lambda: {"cwd": ".", "session_id": "target-session", "source": "startup"},
     )
-    monkeypatch.setattr(hook, "derive_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
     monkeypatch.setattr(hook, "register_claude_wake", lambda *_a, **_k: None)
     monkeypatch.setattr(
-        hook, "relay_request", lambda *_a, **_k: {"deliveries": [DELIVERY]},
+        hook, "relay_request", lambda *_a, **_k: _turn_response([DELIVERY]),
     )
     acknowledged = []
     monkeypatch.setattr(
@@ -411,7 +441,7 @@ def test_claude_session_start_invalid_scope_never_claims(monkeypatch):
         hook, "read_hook_input",
         lambda: {"cwd": ".", "session_id": "target-session", "source": "startup"},
     )
-    monkeypatch.setattr(hook, "derive_container_ref", lambda *_: "bad\nscope")
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "bad\nscope")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
     monkeypatch.setattr(hook, "register_claude_wake", lambda *_a, **_k: None)
@@ -435,6 +465,177 @@ def test_codex_short_prompt_delivers_relay_before_memory_gate(monkeypatch):
 
     _exercise_short_prompt(hook, monkeypatch, codex=True)
 
+
+@pytest.mark.parametrize(
+    ("relative", "runtime"),
+    [
+        ("integrations/claude-code/hooks/common.py", "claude-code"),
+        ("integrations/codex/hooks/common.py", "codex"),
+    ],
+)
+def test_relay_turn_replays_without_claiming_until_final_destination(
+    monkeypatch, tmp_path: Path, relative: str, runtime: str,
+):
+    common = _load(f"replay_{runtime}", relative)
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
+    session_id = "replay-session"
+    state_dir = tmp_path / "sessions"
+    state_dir.mkdir()
+    (state_dir / f"{session_id}.json").write_text(json.dumps({
+        "container_ref": "git:old/repo",
+        "last_confirmed_container_ref": "git:old/repo",
+        "last_confirmed_endpoint_id": "relay-session-old",
+        "last_confirmed_scope_generation": 0,
+        "relay_turn_intent": {
+            "runtime": runtime,
+            "source_container_ref": "git:old/repo",
+            "destination_container_ref": "git:middle/repo",
+            "endpoint_id": "relay-session-old",
+            "scope_generation": 0,
+        },
+    }), encoding="utf-8")
+    replay_delivery = {**DELIVERY, "delivery_id": "replayed-delivery"}
+    calls = []
+
+    def request(method, path, body, *, timeout):
+        calls.append(body)
+        if body["container_ref"] == "git:middle/repo":
+            return _turn_response(
+                [],
+                container_ref="git:middle/repo",
+                endpoint_id="relay-session-old",
+                scope_generation=1,
+            )
+        if body["container_ref"] == "git:new/repo":
+            return _turn_response(
+                [replay_delivery],
+                container_ref="git:new/repo",
+                endpoint_id="relay-session-old",
+                scope_generation=2,
+            )
+        return None
+
+    result = common.relay_turn(runtime, session_id, "git:new/repo", request=request)
+    assert result is not None
+    assert [item["delivery_id"] for item in result["deliveries"]] == ["replayed-delivery"]
+    assert [body["container_ref"] for body in calls] == [
+        "git:middle/repo", "git:new/repo",
+    ]
+    assert calls[0]["max_chars"] == 1 and calls[0]["max_messages"] == 1
+    assert "max_messages" not in calls[1]
+    state = json.loads((state_dir / f"{session_id}.json").read_text(encoding="utf-8"))
+    assert state["last_confirmed_container_ref"] == "git:new/repo"
+    assert state["last_confirmed_scope_generation"] == 2
+
+@pytest.mark.parametrize((
+    "runtime", "relative",
+), [
+    ("claude-code", "integrations/claude-code/hooks/common.py"),
+    ("codex", "integrations/codex/hooks/common.py"),
+])
+def test_failed_provisional_switch_does_not_bounce_to_pinned_scope(
+    monkeypatch, tmp_path: Path, runtime: str, relative: str,
+):
+    common = _load(f"provisional_{runtime}", relative)
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / f"{runtime}-sessions")
+    monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
+    session_id = "provisional-session"
+    common.pin_container(session_id, "git:old/repo")
+    monkeypatch.setattr(common, "_identity_context", lambda _cwd: {
+        "identity_cwd": "git:new/repo", "repo_config_fingerprint": "new",
+    })
+    monkeypatch.setattr(common, "derive_container_ref", lambda _cwd: "git:new/repo")
+    monkeypatch.setattr(common, "_bounded_timeout", lambda _value: 0)
+    assert common.resolve_container_ref("new", session_id, True, False) == "git:new/repo"
+    common.derive_actor_ref("new", session_id)
+    assert common.resolve_container_ref("new", session_id, True, False) == "git:new/repo"
+
+
+@pytest.mark.parametrize((
+    "runtime", "relative",
+), [
+    ("claude-code", "integrations/claude-code/hooks/common.py"),
+    ("codex", "integrations/codex/hooks/common.py"),
+])
+def test_confirmed_switch_does_not_attach_old_identity_to_new_pin(
+    monkeypatch, tmp_path: Path, runtime: str, relative: str,
+):
+    common = _load(f"confirmed_identity_{runtime}", relative)
+    sessions = tmp_path / f"{runtime}-confirmed-sessions"
+    monkeypatch.setattr(common, "SESSIONS_DIR", sessions)
+    sessions.mkdir()
+    session_id = "confirmed-session"
+    (sessions / f"{session_id}.json").write_text(json.dumps({
+        "container_ref": "git:a",
+        "last_confirmed_container_ref": "git:a",
+        "last_confirmed_endpoint_id": "relay-session-e1",
+        "last_confirmed_scope_generation": 0,
+        "identity_cwd": "a",
+        "repo_config_fingerprint": "a",
+        "actor_ref": "actor-a",
+    }), encoding="utf-8")
+    contexts = {
+        "a": {"identity_cwd": "a", "repo_config_fingerprint": "a"},
+        "b": {"identity_cwd": "b", "repo_config_fingerprint": "b"},
+    }
+    monkeypatch.setattr(common, "_identity_context", lambda cwd: contexts[cwd])
+    monkeypatch.setattr(common, "derive_container_ref", lambda cwd: f"git:{cwd}")
+    monkeypatch.setattr(common, "_bounded_timeout", lambda _value: 0)
+    monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
+    assert common.resolve_container_ref("b", session_id, True, False) == "git:b"
+    common.derive_actor_ref("b", session_id)
+    result = common.relay_turn(runtime, session_id, "git:b", request=lambda *_a, **_k: _turn_response(
+        container_ref="git:b", endpoint_id="relay-session-e1", scope_generation=1,
+    ))
+    assert result is not None
+    assert common.resolve_container_ref("a", session_id, True, False) == "git:a"
+
+
+@pytest.mark.parametrize("runtime", ["claude-code", "codex"])
+def test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
+    client, monkeypatch, tmp_path: Path, runtime: str,
+):
+    relative = "integrations/claude-code/hooks/common.py" if runtime == "claude-code" else "integrations/codex/hooks/common.py"
+    common = _load(f"legacy_{runtime}", relative)
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / f"{runtime}-sessions")
+    old = "git:legacy/old"
+    new = "git:legacy/new"
+    sender = "git:legacy/sender"
+    old_response = client.post("/relay/turn", json={
+        "runtime": runtime, "session_ref": "legacy-target", "container_ref": old,
+    })
+    assert old_response.status_code == 200
+    endpoint = old_response.json()["session"]["endpoint_id"]
+    assert client.post("/relay/sessions/name", json={
+        "runtime": runtime, "session_ref": "legacy-target", "container_ref": old,
+        "alias": "legacy-alias",
+    }).status_code == 200
+    assert client.post("/relay/turn", json={
+        "runtime": runtime, "session_ref": "legacy-sender", "container_ref": sender,
+    }).status_code == 200
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": runtime, "sender_session_ref": "legacy-sender",
+        "recipient": endpoint, "payload": "queued legacy delivery", "container_ref": sender,
+    })
+    assert sent.status_code == 200
+    state_dir = common.SESSIONS_DIR
+    state_dir.mkdir(parents=True)
+    (state_dir / "legacy-target.json").write_text(json.dumps({
+        "container_ref": old,
+    }), encoding="utf-8")
+
+    def request(method, path, body, *, timeout):
+        response = client.request(method, path, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    result = common.relay_turn(runtime, "legacy-target", new, max_chars=1000, request=request)
+
+
+    assert result["session"]["endpoint_id"] == endpoint
+    assert result["session"]["alias"] == "legacy-alias"
+    assert [item["payload"] for item in result["deliveries"]] == ["queued legacy delivery"]
+
 @pytest.mark.parametrize(
     ("relative", "runtime", "imported"),
     [
@@ -442,69 +643,63 @@ def test_codex_short_prompt_delivers_relay_before_memory_gate(monkeypatch):
         ("integrations/codex/hooks/user_prompt_submit.py", "codex", True),
     ],
 )
-def test_failed_project_close_is_retried(
+
+def test_project_switch_uses_atomic_turn_transition_without_relay_close(
     monkeypatch, relative, runtime, imported
 ):
     if imported:
         from integrations.codex.hooks import user_prompt_submit as hook
     else:
         hook = _load("claude_switch", relative)
+    session_id = "target"
+    old_container = "git:old/repo"
+    new_container = "git:new/repo"
+    session_dir = hook.relay_turn.__globals__["SESSIONS_DIR"]
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / f"{session_id}.json").write_text(json.dumps({
+        "container_ref": old_container,
+        "last_confirmed_container_ref": old_container,
+        "last_confirmed_endpoint_id": "relay-session-old",
+        "last_confirmed_scope_generation": 0,
+    }), encoding="utf-8")
     monkeypatch.setattr(
         hook, "read_hook_input",
-        lambda: {"cwd": ".", "session_id": "target", "prompt": "hi"},
+        lambda: {"cwd": ".", "session_id": session_id, "prompt": "hi"},
     )
     monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
-    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:new/repo")
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: new_container)
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
-    state = {"pending": ["git:old/repo"]}
-    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: (list(state["pending"]), 0))
-    monkeypatch.setattr(
-        hook,
-        "complete_relay_closes",
-        lambda _session, completed, _generation: state.update(
-            pending=[ref for ref in state["pending"] if ref not in completed]
-        ),
-    )
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
     calls = []
-    wake_closes = []
-    if not imported:
-        monkeypatch.setattr(
-            hook,
-            "close_claude_wake",
-            lambda session, container: wake_closes.append((session, container)) or True,
-        )
-    close_attempts = 0
 
     def relay(method, path, body, *, timeout):
-        nonlocal close_attempts
         calls.append((method, path, body, timeout))
-        if path == "/relay/sessions/close":
-            close_attempts += 1
-            return None if close_attempts == 1 else {"state": "closed"}
-        return {"deliveries": []}
+        assert path == "/relay/turn"
+        return _turn_response(
+            [], container_ref=new_container,
+            endpoint_id="relay-session-old", scope_generation=1,
+        )
 
     monkeypatch.setattr(hook, "relay_request", relay)
     monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: None)
     if imported:
         monkeypatch.setattr(hook, "emit_context", lambda *_: None)
-    for _ in range(2):
-        with pytest.raises(SystemExit):
-            hook.main()
-    assert [call[1] for call in calls] == [
-        "/relay/sessions/close", "/relay/turn",
-        "/relay/sessions/close", "/relay/turn",
-    ]
-    assert calls[0][2] == {
-        "runtime": runtime,
-        "session_ref": "target",
-        "container_ref": "git:old/repo",
-    }
-    assert state["pending"] == []
-    if not imported:
-        assert wake_closes == [
-            ("target", "git:old/repo"),
-            ("target", "git:old/repo"),
-        ]
+    else:
+        monkeypatch.setattr(hook, "register_claude_wake", lambda *_a, **_k: None)
+
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    assert len(calls) == 1
+    assert calls[0][1] == "/relay/turn"
+    assert calls[0][2]["container_ref"] == new_container
+    assert calls[0][2]["previous_container_ref"] == old_container
+    assert calls[0][2]["previous_endpoint_id"] == "relay-session-old"
+    assert calls[0][2]["previous_scope_generation"] == 0
+    state = json.loads((session_dir / f"{session_id}.json").read_text(encoding="utf-8"))
+    assert state["last_confirmed_container_ref"] == new_container
+    assert state["last_confirmed_endpoint_id"] == "relay-session-old"
+    assert state["last_confirmed_scope_generation"] == 1
 
 @pytest.mark.parametrize(
     ("relative", "imported"),
@@ -529,7 +724,7 @@ def test_slash_and_duplicate_turns_never_claim(monkeypatch, relative, imported):
         calls = []
         monkeypatch.setattr(
             hook, "relay_request",
-            lambda *_a, **_k: calls.append((_a, _k)) or {"deliveries": []},
+            lambda *_a, **_k: calls.append((_a, _k)) or _turn_response(),
         )
         hook.main()
         assert len(calls) == 1
@@ -556,7 +751,7 @@ def test_codex_combined_output_is_relay_first_and_bounded(monkeypatch):
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(
         hook, "relay_request",
-        lambda *_a, **_k: {"deliveries": [DELIVERY], "has_more": True, "remaining_count": 2},
+        lambda *_a, **_k: _turn_response([DELIVERY], has_more=True, remaining_count=2),
     )
     monkeypatch.setattr(
         hook,
@@ -601,7 +796,7 @@ def test_claude_relay_uses_utf8_and_skips_memory_after_a_claim(monkeypatch):
     monkeypatch.setattr(
         hook,
         "relay_request",
-        lambda *_args, **_kwargs: {"deliveries": [{**DELIVERY, "payload": "review → then continue"}], "has_more": True, "remaining_count": 1},
+        lambda *_args, **_kwargs: _turn_response([{**DELIVERY, "payload": "review → then continue"}], has_more=True, remaining_count=1),
     )
     monkeypatch.setattr(hook, "pallium_request", lambda *_args, **_kwargs: pytest.fail("claimed Relay must not wait for memory"))
     acknowledgements = []
@@ -646,7 +841,7 @@ def test_unsafe_only_relay_backlog_does_not_skip_memory(monkeypatch, name, relat
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
-    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: {"deliveries": [{**DELIVERY, "payload": "unsafe\x00legacy"}], "has_more": True, "remaining_count": 1})
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: _turn_response([{**DELIVERY, "payload": "unsafe\x00legacy"}], has_more=True, remaining_count=1))
     memory_calls = []
     monkeypatch.setattr(hook, "pallium_request", lambda *args, **kwargs: memory_calls.append((args, kwargs)) or None)
     acknowledgements = []
@@ -677,9 +872,7 @@ def test_claude_stop_emits_rendered_subset_before_ack(monkeypatch):
     monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         hook, "relay_request",
-        lambda method, path, payload, *, timeout: calls.append((method, path, payload, timeout)) or {
-            "deliveries": deliveries, "has_more": True, "remaining_count": 1,
-        },
+        lambda method, path, payload, *, timeout: calls.append((method, path, payload, timeout)) or _turn_response(deliveries, has_more=True, remaining_count=1),
     )
     events = []
     monkeypatch.setattr(hook, "_emit_relay", lambda text: events.append(("emit", text)))
@@ -769,7 +962,7 @@ def test_claude_stop_emits_and_leaves_lease_when_acknowledgment_fails(monkeypatc
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: {"deliveries": [DELIVERY]})
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: _turn_response([DELIVERY]))
     monkeypatch.setattr(hook, "acknowledge_relay", lambda *_args, **_kwargs: [])
 
     with pytest.raises(SystemExit) as stopped:
@@ -789,7 +982,7 @@ def test_claude_stop_does_not_ack_when_emission_fails(monkeypatch):
         hook, "register_claude_wake",
         lambda *_args, **kwargs: registrations.append(kwargs["idle"]),
     )
-    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: {"deliveries": [DELIVERY]})
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: _turn_response([DELIVERY]))
     monkeypatch.setattr(hook, "_emit_relay", lambda _text: (_ for _ in ()).throw(OSError("closed")))
     monkeypatch.setattr(
         hook, "acknowledge_relay",
@@ -810,7 +1003,7 @@ def test_claude_stop_rearms_after_noncontinuing_probe(monkeypatch, broken_format
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **kwargs: registrations.append(kwargs["idle"]))
-    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: {"deliveries": []})
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: _turn_response())
     if broken_format:
         monkeypatch.setattr(hook, "format_relay", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError()))
 
@@ -833,7 +1026,7 @@ def test_claude_stop_emits_unicode_to_utf8_stderr_buffer(monkeypatch):
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(hook, "register_claude_wake", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: {"deliveries": [{**DELIVERY, "payload": "review → ✓"}]})
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: _turn_response([{**DELIVERY, "payload": "review → ✓"}]))
     monkeypatch.setattr(hook, "acknowledge_relay", lambda deliveries, **_kwargs: deliveries)
     output = Cp1252Error()
     monkeypatch.setattr(hook.sys, "stderr", output)
