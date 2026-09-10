@@ -6,7 +6,7 @@
 
 Do not ship the tested query-density excerpt window. It found more partial evidence in some results, but under the frozen answer-completeness rubric neither variant produced a single excerpt containing every fact and qualifier needed to answer its request. The candidate also lost required facts or qualifiers in other results and missed the frozen worst-case latency gate. The holdout stayed unopened because the candidate had already failed the development gates. This does not imply that search is useless: a short excerpt can still identify a relevant source worth expanding.
 
-This is a report-only result. No retrieval, ranking, API, MCP, skill, integration, storage, or injection behavior changed.
+A follow-up also rejected one high-count response-allocation candidate: it recovered visible fragments but lost useful source-choice context and failed declared identifier and qualifier boundaries. This remains a report-only result. No retrieval, ranking, API, MCP, skill, integration, storage, or injection behavior changed.
 
 ## Serving baseline and cost
 
@@ -106,17 +106,88 @@ The wider inventory and earlier diagnostic support several distinct classes; the
 7. **Coverage gaps.** Current recorded queries contained no non-ASCII text; linked Claude evidence was sparse and OpenCode was absent. Unicode behavior remains covered by generic tests and adversarial checks, not real-query prevalence.
 8. **Chronology limits.** Source timestamps were unavailable in the graded packet. Review preserved explicit proposal/completion/correction wording but did not infer cross-source currentness.
 
+## Follow-up: high-count response packaging
+
+A 2026-09-10 development-only follow-up tested one allocation candidate against the
+same frozen 36-lookup replay. This measures fixed-candidate agent-visible
+presentation/navigation. Candidate recovery was unchanged; injection precision and
+downstream-task effect remain unmeasured. No external evaluator calls, production
+changes, service changes, or holdout evaluation occurred.
+
+The baseline reproduced the prior compaction result exactly: 115 input and output
+hits, no empty input excerpts, and 20 empty output excerpts across the same four
+10-result replies. Their serialized responses were 1,998–1,999 characters. Responses
+with 0, 2, 3, 5, or 6 results remained separate preservation cases.
+
+The single candidate activated only when a 10-hit reply remained over the unchanged
+2,000-character budget after existing optional-field removal. It first reserved a
+24-character prefix for each nonempty excerpt, then spent the remaining serialized
+budget in rank order using bounded binary search. Lower-count and already-fitting
+responses delegated to the current compactor byte-for-byte. On the four real
+10-result development replies, the candidate retained all IDs, order, count, lookup
+lineage, warning fields, and expansion handles; each reply serialized to exactly
+2,000 characters and all 20 formerly empty excerpts became nonempty.
+
+Blind source-choice review rejected the candidate:
+
+| Measure | Result |
+|---|---:|
+| Formerly empty rows that became useful expansion previews | 13 / 20 |
+| Row wins / ties / losses | 13 / 10 / 17 |
+| Net row wins required / observed | at least 8 / -4 |
+| Lookup wins / ties / losses | 3 / 1 / 0 |
+| Useful source-choice preview losses | 17 |
+| Material qualifier or context-loss rows | at least 8 |
+
+The short floors often preserved a recognizable noun phrase but removed why it
+mattered. Lost context included pending approval, coordinate-before-edit
+restrictions, stale-receipt conditions, restart safety conditional on measurements
+not having started, failed or observability-only work, and benchmarks still running.
+Source IDs still allowed expansion, but the presentation made some expansion choices
+less informed. This fails the zero-qualifier-loss and positive-net-row gates even
+though 13 formerly empty rows became useful.
+
+Declared boundary fixtures also rejected promotion. With otherwise ordinary
+10-result fields, the serialized 24-character-floor payload was 1,794 characters for
+36-character IDs, 2,102 for 64-character IDs, and 2,806 for 128-character IDs. The
+36-character case fit. The 64-character case fell back to the baseline with nine
+empty previews. The 128-character case fell back to the baseline, which could retain
+only seven hits under the current budget. A Unicode, JSON-escaping, and current-
+replacement qualifier fixture required 2,148 characters and also fell back with nine
+empty previews. These are normal boundary inputs, not the separately classified
+mathematically impossible 300-character identity diagnostic. They show that identity
+and qualification fields alone can leave too little room for the proposed preview
+floor without increasing the budget or dropping results.
+
+Generic per-call timing passed the declared incremental and absolute limits. The
+10-by-160 case measured 1.2866 ms candidate p95 and 2.3202 ms maximum versus
+1.0717/1.8171 ms for baseline. The harness did not run the predeclared latency suite
+over frozen observed sizes, Unicode/escaping, long IDs, or the impossible diagnostic;
+because quality and boundary gates had already failed, those missing timings were not
+used to rescue or promote the candidate.
+
+The holdout selection and holdout packet were not opened or graded. The harness did
+load each complete frozen snapshot through the old inventory loader before filtering
+to the 36 published development hashes, so it did not prove access-level holdout
+sealing. Both snapshots regenerated the published development packets exactly. This
+limitation does not weaken the no-change decision, but it prevents a stronger claim
+that non-development snapshot content was never loaded.
+
+No caller-surface search-to-expansion E2E was added because production behavior did
+not change. The offline navigation check established source-anchor and lookup-ID
+field preservation only; it did not exercise a real source retrieval with
+parent_lookup_id.
+
 ## Recommendation
 
-Keep the existing excerpt behavior. Do not change the shared `build_excerpt` helper: normal retrieval also feeds derived-memory routing, work-signal classification, and disclaimer suppression, so a global window change is not presentation-only. Do not add a history-specific density window based on this evidence either.
+Keep the existing excerpt and response-packaging behavior. Do not change the shared `build_excerpt` helper: normal retrieval also feeds derived-memory routing, work-signal classification, and disclaimer suppression, so a global window change is not presentation-only. Do not add the tested history-specific density window or the tested 24-character-floor/rank-allocation policy based on this evidence.
 
 The smallest worthwhile follow-ups are separate investigations, not bundled implementation:
 
-1. instrument per-stage payload length and field retention for high-count responses, then compare whether bounded allocation or explicit expansion/navigation can keep every retained hit recognizable without increasing the response budget, changing result count, or dropping identity and essential provenance; use the generic 10-by-160-character case as the minimum reproduction;
-2. evaluate explicit source expansion or on-demand navigation when a short excerpt is incomplete, preserving the current scope and stale-history cautions;
-3. study candidate-pool, fusion, and query-repair failures on a genuinely task-independent set, reporting candidate recovery separately from excerpt sufficiency.
+1. compare explicit source expansion or on-demand navigation when a short excerpt is incomplete under a separately frozen plan, preserving the current response budget, result identity, exact-work scope, and stale-history cautions; do not retune the rejected allocation on this development split;
+2. study candidate-pool, fusion, and query-repair failures on a genuinely task-independent set, reporting candidate recovery separately from excerpt sufficiency.
 
-The roadmap item remains queued. This study resolves one hypothesis; it does not establish the broader feature as done.
+The roadmap item remains queued. This study and its packaging follow-up resolve two presentation hypotheses; they do not establish the broader feature as done.
 
 ## Reproducibility and limits
 

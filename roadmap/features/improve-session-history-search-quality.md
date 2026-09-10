@@ -83,11 +83,35 @@ six results had no empty excerpt. The broader feature remains queued because ran
 expansion/navigation, telemetry coverage, multilingual prevalence, and independent-task evidence
 remain unresolved.
 
-The next evidence-backed question is narrow: for high-count responses under the fixed MCP budget,
+The next evidence-backed question was narrow and is evaluated in the following completed investigation: for high-count responses under the fixed MCP budget,
 can per-stage instrumentation identify a bounded allocation or explicit expansion/navigation flow
 that keeps every retained hit recognizable while preserving source/lookup IDs, essential
 provenance, exact-work scope, result count, and the historical-state warning? Start with the generic
 10-results-by-160-characters reproduction; do not repeat or tune the rejected density window.
+
+## Completed investigation: high-count response packaging
+
+The 2026-09-10 development-only follow-up rejected one rank-prioritized minimum-preview
+allocation. On the four frozen 10-result replies it converted all 20 empty excerpts to
+nonempty text within the existing 2,000-character budget and preserved source/lookup
+identity, order, count, warnings, and expansion handles. Blind source-choice review
+found only 13 of those 20 new fragments useful, however, while the candidate caused
+17 useful-preview losses and at least 8 material context or qualifier losses. Row
+wins/ties/losses were 13/10/17 (net -4), below the required +8 with zero qualifier
+loss.
+
+The candidate also failed declared boundary cases. A 24-character floor fit with
+36-character IDs, but not with 64- or 128-character IDs or with a Unicode/escaped-text
+current-replacement fixture. The 128-character baseline could retain only seven hits,
+making the fixed-budget identity-versus-preview tradeoff explicit. Generic latency
+passed, but the broader predeclared latency matrix was not run after the decisive
+quality and boundary failures.
+
+Do not tune this allocation on the same development split or open its reserved
+holdout. The next representation work, if prioritized, should compare explicit
+on-demand expansion/navigation under a separately frozen plan rather than redistribute
+the same fixed reply budget. Ranking, exact-work scope, visibility, and historical
+cautions remain unchanged.
 
 ## Exact-work scope contract
 

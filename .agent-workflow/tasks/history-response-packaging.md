@@ -36,16 +36,22 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-10: Created a fresh isolated branch/worktree from merged PR #156, confirmed current main and PR status, mapped the compaction/search/expansion flow, and obtained clean-context GRAY/Elevated pre-edit classification. Production remains blocked pending plan and architect review.
+- 2026-09-10: Reproduced the frozen 36-lookup baseline, prototyped the single 10-hit/24-character-floor candidate in ignored artifacts, and stopped with no production change after blind quality and realistic boundary gates failed. The holdout selection/packet were not opened, but the old inventory loader read complete snapshots before development-hash filtering, so access-level sealing is not claimed.
 
 ## Evidence
 
-- PR #156 report and roadmap on base `fc33e741`; prior ignored artifacts remain in the completed study worktree and will be hash-validated before reuse.
+- PR #156 report and roadmap on base fc33e741.
+- Frozen hashes verified: development evidence 2A7D0AFB786483171511AE07FB37229324E681F6B6B6A4063F22E466E3BAB41B, variants 3C1659887D3908F6292952982F0524A033A11B6662A6191B96D17B981ACE67D2, and compaction summary 07846FF802969BDAA2F7FEBBA6827471EF990641FE46BCC6C8AE3238E7564202.
+- Corrected ignored artifacts: prototype 979C78AB5B9F7F8D1498B04FBC0182EE157F6D706FB1A16E3132FE064F2A93C7, aggregate summary ACB4988832C95E40167D6DC0A7D0C1F165C04C083713EEA33EF3A1B55D8DFD68, blind packet F0ED7C63F4BD3CA31BEC527E83A7547B52C74FBD13DE2780B2A31DC14C56E38E, and sealed key D38A11F9CF1ACFB98E691EC73D9E163C5C84131110FA660375F42308748E3D1C.
+- Baseline reproduced 36 lookups, 115 retained hits, 20 post-compaction empty excerpts, and 1,998–1,999-character high-count replies. Candidate converted all 20 to nonempty text at 2,000 characters while preserving real-development identity fields.
+- Blind review: 13/20 formerly empty rows useful; row wins/ties/losses 13/10/17; lookup wins/ties/losses 3/1/0; 17 useful-preview losses and at least 8 material qualifier/context losses.
+- Boundary floors: 36-character IDs 1,794 characters (fit), 64-character IDs 2,102 (fail), 128-character IDs 2,806 (fail), Unicode/escaping/current-replacement 2,148 (fail). Generic latency passed; frozen/boundary latency and real caller-surface expansion were not run after decisive rejection.
 
 ## Plan review
 
@@ -53,4 +59,4 @@ PASS for the offline prototype. The reviewer probed low-count activation and imp
 
 ## Result review
 
-Pending.
+Clean-context gpt-6-astra high review returned NO-CHANGE for the candidate; after the evidence and roadmap were recorded and one recommendation drift was corrected, final documentation review passed. The 13/20 useful-former-empty threshold passed, but net row wins were -4 versus the required +8, 17 useful previews regressed, and at least 8 rows lost material qualifier or context. The 64/128-character-ID and Unicode/replacement fixtures validly instantiate declared boundaries and failed. The reviewer also limited the latency claim to generic shapes, classified the navigation check as field preservation rather than lifecycle E2E, and noted that full snapshots were loaded before development filtering. Holdout and production are not authorized.
