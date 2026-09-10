@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Corrected design review packet (revision 3)
@@ -190,6 +190,20 @@ Dashboard: `app/dashboard.py`, `app/dashboard.html`, `tests/test_dashboard.py`, 
 2026-09-09 — Remediation `60b1aeae` changed the repository output grammar to port-bearing authority and added default/non-default expected vectors. Smart remediation verification returned APPROVE with no remaining design blockers. No production file has been edited.
 
 2026-09-09 — Implemented the first approved vertical slice in the isolated worktree. Added the generic readable scope/local identity validator and exact SHA-256 key without changing _normalize_work_ref; added the endpoint-owned association table/index to shared and separate Relay schema initialization; added atomic structural refresh, explicit attach/detach/capacity, session read, and service-global participant storage; and exposed the additive /relay/turn projection plus HTTP read/attach/detach/participants routes. The turn is admitted before best-effort structural refresh, participant overlap is deduplicated by endpoint, dormant sessions are included, and closed sessions remain opt-in. Focused verification: 32 passed across tests/test_relay_work_ref_identity.py, tests/test_relay_work_ref_associations_e2e.py, and tests/test_sqlite_relay_isolation.py. The delegated identity slice initially landed in the shared checkout; RelayDev moved only those two agent-owned changes into this isolated worktree and reversed the exact patch from the shared checkout before review. apply_patch had already failed with machine-local CreateProcess error 1327, so all edits used deterministic named-file replacements as permitted by local instructions. No installed service, merge, or live state was touched.
+2026-09-10 — Completed the approved end-to-end slice at implementation revision `b0bfd5dc`: endpoint-owned explicit/structural associations; exact participant lookup; additive HTTP/MCP surfaces; runtime hook refresh and immutable bounded History capture for Codex, Claude Code, and OpenCode; dashboard lookup/correction; roadmap/guide alignment; isolated demo; and two screenshots. The demo uses OpenCode identities so its temporary seeded database cannot invoke Codex/Claude wake adapters. No installed service, live database, merge, or live integration state was touched.
+
+2026-09-10 — Smart result review initially returned four P2 findings: malformed diagnostics could raise on unhashable containers, a concurrent final detach could race participant projection and pagination, a valid five-participant MCP page could exceed its fixed output budget without continuation, and three raw Git URL forms differed between Python and JavaScript parsers. The shared sanitizer now rejects malformed diagnostic shapes, participant paging and origins use one snapshot-consistent joined statement, MCP trims only whole participant rows with truthful `next_offset`, and shared invalid vectors reject Unicode/percent-encoded hosts and backslash paths in both runtimes. Final independent remediation review returned PASS with no remaining actionable findings.
+
+2026-09-10 — Agent Workflow skill-feedback trigger 1 fired because the full-suite gate was retried while legacy hook test doubles were updated, but it did not pass the actionability filter: the retries came from task-specific strict mocks and one host-injected actor environment value, not a repeatable gap in the workflow skill.
+
+## Evidence
+
+Verified implementation revision `b0bfd5dc` in the isolated worktree. Focused affected Python suite: 520 passed, 2 Windows skips. OpenCode serial suite: 51 passed, 7 intentional Windows skips. Final full repository suite with the host-injected `PALLIUM_HOOK_ACTOR_REF` cleared for hermetic identity tests: 4,781 passed, 33 skipped, 2 expected xfails. `scripts/run-import-linter.py` reported zero boundary violations; `git diff --check` passed. The isolated demo completed register → attach → participant discovery → exact send/claim/reply → History capture → detach → immutable exact History query → close without touching port 19836 or the installed database. The shipped dashboard JavaScript harness passed via `tests/test_dashboard.py`, and the two committed screenshots were visually inspected. The repository last-failure command found no cached failing nodes and therefore deselected the suite.
+
+## Result review
+
+Clean-context smart review by `association_result_review` examined the complete persistence/API/MCP/hook/dashboard/identity diff, reproduced four P2 failures, and reviewed each remediation. Final verdict: PASS. Remediation verification independently reported 47 focused Python tests and both JavaScript identity checks passing, with no remaining actionable finding. PR-time `api-reviewed` and `persistence-reviewed` labels or CODEOWNER approval remain intentionally unsatisfied until the PR exists; merge stays blocked until those repository checkpoints pass.
+
 ## Plan review
 
 Architect technical review APPROVED revision 3 for implementation in Relay message `relay-reply-05b483e577024c416b6f42a4d71bdef950560a9a2bbdf99b8321da076843c066`. Acceptance clarifications: diagnostic inspection must not change legacy caller-ref selection; every read and successful attach returns the exact key plus readable fields and existing History-search guidance; repository identity additions stay at the existing owning boundary and do not change container identity; scope stays four tools, one table, simple UI; final evidence is a working isolated HTTP/MCP/send/reply/detach/History and browser journey, not the text mock. Stop before merge/live install.
