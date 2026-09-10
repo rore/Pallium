@@ -29,7 +29,8 @@ from app.mcp.server import (
     _compact_history,
     _json_text,
 )
-from storage.vector_index import VectorIndexConfig
+from core.work_ref import work_refs_from_metadata
+from storage.vector_index import VectorIndexConfig, _replace_with_retry
 
 
 SCHEMA_VERSION = 1
@@ -40,6 +41,10 @@ NONTERMINAL = frozenset({"reserved", "started"})
 
 class PackError(ValueError):
     """The frozen input pack is invalid or incompatible with existing state."""
+
+
+class PersistenceError(Exception):
+    """A durable runner record could not be written."""
 
 
 def _canonical(value: Any) -> bytes:
@@ -61,11 +66,18 @@ def _atomic_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     data = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
-    with tmp.open("w", encoding="utf-8", errors="strict", newline="\n") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    try:
+        with tmp.open("w", encoding="utf-8", errors="strict", newline="\n") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_with_retry(str(tmp), str(path))
+    except OSError as exc:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise PersistenceError(f"cannot persist {path}: {exc}") from exc
 
 
 def _require_int(value: Any, name: str, minimum: int = 0) -> int:
@@ -79,6 +91,11 @@ def _require_text(value: Any, name: str, *, allow_empty: bool = False) -> str:
         raise PackError(f"{name} must be a {'possibly empty ' if allow_empty else ''}string")
     value.encode("utf-8", errors="strict")
     return value
+
+
+def _safe_name(value: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip(".-")
+    return stem[:80] or hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
 def validate_pack(pack: Any) -> dict[str, Any]:
@@ -124,6 +141,7 @@ def validate_pack(pack: Any) -> dict[str, Any]:
     if not isinstance(sources, list) or not sources:
         raise PackError("sources must be a non-empty array")
     source_ids: set[str] = set()
+    source_keys: set[str] = set()
     for index, source in enumerate(sources):
         if not isinstance(source, dict):
             raise PackError(f"sources[{index}] must be an object")
@@ -131,7 +149,11 @@ def validate_pack(pack: Any) -> dict[str, Any]:
         if source_id in source_ids:
             raise PackError(f"duplicate source_id: {source_id}")
         source_ids.add(source_id)
-        _require_text(source.get("content"), f"sources[{index}].content", allow_empty=True)
+        source_key = _safe_name(source_id)
+        if source_key in source_keys:
+            raise PackError(f"source_id filename collision: {source_id}")
+        source_keys.add(source_key)
+        _require_text(source.get("content"), f"sources[{index}].content")
         for key in ("source_type", "artifact_kind", "role", "thread_ref"):
             if key in source:
                 _require_text(source[key], f"sources[{index}].{key}")
@@ -142,6 +164,7 @@ def validate_pack(pack: Any) -> dict[str, Any]:
     if not isinstance(cases, list) or not cases:
         raise PackError("cases must be a non-empty array")
     case_ids: set[str] = set()
+    case_keys: set[str] = set()
     for index, case in enumerate(cases):
         if not isinstance(case, dict):
             raise PackError(f"cases[{index}] must be an object")
@@ -149,12 +172,23 @@ def validate_pack(pack: Any) -> dict[str, Any]:
         if case_id in case_ids:
             raise PackError(f"duplicate case id: {case_id}")
         case_ids.add(case_id)
-        _require_text(case.get("query"), f"cases[{index}].query", allow_empty=True)
-        _require_int(case.get("limit"), f"cases[{index}].limit", 1)
+        case_key = _safe_name(case_id)
+        if case_key in case_keys:
+            raise PackError(f"case id filename collision: {case_id}")
+        case_keys.add(case_key)
+        query = _require_text(case.get("query"), f"cases[{index}].query", allow_empty=True)
+        limit = _require_int(case.get("limit"), f"cases[{index}].limit", 1)
+        if limit > 50:
+            raise PackError(f"cases[{index}].limit must be <= 50")
         if "work_refs" in case:
             refs = case["work_refs"]
-            if not isinstance(refs, list) or any(not isinstance(item, str) or not item for item in refs):
-                raise PackError(f"cases[{index}].work_refs must be a non-empty-string array")
+            normalized = work_refs_from_metadata({"pallium_work_refs": refs})
+            if not isinstance(refs, list) or len(refs) != 1 or len(normalized) != 1:
+                raise PackError(
+                    f"cases[{index}].work_refs must contain one valid exact work reference"
+                )
+        elif not query.strip():
+            raise PackError(f"cases[{index}].query must be non-blank for broad search")
 
     gold = pack.get("gold")
     if not isinstance(gold, dict) or set(gold) != case_ids:
@@ -203,10 +237,6 @@ def _prepare_manifest(pack: dict[str, Any], driver: Sequence[str], run_dir: Path
         _atomic_json(path, manifest)
     return manifest
 
-
-def _safe_name(value: str) -> str:
-    stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip(".-")
-    return stem[:80] or hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
 def _attempt_paths(run_dir: Path, case_id: str, variant: str) -> list[Path]:
@@ -366,6 +396,24 @@ async def _fixture(pack: dict[str, Any], run_dir: Path) -> tuple[Any, PalliumMcp
             return response.json()
 
     client._post = post
+
+    async def get_source_context(source_item_id: str, **kwargs: Any) -> Any:
+        params: dict[str, Any] = {
+            "container_ref": config["container_ref"],
+            "active_session_ref": config["thread_ref"],
+            "query_visibility": config["visibility"],
+        }
+        for key in ("before", "after", "max_chars", "parent_lookup_id", "defer_delivery"):
+            if kwargs.get(key) is not None:
+                params[key] = kwargs[key]
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://runner", timeout=30
+        ) as http:
+            response = await http.get(f"/source/{source_item_id}/context", params=params)
+            response.raise_for_status()
+            return response.json()
+
+    client.get_source_context = get_source_context
     if not ready_path.exists():
         items = []
         for source in pack["sources"]:
@@ -398,7 +446,17 @@ async def _search(
     variant: str,
 ) -> dict[str, Any]:
     path = run_dir / "steps" / _safe_name(case["id"]) / variant / "search.json"
-    request = {"query": case["query"], "limit": case["limit"], "work_refs": case.get("work_refs")}
+    work_refs = case.get("work_refs")
+    requested_work_ref = (
+        work_refs_from_metadata({"pallium_work_refs": work_refs})[0] if work_refs else None
+    )
+    request = {
+        "query": case["query"],
+        "limit": case["limit"],
+        "mode": "exact_work_ref" if requested_work_ref else "broad",
+        "work_ref": requested_work_ref,
+        "defer_delivery": True,
+    }
     completed, row = _start_step(
         path,
         {
@@ -412,23 +470,47 @@ async def _search(
     )
     if completed is not None:
         return completed
-    raw = await client.search_history(
-        case["query"], limit=case["limit"], work_refs=case.get("work_refs")
-    )
-    formatted = _compact_history(
-        raw,
-        case["query"],
-        limit=case["limit"],
-        container_ref=pack["config"]["container_ref"],
-        thread_ref=pack["config"]["thread_ref"],
-        search_mode="exact_work" if case.get("work_refs") else "broad",
-        requested_work_ref=case["work_refs"][0] if case.get("work_refs") else None,
-    )
+    if requested_work_ref:
+        raw = await client.search_history_by_work_ref(
+            requested_work_ref, case["query"], limit=case["limit"], defer_delivery=True
+        )
+        formatted = _compact_history(
+            raw,
+            case["query"],
+            limit=case["limit"],
+            container_ref=pack["config"]["container_ref"],
+            thread_ref=pack["config"]["thread_ref"],
+            search_mode="exact_work_ref",
+            requested_work_ref=requested_work_ref,
+        )
+    else:
+        raw = await client.search_history(case["query"], limit=case["limit"], defer_delivery=True)
+        formatted = _compact_history(
+            raw,
+            case["query"],
+            limit=case["limit"],
+            container_ref=pack["config"]["container_ref"],
+            thread_ref=pack["config"]["thread_ref"],
+        )
+    receipt = None
+    if "error" not in formatted and raw.get("delivery_attempt_id"):
+        receipt = await client.finalize_historical_delivery(
+            raw["delivery_attempt_id"],
+            items=[
+                {"source_item_id": item["source_item_id"], "role": "search_match"}
+                for item in formatted.get("results", [])
+            ],
+        )
+        if receipt.get("error"):
+            formatted = receipt
+        else:
+            formatted["lookup_event_id"] = receipt.get("lookup_event_id")
     text = _json_text(formatted)
     return _finish_step(
         path,
         row,
         raw_response=raw,
+        delivery_receipt=receipt,
         tool_text=text,
         tool_text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         lookup_event_id=formatted.get("lookup_event_id"),
@@ -436,7 +518,7 @@ async def _search(
 
 
 async def _expand(
-    app: Any,
+    client: PalliumMcpClient,
     pack: dict[str, Any],
     manifest: dict[str, Any],
     run_dir: Path,
@@ -460,15 +542,14 @@ async def _expand(
     if not isinstance(parent, str) or not parent:
         raise PackError("search produced no lookup_event_id for expansion lineage")
     config = pack["config"]
-    params = {
-        "container_ref": config["container_ref"],
-        "active_session_ref": config["thread_ref"],
-        "query_visibility": config["visibility"],
+    request = {
         "before": config["expansion_before"],
         "after": config["expansion_after"],
         "max_chars": config["expansion_max_chars"],
         "parent_lookup_id": parent,
+        "defer_delivery": True,
     }
+
     completed, row = _start_step(
         path,
         {
@@ -479,25 +560,42 @@ async def _expand(
             "kind": "expansion",
             "source_item_id": source_item_id,
             "parent_lookup_id": parent,
-            "request": params,
+            "request": request,
         },
     )
     if completed is not None:
         if completed.get("parent_lookup_id") != parent:
             raise PackError("cached expansion lookup lineage mismatch")
         return completed
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://runner", timeout=30
-    ) as http:
-        response = await http.get(f"/source/{source_item_id}/context", params=params)
-        response.raise_for_status()
-        raw = response.json()
+    raw = await client.get_source_context(
+        source_item_id,
+        before=config["expansion_before"],
+        after=config["expansion_after"],
+        max_chars=config["expansion_max_chars"],
+        parent_lookup_id=parent,
+        defer_delivery=True,
+    )
     formatted = _bounded_expansion(raw, config["expansion_max_chars"])
+    receipt = None
+    if "error" not in formatted and raw.get("delivery_attempt_id"):
+        receipt = await client.finalize_historical_delivery(
+            raw["delivery_attempt_id"],
+            items=[
+                {
+                    "source_item_id": item["source_item_id"],
+                    "role": "anchor" if item.get("is_anchor") else "neighbor",
+                }
+                for item in formatted.get("items", [])
+            ],
+        )
+        if receipt.get("error"):
+            formatted = receipt
     text = _json_text(formatted)
     return _finish_step(
         path,
         row,
         raw_response=raw,
+        delivery_receipt=receipt,
         tool_text=text,
         tool_text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
     )
@@ -518,7 +616,7 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
 
 async def _driver_attempt(
     command: Sequence[str],
-    app: Any,
+    client: PalliumMcpClient,
     pack: dict[str, Any],
     manifest: dict[str, Any],
     run_dir: Path,
@@ -607,7 +705,7 @@ async def _driver_attempt(
                     raise RuntimeError("too_many_expansions")
                 source_id = _require_text(message.get("source_item_id"), "driver.source_item_id")
                 expanded = await _expand(
-                    app, pack, manifest, run_dir, case, variant, search, source_id
+                    client, pack, manifest, run_dir, case, variant, search, source_id
                 )
                 expansions += 1
                 await send(
@@ -706,7 +804,6 @@ def _global_attempt_fits(pack: dict[str, Any], run_dir: Path) -> bool:
 
 async def _run_variant(
     command: Sequence[str],
-    app: Any,
     client: PalliumMcpClient,
     pack: dict[str, Any],
     manifest: dict[str, Any],
@@ -716,7 +813,7 @@ async def _run_variant(
 ) -> dict[str, Any]:
     _recover_indeterminate(run_dir, case["id"], variant)
     terminal = _terminal_attempt(run_dir, case["id"], variant)
-    if terminal and terminal["status"] in {"completed", "permanent_failure"}:
+    if terminal and terminal["status"] in {"completed", "permanent_failure", "budget_skipped"}:
         return terminal
 
     paths = _attempt_paths(run_dir, case["id"], variant)
@@ -724,7 +821,28 @@ async def _run_variant(
         if paths and not _can_retry(pack, run_dir, case["id"]):
             break
         if not _global_attempt_fits(pack, run_dir):
-            break
+            path = (
+                run_dir
+                / "attempts"
+                / _safe_name(case["id"])
+                / variant
+                / f"attempt-{len(paths) + 1:03d}.json"
+            )
+            row = {
+                "schema_version": SCHEMA_VERSION,
+                "pack_hash": manifest["pack_hash"],
+                "case_id": case["id"],
+                "variant": variant,
+                "attempt": len(paths) + 1,
+                "status": "budget_skipped",
+                "reservation": {"input_tokens": 0, "output_tokens": 0},
+                "charged_usage": {"input_tokens": 0, "output_tokens": 0},
+                "cost_usd": 0.0,
+                "cost_status": "known",
+                "reason": "insufficient remaining input/output or retry budget",
+            }
+            _atomic_json(path, row)
+            return row
         number = len(paths) + 1
         path = (
             run_dir
@@ -763,7 +881,7 @@ async def _run_variant(
         _atomic_json(path, row)
         outcome = await _driver_attempt(
             command,
-            app,
+            client,
             pack,
             manifest,
             run_dir,
@@ -898,7 +1016,7 @@ async def run(
     pack = load_pack(pack_path)
     run_dir.mkdir(parents=True, exist_ok=True)
     manifest = _prepare_manifest(pack, driver_command, run_dir)
-    app, client = await _fixture(pack, run_dir)
+    _app, client = await _fixture(pack, run_dir)
     config = pack["config"]
 
     for case in pack["cases"]:
@@ -939,7 +1057,7 @@ async def run(
             continue
         for variant in VARIANTS:
             await _run_variant(
-                driver_command, app, client, pack, manifest, run_dir, case, variant
+                driver_command, client, pack, manifest, run_dir, case, variant
             )
         pair["status"] = "active"
         _atomic_json(pair_path, pair)

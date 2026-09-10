@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -20,7 +21,14 @@ pytestmark = pytest.mark.slow
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from evals.reliable_pair_runner import PackError, run, validate_pack
+from app.mcp.server import _bounded_expansion, _compact_history, _json_text
+from evals.reliable_pair_runner import (
+    PackError,
+    PersistenceError,
+    _atomic_json,
+    run,
+    validate_pack,
+)
 
 
 PYTHON = sys.executable
@@ -259,6 +267,47 @@ def test_pilot_real_surfaces_unicode_resume_and_pair_order(tmp_path: Path) -> No
     )
     assert "\u627e\u5230\u7b54\u6848" in expansion["tool_text"]
     assert expansion["parent_lookup_id"] == search["lookup_event_id"]
+    assert "search_mode" not in json.loads(search["tool_text"])
+    expected_search = _compact_history(
+        search["raw_response"],
+        "résumé marker 1",
+        limit=5,
+        container_ref="fixture:reliable-pair",
+        thread_ref="pilot-active-thread",
+    )
+    expected_search["lookup_event_id"] = search["delivery_receipt"]["lookup_event_id"]
+    assert search["tool_text"] == _json_text(expected_search)
+    assert expansion["tool_text"] == _json_text(
+        _bounded_expansion(expansion["raw_response"], 2000)
+    )
+    with sqlite3.connect(state / "fixture.db") as db:
+        lookup = db.execute(
+            "SELECT event_type, exposed_json FROM historical_lookup_reuse_event WHERE id = ?",
+            (search["lookup_event_id"],),
+        ).fetchone()
+        expanded = db.execute(
+            "SELECT event_type, parent_lookup_id, exposed_json "
+            "FROM historical_lookup_reuse_event WHERE id = ?",
+            (expansion["delivery_receipt"]["lookup_event_id"],),
+        ).fetchone()
+    assert lookup == (
+        "lookup",
+        json.dumps(
+            [
+                {"source_item_id": item["source_item_id"], "role": "search_match"}
+                for item in json.loads(search["tool_text"])["results"]
+            ],
+            separators=(",", ":"),
+        ),
+    )
+    assert expanded[0:2] == ("expansion", search["lookup_event_id"])
+    assert json.loads(expanded[2]) == [
+        {
+            "source_item_id": item["source_item_id"],
+            "role": "anchor" if item["is_anchor"] else "neighbor",
+        }
+        for item in json.loads(expansion["tool_text"])["items"]
+    ]
     rows = _attempts(state)
     assert report["attempt_count"] == len(rows)
     assert report["usage"]["charged_input_tokens"] == sum(
@@ -365,6 +414,102 @@ def test_exact_pair_budget_and_cannot_start_pair(tmp_path: Path) -> None:
     assert stopped["quality"] is None
 
 
+def test_finalized_lookup_exposes_only_post_format_truncated_results(tmp_path: Path) -> None:
+    value = _pack()
+    query = value["cases"][0]["query"]
+    value["cases"][0]["limit"] = 50
+    value["sources"] = [
+        {
+            "source_id": f"crowded-{index}",
+            "source_type": "chat_message",
+            "artifact_kind": "message",
+            "role": "assistant-" + ("x" * 500),
+            "thread_ref": f"history-{index}",
+            "content": f"{query} result {index}",
+        }
+        for index in range(12)
+    ]
+    pack_path = _write_pack(tmp_path, value)
+    state = tmp_path / "state"
+
+    report = _run(pack_path, state, "permanent", tmp_path / "control")
+
+    assert report["invalid_pairs"] == 1
+    search = json.loads(
+        (state / "steps" / "case-1" / "baseline" / "search.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    raw_ids = [item["source_item_id"] for item in search["raw_response"]["results"]]
+    visible_ids = [item["source_item_id"] for item in json.loads(search["tool_text"])["results"]]
+    assert len(raw_ids) > len(visible_ids) > 0
+    with sqlite3.connect(state / "fixture.db") as db:
+        exposed = db.execute(
+            "SELECT exposed_json FROM historical_lookup_reuse_event WHERE id = ?",
+            (search["lookup_event_id"],),
+        ).fetchone()[0]
+    assert [item["source_item_id"] for item in json.loads(exposed)] == visible_ids
+
+def test_exact_work_uses_public_format_and_finalized_lookup(tmp_path: Path) -> None:
+    value = _pack()
+    value["cases"][0]["work_refs"] = ["FEATURE 42"]
+    value["sources"][0]["metadata"] = {"pallium_work_refs": ["feature-42"]}
+    pack_path = _write_pack(tmp_path, value)
+    state = tmp_path / "state"
+
+    report = _run(pack_path, state, "permanent", tmp_path / "control")
+
+    assert report["invalid_pairs"] == 1
+    search = json.loads(
+        (state / "steps" / "case-1" / "baseline" / "search.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload = json.loads(search["tool_text"])
+    assert payload["search_mode"] == "exact_work_ref"
+    assert payload["requested_work_ref"] == "feature-42"
+    expected = _compact_history(
+        search["raw_response"],
+        value["cases"][0]["query"],
+        limit=5,
+        container_ref=value["config"]["container_ref"],
+        thread_ref=value["config"]["thread_ref"],
+        search_mode="exact_work_ref",
+        requested_work_ref="feature-42",
+    )
+    expected["lookup_event_id"] = search["delivery_receipt"]["lookup_event_id"]
+    assert search["tool_text"] == _json_text(expected)
+    with sqlite3.connect(state / "fixture.db") as db:
+        row = db.execute(
+            "SELECT trigger_origin, exposed_json FROM historical_lookup_reuse_event "
+            "WHERE id = ?",
+            (search["lookup_event_id"],),
+        ).fetchone()
+    assert row[0] == "agent_pull_work"
+    assert [item["source_item_id"] for item in json.loads(row[1])] == [
+        item["source_item_id"] for item in payload["results"]
+    ]
+
+
+def test_mid_pair_budget_exhaustion_is_durable(tmp_path: Path) -> None:
+    value = _pack(total_output=40, retry_input=0, retry_output=0)
+    pack_path = _write_pack(tmp_path, value)
+    state = tmp_path / "state"
+
+    report = _run(pack_path, state, "usage_over", tmp_path / "control")
+    rows = _attempts(state)
+
+    assert [row["status"] for row in rows] == ["permanent_failure", "budget_skipped"]
+    assert report["variant_statuses"] == {
+        "budget_skipped": 1,
+        "permanent_failure": 1,
+    }
+    assert report["pairs"][0]["variants"]["candidate"]["status"] == "budget_skipped"
+    assert report["usage"]["charged_output_tokens"] == 21
+    resumed = _run(pack_path, state, "usage_over", tmp_path / "control")
+    assert resumed["records_hash"] == report["records_hash"]
+
+
 def test_output_overrun_is_terminal_and_reported(tmp_path: Path) -> None:
     pack_path = _write_pack(tmp_path, _pack())
     state = tmp_path / "state"
@@ -413,6 +558,10 @@ def test_resume_rejects_changed_config_sources_cases_or_gold(tmp_path: Path) -> 
         (lambda value: value["config"].__setitem__("total_input_tokens", -1), "total_input_tokens"),
         (lambda value: value["config"].__setitem__("attempt_output_tokens", "20"), "attempt_output_tokens"),
         (lambda value: value["sources"][0].__setitem__("metadata", []), "metadata"),
+        (lambda value: value["sources"][0].__setitem__("content", ""), "content"),
+        (lambda value: value["cases"][0].__setitem__("query", "  "), "non-blank"),
+        (lambda value: value["cases"][0].__setitem__("limit", 51), "limit"),
+        (lambda value: value["cases"][0].__setitem__("work_refs", []), "work_refs"),
         (lambda value: value["gold"].__setitem__("extra", {}), "gold keys"),
     ],
 )
@@ -421,6 +570,34 @@ def test_pack_validation_rejects_invalid_types_and_bounds(mutate, match: str) ->
     mutate(value)
     with pytest.raises(PackError, match=match):
         validate_pack(value)
+
+
+def test_pack_validation_rejects_filename_key_collisions() -> None:
+    cases = _pack(case_count=2)
+    first_gold, second_gold = cases["gold"].values()
+    cases["cases"][0]["id"] = "a/b"
+    cases["cases"][1]["id"] = "a-b"
+    cases["gold"] = {"a/b": first_gold, "a-b": second_gold}
+    with pytest.raises(PackError, match="case id filename collision"):
+        validate_pack(cases)
+
+    sources = _pack(case_count=2)
+    sources["sources"][0]["source_id"] = "a/b"
+    sources["sources"][1]["source_id"] = "a-b"
+    with pytest.raises(PackError, match="source_id filename collision"):
+        validate_pack(sources)
+
+
+def test_persistence_failure_is_not_transport_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(_source: str, _destination: str) -> None:
+        raise PermissionError("locked")
+
+    monkeypatch.setattr("evals.reliable_pair_runner._replace_with_retry", fail)
+    with pytest.raises(PersistenceError, match="cannot persist"):
+        _atomic_json(tmp_path / "record.json", {"status": "started"})
+    assert not (tmp_path / "record.json").exists()
 
 
 def test_real_process_interruption_records_indeterminate_and_restores_lineage(
