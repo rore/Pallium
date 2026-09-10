@@ -89,6 +89,13 @@ that keeps every retained hit recognizable while preserving source/lookup IDs, e
 provenance, exact-work scope, result count, and the historical-state warning? Start with the generic
 10-results-by-160-characters reproduction; do not repeat or tune the rejected density window.
 
+### Completed investigation: 4,000-character response budget
+
+A 2026-09-10 bounded follow-up rejected increasing the agent-facing search response budget from 2,000 to 4,000 characters. It froze 15 broad fixed-candidate cases without replacement. Prior development, holdout, comparison-query, and retrievable-neighbor protection made six ungradable, leaving nine eligible cases: six answerable, one partial, and two negative. Frozen anchors were source-disjoint, but work/thread dependence remained.
+
+Exactly three pressure cases could possibly improve. During the separate-context paired run, an expansion transport failure invalidated one of those pairs; the maximum possible added resolutions fell to two, below the fixed requirement of three. The run stopped after 10 of 18 planned journeys, with no rerun, tuning, or replacement. Other safety, negative-regression, and 125% retrieval-text gates were not estimated after the decisive early failure. Production stays at 2,000 characters. Private evidence remains under `.local/history-budget-4000-trial/`; the public report records the method, exclusions, token cost, and limits.
+
+This closes the response-budget hypothesis, not the broader roadmap item. Continue with independently justified navigation, instrumentation, ranking/query-repair, and diverse-task evidence; do not reopen the same budget trial without a new design and new evidence.
 ## Exact-work scope contract
 
 Exact-work search must remain exact. Never silently broaden, mix outside-work hits,

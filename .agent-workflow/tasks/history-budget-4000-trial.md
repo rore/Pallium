@@ -61,10 +61,9 @@ User approved architect-assigned work and PR creation. Architect approved the fi
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Feasibility froze 15 source-disjoint-anchor components (8 pressure, 7 fitting). Complete prior-development/holdout/request/exposed/retrievable-neighborhood isolation marked 6 fixed cases ungradable without replacement, leaving 9 eligible cases and 18 blinded journeys. Gold audit and paired trial are approved; production edit remains conditional on the fixed ship rule.
-
+Feasibility froze 15 source-disjoint-anchor components (8 pressure, 7 fitting). Complete prior-development/holdout/request/exposed/retrievable-neighborhood isolation marked 6 fixed cases ungradable without replacement, leaving 9 eligible cases and 18 blinded journeys. Gold classified 6 answerable, 1 partial, 2 negative, and 6 protected/ungradable cases. Exactly three pressure cases could improve. The paired run stopped after 10/18 journeys when a transport-invalidated possible-improvement pair reduced the maximum added resolutions to two. Decision: REJECT; production stays unchanged. Explicit experiment-payload usage was 129,951 input / 12,331 output tokens.

@@ -1,12 +1,14 @@
 # Session History search-quality study
 
-**Measures:** fixed-candidate agent-visible evidence sufficiency. Candidate recovery is unchanged by construction; injection precision and downstream-task effect are unmeasured.
+**Measures:** fixed-candidate agent-visible evidence sufficiency. Candidate recovery is unchanged by construction; injection precision is unmeasured. A later downstream-task-effect budget trial stopped before effect estimation when its fixed ship threshold became unreachable.
 
 ## Outcome
 
 Do not ship the tested query-density excerpt window. It found more partial evidence in some results, but under the frozen answer-completeness rubric neither variant produced a single excerpt containing every fact and qualifier needed to answer its request. The candidate also lost required facts or qualifiers in other results and missed the frozen worst-case latency gate. The holdout stayed unopened because the candidate had already failed the development gates. This does not imply that search is useless: a short excerpt can still identify a relevant source worth expanding.
 
 This is a report-only result. No retrieval, ranking, API, MCP, skill, integration, storage, or injection behavior changed.
+
+A bounded follow-up also rejected increasing the agent-facing search response budget from 2,000 to 4,000 characters. Evidence isolation left exactly three cases that could improve; a trial transport failure invalidated one of them, so the required three added resolutions became mathematically impossible. The run stopped without resampling or rerunning the affected pair.
 
 ## Serving baseline and cost
 
@@ -106,9 +108,29 @@ The wider inventory and earlier diagnostic support several distinct classes; the
 7. **Coverage gaps.** Current recorded queries contained no non-ASCII text; linked Claude evidence was sparse and OpenCode was absent. Unicode behavior remains covered by generic tests and adversarial checks, not real-query prevalence.
 8. **Chronology limits.** Source timestamps were unavailable in the graded packet. Review preserved explicit proposal/completion/correction wording but did not infer cross-source currentness.
 
+## Follow-up: 2,000-to-4,000 response-budget trial
+
+The 2026-09-10 follow-up tested one narrow presentation question: whether increasing only the agent-facing raw-history search response budget from 2,000 to 4,000 characters could improve downstream answers. It used a broad fixed-candidate presentation replay; the historical lookup schema does not preserve exact-work mode, so this is not an exact-work result. Candidate membership and ranking were fixed. Frozen anchors were source-disjoint, but work/thread dependence remained; the result supports only a bounded local decision.
+
+The original 15 cases stayed fixed. Protection covered all prior development and holdout events, the four prior comparison queries, their requests and exposed sources, and every retrievable expansion neighbor. Six fixed cases overlapped that protected universe and were marked ungradable without replacement; their evidence was redacted from gold and their variant cards were not run. The remaining nine cases produced six answerable, one partial, and two negative gold classifications. Negative count is two; this is observed fixed-sample coverage, not a claim about real-negative prevalence.
+
+Only three pressure cases were answerable or partial and therefore capable of improving. That met the predeclared minimum exactly. Two isolated reviewers froze gold before any variant output, and a clean-context smart review passed the harness. The paired run then started with separate fresh contexts. Ten of 18 planned journeys completed before the stopping condition fired. In two cases an expansion response was persisted in the harness log but did not reach the model; one failure was explicitly a Unicode console error and the second remained an opaque transport failure. Each affected pair was marked ungradable and was not rerun. One affected pair was one of the three possible improvement cases, leaving a maximum of two additional resolutions.
+
+| Fixed ship gate | Result |
+|---|---|
+| At least three additional resolved cases | **FAIL:** maximum possible fell to two |
+| Zero lost baseline successes | Not estimated after early stop |
+| No added unsupported/currentness/permission claim | Not estimated after early stop |
+| No observed negative regression | Not estimated after early stop; gold contained two negatives |
+| Search-plus-consumed-expansion text at most 125% | Not estimated after early stop |
+| Caller contract checks green | Not run because production was not changed |
+
+Decision: **REJECT** the 4,000-character budget. Production remains at 2,000 characters. No replacement sampling, prompt tuning, affected-pair rerun, code edit, install, service restart, or merge occurred.
+
+The enforcing experiment-payload ledger recorded 129,951 input and 12,331 output tokens against caps of 175,000 and 25,000. Counts use `o200k_base` for explicit repeated prompts, files, tool responses, and results plus framing reserves; provider-hidden runtime instructions are excluded because counters were unavailable. Private snapshots, evidence, cards, responses, logs, and the ledger remain ignored under `.local/history-budget-4000-trial/`.
 ## Recommendation
 
-Keep the existing excerpt behavior. Do not change the shared `build_excerpt` helper: normal retrieval also feeds derived-memory routing, work-signal classification, and disclaimer suppression, so a global window change is not presentation-only. Do not add a history-specific density window based on this evidence either.
+Keep the existing 2,000-character agent-facing search response budget and excerpt behavior. Do not change the shared `build_excerpt` helper: normal retrieval also feeds derived-memory routing, work-signal classification, and disclaimer suppression, so a global window change is not presentation-only. Do not add a history-specific density window based on this evidence either.
 
 The smallest worthwhile follow-ups are separate investigations, not bundled implementation:
 
