@@ -272,19 +272,9 @@ class SQLiteStorageProvider(
             with engine.connect().execution_options(
                 isolation_level="AUTOCOMMIT"
             ) as connection:
-                previous_timeout = int(
-                    connection.exec_driver_sql("PRAGMA busy_timeout").scalar() or 0
-                )
-                # Bootstrap must fail fast under a competing owner; pooled work keeps 15s.
-                connection.exec_driver_sql("PRAGMA busy_timeout=0")
-                try:
-                    # auto_vacuum must precede WAL on a new database.
-                    connection.exec_driver_sql("PRAGMA auto_vacuum=INCREMENTAL")
-                    connection.exec_driver_sql("PRAGMA journal_mode=WAL")
-                finally:
-                    connection.exec_driver_sql(
-                        f"PRAGMA busy_timeout={previous_timeout}"
-                    )
+                # auto_vacuum must precede WAL on a new database.
+                connection.exec_driver_sql("PRAGMA auto_vacuum=INCREMENTAL")
+                connection.exec_driver_sql("PRAGMA journal_mode=WAL")
 
     _LOCKED_MAX_RETRIES = 3
     _LOCKED_BACKOFF_BASE = 0.2
