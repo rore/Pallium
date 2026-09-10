@@ -32,12 +32,15 @@
 **Exceptions:** —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Discovery and pre-edit redline classification completed. No code changes yet.\n- Clean-context Elevated-risk plan review completed; its catalog-preservation finding was incorporated before implementation.
+- Discovery and pre-edit redline classification completed. No code changes yet.
+- Clean-context Elevated-risk plan review completed; its catalog-preservation finding was incorporated before implementation.
+- Implemented the shared base-config fix and regression assertions in the approved two-file scope.
+- Verification exposed developer-profile leakage in unrelated hook tests; diagnosed it, delegated a separate isolated repair, and reran this branch in a clean CI-like home.
 
 ## Plan review
 
@@ -47,8 +50,11 @@ A clean-context smart-model review approved the revised two-file plan after requ
 
 - Observed Pallium stdio initialization/list-tools: about 4.95 seconds, 27 tools advertised.
 - Official Codex MCP configuration: optional catalog grace defaults to 1000 ms; required servers use their startup timeout.
+- Focused regression: 1 passed in 0.13s.
+- Affected Codex integration file: 29 passed in 2.90s.
+- Initial full suite: 2 unrelated deterministic failures caused by inherited `PALLIUM_HOOK_ACTOR_REF` and real `~/.pallium/hooks/state/sessions/session-test.json`; no changed code was implicated.
+- Clean-home full suite: 4786 passed, 33 skipped, 2 xfailed in 241.78s.
 
 ## Result review
 
 - Pending.
-

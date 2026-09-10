@@ -47,6 +47,11 @@ env = { PALLIUM_MCP_TRANSPORT = "stdio" }
         'cpython-3.13.14-windows-x86_64-none/python.exe"'
     ) in content
     assert 'args = ["-m", "app.run", "mcp"]' in content
+    assert 'required = true' in content
+    assert 'enabled_tools' not in content
+    assert 'disabled_tools' not in content
+    assert 'startup_timeout_sec = 10' in content
+    assert 'tool_timeout_sec = 30' in content
     assert 'PALLIUM_BASE_URL = "http://localhost:19836"' in content
     assert 'PALLIUM_AGENT_REF = "codex"' in content
     assert "PALLIUM_CONTAINER_REF" not in content
