@@ -170,7 +170,7 @@ def test_fresh_separate_and_same_databases_use_current_schema(tmp_path: Path) ->
     )
     same_path = tmp_path / "same.db"
     same = SQLiteStorageProvider(f"sqlite:///{same_path}")
-    required = {"relay_sessions", "relay_messages", "relay_deliveries", "relay_aliases"}
+    required = {"relay_sessions", "relay_session_work_refs", "relay_messages", "relay_deliveries", "relay_aliases"}
     for path in (separate_relay, same_path):
         assert required <= _tables(path)
         assert "relay_migration_metadata" not in _tables(path)
@@ -239,6 +239,7 @@ def test_existing_one_file_only_pair_fails_without_creating_other(
         ("relay_messages", "sender_endpoint_id"),
         ("relay_deliveries", "recipient_endpoint_id"),
         ("relay_deliveries", "recipient_container_ref"),
+        ("relay_session_work_refs", "scope_ref"),
     ],
 )
 def test_missing_current_endpoint_column_fails_without_mutation(
@@ -273,6 +274,28 @@ def test_existing_empty_relay_file_fails_without_initializing_or_mutating_it(
         SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
     assert relay.read_bytes() == before
     assert _tables(relay) == {"unrelated"}
+
+
+def test_orphaned_optional_relay_table_fails_without_mutation(tmp_path: Path) -> None:
+    path = tmp_path / "relay.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """CREATE TABLE relay_session_work_refs (
+                endpoint_id TEXT NOT NULL,
+                work_ref TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                scope_ref TEXT NOT NULL,
+                local_ref TEXT NOT NULL,
+                position INTEGER,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (endpoint_id, work_ref, origin)
+            )"""
+        )
+    before = path.read_bytes()
+    with pytest.raises(RuntimeError, match="Relay schema is incomplete"):
+        SQLiteStorageProvider(f"sqlite:///{path}")
+    assert path.read_bytes() == before
 
 
 def test_dormant_legacy_relay_tables_in_main_do_not_block_active_pair(
@@ -461,3 +484,18 @@ def test_actor_bearing_relay_schema_is_rejected_without_migration(tmp_path: Path
     with pytest.raises(RuntimeError, match="column|schema|current"):
         SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
     assert relay.read_bytes() == before
+
+def test_relay_association_schema_upgrade_preserves_existing_rows(tmp_path: Path) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    provider = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    provider.relay_turn(runtime="codex", session_ref="kept", container_ref="c", title=None, max_chars=100, max_messages=1, lease_seconds=60)
+    provider.close()
+    with sqlite3.connect(relay) as connection:
+        connection.execute("DROP TABLE relay_session_work_refs")
+    reopened = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    with sqlite3.connect(relay) as connection:
+        assert connection.execute("SELECT session_ref FROM relay_sessions WHERE session_ref='kept'").fetchone() == ("kept",)
+        assert connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='relay_session_work_refs'").fetchone()
+        assert connection.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_relay_work_refs_lookup'").fetchone()
+    reopened.close()

@@ -532,6 +532,18 @@ class RelaySessionRecord(Base):
     )
 
 
+class RelaySessionWorkRefRecord(Base):
+    __tablename__ = "relay_session_work_refs"
+
+    endpoint_id = Column(String, primary_key=True)
+    work_ref = Column(String, primary_key=True)
+    origin = Column(String, primary_key=True)
+    scope_ref = Column(String, nullable=False)
+    local_ref = Column(String, nullable=False)
+    position = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+
 class RelayMessageRecord(Base):
     __tablename__ = "relay_messages"
 
@@ -583,6 +595,7 @@ class RelayAliasRecord(Base):
 
 _RELAY_TABLE_NAMES = frozenset({
     RelaySessionRecord.__tablename__,
+    RelaySessionWorkRefRecord.__tablename__,
     RelayMessageRecord.__tablename__,
     RelayDeliveryRecord.__tablename__,
     RelayAliasRecord.__tablename__,
@@ -667,6 +680,10 @@ class SQLiteSchemaMixin:
         "idx_relay_sessions_discovery": (
             "CREATE INDEX IF NOT EXISTS idx_relay_sessions_discovery "
             "ON relay_sessions(container_ref, runtime, state, last_seen_at)"
+        ),
+        "idx_relay_work_refs_lookup": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_work_refs_lookup "
+            "ON relay_session_work_refs(work_ref, endpoint_id)"
         ),
         "idx_relay_deliveries_claim": (
             "CREATE INDEX IF NOT EXISTS idx_relay_deliveries_claim "
@@ -994,6 +1011,7 @@ class SQLiteSchemaMixin:
                 engine,
                 tables=[
                     RelaySessionRecord.__table__,
+                    RelaySessionWorkRefRecord.__table__,
                     RelayMessageRecord.__table__,
                     RelayDeliveryRecord.__table__,
                     RelayAliasRecord.__table__,

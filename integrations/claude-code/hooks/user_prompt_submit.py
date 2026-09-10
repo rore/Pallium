@@ -26,8 +26,11 @@ from common import (
     relay_request,
     resolve_container_ref,
     build_work_refs_metadata,
+    structural_work_refs_payload,
+    confirmed_registry_work_refs,
     discover_work_refs,
     injected_work_ref,
+    work_ref_warning,
     register_claude_wake,
     start_hook_deadline,
 )
@@ -86,12 +89,15 @@ def main() -> None:
         deliveries = []
         rendered_deliveries = []
         relay_output = ""
+        confirmed_refs = []
+        work_refs_status = None
         relay_scope = format_injection(
             [], container_ref, budget_chars=RELAY_OUTPUT_BUDGET,
             thread_ref=session_id, actor_ref=actor_ref,
             agent_ref="claude-code", visibility="private", work_ref=current_work_ref,
         ) if has_session else ""
         if relay_scope:
+            work_refs_status = "unavailable"
             relay_response = relay_request(
                 "POST",
                 "/relay/turn",
@@ -100,10 +106,15 @@ def main() -> None:
                     "session_ref": session_id,
                     "container_ref": container_ref,
                     "max_chars": RELAY_TURN_BUDGET,
+                    "structural_work_refs": structural_work_refs_payload(container_ref, discovery, cwd),
                 },
                 timeout=0.75,
             )
             relay_response = relay_response or {}
+            confirmed_refs = confirmed_registry_work_refs(relay_response)
+            candidate_status = relay_response.get("structural_work_refs_status")
+            if candidate_status in {"complete", "unavailable"}:
+                work_refs_status = candidate_status
             deliveries = relay_response.get("deliveries") or []
             relay_output, rendered_deliveries = format_relay(
                 deliveries,
@@ -119,8 +130,15 @@ def main() -> None:
                 acknowledge_relay(rendered_deliveries, container_ref=container_ref)
                 sys.exit(0)
 
+        work_refs_metadata = build_work_refs_metadata(
+            cwd, payload.get("pallium_work_refs"), discovery,
+            confirmed_refs, work_refs_status,
+        )
+        warning = work_ref_warning(work_refs_metadata)
         separator = 2 if relay_output else 0
-        memory_budget = min(2400, max(0, 4000 - len(relay_output) - separator))
+        memory_budget = min(
+            2400, max(0, 4000 - len(relay_output) - len(warning) - separator)
+        )
         memory_output = format_injection(
             [], container_ref, budget_chars=memory_budget,
             thread_ref=session_id, actor_ref=actor_ref,
@@ -144,9 +162,21 @@ def main() -> None:
                 "query_limit": 5,
                 "query_actor_ref": actor_ref,
                 "query_trigger_origin": "user_prompt_submit",
-                "metadata": build_work_refs_metadata(cwd, payload.get("pallium_work_refs"), discovery),
+                "metadata": work_refs_metadata,
             })
             if response:
+                if isinstance(response.get("work_ref_metadata"), dict):
+                    warning = work_ref_warning(response["work_ref_metadata"])
+                    memory_budget = min(
+                        2400,
+                        max(
+                            0,
+                            4000
+                            - len(relay_output)
+                            - len(warning)
+                            - separator,
+                        ),
+                    )
                 memory_output = format_injection(
                     response.get("injectable_blocks", []),
                     container_ref,
@@ -159,7 +189,7 @@ def main() -> None:
                     request_source_item_id=response.get("source_item_id"),
                 )
 
-        output = "\n\n".join(part for part in (relay_output, memory_output) if part)
+        output = "\n\n".join(part for part in (relay_output, memory_output, warning) if part)
         if output and emit_utf8(output):
             if relay_output:
                 acknowledge_relay(

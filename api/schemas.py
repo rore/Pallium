@@ -64,6 +64,7 @@ class ItemCreateResponse(BaseModel):
     processing_status: ProcessingStatus
     processing_attempts: int
     processing_error: str | None = None
+    work_ref_metadata: dict[str, Any] | None = None
 
 
 class MemoryProvenanceResponse(BaseModel):
@@ -439,6 +440,7 @@ class ItemAndQueryResponse(BaseModel):
     injectable_blocks: list[InjectableBlockResponse] = Field(default_factory=list)
     # vNext P0 (design 015): see QueryResponse.lookup_event_id.
     lookup_event_id: str | None = None
+    work_ref_metadata: dict[str, Any] | None = None
 
 
 class ItemAndQueryDebugResponse(BaseModel):
@@ -814,6 +816,7 @@ class RelayTurnRequest(BaseModel):
         description="Pre-claim compact-JSON candidate budget; not a transport response-size limit.",
     )
     max_messages: int = Field(default=3, ge=0)
+    structural_work_refs: Any = None
 
 
 class RelaySessionMutationRequest(BaseModel):
@@ -821,6 +824,10 @@ class RelaySessionMutationRequest(BaseModel):
     session_ref: str = Field(min_length=1, max_length=255)
     container_ref: str = Field(min_length=1, max_length=512)
 
+
+class RelayWorkRefMutationRequest(RelaySessionMutationRequest):
+    scope_ref: str
+    local_ref: str
 
 class RelaySessionNameRequest(RelaySessionMutationRequest):
     alias: str | None = Field(default=None, min_length=1, max_length=32)
@@ -865,6 +872,65 @@ class RelaySessionResponse(BaseModel):
     closed_at: datetime | None = None
 
 
+class RelayWorkRefResponse(BaseModel):
+    work_ref: str
+    scope_ref: str
+    local_ref: str
+    origin: Literal["explicit", "structural"]
+    position: int | None = None
+    created_at: datetime
+    updated_at: datetime
+    history_guidance: str | None = None
+
+
+class RelaySessionWorkRefsResponse(BaseModel):
+    session: RelaySessionResponse
+    work_refs: list[RelayWorkRefResponse]
+
+
+class RelayWorkRefAttachResponse(BaseModel):
+    session: RelaySessionResponse
+    attached: RelayWorkRefResponse
+    work_refs: list[RelayWorkRefResponse]
+    history_guidance: str
+
+
+class RelayWorkRefDetachResponse(BaseModel):
+    session: RelaySessionResponse
+    detached: bool
+    structural_remains: bool
+    work_ref: str
+    scope_ref: str
+    local_ref: str
+    work_refs: list[RelayWorkRefResponse]
+    history_guidance: str
+
+
+class RelayParticipantAssociationResponse(BaseModel):
+    work_ref: str
+    scope_ref: str
+    local_ref: str
+    origins: list[Literal["explicit", "structural"]]
+    created_at: datetime
+    updated_at: datetime
+
+class RelayWorkRefParticipantResponse(RelaySessionResponse):
+    state: Literal["active", "unreachable", "closed"]
+    lifecycle: Literal["recent", "dormant", "closed"]
+    container_ref: str
+    association: RelayParticipantAssociationResponse
+
+
+class RelayWorkRefParticipantsResponse(BaseModel):
+    contract: Literal["relay-session-work-associations/v1"]
+    work_ref: str
+    scope_ref: str | None = None
+    local_ref: str | None = None
+    history_guidance: str
+    participants: list[RelayWorkRefParticipantResponse]
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=1, le=200)
+
 class RelayDeliveryResponse(BaseModel):
     delivery_id: str
     message_id: str
@@ -900,6 +966,9 @@ class RelayTurnResponse(BaseModel):
     deliveries: list[RelayDeliveryResponse]
     has_more: bool
     remaining_count: int = Field(ge=0)
+    structural_work_refs_status: Literal["unchanged", "complete", "unavailable"] = "unchanged"
+    structural_work_refs_error: str | None = None
+    work_refs: list[RelayWorkRefResponse] | None = None
 
 
 class RelayMessageResponse(BaseModel):

@@ -18,6 +18,11 @@ from api.schemas import (
     RelayReplyRequest,
     RelaySendRequest,
     RelaySessionMutationRequest,
+    RelaySessionWorkRefsResponse,
+    RelayWorkRefAttachResponse,
+    RelayWorkRefDetachResponse,
+    RelayWorkRefMutationRequest,
+    RelayWorkRefParticipantsResponse,
     RelaySessionNameRequest,
     RelaySessionResponse,
     RelayTurnRequest,
@@ -68,7 +73,7 @@ from core.claude_wake import ClaudeWakeRegistry
 from core.errors import ImmediateTransactionBusyError, LookupRequestLinkError, SupersessionConflictError
 from core.relay import RELAY_MESSAGE_MAX_CHARS, RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError
 from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
-from core.service import PalliumService
+from core.service import PalliumService, _sanitize_work_ref_metadata
 from core.visibility import QueryVisibilityTrace, Visibility, VisibilityExclusion
 
 
@@ -79,6 +84,21 @@ def _normalize_query_work_refs(raw: list[str] | None) -> tuple[str, ...]:
     return tuple(ref for ref in (
         _normalize_work_ref(r) for r in raw
     ) if ref is not None)
+
+
+def _work_ref_response_metadata(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    sanitized = _sanitize_work_ref_metadata(metadata)
+    if not isinstance(sanitized, dict):
+        return None
+    keys = (
+        "pallium_relay_work_refs_status",
+        "pallium_work_refs",
+        "pallium_work_refs_omitted",
+        "pallium_work_refs_omitted_registry",
+        "pallium_work_refs_diagnostics",
+    )
+    result = {key: sanitized[key] for key in keys if key in sanitized}
+    return result or None
 
 
 def _validated_query_work_refs(request: QueryRequest) -> tuple[str, ...]:
@@ -414,7 +434,10 @@ def create_router(
         except RelayNotFoundError as exc:
             raise HTTPException(status_code=404, detail="relay entity not found in the requested scope") from exc
         except RelayConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            detail = str(exc)
+            if detail.startswith("association_limit:"):
+                detail = {"code": "association_limit", "message": detail.partition(":")[2].strip()}
+            raise HTTPException(status_code=409, detail=detail) from exc
         except RelayUnavailableError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
         except ImmediateTransactionBusyError as exc:
@@ -460,6 +483,69 @@ def create_router(
             )
         )
 
+    @router.get(
+        "/relay/sessions/work-refs",
+        response_model=RelaySessionWorkRefsResponse,
+    )
+    async def relay_session_work_refs(
+        runtime: str = Query(min_length=1, max_length=32),
+        session_ref: str = Query(min_length=1, max_length=255),
+        container_ref: str = Query(min_length=1, max_length=512),
+    ):
+        return await _relay_call(
+            "session_work_refs",
+            lambda: _relay().session_work_refs(
+                runtime=runtime,
+                session_ref=session_ref,
+                container_ref=container_ref,
+            ),
+        )
+
+    @router.post(
+        "/relay/sessions/work-refs/attach",
+        response_model=RelayWorkRefAttachResponse,
+    )
+    async def relay_attach_work_ref(request: RelayWorkRefMutationRequest):
+        return await _relay_call(
+            "attach_work_ref",
+            lambda: _relay().attach_work_ref(**request.model_dump()),
+        )
+
+    @router.post(
+        "/relay/sessions/work-refs/detach",
+        response_model=RelayWorkRefDetachResponse,
+    )
+    async def relay_detach_work_ref(request: RelayWorkRefMutationRequest):
+        return await _relay_call(
+            "detach_work_ref",
+            lambda: _relay().detach_work_ref(**request.model_dump()),
+        )
+
+    @router.get(
+        "/relay/work-refs/participants",
+        response_model=RelayWorkRefParticipantsResponse,
+    )
+    async def relay_work_ref_participants(
+        scope_ref: str | None = None,
+        local_ref: str | None = None,
+        work_ref: str | None = None,
+        container_ref: str | None = Query(default=None, min_length=1, max_length=512),
+        include_closed: bool = False,
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+    ):
+        return await _relay_call(
+            "work_ref_participants",
+            lambda: _relay().work_ref_participants(
+                scope_ref=scope_ref,
+                local_ref=local_ref,
+                work_ref=work_ref,
+                container_ref=container_ref,
+                include_closed=include_closed,
+                offset=offset,
+                limit=limit,
+            ),
+        )
     @router.post("/relay/sessions/name", response_model=RelaySessionResponse)
     async def relay_name_session(request: RelaySessionNameRequest):
         return await _relay_call("name_session", lambda: _relay().name_session(**request.model_dump()))
@@ -620,7 +706,7 @@ def create_router(
         )
         _enqueue_assistant_usage_audit(service, request.role, result.source_item_id)
 
-        return ItemCreateResponse(**result.as_dict())
+        return ItemCreateResponse(**result.as_dict(), work_ref_metadata=_work_ref_response_metadata(request.metadata))
 
     MAX_ITEMS_PER_REQUEST = 50
 
@@ -901,6 +987,7 @@ def create_router(
             decision_reason=query_result.decision_reason,
             injectable_blocks=[_serialize_injectable_block(block) for block in query_result.injectable_blocks],
             lookup_event_id=lookup_event_id,
+            work_ref_metadata=_work_ref_response_metadata(request.metadata),
         )
 
     @router.post("/item-and-query/debug", response_model=ItemAndQueryDebugResponse)

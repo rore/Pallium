@@ -45,12 +45,70 @@ const TRIGGER_BUDGET = 1200;
 const CONTENT_LENGTH_GATE = 20000;
 const RETRY_THRESHOLD = 3;
 const MIN_PROMPT_LEN = 20;
-
 const POSTTOOL_TRIGGERS_ENABLED = process.env.PALLIUM_POSTTOOL_TRIGGERS === "1";
 
-// Parse a command markdown file's frontmatter into { description, template }.
-// Kept in a tiny local helper (not exported from the plugin module) because
-// OpenCode's plugin loader treats every exported function as a plugin factory.
+function structuralWorkRefsPayload(containerRef, discovery, cwd) {
+  const repositoryRef = pallium.repositoryScopeRef(cwd);
+  return repositoryRef ? pallium.structuralWorkRefsPayload(containerRef, discovery?.structuralRefs, repositoryRef) : [];
+}
+
+function confirmedRegistryWorkRefs(response) {
+  const rows = response && Array.isArray(response.work_refs) ? response.work_refs : [];
+  const result = [];
+  for (const row of rows) {
+    const key = row && row.origin === "explicit" ? row.work_ref : null;
+    if (typeof key === "string" && /^work:v1:[0-9a-f]{64}$/.test(key) && !result.includes(key)) result.push(key);
+    if (result.length === 3) break;
+  }
+  return result;
+}
+
+function buildWorkRefsMetadata(cwd, explicitRefs, discovery, confirmedRefs = [], relayStatus = null) {
+  const metadata = pallium.buildWorkRefsMetadata(cwd, explicitRefs, discovery);
+  const refs = Array.isArray(metadata.pallium_work_refs) ? metadata.pallium_work_refs : [];
+  const structuralCount = Array.isArray(discovery?.structuralRefs) ? discovery.structuralRefs.length : 0;
+  const callerCount = Array.isArray(explicitRefs) ? explicitRefs.filter((ref) => typeof ref === "string").length : 0;
+  for (const ref of confirmedRefs) if (!refs.includes(ref)) refs.push(ref);
+  if (refs.length) metadata.pallium_work_refs = refs;
+  if (["complete", "partial", "unavailable"].includes(relayStatus)) {
+    metadata.pallium_work_ref_sources = [
+      ...Array(structuralCount).fill("structural"),
+      ...Array(callerCount).fill("caller"),
+      ...Array(Math.max(0, refs.length - structuralCount - callerCount)).fill("registry"),
+    ];
+    metadata.pallium_relay_work_refs_status = relayStatus;
+  }
+  return metadata;
+}
+
+function workRefWarning(metadata) {
+  const status = metadata?.pallium_relay_work_refs_status;
+  if (status === "unavailable") return "[Pallium work refs: Relay association enrichment was unavailable; branch, Work Record, and supplied refs were still recorded.]";
+
+  const diagnostics = metadata?.pallium_work_refs_diagnostics;
+  if (!diagnostics || typeof diagnostics !== "object") return "";
+  const values = [
+    diagnostics.omitted_valid_count,
+    diagnostics.invalid_count,
+    diagnostics.caller_input_count,
+    diagnostics.caller_examined_count,
+  ];
+  if (values.some(value => !Number.isInteger(value) || value < 0)) return "";
+
+  const registry = Array.isArray(metadata.pallium_work_refs_omitted_registry)
+    ? metadata.pallium_work_refs_omitted_registry.filter(value => typeof value === "string").slice(0, 3)
+    : [];
+  const unexamined = Math.max(0, diagnostics.caller_input_count - diagnostics.caller_examined_count);
+  if (!diagnostics.omitted_valid_count && !diagnostics.invalid_count && !unexamined) return "";
+
+  const details = [];
+  if (registry.length) details.push("associated " + registry.join(", ") + " not searchable from this turn");
+  const additional = Math.max(0, diagnostics.omitted_valid_count - registry.length);
+  if (additional) details.push(additional + " additional valid ref(s) omitted");
+  if (diagnostics.invalid_count) details.push(diagnostics.invalid_count + " invalid ref(s) ignored");
+  if (unexamined) details.push(unexamined + " caller ref(s) beyond the 20-item diagnostic bound");
+  return "[Pallium work refs: " + details.join("; ") + ".]";
+}
 function parseCommandFile(filePath) {
   let raw;
   try {
@@ -200,6 +258,7 @@ export default async ({ client, directory, worktree } = {}) => {
       ingestedBySession.set(sessionId, seen);
 
       const containerRef = pallium.resolveContainerRef(cwd, sessionId);
+      const discovery = pallium.discoverWorkRefs(cwd);
       const actorRef = pallium.resolveActorRef(cwd, sessionId);
 
       const item = {
@@ -216,10 +275,14 @@ export default async ({ client, directory, worktree } = {}) => {
         artifact_kind: "message",
       };
       const workTrace = pallium.buildWorkTraceMetadata(turn);
-      item.metadata = { ...pallium.buildWorkRefsMetadata(cwd), ...(workTrace ? { agent_work_trace_turn: workTrace, cwd } : {}) };
-      if (!Object.keys(item.metadata).length) delete item.metadata;
-
+      const workRefsResponse = await pallium.relayRequest("GET", "/relay/sessions/work-refs", { runtime: "opencode", session_ref: sessionId, container_ref: containerRef }, 500);
+      const confirmedRefs = confirmedRegistryWorkRefs(workRefsResponse);
+      const workRefsStatus = workRefsResponse && Array.isArray(workRefsResponse.work_refs) ? "complete" : "unavailable";
+      item.metadata = { ...buildWorkRefsMetadata(cwd, null, discovery, confirmedRefs, workRefsStatus), ...(workTrace ? { agent_work_trace_turn: workTrace, cwd } : {}) };      if (!Object.keys(item.metadata).length) delete item.metadata;
       const response = await pallium.palliumRequest("POST", "/items", [item]);
+      const responseMetadata = Array.isArray(response) ? response[0]?.work_ref_metadata : null;
+      const workRefLog = responseMetadata != null ? workRefWarning(responseMetadata) : workRefWarning(item.metadata);
+      if (workRefLog) log("warn", workRefLog);
       // palliumRequest returns null on any failure; drop the dedup key so the
       // turn is retried on a later session.idle / compaction rather than lost.
       if (response === null && seen) seen.delete(dedupKey);
@@ -375,6 +438,8 @@ export default async ({ client, directory, worktree } = {}) => {
         const discovery = pallium.discoverWorkRefs(cwd);
         const currentWorkRef = pallium.injectedWorkRef(discovery);
 
+        let confirmedRefs = [];
+        let workRefsStatus = "unavailable";
         // Claim on the user turn, but acknowledge only after messages.transform
         // has attached the context to the actual model-bound history.
         if (output && output.message && typeof output.message === "object" && !pendingRelay.has(sessionId)) {
@@ -383,7 +448,10 @@ export default async ({ client, directory, worktree } = {}) => {
             session_ref: sessionId,
             container_ref: containerRef,
             max_chars: RELAY_TURN_BUDGET,
+            structural_work_refs: structuralWorkRefsPayload(containerRef, discovery, cwd),
           }, pallium.HTTP_TIMEOUT_MS);
+          confirmedRefs = confirmedRegistryWorkRefs(relayResponse);
+          workRefsStatus = ["complete", "unavailable"].includes(relayResponse?.structural_work_refs_status) ? relayResponse.structural_work_refs_status : "unavailable";
           const deliveries = (relayResponse && relayResponse.deliveries) || [];
           const remainingCount = relayResponse?.has_more === true && Number.isInteger(relayResponse.remaining_count)
             ? relayResponse.remaining_count : 0;
@@ -410,6 +478,8 @@ export default async ({ client, directory, worktree } = {}) => {
 
         const queryText = content.length > 500 ? content.slice(0, 500) : content;
 
+        const workRefsMetadata = buildWorkRefsMetadata(cwd, input && input.metadata && input.metadata.pallium_work_refs, discovery, confirmedRefs, workRefsStatus);
+        let warning = workRefWarning(workRefsMetadata);
         const resp = await pallium.palliumRequest("POST", "/item-and-query", {
           source_type: pallium.SOURCE_TYPE,
           source_id: pallium.ocSourceId(),
@@ -426,11 +496,12 @@ export default async ({ client, directory, worktree } = {}) => {
           query_limit: 5,
           query_actor_ref: actorRef,
           query_trigger_origin: "user_prompt_submit",
-          metadata: pallium.buildWorkRefsMetadata(cwd, input && input.metadata && input.metadata.pallium_work_refs, discovery),
+          metadata: workRefsMetadata,
         });
-        if (!resp) return;
-        const output_text = pallium.formatInjection(resp.injectable_blocks || [], containerRef, USER_PROMPT_BUDGET, sessionId, actorRef, pallium.AGENT_REF, "private", resp.source_item_id, pendingRelay.has(sessionId) ? null : currentWorkRef);
-        if (output_text) enqueueInjection(sessionId, output_text);
+        if (!resp) { if (warning) enqueueInjection(sessionId, warning); return; }
+        warning = Object.prototype.hasOwnProperty.call(resp, "work_ref_metadata") ? workRefWarning(resp.work_ref_metadata) : warning;
+        const output_text = pallium.formatInjection(resp.injectable_blocks || [], containerRef, Math.max(0, USER_PROMPT_BUDGET - [...warning].length - (warning ? 2 : 0)), sessionId, actorRef, pallium.AGENT_REF, "private", resp.source_item_id, pendingRelay.has(sessionId) ? null : currentWorkRef);
+        if (output_text || warning) enqueueInjection(sessionId, [output_text, warning].filter(Boolean).join("\n\n"));
       } catch (e) {
         log("error", `chat.message failed: ${e && e.message}`);
       }

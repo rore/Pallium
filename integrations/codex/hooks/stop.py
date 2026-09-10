@@ -17,6 +17,7 @@ AGENT_REF = _common.AGENT_REF
 SOURCE_TYPE = _common.SOURCE_TYPE
 build_work_trace_metadata = _common.build_work_trace_metadata
 build_work_refs_metadata = _common.build_work_refs_metadata
+fetch_confirmed_work_refs = _common.fetch_confirmed_work_refs
 derive_actor_ref = _common.derive_actor_ref
 derive_container_ref = _common.derive_container_ref
 pallium_request = _common.pallium_request
@@ -24,6 +25,7 @@ read_hook_input = _common.read_hook_input
 read_turn = _common.read_turn
 resolve_container_ref = _common.resolve_container_ref
 start_hook_deadline = _common.start_hook_deadline
+work_ref_warning = _common.work_ref_warning
 
 CONTENT_LENGTH_GATE = 20_000
 
@@ -51,7 +53,18 @@ def main() -> None:
         container_ref = resolve_container_ref(cwd, session_id)
         actor_ref = derive_actor_ref(cwd, session_id)
 
-        metadata = build_work_refs_metadata(cwd, payload.get("pallium_work_refs"))
+        confirmed_refs, work_refs_status = (
+            fetch_confirmed_work_refs("codex", session_id, container_ref)
+            if isinstance(session_id, str) and session_id
+            else ([], None)
+        )
+        metadata = build_work_refs_metadata(
+            cwd, payload.get("pallium_work_refs"),
+            confirmed_refs=confirmed_refs, relay_status=work_refs_status,
+        )
+        warning = work_ref_warning(metadata)
+        if warning:
+            print(warning, file=sys.stderr)
         work_trace_meta = build_work_trace_metadata(turn_data)
         if work_trace_meta:
             metadata["agent_work_trace_turn"] = work_trace_meta

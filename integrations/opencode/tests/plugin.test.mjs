@@ -48,9 +48,9 @@ function installFetch(routes) {
   };
 }
 
-function makeClient(messages) {
+function makeClient(messages, logs = null) {
   return {
-    app: { log: async () => true },
+    app: { log: async (entry) => { if (logs) logs.push(entry); return true; } },
     session: {
       messages: async () => ({ data: messages }),
     },
@@ -100,9 +100,18 @@ test("chat.message ingests the user prompt and queues memory for the system prom
   assert.match(system[0], /"request_source_item_id":"request-opencode-1"/);
   assert.match(system[0], /\[Pallium memory — container: path:/);
   assert.match(system[0], /ref:ref-xyz\]/);
-  assert.match(system[0], /\[End Pallium memory\]$/);
+assert.match(system[0], /\[End Pallium memory\]/);
+  assert.match(system[0], /Relay association enrichment was unavailable/);
 });
 
+test("chat.message treats empty response work-ref metadata as authoritative", async () => {
+  installFetch({ "/item-and-query": { ...oneBlock, work_ref_metadata: {} } });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  const output = { message: { sessionID: "sesAuthoritativeEmpty", role: "user" }, parts: [{ type: "text", text: "Explain this substantial work reference flow in detail" }] };
+  await hooks["chat.message"]({}, output);
+  const system = await systemTransform(hooks, "sesAuthoritativeEmpty");
+  assert.doesNotMatch(system.join("\n"), /Relay association enrichment was unavailable/);
+});
 test("chat.message skips short prompts, slash-commands, and duplicates", async () => {
   installFetch({ "/item-and-query": oneBlock });
   const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
@@ -153,8 +162,9 @@ test("event session.idle reads the last assistant message and ingests it via /it
       ],
     },
   ];
+  const logs = [];
   installFetch({ "/items": [{ source_item_id: "sid-1" }] });
-  const hooks = await loadPlugin({ client: makeClient(messages), directory: nonGitDir });
+  const hooks = await loadPlugin({ client: makeClient(messages, logs), directory: nonGitDir });
 
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "sesD" } } });
   const items = fetchCalls.find((c) => c.url.includes("/items"));
@@ -168,6 +178,7 @@ test("event session.idle reads the last assistant message and ingests it via /it
   assert.ok(item.metadata && item.metadata.agent_work_trace_turn, "attaches work-trace metadata");
   assert.deepEqual(item.metadata.agent_work_trace_turn.files_read, ["src/a.js"]);
   assert.deepEqual(item.metadata.agent_work_trace_turn.files_modified, ["src/b.js"]);
+  assert.equal(logs.some((entry) => /Relay association enrichment was unavailable/.test(entry.body?.message || "")), true);
 
   // Idempotent: a second session.idle for the same turn does not re-ingest.
   const before = fetchCalls.length;
@@ -175,6 +186,15 @@ test("event session.idle reads the last assistant message and ingests it via /it
   assert.equal(fetchCalls.length, before, "same assistant message must not be re-ingested");
 });
 
+test("assistant ingest treats empty response work-ref metadata as authoritative", async () => {
+  const logs = [];
+  const messages = [{ info: { role: "assistant", id: "aAuthoritativeEmpty" }, parts: [{ type: "text", text: "Recorded without a stale warning." }] }];
+  installFetch({ "/items": [{ source_item_id: "sid-authoritative-empty", work_ref_metadata: {} }] });
+  const hooks = await loadPlugin({ client: makeClient(messages, logs), directory: nonGitDir });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "sesAssistantAuthoritativeEmpty" } } });
+  assert.equal(fetchCalls.find((call) => call.url.includes("/items")).body[0].metadata.pallium_relay_work_refs_status, "unavailable");
+  assert.equal(logs.some((entry) => /Relay association enrichment was unavailable/.test(entry.body?.message || "")), false);
+});
 test("a failed /items ingest is retried on a later lifecycle event", async () => {
   const messages = [
     { info: { role: "assistant", id: "aRetry" }, parts: [{ type: "text", text: "Ingest me, please." }] },
@@ -540,4 +560,43 @@ test("Relay scope carries the first structural OpenCode work_ref when supported"
     const modelMessage = await messagesTransform(hooks, output.message, output.parts);
     assert.match(modelMessage.parts[0].text, /"work_ref":"git-branch:fix\/relay"/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("chat.message warns when associated refs exceed the five-ref History limit", async () => {
+  const associated = ["work:v1:" + "a".repeat(64), "work:v1:" + "b".repeat(64)];
+  installFetch({
+    "/relay/turn": {
+      deliveries: [], has_more: false, remaining_count: 0,
+      structural_work_refs_status: "complete",
+      work_refs: associated.map((work_ref) => ({ origin: "explicit", work_ref })),
+    },
+    "/item-and-query": {
+      ...oneBlock,
+      work_ref_metadata: {
+        pallium_relay_work_refs_status: "partial",
+        pallium_work_refs: ["s", "white-space", "strasse", "one", "two"],
+        pallium_work_refs_omitted_registry: associated,
+        pallium_work_refs_diagnostics: {
+          omitted_valid_count: 4,
+          invalid_count: 0,
+          caller_input_count: 10,
+          caller_examined_count: 10,
+          caller_input_truncated: false,
+          counts_complete: true,
+        },
+      },
+    },
+  });
+  const hooks = await loadPlugin({ client: makeClient([]), directory: nonGitDir });
+  await hooks["chat.message"](
+    { metadata: { pallium_work_refs: ["s", "S", "white space", "white_space", "Straße", "STRASSE", "one", "two", "three", "four"] } },
+    {
+      message: { sessionID: "sesWorkRefWarning", role: "user" },
+      parts: [{ type: "text", text: "Continue this substantial associated task safely" }],
+    },
+  );
+  const system = (await systemTransform(hooks, "sesWorkRefWarning")).join("\n");
+  assert.match(system, /not searchable from this turn/);
+  assert.ok(associated.every((key) => system.includes(key)));
+  assert.ok([...system].length <= 2400);
 });

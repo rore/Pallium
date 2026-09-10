@@ -1,6 +1,6 @@
 # Current State
 
-> Updated 2026-09-07. Keep queue and sequencing in [roadmap/](../../roadmap/);
+> Updated 2026-09-10. Keep queue and sequencing in [roadmap/](../../roadmap/);
 > this file is only a short implementation snapshot.
 
 ## Product shape
@@ -21,6 +21,8 @@ evaluated layer over history rather than the product definition.
 - persistent bounded messages
 - runtime-wide, exact-session, and alias addressing
 - replies and delivery status
+- endpoint-owned exact work-reference associations through HTTP, MCP, and the
+  dashboard, with immutable bounded snapshots in subsequent Session History turns
 - automatic hook delivery plus MCP recovery receive/ack tools
 - durable next-natural-turn fallback for Claude Code, Codex, and OpenCode
 - Windows and Linux Claude Code wake qualified (Linux via installed UDS on Ubuntu 24.04 / Claude Code 2.1.250)

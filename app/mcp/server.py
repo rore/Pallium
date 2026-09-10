@@ -14,6 +14,7 @@ from pydantic import BeforeValidator
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
+from core.work_ref import readable_work_ref
 from retrieval.common import build_excerpt
 
 
@@ -23,6 +24,7 @@ _MCP_EXPANSION_MAX_CHARS = 4000
 _MCP_EXPANSION_MIN_CHARS = 256
 _MCP_RELAY_MAX_CHARS = 2000
 _MCP_RELAY_MIN_CHARS = 256
+_MCP_RELAY_WORK_REFS_MAX_CHARS = 12000
 
 
 def _mask_invalid_work_ref(value: object) -> object:
@@ -502,6 +504,33 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     # found" and have to reinitialize.
     server = FastMCP("pallium", host=host, port=port, stateless_http=True)
 
+    def current_relay_identity(ctx, request_ctx):
+        runtime = ctx.agent_ref
+        session_ref = ctx.thread_ref
+        if not runtime:
+            return None, None, (
+                "Error: PALLIUM_AGENT_REF is not set. Relay work-reference tools "
+                "require integration-injected runtime identity."
+            )
+        if runtime == "codex":
+            metadata = None
+            if request_ctx:
+                try:
+                    metadata = request_ctx.request_context.meta
+                except ValueError:
+                    pass
+            session_ref, metadata_error = resolve_codex_thread_ref(metadata)
+            if metadata_error:
+                return None, None, (
+                    f"Error: {metadata_error}; upgrade or reload Codex, then retry. "
+                    "Relay work-reference tools remain fail-closed."
+                )
+        if not session_ref:
+            return None, None, (
+                "Error: PALLIUM_THREAD_REF is not set. Relay work-reference tools "
+                "require integration-injected session identity."
+            )
+        return runtime, session_ref, None
     @server.tool()
     async def pallium_query(
         query: str,
@@ -847,6 +876,145 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         )
         return _relay_text(result)
 
+    async def pallium_relay_work_refs(
+        container_ref: str | None = None,
+        request_ctx: object | None = None,
+    ) -> str:
+        """List this session's readable Relay work references. Returned exact keys can be copied into the existing exact History search. Registry membership is durable; History coverage is evaluated per turn."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
+        if scope_error:
+            return scope_error
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        runtime, session_ref, identity_error = current_relay_identity(ctx, request_ctx)
+        if identity_error:
+            return identity_error
+        result = await PalliumMcpClient(ctx).relay_work_refs(
+            current_runtime=runtime,
+            current_session_ref=session_ref,
+        )
+        rendered = _json_text(result)
+        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
+            {"error": "relay work-reference response exceeds the response budget"}
+        )
+
+    pallium_relay_work_refs.__annotations__["request_ctx"] = Context | None
+    server.tool()(pallium_relay_work_refs)
+
+    async def pallium_relay_attach_work_ref(
+        scope_ref: str,
+        local_ref: str,
+        container_ref: str | None = None,
+        request_ctx: object | None = None,
+    ) -> str:
+        """Attach one readable explicit work reference to this exact Relay session. The response includes the canonical exact key and guidance for the existing exact History search."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
+        if scope_error:
+            return scope_error
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        runtime, session_ref, identity_error = current_relay_identity(ctx, request_ctx)
+        if identity_error:
+            return identity_error
+        result = await PalliumMcpClient(ctx).relay_attach_work_ref(
+            current_runtime=runtime,
+            current_session_ref=session_ref,
+            scope_ref=scope_ref,
+            local_ref=local_ref,
+        )
+        if isinstance(result, dict) and "error" in result:
+            result = _bounded_error(result, _MCP_RELAY_WORK_REFS_MAX_CHARS)
+        rendered = _json_text(result)
+        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
+            {"error": "relay work-reference response exceeds the response budget"}
+        )
+
+    pallium_relay_attach_work_ref.__annotations__["request_ctx"] = Context | None
+    server.tool()(pallium_relay_attach_work_ref)
+
+    async def pallium_relay_detach_work_ref(
+        scope_ref: str,
+        local_ref: str,
+        container_ref: str | None = None,
+        request_ctx: object | None = None,
+    ) -> str:
+        """Detach only this session's explicit origin for one readable work reference. A structural origin may remain and is reported."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
+        if scope_error:
+            return scope_error
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        runtime, session_ref, identity_error = current_relay_identity(ctx, request_ctx)
+        if identity_error:
+            return identity_error
+        result = await PalliumMcpClient(ctx).relay_detach_work_ref(
+            current_runtime=runtime,
+            current_session_ref=session_ref,
+            scope_ref=scope_ref,
+            local_ref=local_ref,
+        )
+        if isinstance(result, dict) and "error" in result:
+            result = _bounded_error(result, _MCP_RELAY_WORK_REFS_MAX_CHARS)
+        rendered = _json_text(result)
+        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
+            {"error": "relay work-reference response exceeds the response budget"}
+        )
+
+    pallium_relay_detach_work_ref.__annotations__["request_ctx"] = Context | None
+    server.tool()(pallium_relay_detach_work_ref)
+
+    @server.tool()
+    async def pallium_relay_participants(
+        scope_ref: str,
+        local_ref: str,
+        include_closed: bool = False,
+        container_ref: str | None = None,
+        offset: int = 0,
+    ) -> str:
+        """Find a bounded service-global page of Relay sessions with one exact readable work reference. Dormant sessions are included; closed sessions require include_closed=true. Continue with next_offset when present."""
+        if offset < 0:
+            return _json_text({"error": "offset must be non-negative"})
+        try:
+            readable_work_ref(scope_ref, local_ref)
+        except ValueError:
+            return _json_text({"error": "invalid readable work reference"})
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
+        if scope_error:
+            return scope_error
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        result = await PalliumMcpClient(ctx).relay_work_ref_participants(
+            scope_ref=scope_ref,
+            local_ref=local_ref,
+            include_closed=include_closed,
+            offset=offset,
+            limit=5,
+        )
+        if not isinstance(result, dict) or not isinstance(result.get("participants"), list):
+            rendered = _json_text(result)
+            return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
+                {"error": "relay participant response exceeds the response budget"}
+            )
+        result = dict(result)
+        participants = list(result["participants"])
+        fetched_count = len(participants)
+        while participants:
+            result["participants"] = participants
+            result["next_offset"] = (
+                offset + len(participants)
+                if len(participants) < fetched_count or fetched_count == 5
+                else None
+            )
+            rendered = _json_text(result)
+            if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS:
+                return rendered
+            participants.pop()
+        result["participants"] = []
+        result["next_offset"] = None
+        rendered = _json_text(result)
+        return rendered if len(rendered) <= _MCP_RELAY_WORK_REFS_MAX_CHARS else _json_text(
+            {"error": "relay participant response exceeds the response budget"}
+        )
     @server.tool()
     async def pallium_relay_send(
         message: str,
@@ -931,22 +1099,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             )
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
-        runtime = ctx.agent_ref
-        session_ref = ctx.thread_ref
-        if not runtime:
-            return "Error: PALLIUM_AGENT_REF is not set. Relay receive requires integration-injected runtime identity."
-        if runtime == "codex":
-            metadata = None
-            if request_ctx:
-                try:
-                    metadata = request_ctx.request_context.meta
-                except ValueError:
-                    pass
-            session_ref, metadata_error = resolve_codex_thread_ref(metadata)
-            if metadata_error:
-                return f"Error: {metadata_error}; upgrade or reload Codex, then retry. Relay receive remains fail-closed."
-        if not session_ref:
-            return "Error: PALLIUM_THREAD_REF is not set. Relay receive requires integration-injected session identity."
+        runtime, session_ref, identity_error = current_relay_identity(ctx, request_ctx)
+        if identity_error:
+            return identity_error
         result = await PalliumMcpClient(ctx).relay_receive(
             runtime=runtime, session_ref=session_ref, max_response_chars=effective_max_chars,
         )

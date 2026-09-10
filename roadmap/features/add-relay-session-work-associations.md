@@ -1,7 +1,7 @@
 ---
 id: add-relay-session-work-associations
 title: Associate Relay sessions with multiple work references
-status: queued
+status: in_progress
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -180,7 +180,9 @@ and Minimap UI implementation (owned by the companion feature).
    same repo across worktrees, alias transfer, legacy refs, Unicode, malformed and
    secret-bearing refs, empty/max/over-max, duplicates, and missing endpoints.
 3. Lifecycle tests cover explicit/discovered overlap, branch/cwd change, concurrent
-   mutations, stale registrations, restart, delayed/retried ingestion, and pruning.
+   mutations, stale registrations, restart, delayed/retried ingestion, and isolated
+   test cleanup. Physical endpoint deletion/pruning is deferred because no such
+   product lifecycle exists; close/reopen retains associations.
    Old history stays unchanged; new refs retrieve new turns under existing scope.
 4. Boundary tests prove no unauthorized cross-session mutation, no history scope
    expansion, no message/wake side effects on reads, and graceful storage/integration
@@ -192,4 +194,4 @@ and Minimap UI implementation (owned by the companion feature).
    consumer contract for Minimap. Tests use controlled sessions without paid turns;
    run focused coverage and repository-required checks before implementation review.
 
-The item is queued; roadmap creation does not claim any of these behaviors shipped.
+Implemented in PR #157 with endpoint-owned associations, HTTP/MCP/dashboard surfaces, immutable hook capture, cross-runtime identity vectors, public-surface E2E coverage, and an isolated runnable demonstration. Manager acceptance remediation is in progress; the feature is not shipped or approved for merge until the dashboard journey and final review pass.

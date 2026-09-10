@@ -8,11 +8,17 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from core.relay import RelayConflictError, RelayNotFoundError
-from storage.sqlite_schema import RelayAliasRecord, RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
+from storage.sqlite_schema import (
+    RelayAliasRecord,
+    RelayDeliveryRecord,
+    RelayMessageRecord,
+    RelaySessionRecord,
+    RelaySessionWorkRefRecord,
+)
 
 
 def _now(value: datetime | None = None) -> datetime:
@@ -26,6 +32,7 @@ def _iso(value: datetime | None) -> str | None:
 
 # ponytail: NOT NULL sentinel avoids a SQLite table rebuild; migrate only if year-9999 storage stops being portable.
 _DURABLE_EXPIRY = datetime.max.replace(tzinfo=timezone.utc)
+_MAX_EXPLICIT_WORK_REFS = 3
 
 
 def _expiry_at(current: datetime, expires_in_seconds: int | None) -> datetime:
@@ -62,6 +69,17 @@ def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int) -
         "closed_at": _iso(row.closed_at),
     }
 
+
+def _work_ref_view(row: RelaySessionWorkRefRecord) -> dict[str, Any]:
+    return {
+        "work_ref": row.work_ref,
+        "scope_ref": row.scope_ref,
+        "local_ref": row.local_ref,
+        "origin": row.origin,
+        "position": row.position,
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
 
 def _render_safe(value: str) -> bool:
     return not any(
@@ -440,6 +458,253 @@ class SQLiteRelayMixin:
                 ))
 
             return response(claimed)
+
+    def relay_refresh_structural_work_refs(
+        self,
+        *,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        work_refs: list[dict[str, str]],
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        current = _now(now)
+        with self._begin_relay_immediate() as db:
+            session = self._relay_session(
+                db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
+            )
+            if session is None or session.state != "active":
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            existing = db.execute(
+                select(RelaySessionWorkRefRecord).where(
+                    RelaySessionWorkRefRecord.endpoint_id == session.id,
+                    RelaySessionWorkRefRecord.origin == "structural",
+                )
+            ).scalars().all()
+            created_at = {row.work_ref: row.created_at for row in existing}
+            db.execute(
+                delete(RelaySessionWorkRefRecord).where(
+                    RelaySessionWorkRefRecord.endpoint_id == session.id,
+                    RelaySessionWorkRefRecord.origin == "structural",
+                )
+            )
+            for position, work_ref in enumerate(work_refs):
+                db.add(RelaySessionWorkRefRecord(
+                    endpoint_id=session.id,
+                    work_ref=work_ref["work_ref"],
+                    origin="structural",
+                    scope_ref=work_ref["scope_ref"],
+                    local_ref=work_ref["local_ref"],
+                    position=position,
+                    created_at=created_at.get(work_ref["work_ref"], current),
+                    updated_at=current,
+                ))
+            db.flush()
+            return self._relay_session_work_ref_views(db, session.id)
+
+    @staticmethod
+    def _relay_session_work_ref_views(db, endpoint_id: str) -> list[dict[str, Any]]:
+        rows = db.execute(
+            select(RelaySessionWorkRefRecord)
+            .where(RelaySessionWorkRefRecord.endpoint_id == endpoint_id)
+            .order_by(
+                RelaySessionWorkRefRecord.origin.desc(),
+                RelaySessionWorkRefRecord.position,
+                RelaySessionWorkRefRecord.created_at,
+            )
+        ).scalars().all()
+        return [_work_ref_view(row) for row in rows]
+
+    def relay_session_work_refs(
+        self,
+        *,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+    ) -> dict[str, Any]:
+        with self._relay_session_factory() as db:
+            session = self._relay_session(
+                db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
+            )
+            if session is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            return {
+                "session": _session_view(session, _now(), 24 * 60 * 60),
+                "work_refs": self._relay_session_work_ref_views(db, session.id),
+            }
+
+    def relay_attach_work_ref(
+        self,
+        *,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        work_ref: dict[str, str],
+        now: datetime | None = None,
+        allow_closed: bool = False,
+    ) -> dict[str, Any]:
+        current = _now(now)
+        with self._begin_relay_immediate() as db:
+            session = self._relay_session(
+                db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
+            )
+            if session is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            if session.state == "closed" and not allow_closed:
+                raise RelayConflictError("relay session is closed")
+            row = db.get(
+                RelaySessionWorkRefRecord,
+                (session.id, work_ref["work_ref"], "explicit"),
+            )
+            if row is None:
+                explicit_count = len(db.execute(
+                    select(RelaySessionWorkRefRecord).where(
+                        RelaySessionWorkRefRecord.endpoint_id == session.id,
+                        RelaySessionWorkRefRecord.origin == "explicit",
+                    )
+                ).scalars().all())
+                if explicit_count >= _MAX_EXPLICIT_WORK_REFS:
+                    raise RelayConflictError(
+                        "association_limit: at most 3 explicit work references; detach one before attaching another"
+                    )
+                row = RelaySessionWorkRefRecord(
+                    endpoint_id=session.id,
+                    work_ref=work_ref["work_ref"],
+                    origin="explicit",
+                    scope_ref=work_ref["scope_ref"],
+                    local_ref=work_ref["local_ref"],
+                    position=None,
+                    created_at=current,
+                    updated_at=current,
+                )
+                db.add(row)
+            else:
+                row.scope_ref = work_ref["scope_ref"]
+                row.local_ref = work_ref["local_ref"]
+                row.updated_at = current
+            db.flush()
+            return {
+                "session": _session_view(session, current, 24 * 60 * 60),
+                "attached": _work_ref_view(row),
+                "work_refs": self._relay_session_work_ref_views(db, session.id),
+            }
+
+    def relay_detach_work_ref(
+        self,
+        *,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        work_ref: str,
+        allow_closed: bool = False,
+    ) -> dict[str, Any]:
+        with self._begin_relay_immediate() as db:
+            session = self._relay_session(
+                db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
+            )
+            if session is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            if session.state == "closed" and not allow_closed:
+                raise RelayConflictError("relay session is closed")
+            row = db.get(RelaySessionWorkRefRecord, (session.id, work_ref, "explicit"))
+            detached = row is not None
+            if row is not None:
+                db.delete(row)
+                db.flush()
+            remaining = self._relay_session_work_ref_views(db, session.id)
+            return {
+                "session": _session_view(session, _now(), 24 * 60 * 60),
+                "detached": detached,
+                "structural_remains": any(
+                    item["work_ref"] == work_ref and item["origin"] == "structural"
+                    for item in remaining
+                ),
+                "work_refs": remaining,
+            }
+
+    def relay_session_scope_by_endpoint(self, endpoint_id: str) -> dict[str, str]:
+        with self._relay_session_factory() as db:
+            session = db.get(RelaySessionRecord, endpoint_id)
+            if session is None:
+                raise RelayNotFoundError("relay endpoint not found")
+            return {
+                "runtime": session.runtime,
+                "session_ref": session.session_ref,
+                "container_ref": session.container_ref,
+            }
+    def relay_work_ref_participants(
+        self,
+        *,
+        work_ref: str,
+        include_closed: bool,
+        container_ref: str | None,
+        offset: int,
+        limit: int,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        current = _now(now)
+        with self._relay_session_factory() as db:
+            page = (
+                select(
+                    RelaySessionRecord.id.label("endpoint_id"),
+                    RelaySessionRecord.last_seen_at.label("last_seen_at"),
+                )
+                .join(
+                    RelaySessionWorkRefRecord,
+                    RelaySessionWorkRefRecord.endpoint_id == RelaySessionRecord.id,
+                )
+                .where(RelaySessionWorkRefRecord.work_ref == work_ref)
+                .group_by(RelaySessionRecord.id, RelaySessionRecord.last_seen_at)
+            )
+            if not include_closed:
+                page = page.where(RelaySessionRecord.state != "closed")
+            if container_ref is not None:
+                page = page.where(RelaySessionRecord.container_ref == container_ref)
+            page = page.order_by(
+                RelaySessionRecord.last_seen_at.desc(),
+                RelaySessionRecord.id,
+            ).offset(offset).limit(limit).subquery()
+            statement = (
+                select(RelaySessionRecord, RelaySessionWorkRefRecord)
+                .join(page, page.c.endpoint_id == RelaySessionRecord.id)
+                .join(
+                    RelaySessionWorkRefRecord,
+                    and_(
+                        RelaySessionWorkRefRecord.endpoint_id == RelaySessionRecord.id,
+                        RelaySessionWorkRefRecord.work_ref == work_ref,
+                    ),
+                )
+                .order_by(
+                    page.c.last_seen_at.desc(),
+                    RelaySessionRecord.id,
+                    RelaySessionWorkRefRecord.origin,
+                )
+            )
+            grouped = []
+            for session, association in db.execute(statement).all():
+                if not grouped or grouped[-1][0].id != session.id:
+                    grouped.append((session, [association]))
+                else:
+                    grouped[-1][1].append(association)
+            result = []
+            for session, associations in grouped:
+                association = associations[0]
+                session_view = _session_view(session, current, 24 * 60 * 60)
+                result.append({
+                    **session_view,
+                    "state": session.state,
+                    "lifecycle": session_view["state"],
+                    "container_ref": session.container_ref,
+                    "association": {
+                        "work_ref": association.work_ref,
+                        "scope_ref": association.scope_ref,
+                        "local_ref": association.local_ref,
+                        "origins": sorted(row.origin for row in associations),
+                        "created_at": _iso(min(row.created_at for row in associations)),
+                        "updated_at": _iso(max(row.updated_at for row in associations)),
+                    },
+                })
+            return result
 
     def relay_close_session(
         self,

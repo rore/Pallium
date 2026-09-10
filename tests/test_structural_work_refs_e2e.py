@@ -341,6 +341,39 @@ def test_opencode_user_and_assistant_resolver_failure_still_ingest(
 
 
 @pytest.mark.parametrize(
+    "host,source_type",
+    (("codex", "codex"), ("claude", "claude-code")),
+)
+def test_python_stop_hook_actual_http_items_round_trips_into_exact_history(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, source_type: str
+) -> None:
+    payload = next(item for item in _python_payloads(_repo_metadata(tmp_path / host), [], monkeypatch) if item["source_type"] == source_type and item["role"] == "assistant")
+    response = client.post("/items", json=[payload])
+    assert response.status_code == 200, response.text
+    item = _stored(client, payload)
+    assert item is not None
+    exact = client.post("/query", json={"text": payload["content"], "limit": 5, "source_only": True, "trigger_origin": "agent_pull_work", "work_refs": [item.metadata["pallium_work_refs"][0]], "container_ref": payload["container_ref"], "thread_ref": payload["thread_ref"], "visibility": "private"})
+    assert exact.status_code == 200, exact.text
+    assert exact.json()["results"][0]["source_item_id"] == response.json()[0]["source_item_id"]
+
+
+def test_opencode_real_plugin_payloads_actual_http_round_trip_into_exact_history(client, tmp_path: Path) -> None:
+    captured = _opencode_payloads(_repo_metadata(tmp_path / "opencode-repo"), ["EXPLICIT-REF"], tmp_path / "node-home")
+    assert len(captured) == 2
+    for payload in captured:
+        item_payload = payload[0] if isinstance(payload, list) else payload
+        response = client.post("/items", json=[item_payload])
+        assert response.status_code == 200, response.text
+        item = _stored(client, item_payload)
+        assert item is not None
+        refs = item.metadata.get("pallium_work_refs", [])
+        if not refs:
+            pytest.skip("OpenCode structural discovery is unsupported on Windows")
+        exact = client.post("/query", json={"text": item_payload["content"], "limit": 5, "source_only": True, "trigger_origin": "agent_pull_work", "work_refs": [refs[0]], "container_ref": item_payload["container_ref"], "thread_ref": item_payload["thread_ref"], "visibility": "private"})
+        assert exact.status_code == 200, exact.text
+        assert exact.json()["results"][0]["source_item_id"] == response.json()[0]["source_item_id"]
+
+@pytest.mark.parametrize(
     "host,relative",
     (("codex", "codex/hooks"), ("claude", "claude-code/hooks")),
 )
@@ -554,6 +587,7 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
     repo = _repo_metadata(tmp_path / "repo")
     git_dir = repo / ".git"
     (git_dir / "config").write_text(
@@ -664,12 +698,12 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
     with pytest.raises(SystemExit):
         prompt.main()
 
-    assert git_calls == [
+    assert git_calls.count(("git", "remote", "get-url", "origin")) == 5
+    assert git_calls.count(("git", "config", "user.name")) == 2
+    assert all(call in {
         ("git", "remote", "get-url", "origin"),
         ("git", "config", "user.name"),
-        ("git", "remote", "get-url", "origin"),
-        ("git", "config", "user.name"),
-    ]
+    } for call in git_calls)
     assert requests[0]["metadata"]["pallium_work_refs"] == [
         "git-branch:fix/alpha",
         "agent-workflow:alpha",
@@ -697,3 +731,105 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
     }]
     assert prompt._common.get_pinned_container("cache-session") == "git:example.test/other"
     assert prompt._common.get_pending_relay_closes("cache-session") == []
+@pytest.mark.parametrize(
+    "host,relative",
+    (("codex", "codex/hooks"), ("claude", "claude-code/hooks")),
+)
+def test_python_hook_registry_association_round_trips_through_http_history(
+    host,
+    relative,
+    client,
+    tmp_path,
+    monkeypatch,
+):
+    container = "git:example.test/team/registry-hook"
+    session = f"{host}-registry-hook"
+    feature = {
+        "scope_ref": "roadmap:v1:git:example.test/team/repo#roadmap",
+        "local_ref": "feature:registry-hook-history",
+    }
+    admitted = client.post(
+        "/relay/turn",
+        json={"runtime": "codex" if host == "codex" else "claude-code", "session_ref": session, "container_ref": container},
+    )
+    assert admitted.status_code == 200, admitted.text
+    attached = client.post(
+        "/relay/sessions/work-refs/attach",
+        json={
+            "runtime": "codex" if host == "codex" else "claude-code",
+            "session_ref": session,
+            "container_ref": container,
+            **feature,
+        },
+    )
+    assert attached.status_code == 200, attached.text
+    key = attached.json()["attached"]["work_ref"]
+
+    repo = _repo_metadata(tmp_path / f"{host}-registry-repo")
+    prompt = _load(
+        f"{host}_registry_hook_e2e",
+        Path("integrations") / relative / "user_prompt_submit.py",
+        monkeypatch,
+    )
+    monkeypatch.setattr(
+        prompt,
+        "read_hook_input",
+        lambda: {
+            "cwd": str(repo),
+            "session_id": session,
+            "prompt": "Capture this registry-associated feature for exact History search.",
+        },
+    )
+    monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_args: container)
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_args: "actor")
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_args: False)
+    monkeypatch.setattr(prompt, "get_pending_relay_close_batch", lambda *_args: ([], 0))
+    monkeypatch.setattr(prompt, "complete_relay_closes", lambda *_args, **_kwargs: True)
+    if hasattr(prompt, "emit_context"):
+        monkeypatch.setattr(prompt, "emit_context", lambda *_args: None)
+    else:
+        monkeypatch.setattr(prompt, "emit_utf8", lambda *_args, **_kwargs: True)
+
+    def relay_request(method, path, body, **_kwargs):
+        response = client.request(
+            method,
+            path,
+            params=body if method == "GET" else None,
+            json=None if method == "GET" else body,
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    captured = {}
+
+    def pallium_request(method, path, body, **_kwargs):
+        assert method == "POST" and path == "/item-and-query"
+        captured["metadata"] = body["metadata"]
+        response = client.post(path, json={**body, "use_case": "demo_agent_memory"})
+        assert response.status_code == 200, response.text
+        captured["source_item_id"] = response.json()["source_item_id"]
+        return response.json()
+
+    monkeypatch.setattr(prompt, "relay_request", relay_request)
+    monkeypatch.setattr(prompt, "pallium_request", pallium_request)
+    with pytest.raises(SystemExit):
+        prompt.main()
+
+    assert key in captured["metadata"]["pallium_work_refs"]
+    exact = client.post(
+        "/query",
+        json={
+            "text": " ",
+            "limit": 5,
+            "source_only": True,
+            "trigger_origin": "agent_pull_work",
+            "work_refs": [key],
+            "container_ref": container,
+            "thread_ref": session,
+            "visibility": "private",
+        },
+    )
+    assert exact.status_code == 200, exact.text
+    assert [row["source_item_id"] for row in exact.json()["results"]] == [
+        captured["source_item_id"]
+    ]
