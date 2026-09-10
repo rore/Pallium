@@ -816,7 +816,18 @@ class RelayTurnRequest(BaseModel):
         description="Pre-claim compact-JSON candidate budget; not a transport response-size limit.",
     )
     max_messages: int = Field(default=3, ge=0)
+    register_session: bool = True
     structural_work_refs: Any = None
+    previous_container_ref: str | None = Field(default=None, min_length=1, max_length=512)
+    previous_endpoint_id: str | None = Field(default=None, min_length=1, max_length=128)
+    previous_scope_generation: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_transition_fields(self):
+        values = (self.previous_container_ref, self.previous_endpoint_id, self.previous_scope_generation)
+        if any(value is not None for value in values) and not all(value is not None for value in values):
+            raise ValueError("previous_container_ref, previous_endpoint_id, and previous_scope_generation are required together")
+        return self
 
 
 class RelaySessionMutationRequest(BaseModel):
@@ -863,6 +874,7 @@ class RelaySessionResponse(BaseModel):
     endpoint_id: str
     runtime: str
     session_ref: str
+    container_ref: str
     title: str | None = None
     alias: str | None = None
     state: str
@@ -870,6 +882,7 @@ class RelaySessionResponse(BaseModel):
     first_seen_at: datetime
     last_seen_at: datetime
     closed_at: datetime | None = None
+    scope_generation: int = Field(default=0, ge=0)
 
 
 class RelayWorkRefResponse(BaseModel):

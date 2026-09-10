@@ -146,6 +146,12 @@ same error applies when replying after the original sender closes. A released
 name and an unknown selector remain not found; an unreachable destination keeps
 its existing `409 recipient session is unreachable` result.
 
+## Project scope transitions
+
+Claude Code and Codex keep the same Relay endpoint when a session deliberately moves to another Git project. The hooks persist and retry an exact source/destination intent, while the server accepts the move only for the supplied endpoint and scope generation. A confirmed move preserves the alias, manual work references, and pending or claimed deliveries. Historical delivery records keep their original container snapshots; follow-up wake routing resolves the endpoint's current container.
+
+A stale, missing, closed, unreachable, or occupied transition fails without moving either endpoint. Pallium never searches globally for a source session or takes over a destination. OpenCode remains pinned to one project for the life of its current session.
+
 ## Limits and scope
 
 - message and reply text: at most 16,000 Unicode code points

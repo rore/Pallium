@@ -168,11 +168,9 @@ async def _exercise_child(
                 {"x-codex-turn-metadata": []},
             ]
             errors = [
-                (
-                    await session.call_tool(
-                        "pallium_relay_receive", {}, meta=meta
-                    )
-                ).content[0].text
+                await session.call_tool(
+                    "pallium_relay_receive", {}, meta=meta
+                )
                 for meta in invalid
             ]
             assert len(_RelayHandler.calls) == calls_before_errors
@@ -212,7 +210,7 @@ def test_codex_stdio_metadata_identity() -> None:
         server.shutdown()
         server.server_close()
 
-    assert all(result.startswith("Error:") for result in errors)
+    assert all(result.isError is True and '"error"' in result.content[0].text for result in errors)
     turns = [
         payload
         for path, payload in _RelayHandler.calls

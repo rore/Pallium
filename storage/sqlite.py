@@ -194,6 +194,7 @@ class SQLiteStorageProvider(
             "relay_aliases": {"endpoint_id"},
         }
         optional = {
+            "relay_endpoint_generations": {"endpoint_id", "generation"},
             "relay_session_work_refs": {
                 "endpoint_id", "work_ref", "origin", "scope_ref", "local_ref",
                 "position", "created_at", "updated_at",

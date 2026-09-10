@@ -253,9 +253,49 @@ class PalliumMcpClient:
     async def _get_or_error(self, path: str, params: dict[str, Any]) -> Any:
         try:
             async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as http:
-                response = await http.get(path, params=params)
+                deadline = time.monotonic() + self._RELAY_BUSY_BUDGET_SECONDS
+                response = None
+                last_connect_error: Exception | None = None
+                for attempt in range(self._RELAY_BUSY_ATTEMPTS):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 and attempt:
+                        break
+                    try:
+                        response = await http.get(path, params=params, timeout=max(0.1, remaining))
+                    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                        last_connect_error = exc
+                        if attempt + 1 >= self._RELAY_BUSY_ATTEMPTS or deadline <= time.monotonic():
+                            return {"error": redact_sensitive(str(exc))}
+                        await asyncio.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+                        continue
+                    try:
+                        body = response.json()
+                    except Exception:
+                        body = None
+                    detail = body.get("detail") if isinstance(body, dict) else None
+                    is_retryable_busy = (
+                        response.status_code == 503
+                        and isinstance(detail, dict)
+                        and detail.get("code") == "relay_busy"
+                        and detail.get("retryable") is True
+                    )
+                    if is_retryable_busy and attempt + 1 < self._RELAY_BUSY_ATTEMPTS:
+                        remaining = deadline - time.monotonic()
+                        if remaining > 0:
+                            try:
+                                delay = min(1.0, remaining, max(0.0, float(response.headers.get("Retry-After", "1"))))
+                            except (TypeError, ValueError):
+                                delay = min(1.0, remaining)
+                            await asyncio.sleep(delay)
+                            continue
+                    response.raise_for_status()
+                    if body is None:
+                        return response.json()
+                    return body
+                if response is None:
+                    return {"error": redact_sensitive(str(last_connect_error or "Relay retry budget exhausted"))}
                 response.raise_for_status()
-                return response.json()
+                raise AssertionError("unreachable")
         except httpx.HTTPStatusError as exc:
             raw = redact_sensitive(exc.response.text)
             try:
@@ -516,18 +556,31 @@ class PalliumMcpClient:
                     else None
                 )
                 response = None
+                last_connect_error: Exception | None = None
                 for attempt in range(attempts):
-                    if response is not None and deadline is not None and time.monotonic() >= deadline:
-                        break
+                    if deadline is not None and attempt and time.monotonic() >= deadline:
+                        if response is not None:
+                            break
+                        return {"error": redact_sensitive(str(last_connect_error or "Relay retry budget exhausted"))}
                     request_timeout = (
                         max(0.1, deadline - time.monotonic())
                         if deadline is not None
                         else None
                     )
-                    if request_timeout is None:
-                        response = await http.post(path, json=payload)
-                    else:
-                        response = await http.post(path, json=payload, timeout=request_timeout)
+                    try:
+                        if request_timeout is None:
+                            response = await http.post(path, json=payload)
+                        else:
+                            response = await http.post(path, json=payload, timeout=request_timeout)
+                    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                        last_connect_error = exc
+                        if not retry_relay_busy or attempt + 1 >= attempts:
+                            return {"error": redact_sensitive(str(exc))}
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            return {"error": redact_sensitive(str(exc))}
+                        await asyncio.sleep(min(1.0, remaining))
+                        continue
                     parse_error = None
                     try:
                         body = response.json()
@@ -559,21 +612,23 @@ class PalliumMcpClient:
                     if parse_error is not None:
                         raise parse_error
                     return body
-                assert response is not None
+                if response is None:
+                    return {"error": redact_sensitive(str(last_connect_error or "Relay retry budget exhausted"))}
                 response.raise_for_status()
                 raise AssertionError("unreachable")
         except httpx.HTTPStatusError as exc:
+            raw = redact_sensitive(exc.response.text)
             try:
-                body = exc.response.json()
+                body = json.loads(raw)
             except Exception:
-                body = exc.response.text
+                body = raw
             return {
-                "error": str(exc),
+                "error": redact_sensitive(str(exc)),
                 "status_code": exc.response.status_code,
                 "detail": body,
             }
         except Exception as exc:
-            return {"error": str(exc)}
+            return {"error": redact_sensitive(str(exc))}
     async def remember_memory(
         self,
         *,

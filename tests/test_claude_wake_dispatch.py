@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import socket
+import sys
 import threading
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -771,6 +772,9 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     start = _load_claude_hook("session_start", monkeypatch)
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     stop = _load_claude_hook("stop", monkeypatch)
+    hook_sessions = tmp_path / "hook-sessions"
+    for hook in (start, prompt, stop):
+        monkeypatch.setitem(hook.relay_turn.__globals__, "SESSIONS_DIR", hook_sessions)
 
     for hook in (start, prompt, stop):
         monkeypatch.setattr(
@@ -797,13 +801,14 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
         })
         return response.status_code == 204
 
-    def acknowledge(deliveries, **_kwargs):
+    def acknowledge(deliveries, **kwargs):
         acknowledged = []
+        ack_container = kwargs.get("container_ref", scope["container_ref"])
         for delivery in deliveries:
             response = http.post("/relay/deliveries/ack", json={
                 "delivery_id": delivery["delivery_id"],
                 "claim_token": delivery["claim_token"],
-                **scope,
+                "container_ref": ack_container,
             })
             assert response.status_code == 200
             acknowledged.append(delivery)
@@ -943,7 +948,7 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     with pytest.raises(SystemExit):
         prompt.main()
     assert state(sent2) == "delivered"
-    assert state(sent3) == "pending"
+    assert state(sent2) == state(sent3) == "delivered"
 
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
     with pytest.raises(SystemExit):
@@ -1017,6 +1022,7 @@ def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
     transport.assert_not_called()
 
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
+    monkeypatch.setitem(prompt.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
@@ -1089,6 +1095,7 @@ def test_empty_stop_rearms_claude_wake_after_turn_admission(client, monkeypatch,
     http = TestClient(app, client=("127.0.0.1", 50000))
     scope = {"container_ref": PAYLOAD["container_ref"]}
     stop = _load_claude_hook("stop", monkeypatch)
+    monkeypatch.setitem(stop.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     def register(session, container, **kwargs):
@@ -1260,6 +1267,7 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         registry = app_b.state.claude_wake_registry
         registry.set_reconcile_signal(None)
         stop = _load_claude_hook("stop", monkeypatch)
+        monkeypatch.setitem(stop.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
         monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
         monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
         monkeypatch.setattr(stop, "read_hook_input", lambda: {
@@ -1461,6 +1469,7 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
     http = TestClient(app, client=("127.0.0.1", 50000))
     relay = RelayService(client.app.state.pallium_service._storage)
     stop = _load_claude_hook("stop", monkeypatch)
+    monkeypatch.setitem(stop.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
     def register(session, container, **kwargs):
         response = http.post("/internal/claude-wake/register", json={
             **PAYLOAD,
@@ -1646,6 +1655,7 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
         return acknowledged
 
     stop = _load_claude_hook("stop", monkeypatch)
+    monkeypatch.setattr(sys.modules[stop.relay_turn.__module__], "SESSIONS_DIR", tmp_path / "hook-sessions")
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(stop, "register_claude_wake", register)
@@ -1671,6 +1681,7 @@ def test_crash_after_claim_idle_stop_rewakes_actual_claude_hook_once(
     assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
 
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
+    monkeypatch.setattr(sys.modules[prompt.relay_turn.__module__], "SESSIONS_DIR", tmp_path / "hook-sessions")
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(prompt, "register_claude_wake", register)

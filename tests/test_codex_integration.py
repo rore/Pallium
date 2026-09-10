@@ -663,16 +663,19 @@ def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
 
 
 def test_codex_relay_delivery_bypasses_identical_prompt_dedup(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
 
+    monkeypatch.setitem(
+        hook.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "sessions"
+    )
     events: list[str] = []
     delivery = {"delivery_id": "delivery-1"}
     monkeypatch.setattr(
         hook,
         "read_hook_input",
-        lambda: {"cwd": ".", "session_id": "session-1", "prompt": "same wake signal"},
+        lambda: {"cwd": ".", "session_id": "codex-delivery-session", "prompt": "same wake signal"},
     )
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
@@ -680,7 +683,7 @@ def test_codex_relay_delivery_bypasses_identical_prompt_dedup(
     monkeypatch.setattr(
         hook,
         "relay_request",
-        lambda *_args, **_kwargs: events.append("relay") or {"deliveries": [delivery]},
+        lambda *_args, **_kwargs: events.append("relay") or {"session": {"endpoint_id": "relay-session-codex-session-1", "container_ref": "git:example/repo", "scope_generation": 0}, "deliveries": [delivery], "has_more": False, "remaining_count": 0},
     )
     monkeypatch.setattr(hook, "format_relay", lambda _deliveries, **_kwargs: ("relay block", [delivery]))
     monkeypatch.setattr(
@@ -703,15 +706,18 @@ def test_codex_relay_delivery_bypasses_identical_prompt_dedup(
 
 
 def test_codex_no_relay_still_dedups_before_ingestion(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
 
+    monkeypatch.setitem(
+        hook.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "sessions"
+    )
     events: list[str] = []
     monkeypatch.setattr(
         hook,
         "read_hook_input",
-        lambda: {"cwd": ".", "session_id": "session-1", "prompt": "same normal prompt"},
+        lambda: {"cwd": ".", "session_id": "codex-dedup-session", "prompt": "same normal prompt"},
     )
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
@@ -719,7 +725,7 @@ def test_codex_no_relay_still_dedups_before_ingestion(
     monkeypatch.setattr(
         hook,
         "relay_request",
-        lambda *_args, **_kwargs: events.append("relay") or {"deliveries": []},
+        lambda *_args, **_kwargs: events.append("relay") or {"session": {"endpoint_id": "relay-session-codex-session-1", "container_ref": "git:example/repo", "scope_generation": 0}, "deliveries": [], "has_more": False, "remaining_count": 0},
     )
     monkeypatch.setattr(hook, "format_relay", lambda _deliveries, **_kwargs: ("", []))
     monkeypatch.setattr(

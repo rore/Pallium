@@ -473,6 +473,36 @@ def test_current_relay_rows_alias_removal_unresolved_binding_and_claim_survive_r
     )["deliveries"] == []
     reopened.close()
 
+def test_relay_generation_schema_upgrade_preserves_existing_sessions(tmp_path: Path) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    main_url = f"sqlite:///{main}"
+    relay_url = f"sqlite:///{relay}"
+    provider = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    provider.relay_turn(
+        runtime="codex", session_ref="kept", container_ref="scope-a",
+        title=None, max_chars=100, max_messages=1, lease_seconds=60,
+    )
+    provider.close()
+
+    with sqlite3.connect(relay) as connection:
+        connection.execute("DROP TABLE relay_endpoint_generations")
+
+    reopened = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    first = reopened.relay_turn(
+        runtime="codex", session_ref="kept", container_ref="scope-a",
+        title=None, max_chars=100, max_messages=1, lease_seconds=60,
+    )
+    assert first["session"]["scope_generation"] == 0
+    with sqlite3.connect(relay) as connection:
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='relay_endpoint_generations'"
+        ).fetchone()
+        assert connection.execute(
+            "SELECT session_ref FROM relay_sessions WHERE session_ref='kept'"
+        ).fetchone() == ("kept",)
+    reopened.close()
+
 def test_actor_bearing_relay_schema_is_rejected_without_migration(tmp_path: Path) -> None:
     main = tmp_path / "main.db"
     relay = tmp_path / "relay.db"

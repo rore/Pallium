@@ -6,6 +6,8 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from mcp.types import CallToolRequest, CallToolRequestParams
+from mcp.server.fastmcp.exceptions import ToolError
 
 pytest.importorskip("mcp", reason="mcp[cli] not installed")
 
@@ -19,6 +21,11 @@ from app.mcp.server import (
     create_server,
 )
 
+
+def _tool_error_json(error: ToolError) -> tuple[str, dict]:
+    text = str(error)
+    start = text.index(": ", text.index("tool ")) + 2
+    return text, json.loads(text[start:])
 
 class TestSelfGating:
     @pytest.mark.asyncio
@@ -155,7 +162,8 @@ class TestBoundedErrorSurface:
 
         server = create_server()
         with patch("app.mcp.client.PalliumMcpClient.relay_send", new_callable=AsyncMock, return_value=oversized_422):
-            content_list, _ = await server.call_tool(
+            with pytest.raises(ToolError) as raised:
+                await server.call_tool(
                 "pallium_relay_send",
                 {
                     "message": "test",
@@ -165,10 +173,10 @@ class TestBoundedErrorSurface:
                     "container_ref": "git:example.com/test/repo",
                     "actor_ref": "test-actor",
                 },
-            )
+                )
 
-        out = json.loads(content_list[0].text)
-        assert len(content_list[0].text) <= 2000
+        text, out = _tool_error_json(raised.value)
+        assert len(text) <= 2000
         assert out["status_code"] == 422
         assert "input" not in out["detail"]["detail"][0]
         assert "url" not in out["detail"]["detail"][0]
@@ -785,8 +793,10 @@ async def test_relay_recipients_negative_offset_skips_http(monkeypatch: pytest.M
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
     relay_recipients = AsyncMock(return_value=[])
     with patch("app.mcp.client.PalliumMcpClient.relay_recipients", new=relay_recipients):
-        content, _ = await create_server().call_tool("pallium_relay_recipients", {"offset": -1})
-    assert json.loads(content[0].text)["error"] == "offset must be non-negative"
+        with pytest.raises(ToolError) as raised:
+            await create_server().call_tool("pallium_relay_recipients", {"offset": -1})
+    _, payload = _tool_error_json(raised.value)
+    assert payload["error"] == "offset must be non-negative"
     relay_recipients.assert_not_awaited()
 
 @pytest.mark.asyncio
@@ -861,6 +871,56 @@ async def test_relay_reply_uses_delivery_without_model_supplied_identity(monkeyp
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "arguments", "method", "result"),
+    [
+        ("pallium_relay_status", {"message_id": "m-1", "container_ref": "git:example/repo", "actor_ref": "actor-1"}, "relay_status", {"error": "offline", "status_code": 503, "detail": "bounded"}),
+        ("pallium_relay_send", {"message": "x", "recipient": "codex:session-1", "sender_runtime": "codex", "sender_session_ref": "s", "container_ref": "git:example/repo"}, "relay_send", {"error": "x" * 5000, "detail": {"x": "y"}}),
+        ("pallium_relay_reply", {"delivery_id": "d", "message": "x", "container_ref": "git:example/repo"}, "relay_reply", {"error": "conflict", "status_code": 409}),
+        ("pallium_relay_ack", {"delivery_id": "d", "receipt": "r", "container_ref": "git:example/repo"}, "relay_mcp_ack", {"error": "conflict", "status_code": 409}),
+        ("pallium_relay_participants", {"scope_ref": "tracker:v1:example.test#p", "local_ref": "ticket:1"}, "relay_work_ref_participants", []),
+    ],
+)
+async def test_relay_failures_are_fastmcp_errors(monkeypatch: pytest.MonkeyPatch, tool, arguments, method, result) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    with patch.object(mcp_server.PalliumMcpClient, method, new=AsyncMock(return_value=result)):
+        server = create_server()
+        request = CallToolRequest(params=CallToolRequestParams(name=tool, arguments=arguments))
+        response = await server._mcp_server.request_handlers[CallToolRequest](request)
+    assert response.root.isError is True
+    assert response.root.content and len(response.root.content[0].text) <= 2000
+
+
+@pytest.mark.asyncio
+async def test_relay_receive_error_includes_fastmcp_prefix_in_requested_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.setenv("CODEX_THREAD_ID", "session-1")
+    error = {"error": "x" * 5000, "status_code": 503}
+    with patch.object(mcp_server.PalliumMcpClient, "relay_receive", new=AsyncMock(return_value=error)):
+        server = create_server()
+        request = CallToolRequest(params=CallToolRequestParams(
+            name="pallium_relay_receive",
+            arguments={"max_chars": 256, "container_ref": "git:example/repo"},
+        ))
+        response = await server._mcp_server.request_handlers[CallToolRequest](request)
+    assert response.root.isError is True
+    assert response.root.content and len(response.root.content[0].text) <= 256
+
+
+@pytest.mark.asyncio
+async def test_relay_validation_and_invalid_response_are_fastmcp_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    server = create_server()
+    request = CallToolRequest(params=CallToolRequestParams(name="pallium_relay_status", arguments={"message_id": "m", "offset": -1, "container_ref": "git:example/repo"}))
+    response = await server._mcp_server.request_handlers[CallToolRequest](request)
+    assert response.root.isError is True and "non-negative" in response.root.content[0].text
+    with patch.object(mcp_server.PalliumMcpClient, "relay_status", new=AsyncMock(return_value={"bad": "shape"})):
+        request = CallToolRequest(params=CallToolRequestParams(name="pallium_relay_status", arguments={"message_id": "m", "container_ref": "git:example/repo"}))
+        response = await server._mcp_server.request_handlers[CallToolRequest](request)
+    assert response.root.isError is True and "invalid relay status response" in response.root.content[0].text
+
+@pytest.mark.asyncio
 async def test_relay_status_keeps_errors_visible(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
     monkeypatch.setenv("PALLIUM_CONTAINER_REF", "git:example/repo")
@@ -868,10 +928,12 @@ async def test_relay_status_keeps_errors_visible(monkeypatch: pytest.MonkeyPatch
     error = {"error": "conflict", "status_code": 409, "detail": {"reason": "already delivered"}}
     with patch("app.mcp.client.PalliumMcpClient.relay_status", new=AsyncMock(return_value=error)):
         server = create_server()
-        content, _ = await server.call_tool("pallium_relay_status", {
-            "message_id": "m-1", "container_ref": "git:example/repo", "actor_ref": "actor-1",
-        })
-    assert json.loads(content[0].text) == error
+        with pytest.raises(ToolError) as raised:
+            await server.call_tool("pallium_relay_status", {
+                "message_id": "m-1", "container_ref": "git:example/repo", "actor_ref": "actor-1",
+            })
+    _, payload = _tool_error_json(raised.value)
+    assert payload == error
 
 
 @pytest.mark.asyncio
@@ -974,13 +1036,15 @@ async def test_relay_status_rejects_nonadvancing_metadata_without_second_read(mo
     }
     status = AsyncMock(return_value=malformed)
     with patch("app.mcp.client.PalliumMcpClient.relay_status", new=status):
-        content, _ = await create_server().call_tool(
-            "pallium_relay_status", {
-                "message_id": "m-1", "offset": 4,
-                "container_ref": "git:example/repo", "actor_ref": "actor-1",
-            },
-        )
-    assert json.loads(content[0].text)["error"] == "invalid relay status pagination metadata"
+        with pytest.raises(ToolError) as raised:
+            await create_server().call_tool(
+                "pallium_relay_status", {
+                    "message_id": "m-1", "offset": 4,
+                    "container_ref": "git:example/repo", "actor_ref": "actor-1",
+                },
+            )
+    _, payload = _tool_error_json(raised.value)
+    assert payload["error"] == "invalid relay status pagination metadata"
     status.assert_awaited_once_with("m-1", offset=4, page_size=2000)
 
 def test_main_reads_stdio_transport_environment(monkeypatch: pytest.MonkeyPatch) -> None:

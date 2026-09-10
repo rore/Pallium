@@ -598,3 +598,46 @@ def test_codex_helpers_mirror_claude_code(tmp_path, monkeypatch):
         assert mod.get_pinned_container("s-codex") == "git:foo/bar"  # sticky
     finally:
         sys.modules.pop("codex_common_test", None)
+
+
+class TestRelayTurnIntentRecovery:
+    def test_lost_response_replays_persisted_transition_intent(self, tmp_state, monkeypatch):
+        responses = [
+            {"session": {"endpoint_id": "e1", "container_ref": "git:a", "scope_generation": 0}, "deliveries": []},
+            None,
+            {"session": {"endpoint_id": "e1", "container_ref": "git:b", "scope_generation": 1}, "deliveries": []},
+        ]
+        calls = []
+
+        def relay(_method, _path, payload, *, timeout, deadline=None):
+            calls.append(payload)
+            return responses.pop(0)
+
+        monkeypatch.setattr(common, "relay_request", relay)
+        assert common.relay_turn("claude-code", "recover", "git:a")
+        assert common.relay_turn("claude-code", "recover", "git:b") is None
+        state = json.loads((tmp_state / "sessions" / "recover.json").read_text(encoding="utf-8"))
+        assert state["relay_turn_intent"]["destination_container_ref"] == "git:b"
+        assert common.relay_turn("claude-code", "recover", "git:b")
+        assert "relay_turn_intent" not in json.loads(
+            (tmp_state / "sessions" / "recover.json").read_text(encoding="utf-8")
+        )
+        assert calls[-1]["previous_endpoint_id"] == "e1"
+        assert calls[-1]["previous_scope_generation"] == 0
+
+    def test_scope_can_round_trip_a_b_a_and_continue_to_c(self, tmp_state, monkeypatch):
+        responses = [
+            {"session": {"endpoint_id": "e1", "container_ref": "git:a", "scope_generation": 0}, "deliveries": []},
+            {"session": {"endpoint_id": "e1", "container_ref": "git:b", "scope_generation": 1}, "deliveries": []},
+            {"session": {"endpoint_id": "e1", "container_ref": "git:a", "scope_generation": 2}, "deliveries": []},
+            {"session": {"endpoint_id": "e1", "container_ref": "git:c", "scope_generation": 3}, "deliveries": []},
+        ]
+        calls = []
+        monkeypatch.setattr(common, "relay_request", lambda _m, _p, payload, **_k: calls.append(payload) or responses.pop(0))
+        pending = []
+        for destination in ("git:a", "git:b", "git:a", "git:c"):
+            assert common.relay_turn("claude-code", "roundtrip", destination)
+            pending.append(common.get_pending_relay_closes("roundtrip"))
+        assert [call["container_ref"] for call in calls] == ["git:a", "git:b", "git:a", "git:c"]
+        assert [call.get("previous_scope_generation") for call in calls] == [None, 0, 1, 2]
+        assert pending == [[], ["git:a"], ["git:b"], ["git:b", "git:a"]]

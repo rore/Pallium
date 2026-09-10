@@ -16,6 +16,7 @@ from common import (
     build_work_refs_metadata,
     fetch_confirmed_work_refs,
     derive_actor_ref,
+    resolve_container_ref,
     emit_utf8,
     format_injection,
     format_relay,
@@ -24,7 +25,8 @@ from common import (
     read_turn,
     register_claude_wake,
     relay_request,
-    resolve_container_ref,
+    relay_turn,
+
     start_hook_deadline,
     work_ref_warning,
 )
@@ -43,7 +45,7 @@ def main() -> None:
         session_id = payload.get("session_id")
         cwd = payload.get("cwd", ".")
         transcript_path = payload.get("transcript_path", "")
-        container_ref = resolve_container_ref(cwd, session_id)
+        container_ref = resolve_container_ref(cwd, session_id, True, False)
         actor_ref = derive_actor_ref(cwd, session_id)
         register_claude_wake(session_id, container_ref, idle=True)
 
@@ -55,17 +57,7 @@ def main() -> None:
                     agent_ref="claude-code", visibility="private",
                 )
                 turn = (
-                    relay_request(
-                        "POST",
-                        "/relay/turn",
-                        {
-                            "runtime": "claude-code",
-                            "session_ref": session_id,
-                            "container_ref": container_ref,
-                            "max_chars": RELAY_TURN_BUDGET,
-                        },
-                        timeout=0.75,
-                    ) or {}
+                    relay_turn("claude-code", session_id, container_ref, max_chars=RELAY_TURN_BUDGET, timeout=0.75, request=relay_request) or {}
                 ) if relay_scope else {}
                 deliveries = turn.get("deliveries") if isinstance(turn, dict) else []
                 remaining_count = (
