@@ -163,6 +163,33 @@ A 2026-09-10 bounded follow-up did not validate increasing the agent-facing sear
 Among eight pressure cases, three were protected/ungradable and two were negative, leaving exactly three answerable or partial cases that could improve: the ship threshold had no margin. Ten of 18 journeys produced outputs, but tool-output transport failures invalidated the only case with both variants dispatched and a separate pressure baseline. The first was a Windows stdout Unicode encoding failure on a persisted second expansion; the second, after the UTF-8 fix, persisted its expansion but delivered no readable output to the model for an unknown transport reason. The phase had only 924 input tokens left, below either affected journey reservation, and the fixed protocol prohibited reruns. No valid completed pair remained, so downstream effect, baseline losses, safety, negative regression, and the 125% retrieval-text gate were not estimated.
 
 Operational decision: **DO NOT SHIP / NOT VALIDATED**. Production stays at 2,000 characters, but the incomplete run is not evidence that 4,000 regressed or failed a quality or cost gate. This closes only this fixed trial; the response-budget hypothesis remains unresolved. PR #160 preserves and supersedes PR #159. Continue with independently justified navigation, instrumentation, ranking/query-repair, and diverse-task evidence; revisit the budget only with a new design, new evidence, and explicit execution budget.
+
+## Completed infrastructure qualification: reliable paired runner
+
+Before any new model-backed search experiment, a deterministic 2026-09-10 pilot
+qualified a reusable paired runner. It creates an isolated persistent SQLite fixture
+from frozen raw sources, exercises the production History search and expansion routes
+plus exact MCP formatters, lets a subprocess chooser select expansions from actual
+search text, and persists every tool/driver attempt with lookup lineage. It completes
+baseline and candidate for one case before advancing, reserves input and output budget
+for the full pair plus bounded retries, rejects incompatible resumes, and distinguishes
+valid abstention/product outcomes from transport-invalid, indeterminate, permanent,
+and cannot-start-pair states.
+
+Focused acceptance covered real process termination and restart, conservative charging
+of the crash-after-execution-before-persist window, completed-step reuse, transient and
+permanent transport failure, malformed and invalid UTF-8 output, Unicode content crossing
+the subprocess boundary, input/output and pair budget boundaries, strict pack validation,
+all-invalid reporting, ordering, and report reconciliation. The suite passed 20 tests.
+The independently runnable no-model pilot produced one usable scripted pair, zero invalid
+pairs, two completed attempts, 40 charged input tokens, 10 charged output tokens, and
+USD 0.00.
+
+This is infrastructure qualification only: it measures no agent quality, search quality,
+candidate effect, or downstream task effect. Production remains unchanged. The feature
+stays queued, and no real model evaluation may begin until the architect separately
+verifies the pilot artifacts and authorizes the adapter/run.
+
 ## Exact-work scope contract
 
 Exact-work search must remain exact. Never silently broaden, mix outside-work hits,

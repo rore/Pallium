@@ -55,7 +55,7 @@ Production seams already exist: `PalliumMcpClient` calls the real History HTTP r
 7. Open a PR with measured pilot evidence and one explicit human gate: architect verification before any model experiment. Close the PR lifecycle only after required review and CI.
 
 **Verification plan:**
-- Criteria 1–7 -> `python -m pytest tests/test_reliable_pair_runner.py -q -n 0`.
+- Criteria 1–7 -> `python -m pytest tests/test_reliable_pair_runner.py -q -n 0 -m slow`.
 - Exact production-path fidelity -> focused tests fail if real ASGI search/expansion or MCP formatter output differs; no hand-authored search response is accepted.
 - Workflow -> `python scripts/agent-workflow-check.py --repo-root . --slug reliable-eval-runner`.
 - Regression -> affected History/MCP test files, then `python -m pytest tests/ -x -q` once before review/PR.
@@ -85,7 +85,7 @@ A cheap deletion audit found only cosmetic helper inlining, which would not mate
 
 ## Evidence
 
-No pilot/model evidence yet. The prior failed trial is discovery evidence only and reported zero valid pairs.
+Focused acceptance passed 20 tests in 59.43s. Independent affected-path verification passed the same 20 focused tests in 60.83s and 30 production History/MCP tests in 10.93s. The deterministic no-model pilot at `.local/reliable-pair-pilot-v2/state/report.json` produced one usable pair, zero invalid pairs, two completed attempts, 40 charged input tokens, 10 charged output tokens, and USD 0.00. This is infrastructure evidence only; no paid model or evaluator call ran and no downstream quality was measured.
 
 ## Result review
 

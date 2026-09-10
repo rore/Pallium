@@ -106,6 +106,36 @@ updated facts — retrieval returns the right individual facts but the answering
 LLM struggles to combine them correctly when stale versions also appear in
 context.
 
+## Reliable Paired Evaluation Infrastructure
+
+`evals/reliable_pair_runner.py` is the precondition for any new paid Session History
+search experiment. It runs each baseline/candidate pair serially against a frozen
+UTF-8 pack, an isolated persistent SQLite database, the production History HTTP
+routes, and the exact MCP search/expansion formatters. A driver sees the formatted
+search text, chooses expansion handles, and receives the real formatted expansion;
+gold remains outside the driver protocol.
+
+The runner writes an immutable manifest plus atomic search, expansion, driver-attempt,
+pair, usage/cost, and report records. Resume reuses completed steps. A call left
+started at process death is recorded as indeterminate and conservatively charged;
+this does not claim exactly-once execution. Quality is reported only for pairs whose
+two variants produced valid answer/abstention results. Transport-invalid and
+cannot-start-pair outcomes remain separate, and total USD cost is `null` when any
+attempt cost is unknown.
+
+Run the deterministic, no-model pilot and keep its inspectable output:
+
+```powershell
+python tests/test_reliable_pair_runner.py --pilot .local/reliable-pair-pilot
+python -m pytest tests/test_reliable_pair_runner.py -q -n 0 -m slow
+```
+
+The 2026-09-10 qualification produced one usable scripted pair, zero invalid pairs,
+two completed attempts, 40 charged input tokens, 10 charged output tokens, and
+USD 0.00. This measures runner behavior only. It is not evidence about agent quality,
+search quality, candidate benefit, or downstream task effect. A real model adapter
+and any paid run require separate verification and authorization.
+
 ## Running Benchmarks
 
 ```bash
