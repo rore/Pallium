@@ -74,10 +74,15 @@ qualifier needed to answer the request; zero fully sufficient excerpts is not a 
 expandability score. Baseline-helper latency was not measured, so no incremental-overhead claim
 is available.
 
-A follow-through traced the 20 empty replay excerpts to the existing 2,000-character MCP
-compactor: four 10-result responses kept every source ID but emptied five excerpts each after
-optional work references and session cues were removed. These were empty-text hits, not omitted
-results. Separately, 12 replay inputs had no result: the 10 sampled no-answer lookups and two linked
+A follow-through traced the 20 empty excerpts in the reconstructed payloads to the existing
+2,000-character MCP compactor: four 10-result responses kept every source ID but emptied five
+excerpts each after optional work references and session cues were removed. The reconstruction
+omitted `recorded_at` and `recorded_at_source`, although the production formatter conditionally
+retains both before excerpt trimming, so these counts do not establish the complete current
+production response shape or empty-preview rate. The associated blind grades likewise compare
+incomplete reconstructed inputs, not complete current-production caller payloads. These were
+empty-text hits, not omitted results.
+Separately, 12 replay inputs had no result: the 10 sampled no-answer lookups and two linked
 lookups whose single exposed source was absent from the snapshot source join. Responses with two to
 six results had no empty excerpt. The broader feature remains queued because ranking, query repair,
 expansion/navigation, telemetry coverage, multilingual prevalence, and independent-task evidence
@@ -92,7 +97,8 @@ provenance, exact-work scope, result count, and the historical-state warning? St
 ## Completed investigation: high-count response packaging
 
 The 2026-09-10 development-only follow-up rejected one rank-prioritized minimum-preview
-allocation. On the four frozen 10-result replies it converted all 20 empty excerpts to
+allocation. On the four incomplete reconstructed 10-result replies it converted all 20 empty
+excerpts to
 nonempty text within the existing 2,000-character budget and preserved source/lookup
 identity, order, count, warnings, and expansion handles. Blind source-choice review
 found only 13 of those 20 new fragments useful, however, while the candidate caused
@@ -107,11 +113,23 @@ making the fixed-budget identity-versus-preview tradeoff explicit. Generic laten
 passed, but the broader predeclared latency matrix was not run after the decisive
 quality and boundary failures.
 
+A later live caller-flow check reran three existing development queries in one current
+session. Each returned ten source IDs with nine empty excerpts. Expanding rank 1 with
+the same search's lookup ID returned a nonempty anchor and matching parent lineage in
+all three cases for one additional MCP call capped at 2,400 characters. This proves
+only that rank-1 expansion worked for those examples. It does not establish that rank
+1 was the best source, that agents can choose among empty previews, that other ranks
+work, or that guidance/product behavior needs no improvement. The live calls were not
+a paired same-input replay, so the omitted timestamp fields are not claimed to fully
+explain the five-to-nine difference.
+
 Do not tune this allocation on the same development split or open its reserved
-holdout. The next representation work, if prioritized, should compare explicit
-on-demand expansion/navigation under a separately frozen plan rather than redistribute
-the same fixed reply budget. Ranking, exact-work scope, visibility, and historical
-cautions remain unchanged.
+holdout. The unresolved question is how agents choose a useful source when multiple
+retained hits have empty or insufficient previews; the three rank-1 expansions do not
+settle it. Any next representation work should use full caller-payload field parity
+or explicitly verify parity before comparing on-demand navigation, rather than
+redistribute the same fixed reply budget. Ranking, exact-work scope, visibility, and
+historical cautions remain unchanged.
 
 ## Exact-work scope contract
 

@@ -18,7 +18,7 @@ No external evaluator/provider calls were purchased. The study did not restart o
 
 ## Method
 
-The experiment was a fixed-candidate presentation replay, not a retrieval replay. Recorded post-gate source IDs fixed result membership and order. A validated snapshot supplied the corresponding source text. Baseline and candidate variants then passed through the real 160-character provider excerpt budget and unchanged MCP compaction. Candidate recovery was therefore unchanged by construction; vector ranking and embedding behavior were not replayed.
+The experiment was a fixed-candidate presentation replay, not a retrieval replay. Recorded post-gate source IDs fixed result membership and order. A validated snapshot supplied the corresponding source text. Baseline and candidate variants then passed through the production 160-character excerpt helper and MCP compactor, but with the incomplete reconstructed row fields described below. Candidate recovery was therefore unchanged by construction; vector ranking and embedding behavior were not replayed.
 
 Before text review, lookup events were joined into components when they shared a requesting session, normalized query, work reference, linked request lineage, exposed source ID, or normalized source-content fingerprint. Previously inspected diagnostic cases were barred from holdout. The selected development partition contained 36 lookups from 10 components: all 14 exact-work lookups, 10 no-answer lookups, and 24 initially judgeable candidates. Blind requirements review retained 23 judgeable lookups and excluded 13: 10 lacked request context and three lacked an evidence-bearing returned source.
 
@@ -33,7 +33,9 @@ For each judgeable development lookup, a clean-context reviewer recorded require
 
 The frozen rubric measured answer completeness within one excerpt. It did not grade source relevance, recognizability, or whether the excerpt provided a useful lead for expansion. The original grades remain unchanged; zero fully sufficient excerpts means only that neither 160-character variant could complete the frozen requests by itself.
 
-Only after blind grades were sealed was the candidate key opened. An initial grading pass was discarded when review found that anonymized 64-character identifiers had been compacted in place of real identifiers. The corrected replay compacted with real private identifiers first, checked the actual response budget, then anonymized the already-compacted payload.
+Only after blind grades were sealed was the candidate key opened. An initial grading pass was discarded when review found that anonymized 64-character identifiers had been compacted in place of real identifiers. The corrected replay compacted with real private identifiers first, checked the reconstructed response budget, then anonymized the already-compacted payload.
+
+That reconstruction was still incomplete relative to the production caller payload. Its rows included source identity, role, `occurred_at`, thread and match metadata, work references, historical updates, and excerpts, but omitted `recorded_at` and `recorded_at_source`; production `_history_fields` conditionally retains both before excerpt trimming. The counts and blind grades below therefore describe the reconstructed inputs, not the complete current production response shape or empty-preview rate.
 
 The predeclared promotion gates required at least 10 judgeable holdout lookups, at least a 10 percentage-point sufficient-rate gain, at least two net lookup wins, no slice regression, no required-fact or qualifier loss, no misleading result, unchanged IDs/order/count and response budgets, and per-call p95/max latency no greater than 5/20 ms.
 
@@ -69,12 +71,12 @@ Ten no-answer development lookups remained descriptive preservation cases. Resul
 | Excerpt UTF-8 bytes | 15,046 | 14,970 |
 | Excerpt whitespace-token proxy | 2,168 | 2,054 |
 | Mean excerpt characters | 129.33 | 129.27 |
-| Empty excerpts after actual MCP compaction | 20 | 20 |
+| Empty excerpts after reconstructed MCP compaction | 20 | 20 |
 | Compact MCP JSON characters, total | 49,650 | 49,620 |
 | Compact MCP JSON whitespace-token proxy | 2,975 | 2,858 |
 | Maximum compact MCP JSON characters | 3,158 | 3,158 |
 
-The MCP JSON size rows measure the anonymized research packets after real compaction; replacing private UUIDs with longer hashes inflated those stored packets beyond the live 2,000-character limit. The corrected replay separately asserted the pre-anonymization live budget.
+The MCP JSON size rows measure the anonymized research packets after compaction; replacing private UUIDs with longer hashes inflated those stored packets beyond the live 2,000-character limit. The replay separately asserted that its pre-anonymization reconstructed payloads fit the budget, but did not include every field retained by the current production formatter.
 
 The bounded follow-through measured those pre-anonymization compactor outputs by input result count:
 
@@ -100,7 +102,7 @@ The wider inventory and earlier diagnostic support several distinct classes; the
 1. **Unjudgeable telemetry.** Fifteen recorded lookups lacked query text, and many lacked a directly linked request. Missing context cannot establish evidence sufficiency.
 2. **Valid no-answer and exact-scope boundaries.** Sixty-one lookups returned no answer. Older untagged sources can be broad-search candidates while correctly absent from exact-work results. Exact search must not silently broaden.
 3. **Truncation exposure.** Most exposed sources were longer than the excerpt budget, but length alone does not prove that answer evidence was hidden.
-4. **Response-budget compaction.** A bounded follow-up traced all 20 empty excerpts to the unchanged 2,000-character MCP response compactor, not either excerpt helper: pre-compaction empties were 0 in both variants, while each of four 10-result responses retained all 10 hits but trimmed five excerpts to empty in both variants. The shared compactor therefore explains the baseline and candidate empties; neither helper produced them. The 20 responses with two to six results had no empty excerpt. On the empty rows, all 20 source IDs and roles survived, as did each parent lookup-event ID, so expansion handles remained usable; 15 rows that originally carried work references and all 20 original session cues lost those optional fields in earlier compaction passes. A generic 10-by-160-character synthetic response reproduced the same five empty excerpts at 1,999 serialized characters. This is separate from ranking and does not justify changing budgets or result count.
+4. **Response-budget compaction.** Within the incomplete reconstructed payloads, a bounded follow-up traced all 20 empty excerpts to the unchanged 2,000-character MCP response compactor, not either excerpt helper: pre-compaction empties were 0 in both variants, while each of four 10-result responses retained all 10 hits but trimmed five excerpts to empty in both variants. The shared compactor therefore explains those reconstructed baseline and candidate empties; neither helper produced them. The 20 reconstructed responses with two to six results had no empty excerpt. On the empty rows, all 20 source IDs and roles survived, as did each parent lookup-event ID, so expansion handles remained usable; 15 rows that originally carried work references and all 20 original session cues lost those optional fields in earlier compaction passes. A generic 10-by-160-character synthetic response reproduced the same five empty excerpts at 1,999 serialized characters. These counts are not a current-production prevalence claim because `recorded_at` and `recorded_at_source` were omitted from the replay.
 5. **Selective query-repair effects.** Earlier cases showed that focused query repair or expansion can recover evidence, while other rewrites lose qualification anchors. There is no supported universal rewrite.
 6. **Candidate/ranking failures.** Earlier traces included an eligible lexical candidate outside the displayed top results. The fixed-candidate experiment did not test fusion, overfetch, or ranking changes.
 7. **Coverage gaps.** Current recorded queries contained no non-ASCII text; linked Claude evidence was sparse and OpenCode was absent. Unicode behavior remains covered by generic tests and adversarial checks, not real-query prevalence.
@@ -114,18 +116,21 @@ presentation/navigation. Candidate recovery was unchanged; injection precision a
 downstream-task effect remain unmeasured. No external evaluator calls, production
 changes, service changes, or holdout evaluation occurred.
 
-The baseline reproduced the prior compaction result exactly: 115 input and output
-hits, no empty input excerpts, and 20 empty output excerpts across the same four
-10-result replies. Their serialized responses were 1,998–1,999 characters. Responses
-with 0, 2, 3, 5, or 6 results remained separate preservation cases.
+The baseline reproduced the prior incomplete reconstruction exactly: 115 input and
+output hits, no empty input excerpts, and 20 empty output excerpts across the same
+four 10-result replies. Their serialized responses were 1,998–1,999 characters.
+Responses with 0, 2, 3, 5, or 6 results remained separate preservation cases. These
+are reconstructed-payload counts and sizes, not measurements of the complete current
+production formatter.
 
 The single candidate activated only when a 10-hit reply remained over the unchanged
 2,000-character budget after existing optional-field removal. It first reserved a
 24-character prefix for each nonempty excerpt, then spent the remaining serialized
 budget in rank order using bounded binary search. Lower-count and already-fitting
-responses delegated to the current compactor byte-for-byte. On the four real
-10-result development replies, the candidate retained all IDs, order, count, lookup
-lineage, warning fields, and expansion handles; each reply serialized to exactly
+responses delegated to the current compactor byte-for-byte. On the four reconstructed
+10-result development replies, the candidate preserved the checked identity, lineage,
+warning, and expansion-handle fields present in the reconstruction; each reply
+serialized to exactly
 2,000 characters and all 20 formerly empty excerpts became nonempty.
 
 Blind source-choice review rejected the candidate:
@@ -178,13 +183,27 @@ not change. The offline navigation check established source-anchor and lookup-ID
 field preservation only; it did not exercise a real source retrieval with
 parent_lookup_id.
 
+A later diagnosis exercised the unchanged live caller flow without opening the
+holdout or changing the candidate. Three existing development queries were rerun in
+one current session with `limit=10`. Each current response retained ten source IDs
+but exposed nine empty excerpts. Expanding rank 1 with the lookup ID returned by that
+same search, `before=1`, `after=1`, and `max_chars=2400` returned one nonempty
+anchor and the matching parent lookup ID in all three cases. This costs one additional
+MCP call and at most 2,400 response characters for the selected source. The check
+proves only that the rank-1 expansion path worked for these three queries. It did not
+test other ranks, whether rank 1 was the best source, whether an agent can choose
+among empty previews, population-level call cost, or downstream task effect. Because
+the live calls were not a paired replay of the same complete inputs, the omitted
+`recorded_at` fields are a fidelity defect but are not claimed to fully explain the
+change from five to nine empty previews.
+
 ## Recommendation
 
 Keep the existing excerpt and response-packaging behavior. Do not change the shared `build_excerpt` helper: normal retrieval also feeds derived-memory routing, work-signal classification, and disclaimer suppression, so a global window change is not presentation-only. Do not add the tested history-specific density window or the tested 24-character-floor/rank-allocation policy based on this evidence.
 
-The smallest worthwhile follow-ups are separate investigations, not bundled implementation:
+The remaining questions are separate investigations, not bundled implementation:
 
-1. compare explicit source expansion or on-demand navigation when a short excerpt is incomplete under a separately frozen plan, preserving the current response budget, result identity, exact-work scope, and stale-history cautions; do not retune the rejected allocation on this development split;
+1. determine how an agent should choose which source to expand when several retained hits have empty or insufficient previews, preserving the current response budget, result identity, exact-work scope, and stale-history cautions; the three rank-1 checks do not establish that current guidance or presentation is adequate, and the rejected allocation must not be retuned on this development split;
 2. study candidate-pool, fusion, and query-repair failures on a genuinely task-independent set, reporting candidate recovery separately from excerpt sufficiency.
 
 The roadmap item remains queued. This study and its packaging follow-up resolve two presentation hypotheses; they do not establish the broader feature as done.
@@ -200,4 +219,4 @@ The ignored harness used only repository code and the Python standard library ar
 - aggregate-only public-claim verification: 59008D205FAAF6CDC5DA9DD56A04EC02BE4356CB14DD5ED9B113019DFA390C76;
 - compaction follow-through aggregate: 07846FF802969BDAA2F7FEBBA6827471EF990641FE46BCC6C8AE3238E7564202.
 
-The replay used current snapshotted source rows with historical exposed IDs, not an atomic historical vector-index snapshot. It cannot estimate ranking changes, past source contents, downstream task effect, or population-level accuracy. Development lookups are dependent within components, and the reserved holdout is one independent component rather than 12 independent tasks. These limits strengthen the no-change conclusion and prevent a broader product claim.
+The replay used current snapshotted source rows with historical exposed IDs, not an atomic historical vector-index snapshot, and omitted `recorded_at` plus `recorded_at_source` from the reconstructed caller payload. It cannot estimate ranking changes, past source contents, the complete current response shape, downstream task effect, or population-level accuracy. Development lookups are dependent within components, and the reserved holdout is one independent component rather than 12 independent tasks. These limits preserve the conservative rejection of the tested candidates but prevent a broader product or current-production claim.
