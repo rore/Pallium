@@ -105,6 +105,40 @@ def test_history_guidance_distinguishes_modes_without_dropping_safety() -> None:
             assert f"`{tool}`" in rendered
 
 
+def test_work_association_guidance_is_lazy_aligned_and_safe() -> None:
+    skill_paths = [
+        Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md")
+        for runtime in ("codex", "claude-code", "opencode")
+    ]
+    reference_paths = [path.parent / "references" / "work-associations.md" for path in skill_paths]
+    skills = [path.read_bytes() for path in skill_paths]
+    references = [path.read_bytes() for path in reference_paths]
+
+    assert skills[1:] == skills[:-1]
+    assert references[1:] == references[:-1]
+    for path in skill_paths:
+        skill = path.read_text(encoding="utf-8")
+        assert "For exact work or link correction" in skill
+        assert "[work associations](references/work-associations.md)" in skill
+        assert (path.parent / "references" / "work-associations.md").is_file()
+
+    detail = reference_paths[0].read_text(encoding="utf-8")
+    for required in (
+        "Branch and Agent Workflow references are structural",
+        "Hooks refresh them automatically",
+        "do not attach explicit duplicates",
+        "`pallium_relay_work_refs`",
+        "stable, known scope and reference",
+        "three explicit references in addition to its structural references",
+        "`pallium_relay_detach_work_ref` when the session stops that work",
+        "`pallium_relay_participants(scope_ref, local_ref)`",
+        "does not send or wake",
+        "grant routing permission or memory access",
+        "prove Session History coverage",
+        "Associated work references",
+    ):
+        assert required in detail
+
 def test_field_feedback_guidance_is_lazy_aligned_and_safe() -> None:
     skill_paths = [
         Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md")
