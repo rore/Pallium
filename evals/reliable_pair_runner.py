@@ -50,6 +50,10 @@ class PersistenceError(Exception):
     """A durable runner record could not be written."""
 
 
+class StepRetryError(Exception):
+    """A durable retrieval step failed safely and may be resumed."""
+
+
 def _canonical(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -238,9 +242,12 @@ def _prepare_manifest(pack: dict[str, Any], driver: Sequence[str], run_dir: Path
     if path.exists():
         old = _read_json(path)
         if old != manifest:
-            old_hashes = old.get("component_hashes", {}) if isinstance(old, dict) else {}
+            old_manifest = old if isinstance(old, dict) else {}
+            old_hashes = old_manifest.get("component_hashes", {})
+            if not isinstance(old_hashes, dict):
+                old_hashes = {}
             mismatches = sorted(key for key, value in hashes.items() if old_hashes.get(key) != value)
-            if old.get("pack_hash") != manifest["pack_hash"] and not mismatches:
+            if old_manifest.get("pack_hash") != manifest["pack_hash"] and not mismatches:
                 mismatches.append("pack")
             raise PackError(f"incompatible resume: changed {', '.join(mismatches) or 'manifest'}")
     else:
@@ -288,15 +295,45 @@ def _start_step(path: Path, base: dict[str, Any]) -> tuple[dict[str, Any] | None
         row = _read_json(path)
         if row.get("status") == "completed":
             return row, row
-        if row.get("status") != "started" or not row.get("attempts"):
+        if (
+            row.get("status") not in {"started", "retryable_failure"}
+            or not row.get("attempts")
+        ):
             raise PackError(f"invalid durable step state: {path}")
-        row["attempts"][-1]["status"] = "indeterminate"
+        if row["status"] == "started":
+            row["attempts"][-1]["status"] = "indeterminate"
+        row.pop("error", None)
     else:
         row = {**base, "attempts": []}
     row["attempts"].append({"attempt": len(row["attempts"]) + 1, "status": "started"})
     row["status"] = "started"
     _atomic_json(path, row)
     return None, row
+
+
+def _retry_step(
+    path: Path,
+    row: dict[str, Any],
+    *,
+    raw_response: Any,
+    delivery_receipt: dict[str, Any],
+    kind: str,
+) -> None:
+    error = delivery_receipt.get("error")
+    row.update(
+        raw_response=raw_response,
+        delivery_receipt=delivery_receipt,
+        error=error,
+    )
+    row["status"] = "retryable_failure"
+    row["attempts"][-1].update(
+        status="retryable_failure",
+        raw_response=raw_response,
+        delivery_receipt=delivery_receipt,
+        error=error,
+    )
+    _atomic_json(path, row)
+    raise StepRetryError(f"{kind} delivery finalization failed; resume to retry")
 
 
 def _finish_step(path: Path, row: dict[str, Any], **values: Any) -> dict[str, Any]:
@@ -354,6 +391,13 @@ def _terminal_attempt(run_dir: Path, case_id: str, variant: str) -> dict[str, An
     return completed or (rows[-1] if rows else None)
 
 
+def _close_fixture(app: Any) -> None:
+    service = app.state.pallium_service
+    service.close()
+    close_storage = getattr(service._storage, "close", None)
+    if callable(close_storage):
+        close_storage()
+
 async def _fixture(pack: dict[str, Any], run_dir: Path) -> tuple[Any, PalliumMcpClient]:
     config = pack["config"]
     db_path = run_dir / "fixture.db"
@@ -388,63 +432,67 @@ async def _fixture(pack: dict[str, Any], run_dir: Path) -> tuple[Any, PalliumMcp
             observability=ObservabilityConfig(query_audit_log=True),
         )
     )
-    app.state._lifespan_complete = True
-    context = PalliumContext(
-        base_url="http://runner",
-        container_ref=config["container_ref"],
-        thread_ref=config["thread_ref"],
-        visibility=config["visibility"],
-    )
-    client = PalliumMcpClient(context)
+    try:
+        app.state._lifespan_complete = True
+        context = PalliumContext(
+            base_url="http://runner",
+            container_ref=config["container_ref"],
+            thread_ref=config["thread_ref"],
+            visibility=config["visibility"],
+        )
+        client = PalliumMcpClient(context)
 
-    async def post(path: str, payload: Any) -> Any:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://runner", timeout=30
-        ) as http:
-            response = await http.post(path, json=payload)
-            response.raise_for_status()
-            return response.json()
+        async def post(path: str, payload: Any) -> Any:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://runner", timeout=30
+            ) as http:
+                response = await http.post(path, json=payload)
+                response.raise_for_status()
+                return response.json()
 
-    client._post = post
+        client._post = post
 
-    async def get_source_context(source_item_id: str, **kwargs: Any) -> Any:
-        params: dict[str, Any] = {
-            "container_ref": config["container_ref"],
-            "active_session_ref": config["thread_ref"],
-            "query_visibility": config["visibility"],
-        }
-        for key in ("before", "after", "max_chars", "parent_lookup_id", "defer_delivery"):
-            if kwargs.get(key) is not None:
-                params[key] = kwargs[key]
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://runner", timeout=30
-        ) as http:
-            response = await http.get(f"/source/{source_item_id}/context", params=params)
-            response.raise_for_status()
-            return response.json()
-
-    client.get_source_context = get_source_context
-    if not ready_path.exists():
-        items = []
-        for source in pack["sources"]:
-            item = {
-                "source_type": source.get("source_type", "chat_message"),
-                "source_id": source["source_id"],
-                "content_type": "text/plain",
-                "content": source["content"],
-                "artifact_kind": source.get("artifact_kind", "message"),
+        async def get_source_context(source_item_id: str, **kwargs: Any) -> Any:
+            params: dict[str, Any] = {
                 "container_ref": config["container_ref"],
-                "thread_ref": source.get("thread_ref", "fixture-history"),
-                "visibility": config["visibility"],
-                "metadata": source.get("metadata", {}),
+                "active_session_ref": config["thread_ref"],
+                "query_visibility": config["visibility"],
             }
-            if source.get("role") is not None:
-                item["role"] = source["role"]
-            items.append(item)
-        await post("/items", items)
-        app.state.pallium_service.drain_processing_queue(worker_id="reliable-pair-runner")
-        _atomic_json(ready_path, expected_ready)
-    return app, client
+            for key in ("before", "after", "max_chars", "parent_lookup_id", "defer_delivery"):
+                if kwargs.get(key) is not None:
+                    params[key] = kwargs[key]
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://runner", timeout=30
+            ) as http:
+                response = await http.get(f"/source/{source_item_id}/context", params=params)
+                response.raise_for_status()
+                return response.json()
+
+        client.get_source_context = get_source_context
+        if not ready_path.exists():
+            items = []
+            for source in pack["sources"]:
+                item = {
+                    "source_type": source.get("source_type", "chat_message"),
+                    "source_id": source["source_id"],
+                    "content_type": "text/plain",
+                    "content": source["content"],
+                    "artifact_kind": source.get("artifact_kind", "message"),
+                    "container_ref": config["container_ref"],
+                    "thread_ref": source.get("thread_ref", "fixture-history"),
+                    "visibility": config["visibility"],
+                    "metadata": source.get("metadata", {}),
+                }
+                if source.get("role") is not None:
+                    item["role"] = source["role"]
+                items.append(item)
+            await post("/items", items)
+            app.state.pallium_service.drain_processing_queue(worker_id="reliable-pair-runner")
+            _atomic_json(ready_path, expected_ready)
+        return app, client
+    except BaseException:
+        _close_fixture(app)
+        raise
 
 
 async def _search(
@@ -512,9 +560,14 @@ async def _search(
             ],
         )
         if receipt.get("error"):
-            formatted = receipt
-        else:
-            formatted["lookup_event_id"] = receipt.get("lookup_event_id")
+            _retry_step(
+                path,
+                row,
+                raw_response=raw,
+                delivery_receipt=receipt,
+                kind="search",
+            )
+        formatted["lookup_event_id"] = receipt.get("lookup_event_id")
     text = _json_text(formatted)
     return _finish_step(
         path,
@@ -599,7 +652,13 @@ async def _expand(
             ],
         )
         if receipt.get("error"):
-            formatted = receipt
+            _retry_step(
+                path,
+                row,
+                raw_response=raw,
+                delivery_receipt=receipt,
+                kind="expansion",
+            )
     text = _json_text(formatted)
     return _finish_step(
         path,
@@ -685,7 +744,17 @@ async def _driver_attempt(
         except ValueError as exc:
             raise RuntimeError("line_too_large") from exc
         if not raw:
-            stderr = await process.stderr.read() if process.stderr is not None else b""
+            try:
+                stderr = (
+                    await asyncio.wait_for(
+                        process.stderr.read(),
+                        timeout=float(config["driver_timeout_seconds"]),
+                    )
+                    if process.stderr is not None
+                    else b""
+                )
+            except asyncio.TimeoutError:
+                stderr = b""
             detail = stderr.decode("utf-8", errors="replace").strip()
             raise RuntimeError(f"missing_output\n{detail}" if detail else "missing_output")
         if len(raw) > config["max_driver_line_bytes"]:
@@ -1029,53 +1098,56 @@ async def run(
     pack = load_pack(pack_path)
     run_dir.mkdir(parents=True, exist_ok=True)
     manifest = _prepare_manifest(pack, driver_command, run_dir)
-    _app, client = await _fixture(pack, run_dir)
+    app, client = await _fixture(pack, run_dir)
     config = pack["config"]
-
-    for case in pack["cases"]:
-        pair_path = _pair_path(run_dir, case["id"])
-        if not pair_path.exists():
-            used_in, used_out = _budget_used(run_dir)
-            required_in, required_out = _pair_required(config)
-            if (
-                used_in + required_in > config["total_input_tokens"]
-                or used_out + required_out > config["total_output_tokens"]
-            ):
+    service = app.state.pallium_service
+    try:
+        for case in pack["cases"]:
+            pair_path = _pair_path(run_dir, case["id"])
+            if not pair_path.exists():
+                used_in, used_out = _budget_used(run_dir)
+                required_in, required_out = _pair_required(config)
+                if (
+                    used_in + required_in > config["total_input_tokens"]
+                    or used_out + required_out > config["total_output_tokens"]
+                ):
+                    _atomic_json(
+                        pair_path,
+                        {
+                            "case_id": case["id"],
+                            "status": "cannot_start_pair",
+                            "reason": "insufficient pair and retry reservation",
+                            "required": {
+                                "input_tokens": required_in,
+                                "output_tokens": required_out,
+                            },
+                        },
+                    )
+                    continue
                 _atomic_json(
                     pair_path,
                     {
                         "case_id": case["id"],
-                        "status": "cannot_start_pair",
-                        "reason": "insufficient pair and retry reservation",
-                        "required": {
+                        "status": "active",
+                        "reservation": {
                             "input_tokens": required_in,
                             "output_tokens": required_out,
                         },
                     },
                 )
+            pair = _read_json(pair_path)
+            if pair["status"] in {"completed", "invalid", "cannot_start_pair"}:
                 continue
-            _atomic_json(
-                pair_path,
-                {
-                    "case_id": case["id"],
-                    "status": "active",
-                    "reservation": {
-                        "input_tokens": required_in,
-                        "output_tokens": required_out,
-                    },
-                },
-            )
-        pair = _read_json(pair_path)
-        if pair["status"] in {"completed", "invalid", "cannot_start_pair"}:
-            continue
-        for variant in VARIANTS:
-            await _run_variant(
-                driver_command, client, pack, manifest, run_dir, case, variant
-            )
-        pair["status"] = "active"
-        _atomic_json(pair_path, pair)
+            for variant in VARIANTS:
+                await _run_variant(
+                    driver_command, client, pack, manifest, run_dir, case, variant
+                )
+            pair["status"] = "active"
+            _atomic_json(pair_path, pair)
 
-    return build_report(pack, manifest, run_dir)
+        return build_report(pack, manifest, run_dir)
+    finally:
+        _close_fixture(app)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -1090,7 +1162,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         report = asyncio.run(run(args.pack, args.run_dir, args.driver))
-    except PackError as exc:
+    except (PackError, StepRetryError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))

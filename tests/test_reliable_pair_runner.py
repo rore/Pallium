@@ -21,10 +21,13 @@ pytestmark = pytest.mark.slow
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import evals.reliable_pair_runner as runner
+from app.mcp.client import PalliumMcpClient
 from app.mcp.server import _bounded_expansion, _compact_history, _json_text
 from evals.reliable_pair_runner import (
     PackError,
     PersistenceError,
+    StepRetryError,
     _atomic_json,
     run,
     validate_pack,
@@ -160,6 +163,13 @@ def _driver_main(mode: str, control: Path) -> int:
         sys.stdout.buffer.flush()
         return 0
     if mode == "missing":
+        return 0
+    if mode == "stdout_closed_stderr_open":
+        subprocess.Popen(
+            [PYTHON, "-c", "import time; time.sleep(2)"],
+            stdout=subprocess.DEVNULL,
+            stderr=sys.stderr,
+        )
         return 0
 
     _append(control / "external_execution.log", key)
@@ -340,6 +350,79 @@ def test_safe_transport_failure_retries_with_reserved_budget(
     ]
     assert report["attempt_count"] == 4
     assert report["usage"]["charged_input_tokens"] == 240
+
+
+@pytest.mark.parametrize("stage", ["search", "expansion"])
+def test_delivery_finalization_failure_is_durable_and_retried_on_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    original = PalliumMcpClient.finalize_historical_delivery
+    failed = False
+
+    async def fail_once(
+        client: PalliumMcpClient, attempt_id: str, *, items: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        nonlocal failed
+        roles = {item["role"] for item in items}
+        current = "search" if roles == {"search_match"} else "expansion"
+        if current == stage and not failed:
+            failed = True
+            return {"error": "transient finalization failure"}
+        return await original(client, attempt_id, items=items)
+
+    monkeypatch.setattr(PalliumMcpClient, "finalize_historical_delivery", fail_once)
+    pack_path = _write_pack(tmp_path, _pack())
+    state, control = tmp_path / "state", tmp_path / "control"
+
+    with pytest.raises(StepRetryError, match=f"{stage} delivery finalization failed"):
+        _run(pack_path, state, "normal", control)
+
+    step_path = (
+        state / "steps" / "case-1" / "baseline" / "search.json"
+        if stage == "search"
+        else next((state / "steps" / "case-1" / "baseline").glob("expand-*.json"))
+    )
+    failed_step = json.loads(step_path.read_text(encoding="utf-8"))
+    assert failed_step["status"] == "retryable_failure"
+    assert failed_step["attempts"][0]["attempt"] == 1
+    assert failed_step["attempts"][0]["status"] == "retryable_failure"
+    assert failed_step["attempts"][0]["error"] == "transient finalization failure"
+    assert failed_step["error"] == "transient finalization failure"
+
+    report = _run(pack_path, state, "normal", control)
+    completed_step = json.loads(step_path.read_text(encoding="utf-8"))
+    assert report["usable_pairs"] == 1
+    assert completed_step["status"] == "completed"
+    assert [item["status"] for item in completed_step["attempts"]] == [
+        "retryable_failure",
+        "completed",
+    ]
+    assert completed_step["attempts"][0]["error"] == "transient finalization failure"
+    assert completed_step["attempts"][0]["delivery_receipt"] == {
+        "error": "transient finalization failure"
+    }
+    assert "delivery_attempt_id" in completed_step["attempts"][0]["raw_response"]
+
+
+def test_closed_stdout_with_open_stderr_is_bounded(tmp_path: Path) -> None:
+    value = _pack(retry_input=0, retry_output=0)
+    value["config"]["driver_timeout_seconds"] = 0.2
+    pack_path = _write_pack(tmp_path, value)
+    started = time.monotonic()
+
+    report = _run(
+        pack_path,
+        tmp_path / "state",
+        "stdout_closed_stderr_open",
+        tmp_path / "control",
+    )
+
+    assert time.monotonic() - started < 5
+    assert report["invalid_pairs"] == 1
+    assert all(
+        row["error"]["code"] in {"missing_output", "timeout"}
+        for row in _attempts(tmp_path / "state")
+    )
 
 
 def test_completed_expansion_is_reused_after_transport_retry(tmp_path: Path) -> None:
@@ -531,21 +614,33 @@ def test_resume_rejects_changed_config_sources_cases_or_gold(tmp_path: Path) -> 
     changes = []
     changed = deepcopy(original)
     changed["config"]["max_expansions"] = 3
-    changes.append(changed)
+    changes.append((changed, "config"))
     changed = deepcopy(original)
     changed["sources"][0]["content"] += " changed"
-    changes.append(changed)
+    changes.append((changed, "sources"))
     changed = deepcopy(original)
     changed["cases"][0]["query"] += " changed"
-    changes.append(changed)
+    changes.append((changed, "cases"))
     changed = deepcopy(original)
     changed["gold"]["case-1"]["required_substring"] = "changed"
-    changes.append(changed)
+    changes.append((changed, "gold"))
 
-    for value in changes:
+    for value, component in changes:
         _write_pack(tmp_path, value)
-        with pytest.raises(PackError, match="incompatible resume"):
+        with pytest.raises(PackError, match=f"incompatible resume: changed {component}"):
             _run(pack_path, state, "normal", control)
+
+
+def test_resume_rejects_malformed_manifest_cleanly(tmp_path: Path) -> None:
+    pack_path = _write_pack(tmp_path, _pack())
+    state, control = tmp_path / "state", tmp_path / "control"
+    _run(pack_path, state, "normal", control)
+    (state / "manifest.json").write_text("[]\n", encoding="utf-8")
+
+    with pytest.raises(
+        PackError, match="incompatible resume: changed cases, config, gold, sources"
+    ):
+        _run(pack_path, state, "normal", control)
 
 
 @pytest.mark.parametrize(
@@ -559,6 +654,28 @@ def test_resume_rejects_changed_config_sources_cases_or_gold(tmp_path: Path) -> 
         (lambda value: value["config"].__setitem__("attempt_output_tokens", "20"), "attempt_output_tokens"),
         (lambda value: value["config"].__setitem__("driver_timeout_seconds", float("nan")), "driver_timeout_seconds"),
         (lambda value: value["config"].__setitem__("driver_timeout_seconds", float("inf")), "driver_timeout_seconds"),
+        (lambda value: value["config"].__setitem__("visibility", "team"), "visibility"),
+        (
+            lambda value: value["config"].__setitem__("max_driver_line_bytes", 63),
+            "max_driver_line_bytes",
+        ),
+        (lambda value: value.pop("variants"), "variants"),
+        (
+            lambda value: value.__setitem__("variants", ["candidate", "baseline"]),
+            "variants",
+        ),
+        (
+            lambda value: value["sources"].append(deepcopy(value["sources"][0])),
+            "duplicate source_id",
+        ),
+        (
+            lambda value: value["cases"].append(deepcopy(value["cases"][0])),
+            "duplicate case id",
+        ),
+        (
+            lambda value: value["gold"]["case-1"].__setitem__("allow_abstain", "false"),
+            "allow_abstain",
+        ),
         (lambda value: value["sources"][0].__setitem__("metadata", []), "metadata"),
         (lambda value: value["sources"][0].__setitem__("artifact_kind", "bogus"), "artifact_kind"),
         (lambda value: value["sources"][0].__setitem__("content", ""), "content"),
@@ -601,6 +718,37 @@ def test_pack_validation_rejects_filename_key_collisions() -> None:
         validate_pack(sources)
 
 
+def test_fixture_setup_failure_closes_owned_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_atomic = runner._atomic_json
+    original_close = runner._close_fixture
+    close_calls = 0
+
+    def fail_ready(path: Path, value: Any) -> None:
+        if path.name == "fixture.ready.json":
+            raise PersistenceError("forced ready-marker failure")
+        original_atomic(path, value)
+
+    def track_close(app: Any) -> None:
+        nonlocal close_calls
+        close_calls += 1
+        original_close(app)
+
+    monkeypatch.setattr(runner, "_atomic_json", fail_ready)
+    monkeypatch.setattr(runner, "_close_fixture", track_close)
+
+    with pytest.raises(PersistenceError, match="forced ready-marker failure"):
+        _run(
+            _write_pack(tmp_path, _pack()),
+            tmp_path / "state",
+            "normal",
+            tmp_path / "control",
+        )
+
+    assert close_calls == 1
+
+
 def test_persistence_failure_is_not_transport_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -638,9 +786,11 @@ def test_real_process_interruption_records_indeterminate_and_restores_lineage(
     deadline = time.monotonic() + 15
     while not (control / "blocked").exists() and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert (control / "blocked").exists(), process.stderr.read().decode("utf-8", errors="replace")
-    process.terminate()
-    process.wait(timeout=10)
+    blocked = (control / "blocked").exists()
+    if process.poll() is None:
+        process.terminate()
+    _stdout, stderr = process.communicate(timeout=10)
+    assert blocked, stderr.decode("utf-8", errors="replace")
 
     first = json.loads(
         (state / "attempts" / "case-1" / "baseline" / "attempt-001.json").read_text(
