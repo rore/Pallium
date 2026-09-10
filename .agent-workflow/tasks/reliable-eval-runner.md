@@ -79,6 +79,8 @@ Not required at this risk level. Architect design approval and later pilot verif
 
 Architect approval received 2026-09-10. Implementation is limited to `evals/reliable_pair_runner.py` and `tests/test_reliable_pair_runner.py` first; documentation, roadmap, and this record follow only after pilot evidence. No production path or dependency may change. `apply_patch` previously failed with Windows error 1327, so edits use the narrow deterministic replacement fallback allowed by local instructions.
 
+The bounded Luna worker was stopped after producing no usable runner and an incompatible partial test draft; direct implementation avoided further coordination cost. The runner now uses an isolated persistent SQLite database, real ASGI search/expansion routes, direct production formatters, atomic per-step and per-attempt records, pair-first input/output reservations, explicit indeterminate crash recovery, and a minimal interactive UTF-8 subprocess protocol. The test module doubles as the independent scripted pilot/driver. Focused acceptance: 20 passed in 59.34s. Fresh pilot artifacts: .local/reliable-pair-pilot-v2/state/report.json; one usable scripted pair, zero invalid pairs, two completed attempts, 40 charged input tokens, 10 charged output tokens, USD 0.00. This qualifies infrastructure only.
+
 ## Evidence
 
 No pilot/model evidence yet. The prior failed trial is discovery evidence only and reported zero valid pairs.
