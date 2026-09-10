@@ -13,7 +13,7 @@
 
 **Complexity:** Large
 
-**Reason:** Pre-edit redline reports API_CHANGE plus SCHEMA_CHANGE with red/watch API and persistence surfaces, requiring api-review and persistence-review. The complete feature spans independently verifiable registry, ingestion, HTTP/MCP, dashboard, lifecycle, and history outcomes across multiple sessions.
+**Reason:** Pre-edit redline reported API_CHANGE plus SCHEMA_CHANGE with red/watch API and persistence surfaces. The final diff retains High/Large and requires architecture-review, api-review, and persistence-review because the shared ingestion sanitizer is also a red-zone core boundary. The complete feature spans independently verifiable registry, ingestion, HTTP/MCP, dashboard, lifecycle, and history outcomes across multiple sessions.
 
 **Discovery:** Current main stores work refs only on immutable SourceItem metadata (`pallium_work_refs`, normalized/deduplicated, maximum five). Hooks discover bare `git-branch:*` and `agent-workflow:*` refs, choose the first structural ref for scalar current-work injection, and independently rediscover at user/assistant ingestion. Relay persists endpoint identity/lifecycle/alias but no work refs; container-local recipient listing and the service-global dashboard are separate projections. Alias release/transfer does not replace endpoint identity, close retains the endpoint, and a turn reopens that exact endpoint. Minimap has no reusable identity helper yet; its queued companion explicitly makes Minimap the producer of a repository-plus-roadmap-root-qualified item ref and Pallium the association owner. Pre-edit redline classification is API_CHANGE plus SCHEMA_CHANGE, Risk High / Complexity Large, with API and persistence review required and no existing boundary violation.
 
@@ -202,12 +202,23 @@ Verified implementation revision `b0bfd5dc` in the isolated worktree. Focused af
 
 ## Result review
 
-Clean-context smart review by `association_result_review` examined the complete persistence/API/MCP/hook/dashboard/identity diff, reproduced four P2 failures, and reviewed each remediation. Final verdict: PASS. Remediation verification independently reported 47 focused Python tests and both JavaScript identity checks passing, with no remaining actionable finding. PR-time `api-reviewed` and `persistence-reviewed` labels or CODEOWNER approval remain intentionally unsatisfied until the PR exists; merge stays blocked until those repository checkpoints pass.
+Clean-context smart review by `association_result_review` examined the complete persistence/API/MCP/hook/dashboard/identity diff, reproduced four P2 failures, and reviewed each remediation. Final verdict: PASS. Remediation verification independently reported 47 focused Python tests and both JavaScript identity checks passing, with no remaining actionable finding. Final local redline added `architecture-review` because the approved `core/service.py` sanitizer path is red-zone; this is classification drift, not scope expansion. PR-time `architecture-reviewed`, `api-reviewed`, and `persistence-reviewed` labels or CODEOWNER approval remain intentionally unsatisfied until the PR exists; merge stays blocked until those repository checkpoints pass.
 
 ## Plan review
 
 Architect technical review APPROVED revision 3 for implementation in Relay message `relay-reply-05b483e577024c416b6f42a4d71bdef950560a9a2bbdf99b8321da076843c066`. Acceptance clarifications: diagnostic inspection must not change legacy caller-ref selection; every read and successful attach returns the exact key plus readable fields and existing History-search guidance; repository identity additions stay at the existing owning boundary and do not change container identity; scope stays four tools, one table, simple UI; final evidence is a working isolated HTTP/MCP/send/reply/detach/History and browser journey, not the text mock. Stop before merge/live install.
 
+## Checkpoint: architecture-review
+
+What is changing: Extend the existing shared SourceItem ingestion sanitizer to recompute bounded work-reference diagnostics from validated hook metadata while stripping caller-authored reserved fields. Relay orchestration remains in `core/relay.py`; API and storage stay behind their existing boundaries.
+
+Why: Hook-captured registry refs must remain truthful under the five-reference History cap, and malformed or forged metadata must not break ingestion or reflect untrusted diagnostics.
+
+Affected contract / model / boundary: `core/service.py` ingestion trust boundary and `core/relay.py` orchestration. Retrieval, visibility, current-work selection, and existing work-ref normalization remain unchanged.
+
+Compatibility / migration risk: additive metadata only; invalid diagnostic shapes degrade to safe normalized refs without diagnostics. No historical rewrite or scope widening.
+
+Verification plan: malformed dict/list/secret HTTP ingestion, caller-precedence and overflow tests, hook-to-HTTP-to-exact-History E2E, import-boundary report, and redline `architecture-review` satisfaction on the PR.
 ## Checkpoint: api-review
 What is changing: Add four Relay session-work HTTP operations, one optional ordered structural field and additive response projection on `/relay/turn`, plus four MCP wrappers. Existing request fields, scalar work refs, recipient/send/reply routes, and status codes remain unchanged.
 Why: Sessions need readable explicit association mutation and exact plural participant discovery through existing caller surfaces.
