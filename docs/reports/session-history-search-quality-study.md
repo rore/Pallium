@@ -1,6 +1,6 @@
 # Session History search-quality study
 
-**Measures:** fixed-candidate agent-visible evidence sufficiency. Candidate recovery is unchanged by construction; injection precision is unmeasured. A later downstream-task-effect budget trial stopped before effect estimation when its fixed ship threshold became unreachable.
+**Measures:** fixed-candidate agent-visible evidence sufficiency. Candidate recovery is unchanged by construction; injection precision is unmeasured. A later downstream-task-effect budget trial was incomplete because tool-output transport failures left no valid completed pairs; its operational decision is do not ship / not validated.
 
 ## Outcome
 
@@ -8,7 +8,7 @@ Do not ship the tested query-density excerpt window. It found more partial evide
 
 A follow-up also rejected one high-count response-allocation candidate: it recovered visible fragments but lost useful source-choice context and failed declared identifier and qualifier boundaries. This remains a report-only result. No retrieval, ranking, API, MCP, skill, integration, storage, or injection behavior changed.
 
-A later bounded follow-up rejected increasing the agent-facing search response budget from 2,000 to 4,000 characters. Evidence isolation left exactly three cases that could improve; a trial transport failure invalidated one of them, so the required three added resolutions became mathematically impossible. The run stopped without resampling or rerunning the affected pair.
+A later bounded follow-up did not validate increasing the agent-facing search response budget from 2,000 to 4,000 characters. Tool-output transport failures invalidated two pairs, including one of exactly three cases capable of improving, and the fixed ship rule could no longer be satisfied without a forbidden rerun or replacement. The incomplete run is not evidence that 4,000 characters regressed or failed quality, safety, negative-regression, or cost gates; those effects remain unmeasured.
 
 ## Serving baseline and cost
 
@@ -245,25 +245,29 @@ precision, and downstream task effect remain unmeasured.
 
 The 2026-09-10 follow-up tested one narrow presentation question: whether increasing only the agent-facing raw-history search response budget from 2,000 to 4,000 characters could improve downstream answers. It used a broad fixed-candidate presentation replay; the historical lookup schema does not preserve exact-work mode, so this is not an exact-work result. Candidate membership and ranking were fixed. Frozen anchors were source-disjoint, but work/thread dependence remained; the result supports only a bounded local decision.
 
-The original 15 cases stayed fixed. Protection covered all prior development and holdout events, the four prior comparison queries, their requests and exposed sources, and every retrievable expansion neighbor. Six fixed cases overlapped that protected universe and were marked ungradable without replacement; their evidence was redacted from gold and their variant cards were not run. The remaining nine cases produced six answerable, one partial, and two negative gold classifications. Negative count is two; this is observed fixed-sample coverage, not a claim about real-negative prevalence.
+The original 15 cases stayed fixed. Protection covered all prior development and holdout events, the four prior comparison queries, their requests and exposed sources, and every retrievable expansion neighbor. Six fixed cases overlapped that protected universe and were classified ungradable before any variant output: their evidence was redacted, they received no trial cards, and they were not replaced. This prevented prior-study or holdout leakage; it was not a quality judgment. The remaining nine cases produced six answerable, one partial, and two negative gold classifications. Negative count is two; this is observed fixed-sample coverage, not a claim about real-negative prevalence.
 
-Only three pressure cases were answerable or partial and therefore capable of improving. That met the predeclared minimum exactly. Two isolated reviewers froze gold before any variant output, and a clean-context smart review passed the harness. The paired run then started with separate fresh contexts. Ten of 18 planned journeys completed before the stopping condition fired. In two cases an expansion response was persisted in the harness log but did not reach the model; one failure was explicitly a Unicode console error and the second remained an opaque transport failure. Each affected pair was marked ungradable and was not rerun. One affected pair was one of the three possible improvement cases, leaving a maximum of two additional resolutions.
+Among the eight pressure cases, three were protected/ungradable and two were negative after exhaustive review of their frozen evidence universe. Only the remaining three were answerable or partial and therefore capable of improving from the larger response. That met the predeclared minimum exactly and left no margin before the run began.
+
+Ten of 18 planned journey outputs were produced, but none formed a valid completed pair. Only one case had both variants dispatched; its 4,000-character candidate was invalidated when the expansion helper persisted both requested payloads and the model consumed the first, but Windows stdout hit a Unicode encoding error while returning the second. The helper was then changed to emit UTF-8, with no rerun under the fixed protocol. In a later 2,000-character baseline for a pressure case, after that fix, the helper persisted a 2,400-character expansion with no logged harness error, yet the fresh model context received no readable command output and abstained. That second cause remains unknown at the tool-output transport boundary; its 4,000-character mate was not dispatched. The other seven cases had only one variant dispatched. These are not established Pallium Relay defects.
+
+The paired-journey phase had used 24,076 of its fixed 25,000 input-token allowance, leaving 924. That was below the two affected journeys' 2,353- and 3,545-token reservations, so even without the no-rerun rule neither affected journey could be repaired inside the remaining phase budget. With one of exactly three possible-improvement pairs invalidated, the predeclared operational ship rule was unreachable. The run stopped without replacement, rerun, tuning, or further dispatch; zero valid pairs means there is no downstream effect estimate and no usable baseline-versus-candidate outcome.
 
 | Fixed ship gate | Result |
 |---|---|
-| At least three additional resolved cases | **FAIL:** maximum possible fell to two |
-| Zero lost baseline successes | Not estimated after early stop |
-| No added unsupported/currentness/permission claim | Not estimated after early stop |
-| No observed negative regression | Not estimated after early stop; gold contained two negatives |
-| Search-plus-consumed-expansion text at most 125% | Not estimated after early stop |
+| At least three additional resolved cases | Not estimated: zero valid completed pairs; the fixed rule became unreachable without a forbidden rerun or replacement |
+| Zero lost baseline successes | Not estimated after the incomplete run |
+| No added unsupported/currentness/permission claim | Not estimated after the incomplete run |
+| No observed negative regression | Not estimated after the incomplete run; gold contained two negatives |
+| Search-plus-consumed-expansion text at most 125% | Not estimated after the incomplete run |
 | Caller contract checks green | Not run because production was not changed |
 
-Decision: **REJECT** the 4,000-character budget. Production remains at 2,000 characters. No replacement sampling, prompt tuning, affected-pair rerun, code edit, install, service restart, or merge occurred.
+Operational decision: **DO NOT SHIP / NOT VALIDATED**. Production remains at 2,000 characters. The incomplete trial does not show that 4,000 characters regressed or failed any quality, safety, negative-regression, or retrieval-text gate. No replacement sampling, prompt tuning, affected-pair rerun, code edit, install, service restart, or merge occurred.
 
-The enforcing experiment-payload ledger recorded 144,083 input and 12,483 output tokens against caps of 175,000 and 25,000. Counts use `o200k_base` for explicit repeated prompts, files, tool responses, and results plus framing reserves; provider-hidden runtime instructions are excluded because counters were unavailable. Private snapshots, evidence, cards, responses, logs, and the ledger remain ignored under `.local/history-budget-4000-trial/`.
+The enforcing experiment-payload ledger recorded 144,083 input and 12,483 output tokens against caps of 175,000 and 25,000. Counts use `o200k_base` for explicit repeated prompts, files, tool responses, and results plus framing reserves; provider-hidden runtime instructions are excluded because counters were unavailable. The run also departed from the requested Sol-only/no-redundant-runs constraint: the final review used gpt-6-astra high and a broad suite ran after the documentation-only decision. Both are recorded, neither repairs the missing pairs or supports an effect estimate, and neither is repeated for this prose correction. Private snapshots, evidence, cards, responses, logs, and the ledger remain ignored under `.local/history-budget-4000-trial/`.
 ## Recommendation
 
-Keep the existing 2,000-character agent-facing search response budget and current excerpt/response-packaging behavior. Do not change the shared `build_excerpt` helper: normal retrieval also feeds derived-memory routing, work-signal classification, and disclaimer suppression, so a global window change is not presentation-only. Do not add the tested history-specific density window or the tested 24-character-floor/rank-allocation policy based on this evidence.
+Keep the existing 2,000-character agent-facing search response budget because the 4,000-character candidate was not validated; do not interpret that operational default as evidence that 4,000 is worse. Do not change the shared `build_excerpt` helper: normal retrieval also feeds derived-memory routing, work-signal classification, and disclaimer suppression, so a global window change is not presentation-only. Do not add the tested history-specific density window or the tested 24-character-floor/rank-allocation policy based on this evidence.
 
 The remaining questions are separate investigations, not bundled implementation:
 
