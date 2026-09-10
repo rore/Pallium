@@ -207,6 +207,31 @@ def test_scope_transition_replay_and_same_scope_turn_are_idempotent(client: Test
     assert client.get("/relay/sessions", params={**old, "include_inactive": True}).json() == []
 
 
+def test_non_registering_turn_rejects_scope_transition_without_mutation(
+    client: TestClient,
+) -> None:
+    old = {"container_ref": "git:example.test/non-registering-old"}
+    new = {"container_ref": "git:example.test/non-registering-new"}
+    first = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "non-registering-transition", **old,
+    }).json()["session"]
+
+    rejected = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "non-registering-transition", **new,
+        "register_session": False,
+        "previous_container_ref": old["container_ref"],
+        "previous_endpoint_id": first["endpoint_id"],
+        "previous_scope_generation": first["scope_generation"],
+    })
+
+    assert rejected.status_code == 409
+    old_rows = client.get(
+        "/relay/sessions", params={**old, "include_inactive": True}
+    ).json()
+    assert [row["endpoint_id"] for row in old_rows] == [first["endpoint_id"]]
+    assert client.get("/relay/sessions", params={**new, "include_inactive": True}).json() == []
+
+
 def test_same_scope_turn_recovers_unreachable_endpoint_with_fenced_identity(client: TestClient, relay_storage) -> None:
     scope = {"container_ref": "git:example.test/unreachable-recovery"}
     first = client.post("/relay/turn", json={

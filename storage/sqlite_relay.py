@@ -327,6 +327,12 @@ class SQLiteRelayMixin:
         previous_scope_generation: int | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
+        if not register_session and any(
+            value is not None
+            for value in (previous_container_ref, previous_endpoint_id, previous_scope_generation)
+        ):
+            raise RelayConflictError("scope transitions require session registration")
+
         current = _now(now)
         with self._begin_relay_immediate() as db:
             registered = self._relay_session(

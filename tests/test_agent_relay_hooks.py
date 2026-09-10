@@ -527,6 +527,69 @@ def test_relay_turn_replays_without_claiming_until_final_destination(
     assert state["last_confirmed_container_ref"] == "git:new/repo"
     assert state["last_confirmed_scope_generation"] == 2
 
+
+@pytest.mark.parametrize(
+    ("relative", "runtime"),
+    [
+        ("integrations/claude-code/hooks/common.py", "claude-code"),
+        ("integrations/codex/hooks/common.py", "codex"),
+    ],
+)
+def test_non_registering_hook_probe_omits_persisted_transition_fields(
+    monkeypatch, tmp_path: Path, relative: str, runtime: str,
+) -> None:
+    common = _load(f"non_registering_{runtime}", relative)
+    state_dir = tmp_path / "sessions"
+    state_dir.mkdir()
+    monkeypatch.setattr(common, "SESSIONS_DIR", state_dir)
+    session_id = "non-registering-session"
+    (state_dir / f"{session_id}.json").write_text(json.dumps({
+        "container_ref": "git:old/repo",
+        "last_confirmed_container_ref": "git:old/repo",
+        "last_confirmed_endpoint_id": "relay-session-old",
+        "last_confirmed_scope_generation": 0,
+        "relay_turn_intent": {
+            "runtime": runtime,
+            "source_container_ref": "git:old/repo",
+            "destination_container_ref": "git:middle/repo",
+            "endpoint_id": "relay-session-old",
+            "scope_generation": 0,
+        },
+    }), encoding="utf-8")
+    calls = []
+
+    def request(_method, _path, body, **_kwargs):
+        calls.append(body)
+        return None
+
+    assert common.relay_turn(
+        runtime, session_id, "git:new/repo",
+        register_session=False, request=request,
+    ) is None
+    assert len(calls) == 1
+    assert calls[0]["register_session"] is False
+    assert not {
+        "previous_container_ref",
+        "previous_endpoint_id",
+        "previous_scope_generation",
+    }.intersection(calls[0])
+
+
+def test_codex_confirmed_scope_moves_update_pending_closes(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    common = _load("codex_pending_closes", "integrations/codex/hooks/common.py")
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
+    responses = [
+        _turn_response(container_ref=scope, endpoint_id="e1", scope_generation=index)
+        for index, scope in enumerate(("git:a", "git:b", "git:a", "git:c"))
+    ]
+    monkeypatch.setattr(common, "relay_request", lambda *_a, **_k: responses.pop(0))
+    for destination in ("git:a", "git:b", "git:a", "git:c"):
+        assert common.relay_turn("codex", "roundtrip", destination)
+    assert common.get_pending_relay_closes("roundtrip") == ["git:b", "git:a"]
+
+
 @pytest.mark.parametrize((
     "runtime", "relative",
 ), [

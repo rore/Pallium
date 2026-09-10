@@ -2375,14 +2375,14 @@ def relay_turn(
             if not _write_session_state_locked(sid, state):
                 return None
 
-        destinations = [intent] if intent is not None else [{
+        turn_intent = intent if intent is not None else {
             "runtime": runtime,
             "source_container_ref": state.get("last_confirmed_container_ref"),
             "destination_container_ref": container_ref,
             "endpoint_id": state.get("last_confirmed_endpoint_id"),
             "scope_generation": state.get("last_confirmed_scope_generation", confirmed_generation),
-        }]
-        for turn_intent in destinations:
+        }
+        for _ in range(2):
             destination = turn_intent["destination_container_ref"]
             if not isinstance(destination, str) or _safe_scope_value(destination) is None:
                 return None
@@ -2411,7 +2411,9 @@ def relay_turn(
             source = turn_intent.get("source_container_ref")
             endpoint = turn_intent.get("endpoint_id")
             generation = turn_intent.get("scope_generation")
-            if source is not None or endpoint is not None or generation != 0:
+            if register_session is True and (
+                source is not None or endpoint is not None or generation != 0
+            ):
                 if not (
                     isinstance(source, str)
                     and isinstance(endpoint, str)
@@ -2455,6 +2457,16 @@ def relay_turn(
                 return invalid_response
 
             if isinstance(source, str) and source != confirmed_container:
+                pending = state.get("pending_relay_closes")
+                state["pending_relay_closes"] = [
+                    ref for ref in dict.fromkeys([
+                        *(pending if isinstance(pending, list) else []), source,
+                    ]) if ref != confirmed_container
+                ]
+                close_generation = state.get("container_generation", 0)
+                state["container_generation"] = (
+                    close_generation + 1 if isinstance(close_generation, int) else 1
+                )
                 for key in ("identity_cwd", "repo_config_fingerprint", "actor_ref", "provisional_identity_context"):
                     state.pop(key, None)
             state["last_confirmed_container_ref"] = confirmed_container
@@ -2466,13 +2478,13 @@ def relay_turn(
                 return None
             if not intermediate:
                 return response
-            destinations.append({
+            turn_intent = {
                 "runtime": runtime,
                 "source_container_ref": confirmed_container,
                 "destination_container_ref": container_ref,
                 "endpoint_id": endpoint_id,
                 "scope_generation": generation_value,
-            })
+            }
         return None
     finally:
         _release_session_lock(lock_file)

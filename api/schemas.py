@@ -816,6 +816,7 @@ class RelayTurnRequest(BaseModel):
         description="Pre-claim compact-JSON candidate budget; not a transport response-size limit.",
     )
     max_messages: int = Field(default=3, ge=0)
+    register_session: bool = True
     structural_work_refs: Any = None
     previous_container_ref: str | None = Field(default=None, min_length=1, max_length=512)
     previous_endpoint_id: str | None = Field(default=None, min_length=1, max_length=128)

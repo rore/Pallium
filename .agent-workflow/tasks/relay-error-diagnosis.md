@@ -54,6 +54,8 @@ Verified against the working tree based on `4dd5615f`:
 - MCP client/server/protocol/lifecycle set: `211 passed`; client-only retry boundaries: `48 passed`.
 - Claude/Codex hook, wake, deadline, parity, and persisted-state set: `428 passed, 2 skipped`.
 - Full repository non-slow suite after result-review fixes, serial to avoid confirmed unrelated Windows/one-second parallel flakes: `4831 passed, 33 skipped, 170 deselected, 2 xfailed`.
+- CodeRabbit remediation: `10 passed` focused; `237 passed` across the five affected files in clean processes; independent smart review ran `89 passed` and `git diff --check`.
+
 ## Result review
 
-Clean-context smart review found four hook recovery gaps, then three follow-up identity/wake-cleanup/protocol-budget gaps. All were fixed and covered. The final smart re-review passed with no actionable findings; its 11 focused checks passed. Residual risk: FastMCP error sizing depends on the SDK prefix format, guarded by real `tools/call` tests.
+Clean-context smart review found four hook recovery gaps, then three follow-up identity/wake-cleanup/protocol-budget gaps. All were fixed and covered. The final smart re-review passed with no actionable findings; its 11 focused checks passed. CodeRabbit then found a non-registering transition mutation, missing Codex pending-close bookkeeping, two persistent test-state leaks, and an implicit replay bound. The fixes also surfaced and closed the missing HTTP `register_session` schema field. A final high-capability clean-context review passed with no actionable findings and 89 focused tests. Residual risk: FastMCP error sizing depends on the SDK prefix format, guarded by real `tools/call` tests.

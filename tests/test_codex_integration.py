@@ -663,10 +663,13 @@ def test_codex_prompt_scope_uses_host_session_and_never_fabricates_unknown(
 
 
 def test_codex_relay_delivery_bypasses_identical_prompt_dedup(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
 
+    monkeypatch.setitem(
+        hook.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "sessions"
+    )
     events: list[str] = []
     delivery = {"delivery_id": "delivery-1"}
     monkeypatch.setattr(
@@ -703,10 +706,13 @@ def test_codex_relay_delivery_bypasses_identical_prompt_dedup(
 
 
 def test_codex_no_relay_still_dedups_before_ingestion(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     from integrations.codex.hooks import user_prompt_submit as hook
 
+    monkeypatch.setitem(
+        hook.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "sessions"
+    )
     events: list[str] = []
     monkeypatch.setattr(
         hook,

@@ -772,9 +772,12 @@ def test_registration_idle_boundary_is_fail_closed(idle, expected) -> None:
 
 
 def test_session_start_delivers_and_acks_relay_before_orientation(
-    monkeypatch: pytest.MonkeyPatch, capsys,
+    monkeypatch: pytest.MonkeyPatch, capsys, tmp_path: Path,
 ) -> None:
     start = _load_claude_hook("session_start", monkeypatch)
+    monkeypatch.setitem(
+        start.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "sessions"
+    )
     delivery = {
         "delivery_id": "delivery-start",
         "claim_token": "claim-start",
