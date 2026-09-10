@@ -215,7 +215,7 @@ def _driver_main(mode: str, control: Path) -> int:
             "usage": {
                 "input_tokens": 20,
                 "output_tokens": output_tokens,
-                "cost_usd": 0.0,
+                "cost_usd": float("nan") if mode == "cost_nan" else 0.0,
             },
         }
     )
@@ -557,7 +557,10 @@ def test_resume_rejects_changed_config_sources_cases_or_gold(tmp_path: Path) -> 
         (lambda value: value["config"].__setitem__("max_attempts", 11), "max_attempts"),
         (lambda value: value["config"].__setitem__("total_input_tokens", -1), "total_input_tokens"),
         (lambda value: value["config"].__setitem__("attempt_output_tokens", "20"), "attempt_output_tokens"),
+        (lambda value: value["config"].__setitem__("driver_timeout_seconds", float("nan")), "driver_timeout_seconds"),
+        (lambda value: value["config"].__setitem__("driver_timeout_seconds", float("inf")), "driver_timeout_seconds"),
         (lambda value: value["sources"][0].__setitem__("metadata", []), "metadata"),
+        (lambda value: value["sources"][0].__setitem__("artifact_kind", "bogus"), "artifact_kind"),
         (lambda value: value["sources"][0].__setitem__("content", ""), "content"),
         (lambda value: value["cases"][0].__setitem__("query", "  "), "non-blank"),
         (lambda value: value["cases"][0].__setitem__("limit", 51), "limit"),
@@ -571,6 +574,16 @@ def test_pack_validation_rejects_invalid_types_and_bounds(mutate, match: str) ->
     with pytest.raises(PackError, match=match):
         validate_pack(value)
 
+
+def test_nonfinite_driver_cost_is_permanent_failure(tmp_path: Path) -> None:
+    pack_path = _write_pack(tmp_path, _pack(retry_input=0, retry_output=0))
+    state = tmp_path / "state"
+
+    report = _run(pack_path, state, "cost_nan", tmp_path / "control")
+
+    assert report["quality"] is None
+    assert report["attempt_statuses"] == {"permanent_failure": 2}
+    assert all(row["error"]["code"] == "invalid_cost" for row in _attempts(state))
 
 def test_pack_validation_rejects_filename_key_collisions() -> None:
     cases = _pack(case_count=2)

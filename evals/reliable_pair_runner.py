@@ -10,15 +10,17 @@ import argparse
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Sequence, get_args
 
 import httpx
 
+from api.schemas import ArtifactKind
 from app.config import AppConfig, ObservabilityConfig, SemanticPackageConfig
 from app.main import create_app
 from app.mcp.client import PalliumMcpClient
@@ -37,6 +39,7 @@ SCHEMA_VERSION = 1
 VARIANTS = ("baseline", "candidate")
 SAFE_RETRY_CODES = frozenset({"connection_lost", "invalid_utf8", "missing_output", "timeout"})
 NONTERMINAL = frozenset({"reserved", "started"})
+ARTIFACT_KINDS = frozenset(get_args(ArtifactKind))
 
 
 class PackError(ValueError):
@@ -131,7 +134,12 @@ def validate_pack(pack: Any) -> dict[str, Any]:
     if config["max_expansions"] > 10:
         raise PackError("config.max_expansions must be <= 10")
     timeout = config.get("driver_timeout_seconds")
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not math.isfinite(float(timeout))
+        or timeout <= 0
+    ):
         raise PackError("config.driver_timeout_seconds must be a positive number")
 
     if pack.get("variants") != list(VARIANTS):
@@ -157,6 +165,8 @@ def validate_pack(pack: Any) -> dict[str, Any]:
         for key in ("source_type", "artifact_kind", "role", "thread_ref"):
             if key in source:
                 _require_text(source[key], f"sources[{index}].{key}")
+        if source.get("artifact_kind", "message") not in ARTIFACT_KINDS:
+            raise PackError(f"sources[{index}].artifact_kind is invalid")
         if "metadata" in source and not isinstance(source["metadata"], dict):
             raise PackError(f"sources[{index}].metadata must be an object")
 
@@ -741,7 +751,10 @@ async def _driver_attempt(
             output_tokens = _require_int(usage.get("output_tokens"), "usage.output_tokens", 0)
             cost = usage.get("cost_usd")
             if cost is not None and (
-                isinstance(cost, bool) or not isinstance(cost, (int, float)) or cost < 0
+                isinstance(cost, bool)
+                or not isinstance(cost, (int, float))
+                or not math.isfinite(float(cost))
+                or cost < 0
             ):
                 raise RuntimeError("invalid_cost")
             return {

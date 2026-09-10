@@ -180,7 +180,7 @@ Focused acceptance covered real process termination and restart, conservative ch
 of the crash-after-execution-before-persist window, completed-step reuse, transient and
 permanent transport failure, malformed and invalid UTF-8 output, Unicode content crossing
 the subprocess boundary, input/output and pair budget boundaries, strict pack validation,
-all-invalid reporting, ordering, and report reconciliation. The corrected suite passed 29 tests, including production-format truncation and finalized audit-set parity.
+all-invalid reporting, ordering, and report reconciliation. The corrected suite passed 33 tests, including production-format truncation, finalized audit-set parity, artifact-kind bounds, and finite timeout/cost validation.
 The independently runnable no-model pilot produced one usable scripted pair, zero invalid
 pairs, two completed attempts, 40 charged input tokens, 10 charged output tokens, and
 USD 0.00.
