@@ -211,6 +211,10 @@ def _load_claude_hook(name: str, monkeypatch: pytest.MonkeyPatch):
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
+    common = sys.modules["common"]
+    state_dir = Path(os.environ["PALLIUM_CLAUDE_WAKE_DIR"]).parent / "hook-state"
+    common.STATE_DIR = state_dir
+    common.SESSIONS_DIR = state_dir / "sessions"
     return module
 
 
