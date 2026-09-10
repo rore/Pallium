@@ -72,7 +72,7 @@ Not required at this risk level. Architect design approval and later pilot verif
 —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -85,7 +85,7 @@ A cheap deletion audit found only cosmetic helper inlining, which would not mate
 
 ## Evidence
 
-Focused acceptance passed 20 tests in 59.43s. Independent affected-path verification passed the same 20 focused tests in 60.83s and 30 production History/MCP tests in 10.93s. The deterministic no-model pilot at `.local/reliable-pair-pilot-v2/state/report.json` produced one usable pair, zero invalid pairs, two completed attempts, 40 charged input tokens, 10 charged output tokens, and USD 0.00. This is infrastructure evidence only; no paid model or evaluator call ran and no downstream quality was measured.
+Focused acceptance passed 20 tests in 59.43s. Independent affected-path verification passed the same 20 focused tests in 60.83s and 30 production History/MCP tests in 10.93s. The deterministic no-model pilot at `.local/reliable-pair-pilot-v2/state/report.json` produced one usable pair, zero invalid pairs, two completed attempts, 40 charged input tokens, 10 charged output tokens, and USD 0.00. This is infrastructure evidence only; no paid model or evaluator call ran and no downstream quality was measured. Full non-slow regression at tested revision `72678ea6` passed 4,835 tests with 33 skipped and 2 expected failures in 202.82s. Import-boundary, redline, and workflow gates passed with Routine detected risk, no boundary violations, and no triggered review checkpoints.
 
 ## Result review
 
