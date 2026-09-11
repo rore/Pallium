@@ -7,11 +7,11 @@ description: Use Pallium Relay, Session History, or optional derived memory.
 
 ## Relay
 
-- Act on deliveries; reply on completion/blocker, never status-only.
-- Injected `agent_ref`/`thread_ref` identify self; never infer from recipients.
-- Address `relay-session-…` or `@name`; no broadcast/bare runtime. Ask before `replace_existing=true` unless takeover requested. Relay crosses containers; memory scope is unchanged. Ignore ACK-only.
+- Act on deliveries; reply only on completion/blocker.
+- Injected `agent_ref`/`thread_ref` identify self; never infer it.
+- Role target: use current `@name`; rediscover before endpoint reuse. Verify returned session/container admission snapshot if scope matters. Aliases/endpoints move; neither proves scope. No broadcast/bare runtime. Ask before takeover unless requested. Ignore ACK-only.
 - For exact work or link correction, load [work associations](references/work-associations.md).
-- Reply with `pallium_relay_reply`; inspect with `pallium_relay_status`. Follow preview `next_offset` to null. On `already_delivered=true` or conflict, only that delivery copy is stale: do not retry/reply/use its payload, but continue the surrounding user task and independently established work.
+- Reply via `pallium_relay_reply`; page `pallium_relay_status` to `next_offset=null`. On delivered/conflict, only that delivery copy is stale: do not retry/reply/use its payload, but continue the surrounding user task and independently established work.
 
 ## Session History
 

@@ -66,6 +66,8 @@ Legacy selectors have three forms:
 
 The canonical exact selector is `relay-session-<32 lowercase hex>`. The service-global name form is `@name`. A `runtime:@name` selector is compatibility only; if it does not match, the error says to use `@name`. Regular sends do not broadcast; a separate broadcast API may be added later.
 
+For a role recipient, use its current `@name`, or rediscover and inspect the intended session and container before reusing an exact endpoint. The delivery identity returned by send or reply is the admission snapshot: it makes a misroute visible after persistence, not before enqueue. Aliases can transfer and endpoints can move between containers, so neither selector proves current role ownership or scope.
+
 Legacy runtime-qualified forms apply to other supported runtimes.
 
 `pallium_relay_name(name="…")` assigns or transfers a name. First try without takeover; if occupied, fail and ask the user. Retry with `replace_existing=true` only after explicit approval, or immediately when the original request explicitly says to take over. Transferring a name affects future sends; messages already queued remain addressed to the original session.

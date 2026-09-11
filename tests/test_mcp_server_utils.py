@@ -114,3 +114,79 @@ def test_relay_text_strips_pydantic_sibling_fields() -> None:
     assert "input" not in out["detail"]["detail"][0]
     assert out["detail"]["metadata"] == {"request_id": "abc123"}
 
+def test_relay_text_compact_response_keeps_resolved_delivery_identity() -> None:
+    import json
+
+    endpoint = "relay-session-" + ("a" * 32)
+    result = {
+        "message_id": "relay-msg-identity",
+        "recipient": endpoint,
+        "payload": "x" * 4_000,
+        "redacted": False,
+        "in_reply_to": None,
+        "created_at": "2026-09-12T00:00:00Z",
+        "expires_at": None,
+        "deliveries": [{
+            "claim_token": "must-not-leak",
+            "recipient_endpoint_id": endpoint,
+            "recipient_runtime": "codex",
+            "recipient_session_ref": "target-session",
+            "recipient_container_ref": "git:example.test/target",
+            "state": "pending",
+            "destination_health": "active",
+        }],
+    }
+
+    rendered = _relay_text(result)
+    compact = json.loads(rendered)
+    assert len(rendered) <= 2_000
+    assert compact["message_id"] == "relay-msg-identity"
+    assert compact["deliveries"] == [{
+        "recipient_endpoint_id": endpoint,
+        "recipient_runtime": "codex",
+        "recipient_session_ref": "target-session",
+        "recipient_container_ref": "git:example.test/target",
+        "state": "pending",
+        "destination_health": "active",
+    }]
+    assert "must-not-leak" not in rendered
+
+
+def test_relay_text_compact_response_marks_escaped_identity_overflow() -> None:
+    import json
+
+    endpoint = "relay-session-" + ("b" * 32)
+    result = {
+        "message_id": "relay-msg-overflow",
+        "recipient": endpoint,
+        "payload": "redacted " + ("x" * 4_000),
+        "redacted": True,
+        "in_reply_to": "relay-msg-parent",
+        "created_at": "2026-09-12T00:00:00Z",
+        "expires_at": None,
+        "deliveries": [{
+            "claim_token": "must-not-leak",
+            "recipient_endpoint_id": endpoint,
+            "recipient_runtime": "claude-code",
+            "recipient_session_ref": ((chr(34) + chr(92)) * 128 + chr(34))[:255],
+            "recipient_container_ref": ((chr(34) + chr(92)) * 256)[:512],
+            "state": "pending",
+            "destination_health": "active",
+        }],
+    }
+
+    rendered = _relay_text(result)
+    compact = json.loads(rendered)
+    delivery = compact["deliveries"][0]
+    assert len(rendered) <= 2_000
+    assert compact["message_id"] == "relay-msg-overflow"
+    assert delivery["recipient_endpoint_id"] == endpoint
+    assert delivery["recipient_runtime"] == "claude-code"
+    assert delivery["state"] == "pending"
+    assert delivery["destination_health"] == "active"
+    assert set(delivery["omitted_fields"]) <= {
+        "recipient_session_ref", "recipient_container_ref",
+    }
+    assert delivery["omitted_fields"]
+    assert compact.get("payload_truncated") is True or compact.get("payload_omitted") is True
+    assert "must-not-leak" not in rendered

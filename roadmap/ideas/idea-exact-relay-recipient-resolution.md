@@ -30,7 +30,7 @@ Exact lookup exposes only a row already available through the same scoped paged 
 
 ## Validation
 
-Caller-surface test: exact `session_ref` returns the single matching row; absent match returns empty; the filter respects `container_ref` scope and `include_inactive`; unfiltered listing behavior is unchanged; actor/container isolation still holds (no reaching a session outside the authorized scope).
+Caller-surface test: exact `session_ref` returns the single matching row; absent match returns empty; the filter respects `container_ref` scope and `include_inactive`; unfiltered listing behavior is unchanged; container-local discovery still holds (no reaching a session outside the authorized scope).
 
 ## Outcome
 

@@ -65,7 +65,7 @@ def test_all_guidance_surfaces_preserve_search_to_expansion_telemetry_link() -> 
     assert all(linkage in rendered for rendered in surfaces)
     assert all("never derive, guess, or normalize" in rendered for rendered in surfaces)
 
-def test_relay_stale_delivery_guidance_stops_only_that_delivery() -> None:
+def test_relay_guidance_covers_stale_delivery_and_recipient_identity() -> None:
     skills = (
         Path("integrations/claude-code/skills/pallium-memory/SKILL.md"),
         Path("integrations/codex/skills/pallium-memory/SKILL.md"),
@@ -74,6 +74,10 @@ def test_relay_stale_delivery_guidance_stops_only_that_delivery() -> None:
     rule = ("only that delivery copy is stale: do not retry/reply/use its payload, but "
             "continue the surrounding user task and independently established work")
     assert all(rule in skill.read_text(encoding="utf-8") for skill in skills)
+    routing = "Role target: use current `@name`; rediscover before endpoint reuse"
+    snapshot = "Verify returned session/container admission snapshot if scope matters"
+    movement = "Aliases/endpoints move; neither proves scope"
+    assert all(all(item in skill.read_text(encoding="utf-8") for item in (routing, snapshot, movement)) for skill in skills)
 
 def test_history_guidance_distinguishes_modes_without_dropping_safety() -> None:
     paths = (

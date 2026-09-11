@@ -173,35 +173,74 @@ def _relay_text(result: object) -> str:
         return _relay_error_text({"error": "invalid relay response"})
     if len(_json_text(result)) <= _MCP_RELAY_MAX_CHARS:
         return _json_text(result)
-    if isinstance(result, dict) and isinstance(result.get("deliveries"), list):
+    deliveries = result.get("deliveries")
+    if isinstance(deliveries, list):
         states: dict[str, int] = {}
-        for delivery in result["deliveries"]:
+        projected = []
+        delivery_fields = (
+            "recipient_endpoint_id",
+            "recipient_runtime",
+            "recipient_session_ref",
+            "recipient_container_ref",
+            "state",
+            "destination_health",
+        )
+        for delivery in deliveries:
             state = str(delivery.get("state", "unknown"))
             states[state] = states.get(state, 0) + 1
+            projected.append({key: delivery[key] for key in delivery_fields if key in delivery})
         summary = {
             key: result[key]
             for key in ("message_id", "recipient", "redacted", "in_reply_to", "created_at", "expires_at")
             if key in result
         }
-        summary.update(delivery_count=len(result["deliveries"]), delivery_states=states)
+        summary.update(
+            delivery_count=len(deliveries),
+            delivery_states=states,
+            deliveries=projected,
+        )
         payload = result.get("payload")
-        if result.get("redacted") is True and isinstance(payload, str):
+        has_redacted_payload = result.get("redacted") is True and isinstance(payload, str)
+        if has_redacted_payload:
+            summary["payload_omitted"] = True
+
+        if len(_json_text(summary)) > _MCP_RELAY_MAX_CHARS and "recipient" in summary:
+            summary.pop("recipient")
+            summary["response_fields_omitted"] = ["recipient"]
+        for key in ("recipient_session_ref", "recipient_container_ref"):
+            for delivery in projected:
+                if len(_json_text(summary)) <= _MCP_RELAY_MAX_CHARS:
+                    break
+                if key in delivery:
+                    delivery.pop(key)
+                    delivery.setdefault("omitted_fields", []).append(key)
+        while projected and len(_json_text(summary)) > _MCP_RELAY_MAX_CHARS:
+            projected.pop()
+            summary["deliveries_omitted"] = len(deliveries) - len(projected)
+
+        if has_redacted_payload:
+            summary.pop("payload_omitted")
             summary["payload"] = payload
             if len(_json_text(summary)) > _MCP_RELAY_MAX_CHARS:
                 summary["payload_truncated"] = True
                 marker = "…[truncated]"
-                low, high = 0, len(payload)
-                while low < high:
-                    mid = (low + high + 1) // 2
-                    summary["payload"] = payload[:mid] + marker
-                    if len(_json_text(summary)) <= _MCP_RELAY_MAX_CHARS:
-                        low = mid
-                    else:
-                        high = mid - 1
-                summary["payload"] = payload[:low] + marker
+                summary["payload"] = marker
+                if len(_json_text(summary)) > _MCP_RELAY_MAX_CHARS:
+                    summary.pop("payload")
+                    summary.pop("payload_truncated")
+                    summary["payload_omitted"] = True
+                else:
+                    low, high = 0, len(payload)
+                    while low < high:
+                        mid = (low + high + 1) // 2
+                        summary["payload"] = payload[:mid] + marker
+                        if len(_json_text(summary)) <= _MCP_RELAY_MAX_CHARS:
+                            low = mid
+                        else:
+                            high = mid - 1
+                    summary["payload"] = payload[:low] + marker
         return _json_text(summary)
     return _relay_error_text({"error": "relay response exceeds the response budget"})
-
 
 def _relay_status_text(result: object, offset: int) -> str:
     if isinstance(result, dict) and "error" in result:
@@ -1112,7 +1151,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         expires_in_seconds: int | None = None,
         container_ref: str | None = None,
     ) -> str:
-        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery."""
+        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). For a role recipient, use its current @name; before reusing an exact endpoint, rediscover and verify its session/container. Returned delivery identity is the admission snapshot. Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
