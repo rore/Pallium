@@ -28,9 +28,10 @@ messages, and supports Pallium's optional derived-memory behavior.
 - inspect, flag, and write memory through MCP tools
 
 Windows and Linux exact-session wake are qualified for tasks already loaded by
-their Codex runtime. The native exact-thread queue also persists work for an
-unloaded task's next supported resume; Pallium does not cold-resume it from the
-service checkout. Windows additionally proves overtaken-wake suppression,
+their Codex runtime. If a task is not loaded, Pallium's persisted Relay delivery
+stays pending and the installed hook retrieves it on the next supported turn;
+native unloaded-queue persistence and cold resume are not claimed. Windows
+additionally proves overtaken-wake suppression,
 delivery-derived reply wake of an idle loaded sender, and a bounded remediation
 round trip without manual turns. Remaining interrupted/restart lifecycle and
 macOS qualification work retains next-turn delivery where active wake is not

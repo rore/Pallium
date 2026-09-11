@@ -75,6 +75,7 @@ Not required at this risk level.
 - Focused edit-loop verification is green: `tests/test_codex_wake.py` reports 49 passed, including explicit cwd, Unicode, unsafe/missing/error path, pending-before-hook, exact hook delivery, and single-flight coverage.
 - Independent result review blocked merge on two substantive gaps: redirected `.codex` could still resolve to the service checkout, and live docs/fixture overclaimed native unloaded-task persistence. Scope expanded to the state doc and Codex restart fixture; verification must be rerun after the reviewed correction.
 - Skill feedback Trigger 1 dropped: the repeated `apply_patch` 1327 workaround is a documented machine-local runtime failure outside agent-workflow ownership.
+- Implemented the accepted correction: resolved `.codex` paths equal to or nested inside the live service checkout now fail before spawn; POSIX claims stop at absolute existing directories. Current docs, state, restart fixture, and roadmap now rely only on Pallium pending delivery plus a later real hook for unloaded tasks. Focused adapter+fixture verification reports 56 passed.
 
 ## Plan review
 

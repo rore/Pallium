@@ -184,7 +184,13 @@ def _codex_home() -> Path | None:
         if not _is_local_absolute_path(candidate):
             return None
         resolved = candidate.resolve()
-        if not _is_local_absolute_path(resolved) or not resolved.is_dir():
+        service_cwd = Path.cwd().resolve()
+        if (
+            not _is_local_absolute_path(resolved)
+            or not resolved.is_dir()
+            or resolved == service_cwd
+            or service_cwd in resolved.parents
+        ):
             return None
         return resolved
     except (OSError, RuntimeError, ValueError):

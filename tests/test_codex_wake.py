@@ -139,6 +139,28 @@ def test_relative_neutral_cwd_does_not_spawn(monkeypatch, home) -> None:
     run.assert_not_called()
 
 
+def test_neutral_cwd_redirected_into_service_checkout_does_not_spawn(
+    monkeypatch, tmp_path,
+) -> None:
+    home = tmp_path / "home"
+    codex_home = home / ".codex"
+    service_cwd = tmp_path / "service-checkout"
+    codex_home.mkdir(parents=True)
+    service_cwd.mkdir()
+    monkeypatch.setattr(codex_wake.Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(
+        codex_wake.Path, "cwd", classmethod(lambda cls: service_cwd),
+    )
+    monkeypatch.setattr(
+        codex_wake.Path,
+        "resolve",
+        lambda self: service_cwd if self.name == ".codex" else self,
+    )
+    with patch("app.codex_wake.subprocess.run") as run:
+        assert codex_wake._launch("target-session", "wake") == "failed"
+    run.assert_not_called()
+
+
 def test_neutral_cwd_resolution_error_does_not_spawn() -> None:
     with patch("app.codex_wake.Path.home", side_effect=OSError("unavailable")), patch(
         "app.codex_wake.subprocess.run",

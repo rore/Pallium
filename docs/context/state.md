@@ -1,6 +1,6 @@
 # Current State
 
-> Updated 2026-09-10. Keep queue and sequencing in [roadmap/](../../roadmap/);
+> Updated 2026-09-11. Keep queue and sequencing in [roadmap/](../../roadmap/);
 > this file is only a short implementation snapshot.
 
 ## Product shape
@@ -26,7 +26,7 @@ evaluated layer over history rather than the product definition.
 - automatic hook delivery plus MCP recovery receive/ack tools
 - durable next-natural-turn fallback for Claude Code, Codex, and OpenCode
 - Windows and Linux Claude Code wake qualified (Linux via installed UDS on Ubuntu 24.04 / Claude Code 2.1.250)
-- Windows and Linux Codex exact-session wake qualified; loaded/unloaded and overtaken-wake suppression additionally proven on Windows
+- Windows and Linux Codex exact-session wake qualified for runtime-loaded tasks; unloaded work retains Pallium's pending next-turn fallback, and overtaken-wake suppression is additionally proven on Windows
 
 Codex lifecycle/dogfood and first-run hook-trust setup gates, macOS Claude
 qualification, macOS Codex qualification, and OpenCode active wake remain
