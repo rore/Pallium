@@ -10,7 +10,11 @@ from typing import Any
 
 from api.routes import create_router
 from core.claude_wake import ClaudeWakeRegistry
-from app.codex_wake import mark_codex_relay_wake_admitted, schedule_codex_relay_wake
+from app.codex_wake import (
+    mark_codex_relay_wake_admitted,
+    relay_wake_log_refs,
+    schedule_codex_relay_wake,
+)
 from app.claude_wake import schedule_claude_relay_wake
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.contracts import MemoryRetentionPolicy
@@ -623,7 +627,21 @@ def recover_expired_relay_wakes(
                 continue
             runtime = candidate["recipient_runtime"]
             session_ref = candidate["recipient_session_ref"]
-            logger.info("relay wake_recovery runtime=%s source=persisted", runtime)
+            if runtime == "codex":
+                delivery_ref, session_fp, container_fp = relay_wake_log_refs(
+                    candidate["delivery_id"], session_ref, candidate["container_ref"]
+                )
+                logger.info(
+                    "relay wake_recovery runtime=codex source=persisted "
+                    "delivery_ref=%s session_fp=%s container_fp=%s",
+                    delivery_ref,
+                    session_fp,
+                    container_fp,
+                )
+            else:
+                logger.info(
+                    "relay wake_recovery runtime=%s source=persisted", runtime
+                )
             dispatch_relay_wake(
                 {
                     "recipient": f"{runtime}:{session_ref}",

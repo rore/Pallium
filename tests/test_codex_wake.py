@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
+import logging
 import os
 import subprocess
 import threading
@@ -45,6 +47,10 @@ def _delivery(delivery_id: str = "delivery-1", runtime: str = "codex") -> dict:
 
 def _schedule(result: dict) -> None:
     codex_wake.schedule_codex_relay_wake(result, SCOPE)
+
+
+def _log_fp(value: str) -> str:
+    return "sha256:" + hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()[:16]
 
 
 def setup_function() -> None:
@@ -94,6 +100,154 @@ def test_queue_timeout_is_ambiguous(tmp_path) -> None:
     ) as run:
         assert codex_wake._launch("target-session", "wake") == "ambiguous"
     run.assert_called_once()
+
+def test_launch_result_classifies_without_exposing_process_details(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    cases = (
+        (
+            subprocess.CompletedProcess([], 0, stderr="SECRET_SUCCESS"),
+            "outcome=queued reason=none exit_code=0",
+            True,
+        ),
+        (
+            subprocess.CompletedProcess([], 7, stderr="SECRET_FAILURE"),
+            "outcome=failed reason=nonzero_exit exit_code=7",
+            False,
+        ),
+        (
+            subprocess.TimeoutExpired(
+                ["SECRET_COMMAND"], 30, stderr="SECRET_TIMEOUT"
+            ),
+            "outcome=ambiguous reason=timeout exit_code=none",
+            True,
+        ),
+        (
+            OSError("SECRET_OS_ERROR"),
+            "outcome=failed reason=os_error exit_code=none",
+            False,
+        ),
+        (
+            ValueError("SECRET_VALUE_ERROR"),
+            "outcome=failed reason=value_error exit_code=none",
+            False,
+        ),
+        (
+            None,
+            "outcome=failed reason=invalid_codex_home exit_code=none",
+            False,
+        ),
+    )
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+
+    for index, (effect, expected_log, reservation_held) in enumerate(cases):
+        caplog.clear()
+        delivery_id = f"relay-delivery-{index:032x}"
+        wake_key = (f"session-{index}", "container-\ud800-SECRET_SCOPE")
+        generation = index + 1
+        codex_wake._scheduled_delivery_ids.add(delivery_id)
+        codex_wake._scheduled_session_delivery_ids[wake_key] = delivery_id
+        codex_wake._scheduled_session_generations[wake_key] = generation
+        patch_args = (
+            {"side_effect": effect}
+            if isinstance(effect, BaseException)
+            else {"return_value": effect}
+        )
+        unreachable = []
+        with caplog.at_level(logging.INFO, logger="app.codex_wake"), patch(
+            "app.codex_wake._codex_home",
+            return_value=None if effect is None else codex_home,
+        ), patch(
+            "app.codex_wake._wake_prompt", return_value="SECRET_PROMPT"
+        ), patch("app.codex_wake.subprocess.run", **patch_args) as run:
+            codex_wake._wake_after_debounce(
+                delivery_id, wake_key, generation, unreachable.append
+            )
+
+        message = next(
+            record.getMessage()
+            for record in caplog.records
+            if record.getMessage().startswith("codex_relay_wake delivery_ref=")
+        )
+        assert expected_log in message
+        assert f"delivery_ref={delivery_id}" in message
+        assert f"container_fp={_log_fp(wake_key[1])}" in message
+        assert "SECRET" not in message
+        assert wake_key[1] not in message
+        assert run.call_count == (0 if effect is None else 1)
+        assert (delivery_id in codex_wake._scheduled_delivery_ids) is reservation_held
+        assert len(unreachable) == (0 if reservation_held else 1)
+        codex_wake._scheduled_delivery_ids.clear()
+        codex_wake._scheduled_session_generations.clear()
+        codex_wake._scheduled_session_delivery_ids.clear()
+
+def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = "session-secret-C:/private/token-é-" + "x" * 2048
+    containers = (
+        "git:example.test/private-one\r\nSECRET_ONE\ud800",
+        "C:/private/two/秘密/SECRET_TWO",
+    )
+    deliveries = (
+        "relay-delivery-" + "a" * 32,
+        "relay-delivery-" + "b" * 32,
+    )
+    workers = []
+    unreachable = []
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+
+    with patch("app.codex_wake.threading.Thread") as thread:
+        thread.side_effect = lambda **kwargs: (
+            workers.append(kwargs["args"]),
+            type("Worker", (), {"start": lambda self: None})(),
+        )[1]
+        for delivery_id, container_ref in zip(deliveries, containers):
+            result = _delivery(delivery_id)
+            result["recipient"] = f"codex:{session}"
+            result["deliveries"][0]["recipient_session_ref"] = session
+            codex_wake.schedule_codex_relay_wake(
+                result,
+                {"container_ref": container_ref},
+                on_unreachable=unreachable.append,
+            )
+
+    with caplog.at_level(logging.INFO, logger="app.codex_wake"), patch(
+        "app.codex_wake._wake",
+        side_effect=(
+            ("failed", "nonzero_exit", 7),
+            ("ambiguous", "timeout", None),
+        ),
+    ):
+        for worker in workers:
+            codex_wake._wake_after_debounce(*worker)
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("codex_relay_wake delivery_ref=")
+    ]
+    assert len(messages) == 2
+    assert f"delivery_ref={deliveries[0]}" in messages[0]
+    assert f"delivery_ref={deliveries[1]}" in messages[1]
+    assert f"session_fp={_log_fp(session)}" in messages[0]
+    assert f"session_fp={_log_fp(session)}" in messages[1]
+    assert f"container_fp={_log_fp(containers[0])}" in messages[0]
+    assert f"container_fp={_log_fp(containers[1])}" in messages[1]
+    assert "outcome=failed reason=nonzero_exit exit_code=7" in messages[0]
+    assert "outcome=ambiguous reason=timeout exit_code=none" in messages[1]
+    combined = "\n".join(messages)
+    assert session not in combined
+    assert containers[0] not in combined
+    assert containers[1] not in combined
+    assert "SECRET" not in combined
+    assert len(unreachable) == 1
+    assert codex_wake._scheduled_delivery_ids == {deliveries[1]}
 
 @pytest.mark.parametrize("kind", ["missing", "file"])
 def test_missing_or_non_directory_neutral_cwd_does_not_spawn(monkeypatch, tmp_path, kind) -> None:
@@ -170,7 +324,9 @@ def test_neutral_cwd_resolution_error_does_not_spawn() -> None:
 
 
 def test_wake_defers_claim_until_turn_execution() -> None:
-    with patch("app.codex_wake._launch", return_value="queued") as launch:
+    with patch(
+        "app.codex_wake._launch_result", return_value=("queued", None, 0)
+    ) as launch:
         codex_wake._wake("target-session")
     launch.assert_called_once_with("target-session", codex_wake._wake_prompt())
 
@@ -279,6 +435,55 @@ def test_busy_wake_holds_earliest_trigger_without_blind_retry(
     assert len(workers) == 1
     assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
 
+
+def test_recovery_log_correlates_without_free_form_identifiers(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from app import dependencies
+    from core.claude_wake import ClaudeWakeRegistry
+
+    delivery_id = "relay-delivery-" + "c" * 32
+    session_ref = "session-C:/private/SECRET-é-" + "x" * 2048
+    container_ref = "git:example.test/private\r\nSECRET\ud800"
+    candidate = {
+        "delivery_id": delivery_id,
+        "recipient_endpoint_id": "relay-session-" + "d" * 32,
+        "recipient_runtime": "codex",
+        "recipient_session_ref": session_ref,
+        "state": "pending",
+        "container_ref": container_ref,
+    }
+    scheduled = []
+
+    class Relay:
+        def wake_candidates(self, delivery_id=None):
+            return [candidate] if delivery_id in (None, candidate["delivery_id"]) else []
+
+        def mark_unreachable(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(
+        "app.dependencies.schedule_codex_relay_wake",
+        lambda result, scope, **_kwargs: scheduled.append((result, scope)),
+    )
+    with caplog.at_level(logging.INFO, logger="app.dependencies"):
+        dependencies.recover_expired_relay_wakes(
+            Relay(), ClaudeWakeRegistry()
+        )
+
+    message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("relay wake_recovery runtime=codex")
+    )
+    assert f"delivery_ref={delivery_id}" in message
+    assert f"session_fp={_log_fp(session_ref)}" in message
+    assert f"container_fp={_log_fp(container_ref)}" in message
+    assert session_ref not in message
+    assert container_ref not in message
+    assert "SECRET" not in message
+    assert len(scheduled) == 1
 
 def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> None:
     from app import dependencies
