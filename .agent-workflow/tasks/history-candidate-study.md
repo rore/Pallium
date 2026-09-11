@@ -29,7 +29,7 @@ Moderate
 The tracked Work Record is blue, but ignored `.local/**` study artifacts are gray under the repository policy, making the overall task Elevated. The study has multiple controlled stages but no production mutation or interface change.
 
 **Discovery:**
-The corpus contains 370 finalized lookups, 100 sessions, 15 containers, 115 distinct linked requests, and 93 linked requests with finalized expansion. The last 14 days contain 223 lookups and 84 distinct linked requests. Attempt depth cannot be joined to request episodes from persisted schema. Persisted lookup rows also do not prove the original MCP tool, source_type, role, artifact_kind, work_refs, or all actor/mode options, so replay eligibility requires an exact matching runtime tool-call record. Existing diagnostics cover only small purposive samples and are development evidence. evals/real_corpus_pull_eval.py supplies reconstruction ideas but caps samples at 20 and is not a frozen replay runner. evals/reliable_pair_runner.py supplies durable hash/resume patterns. core/query.py::QueryExecutor.query, core/query.py::_collapse_source_duplicates, retrieval/common.py::build_source_content_fingerprint, api/routes.py::_serialize_result, and app/mcp/server.py::_compact_history are the production selection/serialization/rendering seam. Live /query/debug writes lookup telemetry and is prohibited for this study. Vector retrieval may mutate stale index entries, so state must be prepared before freezing and restored or verified per arm.
+The corpus contains 370 finalized lookups, 101 sessions, 15 containers, 115 distinct linked requests, and 93 linked requests with a linked expansion event. The last 14 days contain 223 lookups and 84 distinct linked requests. Attempt depth cannot be joined to request episodes from persisted schema. Persisted lookup rows also do not prove the original MCP tool, source_type, role, artifact_kind, work_refs, or all actor/mode options, so replay eligibility requires an exact matching runtime tool-call record. Existing diagnostics cover only small purposive samples and are development evidence. evals/real_corpus_pull_eval.py supplies reconstruction ideas but caps samples at 20 and is not a frozen replay runner. evals/reliable_pair_runner.py supplies durable hash/resume patterns. core/query.py::QueryExecutor.query, core/query.py::_collapse_source_duplicates, retrieval/common.py::build_source_content_fingerprint, api/routes.py::_serialize_result, and app/mcp/server.py::_compact_history are the production selection/serialization/rendering seam. Live /query/debug writes lookup telemetry and is prohibited for this study. Vector retrieval may mutate stale index entries, so state must be prepared before freezing and restored or verified per arm.
 
 **Material assumptions:**
 - At least 60 untouched valid linked episodes remain after unioning all previously inspected and calibration cases. Disproof: inventory falls below 60 episodes, 30 sessions, or 5 containers. Action: stop before confirmation and specify prospective collection needs.
@@ -51,12 +51,12 @@ The corpus contains 370 finalized lookups, 100 sessions, 15 containers, 115 dist
 11. Save private case/gold/run records and a public text-free aggregate report. Do not implement or open a PR unless the evidence supports a separately scoped intervention.
 
 **Verification plan:**
-- Run the inventory twice and assert identical IDs, hashes, exclusions, development/confirmation split, and untouched-gate counts.
-- Run one deterministic scripted pair through the exact replay/formatting path; interrupt and resume it; inject transient and permanent failures; include Unicode; assert no repeated completed work, preserved attempts, budget stop, and report-to-record reconciliation.
-- Assert every arm starts from or verifies the same frozen source/index hashes and uses the recorded embedding cache identity.
-- Assert B2/B3 control and treatment inputs match exactly on pool, depth, K, byte budget, and rendering path before transform.
-- Double-label calibration and required review sample before freezing; verify no calibration or prior-inspection ID appears in confirmation.
-- Recompute all metrics independently from durable records and reconcile episode/session/container counts, target eligibility, bytes, latency, and outcome thresholds.
+- Inventory determinism → Run the inventory twice and assert identical IDs, hashes, exclusions, development/confirmation split, and untouched-gate counts.
+- Runner durability → Run one deterministic scripted pair through the exact replay/formatting path; interrupt and resume it; inject transient and permanent failures; include Unicode; assert no repeated completed work, preserved attempts, budget stop, and report-to-record reconciliation.
+- Replay state equality → Assert every arm starts from or verifies the same frozen source/index hashes and uses the recorded embedding cache identity.
+- Arm isolation → Assert B2/B3 control and treatment inputs match exactly on pool, depth, K, byte budget, and rendering path before transform.
+- Label calibration and split integrity → Double-label calibration and required review sample before freezing; verify no calibration or prior-inspection ID appears in confirmation.
+- Report reconciliation → Recompute all metrics independently from durable records and reconcile episode/session/container counts, target eligibility, bytes, latency, and outcome thresholds.
 
 **Plan review:**
 See the Plan review section below. Clean-context Elevated final re-review passed on 2026-09-11.
@@ -67,7 +67,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Plan review
@@ -82,12 +82,21 @@ Clean-context Elevated plan final re-review 2026-09-11: PASS — all prior block
 
 ## Implementation
 
-Not started.
+Created a consistent read-only SQLite backup and private ignored stdlib-only scripts under `.local/history-candidate-study/`. The preflight inventoried the frozen contamination universe, matched actual structured Codex/Claude calls, and stopped before retrieval or arm comparison because the untouched confirmation gate failed. A separate observational audit then measured current source exposure and source-opening behavior across the full linked population; it did not compare candidates or claim relevance/task benefit. The repository's existing reuse-rollup loader was run read-only; its labels are uncalibrated, so they were not used as outcome evidence.
 
 ## Evidence
 
-Pending.
+- Preflight population: 370 finalized lookups, 115 linked request episodes, 101 lookup sessions, and 15 containers.
+- Confirmation gate: 97 episodes were present in frozen prior-study artifacts and 12 were after the cutoff. Six untouched episodes remained; only 3 were reconstructible broad-search calls, from 1 session and 1 container, versus required minima of 60, 30, and 5. Candidate comparison therefore stopped.
+- Preflight manifest was byte-stable across identical runs: SHA-256 `E4A65C2352B1A28A27E1432DCFC847F8DEBF23130A2735232B0DCB88E1E7C760`.
+- Observational population: 115 linked episodes, 180 linked lookup events, 55 sessions, 5 containers, and 1,313 exposed candidate slots. Four lookups returned zero results. Any linked expansion call occurred in 93 episodes; 68 had non-empty expansion output and 38 had an identifiable anchor. These are navigation diagnostics, not usefulness.
+- Of 88 identifiable source openings, delivered list position was median 2; 58/88 were within positions 1-3, 75/88 within 1-5, and all within 1-10. This supports preserving feasible deeper handles, which current compaction already does under #169; it does not measure #169's effect.
+- Case/whitespace-normalized content-equivalent exposure was concentrated in `git:github.com/rore/cabinet_data`: 32/219 surplus slots (14.6%) across 19/36 lookups (52.8%). All groups crossed historical sessions, and four opened anchors belonged to such groups, so blind handle collapse is not justified. A future grouped presentation must preserve each source's provenance, date, and distinct expansion path.
+- Task-notification exposure was smaller: 32/1,017 slots (3.1%) in `git:github.com/rore/pallium`, across 16/135 lookups; none of 88 identifiable opened anchors was a notification. This conditional selection evidence is insufficient for an implementation claim.
+- The existing reuse rollup found 125 labels over 43 events but had no calibration report (`calibration.n=0`); no downstream-benefit conclusion was drawn.
+- Final observational summary was byte-stable across identical runs: SHA-256 `E234B9B3E02DF687C551BF0F8EB5D5136255F0B8CA5A789965BBA3D52293B4C1`.
+- Live service search and production database/vector mutation were not used.
 
 ## Result review
 
-Pending.
+Independent Astra review passed the corrected observational audit. It verified source-opening terminology, delivered-position ranks, expansion strata, query-change accounting, container concentration, missing-source/origin caveats, and deterministic output. It agreed that no candidate-ranking implementation is justified now. The smallest evidence-worthy follow-up is prospective adjudication of equivalent groups in the affected container while preserving provenance, dates, and expansion paths. Content comparisons use current snapshot text rather than preserved historical excerpts.
