@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -48,7 +48,7 @@
 - Persisted delivery metadata resolves the mistaken endpoint to `git:github.com/rore/dictation-app`; current `@pall-arc` resolves to `git:github.com/rore/pallium`.
 - `_relay_text` in `app/mcp/server.py` removes all resolved delivery identity when a long send exceeds the MCP response budget.
 - Focused formatter, cross-container send/reply, escaped-boundary, idempotence, redaction, and guidance tests: 17 passed.
-- Full regression on code revision `d49b900f`: 4,863 passed, 33 skipped, 2 xfailed in 223.71 seconds.
+- Full regression on final code revision `da421397`: 4,864 passed, 33 skipped, 2 xfailed in 209.47 seconds.
 
 ## Plan review
 
