@@ -20,11 +20,13 @@ Smallest fix: thread an optional `session_ref` filter through `relay_list_sessio
 
 Authorization is preserved because resolution stays inside the caller-supplied `container_ref` scope — this adds no new cross-container read capability. Cross-container targeting remains whatever the shipped actor-scoped routing already permits; this item only removes the O(pages) scan within an already-authorized scope.
 
+## Direction (decided)
+
+Optional exact `session_ref` filter on the existing list path is the chosen smallest fix — not a dedicated `resolve` operation. Alias resolution is deferred; add it only if a concrete need appears. Keep this separate from Session History search-quality work.
+
 ## Questions before commitment
 
-- Should the filter be exact `session_ref` only, or also accept an alias for a symmetric "resolve one recipient" call?
 - Does exposing exact-membership presence within a scope leak anything the paged listing does not already reveal? (Expected no — same rows, fewer calls.)
-- Is a dedicated `resolve` operation clearer than an optional filter on the list operation, or does the optional filter keep the surface smaller?
 
 ## Validation if promoted
 
