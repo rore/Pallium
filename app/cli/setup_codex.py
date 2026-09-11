@@ -274,7 +274,7 @@ def _install_relay_profile() -> None:
         _codex_relay_profile_path(),
         "[mcp_servers.pallium]\n"
         "required = true\n"
-        'enabled_tools = ["pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive"]\n'
+        'enabled_tools = ["pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive", "pallium_search_history_by_work_ref", "pallium_search_history", "pallium_expand_source"]\n'
         'default_tools_approval_mode = "prompt"\n'
         "\n[mcp_servers.pallium.tools.pallium_relay_send]\n"
         'approval_mode = "approve"\n'
@@ -283,6 +283,12 @@ def _install_relay_profile() -> None:
         "\n[mcp_servers.pallium.tools.pallium_relay_ack]\n"
         'approval_mode = "approve"\n'
         "\n[mcp_servers.pallium.tools.pallium_relay_receive]\n"
+        'approval_mode = "approve"\n'
+        "\n[mcp_servers.pallium.tools.pallium_search_history_by_work_ref]\n"
+        'approval_mode = "approve"\n'
+        "\n[mcp_servers.pallium.tools.pallium_search_history]\n"
+        'approval_mode = "approve"\n'
+        "\n[mcp_servers.pallium.tools.pallium_expand_source]\n"
         'approval_mode = "approve"\n',
     )
 

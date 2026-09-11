@@ -168,7 +168,7 @@ class TestConnectionError:
             client = PalliumMcpClient(ctx)
             result = await client.query("test")
             assert "error" in result
-            assert "Connection refused" in result["error"]
+            assert result == {"error": "Connection refused"}
 
 class TestExplicitMemoryCreation:
     @staticmethod
@@ -409,7 +409,9 @@ class TestRelay:
         error = httpx.ConnectError("offline")
         with patch("httpx.AsyncClient.post", side_effect=error) as post:
             result = await PalliumMcpClient(ctx).query("memory")
-        assert post.call_count == 1 and "offline" in result["error"]
+        assert post.call_count == 1
+        assert result["error_kind"] == "transport_unavailable"
+        assert result["retryable"] is True
         response = _mock_response(json_data={"ok": True})
         response.json.side_effect = ValueError("invalid json")
         with patch("httpx.AsyncClient.get", return_value=response) as get:
@@ -494,3 +496,20 @@ class TestRelay:
             "session_ref": "session-1",
             "container_ref": "test-container",
         }
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [httpx.ConnectError("secret endpoint"), httpx.ConnectTimeout("secret timeout")])
+async def test_post_connection_failures_are_redacted_and_retryable(ctx: PalliumContext, error: Exception) -> None:
+    with patch("httpx.AsyncClient.post", side_effect=error) as post:
+        result = await PalliumMcpClient(ctx).search_history("query")
+    assert post.call_count == 1
+    assert result == {"error": "transport_unavailable", "error_kind": "transport_unavailable", "retryable": True, "action": "check service health and retry once"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [httpx.ReadTimeout("read"), httpx.WriteError("write"), httpx.ProtocolError("protocol")])
+async def test_post_non_connection_failures_remain_non_retryable(ctx: PalliumContext, error: Exception) -> None:
+    with patch("httpx.AsyncClient.post", side_effect=error) as post:
+        result = await PalliumMcpClient(ctx).ingest("mutation")
+    assert post.call_count == 1
+    assert result == {"error": str(error)}

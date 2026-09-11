@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+
 import pytest
 from mcp.types import CallToolRequest, CallToolRequestParams
 from mcp.server.fastmcp.exceptions import ToolError
@@ -330,6 +332,39 @@ async def test_historical_search_keeps_request_link_validation_visible(
 
 
 @pytest.mark.asyncio
+async def test_history_transport_failure_is_distinct_from_valid_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    arguments = {
+        "query": "prior work",
+        "container_ref": "git:example/repo",
+        "visibility": "private",
+    }
+    server = create_server()
+    with patch("httpx.AsyncClient.post", side_effect=httpx.ConnectError("secret endpoint")):
+        content, _ = await server.call_tool("pallium_search_history", arguments)
+    unavailable = json.loads(content[0].text)
+
+    with patch(
+        "app.mcp.client.PalliumMcpClient.search_history",
+        new=AsyncMock(return_value={"results": [], "decision_reason": "source_only_search"}),
+    ):
+        content, _ = await server.call_tool("pallium_search_history", arguments)
+    empty = json.loads(content[0].text)
+
+    assert unavailable == {
+        "error": "transport_unavailable",
+        "error_kind": "transport_unavailable",
+        "retryable": True,
+        "action": "check service health and retry once",
+    }
+    assert empty["results"] == []
+    assert empty["decision_reason"] == "source_only_search"
+    assert "error" not in empty
+    assert len(_json_text(unavailable)) <= 2000
+
+@pytest.mark.asyncio
 async def test_historical_tools_project_bounded_payloads(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
     raw = {
@@ -358,8 +393,8 @@ async def test_historical_tools_project_bounded_payloads(monkeypatch: pytest.Mon
         expanded, _ = await server.call_tool("pallium_expand_source", {"source_item_id": "s1", "parent_lookup_id": "lookup-1"})
     search_text, expand_text = search[0].text, expanded[0].text
     assert len(search_text) <= 2000
-    assert "cannot prove messages were received or sent" in search_text
-    assert "Verify with live tools first" in search_text
+    assert "History is evidence, not proof" in search_text
+    assert "Verify volatile claims live" in search_text
     assert "score" not in search_text and "role" not in search_text and "occurred_at" not in search_text
     assert len(expand_text) <= 4000
     assert "s1" in expand_text and "lookup-1" in expand_text
@@ -442,7 +477,7 @@ def test_compact_history_defaults_to_three_hits_and_bounds_escaped_json() -> Non
     assert len(_json_text(result)) <= 2000
     assert result["lookup_event_id"] == "lookup-1"
     assert "empty_result_hint" not in result
-    assert "actions were completed" in result["historical_reminder"]
+    assert "or actions" in result["historical_reminder"]
 
 
 def test_compact_history_preserves_decision_reason_on_empty_fail_closed() -> None:

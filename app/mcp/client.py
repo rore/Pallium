@@ -155,6 +155,13 @@ class PalliumMcpClient:
             except Exception:
                 body = exc.response.text
             return {"error": str(exc), "detail": body}
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return {
+                "error": "transport_unavailable",
+                "error_kind": "transport_unavailable",
+                "retryable": True,
+                "action": "check service health and retry once",
+            }
         except Exception as exc:
             return {"error": str(exc)}
 

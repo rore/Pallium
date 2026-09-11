@@ -33,7 +33,12 @@ work reference is provided, use broad search rather than guessing one.
 
 Search returns concise matches with source identifiers. When a match looks
 relevant, the agent uses `pallium_expand_source` to open a bounded number of
-turns around it.
+turns around it, passing that match's `source_item_id` and the search response's
+`lookup_event_id` as `parent_lookup_id`. Search labels are response-local:
+`current` is the requesting session, repeated known foreign sessions share an
+`other-N` label, and `unknown` never asserts shared identity. Regenerate the
+Codex Relay profile after upgrading to make these read-only History tools
+available in Relay-woken tasks.
 
 Search answers “where did we discuss this?” Expansion answers “what was the
 surrounding reasoning?” The bounds keep one match from turning into an entire

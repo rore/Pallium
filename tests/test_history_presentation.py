@@ -40,7 +40,7 @@ def test_search_cues_are_plain_and_replacement_precedes_excerpt() -> None:
     assert list(hit).index("replacement_guidance") < list(hit).index("excerpt")
     assert list(hit).index("historical_updates") < list(hit).index("excerpt")
     assert hit["match_channel"] == "text and meaning match"
-    assert hit["session_cue"] == "same session"
+    assert hit["session_group"] == "current"
     serialized = json.dumps(result)
     assert "score" not in serialized
     assert "confidence" not in serialized
@@ -50,12 +50,13 @@ def test_search_cues_are_plain_and_replacement_precedes_excerpt() -> None:
 @pytest.mark.parametrize(
     ("item_thread", "active_thread", "expected"),
     [
-        ("a", "a", "same session"),
-        ("a", "b", "different session"),
-        (None, "b", "session unknown"),
+        ("a", "a", "current"),
+        ("a", "b", "other-1"),
+        (None, "b", "unknown"),
+        ("a", None, "unknown"),
     ],
 )
-def test_search_session_cue(
+def test_search_session_group(
     item_thread: str | None,
     active_thread: str | None,
     expected: str,
@@ -74,7 +75,7 @@ def test_search_session_cue(
         thread_ref=active_thread,
     )
 
-    assert result["results"][0]["session_cue"] == expected
+    assert result["results"][0]["session_group"] == expected
 
 
 def test_replacement_guidance_survives_budget_and_missing_optionals() -> None:
@@ -101,7 +102,7 @@ def test_replacement_guidance_survives_budget_and_missing_optionals() -> None:
     )
 
     hit = result["results"][0]
-    assert "cannot prove messages were received or sent" in result["historical_reminder"]
+    assert "History is evidence, not proof" in result["historical_reminder"]
     assert "replacement_guidance" in hit
     assert list(hit).index("historical_updates") < list(hit).index("excerpt")
     assert len(_json_text(result)) <= _MCP_SEARCH_MAX_CHARS
@@ -114,7 +115,7 @@ def test_search_unicode_and_limit_boundaries() -> None:
     )
 
     assert "漢" in result["results"][0]["excerpt"]
-    assert "cannot prove messages were received or sent" in result["historical_reminder"]
+    assert "History is evidence, not proof" in result["historical_reminder"]
     assert len(_json_text(result)) <= _MCP_SEARCH_MAX_CHARS
     assert _compact_history(
         {"results": [{"source_item_id": "s", "excerpt": "x"}]},
@@ -170,3 +171,92 @@ def test_expansion_labels_and_bounds() -> None:
         _MCP_EXPANSION_MAX_CHARS + 1,
     ) == _bounded_expansion({}, _MCP_EXPANSION_MAX_CHARS)
     assert "error" in _bounded_expansion({}, 1)
+
+def test_search_session_groups_repeat_without_exposing_thread_ids() -> None:
+    result = _compact_history(
+        {"results": [
+            {"source_item_id": "a", "excerpt": "first", "thread_ref": "current"},
+            {"source_item_id": "b", "excerpt": "second", "thread_ref": "foreign"},
+            {"source_item_id": "c", "excerpt": "third", "thread_ref": "foreign"},
+        ]},
+        "",
+        thread_ref="current",
+    )
+
+    assert [hit["session_group"] for hit in result["results"]] == ["current", "other-1", "other-1"]
+    assert "thread_ref" not in json.dumps(result)
+
+def test_grouped_history_preserves_feasible_ids_order_and_unicode_under_budget() -> None:
+    work_ref = "work-" + ("w" * 60)
+    results = []
+    for index in range(3):
+        item = {
+            "source_item_id": f"{index:02d}" + ("s" * 34),
+            "excerpt": 'quoted "漢字😀 evidence' * 8,
+            "thread_ref": "current" if index == 0 else "foreign-a" if index == 1 else "foreign-b",
+            "work_refs": [work_ref],
+            "recorded_at": "2026-09-11T12:34:56.123456+00:00",
+            "recorded_at_source": "ingest",
+            "occurred_at": "2026-09-11T12:30:00+00:00",
+            "role": "assistant",
+        }
+        if index == 0:
+            item["historical_updates"] = [{
+                "memory_type": "decision",
+                "status": "outdated",
+                "replacement_status": "current",
+                "current_memory_object_id": "m" * 36,
+                "current_recorded_at": "2026-09-11T12:40:00+00:00",
+            }]
+        results.append(item)
+
+    expected_ids = [item["source_item_id"] for item in results]
+    result = _compact_history(
+        {"results": results, "lookup_event_id": "lookup-1"},
+        "漢字",
+        limit=3,
+        thread_ref="current",
+        search_mode="exact_work_ref",
+        requested_work_ref=work_ref,
+    )
+
+    assert [hit["source_item_id"] for hit in result["results"]] == expected_ids
+    assert result["requested_work_ref"] == work_ref
+    assert all("thread_ref" not in hit for hit in result["results"])
+    assert "query" not in result
+    assert len(result["historical_reminder"]) <= 240
+    assert "source_item_id" in result["historical_reminder"]
+    assert "lookup_event_id" in result["historical_reminder"]
+    assert result["results"][0]["recorded_at_source"] == "ingest"
+    assert result["results"][0]["historical_updates"][0]["replacement_status"] == "current"
+    assert len(_json_text(result)) <= _MCP_SEARCH_MAX_CHARS
+
+
+@pytest.mark.parametrize("requested_work_ref", [None, "work-" + ("w" * 60)])
+def test_ten_hit_grouping_never_drops_origin_main_baseline_ids(
+    requested_work_ref: str | None,
+) -> None:
+    # Measured origin/main retains all ten IDs for this identical boundary payload.
+    baseline_ids = [f"{index:02d}" + ("s" * 41) for index in range(10)]
+    results = [
+        {
+            "source_item_id": source_item_id,
+            "excerpt": "evidence " * 50,
+            "thread_ref": "foreign-session",
+            "recorded_at": "2026-09-11T12:34:56.123456+00:00",
+            "recorded_at_source": "ingest",
+        }
+        for source_item_id in baseline_ids
+    ]
+
+    candidate = _compact_history(
+        {"results": results, "lookup_event_id": "l" * 36},
+        "evidence",
+        limit=10,
+        thread_ref="current-session",
+        search_mode="exact_work_ref",
+        requested_work_ref=requested_work_ref,
+    )
+
+    assert [hit["source_item_id"] for hit in candidate["results"]] == baseline_ids
+    assert len(_json_text(candidate)) <= _MCP_SEARCH_MAX_CHARS
