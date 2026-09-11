@@ -190,3 +190,19 @@ def test_relay_text_compact_response_marks_escaped_identity_overflow() -> None:
     assert delivery["omitted_fields"]
     assert compact.get("payload_truncated") is True or compact.get("payload_omitted") is True
     assert "must-not-leak" not in rendered
+
+def test_relay_text_removes_short_response_claim_token_without_mutation() -> None:
+    import json
+
+    delivery = {
+        "claim_token": "secret-claim",
+        "receipt": "safe-receipt",
+        "recipient_endpoint_id": "relay-session-" + ("c" * 32),
+        "state": "claimed",
+    }
+    result = {"message_id": "relay-msg-short", "deliveries": [delivery]}
+
+    rendered = json.loads(_relay_text(result))
+    assert "claim_token" not in rendered["deliveries"][0]
+    assert rendered["deliveries"][0]["receipt"] == "safe-receipt"
+    assert delivery["claim_token"] == "secret-claim"

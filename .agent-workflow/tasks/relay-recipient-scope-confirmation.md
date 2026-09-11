@@ -41,6 +41,7 @@
 - Result review found and blocked an over-broad stale-delivery phrase introduced while compressing guidance. Restored the exact `already_delivered=true` trigger and added a contract assertion; normal delivered hook work remains actionable.
 - Result review then identified a pre-existing short-response path that can expose a non-null delivery claim token on an idempotent reply retry after claim. Paused before PR and returned to planning because the user requires discovered Relay defects to be fixed; awaiting architect scope/risk decision.
 - Architect follow-up approved including the same-formatter credential fix in this PR at Elevated/Simple: copy response/deliveries, remove only `claim_token`, preserve receipt and caller data, and cover claim → retry → ACK without duplicate reply.
+- Implemented claim-token sanitization before the short-response size check using shallow response/delivery copies. Unit coverage proves caller data and receipts are preserved; the caller-surface lifecycle proves claimed idempotent retry returns the same message, exposes no token, and remains ACKable. Affected Relay/MCP subsystem verification: 183 passed.
 
 ## Evidence
 

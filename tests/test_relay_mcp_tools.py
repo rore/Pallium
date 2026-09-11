@@ -832,6 +832,53 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
     assert "claim_token" not in replied[0].text
     assert alias_delivery["recipient_endpoint_id"] == recipient["endpoint_id"]
 
+    long_reply_delivery = (await asgi_post("/relay/turn", {
+        "runtime": "codex", "session_ref": "mcp-source", **source,
+    }))["deliveries"][0]
+    assert long_reply_delivery["message_id"] == reply_data["message_id"]
+    acked_long, _ = await server.call_tool("pallium_relay_ack", {
+        "delivery_id": long_reply_delivery["delivery_id"],
+        "receipt": long_reply_delivery["receipt"],
+        **source,
+    })
+    assert json.loads(acked_long[0].text)["state"] == "delivered"
+
+    short_seed, _ = await server.call_tool("pallium_relay_send", {
+        "message": "short retry seed",
+        "recipient": "@global-review",
+        "sender_runtime": "codex",
+        "sender_session_ref": "mcp-source",
+        **source,
+    })
+    received_short, _ = await server.call_tool("pallium_relay_receive", target)
+    short_inbound = json.loads(received_short[0].text)["deliveries"][0]
+    assert short_inbound["message_id"] == json.loads(short_seed[0].text)["message_id"]
+    short_reply_args = {
+        "delivery_id": short_inbound["delivery_id"],
+        "receipt": short_inbound["receipt"],
+        "message": "short claimed reply",
+        **target,
+    }
+    short_reply, _ = await server.call_tool("pallium_relay_reply", short_reply_args)
+    short_reply_data = json.loads(short_reply[0].text)
+    short_outbound = (await asgi_post("/relay/turn", {
+        "runtime": "codex", "session_ref": "mcp-source", **source,
+    }))["deliveries"][0]
+    assert short_outbound["message_id"] == short_reply_data["message_id"]
+
+    retried, _ = await server.call_tool("pallium_relay_reply", short_reply_args)
+    retried_data = json.loads(retried[0].text)
+    assert retried_data["message_id"] == short_reply_data["message_id"]
+    assert retried_data["deliveries"][0]["receipt"] == short_outbound["receipt"]
+    assert "claim_token" not in retried[0].text
+
+    acked_short, _ = await server.call_tool("pallium_relay_ack", {
+        "delivery_id": short_outbound["delivery_id"],
+        "receipt": short_outbound["receipt"],
+        **source,
+    })
+    assert json.loads(acked_short[0].text)["state"] == "delivered"
+
     from sqlalchemy import func, select
     from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord
 

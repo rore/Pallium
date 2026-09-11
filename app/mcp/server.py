@@ -171,6 +171,16 @@ def _relay_text(result: object) -> str:
         return _relay_error_text(result)
     if not isinstance(result, dict):
         return _relay_error_text({"error": "invalid relay response"})
+    deliveries = result.get("deliveries")
+    if isinstance(deliveries, list):
+        result = {
+            **result,
+            "deliveries": [
+                {key: value for key, value in delivery.items() if key != "claim_token"}
+                if isinstance(delivery, dict) else delivery
+                for delivery in deliveries
+            ],
+        }
     if len(_json_text(result)) <= _MCP_RELAY_MAX_CHARS:
         return _json_text(result)
     deliveries = result.get("deliveries")
