@@ -25,7 +25,7 @@
 
 **Plan review:** Clean-context Astra review in § Plan review — PASS after all findings were incorporated.
 
-**Approvals:** Approved by user 2026-09-12: "Bugs should be fixed immediately"
+**Approvals:** Approved by user 2026-09-11: "Bugs should be fixed immediately"
 
 **Exceptions:** —
 
@@ -36,7 +36,7 @@
 
 Task context and provisional classification were recorded before code inspection. Discovery traced the existing storage-to-MCP path, redline classified the API change, and the reviewed plan is ready to implement.
 
-Implemented the optional exact session_ref filter through storage, core, HTTP, MCP client, and MCP tool boundaries. Exact lookup requires runtime, reuses _relay_session, preserves container and recent/inactive filtering, and leaves the unfiltered query unchanged. Added the reviewed composite-identity, scope, lifecycle, offset, input-boundary, Unicode, and client-forwarding coverage. Final review found no code defect and required stale roadmap/docs reconciliation; the item and public usage note now match the shipped contract.
+Implemented the optional exact `session_ref` filter through storage, core, HTTP, MCP client, and MCP tool boundaries. Exact lookup requires runtime, reuses `_relay_session`, preserves container and recent/inactive filtering, and leaves the unfiltered query unchanged. Added the reviewed composite-identity, scope, lifecycle, offset, input-boundary, Unicode, and client-forwarding coverage. Final review found no code defect and required stale roadmap/docs reconciliation; the item and public usage note now match the shipped contract.
 
 ## Plan review
 
