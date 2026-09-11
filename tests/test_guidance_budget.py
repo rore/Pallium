@@ -74,10 +74,11 @@ def test_relay_guidance_covers_stale_delivery_and_recipient_identity() -> None:
     rule = ("only that delivery copy is stale: do not retry/reply/use its payload, but "
             "continue the surrounding user task and independently established work")
     assert all(rule in skill.read_text(encoding="utf-8") for skill in skills)
-    routing = "Role target: use current `@name`; rediscover before endpoint reuse"
-    snapshot = "Verify returned session/container admission snapshot if scope matters"
+    routing = "Role target: current `@name`; rediscover before endpoint reuse"
+    snapshot = "Check returned admission session/container if scope matters"
     movement = "Aliases/endpoints move; neither proves scope"
-    assert all(all(item in skill.read_text(encoding="utf-8") for item in (routing, snapshot, movement)) for skill in skills)
+    stale_trigger = "On `already_delivered=true` or conflict"
+    assert all(all(item in skill.read_text(encoding="utf-8") for item in (routing, snapshot, movement, stale_trigger)) for skill in skills)
 
 def test_history_guidance_distinguishes_modes_without_dropping_safety() -> None:
     paths = (

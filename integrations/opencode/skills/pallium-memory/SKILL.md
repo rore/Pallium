@@ -9,9 +9,9 @@ description: Use Pallium Relay, Session History, or optional derived memory.
 
 - Act on deliveries; reply only on completion/blocker.
 - Injected `agent_ref`/`thread_ref` identify self; never infer it.
-- Role target: use current `@name`; rediscover before endpoint reuse. Verify returned session/container admission snapshot if scope matters. Aliases/endpoints move; neither proves scope. No broadcast/bare runtime. Ask before takeover unless requested. Ignore ACK-only.
+- Role target: current `@name`; rediscover before endpoint reuse. Check returned admission session/container if scope matters. Aliases/endpoints move; neither proves scope. No broadcast/bare runtime. Ask before takeover unless requested. Ignore ACK-only.
 - For exact work or link correction, load [work associations](references/work-associations.md).
-- Reply via `pallium_relay_reply`; page `pallium_relay_status` to `next_offset=null`. On delivered/conflict, only that delivery copy is stale: do not retry/reply/use its payload, but continue the surrounding user task and independently established work.
+- Reply via `pallium_relay_reply`; page `pallium_relay_status` to `next_offset=null`. On `already_delivered=true` or conflict, only that delivery copy is stale: do not retry/reply/use its payload, but continue the surrounding user task and independently established work.
 
 ## Session History
 

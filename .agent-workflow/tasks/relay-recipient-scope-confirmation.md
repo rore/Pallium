@@ -38,6 +38,7 @@
 - Architect review classified the incident as caller misuse plus a product observability defect. It retained the formatter/guidance scope, rejected a new expected-container guard for this requirement, and added explicit overflow, reply, boundary, token-exclusion, and roadmap-drift coverage before implementation.
 - Implementation touched `app/mcp/server.py`, `tests/test_mcp_server_utils.py`, `tests/test_relay_mcp_tools.py`, `tests/test_guidance_budget.py`, `docs/agent-relay.md`, `roadmap/ideas/idea-exact-relay-recipient-resolution.md`, and the three mirrored integration skills. The compact response now allowlists delivery identity, drops only oversized selector/session/container descriptions with explicit markers, prioritizes metadata before redacted payload preview, and never exposes claim tokens. The normal patch helper failed with Windows error 1327, so edits used deterministic replacements limited to these named files.
 - Skill-feedback trigger 2/7 dropped: the missing recipient-validation guidance is owned by Pallium, not the supported agent-workflow upstream, and is fixed in this task.
+- Result review found and blocked an over-broad stale-delivery phrase introduced while compressing guidance. Restored the exact `already_delivered=true` trigger and added a contract assertion; normal delivered hook work remains actionable.
 
 ## Evidence
 
