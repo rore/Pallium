@@ -114,6 +114,13 @@ This command:
 5. Creates the hook state directory for dedup tracking
 6. Verifies the Pallium service is reachable
 
+Setup reconciles Pallium-managed hook registrations left by other checkout
+paths while preserving unrelated hooks. Setup reports whether the hook
+configuration changed. A changed absolute hook command is still new to Codex
+and requires review; repeated setup from the same checkout keeps an
+already-current hook definition in place and reports that no new review should
+be required.
+
 Restart Codex after setup. On the first start, or whenever a hook command changes,
 Codex asks you to review the new or changed hooks. Approve the Pallium hooks if
 prompted. Until that review, the configuration is installed but automatic Relay
