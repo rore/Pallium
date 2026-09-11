@@ -60,7 +60,7 @@ Not required at this risk level.
 —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -86,16 +86,14 @@ Not required at this risk level.
 
 ## Evidence
 
-Verified implementation revision `6de3f5a9`:
+Verified corrected implementation revision `afbade31`:
 
-- Focused Codex wake caller-surface suite: 49 passed.
-- Repository last-failure rerun after syncing locked optional extras: 106 passed, 4,986 deselected.
-- Full repository suite: 4,842 passed, 33 skipped, 2 expected failures.
-- Import boundaries: 8 contracts kept, 0 broken.
-- Redline: GRAY/watch only for `app/codex_wake.py`; blue tests/docs/roadmap, no boundary violations, no checkpoints, size ok.
+- Focused Codex wake plus restart-fixture suites: 56 passed.
+- Full repository suite: 4,843 passed, 33 skipped, 2 expected failures.
+- Import boundaries: 8 contracts kept, 0 broken; redline remains GRAY/watch only for `app/codex_wake.py`, with no boundary violations or checkpoints.
 - Agent-workflow local gate: clean, exit 0.
-- The first last-failure collection lacked locked MCP/vector extras; `uv sync --frozen --all-extras` corrected the environment and the rerun passed. The first redline attempt lacked its configured generated boundary artifact; `scripts/run-import-linter.py` generated it and the rerun passed.
-
+- Earlier environment-only collection/report setup failures were corrected with locked extras and the configured generated boundary artifact; their reruns passed.
 ## Result review
 
 - Initial independent review: **BLOCKED**. Reject service-checkout redirects, narrow POSIX locality claims, remove unsupported native unloaded-task persistence claims from all sources of truth, and rerun verification. PR/CI and installed-service gates remain sequential acceptance work after the corrected result review.
+- Corrected result re-review pending.
