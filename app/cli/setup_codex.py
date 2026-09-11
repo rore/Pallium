@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 import tempfile
@@ -104,10 +105,18 @@ def _remove_skill() -> None:
         shutil.rmtree(skill_dir, ignore_errors=True)
 
 
+def _quote_hook_arg(value: str) -> str:
+    if sys.platform == "win32":
+        if any(c.isspace() or c in "'&|;<>()^`" for c in value):
+            return f'"{value}"'
+        return value
+    return shlex.quote(value)
+
+
 def _hook_command(script_name: str) -> str:
     python = _python_executable().replace("\\", "/")
     script = str(_hooks_dir() / script_name).replace("\\", "/")
-    return f"{python} {script}"
+    return f"{_quote_hook_arg(python)} {_quote_hook_arg(script)}"
 
 
 def _mcp_command() -> str:
@@ -310,67 +319,146 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def _register_hooks(hooks_data: dict) -> dict:
-    """Register Pallium hooks in Codex hooks.json."""
-    if "hooks" not in hooks_data:
-        hooks_data["hooks"] = {}
-
-    hook_defs = [
-        ("SessionStart", "session_start.py", 8, "Loading memory"),
-        ("UserPromptSubmit", "user_prompt_submit.py", 8, "Retrieving memory"),
-        ("Stop", "stop.py", 15, None),
-    ]
-
-    for event, script, timeout, status_msg in hook_defs:
-        if event not in hooks_data["hooks"]:
-            hooks_data["hooks"][event] = []
-
-        existing = hooks_data["hooks"][event]
-        command = _hook_command(script)
-
-        already_registered = any(
-            any(command in h.get("command", "") for h in entry.get("hooks", []))
-            for entry in existing
-            if isinstance(entry, dict)
+def _managed_hook_script(hook: object) -> str | None:
+    """Return the Pallium script owned by a direct Python hook command."""
+    if not isinstance(hook, dict) or hook.get("type") != "command":
+        return None
+    command = hook.get("command")
+    if not isinstance(command, str) or "\r" in command or "\n" in command:
+        return None
+    try:
+        lexer = shlex.shlex(
+            command.replace("\\", "/"),
+            posix=True,
+            punctuation_chars="&|;<>()^`",
         )
-        if not already_registered:
-            hook_entry: dict = {
-                "type": "command",
-                "command": command,
-                "timeout": timeout,
-            }
-            if status_msg:
-                hook_entry["statusMessage"] = status_msg
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        parts = list(lexer)
+    except ValueError:
+        return None
+    if len(parts) != 2:
+        return None
 
-            entry_wrapper: dict = {
-                "hooks": [hook_entry],
-            }
-            # SessionStart needs a matcher
-            if event == "SessionStart":
-                entry_wrapper["matcher"] = "startup|resume"
+    python, script = parts
+    python_name = python.rsplit("/", 1)[-1]
+    if "/" in python and not re.match(r"^(?:[A-Za-z]:/|/)", python):
+        return None
+    if not re.fullmatch(
+        r"python(?:w)?(?:\d+(?:\.\d+)*)?(?:\.exe)?",
+        python_name,
+        flags=re.IGNORECASE,
+    ):
+        return None
+    if not re.match(r"^(?:[A-Za-z]:/|/)", script):
+        return None
 
-            existing.append(entry_wrapper)
+    normalized_script = script.casefold()
+    for script_name in ("session_start.py", "user_prompt_submit.py", "stop.py"):
+        suffix = f"/integrations/codex/hooks/{script_name}"
+        if normalized_script.endswith(suffix):
+            return script_name
+    return None
+
+
+def _without_managed_hooks(entries: list) -> list:
+    """Remove Pallium hook objects while preserving peer wrappers and order."""
+    cleaned: list = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+            cleaned.append(entry)
+            continue
+        hooks = entry["hooks"]
+        remaining = [hook for hook in hooks if _managed_hook_script(hook) is None]
+        if len(remaining) == len(hooks):
+            cleaned.append(entry)
+        elif remaining:
+            updated = dict(entry)
+            updated["hooks"] = remaining
+            cleaned.append(updated)
+    return cleaned
+
+
+def _register_hooks(hooks_data: dict) -> dict:
+    """Reconcile Pallium hooks in Codex hooks.json across checkout paths."""
+    hooks_by_event = hooks_data.setdefault("hooks", {})
+    hook_defs = [
+        ("SessionStart", "session_start.py", 8, "Loading memory", "startup|resume"),
+        ("UserPromptSubmit", "user_prompt_submit.py", 8, "Retrieving memory", None),
+        ("Stop", "stop.py", 15, None, None),
+    ]
+    expected_events = {event for event, *_ in hook_defs}
+
+    for event in list(hooks_by_event):
+        if event not in expected_events:
+            cleaned = _without_managed_hooks(hooks_by_event[event])
+            if cleaned:
+                hooks_by_event[event] = cleaned
+            else:
+                del hooks_by_event[event]
+
+    for event, script, timeout, status_msg, matcher in hook_defs:
+        desired_hook: dict = {
+            "type": "command",
+            "command": _hook_command(script),
+            "timeout": timeout,
+        }
+        if status_msg:
+            desired_hook["statusMessage"] = status_msg
+
+        current_kept = False
+        reconciled: list = []
+        for entry in hooks_by_event.get(event, []):
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                reconciled.append(entry)
+                continue
+            entry_matcher = entry.get("matcher")
+            matcher_matches = (
+                entry_matcher == matcher
+                if matcher is not None
+                else "matcher" not in entry
+            )
+            original_hooks = entry["hooks"]
+            remaining: list = []
+            for hook in original_hooks:
+                managed_script = _managed_hook_script(hook)
+                if managed_script is None:
+                    remaining.append(hook)
+                elif (
+                    not current_kept
+                    and managed_script == script
+                    and hook == desired_hook
+                    and matcher_matches
+                ):
+                    remaining.append(hook)
+                    current_kept = True
+
+            if len(remaining) == len(original_hooks):
+                reconciled.append(entry)
+            elif remaining:
+                updated = dict(entry)
+                updated["hooks"] = remaining
+                reconciled.append(updated)
+
+        if not current_kept:
+            wrapper: dict = {"hooks": [desired_hook]}
+            if matcher is not None:
+                wrapper["matcher"] = matcher
+            reconciled.append(wrapper)
+        hooks_by_event[event] = reconciled
 
     return hooks_data
 
 
 def _unregister_hooks(hooks_data: dict) -> dict:
-    """Remove Pallium hooks from Codex hooks.json."""
-    hooks_dir_normalized = str(_hooks_dir()).replace("\\", "/")
+    """Remove Pallium hooks from Codex hooks.json across checkout paths."""
     if "hooks" not in hooks_data:
         return hooks_data
 
-    for event in list(hooks_data["hooks"].keys()):
-        entries = hooks_data["hooks"][event]
-        filtered = [
-            entry for entry in entries
-            if not any(
-                hooks_dir_normalized in h.get("command", "").replace("\\", "/")
-                for h in entry.get("hooks", [])
-            )
-        ]
-        if filtered:
-            hooks_data["hooks"][event] = filtered
+    for event in list(hooks_data["hooks"]):
+        cleaned = _without_managed_hooks(hooks_data["hooks"][event])
+        if cleaned:
+            hooks_data["hooks"][event] = cleaned
         else:
             del hooks_data["hooks"][event]
 
@@ -548,10 +636,14 @@ def install(port: int = 19836, guidance_strength: str = "base") -> int:
     # 2. Register hooks in hooks.json
     hooks_path = _codex_hooks_path()
     hooks_data = _read_json(hooks_path)
-    hooks_data = _unregister_hooks(hooks_data)
+    hooks_before = json.dumps(hooks_data, sort_keys=True)
     hooks_data = _register_hooks(hooks_data)
-    _write_json(hooks_path, hooks_data)
-    print(f"  Registered hooks in {hooks_path}")
+    hooks_changed = json.dumps(hooks_data, sort_keys=True) != hooks_before
+    if hooks_changed:
+        _write_json(hooks_path, hooks_data)
+        print(f"  Registered hooks in {hooks_path}")
+    else:
+        print(f"  Hooks already current in {hooks_path}")
 
     # 3. Append AGENTS.md block
     _append_agents_md_block(guidance_strength)
@@ -574,8 +666,12 @@ def install(port: int = 19836, guidance_strength: str = "base") -> int:
         print(f"  Start it with: python -m app.run all --port {port}")
 
     print("\nConfiguration installed.")
-    print("Restart Codex. Approve the Pallium hook review if prompted.")
-    print("Relay wake is ready only after that review.")
+    print("Restart Codex to load this configuration.")
+    if hooks_changed:
+        print("Hook configuration changed. Approve the Pallium hook review if prompted.")
+        print("Relay wake is ready only after that review.")
+    else:
+        print("Hook configuration is unchanged; no new hook review should be required.")
     return 0
 
 

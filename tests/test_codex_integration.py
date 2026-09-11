@@ -129,7 +129,8 @@ def test_codex_install_reports_hook_review_boundary_and_preserves_codex_trust(
     config = config_path.read_text(encoding="utf-8")
     assert "[hooks.state]" not in config
     assert "Configuration installed." in first_output
-    assert "Restart Codex." in first_output
+    assert "Restart Codex to load this configuration." in first_output
+    assert "Hook configuration changed." in first_output
     assert "Approve the Pallium hook review if prompted." in first_output
     assert "Relay wake is ready only after that review." in first_output
     assert "Pallium is now integrated with Codex" not in first_output
@@ -146,7 +147,8 @@ def test_codex_install_reports_hook_review_boundary_and_preserves_codex_trust(
     reinstalled = config_path.read_text(encoding="utf-8")
     assert reinstalled.count("[hooks.state]") == 1
     assert 'trusted_hash = "sha256:owned-by-codex"' in reinstalled
-    assert "Approve the Pallium hook review if prompted." in second_output
+    assert "Hook configuration is unchanged" in second_output
+    assert "Approve the Pallium hook review if prompted." not in second_output
     assert (tmp_path / ".codex" / "hooks.json").is_file()
     assert (tmp_path / ".pallium" / "hooks" / "state").is_dir()
 
@@ -768,3 +770,192 @@ def test_codex_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monke
     assert calls[0][0]["metadata"]["pallium_work_refs"] == [
         "git-branch:feature/demo"
     ]
+
+
+def test_codex_managed_hook_command_requires_exact_direct_python_shape() -> None:
+    accepted = (
+        r'"C:\Python 3.13\python.exe" "C:\Old Work\integrations\codex\hooks\stop.py"',
+        '"C:/Python/python.exe" "C:/Old Work/integrations/codex/hooks/stop.py"',
+        'python "C:/Old Work/integrations/codex/hooks/stop.py"',
+        r'python "C:\Old Work\integrations\codex\hooks\stop.py"',
+        "PYTHON3.13.EXE /tmp/old/integrations/codex/hooks/stop.py",
+        "python /tmp/équipe/integrations/codex/hooks/stop.py",
+    )
+    rejected = (
+        {"command": accepted[0]},
+        {"type": "command", "command": "bash /tmp/integrations/codex/hooks/stop.py"},
+        {
+            "type": "command",
+            "command": "python /tmp/integrations/codex/hooks/stop.py --extra",
+        },
+        {
+            "type": "command",
+            "command": "python /tmp/integrations/codex/hooks/stop.py && echo bad",
+        },
+        {
+            "type": "command",
+            "command": "python /tmp/integrations/codex/hooks/stop.py.bak",
+        },
+        {
+            "type": "command",
+            "command": "echo /tmp/integrations/codex/hooks/stop.py",
+        },
+        {"type": "command", "command": "python /tmp/other/hooks/stop.py"},
+        {"type": "command", "command": "python\n/repo/integrations/codex/hooks/stop.py"},
+        {
+            "type": "command",
+            "command": "cmd /c C:/Python/python.exe C:/Old/integrations/codex/hooks/stop.py",
+        },
+        {
+            "type": "command",
+            "command": "python /tmp/peer.py /repo/integrations/codex/hooks/stop.py",
+        },
+        {
+            "type": "command",
+            "command": "/usr/bin/echo /usr/bin/python /repo/integrations/codex/hooks/stop.py",
+        },
+        {
+            "type": "command",
+            "command": "python /tmp/peer.py --file=/repo/integrations/codex/hooks/stop.py",
+        },
+    )
+
+    for command in accepted:
+        assert (
+            setup_codex._managed_hook_script(
+                {"type": "command", "command": command}
+            )
+            == "stop.py"
+        )
+    for hook in rejected:
+        assert setup_codex._managed_hook_script(hook) is None
+
+
+def test_codex_hook_reconciliation_preserves_mixed_peer_wrappers_and_matchers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(setup_codex.sys, "executable", r"C:\New Work\python.exe")
+    monkeypatch.setattr(
+        setup_codex,
+        "_hooks_dir",
+        lambda: Path(r"C:\New Work\integrations\codex\hooks"),
+    )
+    peer_a = {"type": "command", "command": "peer-a", "timeout": 1, "extra": "a"}
+    peer_b = {"type": "command", "command": "peer-b", "timeout": 2, "extra": "b"}
+    empty_peer_wrapper = {"hooks": [], "peerField": "empty"}
+    stale = {
+        "type": "command",
+        "command": "python C:/Old/integrations/codex/hooks/session_start.py",
+        "timeout": 8,
+    }
+    hooks = {
+        "hooks": {
+            "SessionStart": [
+                empty_peer_wrapper,
+                {"matcher": "startup|resume", "hooks": [peer_a]},
+                {
+                    "matcher": "startup|resume",
+                    "peerField": "keep",
+                    "hooks": [stale, peer_b, dict(stale)],
+                },
+                {"matcher": "wrong", "hooks": [dict(stale)]},
+            ]
+        }
+    }
+
+    entries = setup_codex._register_hooks(hooks)["hooks"]["SessionStart"]
+
+    assert entries[0] == empty_peer_wrapper
+    assert entries[1]["hooks"] == [peer_a]
+    assert entries[2] == {
+        "matcher": "startup|resume",
+        "peerField": "keep",
+        "hooks": [peer_b],
+    }
+    assert all(entry.get("matcher") != "wrong" for entry in entries)
+    managed = [
+        hook
+        for entry in entries
+        for hook in entry["hooks"]
+        if setup_codex._managed_hook_script(hook) == "session_start.py"
+    ]
+    assert len(managed) == 1
+    assert entries[-1]["matcher"] == "startup|resume"
+
+
+def test_codex_public_lifecycle_converges_across_checkouts_and_uninstall(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.run import run
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(setup_codex.sys, "platform", "win32")
+    monkeypatch.setattr(setup_codex, "_verify_service", lambda _port: True)
+    old_root, new_root, third_root = (
+        Path(rf"C:\{name} Checkout") for name in ("Old", "New R&D O'Connor", "Third")
+    )
+    monkeypatch.setattr(
+        setup_codex,
+        "_hooks_dir",
+        lambda: old_root / "integrations/codex/hooks",
+    )
+    assert run(["setup", "codex"]) == 0
+
+    hooks_path = tmp_path / ".codex" / "hooks.json"
+    hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+    peer_wrapper = {
+        "matcher": "peer",
+        "peerField": "keep",
+        "hooks": [{"type": "command", "command": "peer", "timeout": 3}],
+    }
+    hooks["hooks"]["Stop"].insert(0, peer_wrapper)
+    hooks["hooks"]["Stop"].append(
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "python C:/Stale/integrations/codex/hooks/stop.py",
+                    "timeout": 15,
+                }
+            ]
+        }
+    )
+    hooks_path.write_text(json.dumps(hooks, indent=2) + "\n", encoding="utf-8")
+    config_path = tmp_path / ".codex" / "config.toml"
+    sentinel = (
+        "\n[hooks.state]\n\n[hooks.state.'sentinel']\n"
+        'trusted_hash = "sha256:owned"\n'
+    )
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8") + sentinel,
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        setup_codex,
+        "_hooks_dir",
+        lambda: new_root / "integrations/codex/hooks",
+    )
+    assert run(["setup", "codex"]) == 0
+    first = hooks_path.read_bytes()
+    assert run(["setup", "codex"]) == 0
+
+    assert hooks_path.read_bytes() == first
+    assert str(old_root).replace("\\", "/").encode() not in first
+    assert b"C:/Stale/integrations/codex/hooks/stop.py" not in first
+    migrated = json.loads(first)
+    assert migrated["hooks"]["Stop"][0] == peer_wrapper
+    assert 'trusted_hash = "sha256:owned"' in config_path.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(
+        setup_codex,
+        "_hooks_dir",
+        lambda: third_root / "integrations/codex/hooks",
+    )
+    assert run(["setup", "codex", "--uninstall"]) == 0
+    after_uninstall = json.loads(hooks_path.read_text(encoding="utf-8"))
+    assert after_uninstall["hooks"]["Stop"] == [peer_wrapper]
+    assert run(["setup", "codex", "--uninstall"]) == 0
+    assert json.loads(hooks_path.read_text(encoding="utf-8")) == after_uninstall
+    assert 'trusted_hash = "sha256:owned"' in config_path.read_text(encoding="utf-8")

@@ -94,9 +94,12 @@ When moving an installation from a worktree back to the primary checkout:
 
 1. Preserve dirty work in a named stash or branch, restore the primary checkout
    to clean, current `main`, and keep the old worktree until migration finishes.
-2. Run each supported uninstaller **from the old checkout's working directory**,
-   then run setup from the primary checkout. Hook removal is path-specific;
-   setup or uninstall from the new path alone can leave both old and new hooks.
+2. For Claude Code, run the uninstaller **from the old checkout's working
+   directory**, then run setup from the primary checkout; its hook removal is
+   path-specific. Current Codex setup reconciles Pallium-managed hooks across
+   checkout paths, so running setup from the primary checkout removes stale
+   Codex hook registrations and repoints its MCP server. With older Pallium
+   versions, uninstall Codex from the old checkout first.
 3. Confirm Claude's MCP plus hooks and Codex's MCP, hooks, and
    `pallium-relay.config.toml` contain only primary-checkout paths. Confirm the
    OpenCode config still registers its loader, the loader points to the primary
