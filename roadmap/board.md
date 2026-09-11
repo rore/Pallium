@@ -37,6 +37,7 @@
 - idea-shared-raw-revocation
 
 # Ideas
+- idea-exact-relay-recipient-resolution
 - idea-contamination-detector-negation-robustness
 - idea-contamination-differential-paired-inference
 - idea-retrieval-source-fetch-batching
