@@ -906,11 +906,12 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     @relay_tool
     async def pallium_relay_recipients(
         runtime: str | None = None,
+        session_ref: str | None = None,
         include_inactive: bool = False,
         container_ref: str | None = None,
         offset: int = 0,
     ) -> str:
-        """Return a bounded Relay address-book page. Each item includes canonical exact_selector (relay-session-...) and optional service-global alias_selector (`@name`; internal wire-field name). Continue with next_offset; use pallium_relay_receive for inbox delivery."""
+        """Return a bounded Relay address-book page. For exact session_ref lookup, runtime is required. Each item includes canonical exact_selector (relay-session-...) and optional service-global alias_selector (`@name`; internal wire-field name). Continue with next_offset; use pallium_relay_receive for inbox delivery."""
         if offset < 0:
             return _relay_recipients_text([], offset)
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
@@ -919,7 +920,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         result = await PalliumMcpClient(ctx).relay_recipients(
-            runtime=runtime, include_inactive=include_inactive,
+            runtime=runtime, session_ref=session_ref, include_inactive=include_inactive,
         )
         return _relay_recipients_text(result, offset)
 

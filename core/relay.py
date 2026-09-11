@@ -405,13 +405,21 @@ class RelayService:
         *,
         container_ref: str,
         runtime: str | None = None,
+        session_ref: str | None = None,
         include_inactive: bool = False,
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
         container = self._scope(container_ref)
+        validated_runtime = None if runtime is None else validate_runtime(runtime)
+        validated_session_ref = (
+            None if session_ref is None else _opaque(session_ref, "session_ref")
+        )
+        if validated_session_ref is not None and validated_runtime is None:
+            raise ValueError("runtime is required when session_ref is supplied")
         return self._store.relay_list_sessions(
             container_ref=container,
-            runtime=None if runtime is None else validate_runtime(runtime),
+            runtime=validated_runtime,
+            session_ref=validated_session_ref,
             include_inactive=include_inactive,
             recent_seconds=RELAY_RECENT_SECONDS,
             now=now,

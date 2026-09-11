@@ -29,12 +29,14 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 Task context and provisional classification were recorded before code inspection. Discovery traced the existing storage-to-MCP path, redline classified the API change, and the reviewed plan is ready to implement.
+
+Implemented the optional exact session_ref filter through storage, core, HTTP, MCP client, and MCP tool boundaries. Exact lookup requires runtime, reuses _relay_session, preserves container and recent/inactive filtering, and leaves the unfiltered query unchanged. Added the reviewed composite-identity, scope, lifecycle, offset, input-boundary, Unicode, and client-forwarding coverage.
 
 ## Plan review
 
@@ -42,7 +44,10 @@ Initial clean-context Astra review required explicit composite-identity and outs
 
 ## Evidence
 
-Pending.
+- Focused exact contract: 2 passed in 1.13s.
+- Affected Relay/MCP/cross-container files: 195 passed in 45.37s.
+- Full suite with complete pinned extras: 4861 passed, 33 skipped, 215 deselected, 2 xfailed in 765.21s.
+- The first full-suite invocation omitted the vector extra and stopped at collection with missing numpy; rerunning with the repository's complete pinned extras passed.
 
 ## Result review
 

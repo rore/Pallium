@@ -208,11 +208,12 @@ class TestRelay:
     async def test_recipients_forwards_unicode_runtime_and_scope(self, ctx: PalliumContext) -> None:
         response = _mock_response(json_data={"sessions": []})
         with patch("httpx.AsyncClient.get", return_value=response) as mock_get:
-            result = await PalliumMcpClient(ctx).relay_recipients(runtime="קלוד", include_inactive=True)
+            result = await PalliumMcpClient(ctx).relay_recipients(runtime="קלוד", session_ref="会話", include_inactive=True)
         assert result == {"sessions": []}
         assert mock_get.call_args.kwargs["params"] == {
             "container_ref": "test-container",
             "runtime": "קלוד",
+            "session_ref": "会話",
             "include_inactive": True,
         }
 

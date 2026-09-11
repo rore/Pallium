@@ -318,11 +318,17 @@ class PalliumMcpClient:
             return {"error": str(exc)}
 
     async def relay_recipients(
-        self, *, runtime: str | None = None, include_inactive: bool = False
+        self,
+        *,
+        runtime: str | None = None,
+        session_ref: str | None = None,
+        include_inactive: bool = False,
     ) -> Any:
         params = self._relay_scope_params()
         if runtime is not None:
             params["runtime"] = runtime
+        if session_ref is not None:
+            params["session_ref"] = session_ref
         if include_inactive:
             params["include_inactive"] = True
         return await self._get_or_error("/relay/sessions", params)
