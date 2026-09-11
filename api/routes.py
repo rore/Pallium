@@ -472,6 +472,7 @@ def create_router(
     async def relay_sessions(
         container_ref: str = Query(min_length=1, max_length=512),
         runtime: str | None = Query(default=None, max_length=32),
+        session_ref: str | None = Query(default=None, max_length=255),
         include_inactive: bool = False,
     ):
         return await _relay_call(
@@ -479,6 +480,7 @@ def create_router(
             lambda: _relay().list_sessions(
                 container_ref=container_ref,
                 runtime=runtime,
+                session_ref=session_ref,
                 include_inactive=include_inactive,
             )
         )

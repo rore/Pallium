@@ -788,6 +788,7 @@ class SQLiteRelayMixin:
         *,
         container_ref: str,
         runtime: str | None,
+        session_ref: str | None,
         include_inactive: bool,
         recent_seconds: int,
         now: datetime | None = None,
@@ -796,6 +797,21 @@ class SQLiteRelayMixin:
         cutoff = current - timedelta(seconds=recent_seconds)
 
         def run(db):
+            if session_ref is not None:
+                if runtime is None:
+                    raise ValueError("runtime is required when session_ref is supplied")
+                row = self._relay_session(
+                    db,
+                    container_ref=container_ref,
+                    runtime=runtime,
+                    session_ref=session_ref,
+                )
+                if row is None or (
+                    not include_inactive
+                    and (row.state != "active" or _now(row.last_seen_at) < cutoff)
+                ):
+                    return []
+                return [self._relay_session_view(db, row, current, recent_seconds)]
             statement = select(RelaySessionRecord).where(
                 RelaySessionRecord.container_ref == container_ref,
             )

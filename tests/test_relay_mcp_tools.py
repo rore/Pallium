@@ -894,14 +894,9 @@ async def test_redacted_send_and_reply_summaries_are_safe_and_bounded(
 
 @pytest.mark.asyncio
 async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
-    monkeypatch: pytest.MonkeyPatch, asgi_post, asgi_get,
+    monkeypatch: pytest.MonkeyPatch, relay_app, asgi_post, asgi_get,
 ):
-    bind_asgi_post(monkeypatch, asgi_post)
-
-    async def get_from_app(_client, path, params):
-        return await asgi_get(path, params)
-
-    monkeypatch.setattr(PalliumMcpClient, "_get_or_error", get_from_app)
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
     server = create_server()
 
     async def page(**arguments):
@@ -982,6 +977,114 @@ async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
     assert closed["state"] == "closed"
     assert "alias_selector" not in closed
     assert (await page(runtime="codex", offset=999))["recipients"] == []
+
+    shared_ref = "same-ref"
+    outside_only = "outside-only"
+    cutoff_ref = "at-cutoff"
+    before_cutoff_ref = "before-cutoff"
+    closed_ref = "closed-exact"
+    long_ref = "界" * 255
+    other_scope = {"container_ref": "git:example.test/other"}
+    for runtime, session_ref, scope in (
+        ("codex", shared_ref, _SCOPE),
+        ("claude-code", shared_ref, _SCOPE),
+        ("codex", shared_ref, other_scope),
+        ("codex", outside_only, other_scope),
+        ("codex", cutoff_ref, _SCOPE),
+        ("codex", before_cutoff_ref, _SCOPE),
+        ("codex", closed_ref, _SCOPE),
+        ("codex", long_ref, _SCOPE),
+    ):
+        await asgi_post("/relay/turn", {
+            "runtime": runtime, "session_ref": session_ref, **scope,
+        })
+    await asgi_post("/relay/sessions/close", {
+        "runtime": "codex", "session_ref": closed_ref, **_SCOPE,
+    })
+
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from core.relay import RELAY_RECENT_SECONDS
+    from storage.sqlite_schema import RelaySessionRecord
+    import storage.sqlite_relay as sqlite_relay
+
+    fixed_now = datetime.now(timezone.utc)
+    storage = relay_app.state.pallium_service._storage
+    with storage._begin_relay_immediate() as db:
+        for session_ref, delta in (
+            (cutoff_ref, timedelta(seconds=RELAY_RECENT_SECONDS)),
+            (before_cutoff_ref, timedelta(
+                seconds=RELAY_RECENT_SECONDS, microseconds=1,
+            )),
+        ):
+            row = db.execute(select(RelaySessionRecord).where(
+                RelaySessionRecord.container_ref == _SCOPE["container_ref"],
+                RelaySessionRecord.runtime == "codex",
+                RelaySessionRecord.session_ref == session_ref,
+            )).scalar_one()
+            row.last_seen_at = fixed_now - delta
+    real_now = sqlite_relay._now
+    monkeypatch.setattr(
+        sqlite_relay,
+        "_now",
+        lambda value=None: fixed_now if value is None else real_now(value),
+    )
+
+    exact = await page(runtime="codex", session_ref=shared_ref)
+    assert [(row["runtime"], row["session_ref"]) for row in exact["recipients"]] == [
+        ("codex", shared_ref)
+    ]
+    assert exact["total_count"] == 1
+    assert (await page(
+        runtime="codex", session_ref=shared_ref, offset=1,
+    )) == {
+        "recipients": [], "offset": 1, "next_offset": None,
+        "has_more": False, "total_count": 1,
+    }
+    assert [
+        row["runtime"]
+        for row in (await page(
+            runtime="claude-code", session_ref=shared_ref,
+        ))["recipients"]
+    ] == ["claude-code"]
+    assert (await page(
+        runtime="codex", session_ref=outside_only,
+    ))["recipients"] == []
+    assert (await page(
+        runtime="codex", session_ref=cutoff_ref,
+    ))["recipients"][0]["session_ref"] == cutoff_ref
+    assert (await page(
+        runtime="codex", session_ref=before_cutoff_ref,
+    ))["recipients"] == []
+    assert (await page(
+        runtime="codex", session_ref=before_cutoff_ref, include_inactive=True,
+    ))["recipients"][0]["state"] == "dormant"
+    assert (await page(
+        runtime="codex", session_ref=closed_ref,
+    ))["recipients"] == []
+    assert (await page(
+        runtime="codex", session_ref=closed_ref, include_inactive=True,
+    ))["recipients"][0]["state"] == "closed"
+    assert (await page(
+        runtime="codex", session_ref=long_ref,
+    ))["recipients"][0]["session_ref"] == long_ref
+
+    invalid_exact = (
+        ({"session_ref": shared_ref}, "runtime is required"),
+        ({"runtime": "invalid", "session_ref": shared_ref}, "unknown runtime"),
+        ({"runtime": "codex", "session_ref": ""}, "session_ref is required"),
+        ({"runtime": "codex", "session_ref": " padded "}, "surrounding whitespace"),
+        ({"runtime": "codex", "session_ref": "line\nbreak"}, "control characters"),
+        ({"runtime": "codex", "session_ref": "界" * 256}, None),
+    )
+    for arguments, expected in invalid_exact:
+        error = await assert_tool_error(
+            server, "pallium_relay_recipients", arguments,
+        )
+        payload = tool_error_payload(error)
+        assert payload["status_code"] == 422
+        if expected is not None:
+            assert expected in error
 
     sent, _ = await server.call_tool("pallium_relay_send", {
         "message": "canonical alias works", "recipient": holder["alias_selector"],
