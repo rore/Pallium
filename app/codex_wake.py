@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -18,6 +19,7 @@ from typing import Literal
 _DEBOUNCE_SECONDS = 1.0
 _QUEUE_TIMEOUT_SECONDS = 30
 _LaunchOutcome = Literal["queued", "ambiguous", "failed"]
+_LaunchResult = tuple[_LaunchOutcome, str | None, int | None]
 _WakeKey = tuple[str, str]
 _scheduled_delivery_ids: set[str] = set()
 _scheduled_session_generations: dict[_WakeKey, int] = {}
@@ -25,6 +27,29 @@ _generation_counter = 0
 _scheduled_session_delivery_ids: dict[_WakeKey, str] = {}
 _scheduled_lock = threading.Lock()
 logger = logging.getLogger(__name__)
+
+
+def relay_wake_log_refs(
+    delivery_id: str,
+    session_ref: str,
+    container_ref: str,
+) -> tuple[str, str, str]:
+    """Return bounded, non-secret correlation values for local wake logs."""
+    delivery_ref = (
+        delivery_id
+        if re.fullmatch(r"relay-delivery-[0-9a-f]{32}", delivery_id)
+        else _log_fingerprint(delivery_id)
+    )
+    return (
+        delivery_ref,
+        _log_fingerprint(session_ref),
+        _log_fingerprint(container_ref),
+    )
+
+
+def _log_fingerprint(value: str) -> str:
+    digest = hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()[:16]
+    return f"sha256:{digest}"
 
 
 def schedule_codex_relay_wake(
@@ -115,12 +140,25 @@ def _wake_after_debounce(
     attempt_started_at = datetime.now(timezone.utc)
     started = time.monotonic()
     try:
-        outcome = _wake(wake_key[0])
+        launch_result = _wake(wake_key[0])
+        if isinstance(launch_result, tuple):
+            outcome, reason, exit_code = launch_result
+        else:
+            outcome, reason, exit_code = launch_result, None, None
     except Exception:
-        outcome = "failed"
+        outcome, reason, exit_code = "failed", "unexpected_error", None
+    delivery_ref, session_fp, container_fp = relay_wake_log_refs(
+        delivery_id, wake_key[0], wake_key[1]
+    )
     logger.info(
-        "codex_relay_wake outcome=%s latency_ms=%d",
+        "codex_relay_wake delivery_ref=%s session_fp=%s container_fp=%s "
+        "outcome=%s reason=%s exit_code=%s latency_ms=%d",
+        delivery_ref,
+        session_fp,
+        container_fp,
         outcome,
+        reason or "none",
+        exit_code if exit_code is not None else "none",
         int((time.monotonic() - started) * 1000),
     )
     if outcome in {"queued", "ambiguous"}:
@@ -138,9 +176,9 @@ def _wake_after_debounce(
             logger.exception("codex_relay_wake unreachable callback failed")
 
 
-def _wake(session_ref: str) -> _LaunchOutcome:
+def _wake(session_ref: str) -> _LaunchResult:
     # UserPromptSubmit claims persisted Relay only after this turn is admitted.
-    return _launch(session_ref, _wake_prompt())
+    return _launch_result(session_ref, _wake_prompt())
 
 
 def mark_codex_relay_wake_admitted(
@@ -152,9 +190,13 @@ def mark_codex_relay_wake_admitted(
 
 
 def _launch(session_ref: str, prompt: str) -> _LaunchOutcome:
+    return _launch_result(session_ref, prompt)[0]
+
+
+def _launch_result(session_ref: str, prompt: str) -> _LaunchResult:
     cwd = _codex_home()
     if cwd is None:
-        return "failed"
+        return "failed", "invalid_codex_home", None
     try:
         queued = subprocess.run(
             [
@@ -172,10 +214,14 @@ def _launch(session_ref: str, prompt: str) -> _LaunchOutcome:
         )
     except subprocess.TimeoutExpired:
         # The native write may already be durable and is not idempotent.
-        return "ambiguous"
-    except (OSError, ValueError):
-        return "failed"
-    return "queued" if queued.returncode == 0 else "failed"
+        return "ambiguous", "timeout", None
+    except OSError:
+        return "failed", "os_error", None
+    except ValueError:
+        return "failed", "value_error", None
+    if queued.returncode == 0:
+        return "queued", None, 0
+    return "failed", "nonzero_exit", queued.returncode
 
 
 def _codex_home() -> Path | None:
