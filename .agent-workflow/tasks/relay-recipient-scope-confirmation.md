@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -37,11 +37,14 @@
 - Established the incident from persisted Relay metadata and traced exact-selector resolution through storage, HTTP, MCP client, and MCP response compaction. No product code edited; awaiting architect validation.
 - Architect review classified the incident as caller misuse plus a product observability defect. It retained the formatter/guidance scope, rejected a new expected-container guard for this requirement, and added explicit overflow, reply, boundary, token-exclusion, and roadmap-drift coverage before implementation.
 - Implementation touched `app/mcp/server.py`, `tests/test_mcp_server_utils.py`, `tests/test_relay_mcp_tools.py`, `tests/test_guidance_budget.py`, `docs/agent-relay.md`, `roadmap/ideas/idea-exact-relay-recipient-resolution.md`, and the three mirrored integration skills. The compact response now allowlists delivery identity, drops only oversized selector/session/container descriptions with explicit markers, prioritizes metadata before redacted payload preview, and never exposes claim tokens. The normal patch helper failed with Windows error 1327, so edits used deterministic replacements limited to these named files.
+- Skill-feedback trigger 2/7 dropped: the missing recipient-validation guidance is owned by Pallium, not the supported agent-workflow upstream, and is fixed in this task.
 
 ## Evidence
 
 - Persisted delivery metadata resolves the mistaken endpoint to `git:github.com/rore/dictation-app`; current `@pall-arc` resolves to `git:github.com/rore/pallium`.
 - `_relay_text` in `app/mcp/server.py` removes all resolved delivery identity when a long send exceeds the MCP response budget.
+- Focused formatter, cross-container send/reply, escaped-boundary, idempotence, redaction, and guidance tests: 17 passed.
+- Full regression on code revision `d49b900f`: 4,863 passed, 33 skipped, 2 xfailed in 223.71 seconds.
 
 ## Plan review
 
