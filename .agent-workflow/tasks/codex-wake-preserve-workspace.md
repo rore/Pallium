@@ -60,7 +60,7 @@ Not required at this risk level.
 —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -82,7 +82,15 @@ Not required at this risk level.
 
 ## Evidence
 
-Pending.
+Verified implementation revision `6de3f5a9`:
+
+- Focused Codex wake caller-surface suite: 49 passed.
+- Repository last-failure rerun after syncing locked optional extras: 106 passed, 4,986 deselected.
+- Full repository suite: 4,842 passed, 33 skipped, 2 expected failures.
+- Import boundaries: 8 contracts kept, 0 broken.
+- Redline: GRAY/watch only for `app/codex_wake.py`; blue tests/docs/roadmap, no boundary violations, no checkpoints, size ok.
+- Agent-workflow local gate: clean, exit 0.
+- The first last-failure collection lacked locked MCP/vector extras; `uv sync --frozen --all-extras` corrected the environment and the rerun passed. The first redline attempt lacked its configured generated boundary artifact; `scripts/run-import-linter.py` generated it and the rerun passed.
 
 ## Result review
 
