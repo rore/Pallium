@@ -69,6 +69,10 @@ Not required at this risk level.
 - Discovery confirmed the sender-scope 404 is downstream of wake-inherited service cwd and that PR #161 does not cover this exact host-context root cause.
 - Rebased the isolated plan branch onto `origin/main` at `18c43f0d` after PR #165 merged.
 - Approved implementation files: `app/codex_wake.py`, `tests/test_codex_wake.py`, `docs/codex-integration.md`, `docs/agent-relay.md`, `roadmap/features/add-wake-first-relay-delivery.md`, and this Work Record. No other paths are approved.
+- Implemented the accepted queue-only adapter: one exact-thread native queue write from a validated resolved local Codex home, with no cold resume or private state access. Loaded/unloaded qualification is explicit in both current docs and the roadmap; RW-024 records the inherited-cwd failure and RW-025 tracks the observed expired-reply fallback.
+- A low-cost delegated mechanical pass edited only the approved code/test files. Its first result had a malformed command list and stale outcome assertions; review corrected those plus unsafe-path validation order and caller-surface cwd assertions before acceptance.
+- `apply_patch` failed with the machine's known Windows 1327 error. Both the delegate and primary agent used narrowly scoped elevated PowerShell/.NET deterministic replacements limited to approved files.
+- Focused edit-loop verification is green: `tests/test_codex_wake.py` reports 49 passed, including explicit cwd, Unicode, unsafe/missing/error path, pending-before-hook, exact hook delivery, and single-flight coverage.
 
 ## Plan review
 

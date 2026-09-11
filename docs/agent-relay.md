@@ -117,7 +117,7 @@ the same message remains pending for the recipient's next natural turn.
 | Runtime | Current behavior |
 |---|---|
 | Claude Code on Windows and Linux | Exact-session wake is qualified. Linux qualification used the installed UDS path on Ubuntu 24.04. |
-| Codex on Windows and Linux | Exact-session wake is qualified. Windows also proves loaded and unloaded tasks plus overtaken-wake suppression; Linux requires the installed hook to be trusted. |
+| Codex on Windows and Linux | Exact-session wake is qualified for tasks loaded by their Codex runtime. Exact-thread queueing persists work for an unloaded task's next supported resume; Windows also proves overtaken-wake suppression, and Linux requires the installed hook to be trusted. |
 | OpenCode | Durable next-turn delivery; active wake is deferred. |
 | Claude Code and Codex on macOS | Durable next-turn delivery; active wake is not yet qualified. |
 

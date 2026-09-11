@@ -27,12 +27,15 @@ messages, and supports Pallium's optional derived-memory behavior.
 - retrieve or inject selected memory on later turns
 - inspect, flag, and write memory through MCP tools
 
-Windows and Linux exact-session wake are qualified. Windows also proves loaded
-and unloaded tasks, overtaken-wake suppression, delivery-derived reply wake of
-an idle sender, and a bounded remediation round trip without manual turns.
-Remaining interrupted/restart lifecycle and macOS qualification work retains
-next-turn delivery where active wake is not qualified. Correlation telemetry is
-deferred until existing evidence cannot diagnose a concrete failure.
+Windows and Linux exact-session wake are qualified for tasks already loaded by
+their Codex runtime. The native exact-thread queue also persists work for an
+unloaded task's next supported resume; Pallium does not cold-resume it from the
+service checkout. Windows additionally proves overtaken-wake suppression,
+delivery-derived reply wake of an idle loaded sender, and a bounded remediation
+round trip without manual turns. Remaining interrupted/restart lifecycle and
+macOS qualification work retains next-turn delivery where active wake is not
+qualified. Correlation telemetry is deferred until existing evidence cannot
+diagnose a concrete failure.
 
 ## Architecture
 
