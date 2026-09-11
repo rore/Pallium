@@ -513,6 +513,9 @@ async def test_public_mcp_search_expand_lifecycle_preserves_telemetry_and_memory
         assert search["lookup_event_id"]
         anchor_id = search["results"][0]["source_item_id"]
         assert anchor_id == source_ids[1]
+        assert search["results"][0]["session_group"] == "other-1"
+        assert "source_item_id" in search["historical_reminder"]
+        assert "lookup_event_id" in search["historical_reminder"]
         assert search["results"][0]["recorded_at_source"] == "ingest"
         search_updates = search["results"][0]["historical_updates"]
         assert len(search_updates) == 1

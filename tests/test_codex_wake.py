@@ -736,9 +736,9 @@ def test_profile_is_idempotent_and_narrow(monkeypatch, tmp_path) -> None:
     setup_codex._install_relay_profile()
     profile = (tmp_path / ".codex" / "pallium-relay.config.toml").read_text(encoding="utf-8")
     assert "required = true" in profile
-    assert 'enabled_tools = ["pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive"]' in profile
+    assert 'pallium_expand_source' in profile
     assert 'default_tools_approval_mode = "prompt"' in profile
-    assert profile.count('approval_mode = "approve"') == 4
+    assert profile.count('approval_mode = "approve"') == 7
     setup_codex._remove_relay_profile()
     assert not (tmp_path / ".codex" / "pallium-relay.config.toml").exists()
 
@@ -1900,3 +1900,14 @@ def test_pending_and_expired_codex_work_rewakes_after_real_app_restart(
 
     reconciler = app_b.state._claude_wake_reconciler
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
+
+def test_relay_profile_parses_to_exact_read_only_tools(monkeypatch, tmp_path) -> None:
+    from app.cli import setup_codex
+    import tomllib
+
+    monkeypatch.setattr(setup_codex.Path, "home", lambda: tmp_path)
+    setup_codex._install_relay_profile()
+    profile = tomllib.loads((tmp_path / ".codex" / "pallium-relay.config.toml").read_text(encoding="utf-8"))["mcp_servers"]["pallium"]
+    expected = {"pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive", "pallium_search_history_by_work_ref", "pallium_search_history", "pallium_expand_source"}
+    assert set(profile["enabled_tools"]) == expected == set(profile["tools"])
+    assert {tool["approval_mode"] for tool in profile["tools"].values()} == {"approve"}

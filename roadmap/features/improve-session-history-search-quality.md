@@ -15,6 +15,10 @@ evidence. Investigate existing data more widely than the initial ten-case diagno
 then implement the smallest supported fixes. The question is how to improve history
 search and its use, not whether history can help in principle.
 
+### Shipped: response-local navigation and Relay-wake availability
+
+History responses now label session relationship as current, deterministic first-seen other-N, or non-identifying unknown, and state the source_item_id/lookup_event_id handoff for bounded expansion plus live-state verification. Connection-establishment failures are distinct from valid empty results. Regenerate the Codex Relay profile to expose only the read-only History search/expansion tools beside Relay. This change measures presentation/navigation and tool availability only; it makes no candidate-recovery, injection-precision, or downstream-task-effect claim.
+
 Separate retrieval quality, result/excerpt usability, and agent search behavior.
 Different failure classes need different fixes. The preliminary suggestions below
 are hypotheses to test, not a predetermined implementation plan.

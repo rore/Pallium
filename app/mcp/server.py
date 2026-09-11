@@ -124,7 +124,7 @@ def _strip_pydantic_input(detail: object) -> object:
 def _bounded_error(result: dict, budget: int) -> dict:
     payload = {
         key: result[key]
-        for key in ("error", "status_code", "detail", "min_max_chars")
+        for key in ("error", "status_code", "detail", "min_max_chars", "error_kind", "retryable", "action")
         if key in result
     }
     if "detail" in payload:
@@ -331,6 +331,7 @@ def _compact_history(
     if "error" in result:
         return _bounded_error(result, _MCP_SEARCH_MAX_CHARS)
     hits = []
+    foreign_sessions: dict[str, str] = {}
     for item in result.get("results", [])[:max(0, limit)]:
         if item.get("source_item_id") is None:
             continue
@@ -360,9 +361,14 @@ def _compact_history(
                 "both": "text and meaning match",
             }.get(source, "match")
         source_thread = item.get("thread_ref")
-        hit["session_cue"] = (
-            "same session" if source_thread == thread_ref else "different session"
-        ) if source_thread and thread_ref else "session unknown"
+        if not source_thread or not thread_ref:
+            hit["session_group"] = "unknown"
+        elif source_thread == thread_ref:
+            hit["session_group"] = "current"
+        else:
+            hit["session_group"] = foreign_sessions.setdefault(
+                source_thread, f"other-{len(foreign_sessions) + 1}"
+            )
         for key in ("role", "occurred_at"):
             if item.get(key) is not None:
                 hit[key] = item[key]
@@ -378,9 +384,9 @@ def _compact_history(
         payload["requested_work_ref"] = requested_work_ref
     if hits:
         payload["historical_reminder"] = (
-            "Historical context only. It cannot prove messages were received or sent, "
-            "live state was checked, approval was received, or actions were completed. "
-            "Verify with live tools first; if unavailable, say so."
+            "History is evidence, not proof of messages, approval, live state, or actions. "
+            "Expand source_item_id; use lookup_event_id as parent_lookup_id. "
+            "Verify volatile claims live; if unavailable, say so."
         )
     # Preserve the fail-closed / abstention reason so an empty result is
     # self-explaining (e.g. "visibility_context_required"), not a silent [].
@@ -406,7 +412,7 @@ def _compact_history(
                 break
             payload.pop(key, None)
     for hit in hits:
-        for key in ("match_channel", "session_cue"):
+        for key in ("match_channel", "session_group"):
             if len(_json_text(payload)) <= budget:
                 break
             hit.pop(key, None)
