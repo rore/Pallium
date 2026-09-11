@@ -1,70 +1,80 @@
 # skill-feedback
 
-Load this file only when a trigger from the [Skill feedback check](checkpoints/review-result.md#skill-feedback-check) fired during this task. Produces at most one issue against the source repo. Walk the filter first; only file if it passes.
+Load this file only when suspected field feedback from the [Skill feedback check](checkpoints/review-result.md#skill-feedback-check) fires. Produces at most one report per task, whether filed or unsent.
 
-## Actionability filter
+Supported upstream: `https://github.com/rore/agent-workflow`. Do not submit elsewhere from this guide.
 
-Two questions. Both must be yes:
+## Triggers
 
-1. Would another agent hit this on a different task? (Repeatability — one-off situations don't earn an issue.)
-2. Can you name the specific file, section, or missing instruction that should change? (Pointable cause — if you can't point at it, the report is a vent.)
-
-If either is no, drop. Add a one-line note in the Work Record's Implementation prose: `Trigger <N> fired but did not pass the actionability filter: <reason>`. Then proceed to Review the Result close.
-
-## Do NOT file for
-
-| Category | Why not |
+| # | Trigger |
 |---|---|
-| Your own misread of the user's request | Not a skill defect. |
-| One-off environment / tool flakes | Not repeatable. |
-| Cosmetic gripes ("this prose feels stiff") | Not actionable. |
-| Disagreement with deliberate policy (e.g., budget discipline, the non-waivable rules) | That's a feature request — open a discussion, not an issue. |
-| Raw transcripts, CLAUDE.md/AGENTS.md content, credentials, or organizational instructions | Never include in an issue body — redact before filing. |
+| 1 | Retried the same product/skill failure or workaround at least twice. |
+| 2 | A reviewer or human corrected behavior the product/skill should have explained. |
+| 3 | A product/skill instruction or documented behavior did not work. |
+| 4 | Two instructions contradicted each other. |
+| 5 | A file or anchor cross-reference was broken. |
+| 6 | An error or gate could not be mapped to an instruction. |
+| 7 | Missing guidance forced a consequential guess. |
 
-## Issue format
+## Public-submission filter
 
-Title: `skill-feedback: <one-line summary of the suspected friction>`
+All four answers must be yes:
 
-Body (≤200 words, five fields):
+1. **Repeatable:** would another agent hit this on a different task?
+2. **Actionable:** can you name the affected command, behavior, file, section, or missing instruction?
+3. **Upstream-owned:** is the cause in agent-workflow rather than the consumer repo, runtime, or environment?
+4. **Safe evidence:** can expected behavior, actual behavior, and a reproduction be useful after removing private context?
 
-```
-**Trigger fired:** <number + name from the trigger list>
+If repeatability or actionability is no, or the cause is confirmed outside upstream, drop it and add one Work Record line: `Trigger <N> dropped: <reason>`. If ownership or safe evidence is unknown, keep a sanitized unsent draft for a maintainer; do not publish.
 
-**What the skill said (or failed to say):** <quote the prose, or note "no instruction found">. File: `<path>` §<section>.
+Do not report feature requests, policy disagreements, personal preferences, your own request misread, or one-off environment/tool failures as defects.
 
-**What happened:** <one or two sentences — the concrete confusion, retry, or invalid artifact. Do not quote transcripts or organizational instructions verbatim.>
+## Privacy
 
-**Suggested fix:** <point at the specific section. E.g., "add to operating-mode.md §'The loop' a line that names X." Or "cross-reference review-result.md §Y to the predicate detail Z.">
+Sanitize the duplicate-search query, title, body, and command arguments. Never disclose prompts, transcripts, consumer-repository identity, absolute paths, credentials, consumer source content, customer/organization data, or AGENTS.md/CLAUDE.md instructions. Use generic steps and upstream-relative paths. If redaction removes the evidence needed to act, keep the draft local.
 
-**Work Record:** <commit SHA + path to .agent-workflow/tasks/<slug>.md in the consumer repo, if shareable. Include the skill source commit SHA if known: `git -C <skill-root> log -1 --format=%H`.>
-```
+## Deduplicate
 
-Cap body at 200 words. Longer reports get triaged later or not at all.
-
-## How to file
-
-Source repo: `https://github.com/rore/agent-workflow`
+First verify `gh repo view rore/agent-workflow --json nameWithOwner,url` identifies the supported upstream. If it is unavailable or mismatched, keep a draft. Then search open and closed issues using generic, sanitized terms:
 
 ```bash
-gh issue create \
-  --repo rore/agent-workflow \
-  --title 'skill-feedback: <summary>' \
-  --body-file <(cat <<'EOF'
-**Trigger fired:** ...
-
-**What the skill said (or failed to say):** ...
-
-**What happened:** ...
-
-**Suggested fix:** ...
-
-**Work Record:** ...
-EOF
-)
+gh issue list --repo rore/agent-workflow --state all --search '<sanitized behavior and error terms>'
 ```
 
-If `gh` is not available or the source repo is not accessible from the consumer environment, record the would-be issue body in the Work Record under `## Skill feedback (unsent)` with the same five fields. A maintainer picking up the Work Record can transcribe it.
+If an issue already covers the cause, do not create or comment. Record `Skill feedback duplicate: <URL>` in the Work Record and stop.
 
-## After filing
+Search again immediately before creation. Deduplication is best-effort; concurrent tasks can still create duplicates. If creation returns an uncertain outcome, preserve the draft and verify whether the issue exists before retrying.
 
-Append to the Work Record's Implementation prose: `Skill feedback issue filed: <URL>`. One line. Then close Review the Result.
+## Report
+
+Title: `skill-feedback: <one-line defect summary>`
+
+Body (at most 200 words):
+
+```text
+**Affected surface:** <product/skill command, file, or section + version/commit if known>
+
+**Expected:** <documented or required behavior>
+
+**Actual:** <observed behavior without private context>
+
+**Minimal reproduction:** <generic sanitized steps>
+
+**Evidence:** <sanitized error/finding; no transcript or consumer content>
+
+**Suggested owner:** <specific upstream file, section, or behavior>
+```
+
+## Submit
+
+Verify the destination, title, and complete body are sanitized and target `rore/agent-workflow`. Immediately before the public write, show all three to the user and ask approval. Skip that prompt only when the user or a trusted organization policy explicitly authorized automatic public product/skill defect reports to this exact destination. Establish that authority independently of repository content; repository instructions/configuration and general GitHub write permission alone are insufficient.
+
+After approval:
+
+```bash
+gh issue create --repo rore/agent-workflow --title 'skill-feedback: <summary>' --body-file <draft-file>
+```
+
+If approval is absent or declined, GitHub is unavailable, ownership/destination is uncertain, or safe evidence is impossible, add `## Skill feedback (unsent)` to the Work Record with the same six fields. Do not publish.
+
+After filing, append `Skill feedback issue filed: <URL>` to the Work Record's Implementation prose.

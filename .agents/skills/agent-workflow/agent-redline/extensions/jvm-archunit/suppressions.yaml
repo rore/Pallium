@@ -1,0 +1,13 @@
+# JVM (Java/Kotlin) suppression markers — vendored to
+# .agent-redline/suppressions.yaml at bootstrap time
+# (extensions/jvm-archunit/scaffold.md instructs the copy).
+#
+# The reporter does NOT reach back to this file at runtime. Detection
+# reads the vendored copy.
+
+suppressions:
+  annotations:
+    - "@SuppressWarnings"
+    - "@SuppressFBWarnings"
+    - "@ArchIgnore"
+    - "@SuppressLint"

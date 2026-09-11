@@ -1,50 +1,71 @@
 #!/usr/bin/env python3
-"""Install the agent-workflow Claude Code hooks into a repo's .claude/settings.json.
+"""Merge agent-workflow hooks into Claude Code or Codex project settings.
 
-Create-or-merge, idempotent, and non-destructive: it adds three hook
-registrations (seed / gate / reinforce) that point at ``.claude/hooks/`` via
-``$CLAUDE_PROJECT_DIR``, WITHOUT removing or altering any hook the repo already
-has. Run again → no-op.
-
-It also resolves the plan-mode gate's guarded paths: it reads
-``hooks.guardedPaths`` from the repo's ``agent-workflow.yaml`` (repo root =
-parent of the ``.claude`` dir that holds settings.json) and writes them to a
-stdlib-JSON sidecar ``.claude/hooks/guarded-paths.json`` that the dependency-free
-gate hook reads at runtime. This step degrades gracefully: if the yaml is
-absent, the key is missing, or pyyaml is unavailable, no sidecar is written and
-the gate falls back to its historical ``["src/"]`` default (a warning is printed,
-exit stays 0).
-
-Safety:
-- If an existing settings.json is present but unparseable, ABORT (exit 1) and
-  touch nothing — never clobber a file we can't read.
-- Idempotency keys on the exact command string, so re-runs don't duplicate.
+The installer owns only exact agent-workflow command registrations. It preserves
+third-party hooks, rejects malformed JSON without writing, and is idempotent.
+Claude also receives the supplemental plan gate sidecar; Codex receives portable
+Unix and Windows commands and still requires project-hook trust.
 
 Usage:
-    python install-settings.py [--settings PATH]
-    (default PATH: .claude/settings.json under the current directory)
+    python install-settings.py --runtime claude|codex [--settings PATH]
 """
 import argparse
+import base64
 import json
 import os
 import sys
 
-# event -> (matcher or None, command)
-_HOOKS = [
-    ("UserPromptSubmit", None,          'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/seed-workflow.sh"'),
-    ("PreToolUse",       "ExitPlanMode", 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/check-plan.sh"'),
-    ("PostToolUse",      "ExitPlanMode", 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/reinforce-workflow.sh"'),
-]
+def _codex_windows_command(action):
+    script = (
+        "& (Join-Path (git rev-parse --show-toplevel) "
+        "'scripts/agent-workflow-runtime.ps1') codex " + action
+        + "; exit $LASTEXITCODE"
+    )
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    return (
+        "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass "
+        "-EncodedCommand " + encoded
+    )
 
 
-def _command_present(event_groups, command):
+# event -> (matcher or None, command, optional Windows command)
+_RUNTIME_HOOKS = {
+    "claude": [
+        ("UserPromptSubmit", None, 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/seed-workflow.sh"', None),
+        ("PreToolUse", "ExitPlanMode", 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/check-plan.sh"', None),
+        ("PostToolUse", "ExitPlanMode", 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/reinforce-workflow.sh"', None),
+        (
+            "PreToolUse",
+            "Write|Edit|MultiEdit|NotebookEdit|apply_patch",
+            'bash "$CLAUDE_PROJECT_DIR/scripts/agent-workflow-runtime.sh" claude guard',
+            None,
+        ),
+    ],
+    "codex": [
+        (
+            "UserPromptSubmit",
+            None,
+            'bash "$(git rev-parse --show-toplevel)/scripts/agent-workflow-runtime.sh" codex seed',
+            _codex_windows_command("seed"),
+        ),
+        (
+            "PreToolUse",
+            "Edit|Write|apply_patch",
+            'bash "$(git rev-parse --show-toplevel)/scripts/agent-workflow-runtime.sh" codex guard',
+            _codex_windows_command("guard"),
+        ),
+    ],
+}
+
+
+def _existing_command(event_groups, command):
     for group in event_groups:
         if not isinstance(group, dict):
             continue
-        for h in group.get("hooks", []) or []:
-            if isinstance(h, dict) and h.get("command") == command:
-                return True
-    return False
+        for hook in group.get("hooks", []) or []:
+            if isinstance(hook, dict) and hook.get("command") == command:
+                return hook
+    return None
 
 
 def _atomic_write_json(path, obj):
@@ -116,9 +137,13 @@ def _write_guarded_paths_sidecar(settings_path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--settings", default=os.path.join(".claude", "settings.json"))
+    ap.add_argument("--runtime", choices=("claude", "codex"), default="claude")
+    ap.add_argument("--settings")
     args = ap.parse_args()
-    path = args.settings
+    path = args.settings or os.path.join(
+        f".{args.runtime}",
+        "settings.json" if args.runtime == "claude" else "hooks.json",
+    )
 
     if os.path.exists(path):
         try:
@@ -142,27 +167,38 @@ def main():
         return 1
 
     added = 0
-    for event, matcher, command in _HOOKS:
+    for event, matcher, command, command_windows in _RUNTIME_HOOKS[args.runtime]:
         groups = hooks.setdefault(event, [])
         if not isinstance(groups, list):
             sys.stderr.write("error: hooks.%s is not a list; refusing to modify.\n" % event)
             return 1
-        if _command_present(groups, command):
-            continue  # idempotent
-        entry = {"hooks": [{"type": "command", "command": command}]}
+        existing = _existing_command(groups, command)
+        if existing is not None:
+            if command_windows and existing.get("commandWindows") != command_windows:
+                existing["commandWindows"] = command_windows
+                added += 1
+            continue
+        hook = {"type": "command", "command": command}
+        if command_windows:
+            hook["commandWindows"] = command_windows
+        entry = {"hooks": [hook]}
         if matcher:
-            entry = {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
+            entry["matcher"] = matcher
         groups.append(entry)
         added += 1
 
     if added == 0:
         print("agent-workflow hooks already installed in %s (no change)." % path)
-        _write_guarded_paths_sidecar(path)
+        if args.runtime == "claude":
+            _write_guarded_paths_sidecar(path)
         return 0
 
     _atomic_write_json(path, data)  # atomic — avoids partial-write/truncation on interrupt
     print("installed %d agent-workflow hook(s) into %s." % (added, path))
-    _write_guarded_paths_sidecar(path)
+    if args.runtime == "claude":
+        _write_guarded_paths_sidecar(path)
+    elif args.runtime == "codex":
+        print("note: Codex project hooks run only after the repository .codex layer is trusted.")
     return 0
 
 

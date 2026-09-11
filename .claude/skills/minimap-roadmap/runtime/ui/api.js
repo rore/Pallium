@@ -10,6 +10,8 @@ const ROADMAP_PREFIXES = [
   "/api/board",
   "/api/scope",
   "/api/items/",
+  "/api/metadata-order",
+  "/api/lenses/",
   "/api/setup/",
 ];
 
@@ -59,7 +61,9 @@ export function createApi({ fetch: fetchImpl, getRepo } = {}) {
     // Roadmap
     loadWorkspace: () => request("/api/workspace"),
     initializeWorkspace: () => request("/api/setup/initialize", { method: "POST" }),
-    saveBoard: (groups) => postJson("/api/board", { groups }),
+    saveBoard: (groups, expectedRevision) => postJson("/api/board", { groups, expectedRevision }),
+    reorderMetadata: (payload) => postJson("/api/metadata-order", payload),
+    reorderLensGroup: (field, payload) => postJson(`/api/lenses/${id(field)}/order`, payload),
     saveScope: (scopeText) => postJson("/api/scope", { scopeText }),
     readItem: (itemId) => request(`/api/items/${id(itemId)}`),
     saveItem: (itemId, payload) => postJson(`/api/items/${id(itemId)}`, payload),

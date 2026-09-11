@@ -46,6 +46,8 @@ export function filterBoardItemIds(workspace, ctx = {}) {
   return orderedIds.filter((itemId) => itemMatchesFilters(workspace.items?.[itemId], ctx));
 }
 
+const NON_CLEARABLE_LENS_KEYS = new Set(["status", "priority", "commitment", "kind"]);
+
 export function getItemLensGroupValue(item, lensKey, opts) {
   const { defaultLensKey, unassignedKey } = opts || {};
   if (!item || lensKey === defaultLensKey) return "";
@@ -96,17 +98,17 @@ export function buildDerivedVisibleGroups(workspace, lens, opts) {
       draggable: Boolean(lens.draggable && group.dropValue),
     }));
 
-  if (unassignedItems.length > 0) {
+  const canClear = Boolean(lens.draggable && !NON_CLEARABLE_LENS_KEYS.has(lens.key));
+  if (unassignedItems.length > 0 || (showEmptyGroups && canClear)) {
     visibleGroups.push({
       name: unassignedLabel,
       groupKey: unassignedKey,
       originalIndex: visibleGroups.length,
-      dropValue: "",
+      dropValue: canClear ? unassignedKey : "",
       items: unassignedItems,
       isDerived: true,
-      draggable: false,
+      draggable: canClear,
     });
   }
-
   return visibleGroups;
 }

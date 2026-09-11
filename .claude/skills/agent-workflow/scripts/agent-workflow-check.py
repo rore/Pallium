@@ -2092,6 +2092,8 @@ from datetime import date
 
 
 
+_WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 # Allowed Work Record state values. Both shapes share the same allowed
 # states; routine fast-path lists three (SPEC §7), expanded uses the
 # same set plus may add others later. We accept the "Blocked or
@@ -2610,14 +2612,14 @@ def risk_declared_not_below_detected(ctx: CheckerContext) -> PredicateResult:
 def review_checkpoints_satisfied(ctx: CheckerContext) -> PredicateResult:
     """Predicate: every triggered redline checkpoint is satisfied.
 
-    Closes SPEC §9.7 result-review enforcement at the harness level. The
+    Enforces the Redline-checkpoint subset of SPEC §9.7 result review. The
     harness does NOT re-implement redline's satisfaction logic — redline
     already evaluates each triggered checkpoint against PR labels and
     CODEOWNER approvals (see ``core/agent-redline/core/reporter/
     reporter.py:_is_satisfied``). This predicate reads redline's
     already-computed ``satisfied`` state and surfaces it through our
-    verdict so a red-zone (or any checkpoint-triggering) change cannot
-    merge with an unsatisfied review checkpoint.
+    verdict. Unsatisfied checkpoints block in binding mode and remain
+    advisory in shadow mode.
 
     Skipped (passed, with a "skipped" detail) when the verdict is
     unavailable — the ``risk.redline_findings_available`` predicate
@@ -2625,9 +2627,9 @@ def review_checkpoints_satisfied(ctx: CheckerContext) -> PredicateResult:
     reported no triggered checkpoints (a blue-only diff).
 
     On a usable verdict with checkpoints triggered: passes when every
-    checkpoint's ``satisfied`` field is ``True``; otherwise blocks with
-    the first unsatisfied checkpoint's id, reason, and the ``satisfy_by``
-    options that would satisfy it.
+    checkpoint's ``satisfied`` field is ``True``; otherwise reports the
+    first unsatisfied checkpoint's id, reason, and ``satisfy_by`` options.
+    The Redline report mode determines whether that finding blocks.
 
     Non-waivable per SPEC §13.4: checkpoint satisfaction MUST remain
     distinct from human approval — a slice-F exception waiving this
@@ -2701,9 +2703,9 @@ def review_checkpoints_satisfied(ctx: CheckerContext) -> PredicateResult:
 # Predicates that may never be downgraded by a task exception.
 #
 # SPEC §11 explicitly forbids waiving boundary-violation findings.
-# Beyond that, the structural-shape preconditions are also non-
-# waivable — they establish whether the Work Record itself is
-# meaningful, and waiving them would leave the verdict noise.
+# Beyond that, structural-shape preconditions and implementation
+# readiness are also non-waivable: they make the verdict meaningful
+# and prevent a task exception from authorizing implementation.
 _NON_WAIVABLE_PREDICATES: frozenset[str] = frozenset({
     # SPEC §11 — boundary violations never waivable.
     "risk.boundary_violation_absent",
@@ -2713,6 +2715,7 @@ _NON_WAIVABLE_PREDICATES: frozenset[str] = frozenset({
     "risk.declared",
     "complexity.declared",
     "workrecord.shape_matches_classification",
+    "workrecord.implementation_ready",
     # The exception predicates themselves — circular waivers are not
     # honoured. An exception waiving exceptions.well_formed would be
     # the harness telling itself to ignore its own content checks.
@@ -2772,7 +2775,7 @@ def exceptions_not_against_boundary(ctx: CheckerContext) -> PredicateResult:
     """Predicate: no exception waives a non-waivable predicate.
 
     SPEC §11 forbids waiving boundary-violation findings. The harness
-    extends this to the structural-shape preconditions; see
+    extends this to structural preconditions and implementation readiness; see
     :data:`_NON_WAIVABLE_PREDICATES`. An exception naming any of these
     is a blocking failure and the original predicate continues to fire
     normally (the downgrade pass refuses to honour the exception).
@@ -2797,8 +2800,8 @@ def exceptions_not_against_boundary(ctx: CheckerContext) -> PredicateResult:
             detail=(
                 f"exception(s) name non-waivable predicate(s): {names}. "
                 "SPEC §11 forbids waiving boundary-violation findings; "
-                "the harness extends the rule to the structural-shape "
-                "preconditions that establish verdict meaningfulness."
+                "the harness extends the rule to structural preconditions "
+                "and implementation readiness."
             ),
             blocking=True,
         )
@@ -3337,6 +3340,7 @@ PREDICATE_SOURCE: dict[str, str] = {
     "workrecord.routine_fields_present": "core",
     "workrecord.expanded_fields_present": "core",
     "workrecord.state_valid": "core",
+    "workrecord.implementation_ready": "core",
     "exceptions.well_formed": "core",
     "exceptions.not_against_boundary": "core",
     "exceptions.not_expired": "core",
@@ -3443,6 +3447,7 @@ def workrecord_commit_order(ctx: CheckerContext) -> PredicateResult:
             timeout=_GIT_TIMEOUT_SEC,
             encoding="utf-8",
             errors="replace",
+            creationflags=_WINDOWS_NO_WINDOW,
         )
     except (OSError, subprocess.TimeoutExpired):
         return PredicateResult(
@@ -3483,6 +3488,7 @@ def workrecord_commit_order(ctx: CheckerContext) -> PredicateResult:
                 timeout=_GIT_TIMEOUT_SEC,
                 encoding="utf-8",
                 errors="replace",
+            creationflags=_WINDOWS_NO_WINDOW,
             )
         except (OSError, subprocess.TimeoutExpired):
             # Per-commit failure: don't bail the predicate. Skip this
@@ -3854,6 +3860,7 @@ def _run_one(
     redline_verdict_path: Path | None,
     base_ref: str | None = None,
     head_ref: str | None = None,
+    require_implementation_ready: bool = False,
 ) -> RecordVerdict:
     """Run the predicate set against one slug and build its RecordVerdict.
 
@@ -3864,6 +3871,22 @@ def _run_one(
     """
     ctx = _build_context(repo_root, slug, redline_verdict_path, base_ref=base_ref, head_ref=head_ref)
     results = [predicate(ctx) for predicate in PREDICATES]
+    if require_implementation_ready:
+        state = (
+            ctx.record["state"].rstrip(".").strip()
+            if ctx.record is not None
+            else None
+        )
+        results.append(PredicateResult(
+            name="workrecord.implementation_ready",
+            passed=state == "Ready to implement",
+            detail=(
+                "Work Record is ready for implementation."
+                if state == "Ready to implement"
+                else f"Work Record state {state!r} is not 'Ready to implement'."
+            ),
+            blocking=True,
+        ))
     results = _apply_exception_downgrades(results, ctx)
     record = aggregate_record(slug, results)
     return dataclasses.replace(record, effective_rules=_effective_rules(results))
@@ -3875,6 +3898,7 @@ def run_checker(
     redline_verdict_path: Path | None = None,
     base_ref: str | None = None,
     head_ref: str | None = None,
+    require_implementation_ready: bool = False,
 ) -> Verdict:
     """Run the checker against one slug; return the wrapped verdict.
 
@@ -3882,7 +3906,14 @@ def run_checker(
     :class:`Verdict` shape so callers (tests, local CLI, CI) treat
     single and multi uniformly.
     """
-    return run_checker_multi(repo_root, [slug], redline_verdict_path, base_ref=base_ref, head_ref=head_ref)
+    return run_checker_multi(
+        repo_root,
+        [slug],
+        redline_verdict_path,
+        base_ref=base_ref,
+        head_ref=head_ref,
+        require_implementation_ready=require_implementation_ready,
+    )
 
 
 def run_checker_multi(
@@ -3891,6 +3922,7 @@ def run_checker_multi(
     redline_verdict_path: Path | None = None,
     base_ref: str | None = None,
     head_ref: str | None = None,
+    require_implementation_ready: bool = False,
 ) -> Verdict:
     """Run the checker against multiple slugs; return the aggregated verdict.
 
@@ -3905,7 +3937,14 @@ def run_checker_multi(
     :func:`aggregate` for the rationale.
     """
     records = [
-        _run_one(repo_root, s, redline_verdict_path, base_ref=base_ref, head_ref=head_ref)
+        _run_one(
+            repo_root,
+            s,
+            redline_verdict_path,
+            base_ref=base_ref,
+            head_ref=head_ref,
+            require_implementation_ready=require_implementation_ready,
+        )
         for s in slugs
     ]
     return aggregate(records)
@@ -3928,6 +3967,8 @@ _PROTECTED_APPLICABILITY_PATHS: tuple[str, ...] = (
     "CLAUDE.md",
     "GEMINI.md",
     ".claude/",
+    ".agents/",
+    ".codex/",
     ".opencode/",
     ".agent-redline/",
     "dist/agent-workflow/",
@@ -3945,6 +3986,7 @@ _PROTECTED_APPLICABILITY_PATHS: tuple[str, ...] = (
 _PROTECTED_INSTRUCTION_FILENAMES: frozenset[str] = frozenset(
     {"AGENTS.md", "CLAUDE.md", "GEMINI.md", "copilot-instructions.md"}
 )
+_WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def read_changed_paths(
@@ -4063,6 +4105,7 @@ def _github_default_branch_protection(repo_root: Path) -> str:
             result = subprocess.run(
                 ["gh", *args], cwd=repo_root, capture_output=True, text=True,
                 encoding="utf-8", timeout=20, check=False,
+                creationflags=_WINDOWS_NO_WINDOW,
             )
         except (OSError, subprocess.TimeoutExpired):
             return None
@@ -4084,6 +4127,7 @@ def _github_default_branch_protection(repo_root: Path) -> str:
         current = subprocess.run(
             ["git", "branch", "--show-current"], cwd=repo_root,
             capture_output=True, text=True, encoding="utf-8", timeout=20, check=False,
+            creationflags=_WINDOWS_NO_WINDOW,
         )
     except (OSError, subprocess.TimeoutExpired):
         return "unavailable"
@@ -4132,6 +4176,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Complete NUL-delimited paths from `git diff --name-only -z --no-renames`.",
     )
     parser.add_argument("--redline-verdict", type=Path, default=None)
+    parser.add_argument(
+        "--require-implementation-ready",
+        action="store_true",
+        help="Require the resolved Work Record state to be Ready to implement.",
+    )
     parser.add_argument("--bootstrap-applicability-proposal-z", type=Path)
     parser.add_argument("--bootstrap-applicability-approved-z", type=Path)
     parser.add_argument("--bootstrap-direct-default-branch-approved", action="store_true")
@@ -4226,7 +4275,7 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 pass
 
-    if config_error is not None and changed_path is not None:
+    if config_error is not None:
         verdict = _synthetic_verdict(
             args.slug or "<configuration>",
             [PredicateResult(
@@ -4255,6 +4304,7 @@ def main(argv: list[str] | None = None) -> int:
             redline_verdict_path=args.redline_verdict,
             base_ref=args.base_ref,
             head_ref=args.head_ref,
+            require_implementation_ready=args.require_implementation_ready,
         )
 
     redline = None
