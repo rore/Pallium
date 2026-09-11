@@ -1,5 +1,5 @@
 <!-- agent-workflow:start -->
-**Outcome:** Relay agents can detect the resolved destination of every send and are explicitly guided not to reuse unverified exact endpoint IDs across workspaces.
+**Outcome:** Relay agents can detect the resolved destination of every send, never receive delivery claim tokens through normal Relay responses, and are explicitly guided not to reuse unverified exact endpoint IDs across workspaces.
 
 **Target:** Pallium Relay MCP integration.
 
@@ -7,7 +7,7 @@
 
 **Constraints:** Preserve intentional cross-container Relay routing, selector compatibility, response budgets, redaction, and existing HTTP contracts; do not add dependencies or change persistence.
 
-**Completion criteria:** Long Relay send and reply responses expose canonical endpoint identity plus bounded resolved destination metadata without claim tokens; maximal/escaped identity fields remain within budget with explicit omission/truncation markers; guidance requires current discovery/alias use for role recipients and describes destination identity as an admission snapshot; short and error responses remain compatible; related roadmap wording matches service-global routing; all affected and full tests pass.
+**Completion criteria:** Relay send and reply responses never expose claim tokens; long responses expose canonical endpoint identity plus bounded resolved destination metadata; maximal/escaped identity fields remain within budget with explicit omission/truncation markers; guidance requires current discovery/alias use for role recipients and describes destination identity as an admission snapshot; short responses otherwise remain compatible and preserve receipts without mutating caller data; related roadmap wording matches service-global routing; all affected and full tests pass.
 
 **Risk:** Elevated
 
@@ -17,19 +17,19 @@
 
 **Discovery:** Incident `relay-msg-99a547d886e2482bbc8a7da265cbfb7c` used a historically remembered canonical endpoint and was correctly routed cross-container to `git:github.com/rore/dictation-app`. The HTTP/store response already contained resolved delivery identity, but `_relay_text` discarded it when compacting a long payload, leaving only counts/states. Current guidance calls endpoint IDs canonical without requiring revalidation. Cross-container exact routing is intentional and covered by `tests/test_cross_container_relay_e2e.py`.
 
-**Material assumptions:** Compact resolved-delivery metadata plus safer selector guidance is the smallest sufficient contract. Architect review confirmed that an expected-container guard is unnecessary without an explicit mismatch-rejection requirement; if that requirement appears, return to planning and reclassify for atomic API/schema admission scope before editing.
+**Material assumptions:** Compact resolved-delivery metadata plus safer selector guidance is the smallest sufficient routing contract. Architect follow-up confirmed that filtering claim tokens from every successful MCP response belongs in this shared formatter and remains Elevated/Simple; shallow copies must preserve receipts and caller data. An expected-container guard remains unnecessary without an explicit mismatch-rejection requirement; if that appears, return to planning and reclassify for atomic API/schema admission scope.
 
-**Plan:** Preserve compact response budgeting while adding an allowlisted per-delivery projection that prioritizes message ID and canonical endpoint identity, retains bounded runtime/session/container/state/health fields when they fit, and explicitly marks omitted or truncated descriptive fields. Add caller-surface MCP coverage for long cross-container send and reply behavior, redacted and non-redacted payloads, maximal/escaped identities, idempotent reply, budget, and claim-token exclusion; add focused formatter unit coverage. Update consistent guidance across Codex/Claude/OpenCode skills and Relay docs, and correct the related roadmap's stale actor-scoped wording. Do not alter routing, persistence, or HTTP/API semantics.
+**Plan:** Shallow-copy successful Relay responses and delivery dictionaries, remove only `claim_token` before the short-response size check, and preserve receipts/caller data. Preserve compact response budgeting with an allowlisted per-delivery projection that prioritizes message ID and canonical endpoint identity, retains bounded runtime/session/container/state/health fields when they fit, and explicitly marks omitted or truncated descriptive fields. Add caller-surface MCP coverage for long cross-container send/reply behavior and the claimed-reply idempotent retry lifecycle; add focused formatter unit coverage. Update mirrored skills/docs and correct stale roadmap wording. Do not alter routing, persistence, claim semantics, or HTTP/API contracts.
 
-**Verification plan:** Long cross-container MCP send and reply shall expose bounded admission-snapshot destination identity without claim tokens, including redacted/non-redacted and idempotent paths → focused MCP E2E test. Compact formatter shall prioritize canonical identity, safely mark maximal/escaped descriptive-field omission or truncation, and remain within 2,000 characters → formatter unit tests. Existing short/error/send/receive behavior shall remain compatible → affected MCP and cross-container test files. Mirrored guidance shall remain byte-identical and within budget → guidance-budget tests. Final regression → `python -m pytest tests/ -x -q`, workflow checker, redline checker, PR CI and independent result review.
+**Verification plan:** Long cross-container MCP send/reply shall expose bounded admission-snapshot destination identity without claim tokens → focused MCP E2E test. Short claimed-reply retry shall return the same message without a claim token while preserving receipt, ACK usability, and single-reply idempotence → MCP lifecycle E2E test. Formatter shall not mutate caller data, shall prioritize canonical identity, and shall keep maximal/escaped output within 2,000 characters with omission markers → formatter unit tests. Existing error/send/receive behavior shall remain compatible → affected MCP and cross-container tests. Mirrored guidance shall remain identical and within budget → guidance-budget tests. Final regression → `python -m pytest tests/ -x -q`, workflow/redline checks, PR CI, and independent result review.
 
-**Plan review:** Revised and accepted after clean-context Astra architectural review `/root/relay_scope_architect` on 2026-09-12; no pre-admission guard required. The persisted `@pall-arc` requests remain queued because its task is busy.
+**Plan review:** Revised and accepted after clean-context Astra architectural review `/root/relay_scope_architect` on 2026-09-12; no pre-admission guard required. Follow-up review approved same-formatter claim-token sanitization as Elevated/Simple with no new checkpoint. Persisted `@pall-arc` requests remain queued because its task is busy.
 
 **Approvals:** Not required at this risk level.
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -39,6 +39,8 @@
 - Implementation touched `app/mcp/server.py`, `tests/test_mcp_server_utils.py`, `tests/test_relay_mcp_tools.py`, `tests/test_guidance_budget.py`, `docs/agent-relay.md`, `roadmap/ideas/idea-exact-relay-recipient-resolution.md`, and the three mirrored integration skills. The compact response now allowlists delivery identity, drops only oversized selector/session/container descriptions with explicit markers, prioritizes metadata before redacted payload preview, and never exposes claim tokens. The normal patch helper failed with Windows error 1327, so edits used deterministic replacements limited to these named files.
 - Skill-feedback trigger 2/7 dropped: the missing recipient-validation guidance is owned by Pallium, not the supported agent-workflow upstream, and is fixed in this task.
 - Result review found and blocked an over-broad stale-delivery phrase introduced while compressing guidance. Restored the exact `already_delivered=true` trigger and added a contract assertion; normal delivered hook work remains actionable.
+- Result review then identified a pre-existing short-response path that can expose a non-null delivery claim token on an idempotent reply retry after claim. Paused before PR and returned to planning because the user requires discovered Relay defects to be fixed; awaiting architect scope/risk decision.
+- Architect follow-up approved including the same-formatter credential fix in this PR at Elevated/Simple: copy response/deliveries, remove only `claim_token`, preserve receipt and caller data, and cover claim → retry → ACK without duplicate reply.
 
 ## Evidence
 
