@@ -8,15 +8,15 @@ Codex Relay wake never changes an addressed task's workspace or scope merely bec
 Pallium Codex Relay wake adapter.
 
 **Scope:**
-`app/codex_wake.py`, focused caller-surface coverage in `tests/test_codex_wake.py`, current qualification in `docs/codex-integration.md` and `docs/agent-relay.md`, wake roadmap status and incident evidence in `roadmap/features/add-wake-first-relay-delivery.md`, and this Work Record.
+`app/codex_wake.py`, focused caller-surface coverage in `tests/test_codex_wake.py`, current qualification in `docs/codex-integration.md`, `docs/agent-relay.md`, and `docs/context/state.md`; the Codex restart contract fixture in `tests/relay/wake/fixtures/codex/06_restart_recovery.json`; wake roadmap status and incident evidence in `roadmap/features/add-wake-first-relay-delivery.md`; and this Work Record.
 
 **Constraints:**
-Preserve exact-session routing, pending-until-hook-admission, single-flight deduplication, hidden process launch, and fail-closed sender scope. Do not add cross-scope fallback, read or write private Codex state, add dependencies, or launch a Codex subprocess from the service cwd.
+Preserve exact-session routing, pending-until-hook-admission, single-flight deduplication, hidden process launch, and fail-closed sender scope. Do not add cross-scope fallback, read or write private Codex state, add dependencies, launch a Codex subprocess from the service cwd, or claim native unloaded-task persistence without executable evidence. Windows neutral paths must reject UNC/device/remote-drive and service-checkout redirects; POSIX paths must be absolute existing directories, with mount locality explicitly unclaimed.
 
 **Completion criteria:**
 1. Every wake uses the already-qualified native exact-thread queue from a vetted neutral Codex directory, never `codex exec resume` from the service checkout.
 2. Loaded idle and busy tasks retain prompt wake plus the existing pending-until-hook-admission semantics.
-3. Unloaded tasks retain the durable exact-thread queued message for their next supported resume; current docs and roadmap no longer claim unattended cold resume.
+3. Unloaded-task correctness relies only on Pallium persistence: the Relay delivery remains pending and a later supported hook turn retrieves it. Current docs, state, fixture, and roadmap claim neither unattended cold resume nor native unloaded-queue persistence.
 4. The HTTP send-to-wake lifecycle and focused edge cases pass, followed by the repository regression suite and deployed Windows service health checks.
 
 **Risk:**
@@ -32,26 +32,26 @@ Redline classifies `app/codex_wake.py` as gray/watch runtime code, mapping to El
 `app/codex_wake.py::_launch` invokes `codex exec ... resume` and its queue fallback without `cwd`, so both inherit the installed service checkout. The incident log shows Codex applied that inherited cwd before the hook derived Pallium scope. The initial proposal to read `state_5.sqlite.threads.cwd` was rejected in clean-context review because that private value may be stale after handoff and is not a supported workspace authority. The existing Phase 0 evidence proves `codex queue --thread` is the native exact-session path for loaded idle and busy tasks and persists safely for later resume. Official OpenAI documentation search did not establish a supported cold-resume workspace API. PR #161 preserves legitimate Relay scope transitions but does not prevent this host-created transition.
 
 **Material assumptions:**
-- `codex queue --thread` remains the supported runtime-owned mechanism for an exact loaded task and persists the message for an unloaded task's next supported resume. A caller-surface regression that loses the message or targets another task disproves this and returns the task to planning.
-- The resolved user Codex home (`Path.home() / ".codex"`) is an existing local directory suitable only as a process launch directory; it is not used as task workspace state. A missing, non-directory, relative, device, or network path must fail closed without spawning.
+- `codex queue --thread` remains the supported runtime-owned mechanism for an exact loaded task. Unloaded-task correctness depends only on Pallium's pending delivery and later hook retrieval; native queue persistence is not assumed.
+- The resolved user Codex home (`Path.home() / ".codex"`) is suitable only as a process launch directory and is not task workspace state. Missing, non-directory, relative, Windows UNC/device/remote-drive, service-checkout redirect, and resolution-error paths fail closed. POSIX mount locality is not claimed because stdlib cannot prove it portably.
 - Removing unattended cold `exec resume` is an intentional qualification correction, not a silent compatibility promise. A future supported runtime workspace API is required before restoring cold resume.
 
 **Plan:**
 1. Delete the private cold `exec resume` path and launch only `codex queue --thread` from a small stdlib-validated local Codex-home directory; fail closed before spawning if that directory is unavailable or unsafe.
-2. Add focused neutral-directory/queue edge cases plus an HTTP send-to-wake caller-surface regression that proves the service cwd cannot enter the subprocess call while delivery remains pending until the hook path.
-3. Correct current Codex integration and Relay qualification from loaded-plus-unloaded wake to loaded-task wake plus durable unloaded-task next-resume delivery, and record the generalized inherited-cwd incident in the wake roadmap.
+2. Add focused neutral-directory/queue edge cases, including a redirected service-checkout path, plus an HTTP send-to-wake caller-surface regression that proves the service cwd cannot enter the subprocess call while delivery remains pending until the hook path.
+3. Correct every current source of truth—including state and the Codex restart fixture—from loaded-plus-unloaded native wake to loaded-task wake plus Pallium-persisted unloaded-task next-turn delivery, and record the generalized inherited-cwd incident in the wake roadmap.
 4. Run focused tests, affected Relay/Codex suites, workflow/redline checks, then the full suite once. Obtain independent smart result review before PR merge.
 5. Merge only with green CI and resolved review threads. Fast-forward the stable installed checkout and applicable development checkout state to current `origin/main`, restart only with `Pallium-installed\scripts\restart-service.ps1`, and verify `/health`, `/status`, and `/debug/queue/health`.
 
 **Verification plan:**
 - Loaded exact-task wake uses one native queue command from the vetted neutral directory → focused launch test and caller-surface HTTP lifecycle test.
-- Unsafe or missing neutral directory never inherits service cwd → parameterized fail-closed tests.
-- Busy delivery remains a distinct queued turn with unchanged admission semantics; unloaded delivery remains durable without a false cold-resume claim → existing lifecycle tests plus command/cwd and documentation assertions.
+- Unsafe, missing, or service-checkout-redirected neutral directory never reaches a subprocess → parameterized fail-closed tests.
+- Busy delivery remains a distinct queued turn with unchanged admission semantics; unloaded correctness relies only on pending Relay persistence and later real-hook retrieval → existing lifecycle tests, corrected restart fixture, and source-of-truth scan.
 - Final code satisfies repository governance and regressions → redline/workflow checks, full `tests/` suite, green PR CI, independent review.
 - Installed service runs merged code healthily → exact commit comparison, wrapper restart, and all three required health endpoints.
 
 **Plan review:**
-Initial clean-context re-review accepted the queue-only plan: exact-thread queue from a validated neutral Codex home, fail-closed path handling, explicit unloaded-task qualification, and caller-surface coverage.
+Initial clean-context re-review accepted queue-only wake. Result review then found redirected-service-cwd and native-unloaded-persistence claim gaps; the expanded correction is pending repeat clean-context plan review.
 
 **Approvals:**
 Not required at this risk level.
@@ -60,7 +60,7 @@ Not required at this risk level.
 —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -73,6 +73,8 @@ Not required at this risk level.
 - A low-cost delegated mechanical pass edited only the approved code/test files. Its first result had a malformed command list and stale outcome assertions; review corrected those plus unsafe-path validation order and caller-surface cwd assertions before acceptance.
 - `apply_patch` failed with the machine's known Windows 1327 error. Both the delegate and primary agent used narrowly scoped elevated PowerShell/.NET deterministic replacements limited to approved files.
 - Focused edit-loop verification is green: `tests/test_codex_wake.py` reports 49 passed, including explicit cwd, Unicode, unsafe/missing/error path, pending-before-hook, exact hook delivery, and single-flight coverage.
+- Independent result review blocked merge on two substantive gaps: redirected `.codex` could still resolve to the service checkout, and live docs/fixture overclaimed native unloaded-task persistence. Scope expanded to the state doc and Codex restart fixture; verification must be rerun after the reviewed correction.
+- Skill feedback Trigger 1 dropped: the repeated `apply_patch` 1327 workaround is a documented machine-local runtime failure outside agent-workflow ownership.
 
 ## Plan review
 
@@ -94,4 +96,4 @@ Verified implementation revision `6de3f5a9`:
 
 ## Result review
 
-Pending.
+- Initial independent review: **BLOCKED**. Reject service-checkout redirects, narrow POSIX locality claims, remove unsupported native unloaded-task persistence claims from all sources of truth, and rerun verification. PR/CI and installed-service gates remain sequential acceptance work after the corrected result review.
