@@ -128,7 +128,7 @@ jobs:
           }
 
       - name: Install dependencies
-        run: pip install -e ".[dev,vector]"
+        run: pip install -e ".[dev,vector,mcp]"
 
       - name: Run process-sensitive tests serially
         run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py tests/test_stable_actor_identity_e2e.py -x -q -n 0 --durations=20
