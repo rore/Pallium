@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from core.errors import ImmediateTransactionBusyError
 from storage.sqlite import SQLiteStorageProvider
 
 
@@ -72,21 +73,30 @@ def test_bounded_multi_agent_relay_fan_in_has_no_lost_deliveries(tmp_path: Path)
         provider.relay_turn(runtime="claude-code", session_ref=f"sender-{index}", title=None, max_chars=1000, max_messages=1, lease_seconds=60, **common)
 
     def send(index: int) -> dict:
-        return provider.relay_send(
-            message_id=f"fan-in-{index}", sender_runtime="claude-code", sender_session_ref=f"sender-{index}",
-            recipient="codex:target", recipient_runtime="codex", recipient_kind="session", recipient_value="target",
-            payload=f"finding-{index}", redacted=False, expires_in_seconds=3600, in_reply_to=None,
-            **common,
-        )
+        for attempt in range(12):
+            try:
+                return provider.relay_send(
+                    message_id=f"fan-in-{index}", sender_runtime="claude-code", sender_session_ref=f"sender-{index}",
+                    recipient="codex:target", recipient_runtime="codex", recipient_kind="session", recipient_value="target",
+                    payload=f"finding-{index}", redacted=False, expires_in_seconds=3600, in_reply_to=None,
+                    **common,
+                )
+            except ImmediateTransactionBusyError:
+                if attempt == 11:
+                    raise
+        raise AssertionError("unreachable")
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         sent = list(pool.map(send, range(8)))
     assert {item["message_id"] for item in sent} == {f"fan-in-{i}" for i in range(8)}
     claimed = provider.relay_turn(runtime="codex", session_ref="target", title=None, max_chars=10000, max_messages=20, lease_seconds=60, **common)["deliveries"]
     assert len(claimed) == 8
+    assert {item["message_id"] for item in claimed} == {f"fan-in-{i}" for i in range(8)}
     assert len({item["delivery_id"] for item in claimed}) == 8
     for delivery in claimed:
         provider.relay_ack_by_receipt(delivery_id=delivery["delivery_id"], receipt=delivery["receipt"], **common)
+        status = provider.relay_message_status(message_id=delivery["message_id"], **common)
+        assert status["deliveries"][0]["state"] == "delivered"
     assert provider.relay_turn(runtime="codex", session_ref="target", title=None, max_chars=10000, max_messages=20, lease_seconds=60, **common)["deliveries"] == []
     _dispose(provider)
 
