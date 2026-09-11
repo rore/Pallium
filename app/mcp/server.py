@@ -173,11 +173,12 @@ def _relay_text(result: object) -> str:
         return _relay_error_text({"error": "invalid relay response"})
     deliveries = result.get("deliveries")
     if isinstance(deliveries, list):
+        if not all(isinstance(delivery, dict) for delivery in deliveries):
+            return _relay_error_text({"error": "invalid relay response"})
         result = {
             **result,
             "deliveries": [
                 {key: value for key, value in delivery.items() if key != "claim_token"}
-                if isinstance(delivery, dict) else delivery
                 for delivery in deliveries
             ],
         }

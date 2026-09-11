@@ -206,3 +206,15 @@ def test_relay_text_removes_short_response_claim_token_without_mutation() -> Non
     assert "claim_token" not in rendered["deliveries"][0]
     assert rendered["deliveries"][0]["receipt"] == "safe-receipt"
     assert delivery["claim_token"] == "secret-claim"
+
+
+def test_relay_text_rejects_malformed_delivery_before_compaction() -> None:
+    import json
+
+    result = {
+        "message_id": "relay-msg-malformed",
+        "payload": "x" * 4_000,
+        "deliveries": [{"state": "pending"}, "not-a-delivery"],
+    }
+
+    assert json.loads(_relay_text(result)) == {"error": "invalid relay response"}

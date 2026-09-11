@@ -42,6 +42,7 @@
 - Result review then identified a pre-existing short-response path that can expose a non-null delivery claim token on an idempotent reply retry after claim. Paused before PR and returned to planning because the user requires discovered Relay defects to be fixed; awaiting architect scope/risk decision.
 - Architect follow-up approved including the same-formatter credential fix in this PR at Elevated/Simple: copy response/deliveries, remove only `claim_token`, preserve receipt and caller data, and cover claim → retry → ACK without duplicate reply.
 - Implemented claim-token sanitization before the short-response size check using shallow response/delivery copies. Unit coverage proves caller data and receipts are preserved; the caller-surface lifecycle proves claimed idempotent retry returns the same message, exposes no token, and remains ACKable. Affected Relay/MCP subsystem verification: 183 passed.
+- CodeRabbit identified malformed non-dictionary delivery entries as an unhandled compaction edge case. Added one shared validation guard before sanitization/size branching, so malformed short or oversized responses return the standard invalid-response error.
 
 ## Evidence
 
@@ -50,6 +51,7 @@
 - Focused formatter, cross-container send/reply, escaped-boundary, idempotence, redaction, and guidance tests: 17 passed.
 - Rebased onto `origin/main` revision `9adf9f6f` (PR #174); the only manual conflict retained main's already-correct service-global/container-local roadmap wording. Affected verification: 112 passed.
 - Full regression on final code revision `f937282f`: 4,864 passed, 33 skipped, 2 xfailed in 216.22 seconds.
+- Post-review malformed-delivery fix: formatter and caller-surface Relay tests, 100 passed.
 
 ## Plan review
 
