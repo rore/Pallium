@@ -54,72 +54,123 @@ def setup_function() -> None:
     codex_wake._scheduled_session_delivery_ids.clear()
 
 
-def test_successful_resume_does_not_queue_and_hides_process() -> None:
-    completed = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
-    with patch("app.codex_wake.subprocess.run", return_value=completed) as run:
-        assert codex_wake._launch("target-session", "wake prompt") == "exec_completed"
+def test_queue_writes_once_from_neutral_codex_home(tmp_path) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    queued = subprocess.CompletedProcess([], 0, stderr="")
+    prompt = codex_wake._wake_prompt() + " →"
+    with patch("app.codex_wake._codex_home", return_value=codex_home), patch(
+        "app.codex_wake.subprocess.run", return_value=queued,
+    ) as run:
+        assert codex_wake._launch("target-session", prompt) == "queued"
+    assert run.call_count == 1
     assert run.call_args.args[0] == [
-        codex_wake._codex_executable(), "exec", "--profile", "pallium-relay",
-        "resume", "target-session", "-", "--json"
+        codex_wake._codex_executable(), "queue", "--profile", "pallium-relay",
+        "--thread", "target-session", "--message", prompt,
     ]
-    assert run.call_args.kwargs["input"] == "wake prompt"
+    assert run.call_args.kwargs["cwd"] == str(codex_home)
+    assert run.call_args.kwargs["stdin"] is subprocess.DEVNULL
     assert run.call_args.kwargs["stdout"] is subprocess.DEVNULL
     assert run.call_args.kwargs["stderr"] is subprocess.PIPE
+    assert run.call_args.kwargs["encoding"] == "utf-8"
     assert "shell" not in run.call_args.kwargs
 
 
-def test_exact_active_writer_queues_generic_trigger_hidden() -> None:
-    active = subprocess.CompletedProcess(
-        [], 1, stderr="already has an active writer (code -32600)"
-    )
-    queued = subprocess.CompletedProcess([], 0, stderr="")
-    generic_prompt = codex_wake._wake_prompt()
-    prompt = generic_prompt + " →"
-    with patch("app.codex_wake.subprocess.run", side_effect=[active, queued]) as run:
-        assert codex_wake._launch("target-session", prompt) == "queued"
-    assert run.call_count == 2
-    assert run.call_args_list[0].kwargs["input"] == prompt
-    assert run.call_args_list[0].kwargs["encoding"] == "utf-8"
-    assert run.call_args_list[1].kwargs["encoding"] == "utf-8"
-    assert run.call_args_list[1].args[0] == [
-        codex_wake._codex_executable(), "queue", "--profile", "pallium-relay",
-        "--thread", "target-session", "--message", prompt
-    ]
-    assert "→" in prompt
-    assert run.call_args_list[0].kwargs["input"].startswith(generic_prompt)
-    assert codex_wake._wake_prompt() == generic_prompt
-    assert "delivery_id" not in prompt
-    assert "receipt" not in prompt
-    assert run.call_args_list[1].kwargs["stdin"] is subprocess.DEVNULL
-    assert "shell" not in run.call_args_list[1].kwargs
-
-def test_non_active_writer_failure_and_exec_timeout_do_not_queue() -> None:
-    ambiguous = subprocess.CompletedProcess([], 1, stderr="already has an active writer")
-    with patch("app.codex_wake.subprocess.run", return_value=ambiguous) as run:
+def test_queue_failure(tmp_path) -> None:
+    codex_home = tmp_path / "codex-home"
+    failed = subprocess.CompletedProcess([], 1, stderr="queue rejected")
+    with patch("app.codex_wake._codex_home", return_value=codex_home), patch(
+        "app.codex_wake.subprocess.run", return_value=failed,
+    ) as run:
         assert codex_wake._launch("target-session", "wake") == "failed"
     run.assert_called_once()
-    with patch(
+
+
+def test_queue_timeout_is_ambiguous(tmp_path) -> None:
+    codex_home = tmp_path / "codex-home"
+    with patch("app.codex_wake._codex_home", return_value=codex_home), patch(
         "app.codex_wake.subprocess.run",
-        side_effect=subprocess.TimeoutExpired([], 15),
+        side_effect=subprocess.TimeoutExpired([], 30),
     ) as run:
         assert codex_wake._launch("target-session", "wake") == "ambiguous"
     run.assert_called_once()
 
+@pytest.mark.parametrize("kind", ["missing", "file"])
+def test_missing_or_non_directory_neutral_cwd_does_not_spawn(monkeypatch, tmp_path, kind) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    codex_home = home / ".codex"
+    if kind == "file":
+        codex_home.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(codex_wake.Path, "home", classmethod(lambda cls: home))
+    with patch("app.codex_wake.subprocess.run") as run:
+        assert codex_wake._launch("target-session", "wake") == "failed"
+    run.assert_not_called()
 
-def test_queue_timeout_remains_ambiguous_without_a_second_write() -> None:
-    active = subprocess.CompletedProcess(
-        [], 1, stderr="already has an active writer (code -32600)"
+@pytest.mark.parametrize("cwd", [r"\\server\share\.codex", r"\\?\C:\.codex", r"\\.\C:\.codex"])
+def test_windows_unsafe_neutral_cwd_does_not_spawn(monkeypatch, tmp_path, cwd) -> None:
+    monkeypatch.setattr(codex_wake.os, "name", "nt")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(codex_wake.Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(codex_wake.Path, "resolve", lambda self: type(self)(cwd))
+    with patch("app.codex_wake.subprocess.run") as run:
+        assert codex_wake._launch("target-session", "wake") == "failed"
+    run.assert_not_called()
+
+
+def test_windows_remote_drive_neutral_cwd_does_not_spawn(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(codex_wake.os, "name", "nt")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(codex_wake.Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(codex_wake.Path, "resolve", lambda self: self)
+    monkeypatch.setattr(codex_wake.os.path, "splitdrive", lambda _: ("Z:", "\\.codex"))
+    monkeypatch.setattr(codex_wake, "_windows_drive_is_local", lambda _: False)
+    with patch("app.codex_wake.subprocess.run") as run:
+        assert codex_wake._launch("target-session", "wake") == "failed"
+    run.assert_not_called()
+
+@pytest.mark.parametrize("home", [codex_wake.Path("relative-home")])
+def test_relative_neutral_cwd_does_not_spawn(monkeypatch, home) -> None:
+    monkeypatch.setattr(codex_wake.Path, "home", classmethod(lambda cls: home))
+    with patch("app.codex_wake.subprocess.run") as run:
+        assert codex_wake._launch("target-session", "wake") == "failed"
+    run.assert_not_called()
+
+
+def test_neutral_cwd_redirected_into_service_checkout_does_not_spawn(
+    monkeypatch, tmp_path,
+) -> None:
+    home = tmp_path / "home"
+    codex_home = home / ".codex"
+    service_cwd = tmp_path / "service-checkout"
+    codex_home.mkdir(parents=True)
+    service_cwd.mkdir()
+    monkeypatch.setattr(codex_wake.Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(
+        codex_wake.Path, "cwd", classmethod(lambda cls: service_cwd),
     )
-    with patch(
+    monkeypatch.setattr(
+        codex_wake.Path,
+        "resolve",
+        lambda self: service_cwd if self.name == ".codex" else self,
+    )
+    with patch("app.codex_wake.subprocess.run") as run:
+        assert codex_wake._launch("target-session", "wake") == "failed"
+    run.assert_not_called()
+
+
+def test_neutral_cwd_resolution_error_does_not_spawn() -> None:
+    with patch("app.codex_wake.Path.home", side_effect=OSError("unavailable")), patch(
         "app.codex_wake.subprocess.run",
-        side_effect=[active, subprocess.TimeoutExpired([], 30)],
     ) as run:
-        assert codex_wake._launch("target-session", "wake") == "ambiguous"
-    assert run.call_count == 2
+        assert codex_wake._launch("target-session", "wake") == "failed"
+    run.assert_not_called()
 
 
 def test_wake_defers_claim_until_turn_execution() -> None:
-    with patch("app.codex_wake._launch", return_value="exec_completed") as launch:
+    with patch("app.codex_wake._launch", return_value="queued") as launch:
         codex_wake._wake("target-session")
     launch.assert_called_once_with("target-session", codex_wake._wake_prompt())
 
@@ -280,7 +331,7 @@ def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> 
     assert len(workers) == 1
     assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
 
-def test_exec_completion_requires_matching_admission_before_return(monkeypatch) -> None:
+def test_queued_completion_requires_matching_admission_before_return(monkeypatch) -> None:
     workers = []
     unreachable = []
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
@@ -295,7 +346,7 @@ def test_exec_completion_requires_matching_admission_before_return(monkeypatch) 
 
     def admitted(_: str) -> str:
         codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
-        return "exec_completed"
+        return "queued"
 
     with patch("app.codex_wake._wake", side_effect=admitted):
         codex_wake._wake_after_debounce(*workers[0])
@@ -305,7 +356,7 @@ def test_exec_completion_requires_matching_admission_before_return(monkeypatch) 
     assert not codex_wake._scheduled_delivery_ids
 
 
-def test_exec_completion_without_admission_releases_and_reports(monkeypatch) -> None:
+def test_failed_completion_without_admission_releases_and_reports(monkeypatch) -> None:
     workers = []
     unreachable = []
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
@@ -317,7 +368,7 @@ def test_exec_completion_without_admission_releases_and_reports(monkeypatch) -> 
         codex_wake.schedule_codex_relay_wake(
             _delivery(), SCOPE, on_unreachable=unreachable.append
         )
-    with patch("app.codex_wake._wake", return_value="exec_completed"):
+    with patch("app.codex_wake._wake", return_value="failed"):
         codex_wake._wake_after_debounce(*workers[0])
 
     assert len(unreachable) == 1 and unreachable[0].tzinfo is not None
@@ -536,17 +587,20 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
         }).json()
     assert len(workers) == 1
 
-    with patch("app.codex_wake._wake", return_value="exec_completed"):
+    with patch("app.codex_wake._wake", return_value="queued"):
         codex_wake._wake_after_debounce(*workers[0])
 
     status = route.get(
         f"/relay/messages/{sent['message_id']}", params=scope
     ).json()["deliveries"][0]
     assert status["state"] == "pending"
-    assert status["destination_health"] == "unreachable"
+    assert status["destination_health"] == "active"
     assert status["attempts"] == 0
 
     state_dir = tmp_path / "no-hook-state"
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    monkeypatch.setattr(codex_wake, "_codex_home", lambda: codex_home)
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
@@ -606,7 +660,7 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
 
     def run_admitted_hook(*args, **kwargs):
         command = args[0]
-        if len(command) > 1 and command[1] == "exec":
+        if len(command) > 1 and command[1] == "queue":
             with pytest.raises(SystemExit) as hook_exit:
                 hook.main()
             assert hook_exit.value.code == 0
@@ -617,7 +671,12 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
         "app.codex_wake.subprocess.run", side_effect=run_admitted_hook
     ) as run:
         codex_wake._wake_after_debounce(*workers[1])
-    assert sum(len(call.args[0]) > 1 and call.args[0][1] == "exec" for call in run.call_args_list) == 1
+    queue_calls = [
+        call for call in run.call_args_list
+        if len(call.args[0]) > 1 and call.args[0][1] == "queue"
+    ]
+    assert len(queue_calls) == 1
+    assert queue_calls[0].kwargs["cwd"] == str(codex_home)
     admitted_status = route.get(
         f"/relay/messages/{admitted['message_id']}", params=scope
     ).json()["deliveries"][0]
@@ -641,15 +700,12 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
             **scope,
         }).json()
     assert len(workers) == 3
-    active = subprocess.CompletedProcess(
-        [], 1, stderr="already has an active writer (code -32600)"
-    )
     with patch(
         "app.codex_wake.subprocess.run",
-        side_effect=[active, subprocess.TimeoutExpired([], 30)],
+        side_effect=subprocess.TimeoutExpired([], 30),
     ) as run:
         codex_wake._wake_after_debounce(*workers[2])
-    assert run.call_count == 2
+    assert run.call_count == 1
     ambiguous_status = route.get(
         f"/relay/messages/{ambiguous['message_id']}", params=scope
     ).json()["deliveries"][0]
@@ -749,12 +805,13 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
             **scope,
         },
     ).json()
-    active = subprocess.CompletedProcess(
-        [], 1, stderr="already has an active writer (code -32600)"
-    )
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    monkeypatch.setattr(codex_wake, "_codex_home", lambda: codex_home)
     queued = subprocess.CompletedProcess([], 0, stderr="")
-    with patch("app.codex_wake.subprocess.run", side_effect=[active, queued]):
+    with patch("app.codex_wake.subprocess.run", return_value=queued) as run:
         codex_wake._wake("target-session")
+    assert run.call_args.kwargs["cwd"] == str(codex_home)
 
     before_execution = client.get(
         f"/relay/messages/{sent['message_id']}", params=scope
@@ -914,15 +971,15 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
         }).json()
         assert len(workers) == 1
 
-        active = subprocess.CompletedProcess(
-            [], 1, stderr="already has an active writer (code -32600)"
-        )
+        codex_home = tmp_path / "codex-home"
+        codex_home.mkdir()
+        monkeypatch.setattr(codex_wake, "_codex_home", lambda: codex_home)
         queued = subprocess.CompletedProcess([], 0, stderr="")
-        native_commands = []
+        native_calls = []
 
-        def native_run(command, **_kwargs):
-            native_commands.append(command)
-            return active if command[1] == "exec" else queued
+        def native_run(command, **kwargs):
+            native_calls.append((command, kwargs))
+            return queued
 
         processed = 0
         relay = RelayService(client.app.state.pallium_service._storage)
@@ -934,9 +991,10 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
                 clock[0] += 31
                 recover_expired_relay_wakes(relay, ClaudeWakeRegistry())
 
-    queue_commands = [command for command in native_commands if command[1] == "queue"]
-    assert len(queue_commands) == 1
-    queue_command = queue_commands[0]
+    queue_calls = [call for call in native_calls if call[0][1] == "queue"]
+    assert len(queue_calls) == 1
+    queue_command, queue_kwargs = queue_calls[0]
+    assert queue_kwargs["cwd"] == str(codex_home)
     queued_prompt = queue_command[queue_command.index("--message") + 1]
     assert queued_prompt == codex_wake._wake_prompt()
     assert route.get(

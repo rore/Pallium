@@ -15,12 +15,9 @@ from pathlib import Path
 from typing import Literal
 
 
-_ACTIVE_WRITER = "already has an active writer"
-_ACTIVE_WRITER_CODE = "(code -32600)"
 _DEBOUNCE_SECONDS = 1.0
-_TIMEOUT_SECONDS = 300
 _QUEUE_TIMEOUT_SECONDS = 30
-_LaunchOutcome = Literal["exec_completed", "queued", "ambiguous", "failed"]
+_LaunchOutcome = Literal["queued", "ambiguous", "failed"]
 _WakeKey = tuple[str, str]
 _scheduled_delivery_ids: set[str] = set()
 _scheduled_session_generations: dict[_WakeKey, int] = {}
@@ -155,46 +152,14 @@ def mark_codex_relay_wake_admitted(
 
 
 def _launch(session_ref: str, prompt: str) -> _LaunchOutcome:
-    codex_executable = _codex_executable()
-    try:
-        completed = subprocess.run(
-            [
-                codex_executable,
-                "exec",
-                "--profile",
-                "pallium-relay",
-                "resume",
-                session_ref,
-                "-",
-                "--json",
-            ],
-            input=prompt,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            timeout=_TIMEOUT_SECONDS,
-            **_hidden_process_kwargs(),
-        )
-    except subprocess.TimeoutExpired:
-        return "ambiguous"
-    except (OSError, ValueError):
-        return "failed"
-    if completed.returncode == 0:
-        return "exec_completed"
-    if not _is_active_writer(completed):
+    cwd = _codex_home()
+    if cwd is None:
         return "failed"
     try:
         queued = subprocess.run(
             [
-                codex_executable,
-                "queue",
-                "--profile",
-                "pallium-relay",
-                "--thread",
-                session_ref,
-                "--message",
-                prompt,
+                _codex_executable(), "queue", "--profile", "pallium-relay",
+                "--thread", session_ref, "--message", prompt,
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -202,24 +167,55 @@ def _launch(session_ref: str, prompt: str) -> _LaunchOutcome:
             text=True,
             encoding="utf-8",
             timeout=_QUEUE_TIMEOUT_SECONDS,
+            cwd=str(cwd),
             **_hidden_process_kwargs(),
         )
     except subprocess.TimeoutExpired:
-        # The queue write may already be durable. Native queue deduplication is false,
-        # so retain ownership until the target hook proves admission.
+        # The native write may already be durable and is not idempotent.
         return "ambiguous"
     except (OSError, ValueError):
         return "failed"
     return "queued" if queued.returncode == 0 else "failed"
 
-def _is_active_writer(completed: subprocess.CompletedProcess[str]) -> bool:
-    stderr = completed.stderr or ""
-    return (
-        completed.returncode == 1
-        and _ACTIVE_WRITER in stderr
-        and _ACTIVE_WRITER_CODE in stderr
-    )
 
+def _codex_home() -> Path | None:
+    try:
+        candidate = Path.home() / ".codex"
+        if not _is_local_absolute_path(candidate):
+            return None
+        resolved = candidate.resolve()
+        service_cwd = Path.cwd().resolve()
+        if (
+            not _is_local_absolute_path(resolved)
+            or not resolved.is_dir()
+            or resolved == service_cwd
+            or service_cwd in resolved.parents
+        ):
+            return None
+        return resolved
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _is_local_absolute_path(path: Path) -> bool:
+    if not path.is_absolute() or os.name != "nt":
+        return path.is_absolute()
+    backslash = chr(92)
+    value = str(path).replace("/", backslash)
+    if value.startswith(backslash * 2):
+        return False
+    drive, _ = os.path.splitdrive(value)
+    return bool(drive) and _windows_drive_is_local(drive)
+
+
+def _windows_drive_is_local(drive: str) -> bool:
+    try:
+        import ctypes
+
+        drive_type = ctypes.windll.kernel32.GetDriveTypeW(drive + chr(92))
+    except (AttributeError, OSError, ValueError):
+        return False
+    return drive_type not in {0, 1, 4}
 
 def _wake_prompt() -> str:
     return (

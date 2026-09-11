@@ -23,13 +23,13 @@
     },
     {
       "name": "app_server_restarts_before_item_started",
-      "delivery_state_before": "claimed",
-      "wake_state_before": "triggered",
+      "delivery_state_before": "pending",
+      "wake_state_before": "queued",
       "queued_item_id": "qi-abc001",
       "event": "app_server_restart",
-      "cold_resume": true,
-      "expected_behavior": "adapter re-initializes; queue survives restart (per integration tests); item/started with matching clientUserMessageId confirms admission after resume — admitted only on correlated event, not assumed",
-      "expected_wake_state": "admitted"
+      "cold_resume": false,
+      "expected_behavior": "Pallium delivery remains pending; native queue survival is not admission evidence, and a later supported hook turn claims and admits it",
+      "expected_wake_state": "fallback"
     },
     {
       "name": "already_admitted_recovery",
