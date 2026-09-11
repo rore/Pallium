@@ -3,7 +3,7 @@
 
 **Target:** Pallium Relay.
 
-**Scope:** Existing Relay session-list storage, service, HTTP, MCP paths and focused tests; no new endpoint or alias mechanism.
+**Scope:** Existing Relay session-list storage, service, HTTP, MCP paths, focused tests, and required Relay docs/roadmap alignment; no new endpoint or alias mechanism.
 
 **Constraints:** Preserve container authorization, existing pagination and unfiltered behavior; no schema, service-install, or search-quality changes.
 
@@ -36,7 +36,7 @@
 
 Task context and provisional classification were recorded before code inspection. Discovery traced the existing storage-to-MCP path, redline classified the API change, and the reviewed plan is ready to implement.
 
-Implemented the optional exact session_ref filter through storage, core, HTTP, MCP client, and MCP tool boundaries. Exact lookup requires runtime, reuses _relay_session, preserves container and recent/inactive filtering, and leaves the unfiltered query unchanged. Added the reviewed composite-identity, scope, lifecycle, offset, input-boundary, Unicode, and client-forwarding coverage.
+Implemented the optional exact session_ref filter through storage, core, HTTP, MCP client, and MCP tool boundaries. Exact lookup requires runtime, reuses _relay_session, preserves container and recent/inactive filtering, and leaves the unfiltered query unchanged. Added the reviewed composite-identity, scope, lifecycle, offset, input-boundary, Unicode, and client-forwarding coverage. Final review found no code defect and required stale roadmap/docs reconciliation; the item and public usage note now match the shipped contract.
 
 ## Plan review
 

@@ -37,7 +37,6 @@
 - idea-shared-raw-revocation
 
 # Ideas
-- idea-exact-relay-recipient-resolution
 - idea-contamination-detector-negation-robustness
 - idea-contamination-differential-paired-inference
 - idea-retrieval-source-fetch-batching
@@ -50,6 +49,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- idea-exact-relay-recipient-resolution
 - add-dashboard-operations-and-relay-workspace
 - investigate-cross-repository-relay-coordination
 - add-context-conscious-upstream-field-feedback
