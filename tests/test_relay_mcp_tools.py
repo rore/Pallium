@@ -769,18 +769,27 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
     assert json.loads(named[0].text)["alias"] == "global-review"
 
     sent, _ = await server.call_tool("pallium_relay_send", {
-        "message": "canonical cross-container",
+        "message": "canonical cross-container " + ("x" * 4_000),
         "recipient": recipient["endpoint_id"],
         "sender_runtime": "codex", "sender_session_ref": "mcp-source", **source,
     })
     sent_data = json.loads(sent[0].text)
     message_id = sent_data["message_id"]
-    assert sent_data["deliveries"][0]["recipient_endpoint_id"] == recipient["endpoint_id"]
+    sent_delivery = sent_data["deliveries"][0]
+    assert len(sent[0].text) <= 2_000
+    assert sent_delivery == {
+        "recipient_endpoint_id": recipient["endpoint_id"],
+        "recipient_runtime": "claude-code",
+        "recipient_session_ref": "mcp-target",
+        "recipient_container_ref": target["container_ref"],
+        "state": "pending",
+        "destination_health": "active",
+    }
+    assert "payload" not in sent_data
+    assert "claim_token" not in sent[0].text
 
-    status, _ = await server.call_tool("pallium_relay_status", {
-        "message_id": message_id, **source,
-    })
-    assert json.loads(status[0].text)["deliveries"][0]["state"] == "pending"
+    stored = await asgi_get(f"/relay/messages/{message_id}", source)
+    assert stored["deliveries"][0]["state"] == "pending"
 
     received, _ = await server.call_tool("pallium_relay_receive", {**target})
     delivery = json.loads(received[0].text)["deliveries"][0]
@@ -799,14 +808,76 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
     alias_delivery = alias_data["deliveries"][0]
     received_alias, _ = await server.call_tool("pallium_relay_receive", {**target})
     alias_claim = json.loads(received_alias[0].text)["deliveries"][0]
-    replied, _ = await server.call_tool("pallium_relay_reply", {
+    reply_secret = "ghp_" + ("R" * 36)
+    reply_args = {
         "delivery_id": alias_claim["delivery_id"], "receipt": alias_claim["receipt"],
-        "message": "reply from target", **target,
-    })
+        "message": ("z" * 4_000) + f" Authorization: Bearer {reply_secret}", **target,
+    }
+    replied, _ = await server.call_tool("pallium_relay_reply", reply_args)
+    repeated, _ = await server.call_tool("pallium_relay_reply", reply_args)
     reply_data = json.loads(replied[0].text)
+    repeated_data = json.loads(repeated[0].text)
+    assert len(replied[0].text) <= 2_000
+    assert reply_secret not in replied[0].text
+    assert reply_data["message_id"] == repeated_data["message_id"]
     assert reply_data["in_reply_to"] == alias_data["message_id"]
-    assert reply_data["deliveries"][0]["recipient_endpoint_id"] == sender["endpoint_id"]
+    assert reply_data["deliveries"][0] == {
+        "recipient_endpoint_id": sender["endpoint_id"],
+        "recipient_runtime": "codex",
+        "recipient_session_ref": "mcp-source",
+        "recipient_container_ref": source["container_ref"],
+        "state": "pending",
+        "destination_health": "active",
+    }
+    assert "claim_token" not in replied[0].text
     assert alias_delivery["recipient_endpoint_id"] == recipient["endpoint_id"]
+
+    long_reply_delivery = (await asgi_post("/relay/turn", {
+        "runtime": "codex", "session_ref": "mcp-source", **source,
+    }))["deliveries"][0]
+    assert long_reply_delivery["message_id"] == reply_data["message_id"]
+    acked_long, _ = await server.call_tool("pallium_relay_ack", {
+        "delivery_id": long_reply_delivery["delivery_id"],
+        "receipt": long_reply_delivery["receipt"],
+        **source,
+    })
+    assert json.loads(acked_long[0].text)["state"] == "delivered"
+
+    short_seed, _ = await server.call_tool("pallium_relay_send", {
+        "message": "short retry seed",
+        "recipient": "@global-review",
+        "sender_runtime": "codex",
+        "sender_session_ref": "mcp-source",
+        **source,
+    })
+    received_short, _ = await server.call_tool("pallium_relay_receive", target)
+    short_inbound = json.loads(received_short[0].text)["deliveries"][0]
+    assert short_inbound["message_id"] == json.loads(short_seed[0].text)["message_id"]
+    short_reply_args = {
+        "delivery_id": short_inbound["delivery_id"],
+        "receipt": short_inbound["receipt"],
+        "message": "short claimed reply",
+        **target,
+    }
+    short_reply, _ = await server.call_tool("pallium_relay_reply", short_reply_args)
+    short_reply_data = json.loads(short_reply[0].text)
+    short_outbound = (await asgi_post("/relay/turn", {
+        "runtime": "codex", "session_ref": "mcp-source", **source,
+    }))["deliveries"][0]
+    assert short_outbound["message_id"] == short_reply_data["message_id"]
+
+    retried, _ = await server.call_tool("pallium_relay_reply", short_reply_args)
+    retried_data = json.loads(retried[0].text)
+    assert retried_data["message_id"] == short_reply_data["message_id"]
+    assert retried_data["deliveries"][0]["receipt"] == short_outbound["receipt"]
+    assert "claim_token" not in retried[0].text
+
+    acked_short, _ = await server.call_tool("pallium_relay_ack", {
+        "delivery_id": short_outbound["delivery_id"],
+        "receipt": short_outbound["receipt"],
+        **source,
+    })
+    assert json.loads(acked_short[0].text)["state"] == "delivered"
 
     from sqlalchemy import func, select
     from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord
@@ -877,20 +948,32 @@ async def test_redacted_send_and_reply_summaries_are_safe_and_bounded(
     assert secret not in first_reply[0].text
     assert secret not in second_reply[0].text
 
-    long_session = "w" * 255
-    await asgi_post("/relay/turn", {
-        "runtime": _RUNTIME, "session_ref": long_session, **_SCOPE,
-    })
+    escaped = chr(34) + chr(92)
+    long_session = (escaped * 128 + chr(34))[:255]
+    long_container = (escaped * 256)[:512]
+    long_target = (await asgi_post("/relay/turn", {
+        "runtime": _RUNTIME,
+        "session_ref": long_session,
+        "container_ref": long_container,
+    }))["session"]
     oversized = "Bearer " + ("A" * 20) + " " + ("z" * 1472)
     oversized_text, oversized_result = await send(
-        oversized, f"{_RUNTIME}:{long_session}", expires_in_seconds=60,
+        oversized, long_target["endpoint_id"], expires_in_seconds=60,
     )
+    oversized_delivery = oversized_result["deliveries"][0]
     assert len(oversized_text) <= 2000
     assert oversized_result["redacted"] is True
     assert oversized_result["payload_truncated"] is True
     assert "[truncated]" in oversized_result["payload"]
+    assert oversized_delivery["recipient_endpoint_id"] == long_target["endpoint_id"]
+    assert oversized_delivery["recipient_runtime"] == _RUNTIME
+    assert oversized_delivery["recipient_container_ref"] == long_container
+    assert oversized_delivery["state"] == "pending"
+    assert oversized_delivery["destination_health"] == "active"
+    assert oversized_delivery["omitted_fields"] == ["recipient_session_ref"]
     assert oversized not in oversized_text
     assert "A" * 20 not in oversized_text
+    assert "claim_token" not in oversized_text
 
 @pytest.mark.asyncio
 async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
