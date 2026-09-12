@@ -284,6 +284,30 @@
             </div>
           </div>
 
+          <details id="item-participants" class="item-participants" hidden>
+            <summary class="item-participants-summary">
+              <span>Participants</span>
+              <span id="item-participants-status" class="muted">Unavailable</span>
+            </summary>
+            <div class="item-participants-body">
+              <div class="item-participants-actions">
+                <button id="item-participants-refresh" class="ghost-button" type="button">Refresh</button>
+              </div>
+              <div id="item-participants-reference" class="item-participants-reference" hidden>
+                <div>
+                  <span class="muted">Scope</span>
+                  <code id="item-participants-scope"></code>
+                </div>
+                <div>
+                  <span class="muted">Item</span>
+                  <code id="item-participants-local"></code>
+                </div>
+                <button id="item-participants-copy" class="ghost-button" type="button">Copy reference</button>
+              </div>
+              <div id="item-participants-list" class="item-participants-list" role="list" aria-live="polite"></div>
+            </div>
+          </details>
+
           <div class="editor-panels">
             <section id="setup-view" class="editor-pane setup-view" hidden></section>
 

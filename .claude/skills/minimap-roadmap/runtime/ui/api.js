@@ -65,7 +65,8 @@ export function createApi({ fetch: fetchImpl, getRepo } = {}) {
     reorderMetadata: (payload) => postJson("/api/metadata-order", payload),
     reorderLensGroup: (field, payload) => postJson(`/api/lenses/${id(field)}/order`, payload),
     saveScope: (scopeText) => postJson("/api/scope", { scopeText }),
-    readItem: (itemId) => request(`/api/items/${id(itemId)}`),
+    readItem: (itemId, options = {}) => request(`/api/items/${id(itemId)}`, options),
+    readItemParticipants: (itemId, options = {}) => request(`/api/items/${id(itemId)}/participants`, options),
     saveItem: (itemId, payload) => postJson(`/api/items/${id(itemId)}`, payload),
 
     // Spec sessions — never carry the repo header
