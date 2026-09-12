@@ -594,8 +594,12 @@ def test_unexpected_native_exception_retains_owner(monkeypatch) -> None:
     assert wake.call_count == 1
     assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
 
-def test_schedule_returns_before_child_exits(monkeypatch) -> None:
+def test_schedule_returns_before_child_exits(
+    monkeypatch, tmp_path, isolated_codex_registry: CodexWakeRegistry,
+) -> None:
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
     started = threading.Event()
     release = threading.Event()
 
@@ -603,14 +607,27 @@ def test_schedule_returns_before_child_exits(monkeypatch) -> None:
     def slow_wait(*, timeout: float):
         assert timeout == 30
         started.set()
-        release.wait(1)
+        release.wait()
         return None, ""
 
     process.communicate.side_effect = slow_wait
-    with patch("app.codex_wake._popen", return_value=process):
-        _schedule(_delivery())
-        assert started.wait(0.2)
-    release.set()
+    with patch("app.codex_wake._codex_home", return_value=codex_home), patch(
+        "app.codex_wake._popen", return_value=process,
+    ) as popen:
+        worker = codex_wake.schedule_codex_relay_wake(
+            _delivery("delivery-schedule-returns"), SCOPE,
+            registry=isolated_codex_registry,
+        )
+        assert worker is not None
+        try:
+            assert started.wait(5)
+            assert worker.is_alive()
+        finally:
+            release.set()
+            worker.join(timeout=5)
+
+    popen.assert_called_once()
+    assert not worker.is_alive()
 
 def test_http_route_persists_before_one_callback(client) -> None:
     seen: list[tuple[dict, dict[str, str]]] = []
