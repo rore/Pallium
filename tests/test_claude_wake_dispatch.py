@@ -19,6 +19,7 @@ import pytest
 from app.claude_wake import schedule_claude_relay_wake
 from app.claude_wake_transport import _windows_write, claude_wake_transport
 from core.claude_wake import ClaudeWakeRegistry
+from core.relay_activation import ActivationAttemptResult
 
 
 PAYLOAD = {
@@ -42,6 +43,7 @@ def _wake_result(session_ref: str, delivery_id: str = "delivery-1") -> dict:
         "recipient": f"claude-code:{session_ref}",
         "deliveries": [{
             "delivery_id": delivery_id,
+            "recipient_endpoint_id": "relay-session-" + "a" * 32,
             "state": "pending",
             "recipient_runtime": "claude-code",
             "recipient_session_ref": session_ref,
@@ -77,7 +79,9 @@ class TestTransport:
         thread = threading.Thread(target=listener, daemon=True)
         thread.start()
         assert ready.wait(timeout=1)
-        assert claude_wake_transport(socket_path, "test-token") == "accepted"
+        result = claude_wake_transport(socket_path, "test-token")
+        assert result.outcome == "accepted"
+        assert result.evidence == ("submission_attempted", "transport_accepted")
         assert done.wait(timeout=2)
         thread.join(timeout=1)
         lines = [line for line in received if line.strip()]
@@ -89,7 +93,9 @@ class TestTransport:
 
     @pytest.mark.skipif(os.name == "nt", reason="Unix socket test")
     def test_posix_transport_missing_path_is_unreachable(self) -> None:
-        assert claude_wake_transport("/nonexistent/socket.sock", "token") == "unreachable"
+        result = claude_wake_transport("/nonexistent/socket.sock", "token")
+        assert result.outcome == "failed"
+        assert result.destination_health_update == "unreachable"
 
     @pytest.mark.parametrize("error", [ConnectionRefusedError(), socket.timeout(), PermissionError()])
     def test_posix_transport_classifies_uncertainty_retryable(self, monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
@@ -105,7 +111,8 @@ class TestTransport:
 
         monkeypatch.setattr(transport.socket, "AF_UNIX", 1, raising=False)
         monkeypatch.setattr(transport.socket, "socket", lambda *_: BrokenSocket())
-        assert transport._posix_transport("ignored", "token") == "retryable"
+        result = transport._posix_transport("ignored", "token")
+        assert result.outcome == "deferred" and result.native_retry_safe
 
     def test_windows_write_cancels_after_bounded_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import app.claude_wake_transport as transport
@@ -135,11 +142,12 @@ class TestTransport:
         monkeypatch.setitem(sys.modules, "winerror", SimpleNamespace())
         monkeypatch.setitem(sys.modules, "win32file", SimpleNamespace(GENERIC_WRITE=1, OPEN_EXISTING=2, FILE_FLAG_OVERLAPPED=4, CreateFile=lambda *_: "pipe", CloseHandle=lambda *_: None))
         monkeypatch.setattr(transport, "_windows_write", lambda _handle, data, *_: writes.append(data) or True)
-        assert transport._windows_transport(r"\\.\pipe\claude", "token") == "accepted"
+        result = transport._windows_transport(r"\\.\pipe\claude", "token")
+        assert result.outcome == "accepted"
         auth, frame = (json.loads(data) for data in writes)
         assert auth["type"] == "auth" and frame["type"] == "user"
 
-    @pytest.mark.parametrize("code, expected", [(2, "unreachable"), (231, "retryable"), (121, "retryable"), (5, "retryable")])
+    @pytest.mark.parametrize("code, expected", [(2, "failed"), (231, "deferred"), (121, "deferred"), (5, "deferred")])
     def test_windows_transport_classifies_fake_open_errors(self, monkeypatch: pytest.MonkeyPatch, code: int, expected: str) -> None:
         import sys
         import app.claude_wake_transport as transport
@@ -155,7 +163,7 @@ class TestTransport:
         monkeypatch.setitem(sys.modules, "win32event", SimpleNamespace())
         monkeypatch.setitem(sys.modules, "winerror", SimpleNamespace(ERROR_FILE_NOT_FOUND=2))
         monkeypatch.setitem(sys.modules, "win32file", SimpleNamespace(GENERIC_WRITE=1, OPEN_EXISTING=2, FILE_FLAG_OVERLAPPED=4, CreateFile=create_file, CloseHandle=lambda *_: None))
-        assert transport._windows_transport(r"\\.\pipe\claude", "token") == expected
+        assert transport._windows_transport(r"\\.\pipe\claude", "token").outcome == expected
 
     def test_windows_transport_import_failure_is_retryable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import builtins
@@ -163,12 +171,13 @@ class TestTransport:
 
         original_import = builtins.__import__
         monkeypatch.setattr(builtins, "__import__", lambda name, *args, **kwargs: (_ for _ in ()).throw(ImportError()) if name == "pywintypes" else original_import(name, *args, **kwargs))
-        assert transport._windows_transport(r"\\.\pipe\claude", "token") == "retryable"
+        result = transport._windows_transport(r"\\.\pipe\claude", "token")
+        assert result.outcome == "deferred" and result.native_retry_safe
 
 class TestDispatch:
     """Dispatch tests: route to correct handler, malformed=no-op."""
 
-    def test_claude_code_delivery_calls_probe(self) -> None:
+    def test_claude_code_delivery_calls_attempt(self) -> None:
         """claude-code delivery routes to schedule_claude_relay_wake."""
         registry = MagicMock(spec=ClaudeWakeRegistry)
         result = {
@@ -176,6 +185,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "recipient_endpoint_id": "relay-session-" + "a" * 32,
                     "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
@@ -188,8 +198,8 @@ class TestDispatch:
 
         _join(schedule_claude_relay_wake(result, scope, registry=registry))
 
-        registry.probe.assert_called_once()
-        call_kwargs = registry.probe.call_args[1]
+        registry.attempt.assert_called_once()
+        call_kwargs = registry.attempt.call_args[1]
         assert call_kwargs["runtime"] == "claude-code"
         assert call_kwargs["session_ref"] == "session-test"
         assert call_kwargs["container_ref"] == "git:example/repo"
@@ -205,13 +215,13 @@ class TestDispatch:
 
         schedule_claude_relay_wake(result, scope, registry=registry)
 
-        registry.probe.assert_not_called()
+        registry.attempt.assert_not_called()
 
     def test_non_dict_result_no_op(self) -> None:
         """Non-dict result calls nothing."""
         registry = MagicMock(spec=ClaudeWakeRegistry)
         schedule_claude_relay_wake("not a dict", {}, registry=registry)
-        registry.probe.assert_not_called()
+        registry.attempt.assert_not_called()
 
     def test_missing_container_ref_no_op(self) -> None:
         """Missing container_ref in scope calls nothing."""
@@ -221,6 +231,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "recipient_endpoint_id": "relay-session-" + "a" * 32,
                     "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
@@ -231,7 +242,7 @@ class TestDispatch:
 
         schedule_claude_relay_wake(result, scope, registry=registry)
 
-        registry.probe.assert_not_called()
+        registry.attempt.assert_not_called()
 
     def test_bad_session_ref_no_op(self) -> None:
         """Session ref with whitespace/non-printable calls nothing."""
@@ -241,6 +252,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "recipient_endpoint_id": "relay-session-" + "a" * 32,
                     "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": " bad session ",  # Not stripped in delivery
@@ -253,9 +265,9 @@ class TestDispatch:
 
         schedule_claude_relay_wake(result, scope, registry=registry)
 
-        registry.probe.assert_not_called()
+        registry.attempt.assert_not_called()
 
-    def test_valid_selector_alias_calls_probe(self) -> None:
+    def test_valid_selector_alias_calls_attempt(self) -> None:
         """Valid @alias selector calls probe."""
         registry = MagicMock(spec=ClaudeWakeRegistry)
         result = {
@@ -263,6 +275,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "recipient_endpoint_id": "relay-session-" + "a" * 32,
                     "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
@@ -275,7 +288,7 @@ class TestDispatch:
 
         _join(schedule_claude_relay_wake(result, scope, registry=registry))
 
-        registry.probe.assert_called_once()
+        registry.attempt.assert_called_once()
 
     def test_invalid_selector_format_no_op(self) -> None:
         """Invalid alias format (@-bad) calls nothing."""
@@ -285,6 +298,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "recipient_endpoint_id": "relay-session-" + "a" * 32,
                     "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
@@ -297,7 +311,7 @@ class TestDispatch:
 
         schedule_claude_relay_wake(result, scope, registry=registry)
 
-        registry.probe.assert_not_called()
+        registry.attempt.assert_not_called()
 
     def test_empty_delivery_id_no_op(self) -> None:
         """Empty delivery_id calls nothing."""
@@ -318,7 +332,7 @@ class TestDispatch:
 
         schedule_claude_relay_wake(result, scope, registry=registry)
 
-        registry.probe.assert_not_called()
+        registry.attempt.assert_not_called()
 
     def test_multiple_deliveries_no_op(self) -> None:
         """Multiple deliveries (should be exactly 1) calls nothing."""
@@ -328,6 +342,7 @@ class TestDispatch:
             "deliveries": [
                 {
                     "delivery_id": "delivery-1",
+                    "recipient_endpoint_id": "relay-session-" + "a" * 32,
                     "state": "pending",
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": "session-test",
@@ -345,7 +360,7 @@ class TestDispatch:
 
         schedule_claude_relay_wake(result, scope, registry=registry)
 
-        registry.probe.assert_not_called()
+        registry.attempt.assert_not_called()
 
 def test_wake_worker_returns_without_waiting_and_logs_credential_free_outcome(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
@@ -376,7 +391,7 @@ def test_wake_worker_returns_without_waiting_and_logs_credential_free_outcome(
     _join(worker)
     logged = "\n".join(record.getMessage() for record in caplog.records)
     assert "delivery-α" in logged and session_ref in logged
-    assert "category=trigger_written" in logged and "latency_ms=" in logged
+    assert "category=accepted" in logged and "latency_ms=" in logged
     assert secret not in logged and "message-content" not in logged
 
 
@@ -419,7 +434,7 @@ def test_wake_worker_coalesces_concurrent_sends(monkeypatch: pytest.MonkeyPatch)
     assert calls == [True]
 
 
-def test_transport_failure_rearms_only_the_same_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_transport_exception_retains_exact_reservation(monkeypatch: pytest.MonkeyPatch) -> None:
     import app.claude_wake as wake
 
     registry = ClaudeWakeRegistry()
@@ -437,7 +452,7 @@ def test_transport_failure_rearms_only_the_same_generation(monkeypatch: pytest.M
     scope = {"container_ref": PAYLOAD["container_ref"]}
     _join(schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "first"), scope, registry=registry))
     _join(schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "second"), scope, registry=registry))
-    assert calls == 2
+    assert calls == 1
 
 
 def test_failed_old_generation_cannot_rearm_replacement(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -460,11 +475,12 @@ def test_failed_old_generation_cannot_rearm_replacement(monkeypatch: pytest.Monk
     registry.register(**{**PAYLOAD, "token": "replacement", "idle": False})
     release.set()
     _join(worker)
-    assert not registry.probe(
+    result = registry.attempt(
         runtime=PAYLOAD["runtime"], session_ref=PAYLOAD["session_ref"],
         container_ref=PAYLOAD["container_ref"],
         transport=lambda *_: pytest.fail("replacement must remain busy"),
     )
+    assert result.outcome == "deferred"
 
 def test_relay_messages_response_does_not_wait_for_claude_transport(
     client, monkeypatch: pytest.MonkeyPatch,
@@ -497,7 +513,7 @@ def test_relay_messages_response_does_not_wait_for_claude_transport(
     def transport(*_: object) -> str:
         worker_threads.append(threading.current_thread())
         started.set()
-        assert release.wait(timeout=1)
+        assert release.wait(timeout=5)
         return "accepted"
 
     monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
@@ -538,12 +554,12 @@ def test_wake_outcome_categories_are_distinct_and_secret_free(
     _join(schedule_claude_relay_wake(result, scope, registry=ineligible_registry))
 
     error_registry = MagicMock(spec=ClaudeWakeRegistry)
-    error_registry.probe.side_effect = RuntimeError("worker failure")
+    error_registry.attempt.side_effect = RuntimeError("worker failure")
     _join(schedule_claude_relay_wake(result, scope, registry=error_registry))
 
     logged = "\n".join(record.getMessage() for record in caplog.records)
-    assert "category=transport_failed" in logged
-    assert "category=not_eligible" in logged
+    assert "category=uncertain" in logged
+    assert "category=deferred" in logged
     assert "category=worker_error" in logged
     assert secret not in logged and socket_path not in logged and "payload-secret" not in logged
 
@@ -572,7 +588,7 @@ def test_worker_start_failure_logs_and_later_send_retries(
     _join(schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "retry"), scope, registry=registry))
     logged = "\n".join(record.getMessage() for record in caplog.records)
     assert "category=worker_start_failed" in logged
-    assert "category=trigger_written" in logged
+    assert "category=accepted" in logged
 
 def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     from fastapi import FastAPI
@@ -597,6 +613,7 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     assert relay.list_sessions(runtime="claude-code", include_inactive=True, **scope)[0]["destination_health"] == "active"
     assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": payload["session_ref"], **scope}).status_code == 200
     result = {"recipient": "claude-code:session-test", "deliveries": [{"delivery_id": "d1",
+                    "recipient_endpoint_id": "relay-session-" + "a" * 32,
                     "state": "pending", "recipient_runtime": "claude-code", "recipient_session_ref": "session-test"}]}
     transport = MagicMock(return_value=True)
     with pytest.MonkeyPatch.context() as mp:
@@ -608,7 +625,7 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
         mp.setattr("app.claude_wake.claude_wake_transport", transport)
         _join(schedule_claude_relay_wake(result, scope, registry=registry))
     transport.assert_called_once()
-    assert not registry.probe(runtime="claude-code", session_ref="session-test", container_ref="wrong", transport=transport)
+    assert registry.attempt(runtime="claude-code", session_ref="session-test", container_ref="wrong", transport=transport).outcome == "deferred"
 
 
 def test_windows_write_closes_event_after_cancelled_completion(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1347,8 +1364,8 @@ def test_unreachable_callback_is_aware_and_exception_safe(monkeypatch: pytest.Mo
         registry=registry, on_unreachable=callback,
     ))
     assert len(observed) == 1 and observed[0].tzinfo is not None
-    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])].state == "idle"
-    assert registry.recovery_candidates()[0]["state"] == "idle"
+    assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])].state == "unreachable"
+    assert registry.recovery_candidates() == []
 
     retried: list[datetime] = []
     _join(schedule_claude_relay_wake(
@@ -1356,7 +1373,7 @@ def test_unreachable_callback_is_aware_and_exception_safe(monkeypatch: pytest.Mo
         {"container_ref": PAYLOAD["container_ref"]},
         registry=registry, on_unreachable=retried.append,
     ))
-    assert len(retried) == 1
+    assert retried == []
     assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])].state == "unreachable"
 
 
@@ -1388,15 +1405,15 @@ def test_real_router_unreachable_feedback_and_registration_self_heal(
     assert http.post("/internal/claude-wake/register", json=registration).status_code == 204
 
     probe_finished = threading.Event()
-    original_probe = registry.probe
+    original_probe = registry.attempt
 
-    def probe_and_signal(**kwargs: object) -> bool:
+    def probe_and_signal(**kwargs: object) -> ActivationAttemptResult:
         result = original_probe(**kwargs)
         probe_finished.set()
         return result
 
-    monkeypatch.setattr(registry, "probe", probe_and_signal)
-    monkeypatch.setattr("app.claude_wake.claude_wake_transport", lambda *_: "retryable")
+    monkeypatch.setattr(registry, "attempt", probe_and_signal)
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", lambda *_: ActivationAttemptResult("deferred", "pre_frame", native_retry_safe=True))
     retryable = http.post("/relay/messages", json={
         "sender_runtime": "codex",
         "sender_session_ref": "sender",
@@ -1411,7 +1428,7 @@ def test_real_router_unreachable_feedback_and_registration_self_heal(
     ).json()
     assert retryable_status["deliveries"][0]["destination_health"] == "active"
     assert registry._registrations[("claude-code", "health-target", scope["container_ref"])].state == "idle"
-    monkeypatch.setattr(registry, "probe", original_probe)
+    monkeypatch.setattr(registry, "attempt", original_probe)
 
     persisted = threading.Event()
     original_mark = RelayService.mark_unreachable

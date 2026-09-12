@@ -195,6 +195,7 @@ def _relay_text(result: object) -> str:
             "recipient_container_ref",
             "state",
             "destination_health",
+            "activation",
         )
         for delivery in deliveries:
             state = str(delivery.get("state", "unknown"))
@@ -329,6 +330,41 @@ def _relay_status_text(result: object, offset: int) -> str:
     return _json_text(page(low))
 
 
+def _mcp_activation(value: object) -> dict[str, object]:
+    mandatory = ("behavior", "availability", "qualification", "fallback")
+    if not isinstance(value, dict) or any(not isinstance(value.get(key), str) for key in mandatory):
+        return {
+            "contract": "relay-activation/v1",
+            "behavior": "unknown",
+            "availability": "unknown",
+            "qualification": "unknown",
+            "fallback": "unknown",
+        }
+    allowed = (
+        "contract", "runtime", "platform", "integration", "topology", "behavior",
+        "qualification", "qualification_source", "availability",
+        "availability_source", "fallback", "supported_evidence",
+    )
+    return {key: value[key] for key in allowed if key in value}
+
+
+def _fit_mcp_activation(row: dict[str, object], envelope) -> dict[str, object]:
+    result = dict(row)
+    result["activation"] = _mcp_activation(result.get("activation"))
+    for fields in (
+        ("topology",),
+        ("platform", "integration"),
+        ("qualification_source", "availability_source"),
+        ("supported_evidence",),
+    ):
+        if len(_json_text(envelope(result))) <= _MCP_RELAY_MAX_CHARS:
+            break
+        activation = dict(result["activation"])
+        for field in fields:
+            activation.pop(field, None)
+        result["activation"] = activation
+    return result
+
 def _relay_recipients_text(result: object, offset: int = 0) -> str:
     """Serialize one deterministic recipient page within the MCP Relay budget."""
     if offset < 0:
@@ -342,10 +378,11 @@ def _relay_recipients_text(result: object, offset: int = 0) -> str:
     rows.sort(key=lambda row: str(row.get("session_ref", "")))
     rows.sort(key=lambda row: str(row.get("last_seen_at", "")), reverse=True)
     rows.sort(key=lambda row: str(row.get("runtime", "")))
-    for row in rows:
+    for index, row in enumerate(rows):
         row["exact_selector"] = row.get("endpoint_id")
         if row.get("alias"):
             row["alias_selector"] = f"@{row['alias']}"
+        rows[index] = _fit_mcp_activation(row, lambda fitted: {"recipients": [fitted], "offset": index, "next_offset": None, "has_more": False, "total_count": len(rows)})
 
     total = len(rows)
 

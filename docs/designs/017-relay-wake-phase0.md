@@ -5,6 +5,16 @@
 **Gate:** Every runtime adapter in PR 3–5 must reference this record and pass all seven Phase 0 cases before merging.
 
 **Current qualification (2026-09-07):** Codex exact-session automatic wake is qualified on Windows and Linux; Claude Code is qualified on Windows and Linux. macOS, the remaining Codex lifecycle/setup gates, and OpenCode active wake remain. The Linux Codex witness used Ubuntu 24.04 under WSL2 with Codex 0.153.4, explicit repository and exact-hook hash trust, and no trust-bypass flag. First-run hook trust remains a setup prerequisite, not an unproven transport path or product defect. See the current runtime matrix in the wake-first roadmap item.
+**Current activation contract (2026-09-12):** Production readback now uses the
+bounded `relay-activation/v1` projection. Codex Windows/Linux is `busy_queue`,
+Claude Code Windows/Linux is `idle_wake`, and OpenCode plus current macOS paths
+remain passive with `next_natural_turn` fallback. Native acceptance is not payload
+admission. Accepted or uncertain current submissions use durable exact-delivery
+fences released only by successful ACK, MCP ACK, or atomic reply. Historical
+Phase 0 deadline/rearm transitions below are evidence records, not current retry
+authority; elapsed time, restart, close, turn observation, and absent status never
+release a production fence. Each trusted-local fence store is owned by one Pallium
+service process.
 
 ## Per-runtime verdict
 

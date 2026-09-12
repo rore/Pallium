@@ -870,6 +870,20 @@ class RelayAckRequest(BaseModel):
     container_ref: str = Field(min_length=1, max_length=512)
 
 
+class RelayActivationResponse(BaseModel):
+    contract: Literal["relay-activation/v1"]
+    runtime: Literal["codex", "claude-code", "opencode", "unknown"]
+    platform: Literal["windows", "linux", "macos", "other", "unknown"]
+    integration: Literal["codex_queue", "claude_peer", "hook_only", "unknown"]
+    topology: Literal["existing_session", "none", "unknown"]
+    behavior: Literal["busy_queue", "idle_wake", "passive", "unknown"]
+    qualification: Literal["qualified", "unqualified", "unknown"]
+    qualification_source: Literal["installed_witness", "documented_fallback", "none"]
+    availability: Literal["ready", "busy", "attempt_inflight", "unreachable", "closed", "unknown"]
+    availability_source: Literal["runtime_registration", "durable_reservation", "endpoint_health", "lifecycle", "none"]
+    fallback: Literal["next_natural_turn", "none", "unknown"]
+    supported_evidence: list[Literal["submission_attempted", "transport_accepted", "payload_admitted"]] = Field(max_length=3)
+
 class RelaySessionResponse(BaseModel):
     endpoint_id: str
     runtime: str
@@ -883,6 +897,7 @@ class RelaySessionResponse(BaseModel):
     last_seen_at: datetime
     closed_at: datetime | None = None
     scope_generation: int = Field(default=0, ge=0)
+    activation: RelayActivationResponse | None = None
 
 
 class RelayWorkRefResponse(BaseModel):
@@ -946,6 +961,7 @@ class RelayWorkRefParticipantsResponse(BaseModel):
 
 class RelayDeliveryResponse(BaseModel):
     delivery_id: str
+    activation: RelayActivationResponse | None = None
     message_id: str
     state: str
     destination_health: Literal["active", "unreachable"] | None = None

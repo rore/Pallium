@@ -9,6 +9,10 @@ from types import SimpleNamespace
 import pytest
 
 from core.claude_wake import ClaudeWakeRegistry
+from core.relay_activation import ActivationAttemptResult
+
+
+ENDPOINT_ID = "relay-session-" + "a" * 32
 
 
 PAYLOAD = {
@@ -208,7 +212,7 @@ def test_inflight_write_failure_never_transports_or_claims_relay(
     assert not registry.probe(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
         container_ref=PAYLOAD["container_ref"],
-        delivery_id=before["delivery_id"], transport=lambda path, token: calls.append((path, token)) or "accepted",
+        delivery_id=before["delivery_id"], recipient_endpoint_id=ENDPOINT_ID, transport=lambda path, token: calls.append((path, token)) or "accepted",
     )
     assert calls == []
     candidates = registry.recovery_candidates()
@@ -218,61 +222,68 @@ def test_inflight_write_failure_never_transports_or_claims_relay(
     assert after["state"] == "pending" and after["claim_token"] is None and after["receipt"] is None and after["attempts"] == 0
 
 
-@pytest.mark.parametrize("outcome", ["retryable", "unreachable"])
-def test_post_transport_write_failure_rearms_durable_inflight_for_later_retry(
-    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+@pytest.mark.parametrize("result", [
+    ActivationAttemptResult("deferred", "pre_frame", native_retry_safe=True),
+    ActivationAttemptResult(
+        "failed", "endpoint_missing", native_retry_safe=True,
+        destination_health_update="unreachable",
+    ),
+])
+def test_safe_reset_write_failure_remains_fenced_across_restart(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, result: ActivationAttemptResult,
 ) -> None:
     from core.relay import RelayService
 
-    wall = [100.0]
-    registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
     assert _register(registry, tmp_path, PAYLOAD, "idle")
     scope = {"container_ref": PAYLOAD["container_ref"]}
     relay = RelayService(client.app.state.pallium_service._storage)
     relay.turn(runtime="codex", session_ref="sender", **scope)
     relay.turn(runtime="claude-code", session_ref=PAYLOAD["session_ref"], **scope)
-    sent = relay.send(sender_runtime="codex", sender_session_ref="sender", recipient="claude-code:" + PAYLOAD["session_ref"], payload="pending", **scope)
-    delivery_id = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]["delivery_id"]
+    sent = relay.send(
+        sender_runtime="codex", sender_session_ref="sender",
+        recipient="claude-code:" + PAYLOAD["session_ref"], payload="pending", **scope,
+    )
+    delivery_id = relay.message_status(
+        message_id=sent["message_id"], **scope,
+    )["deliveries"][0]["delivery_id"]
     writes = 0
-    initial_calls: list[tuple[str, str]] = []
     original_write = registry._write_canonical_locked
 
-    def write_through_inflight_then_fail(records):
+    def write_reservation_then_fail_reset(records):
         nonlocal writes
         writes += 1
         return original_write(records) if writes == 1 else False
 
-    monkeypatch.setattr(registry, "_write_canonical_locked", write_through_inflight_then_fail)
+    monkeypatch.setattr(
+        registry, "_write_canonical_locked", write_reservation_then_fail_reset,
+    )
+    calls = []
     assert not registry.probe(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"],
-        delivery_id=delivery_id, transport=lambda path, token: initial_calls.append((path, token)) or outcome,
+        container_ref=PAYLOAD["container_ref"], delivery_id=delivery_id,
+        recipient_endpoint_id=ENDPOINT_ID,
+        transport=lambda path, token: calls.append((path, token)) or result,
     )
-    assert writes == 2 and initial_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
-    assert [(item["state"], item["delivery_id"]) for item in registry.recovery_candidates()] == [("wake_inflight", delivery_id)]
+    assert writes == 2
+    assert calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+    assert registry.recovery_candidates() == []
 
-    def assert_relay_pending() -> None:
-        status = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
-        assert status["state"] == "pending" and status["claim_token"] is None and status["receipt"] is None and status["attempts"] == 0
-
-    assert_relay_pending()
-    restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
-    assert [(item["state"], item["delivery_id"]) for item in restarted.recovery_candidates()] == [("wake_inflight", delivery_id)]
-    wall[0] = 101.0
-    assert restarted.rearm_inflight(
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert restarted.recovery_candidates() == []
+    assert not restarted.rearm_inflight(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"],
-        delivery_id=delivery_id, grace_seconds=1,
+        container_ref=PAYLOAD["container_ref"], delivery_id=delivery_id,
+        grace_seconds=0,
     )
-    later_calls: list[tuple[str, str]] = []
-    assert restarted.probe(
+    later_calls = []
+    assert not restarted.probe(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
-        container_ref=PAYLOAD["container_ref"],
-        delivery_id=delivery_id, transport=lambda path, token: later_calls.append((path, token)) or "accepted",
+        container_ref=PAYLOAD["container_ref"], delivery_id=delivery_id,
+        recipient_endpoint_id=ENDPOINT_ID,
+        transport=lambda *_: later_calls.append(True) or True,
     )
-    assert later_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
-    assert_relay_pending()
-
+    assert later_calls == []
 
 @pytest.mark.parametrize("item", [
     {"runtime": "claude-code", "session_ref": "s", "container_ref": "c", "socket_path": "p", "token": "t", "generation": "bad", "idle": True, "state": "idle", "delivery_id": None, "attempted_at": None, "expires_at": 1},
@@ -299,31 +310,31 @@ def test_reconciler_stop_joins_its_thread(tmp_path: Path) -> None:
     reconciler.stop()
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
 
-def test_accepted_inflight_rehydrates_and_rearms_after_grace(tmp_path: Path) -> None:
+def test_accepted_inflight_rehydrates_without_elapsed_time_release(tmp_path: Path) -> None:
     wall = [100.0]
     registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     assert _register(registry, tmp_path, PAYLOAD, "idle")
-    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", recipient_endpoint_id=ENDPOINT_ID, transport=lambda *_: "accepted")
     restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     assert restarted.recovery_candidates()[0]["attempted_at"] == 100.0
     assert not restarted.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", grace_seconds=1)
     wall[0] = 101.0
-    assert restarted.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", grace_seconds=1)
+    assert not restarted.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", grace_seconds=1)
 
 
-def test_wall_clock_rollback_rearms_inflight_for_eventual_wake(tmp_path: Path) -> None:
+def test_wall_clock_rollback_never_releases_inflight(tmp_path: Path) -> None:
     wall = [100.0]
     registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     assert _register(registry, tmp_path, PAYLOAD, "idle")
-    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", recipient_endpoint_id=ENDPOINT_ID, transport=lambda *_: "accepted")
     wall[0] = 1.0
-    assert registry.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", grace_seconds=1)
+    assert not registry.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", grace_seconds=1)
 
 def test_unreachable_transport_retains_capability_but_preserves_newer_intent(tmp_path: Path) -> None:
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     assert _register(registry, tmp_path, PAYLOAD, "idle")
     _write_intent(tmp_path, {**PAYLOAD, "token": "new"}, "new")
-    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="d", transport=lambda *_: "unreachable")
+    assert not registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="d", recipient_endpoint_id=ENDPOINT_ID, transport=lambda *_: "unreachable")
     assert registry.recovery_candidates() == []
     restarted = ClaudeWakeRegistry(state_dir=tmp_path)
     assert restarted.recovery_candidates() == []
@@ -354,12 +365,12 @@ def test_close_preserves_intent_replaced_after_validation(tmp_path: Path, monkey
     assert registry.close(**{key: closed[key] for key in ("runtime", "session_ref", "container_ref", "intent_id")})
     assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "new"
 
-def test_recovery_retries_rollback_inflight_once_without_relay_mutation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_recovery_never_retries_rollback_inflight(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from app import claude_wake
     wall = [100.0]
     registry = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     assert _register(registry, tmp_path, PAYLOAD, "idle")
-    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", transport=lambda *_: "accepted")
+    assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", recipient_endpoint_id=ENDPOINT_ID, transport=lambda *_: "accepted")
     restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     calls = []
     relay = SimpleNamespace(pending_candidate=lambda **kwargs: calls.append(kwargs) or {"delivery_id": "delivery", "state": "pending"})
@@ -369,9 +380,10 @@ def test_recovery_retries_rollback_inflight_once_without_relay_mutation(tmp_path
     assert scheduled == []
     wall[0] = 1.0
     claude_wake.recover_claude_relay_wakes(restarted, relay)
-    assert len(scheduled) == 1 and len(calls) == 2
+    assert scheduled == [] and calls == []
 
-def test_expired_claim_recovery_retries_without_mutating_relay(
+def test_expired_claim_recovery_does_not_release_inflight(
+
     client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from datetime import datetime, timedelta, timezone
@@ -406,7 +418,7 @@ def test_expired_claim_recovery_retries_without_mutating_relay(
     assert registry.probe(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
         container_ref=PAYLOAD["container_ref"],
-        delivery_id=claimed["delivery_id"], transport=lambda *_: "accepted",
+        delivery_id=claimed["delivery_id"], recipient_endpoint_id=ENDPOINT_ID, transport=lambda *_: "accepted",
     )
     restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
 
@@ -430,8 +442,8 @@ def test_expired_claim_recovery_retries_without_mutating_relay(
     assert not retried.is_set()
     wall[0] = 1.0
     claude_wake.recover_claude_relay_wakes(restarted, relay)
-    assert retried.wait(timeout=1)
-    assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+    assert not retried.is_set()
+    assert transport_calls == []
 
     after = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
     assert after["state"] == "claimed" and after["delivered_at"] is None
@@ -439,7 +451,7 @@ def test_expired_claim_recovery_retries_without_mutating_relay(
         before[key] for key in ("claim_token", "receipt", "claimed_at", "lease_expires_at", "attempts")
     )
 
-def test_reconciler_retries_pending_wake_until_native_transport_accepts(
+def test_reconciler_does_not_retry_uncertain_native_write(
     client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import threading
@@ -474,10 +486,10 @@ def test_reconciler_retries_pending_wake_until_native_transport_accepts(
     reconciler = ClaudeWakeReconciler(registry, relay, interval_seconds=0.01)
     reconciler.start()
     try:
-        assert accepted.wait(timeout=5), observed
+        assert not accepted.wait(timeout=0.1), observed
     finally:
         reconciler.stop()
-    assert observed == [("pending", None, None, 0)] * 4
+    assert observed == [("pending", None, None, 0)]
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
 
 def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
@@ -505,6 +517,7 @@ def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
         "deliveries": [{
             "delivery_id": delivery["delivery_id"], "state": "pending",
             "recipient_runtime": "claude-code", "recipient_session_ref": PAYLOAD["session_ref"],
+            "recipient_endpoint_id": delivery["recipient_endpoint_id"],
         }],
     }
     started = threading.Event()
@@ -539,15 +552,15 @@ def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
     assert not worker.is_alive()
 
     claude_wake.recover_claude_relay_wakes(registry, relay)
-    assert retried.wait(timeout=1)
-    assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])] * 2
+    assert not retried.is_set()
+    assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
     pending = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
     assert pending["state"] == "pending"
     assert tuple(pending[key] for key in ("claim_token", "receipt", "attempts")) == (None, None, 0)
 
 
 @pytest.mark.parametrize("terminal_state", ("claimed", "delivered", "expired"))
-def test_recovery_clears_terminal_inflight_and_reschedules_exact_scope(
+def test_recovery_terminal_reads_never_release_or_reschedule_inflight(
     client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal_state: str,
 ) -> None:
     from datetime import datetime, timedelta, timezone
@@ -596,7 +609,7 @@ def test_recovery_clears_terminal_inflight_and_reschedules_exact_scope(
     assert registry.probe(
         runtime="claude-code", session_ref=PAYLOAD["session_ref"],
         container_ref=PAYLOAD["container_ref"],
-        delivery_id=before["delivery_id"], transport=lambda *_: "accepted",
+        delivery_id=before["delivery_id"], recipient_endpoint_id=ENDPOINT_ID, transport=lambda *_: "accepted",
     )
     restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
 
@@ -609,8 +622,8 @@ def test_recovery_clears_terminal_inflight_and_reschedules_exact_scope(
     claude_wake.recover_claude_relay_wakes(restarted, relay)
     assert transport_calls == []
     candidates = restarted.recovery_candidates()
-    assert len(candidates) == 1 and candidates[0]["state"] == "idle"
-    assert candidates[0]["delivery_id"] is None
+    assert len(candidates) == 1 and candidates[0]["state"] == "wake_inflight"
+    assert candidates[0]["delivery_id"] == before["delivery_id"]
     assert status(sent["message_id"]) == before
 
     fresh = relay.send(
@@ -626,11 +639,7 @@ def test_recovery_clears_terminal_inflight_and_reschedules_exact_scope(
         ),
     )
     claude_wake.recover_claude_relay_wakes(restarted, relay)
-    assert len(scheduled) == 1
-    result, wake_scope, scheduled_registry = scheduled[0]
-    assert result["deliveries"][0]["delivery_id"] == status(fresh["message_id"])["delivery_id"]
-    assert wake_scope == scope
-    assert scheduled_registry is restarted
+    assert scheduled == []
     assert transport_calls == []
     assert status(fresh["message_id"])["state"] == "pending"
 
@@ -732,7 +741,7 @@ def test_windows_capacity_reclaims_only_file_not_found(tmp_path: Path, monkeypat
     assert [candidate["session_ref"] for candidate in registry.recovery_candidates()] == (["new"] if accepted else [PAYLOAD["session_ref"]])
 
 
-def test_unreachable_feedback_precedes_registry_transition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unreachable_feedback_requires_durable_registry_transition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     registry = ClaudeWakeRegistry(state_dir=tmp_path / "success")
     root = tmp_path / "success"
@@ -771,9 +780,8 @@ def test_unreachable_feedback_precedes_registry_transition(tmp_path: Path, monke
         container_ref=PAYLOAD["container_ref"],
         transport=lambda *_: "unreachable", on_unreachable=lambda: events.append("failed"),
     )
-    assert events == ["unreachable", "failed"]
-    candidate = failed_registry.recovery_candidates()[0]
-    assert candidate["state"] == "wake_inflight"
+    assert events == ["unreachable"]
+    assert failed_registry.recovery_candidates() == []
 
 
 
@@ -832,12 +840,16 @@ def test_recovery_health_callbacks_bind_each_exact_candidate(
     callbacks = []
     marked: list[tuple[str, str]] = []
 
-    def schedule(_result: object, _scope: object, *, registry: object, on_unreachable) -> None:
+    def schedule(_result: object, _scope: object, *, registry: object, on_unreachable, **_kwargs) -> None:
         callbacks.append(on_unreachable)
 
     relay = SimpleNamespace(
         pending_candidate=lambda **kwargs: {
             "delivery_id": "delivery-" + str(kwargs["session_ref"]),
+            "recipient_endpoint_id": (
+                "relay-session-"
+                + ("b" if kwargs["session_ref"] == second["session_ref"] else "a") * 32
+            ),
             "state": "pending",
         },
         mark_unreachable=lambda **kwargs: marked.append((
@@ -938,7 +950,7 @@ def test_relay_claim_recovery_is_startup_immediate_rate_limited_and_resilient(
 
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
 
-def test_persistent_registry_keeps_duplicate_native_sessions_per_scope(
+def test_legacy_inflight_without_endpoint_fences_duplicate_session_across_scopes(
     tmp_path: Path,
 ) -> None:
     first = {**PAYLOAD, "session_ref": "duplicate", "container_ref": "container-a", "socket_path": "socket-a", "token": "token-a"}
@@ -956,14 +968,17 @@ def test_persistent_registry_keeps_duplicate_native_sessions_per_scope(
         ("duplicate", "container-b"),
     }
     observed: list[tuple[str, str]] = []
-    for payload in (first, second):
-        assert restarted.probe(
-            runtime="claude-code",
-            session_ref="duplicate",
-            container_ref=payload["container_ref"],
-            transport=lambda socket, token: observed.append((socket, token)) or "accepted",
-        )
-    assert observed == [("socket-a", "token-a"), ("socket-b", "token-b")]
+    assert restarted.probe(
+        runtime="claude-code", session_ref="duplicate",
+        container_ref=first["container_ref"],
+        transport=lambda socket, token: observed.append((socket, token)) or "accepted",
+    )
+    assert not restarted.probe(
+        runtime="claude-code", session_ref="duplicate",
+        container_ref=second["container_ref"],
+        transport=lambda *_: pytest.fail("legacy fence must exclude duplicate session"),
+    )
+    assert observed == [("socket-a", "token-a")]
 
 def test_legacy_intent_fences_existing_idle_capability_on_upgrade(
     tmp_path: Path,

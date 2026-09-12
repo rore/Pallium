@@ -14,7 +14,9 @@ from sqlalchemy import and_, case, func, or_, select
 
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
+from app.codex_wake import get_codex_wake_registry
 from core.filters import source_item_matches_filters
+from core.relay_activation import current_platform, relay_activation_snapshot
 from core.relay import (
     RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError,
 )
@@ -68,12 +70,12 @@ def _dashboard_time(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _dashboard_relay_session(record: RelaySessionRecord, cutoff: datetime) -> dict:
+def _dashboard_relay_session(record: RelaySessionRecord, cutoff: datetime, activation=None) -> dict:
     last_seen = _dashboard_utc(record.last_seen_at)
     lifecycle = "closed" if record.state == "closed" else (
         "recent" if last_seen >= cutoff else "dormant"
     )
-    return {
+    result = {
         "id": record.id, "runtime": record.runtime, "session_ref": record.session_ref,
         "container_ref": record.container_ref,
         "title": record.title, "alias": record.alias, "state": lifecycle,
@@ -83,6 +85,9 @@ def _dashboard_relay_session(record: RelaySessionRecord, cutoff: datetime) -> di
         "last_seen_at": _dashboard_time(record.last_seen_at),
         "closed_at": _dashboard_time(record.closed_at),
     }
+    if activation is not None:
+        result["activation"] = activation(result)
+    return result
 
 
 def _dashboard_source_item(record: SourceItemRecord) -> SourceItem:
@@ -202,6 +207,17 @@ def mount_dashboard(
 ) -> None:
     assets_dir = Path(__file__).resolve().parent.parent / "assets"
     app.mount("/static", StaticFiles(directory=str(assets_dir)), name="static")
+
+    def relay_activation(row: dict[str, object]) -> dict[str, object]:
+        endpoint_id = row.get("endpoint_id", row.get("id", row.get("recipient_endpoint_id")))
+        session_ref = row.get("session_ref", row.get("recipient_session_ref"))
+        container_ref = row.get("container_ref", row.get("recipient_container_ref"))
+        runtime = row.get("runtime", row.get("recipient_runtime"))
+        registry = getattr(app.state, "claude_wake_registry", None)
+        claude_state = registry.state_for(recipient_endpoint_id=endpoint_id, session_ref=session_ref, container_ref=container_ref) if runtime == "claude-code" and registry is not None and all(isinstance(value, str) for value in (endpoint_id, session_ref, container_ref)) else None
+        codex_registry = get_codex_wake_registry()
+        codex_reserved = codex_registry.usable and isinstance(endpoint_id, str) and codex_registry.snapshot(endpoint_id) is not None
+        return relay_activation_snapshot(row, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved)
 
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard_page() -> HTMLResponse:
@@ -663,7 +679,7 @@ def mount_dashboard(
             total = session.scalar(select(func.count()).select_from(RelaySessionRecord).where(clause)) or 0
             records = session.scalars(select(RelaySessionRecord).where(clause).order_by(
                 RelaySessionRecord.last_seen_at.desc(), RelaySessionRecord.id.desc()).offset(offset).limit(limit)).all()
-        sessions = [_dashboard_relay_session(record, cutoff) for record in records]
+        sessions = [_dashboard_relay_session(record, cutoff, relay_activation) for record in records]
         return JSONResponse(content={"sessions": sessions, "total": total, "offset": offset, "limit": limit,
                                      "as_of": _dashboard_time(as_of)})
     @app.post("/dashboard/api/relay/sessions/{endpoint_id}/work-refs")
@@ -783,12 +799,14 @@ def mount_dashboard(
             effective_state = "expired" if delivery.state in ("pending", "claimed") and expires <= as_of else delivery.state
             if delivery_state is not None and effective_state != delivery_state:
                 continue
-            deliveries_by_message.setdefault(delivery.message_id, []).append({"id": delivery.id,
+            delivery_view = {"id": delivery.id,
                 "recipient_runtime": delivery.recipient_runtime, "recipient_session_ref": delivery.recipient_session_ref,
                 "recipient_endpoint_id": delivery.recipient_endpoint_id, "recipient_container_ref": delivery.recipient_container_ref,
                 "state": effective_state, "claimed_at": _dashboard_time(delivery.claimed_at),
                 "lease_expires_at": _dashboard_time(delivery.lease_expires_at), "delivered_at": _dashboard_time(delivery.delivered_at),
-                "attempts": delivery.attempts})
+                "attempts": delivery.attempts}
+            delivery_view["activation"] = relay_activation(delivery_view)
+            deliveries_by_message.setdefault(delivery.message_id, []).append(delivery_view)
         items = []
         for message in messages:
             expires = _dashboard_utc(message.expires_at)
@@ -800,7 +818,7 @@ def mount_dashboard(
                 "in_reply_to": message.in_reply_to, "created_at": _dashboard_time(message.created_at),
                 "expires_at": None if durable else _dashboard_time(expires), "effective_expired": not durable and expires <= as_of,
                 "deliveries": deliveries_by_message.get(message.id, [])})
-        endpoint_sessions = [_dashboard_relay_session(record, as_of - timedelta(hours=24)) for record in endpoint_records]
+        endpoint_sessions = [_dashboard_relay_session(record, as_of - timedelta(hours=24), relay_activation) for record in endpoint_records]
         return JSONResponse(content={"messages": items, "endpoint_sessions": endpoint_sessions,
                                      "total": total, "limit": limit, "until": _dashboard_time(as_of),
                                      "as_of": _dashboard_time(as_of), "has_more": has_more,

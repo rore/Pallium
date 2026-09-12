@@ -10,8 +10,12 @@ from typing import Any
 
 from api.routes import create_router
 from core.claude_wake import ClaudeWakeRegistry
+from core.codex_wake import CodexWakeRegistry
+from core.relay_activation import current_platform, relay_activation_snapshot
 from app.codex_wake import (
+    get_codex_wake_registry,
     mark_codex_relay_wake_admitted,
+    release_codex_relay_wake,
     relay_wake_log_refs,
     schedule_codex_relay_wake,
 )
@@ -573,6 +577,7 @@ def dispatch_relay_wake(
     *,
     relay_service: RelayService | None,
     registry: ClaudeWakeRegistry,
+    codex_registry: CodexWakeRegistry,
 ) -> None:
     """Route a persisted Relay candidate through its existing runtime adapter."""
     if relay_service is None or not isinstance(result, dict) or not isinstance(scope, dict):
@@ -594,6 +599,7 @@ def dispatch_relay_wake(
             target_result,
             target_scope,
             registry=registry,
+            relay_service=relay_service,
             on_unreachable=lambda attempt_started_at: relay_service.mark_unreachable(
                 runtime="claude-code",
                 session_ref=session_ref,
@@ -605,19 +611,17 @@ def dispatch_relay_wake(
         schedule_codex_relay_wake(
             target_result,
             target_scope,
-            on_unreachable=lambda attempt_started_at: relay_service.mark_unreachable(
-                runtime="codex",
-                session_ref=session_ref,
-                container_ref=container_ref,
-                attempt_started_at=attempt_started_at,
-            ),
+            relay_service=relay_service,
+            registry=codex_registry,
         )
 
 def recover_expired_relay_wakes(
     relay_service: RelayService,
     registry: ClaudeWakeRegistry,
+    codex_registry: CodexWakeRegistry | None = None,
 ) -> None:
     """Recheck and dispatch persisted pending work without changing Relay state."""
+    codex_registry = codex_registry or get_codex_wake_registry()
     for candidate in relay_service.wake_candidates():
         try:
             current = relay_service.wake_candidates(
@@ -659,6 +663,7 @@ def recover_expired_relay_wakes(
                 },
                 relay_service=relay_service,
                 registry=registry,
+                codex_registry=codex_registry,
             )
         except Exception:
             logger.exception("Relay wake recovery failed")
@@ -670,6 +675,7 @@ def build_router(
     audit_log_enabled: bool = False,
     relay_storage=None,
     claude_wake_registry: ClaudeWakeRegistry | None = None,
+    codex_wake_registry: CodexWakeRegistry | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     diagnostic_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
 ):
@@ -680,50 +686,65 @@ def build_router(
         except RelayUnavailableError:
             pass
     registry = claude_wake_registry or build_claude_wake_registry()
+    codex_registry = codex_wake_registry or get_codex_wake_registry()
 
     _relay_wake_dispatch = partial(
-        dispatch_relay_wake, relay_service=relay_service, registry=registry
+        dispatch_relay_wake, relay_service=relay_service, registry=registry,
+        codex_registry=codex_registry
     )
 
-    def _relay_ack_rearm(result: object, scope: object) -> None:
-        if (
-            relay_service is None
-            or not isinstance(result, dict)
-            or not isinstance(scope, dict)
-            or result.get("recipient_runtime") != "codex"
-        ):
+    def _relay_ack_release(result: object, scope: object) -> None:
+        if relay_service is None or not isinstance(result, dict) or not isinstance(scope, dict):
             return
+        delivery_id = result.get("delivery_id")
+        if not isinstance(delivery_id, str):
+            return
+
+        registry.release_delivery(delivery_id)
+        release_codex_relay_wake(delivery_id, registry=codex_registry)
+
+        runtime = result.get("recipient_runtime")
+        session_ref = result.get("recipient_session_ref")
         endpoint_id = result.get("recipient_endpoint_id")
-        if not isinstance(endpoint_id, str):
+        container_ref = result.get("recipient_container_ref")
+        if not all(isinstance(value, str) and value for value in (
+            runtime, session_ref, endpoint_id, container_ref,
+        )):
             return
         try:
             live_scope = relay_service.session_scope_by_endpoint(endpoint_id)
         except (RelayNotFoundError, RelayUnavailableError, ValueError):
             return
-        if live_scope["runtime"] != "codex":
+        if live_scope.get("runtime") != runtime:
             return
-        session_ref = live_scope["session_ref"]
-        container_ref = live_scope["container_ref"]
         candidate = relay_service.pending_candidate(
-            runtime="codex",
-            session_ref=session_ref,
-            container_ref=container_ref,
+            runtime=runtime,
+            session_ref=live_scope["session_ref"],
+            container_ref=live_scope["container_ref"],
         )
         if candidate is not None:
             _relay_wake_dispatch(
                 {
-                    "recipient": f"codex:{session_ref}",
+                    "recipient": f"{runtime}:{live_scope['session_ref']}",
                     "deliveries": [{
                         "delivery_id": candidate["delivery_id"],
                         "state": candidate["state"],
                         "recipient_endpoint_id": candidate.get("recipient_endpoint_id"),
-                        "recipient_runtime": "codex",
-                        "recipient_session_ref": session_ref,
-                        "recipient_container_ref": container_ref,
+                        "recipient_runtime": runtime,
+                        "recipient_session_ref": live_scope["session_ref"],
+                        "recipient_container_ref": live_scope["container_ref"],
                     }],
                 },
-                {"container_ref": container_ref},
+                {"container_ref": live_scope["container_ref"]},
             )
+    def _relay_activation(row: dict[str, Any]) -> dict[str, object]:
+        endpoint_id = row.get("endpoint_id", row.get("id", row.get("recipient_endpoint_id")))
+        session_ref = row.get("session_ref", row.get("recipient_session_ref"))
+        container_ref = row.get("container_ref", row.get("recipient_container_ref"))
+        runtime = row.get("runtime", row.get("recipient_runtime"))
+        claude_state = registry.state_for(recipient_endpoint_id=endpoint_id, session_ref=session_ref, container_ref=container_ref) if runtime == "claude-code" and all(isinstance(value, str) for value in (endpoint_id, session_ref, container_ref)) else None
+        codex_reserved = codex_registry.usable and isinstance(endpoint_id, str) and codex_registry.snapshot(endpoint_id) is not None
+        return relay_activation_snapshot(row, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved)
 
     def _relay_turn_admission(request: object) -> None:
         if not isinstance(request, dict):
@@ -754,7 +775,8 @@ def build_router(
             else None
         ),
         relay_turn_callback=_relay_turn_admission,
-        relay_ack_callback=(_relay_ack_rearm if relay_service is not None else None),
+        relay_ack_callback=(_relay_ack_release if relay_service is not None else None),
+        relay_activation_callback=(_relay_activation if relay_service is not None else None),
         relay_runner=relay_runner,
         diagnostic_runner=diagnostic_runner,
     )

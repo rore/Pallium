@@ -7,7 +7,7 @@ import logging
 import os
 import subprocess
 import threading
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,7 @@ from app.dependencies import build_router
 from app import codex_wake
 from app.config import AppConfig
 from app.main import create_app
+from core.codex_wake import CodexWakeRegistry
 from core.relay import RelayService
 from integrations.codex.hooks import user_prompt_submit as hook_module
 from storage.vector_index import VectorIndexConfig
@@ -37,6 +38,7 @@ def _delivery(delivery_id: str = "delivery-1", runtime: str = "codex") -> dict:
         "deliveries": [
             {
                 "delivery_id": delivery_id,
+                "recipient_endpoint_id": "relay-session-" + "a" * 32,
                 "recipient_runtime": runtime,
                 "state": "pending",
                 "recipient_session_ref": "target-session",
@@ -53,6 +55,16 @@ def _log_fp(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()[:16]
 
 
+@pytest.fixture(autouse=True)
+def isolated_codex_registry(monkeypatch: pytest.MonkeyPatch) -> CodexWakeRegistry:
+    registry = CodexWakeRegistry()
+    process = MagicMock(returncode=0)
+    process.communicate.return_value = (None, "")
+    monkeypatch.setattr(codex_wake, "get_codex_wake_registry", lambda *_args, **_kwargs: registry)
+    monkeypatch.setattr(codex_wake, "_popen", lambda *_args, **_kwargs: process)
+    return registry
+
+
 def setup_function() -> None:
     hook_module._common._HOOK_DEADLINE = None
     codex_wake._scheduled_delivery_ids.clear()
@@ -63,135 +75,95 @@ def setup_function() -> None:
 def test_queue_writes_once_from_neutral_codex_home(tmp_path) -> None:
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
-    queued = subprocess.CompletedProcess([], 0, stderr="")
+    process = MagicMock(returncode=0)
+    process.communicate.return_value = (None, "")
     prompt = codex_wake._wake_prompt() + " →"
     with patch("app.codex_wake._codex_home", return_value=codex_home), patch(
-        "app.codex_wake.subprocess.run", return_value=queued,
-    ) as run:
+        "app.codex_wake._popen", return_value=process,
+    ) as popen:
         assert codex_wake._launch("target-session", prompt) == "queued"
-    assert run.call_count == 1
-    assert run.call_args.args[0] == [
+    assert popen.call_args.args[0] == [
         codex_wake._codex_executable(), "queue", "--profile", "pallium-relay",
         "--thread", "target-session", "--message", prompt,
     ]
-    assert run.call_args.kwargs["cwd"] == str(codex_home)
-    assert run.call_args.kwargs["stdin"] is subprocess.DEVNULL
-    assert run.call_args.kwargs["stdout"] is subprocess.DEVNULL
-    assert run.call_args.kwargs["stderr"] is subprocess.PIPE
-    assert run.call_args.kwargs["encoding"] == "utf-8"
-    assert "shell" not in run.call_args.kwargs
+    assert popen.call_args.kwargs["cwd"] == str(codex_home)
+    assert popen.call_args.kwargs["stdin"] is subprocess.DEVNULL
+    assert popen.call_args.kwargs["stdout"] is subprocess.DEVNULL
+    assert popen.call_args.kwargs["stderr"] is subprocess.PIPE
+    assert popen.call_args.kwargs["encoding"] == "utf-8"
+    process.communicate.assert_called_once_with(timeout=30)
 
 
 def test_queue_failure(tmp_path) -> None:
     codex_home = tmp_path / "codex-home"
-    failed = subprocess.CompletedProcess([], 1, stderr="queue rejected")
+    codex_home.mkdir()
+    process = MagicMock(returncode=1)
+    process.communicate.return_value = (None, "queue rejected")
     with patch("app.codex_wake._codex_home", return_value=codex_home), patch(
-        "app.codex_wake.subprocess.run", return_value=failed,
-    ) as run:
+        "app.codex_wake._popen", return_value=process,
+    ):
         assert codex_wake._launch("target-session", "wake") == "failed"
-    run.assert_called_once()
 
 
 def test_queue_timeout_is_ambiguous(tmp_path) -> None:
     codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    process = MagicMock()
+    process.communicate.side_effect = [
+        subprocess.TimeoutExpired([], 30),
+        (None, ""),
+    ]
     with patch("app.codex_wake._codex_home", return_value=codex_home), patch(
-        "app.codex_wake.subprocess.run",
-        side_effect=subprocess.TimeoutExpired([], 30),
-    ) as run:
+        "app.codex_wake._popen", return_value=process,
+    ):
         assert codex_wake._launch("target-session", "wake") == "ambiguous"
-    run.assert_called_once()
+    process.kill.assert_called_once_with()
 
 def test_launch_result_classifies_without_exposing_process_details(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    codex_home = tmp_path / "codex-home"
-    codex_home.mkdir()
-    cases = (
-        (
-            subprocess.CompletedProcess([], 0, stderr="SECRET_SUCCESS"),
-            "outcome=queued reason=none exit_code=0",
-            True,
-        ),
-        (
-            subprocess.CompletedProcess([], 7, stderr="SECRET_FAILURE"),
-            "outcome=failed reason=nonzero_exit exit_code=7",
-            False,
-        ),
-        (
-            subprocess.TimeoutExpired(
-                ["SECRET_COMMAND"], 30, stderr="SECRET_TIMEOUT"
-            ),
-            "outcome=ambiguous reason=timeout exit_code=none",
-            True,
-        ),
-        (
-            OSError("SECRET_OS_ERROR"),
-            "outcome=failed reason=os_error exit_code=none",
-            False,
-        ),
-        (
-            ValueError("SECRET_VALUE_ERROR"),
-            "outcome=failed reason=value_error exit_code=none",
-            False,
-        ),
-        (
-            None,
-            "outcome=failed reason=invalid_codex_home exit_code=none",
-            False,
-        ),
-    )
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-
-    for index, (effect, expected_log, reservation_held) in enumerate(cases):
+    cases = (
+        (("queued", None, 0), "accepted", True),
+        (("failed", "nonzero_exit", 7), "uncertain", True),
+        (("ambiguous", "timeout", None), "uncertain", True),
+        (("failed", "os_error", None), "deferred", False),
+        (("failed", "value_error", None), "deferred", False),
+        (("failed", "invalid_codex_home", None), "deferred", False),
+    )
+    for index, (native, outcome, retained) in enumerate(cases):
         caplog.clear()
-        delivery_id = f"relay-delivery-{index:032x}"
-        wake_key = (f"session-{index}", "container-\ud800-SECRET_SCOPE")
-        generation = index + 1
-        codex_wake._scheduled_delivery_ids.add(delivery_id)
-        codex_wake._scheduled_session_delivery_ids[wake_key] = delivery_id
-        codex_wake._scheduled_session_generations[wake_key] = generation
-        patch_args = (
-            {"side_effect": effect}
-            if isinstance(effect, BaseException)
-            else {"return_value": effect}
+        registry = CodexWakeRegistry(tmp_path / str(index))
+        endpoint_id = f"relay-session-{index:032x}"
+        reservation = registry.reserve(
+            recipient_endpoint_id=endpoint_id,
+            delivery_id=f"relay-delivery-{index:032x}",
+            session_ref=f"session-{index}",
+            container_ref="container-秘密",
         )
-        unreachable = []
+        assert reservation is not None
         with caplog.at_level(logging.INFO, logger="app.codex_wake"), patch(
-            "app.codex_wake._codex_home",
-            return_value=None if effect is None else codex_home,
-        ), patch(
-            "app.codex_wake._wake_prompt", return_value="SECRET_PROMPT"
-        ), patch("app.codex_wake.subprocess.run", **patch_args) as run:
-            codex_wake._wake_after_debounce(
-                delivery_id, wake_key, generation, unreachable.append
-            )
-
+            "app.codex_wake._start_launch", return_value=(None, native),
+        ):
+            codex_wake._wake_after_debounce(reservation, registry)
         message = next(
-            record.getMessage()
-            for record in caplog.records
+            record.getMessage() for record in caplog.records
             if record.getMessage().startswith("codex_relay_wake delivery_ref=")
         )
-        assert expected_log in message
-        assert f"delivery_ref={delivery_id}" in message
-        assert f"container_fp={_log_fp(wake_key[1])}" in message
-        assert "SECRET" not in message
-        assert wake_key[1] not in message
-        assert run.call_count == (0 if effect is None else 1)
-        assert (delivery_id in codex_wake._scheduled_delivery_ids) is reservation_held
-        assert len(unreachable) == (0 if reservation_held else 1)
-        codex_wake._scheduled_delivery_ids.clear()
-        codex_wake._scheduled_session_generations.clear()
-        codex_wake._scheduled_session_delivery_ids.clear()
+        assert f"outcome={outcome}" in message
+        assert "秘密" not in message
+        assert registry.reserved(endpoint_id) is retained
 
 def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
+    isolated_codex_registry: CodexWakeRegistry,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    session = "session-secret-C:/private/token-é-" + "x" * 2048
+    session = "session-secret-C:/private/token-é-" + "x" * 200
     containers = (
-        "git:example.test/private-one\r\nSECRET_ONE\ud800",
+        "git:example.test/private-one-秘密-SECRET_ONE",
         "C:/private/two/秘密/SECRET_TWO",
     )
     deliveries = (
@@ -211,6 +183,9 @@ def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
             result = _delivery(delivery_id)
             result["recipient"] = f"codex:{session}"
             result["deliveries"][0]["recipient_session_ref"] = session
+            result["deliveries"][0]["recipient_endpoint_id"] = (
+                "relay-session-" + ("a" if delivery_id == deliveries[0] else "b") * 32
+            )
             codex_wake.schedule_codex_relay_wake(
                 result,
                 {"container_ref": container_ref},
@@ -218,10 +193,10 @@ def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
             )
 
     with caplog.at_level(logging.INFO, logger="app.codex_wake"), patch(
-        "app.codex_wake._wake",
+        "app.codex_wake._start_launch",
         side_effect=(
-            ("failed", "nonzero_exit", 7),
-            ("ambiguous", "timeout", None),
+            (None, ("failed", "nonzero_exit", 7)),
+            (None, ("ambiguous", "timeout", None)),
         ),
     ):
         for worker in workers:
@@ -239,15 +214,17 @@ def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
     assert f"session_fp={_log_fp(session)}" in messages[1]
     assert f"container_fp={_log_fp(containers[0])}" in messages[0]
     assert f"container_fp={_log_fp(containers[1])}" in messages[1]
-    assert "outcome=failed reason=nonzero_exit exit_code=7" in messages[0]
-    assert "outcome=ambiguous reason=timeout exit_code=none" in messages[1]
+    assert "outcome=uncertain reason=nonzero_exit" in messages[0]
+    assert "outcome=uncertain reason=timeout" in messages[1]
     combined = "\n".join(messages)
     assert session not in combined
     assert containers[0] not in combined
     assert containers[1] not in combined
     assert "SECRET" not in combined
-    assert len(unreachable) == 1
-    assert codex_wake._scheduled_delivery_ids == {deliveries[1]}
+    assert unreachable == []
+    assert codex_wake._scheduled_delivery_ids == set(deliveries)
+    assert isolated_codex_registry.reserved("relay-session-" + "a" * 32)
+    assert isolated_codex_registry.reserved("relay-session-" + "b" * 32)
 
 @pytest.mark.parametrize("kind", ["missing", "file"])
 def test_missing_or_non_directory_neutral_cwd_does_not_spawn(monkeypatch, tmp_path, kind) -> None:
@@ -379,29 +356,26 @@ def test_duplicate_and_non_codex_do_not_start_child() -> None:
 
 
 def test_same_session_in_two_scopes_has_independent_ownership() -> None:
-    other_scope = {
-        "container_ref": "git:example.test/other-wake",
-    }
-    first_key = ("target-session", SCOPE["container_ref"])
-    other_key = ("target-session", other_scope["container_ref"])
+    other_scope = {"container_ref": "git:example.test/other-wake"}
+    other = _delivery("delivery-2")
+    other["deliveries"][0]["recipient_endpoint_id"] = "relay-session-" + "b" * 32
     with patch("app.codex_wake.threading.Thread") as thread:
         _schedule(_delivery())
-        codex_wake.schedule_codex_relay_wake(_delivery("delivery-2"), other_scope)
+        codex_wake.schedule_codex_relay_wake(other, other_scope)
     assert thread.call_count == 2
-    assert set(codex_wake._scheduled_session_generations) == {first_key, other_key}
+    assert codex_wake._scheduled_delivery_ids == {"delivery-1", "delivery-2"}
 
     codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
 
-    assert first_key not in codex_wake._scheduled_session_generations
-    assert other_key in codex_wake._scheduled_session_generations
-    assert codex_wake._scheduled_delivery_ids == {"delivery-2"}
-
+    # Turn observation is not proof that either payload was admitted.
+    assert codex_wake._scheduled_delivery_ids == {"delivery-1", "delivery-2"}
 
 @pytest.mark.parametrize("outcome", ["queued", "ambiguous"])
-def test_busy_wakes_coalesce_until_admission_then_rearm(monkeypatch, outcome: str) -> None:
+def test_busy_wakes_coalesce_and_turn_observation_does_not_rearm(monkeypatch, outcome: str) -> None:
     workers = []
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._wake", return_value=outcome) as wake:
+    native = ("queued", None, 0) if outcome == "queued" else ("ambiguous", "timeout", None)
+    with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._start_launch", return_value=(None, native)) as wake:
         thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
         _schedule(_delivery())
         _schedule(_delivery("delivery-2"))
@@ -411,8 +385,8 @@ def test_busy_wakes_coalesce_until_admission_then_rearm(monkeypatch, outcome: st
         assert len(workers) == 1
         codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
         _schedule(_delivery("delivery-4"))
-    wake.assert_called_once_with("target-session")
-    assert len(workers) == 2
+    wake.assert_called_once_with("target-session", codex_wake._wake_prompt())
+    assert len(workers) == 1
 
 
 @pytest.mark.parametrize("outcome", ["queued", "ambiguous"])
@@ -422,7 +396,7 @@ def test_busy_wake_holds_earliest_trigger_without_blind_retry(
     workers = []
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     with patch("app.codex_wake.threading.Thread") as thread, patch(
-        "app.codex_wake._wake", return_value=outcome
+        "app.codex_wake._start_launch", return_value=(None, ("queued", None, 0) if outcome == "queued" else ("ambiguous", "timeout", None))
     ):
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
@@ -510,7 +484,7 @@ def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> 
 
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     with patch("app.codex_wake.threading.Thread") as thread, patch(
-        "app.codex_wake._wake", return_value="queued"
+        "app.codex_wake._start_launch", return_value=(None, ("queued", None, 0))
     ):
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
@@ -536,7 +510,30 @@ def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> 
     assert len(workers) == 1
     assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
 
-def test_queued_completion_requires_matching_admission_before_return(monkeypatch) -> None:
+def test_turn_observation_during_queued_submission_does_not_release(monkeypatch) -> None:
+    workers = []
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake.threading.Thread") as thread:
+        thread.side_effect = lambda **kwargs: (
+            workers.append(kwargs["args"]),
+            type("Worker", (), {"start": lambda self: None})(),
+        )[1]
+        _schedule(_delivery())
+
+    process = MagicMock(returncode=0)
+    def turn_observed(*, timeout: float):
+        assert timeout == 30
+        codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
+        return None, ""
+
+    process.communicate.side_effect = turn_observed
+    with patch("app.codex_wake._popen", return_value=process):
+        codex_wake._wake_after_debounce(*workers[0])
+
+    assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
+
+
+def test_pre_submit_failure_releases_without_marking_unreachable(monkeypatch) -> None:
     workers = []
     unreachable = []
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
@@ -548,70 +545,43 @@ def test_queued_completion_requires_matching_admission_before_return(monkeypatch
         codex_wake.schedule_codex_relay_wake(
             _delivery(), SCOPE, on_unreachable=unreachable.append
         )
-
-    def admitted(_: str) -> str:
-        codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
-        return "queued"
-
-    with patch("app.codex_wake._wake", side_effect=admitted):
+    with patch("app.codex_wake._start_launch", return_value=(None, ("failed", "os_error", None))):
         codex_wake._wake_after_debounce(*workers[0])
 
     assert unreachable == []
-    assert not codex_wake._scheduled_session_generations
     assert not codex_wake._scheduled_delivery_ids
 
 
-def test_failed_completion_without_admission_releases_and_reports(monkeypatch) -> None:
+def test_unexpected_native_exception_retains_owner(monkeypatch) -> None:
     workers = []
-    unreachable = []
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    with patch("app.codex_wake.threading.Thread") as thread:
+    with patch("app.codex_wake.threading.Thread") as thread, patch(
+        "app.codex_wake._start_launch", side_effect=RuntimeError("launch failed")
+    ) as wake:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
             type("Worker", (), {"start": lambda self: None})(),
         )[1]
-        codex_wake.schedule_codex_relay_wake(
-            _delivery(), SCOPE, on_unreachable=unreachable.append
-        )
-    with patch("app.codex_wake._wake", return_value="failed"):
-        codex_wake._wake_after_debounce(*workers[0])
-
-    assert len(unreachable) == 1 and unreachable[0].tzinfo is not None
-    assert not codex_wake._scheduled_session_generations
-    assert not codex_wake._scheduled_delivery_ids
-
-
-def test_launch_failure_releases_owner_for_later_delivery(monkeypatch) -> None:
-    workers = []
-    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    with patch("app.codex_wake.threading.Thread") as thread, patch(
-        "app.codex_wake._wake", side_effect=RuntimeError("launch failed")
-    ) as wake:
-        thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
         _schedule(_delivery())
-        try:
-            codex_wake._wake_after_debounce(*workers.pop(0))
-        except RuntimeError:
-            pass
+        codex_wake._wake_after_debounce(*workers[0])
         _schedule(_delivery("delivery-2"))
-        try:
-            codex_wake._wake_after_debounce(*workers.pop(0))
-        except RuntimeError:
-            pass
-    assert wake.call_count == 2
-    assert not codex_wake._scheduled_delivery_ids
-    assert not codex_wake._scheduled_session_generations
+    assert wake.call_count == 1
+    assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
 
 def test_schedule_returns_before_child_exits(monkeypatch) -> None:
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     started = threading.Event()
     release = threading.Event()
 
-    def slow_wake(_: str) -> None:
+    process = MagicMock(returncode=0)
+    def slow_wait(*, timeout: float):
+        assert timeout == 30
         started.set()
         release.wait(1)
+        return None, ""
 
-    with patch("app.codex_wake._wake", side_effect=slow_wake):
+    process.communicate.side_effect = slow_wait
+    with patch("app.codex_wake._popen", return_value=process):
         _schedule(_delivery())
         assert started.wait(0.2)
     release.set()
@@ -792,7 +762,7 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
         }).json()
     assert len(workers) == 1
 
-    with patch("app.codex_wake._wake", return_value="queued"):
+    with patch("app.codex_wake._start_launch", return_value=(None, ("queued", None, 0))):
         codex_wake._wake_after_debounce(*workers[0])
 
     status = route.get(
@@ -846,92 +816,8 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
         "runtime": "codex", "session_ref": "target", **scope,
     }).json()["deliveries"] == []
 
-    contexts.clear()
-    with patch("app.codex_wake.threading.Thread") as thread:
-        thread.side_effect = lambda **kwargs: (
-            workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
-        )[1]
-        admitted = route.post("/relay/messages", json={
-            "sender_runtime": "claude-code",
-            "sender_session_ref": "sender",
-            "recipient": "codex:target",
-            "payload": "admitted before child return →",
-            **scope,
-        }).json()
-    assert len(workers) == 2
-
-    original_run = subprocess.run
-
-    def run_admitted_hook(*args, **kwargs):
-        command = args[0]
-        if len(command) > 1 and command[1] == "queue":
-            with pytest.raises(SystemExit) as hook_exit:
-                hook.main()
-            assert hook_exit.value.code == 0
-            return subprocess.CompletedProcess(command, 0, stderr="")
-        return original_run(*args, **kwargs)
-
-    with patch(
-        "app.codex_wake.subprocess.run", side_effect=run_admitted_hook
-    ) as run:
-        codex_wake._wake_after_debounce(*workers[1])
-    queue_calls = [
-        call for call in run.call_args_list
-        if len(call.args[0]) > 1 and call.args[0][1] == "queue"
-    ]
-    assert len(queue_calls) == 1
-    assert queue_calls[0].kwargs["cwd"] == str(codex_home)
-    admitted_status = route.get(
-        f"/relay/messages/{admitted['message_id']}", params=scope
-    ).json()["deliveries"][0]
-    assert admitted_status["state"] == "delivered"
-    assert admitted_status["destination_health"] == "active"
-    assert admitted_status["attempts"] == 1
-    assert len(contexts) == 1 and "admitted before child return →" in contexts[0]
+    # The authoritative ACK performed by the hook releases the exact reservation.
     assert not codex_wake._scheduled_session_generations
-
-    contexts.clear()
-    with patch("app.codex_wake.threading.Thread") as thread:
-        thread.side_effect = lambda **kwargs: (
-            workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
-        )[1]
-        ambiguous = route.post("/relay/messages", json={
-            "sender_runtime": "claude-code",
-            "sender_session_ref": "sender",
-            "recipient": "codex:target",
-            "payload": "queue timeout stays pending →",
-            **scope,
-        }).json()
-    assert len(workers) == 3
-    with patch(
-        "app.codex_wake.subprocess.run",
-        side_effect=subprocess.TimeoutExpired([], 30),
-    ) as run:
-        codex_wake._wake_after_debounce(*workers[2])
-    assert run.call_count == 1
-    ambiguous_status = route.get(
-        f"/relay/messages/{ambiguous['message_id']}", params=scope
-    ).json()["deliveries"][0]
-    assert ambiguous_status["state"] == "pending"
-    assert ambiguous_status["destination_health"] == "active"
-    assert ambiguous_status["attempts"] == 0
-    assert not contexts
-    assert (
-        "target", scope["container_ref"]
-    ) in codex_wake._scheduled_session_generations
-    with patch("app.codex_wake.threading.Thread") as thread:
-        duplicate = route.post("/relay/messages", json={
-            "sender_runtime": "claude-code",
-            "sender_session_ref": "sender",
-            "recipient": "codex:target",
-            "payload": "coalesced behind ambiguous write",
-            **scope,
-        })
-    assert duplicate.status_code == 200
-    thread.assert_not_called()
-
 
 def test_profile_is_idempotent_and_narrow(monkeypatch, tmp_path) -> None:
     from app.cli import setup_codex
@@ -1013,10 +899,11 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
     monkeypatch.setattr(codex_wake, "_codex_home", lambda: codex_home)
-    queued = subprocess.CompletedProcess([], 0, stderr="")
-    with patch("app.codex_wake.subprocess.run", return_value=queued) as run:
+    process = MagicMock(returncode=0)
+    process.communicate.return_value = (None, "")
+    with patch("app.codex_wake._popen", return_value=process) as popen:
         codex_wake._wake("target-session")
-    assert run.call_args.kwargs["cwd"] == str(codex_home)
+    assert popen.call_args.kwargs["cwd"] == str(codex_home)
 
     before_execution = client.get(
         f"/relay/messages/{sent['message_id']}", params=scope
@@ -1184,11 +1071,13 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
 
         def native_run(command, **kwargs):
             native_calls.append((command, kwargs))
-            return queued
+            process = MagicMock(returncode=0)
+            process.communicate.return_value = (None, "")
+            return process
 
         processed = 0
         relay = RelayService(client.app.state.pallium_service._storage)
-        with patch("app.codex_wake.subprocess.run", side_effect=native_run):
+        with patch("app.codex_wake._popen", side_effect=native_run):
             for _ in range(6):
                 while processed < len(workers):
                     codex_wake._wake_after_debounce(*workers[processed])
@@ -1584,7 +1473,7 @@ def test_hook_ack_rearms_next_codex_batch_without_changing_ack_contract(client) 
         duplicate = route.post("/relay/deliveries/ack", json=ack_body)
         assert duplicate.status_code == 200
         assert duplicate.json()["already_delivered"] is True
-        assert schedule.call_count == 1
+        assert schedule.call_count == 2
 
         second = route.post("/relay/turn", json={
             "runtime": "codex", "session_ref": "target", **SCOPE,
@@ -1746,7 +1635,7 @@ def test_relay_turn_callback_failure_keeps_successful_response(client) -> None:
     response = TestClient(app).post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **SCOPE})
     assert response.status_code == 200
 
-def test_build_router_turn_rearms_actual_codex_wake_state(client, monkeypatch) -> None:
+def test_build_router_turn_never_releases_actual_codex_wake_state(client, monkeypatch) -> None:
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     with patch("app.codex_wake.threading.Thread") as thread:
         _schedule(_delivery())
@@ -1766,45 +1655,66 @@ def test_build_router_turn_rearms_actual_codex_wake_state(client, monkeypatch) -
         }).status_code == 200
         assert codex_wake._scheduled_session_generations
         assert route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target-session", **SCOPE}).status_code == 200
-        assert not codex_wake._scheduled_session_generations
-        assert not codex_wake._scheduled_delivery_ids
+        assert codex_wake._scheduled_session_generations
+        assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
         _schedule(_delivery("delivery-2"))
-    assert thread.call_count == 2
+    assert thread.call_count == 1
 
 
-def test_failed_old_generation_cannot_clear_replacement(monkeypatch) -> None:
-    wake_key = ("target-session", SCOPE["container_ref"])
-    codex_wake._scheduled_session_generations[wake_key] = 2
-    codex_wake._scheduled_session_delivery_ids[wake_key] = "delivery-new"
-    codex_wake._scheduled_delivery_ids.add("delivery-new")
-    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    monkeypatch.setattr(codex_wake, "_wake", lambda _: "failed")
-    codex_wake._wake_after_debounce("delivery-old", wake_key, 1)
-    assert codex_wake._scheduled_session_generations[wake_key] == 2
-    assert codex_wake._scheduled_session_delivery_ids[wake_key] == "delivery-new"
-    assert codex_wake._scheduled_delivery_ids == {"delivery-new"}
-
-
-def test_old_scheduled_worker_cannot_clear_new_schedule(monkeypatch) -> None:
-    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    monkeypatch.setattr(
-        codex_wake, "_wake",
-        lambda _session: pytest.fail("stale worker must not launch"),
+def test_failed_old_generation_cannot_submit_or_clear_replacement(monkeypatch) -> None:
+    registry = CodexWakeRegistry()
+    endpoint_id = "relay-session-" + "a" * 32
+    old = registry.reserve(
+        recipient_endpoint_id=endpoint_id, delivery_id="delivery-old",
+        session_ref="target-session", container_ref=SCOPE["container_ref"],
     )
-    with patch("app.codex_wake.threading.Thread") as thread:
-        _schedule(_delivery("delivery-old"))
-        old_args = thread.call_args.kwargs["args"]
-        codex_wake.mark_codex_relay_wake_admitted("target-session", **SCOPE)
-        _schedule(_delivery("delivery-new"))
-        wake_key = ("target-session", SCOPE["container_ref"])
-        new_generation = codex_wake._scheduled_session_generations[wake_key]
+    assert old is not None
+    assert registry.release_delivery("delivery-old") == old
+    new = registry.reserve(
+        recipient_endpoint_id=endpoint_id, delivery_id="delivery-new",
+        session_ref="target-session", container_ref=SCOPE["container_ref"],
+    )
+    assert new is not None and new.generation > old.generation
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake._start_launch") as start:
+        codex_wake._wake_after_debounce(old, registry)
+    start.assert_not_called()
+    assert registry.snapshot(endpoint_id) == new
 
-    assert old_args[2] != new_generation
-    codex_wake._wake_after_debounce(*old_args)
-    assert codex_wake._scheduled_session_generations[wake_key] == new_generation
-    assert codex_wake._scheduled_session_delivery_ids[wake_key] == "delivery-new"
-    assert codex_wake._scheduled_delivery_ids == {"delivery-new"}
 
+def test_ack_during_process_wait_releases_without_deadlock(monkeypatch) -> None:
+    registry = CodexWakeRegistry()
+    endpoint_id = "relay-session-" + "a" * 32
+    reservation = registry.reserve(
+        recipient_endpoint_id=endpoint_id, delivery_id="delivery",
+        session_ref="target-session", container_ref=SCOPE["container_ref"],
+    )
+    assert reservation is not None
+    started = threading.Event()
+    finish = threading.Event()
+    process = MagicMock(returncode=0)
+
+    def communicate(*, timeout: float):
+        assert timeout == 30
+        started.set()
+        assert finish.wait(1)
+        return None, ""
+
+    process.communicate.side_effect = communicate
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake._popen", return_value=process):
+        worker = threading.Thread(
+            target=codex_wake._wake_after_debounce, args=(reservation, registry),
+        )
+        worker.start()
+        assert started.wait(1)
+        assert codex_wake.release_codex_relay_wake(
+            "delivery", registry=registry,
+        )
+        finish.set()
+        worker.join(timeout=1)
+    assert not worker.is_alive()
+    assert registry.snapshot(endpoint_id) is None
 
 def test_idempotent_send_schedules_one_codex_wake(client, monkeypatch) -> None:
     monkeypatch.setattr(
@@ -2116,3 +2026,83 @@ def test_relay_profile_parses_to_exact_read_only_tools(monkeypatch, tmp_path) ->
     expected = {"pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive", "pallium_search_history_by_work_ref", "pallium_search_history", "pallium_expand_source"}
     assert set(profile["enabled_tools"]) == expected == set(profile["tools"])
     assert {tool["approval_mode"] for tool in profile["tools"].values()} == {"approve"}
+
+
+def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservation(
+    client, isolated_codex_registry: CodexWakeRegistry,
+) -> None:
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+        codex_wake_registry=isolated_codex_registry,
+    ))
+    route = TestClient(app)
+    scope = {"container_ref": "git:example.test/ack-release"}
+    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+        assert route.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": session, **scope,
+        }).status_code == 200
+
+    def send_and_claim(payload: str) -> tuple[dict, dict]:
+        with patch("app.codex_wake.threading.Thread"):
+            sent = route.post("/relay/messages", json={
+                "sender_runtime": "claude-code",
+                "sender_session_ref": "sender",
+                "recipient": "codex:target",
+                "payload": payload,
+                **scope,
+            }).json()
+        delivery = sent["deliveries"][0]
+        activation = delivery["activation"]
+        assert activation["contract"] == "relay-activation/v1"
+        assert activation["behavior"] == "busy_queue"
+        assert activation["fallback"] == "next_natural_turn"
+        assert "turn_started" not in activation["supported_evidence"]
+        if not isolated_codex_registry.reserved(delivery["recipient_endpoint_id"]):
+            assert isolated_codex_registry.reserve(
+                recipient_endpoint_id=delivery["recipient_endpoint_id"],
+                delivery_id=delivery["delivery_id"],
+                session_ref="target", container_ref=scope["container_ref"],
+            ) is not None
+        assert isolated_codex_registry.reserved(delivery["recipient_endpoint_id"])
+        turn = route.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", **scope,
+        }).json()
+        claim = next(
+            item for item in turn["deliveries"]
+            if item["delivery_id"] == delivery["delivery_id"]
+        )
+        assert isolated_codex_registry.reserved(delivery["recipient_endpoint_id"])
+        return delivery, claim
+
+    normal, normal_claim = send_and_claim("normal ACK")
+    ack_body = {
+        "delivery_id": normal_claim["delivery_id"],
+        "claim_token": normal_claim["claim_token"],
+        **scope,
+    }
+    assert route.post("/relay/deliveries/ack", json=ack_body).status_code == 200
+    assert not isolated_codex_registry.reserved(normal["recipient_endpoint_id"])
+    repeated = route.post("/relay/deliveries/ack", json=ack_body)
+    assert repeated.status_code == 200 and repeated.json()["already_delivered"] is True
+    assert not isolated_codex_registry.reserved(normal["recipient_endpoint_id"])
+
+    mcp, mcp_claim = send_and_claim("MCP ACK")
+    assert route.post("/relay/deliveries/mcp-ack", json={
+        "delivery_id": mcp_claim["delivery_id"],
+        "receipt": mcp_claim["receipt"],
+        **scope,
+    }).status_code == 200
+    assert not isolated_codex_registry.reserved(mcp["recipient_endpoint_id"])
+
+    reply, reply_claim = send_and_claim("atomic reply")
+    response = route.post("/relay/replies", json={
+        "delivery_id": reply_claim["delivery_id"],
+        "receipt": reply_claim["receipt"],
+        "payload": "reply",
+        **scope,
+    })
+    assert response.status_code == 200
+    assert not isolated_codex_registry.reserved(reply["recipient_endpoint_id"])
+    assert "turn_started" not in response.text

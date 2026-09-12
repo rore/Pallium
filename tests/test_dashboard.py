@@ -748,8 +748,23 @@ class TestDashboardSourceAndRelayProjections:
             sessions = client.get("/dashboard/api/relay/sessions").json()["sessions"]
             assert session_page["total"] == 2 and len(session_page["sessions"]) == 1
             assert {session["session_ref"] for session in sessions} == {"one", "two"}
+
+            assert all(
+                session["activation"]["contract"] == "relay-activation/v1"
+                for session in sessions
+            )
+            assert all(
+                session["activation"]["fallback"] == "next_natural_turn"
+                for session in sessions
+            )
+            assert "turn_started" not in str(sessions)
             page = client.get("/dashboard/api/relay/messages?limit=1").json()
             assert page["total"] == 1 and page["messages"][0]["id"] == sent["message_id"]
+
+            delivery_activation = page["messages"][0]["deliveries"][0]["activation"]
+            assert delivery_activation["contract"] == "relay-activation/v1"
+            assert delivery_activation["behavior"] == "idle_wake"
+            assert "turn_started" not in str(delivery_activation)
             endpoints = {page["messages"][0]["sender_endpoint_id"], page["messages"][0]["deliveries"][0]["recipient_endpoint_id"]}
             assert {session["id"] for session in page["endpoint_sessions"]} == endpoints
             assert "claim_token" not in str(page) and "receipt" not in str(page)

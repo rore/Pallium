@@ -1095,3 +1095,57 @@ def test_main_reads_stdio_transport_environment(monkeypatch: pytest.MonkeyPatch)
     mcp_server.main()
 
     runner.run.assert_called_once_with(transport="stdio")
+
+
+def test_relay_activation_projection_elides_whole_fields_utf8_safely_under_budget() -> None:
+    row = {
+        "endpoint_id": "relay-session-" + "a" * 32,
+        "runtime": "codex",
+        "session_ref": "界" * 255,
+        "title": "界" * 255,
+        "alias": "worker",
+        "state": "recent",
+        "destination_health": "active",
+        "first_seen_at": "2026-09-06T00:00:00Z",
+        "last_seen_at": "2026-09-06T00:00:00Z",
+        "closed_at": None,
+        "activation": {
+            "contract": "relay-activation/v1",
+            "runtime": "codex",
+            "platform": "windows",
+            "integration": "codex_queue",
+            "topology": "existing_session",
+            "behavior": "busy_queue",
+            "qualification": "qualified",
+            "qualification_source": "installed_witness",
+            "availability": "attempt_inflight",
+            "availability_source": "durable_reservation",
+            "fallback": "next_natural_turn",
+            "supported_evidence": [
+                "submission_attempted", "transport_accepted", "payload_admitted",
+            ],
+        },
+    }
+    text = _relay_recipients_text([row])
+    assert len(text) <= 2000
+    assert "\ufffd" not in text and "turn_started" not in text
+    payload = json.loads(text)
+    projected = payload["recipients"][0]
+    assert projected["session_ref"] == row["session_ref"]
+    activation = projected["activation"]
+    assert {
+        key: activation[key]
+        for key in ("behavior", "availability", "qualification", "fallback")
+    } == {
+        "behavior": "busy_queue",
+        "availability": "attempt_inflight",
+        "qualification": "qualified",
+        "fallback": "next_natural_turn",
+    }
+    optional = {
+        "topology", "platform", "integration", "qualification_source",
+        "availability_source", "supported_evidence",
+    }
+    assert set(activation).issubset(optional | {
+        "contract", "runtime", "behavior", "availability", "qualification", "fallback",
+    })

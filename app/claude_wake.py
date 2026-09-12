@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-_workers: set[tuple[int, str, str]] = set()
+_workers: set[tuple[int, str]] = set()
 _workers_lock = threading.Lock()
 
 
@@ -38,9 +38,10 @@ def schedule_claude_relay_wake(
     scope: object,
     *,
     registry: ClaudeWakeRegistry,
+    relay_service: Any | None = None,
     on_unreachable: Callable[[datetime], None] | None = None,
 ) -> threading.Thread | None:
-    """Schedule one bounded wake for a pending Claude delivery."""
+    """Schedule one bounded wake for one exact pending Claude delivery."""
     if not isinstance(result, dict) or not isinstance(scope, dict):
         return None
     deliveries = result.get("deliveries")
@@ -54,63 +55,72 @@ def schedule_claude_relay_wake(
     if delivery.get("state") != "pending":
         return None
     delivery_id = delivery.get("delivery_id")
+    endpoint_id = delivery.get("recipient_endpoint_id")
     session_ref = delivery.get("recipient_session_ref")
     recipient = result.get("recipient")
-    container_ref = scope.get("container_ref")
+    container_ref = delivery.get("recipient_container_ref") or scope.get("container_ref")
     selector = recipient.removeprefix("claude-code:") if isinstance(recipient, str) else ""
     valid_selector = selector == session_ref or bool(
         re.fullmatch(r"@[a-z0-9][a-z0-9_-]{0,31}", selector)
     )
     if (
         delivery.get("recipient_runtime") != "claude-code"
-        or not isinstance(delivery_id, str)
-        or not delivery_id
-        or not isinstance(session_ref, str)
-        or not session_ref
+        or not all(isinstance(value, str) and value for value in (
+            delivery_id, endpoint_id, session_ref, container_ref,
+        ))
         or session_ref != session_ref.strip()
         or not session_ref.isprintable()
-        or not isinstance(container_ref, str)
-        or not container_ref
         or not valid_selector
     ):
         return None
 
-    key = (id(registry), session_ref, container_ref)
+    key = (id(registry), endpoint_id)
     with _workers_lock:
         if key in _workers:
             return None
         _workers.add(key)
 
+    def still_pending() -> bool:
+        if relay_service is None:
+            return True
+        candidate = relay_service.pending_candidate(
+            runtime="claude-code",
+            session_ref=session_ref,
+            container_ref=container_ref,
+            delivery_id=delivery_id,
+        )
+        return (
+            isinstance(candidate, dict)
+            and candidate.get("delivery_id") == delivery_id
+            and candidate.get("recipient_endpoint_id") == endpoint_id
+            and candidate.get("state") == "pending"
+        )
+
     def run() -> None:
         started = time.monotonic()
         attempt_started_at = datetime.now(timezone.utc)
-        attempted = False
+
+        def notify_unreachable() -> None:
+            if on_unreachable is None:
+                return
+            try:
+                on_unreachable(attempt_started_at)
+            except Exception:
+                logger.exception("claude_relay_wake unreachable callback failed")
+                raise
+
         try:
-            def transport(socket_path: str, token: str) -> str:
-                nonlocal attempted
-                attempted = True
-                return claude_wake_transport(socket_path, token)
-
-            def notify_unreachable() -> None:
-                if on_unreachable is None:
-                    return
-                try:
-                    on_unreachable(attempt_started_at)
-                except Exception:
-                    logger.exception("claude_relay_wake unreachable callback failed")
-                    raise
-
-            triggered = registry.probe(
+            attempt = registry.attempt(
                 runtime="claude-code",
                 session_ref=session_ref,
                 container_ref=container_ref,
-                transport=transport,
+                transport=claude_wake_transport,
                 delivery_id=delivery_id,
+                recipient_endpoint_id=endpoint_id,
+                still_pending=still_pending,
                 on_unreachable=notify_unreachable,
             )
-            category = "trigger_written" if triggered else (
-                "transport_failed" if attempted else "not_eligible"
-            )
+            category = attempt.outcome
         except Exception:
             category = "worker_error"
         finally:
@@ -118,7 +128,6 @@ def schedule_claude_relay_wake(
             with _workers_lock:
                 _workers.discard(key)
 
-    # ponytail: module-local coalescing; add persistence only if cold wake is required.
     worker = threading.Thread(target=run, name="pallium-claude-wake", daemon=True)
     started = time.monotonic()
     try:
@@ -130,40 +139,25 @@ def schedule_claude_relay_wake(
         return None
     return worker
 
-
 def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any) -> None:
-    """Read persisted exact-scope candidates and schedule only Relay-pending work."""
+    """Schedule only idle capabilities; unresolved reservations stay fenced."""
     registry.recover_intents()
     for candidate in registry.recovery_candidates():
+        if candidate["state"] == "wake_inflight":
+            continue
         try:
             status = relay_service.pending_candidate(
                 runtime="claude-code",
                 session_ref=candidate["session_ref"],
                 container_ref=candidate["container_ref"],
-                delivery_id=candidate["delivery_id"] if candidate["state"] == "wake_inflight" else None,
             )
         except Exception:
             continue
-        if candidate["state"] == "wake_inflight":
-            delivery_id = candidate["delivery_id"]
-            if not isinstance(delivery_id, str):
-                continue
-            if not isinstance(status, dict) or status.get("state") != "pending":
-                registry.clear_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], delivery_id=delivery_id)
-                continue
-            with _workers_lock:
-                if (
-                    id(registry),
-                    candidate["session_ref"],
-                    candidate["container_ref"],
-                ) in _workers:
-                    continue
-            if not registry.rearm_inflight(runtime="claude-code", session_ref=candidate["session_ref"], container_ref=candidate["container_ref"], delivery_id=delivery_id, grace_seconds=1.0):
-                continue
         if not isinstance(status, dict) or status.get("state") != "pending":
             continue
         delivery_id = status.get("delivery_id")
-        if not isinstance(delivery_id, str) or not delivery_id:
+        endpoint_id = status.get("recipient_endpoint_id")
+        if not all(isinstance(value, str) and value for value in (delivery_id, endpoint_id)):
             continue
         schedule_claude_relay_wake(
             {
@@ -171,12 +165,15 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
                 "deliveries": [{
                     "delivery_id": delivery_id,
                     "state": "pending",
+                    "recipient_endpoint_id": endpoint_id,
                     "recipient_runtime": "claude-code",
                     "recipient_session_ref": candidate["session_ref"],
+                    "recipient_container_ref": candidate["container_ref"],
                 }],
             },
             {"container_ref": candidate["container_ref"]},
             registry=registry,
+            relay_service=relay_service,
             on_unreachable=lambda attempt_started_at, candidate=candidate: relay_service.mark_unreachable(
                 runtime="claude-code",
                 session_ref=candidate["session_ref"],
@@ -184,7 +181,6 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
                 attempt_started_at=attempt_started_at,
             ),
         )
-
 
 _CLAIM_RECOVERY_INTERVAL_SECONDS = 30.0
 
