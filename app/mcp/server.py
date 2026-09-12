@@ -385,7 +385,9 @@ def _fit_mcp_activation(
     row: dict[str, object], envelope, budget: int = _MCP_RELAY_MAX_CHARS,
 ) -> dict[str, object]:
     result = dict(row)
-    result["activation"] = _mcp_activation(result.get("activation"))
+    if "activation" not in result:
+        return result
+    result["activation"] = _mcp_activation(result["activation"])
     for fields in (
         ("topology",),
         ("platform", "integration"),

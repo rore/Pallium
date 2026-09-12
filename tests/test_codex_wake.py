@@ -17,9 +17,10 @@ from sqlalchemy import text
 
 from api.routes import create_router
 from app.dependencies import build_router
-from app import codex_wake
+from app import claude_wake, codex_wake
 from app.config import AppConfig
 from app.main import create_app
+from core.claude_wake import ClaudeWakeRegistry
 from core.codex_wake import CodexWakeRegistry
 from core.relay import RelayService
 from integrations.codex.hooks import user_prompt_submit as hook_module
@@ -2138,67 +2139,228 @@ def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservatio
     assert closed["qualification"] == "unknown"
 
 
-def test_ack_before_reserve_cannot_create_codex_fence_or_native_write(monkeypatch) -> None:
-    registry = CodexWakeRegistry()
-    checked = []
-
-    class AckedRelay:
-        def pending_candidate(self, **kwargs):
-            checked.append(kwargs)
-            assert registry.release_delivery(kwargs["delivery_id"]) is None
-            return None
-
-    with patch("app.codex_wake.threading.Thread") as thread, patch(
-        "app.codex_wake._start_launch",
-    ) as native_start:
-        worker = codex_wake.schedule_codex_relay_wake(
-            _delivery(), SCOPE, relay_service=AckedRelay(), registry=registry,
+def _public_ack_route(client, runtime: str):
+    scope = {"container_ref": f"git:example.test/public-ack-{runtime}"}
+    source_runtime = "claude-code" if runtime == "codex" else "codex"
+    claude_registry = ClaudeWakeRegistry()
+    codex_registry = CodexWakeRegistry()
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+        claude_wake_registry=claude_registry,
+        codex_wake_registry=codex_registry,
+    ))
+    route = TestClient(app)
+    claim_app = FastAPI()
+    claim_app.include_router(create_router(
+        client.app.state.pallium_service,
+        relay_service=RelayService(client.app.state.pallium_service._storage),
+    ))
+    claim_route = TestClient(claim_app)
+    assert route.post("/relay/turn", json={
+        "runtime": source_runtime, "session_ref": "sender", **scope,
+    }).status_code == 200
+    target = route.post("/relay/turn", json={
+        "runtime": runtime, "session_ref": "target", **scope,
+    })
+    assert target.status_code == 200
+    endpoint_id = target.json()["session"]["endpoint_id"]
+    if runtime == "claude-code":
+        assert claude_registry.register(
+            runtime="claude-code", session_ref="target",
+            container_ref=scope["container_ref"], socket_path="socket",
+            token="token", idle=True,
         )
-
-    assert worker is None
-    assert checked == [{
-        "runtime": "codex",
-        "session_ref": "target-session",
-        "container_ref": SCOPE["container_ref"],
-        "delivery_id": "delivery-1",
-    }]
-    assert registry.snapshot("relay-session-" + "a" * 32) is None
-    thread.assert_not_called()
-    native_start.assert_not_called()
+    registry = codex_registry if runtime == "codex" else claude_registry
+    return route, claim_route, scope, source_runtime, endpoint_id, registry
 
 
-def test_ack_after_pending_validation_before_native_start_wins_generation_fence(monkeypatch) -> None:
-    registry = CodexWakeRegistry()
-    endpoint_id = "relay-session-" + "a" * 32
-    validated = []
-    reservation = registry.reserve(
-        recipient_endpoint_id=endpoint_id,
-        delivery_id="delivery-validated",
-        session_ref="target-session",
-        container_ref=SCOPE["container_ref"],
-        still_pending=lambda: validated.append(True) or True,
-    )
-    assert reservation is not None and validated == [True]
-    after_debounce = threading.Event()
-    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: after_debounce.set())
+def _assert_public_ack_readback(route, scope, message_id, delivery_id, endpoint_id, runtime):
+    stored = route.get(
+        f"/relay/messages/{message_id}", params=scope,
+    ).json()["deliveries"][0]
+    assert {
+        key: stored[key]
+        for key in (
+            "delivery_id", "recipient_endpoint_id", "recipient_runtime",
+            "recipient_session_ref", "recipient_container_ref", "state",
+        )
+    } == {
+        "delivery_id": delivery_id,
+        "recipient_endpoint_id": endpoint_id,
+        "recipient_runtime": runtime,
+        "recipient_session_ref": "target",
+        "recipient_container_ref": scope["container_ref"],
+        "state": "delivered",
+    }
 
-    with patch("app.codex_wake._start_launch") as native_start:
-        with registry._lock:
-            worker = threading.Thread(
-                target=codex_wake._wake_after_debounce,
-                args=(reservation, registry),
-            )
-            worker.start()
-            assert after_debounce.wait(1)
-            assert codex_wake.release_codex_relay_wake(
-                "delivery-validated", registry=registry,
-            )
-        worker.join(timeout=1)
 
-    assert not worker.is_alive()
-    assert registry.snapshot(endpoint_id) is None
-    native_start.assert_not_called()
+@pytest.mark.parametrize("runtime", ("codex", "claude-code"))
+def test_http_ack_before_reserve_prevents_fence_and_native_write(
+    client, monkeypatch: pytest.MonkeyPatch, runtime: str,
+) -> None:
+    route, claim_route, scope, source_runtime, endpoint_id, registry = _public_ack_route(client, runtime)
+    scheduler_entered = threading.Event()
+    continue_scheduler = threading.Event()
+    callback_entered = threading.Event()
+    workers = []
+    native_writes = []
+    real_schedule = codex_wake.schedule_codex_relay_wake if runtime == "codex" else claude_wake.schedule_claude_relay_wake
 
+    def gated_schedule(result, wake_scope, **kwargs):
+        scheduler_entered.set()
+        assert continue_scheduler.wait(2)
+        worker = real_schedule(result, wake_scope, **kwargs)
+        workers.append(worker)
+        return worker
+
+    original_release = registry.release_delivery
+
+    def release(delivery_id):
+        callback_entered.set()
+        return original_release(delivery_id)
+
+    monkeypatch.setattr(registry, "release_delivery", release)
+    if runtime == "codex":
+        monkeypatch.setattr(codex_wake, "_start_launch", lambda *_: native_writes.append(True))
+    else:
+        monkeypatch.setattr(claude_wake, "claude_wake_transport", lambda *_: native_writes.append(True))
+    responses = {}
+    message_id = f"public-ack-before-{runtime}"
+
+    def send():
+        responses["send"] = route.post("/relay/messages", json={
+            "sender_runtime": source_runtime, "sender_session_ref": "sender",
+            "recipient": endpoint_id, "message_id": message_id,
+            "payload": "ACK before reservation", **scope,
+        })
+
+    target = "app.dependencies.schedule_codex_relay_wake" if runtime == "codex" else "app.dependencies.schedule_claude_relay_wake"
+    with patch(target, side_effect=gated_schedule):
+        send_thread = threading.Thread(target=send)
+        send_thread.start()
+        assert scheduler_entered.wait(2)
+        claim_response = claim_route.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": "target", **scope,
+        })
+        assert claim_response.status_code == 200
+        claim = claim_response.json()["deliveries"][0]
+        ack = route.post("/relay/deliveries/ack", json={
+            "delivery_id": claim["delivery_id"], "claim_token": claim["claim_token"], **scope,
+        })
+        assert ack.status_code == 200 and callback_entered.is_set()
+        continue_scheduler.set()
+        send_thread.join(timeout=2)
+
+    assert not send_thread.is_alive() and responses["send"].status_code == 200
+    for worker in workers:
+        if worker is not None:
+            worker.join(timeout=2)
+            assert not worker.is_alive()
+    assert native_writes == []
+    if runtime == "codex":
+        assert registry.snapshot(endpoint_id) is None
+    else:
+        assert all(item["state"] != "wake_inflight" for item in registry.recovery_candidates())
+    _assert_public_ack_readback(route, scope, message_id, claim["delivery_id"], endpoint_id, runtime)
+
+
+@pytest.mark.parametrize("runtime", ("codex", "claude-code"))
+def test_http_ack_after_validation_serializes_with_native_start_and_releases_fence(
+    client, monkeypatch: pytest.MonkeyPatch, runtime: str,
+) -> None:
+    route, claim_route, scope, source_runtime, endpoint_id, registry = _public_ack_route(client, runtime)
+    validated = threading.Event()
+    continue_native = threading.Event()
+    callback_entered = threading.Event()
+    workers = []
+    native_writes = []
+    original_release = registry.release_delivery
+
+    def release(delivery_id):
+        callback_entered.set()
+        return original_release(delivery_id)
+
+    monkeypatch.setattr(registry, "release_delivery", release)
+    real_schedule = codex_wake.schedule_codex_relay_wake if runtime == "codex" else claude_wake.schedule_claude_relay_wake
+
+    def capture_schedule(result, wake_scope, **kwargs):
+        worker = real_schedule(result, wake_scope, **kwargs)
+        workers.append(worker)
+        return worker
+
+    if runtime == "codex":
+        continue_worker = threading.Event()
+        monkeypatch.setattr(codex_wake.time, "sleep", lambda _: continue_worker.wait(2))
+        monkeypatch.setattr(codex_wake, "_codex_home", codex_wake.Path.cwd)
+        process = MagicMock(returncode=0)
+        process.communicate.return_value = (None, "")
+
+        def popen(*args, **kwargs):
+            native_writes.append((args, kwargs))
+            validated.set()
+            assert continue_native.wait(2)
+            return process
+
+        monkeypatch.setattr(codex_wake, "_popen", popen)
+    else:
+        original_pending = RelayService.pending_candidate
+        first = True
+
+        def pending_candidate(relay, **kwargs):
+            nonlocal first
+            candidate = original_pending(relay, **kwargs)
+            if first:
+                first = False
+                validated.set()
+                assert continue_native.wait(2)
+            return candidate
+
+        monkeypatch.setattr(RelayService, "pending_candidate", pending_candidate)
+        monkeypatch.setattr(claude_wake, "claude_wake_transport", lambda *args: native_writes.append(args) or "accepted")
+
+    target = "app.dependencies.schedule_codex_relay_wake" if runtime == "codex" else "app.dependencies.schedule_claude_relay_wake"
+    message_id = f"public-ack-native-{runtime}"
+    with patch(target, side_effect=capture_schedule):
+        sent = route.post("/relay/messages", json={
+            "sender_runtime": source_runtime, "sender_session_ref": "sender",
+            "recipient": endpoint_id, "message_id": message_id,
+            "payload": "ACK at native boundary", **scope,
+        })
+        assert sent.status_code == 200
+        assert len(workers) == 1 and workers[0] is not None
+        claim_response = claim_route.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": "target", **scope,
+        })
+        assert claim_response.status_code == 200
+        claim = claim_response.json()["deliveries"][0]
+        if runtime == "codex":
+            continue_worker.set()
+        assert validated.wait(2)
+        ack_responses = []
+
+        def acknowledge():
+            ack_responses.append(route.post("/relay/deliveries/ack", json={
+                "delivery_id": claim["delivery_id"], "claim_token": claim["claim_token"], **scope,
+            }))
+
+        ack_thread = threading.Thread(target=acknowledge)
+        ack_thread.start()
+        assert callback_entered.wait(2)
+        assert ack_thread.is_alive()
+        continue_native.set()
+        ack_thread.join(timeout=2)
+        workers[0].join(timeout=2)
+
+    assert not ack_thread.is_alive() and not workers[0].is_alive()
+    assert len(ack_responses) == 1 and ack_responses[0].status_code == 200
+    assert len(native_writes) == 1
+    if runtime == "codex":
+        assert registry.snapshot(endpoint_id) is None
+    else:
+        assert all(item["state"] != "wake_inflight" for item in registry.recovery_candidates())
+    _assert_public_ack_readback(route, scope, message_id, claim["delivery_id"], endpoint_id, runtime)
 
 @pytest.mark.parametrize(
     ("native_outcome", "durable_outcome"),
