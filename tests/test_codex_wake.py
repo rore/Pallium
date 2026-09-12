@@ -524,9 +524,11 @@ def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> 
     assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
 
 def test_turn_observation_during_queued_submission_does_not_release(
-    monkeypatch, isolated_codex_registry: CodexWakeRegistry,
+    monkeypatch, tmp_path, isolated_codex_registry: CodexWakeRegistry,
 ) -> None:
     workers = []
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
     delivery_id = "delivery-turn-observation"
     delivery = _delivery(delivery_id)
     endpoint_id = delivery["deliveries"][0]["recipient_endpoint_id"]
@@ -545,9 +547,12 @@ def test_turn_observation_during_queued_submission_does_not_release(
         return None, ""
 
     process.communicate.side_effect = turn_observed
-    with patch("app.codex_wake._popen", return_value=process):
+    with patch("app.codex_wake._codex_home", return_value=codex_home), patch(
+        "app.codex_wake._popen", return_value=process,
+    ) as popen:
         codex_wake._wake_after_debounce(*workers[0])
 
+    popen.assert_called_once()
     reservation = isolated_codex_registry.snapshot(endpoint_id)
     assert reservation is not None
     assert reservation.delivery_id == delivery_id
