@@ -53,7 +53,7 @@ Before PR review, redline/workflow checks and `python -m pytest tests/ -x -q` sh
 Pending clean-context reviewer and architect review; implementation is blocked until findings are resolved.
 
 **Approvals:**
-Pending explicit human approval of the reviewed High-risk plan.
+Approved by user 2026-09-12: "Second, the relay to operational tasks. You can advance with that and let's get them completed."
 
 **Exceptions:**
 —
@@ -67,7 +67,8 @@ Pending explicit human approval of the reviewed High-risk plan.
 - Evaluated applicability: production HTTP/MCP/dashboard and adapter changes require the normal workflow; no documentation-only exemption applies.
 - Completed bounded read-only inventory and pre-edit redline classification. No production code has been edited.
 - The first follow-up `apply_patch` hit the machine-local Windows process failure; the Work Record-only correction used one deterministic exact-string replacement as the repository-approved fallback.
-- Sent the concrete design and adapter mapping to `astra-reviewer`; implementation remains blocked pending its verdict, clean-context plan review, and explicit human approval.
+- Sent the concrete design and adapter mapping to `astra-reviewer`; implementation remains blocked pending its verdict and clean-context plan review.
+- Recorded the user's scoped authorization relayed by `astra-reviewer`; no additional permission question is required while implementation stays faithful to the approved roadmap contract.
 
 ## Evidence
 
