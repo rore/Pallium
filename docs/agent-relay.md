@@ -127,6 +127,24 @@ This table follows the current
 [wake roadmap](../roadmap/features/add-wake-first-relay-delivery.md). Recheck it
 before making release claims.
 
+Relay session and delivery reads include an optional `activation` object. Its
+`behavior`, `qualification`, current `availability`, and `fallback` distinguish
+Codex `busy_queue`, Claude Code `idle_wake`, and passive natural-turn delivery.
+`submission_attempted`, `transport_accepted`, and `payload_admitted` are separate
+evidence kinds. `turn_started` is not supported evidence, and a successful native
+write does not mean the payload entered model context. Missing, stale, closed, or
+conflicting evidence is reported as unknown rather than inferred optimistically.
+
+Claude Code and Codex keep one bounded current reservation per stable Relay
+endpoint. An accepted or uncertain native submission remains fenced across worker
+completion, restart, clock changes, registration, close, and delivery-status
+reads. Only successful ACK, MCP ACK, or atomic reply for that exact delivery
+releases it. A positively pre-submit failure becomes retryable only after the
+safe reset durably commits. If a reservation cannot be resolved, later messages
+still arrive on the next natural hook turn; Pallium does not blindly resubmit.
+The trusted-local reservation files assume one Pallium service process; atomic
+replacement provides crash recovery, not multi-process coordination.
+
 Pallium can start a new turn in an existing supported session. It does not
 create agents, assign work, restart sessions, or supervise a workflow.
 

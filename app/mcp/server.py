@@ -182,6 +182,15 @@ def _relay_text(result: object) -> str:
                 for delivery in deliveries
             ],
         }
+        deliveries = result["deliveries"]
+        for index, delivery in enumerate(deliveries):
+            deliveries[index] = _fit_mcp_activation(
+                delivery,
+                lambda fitted, index=index: {
+                    **result,
+                    "deliveries": [*deliveries[:index], fitted, *deliveries[index + 1:]],
+                },
+            )
     if len(_json_text(result)) <= _MCP_RELAY_MAX_CHARS:
         return _json_text(result)
     deliveries = result.get("deliveries")
@@ -195,6 +204,7 @@ def _relay_text(result: object) -> str:
             "recipient_container_ref",
             "state",
             "destination_health",
+            "activation",
         )
         for delivery in deliveries:
             state = str(delivery.get("state", "unknown"))
@@ -250,6 +260,10 @@ def _relay_text(result: object) -> str:
                         else:
                             high = mid - 1
                     summary["payload"] = payload[:low] + marker
+        elif isinstance(payload, str):
+            summary["payload"] = payload
+            if len(_json_text(summary)) > _MCP_RELAY_MAX_CHARS:
+                summary.pop("payload")
         return _json_text(summary)
     return _relay_error_text({"error": "relay response exceeds the response budget"})
 
@@ -296,10 +310,12 @@ def _relay_status_text(result: object, offset: int) -> str:
     if len(full_text) <= _MCP_RELAY_MAX_CHARS:
         return full_text
 
+    projected: list[dict[str, object]] = []
+
     def page(chars: int) -> dict[str, object]:
         body = payload[:chars]
         continued = payload_offset + chars < total
-        return {
+        page_result: dict[str, object] = {
             **{
                 key: result[key]
                 for key in (
@@ -315,7 +331,26 @@ def _relay_status_text(result: object, offset: int) -> str:
             "next_offset": payload_offset + chars if continued else None,
             "delivery_count": len(deliveries),
             "delivery_states": states,
+            "deliveries": projected,
         }
+        if len(projected) < len(deliveries):
+            page_result["deliveries_omitted"] = len(deliveries) - len(projected)
+        return page_result
+
+    fields = (
+        "delivery_id", "recipient_endpoint_id", "recipient_runtime", "state",
+        "destination_health", "activation",
+    )
+    for delivery in deliveries:
+        compact = {key: delivery[key] for key in fields if key in delivery}
+        compact = _fit_mcp_activation(
+            compact,
+            lambda fitted: {**page(0), "deliveries": [*projected, fitted]},
+        )
+        projected.append(compact)
+        if len(_json_text(page(0))) > _MCP_RELAY_MAX_CHARS:
+            projected.pop()
+            break
 
     low, high = 0, len(payload)
     while low < high:
@@ -328,6 +363,44 @@ def _relay_status_text(result: object, offset: int) -> str:
         return _relay_error_text({"error": "relay status metadata exceeds the response budget", "offset": offset})
     return _json_text(page(low))
 
+def _mcp_activation(value: object) -> dict[str, object]:
+    mandatory = ("behavior", "availability", "qualification", "fallback")
+    if not isinstance(value, dict) or any(not isinstance(value.get(key), str) for key in mandatory):
+        return {
+            "contract": "relay-activation/v1",
+            "behavior": "unknown",
+            "availability": "unknown",
+            "qualification": "unknown",
+            "fallback": "unknown",
+        }
+    allowed = (
+        "contract", "runtime", "platform", "integration", "topology", "behavior",
+        "qualification", "qualification_source", "availability",
+        "availability_source", "fallback", "supported_evidence",
+    )
+    return {key: value[key] for key in allowed if key in value}
+
+
+def _fit_mcp_activation(
+    row: dict[str, object], envelope, budget: int = _MCP_RELAY_MAX_CHARS,
+) -> dict[str, object]:
+    result = dict(row)
+    if "activation" not in result:
+        return result
+    result["activation"] = _mcp_activation(result["activation"])
+    for fields in (
+        ("topology",),
+        ("platform", "integration"),
+        ("qualification_source", "availability_source"),
+        ("supported_evidence",),
+    ):
+        if len(_json_text(envelope(result))) <= budget:
+            break
+        activation = dict(result["activation"])
+        for field in fields:
+            activation.pop(field, None)
+        result["activation"] = activation
+    return result
 
 def _relay_recipients_text(result: object, offset: int = 0) -> str:
     """Serialize one deterministic recipient page within the MCP Relay budget."""
@@ -342,10 +415,11 @@ def _relay_recipients_text(result: object, offset: int = 0) -> str:
     rows.sort(key=lambda row: str(row.get("session_ref", "")))
     rows.sort(key=lambda row: str(row.get("last_seen_at", "")), reverse=True)
     rows.sort(key=lambda row: str(row.get("runtime", "")))
-    for row in rows:
+    for index, row in enumerate(rows):
         row["exact_selector"] = row.get("endpoint_id")
         if row.get("alias"):
             row["alias_selector"] = f"@{row['alias']}"
+        rows[index] = _fit_mcp_activation(row, lambda fitted: {"recipients": [fitted], "offset": index, "next_offset": None, "has_more": False, "total_count": len(rows)})
 
     total = len(rows)
 
@@ -1253,13 +1327,48 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         if not isinstance(deliveries, list):
             return _relay_error_text({"error": "invalid relay receive response"})
         result.pop("session", None)  # storage sizes this larger superset; MCP does not expose session metadata
-        for delivery in deliveries:
+        for index, delivery in enumerate(deliveries):
             if not isinstance(delivery, dict):
                 return _relay_error_text({"error": "invalid relay receive response"})
-            delivery.pop("claim_token", None)  # receipt stays; claim_token is never exposed
+            delivery = {key: value for key, value in delivery.items() if key != "claim_token"}
+            deliveries[index] = _fit_mcp_activation(
+                delivery,
+                lambda fitted, index=index: {
+                    **result,
+                    "deliveries": [*deliveries[:index], fitted, *deliveries[index + 1:]],
+                },
+                effective_max_chars,
+            )
+
         rendered = _json_text(result)
-        # The storage transaction sizes a superset before claim. If that invariant ever
-        # regresses, returning the claimed body is safer than hiding it behind an error.
+        if len(rendered) > effective_max_chars and len(deliveries) == 1:
+            delivery = deliveries[0]
+            payload = delivery.get("payload")
+            payload_offset = delivery.get("payload_offset")
+            payload_total = delivery.get("payload_total_chars")
+            if (
+                isinstance(payload, str)
+                and type(payload_offset) is int
+                and type(payload_total) is int
+                and payload_total >= payload_offset + len(payload)
+            ):
+                def candidate(chars: int) -> dict[str, object]:
+                    compact = dict(delivery)
+                    compact["payload"] = payload[:chars]
+                    continued = payload_offset + chars < payload_total
+                    compact["content_truncated"] = payload_offset != 0 or continued
+                    compact["next_offset"] = payload_offset + chars if continued else None
+                    return compact
+
+                low, high = 0, len(payload)
+                while low < high:
+                    middle = (low + high + 1) // 2
+                    if len(_json_text({**result, "deliveries": [candidate(middle)]})) <= effective_max_chars:
+                        low = middle
+                    else:
+                        high = middle - 1
+                deliveries[0] = candidate(low)
+                rendered = _json_text(result)
         if len(rendered) > effective_max_chars:
             return _relay_error_text({"error": "relay receive response exceeds the response budget"}, effective_max_chars)
         return rendered

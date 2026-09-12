@@ -179,4 +179,15 @@ Preserve current endpoint targeting and history/memory scope rules.
    native behavior requires a bounded installed witness with explicit cost limits.
 
 Update the board and applicable Relay/integration docs only after implementation
-and verification. This roadmap item itself does not claim the contract has shipped.
+and verification. The implemented contract is the current source of truth; delivery tracing remains a separate follow-up.
+
+## Awaiting final verification
+
+Implemented with one pure bounded projection shared by HTTP, MCP, and dashboard;
+canonical adapter attempt outcomes; durable current Claude Code and Codex
+exact-delivery fences; ACK-authoritative release; fail-closed corruption, write,
+and capacity behavior; and focused mapping, lifecycle, race, restart, Unicode,
+budget, and caller-surface coverage. Final repository verification and result
+review remain pending. The stores retain no attempt history and
+assume a single Pallium service process. Unresolved reservations intentionally
+fall back to a later natural hook turn without blind native resubmission.

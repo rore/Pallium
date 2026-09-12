@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from app.config import AppConfig
 from app.main import create_app
+from core.codex_wake import CodexWakeRegistry
 from core.models import MemoryObject, SourceItem
 from storage.sqlite_schema import HistoricalLookupReuseEventRecord, HistoricalLookupReuseLabelRecord, MemoryFlagRecord, RelayDeliveryRecord, RelaySessionRecord
 from storage.vector_index import VectorIndexConfig
@@ -748,8 +749,23 @@ class TestDashboardSourceAndRelayProjections:
             sessions = client.get("/dashboard/api/relay/sessions").json()["sessions"]
             assert session_page["total"] == 2 and len(session_page["sessions"]) == 1
             assert {session["session_ref"] for session in sessions} == {"one", "two"}
+
+            assert all(
+                session["activation"]["contract"] == "relay-activation/v1"
+                for session in sessions
+            )
+            assert all(
+                session["activation"]["fallback"] == "next_natural_turn"
+                for session in sessions
+            )
+            assert "turn_started" not in str(sessions)
             page = client.get("/dashboard/api/relay/messages?limit=1").json()
             assert page["total"] == 1 and page["messages"][0]["id"] == sent["message_id"]
+
+            delivery_activation = page["messages"][0]["deliveries"][0]["activation"]
+            assert delivery_activation["contract"] == "relay-activation/v1"
+            assert delivery_activation["behavior"] == "idle_wake"
+            assert "turn_started" not in str(delivery_activation)
             endpoints = {page["messages"][0]["sender_endpoint_id"], page["messages"][0]["deliveries"][0]["recipient_endpoint_id"]}
             assert {session["id"] for session in page["endpoint_sessions"]} == endpoints
             assert "claim_token" not in str(page) and "receipt" not in str(page)
@@ -839,8 +855,10 @@ class TestDashboardSourceAndRelayProjections:
         assert all(entry["source_item_id"] is None and entry["available"] is False for entry in hidden["exposed"])
         assert next(item for item in items if item["id"] == "bad")["exposed"] == []
 
-    def test_relay_split_store_and_multi_delivery_projection_boundaries(self, tmp_path: Path) -> None:
+    def test_relay_split_store_and_multi_delivery_projection_boundaries(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
+        registry = CodexWakeRegistry(tmp_path / "codex-wake")
+        monkeypatch.setattr("app.dashboard.get_codex_wake_registry", lambda: registry)
         app = create_app(config)
         with TestClient(app) as client:
             for runtime, session_ref, container in (("codex", "sender", "c1"), ("claude-code", "first", "c2"), ("codex", "second", "c2"), ("codex", "other", "c3")):
@@ -854,10 +872,38 @@ class TestDashboardSourceAndRelayProjections:
             storage = app.state.pallium_service._storage
             with storage._relay_session_factory() as session:
                 session.add(RelayDeliveryRecord(id="second-delivery", message_id=sent["message_id"], recipient_runtime="codex", recipient_session_ref="second", recipient_endpoint_id=ids["second"], recipient_container_ref="c2", state="pending", attempts=0))
+                session.add(RelayDeliveryRecord(id="active-delivery", message_id=sent["message_id"], recipient_runtime="codex", recipient_session_ref="other", recipient_endpoint_id=ids["other"], recipient_container_ref="c3", state="pending", attempts=0))
                 session.execute(text("UPDATE relay_sessions SET state='closed' WHERE id=:id"), {"id": ids["second"]})
                 session.commit()
+            assert registry.reserve(
+                recipient_endpoint_id=ids["other"], delivery_id="active-delivery",
+                session_ref="other", container_ref="c3",
+            ) is not None
+            moved = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "other", "container_ref": "c4",
+                "max_chars": 1, "max_messages": 1,
+                "previous_container_ref": "c3", "previous_endpoint_id": ids["other"],
+                "previous_scope_generation": 0,
+            })
+            assert moved.status_code == 200 and moved.json()["deliveries"] == []
             page = client.get("/dashboard/api/relay/messages", params={"endpoint_id": ids["sender"], "peer_endpoint_id": ids["second"], "delivery_state": "pending"}).json()
-            assert page["total"] == 1 and len(page["messages"][0]["deliveries"]) == 2
+            assert page["total"] == 1 and len(page["messages"][0]["deliveries"]) == 3
+            activations = {
+                item["id"]: item["activation"]
+                for item in page["messages"][0]["deliveries"]
+            }
+            active = next(
+                item for item in page["messages"][0]["deliveries"]
+                if item["id"] == "active-delivery"
+            )
+            assert active["recipient_endpoint_id"] == ids["other"]
+            assert active["recipient_session_ref"] == "other"
+            assert active["recipient_container_ref"] == "c3"
+            assert activations["active-delivery"]["availability"] == "attempt_inflight"
+            assert activations["active-delivery"]["qualification"] == "qualified"
+            assert activations["active-delivery"]["fallback"] == "next_natural_turn"
+            assert activations["second-delivery"]["availability"] == "closed"
+            assert activations["second-delivery"]["qualification"] == "unknown"
             assert client.get("/dashboard/api/relay/messages?limit=201").status_code == 422
             assert client.get("/dashboard/api/relay/messages?delivery_state=nope").status_code == 422
             assert client.get("/dashboard/api/relay/sessions?destination_health=nope").status_code == 422

@@ -248,6 +248,11 @@ class TestBoundedReceive:
             assert len(content[0].text) <= 2000
             results.append(json.loads(content[0].text))
         assert all(len(result["deliveries"]) == 1 for result in results)
+        assert all(
+            {"behavior", "availability", "qualification", "fallback"}
+            <= result["deliveries"][0]["activation"].keys()
+            for result in results
+        )
         assert [result["has_more"] for result in results] == [True, True, True, False]
         assert [result["remaining_count"] for result in results] == [3, 2, 1, 0]
 
@@ -777,7 +782,7 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
     message_id = sent_data["message_id"]
     sent_delivery = sent_data["deliveries"][0]
     assert len(sent[0].text) <= 2_000
-    assert sent_delivery == {
+    assert {key: value for key, value in sent_delivery.items() if key != "activation"} == {
         "recipient_endpoint_id": recipient["endpoint_id"],
         "recipient_runtime": "claude-code",
         "recipient_session_ref": "mcp-target",
@@ -785,6 +790,8 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
         "state": "pending",
         "destination_health": "active",
     }
+    assert sent_delivery["activation"]["behavior"] == "idle_wake"
+    assert sent_delivery["activation"]["fallback"] == "next_natural_turn"
     assert "payload" not in sent_data
     assert "claim_token" not in sent[0].text
 
@@ -821,7 +828,7 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
     assert reply_secret not in replied[0].text
     assert reply_data["message_id"] == repeated_data["message_id"]
     assert reply_data["in_reply_to"] == alias_data["message_id"]
-    assert reply_data["deliveries"][0] == {
+    assert {key: value for key, value in reply_data["deliveries"][0].items() if key != "activation"} == {
         "recipient_endpoint_id": sender["endpoint_id"],
         "recipient_runtime": "codex",
         "recipient_session_ref": "mcp-source",
@@ -829,6 +836,8 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
         "state": "pending",
         "destination_health": "active",
     }
+    assert reply_data["deliveries"][0]["activation"]["behavior"] == "busy_queue"
+    assert reply_data["deliveries"][0]["activation"]["fallback"] == "next_natural_turn"
     assert "claim_token" not in replied[0].text
     assert alias_delivery["recipient_endpoint_id"] == recipient["endpoint_id"]
 

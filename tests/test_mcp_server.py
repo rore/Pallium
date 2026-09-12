@@ -1047,7 +1047,23 @@ async def test_relay_status_page_is_bounded_escape_safe_and_advancing(monkeypatc
         "in_reply_to": None,
         "created_at": "2026-09-07T00:00:00Z",
         "expires_at": "2026-09-08T00:00:00Z",
-        "deliveries": [{"state": "claimed"}, {"state": "delivered"}],
+        "deliveries": [{
+            "delivery_id": "d-claimed",
+            "recipient_endpoint_id": "relay-session-" + "a" * 32,
+            "recipient_runtime": "codex",
+            "state": "claimed",
+            "activation": {
+                "contract": "relay-activation/v1", "runtime": "codex",
+                "platform": "windows", "integration": "codex_queue",
+                "topology": "existing_session", "behavior": "busy_queue",
+                "qualification": "qualified",
+                "qualification_source": "installed_witness",
+                "availability": "attempt_inflight",
+                "availability_source": "durable_reservation",
+                "fallback": "next_natural_turn",
+                "supported_evidence": ["submission_attempted", "transport_accepted", "payload_admitted"],
+            },
+        }, {"state": "delivered"}],
     }
     status = AsyncMock(return_value=page)
     with patch("app.mcp.client.PalliumMcpClient.relay_status", new=status):
@@ -1059,6 +1075,9 @@ async def test_relay_status_page_is_bounded_escape_safe_and_advancing(monkeypatc
     assert result["payload_offset"] == 0
     assert 0 < result["next_offset"] <= len(payload)
     assert result["delivery_states"] == {"claimed": 1, "delivered": 1}
+    assert result["deliveries"][0]["delivery_id"] == "d-claimed"
+    assert result["deliveries"][0]["activation"]["behavior"] == "busy_queue"
+    assert result["deliveries"][0]["activation"]["fallback"] == "next_natural_turn"
     status.assert_awaited_once_with("m-1", offset=0, page_size=2000)
 
 
@@ -1095,3 +1114,57 @@ def test_main_reads_stdio_transport_environment(monkeypatch: pytest.MonkeyPatch)
     mcp_server.main()
 
     runner.run.assert_called_once_with(transport="stdio")
+
+
+def test_relay_activation_projection_elides_whole_fields_utf8_safely_under_budget() -> None:
+    row = {
+        "endpoint_id": "relay-session-" + "a" * 32,
+        "runtime": "codex",
+        "session_ref": "界" * 255,
+        "title": "界" * 255,
+        "alias": "worker",
+        "state": "recent",
+        "destination_health": "active",
+        "first_seen_at": "2026-09-06T00:00:00Z",
+        "last_seen_at": "2026-09-06T00:00:00Z",
+        "closed_at": None,
+        "activation": {
+            "contract": "relay-activation/v1",
+            "runtime": "codex",
+            "platform": "windows",
+            "integration": "codex_queue",
+            "topology": "existing_session",
+            "behavior": "busy_queue",
+            "qualification": "qualified",
+            "qualification_source": "installed_witness",
+            "availability": "attempt_inflight",
+            "availability_source": "durable_reservation",
+            "fallback": "next_natural_turn",
+            "supported_evidence": [
+                "submission_attempted", "transport_accepted", "payload_admitted",
+            ],
+        },
+    }
+    text = _relay_recipients_text([row])
+    assert len(text) <= 2000
+    assert "\ufffd" not in text and "turn_started" not in text
+    payload = json.loads(text)
+    projected = payload["recipients"][0]
+    assert projected["session_ref"] == row["session_ref"]
+    activation = projected["activation"]
+    assert {
+        key: activation[key]
+        for key in ("behavior", "availability", "qualification", "fallback")
+    } == {
+        "behavior": "busy_queue",
+        "availability": "attempt_inflight",
+        "qualification": "qualified",
+        "fallback": "next_natural_turn",
+    }
+    optional = {
+        "topology", "platform", "integration", "qualification_source",
+        "availability_source", "supported_evidence",
+    }
+    assert set(activation).issubset(optional | {
+        "contract", "runtime", "behavior", "availability", "qualification", "fallback",
+    })

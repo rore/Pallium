@@ -75,14 +75,14 @@ def test_registration_keeps_intent_when_store_unusable_marker_cannot_clear(
     assert response.status_code == 409
     assert json.loads(intent.read_text(encoding="utf-8")) == payload
     assert registry.recovery_candidates() == []
-    assert (state_dir / "capabilities.json").exists()
+    assert not (state_dir / "capabilities.json").exists()
     assert ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates() == []
 
     monkeypatch.setattr(Path, "unlink", original_unlink)
     registry.recover_intents()
-    assert not marker.exists() and not intent.exists()
-    assert [candidate["state"] for candidate in registry.recovery_candidates()] == ["idle"]
-    assert [candidate["state"] for candidate in ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates()] == ["idle"]
+    assert marker.exists() and intent.exists()
+    assert registry.recovery_candidates() == []
+    assert ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates() == []
 
 @pytest.mark.parametrize("replace_closed_intent", (False, True))
 def test_close_endpoint_write_failure_preserves_exact_intent_for_recovery(
@@ -185,13 +185,17 @@ def test_replace_expiry_and_callback_reentry_are_generation_safe() -> None:
     now[0] += 2
 
     completed = threading.Event()
+    workers = []
 
     def transport(_socket_path: str, _token: str) -> str:
-        worker = threading.Thread(target=lambda: registry.register(**{**PAYLOAD, "token": "third"}))
+        worker = threading.Thread(
+            target=lambda: (
+                registry.register(**{**PAYLOAD, "token": "third"}),
+                completed.set(),
+            ),
+        )
+        workers.append(worker)
         worker.start()
-        worker.join(timeout=1)
-        assert not worker.is_alive()
-        completed.set()
         return "accepted"
 
     assert registry.probe(
@@ -200,7 +204,8 @@ def test_replace_expiry_and_callback_reentry_are_generation_safe() -> None:
         container_ref=PAYLOAD["container_ref"],
         transport=transport,
     )
-    assert completed.is_set()
+    workers[0].join(timeout=1)
+    assert not workers[0].is_alive() and completed.is_set()
     assert not registry.probe(
         runtime=PAYLOAD["runtime"],
         session_ref=PAYLOAD["session_ref"],
