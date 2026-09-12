@@ -116,7 +116,8 @@ Context budget rule: HTTP and dashboard may show the full bounded object. MCP de
 - Manager accepted the additive core/projector/surface shape and implementation scope. The accepted constraints omit unsupported `turn_started`, require generation/native-write interleaving coverage, preserve unresolved reservations indefinitely with honest natural-turn fallback, and require fail-closed corrupt/read/write/capacity behavior under the documented single-service-process ownership assumption.
 - Recorded the user's scoped authorization relayed by `astra-reviewer`; no additional permission question is required while implementation stays faithful to the approved roadmap contract.
 - Refreshed pre-edit classification after manager acceptance: API_CHANGE, High/Moderate remains adequate, api-review is required, no boundary risk exists in the accepted dependency direction, and no Relay candidate-reader/storage change is needed.
-- Implementation resumed after the user directly replied "Approve" to the explicit request authorizing the accepted Claude/Codex durable wake reservation and scheduler changes despite duplicate or missed paid-turn risk. No workaround or alternate execution path was used.
+- The first resumption stopped when managed review rejected the user's bare "Approve" as insufficiently explicit; no scheduler mutation or alternate path was attempted.
+- Implementation resumed after the user directly stated: "explicitly authorize durable Codex/Claude wake reservations and native submission despite the risk of duplicate or missed paid/model turns." This is the exact high-impact authorization the managed review required.
 
 ## Evidence
 
