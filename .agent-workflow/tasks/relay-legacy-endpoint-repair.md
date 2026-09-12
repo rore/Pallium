@@ -39,6 +39,7 @@
 
 ## Implementation
 
+- Pre-edit file/class list: `storage/sqlite_schema.py` (one additive repair ledger), `storage/sqlite_relay.py` (manifest snapshot/apply methods), new `app/tools/relay_endpoint_repair.py` (thin offline CLI), `scripts/restart-service.ps1` plus `app/cli/service.py` only for strict stop-state verification, `app/dashboard.py`/`app/dashboard.html` and `api/schemas.py` only if validation requires it for `suppressed`, `tests/test_relay_endpoint_repair_e2e.py`, `tests/test_restart_service.py`, `tests/test_service.py`, focused `tests/test_agent_relay_e2e.py`/`tests/test_dashboard.py`/`tests/test_relay_wake_fixtures.py`, `tests/fixtures/relay_wake/contract.json`, `docs/agent-relay.md`, and `docs/context/operations.md`. Any integration-hook, MCP mutation, activation, core, or other schema/API file is out of scope and returns to planning.
 - Read-only incident discovery, storage/claim/reply/status tracing, reuse audit, activation-branch coordination, architecture validation, and first clean-context plan review are complete.
 - No production code or live Relay state has been changed. The installed two-source/one-destination incident remains diagnostic-only.
 - The repository patch helper failed once with Windows error 1327. Work Record edits use the allowed deterministic named-file fallback.
