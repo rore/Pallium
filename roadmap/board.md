@@ -1,4 +1,5 @@
 # Next · Agent Relay
+- add-relay-activation-capability-contract
 - add-relay-delivery-trace
 
 # Parallel · Session History
@@ -49,7 +50,6 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
-- add-relay-activation-capability-contract
 - add-relay-session-work-associations
 - idea-exact-relay-recipient-resolution
 - add-dashboard-operations-and-relay-workspace

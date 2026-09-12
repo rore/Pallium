@@ -879,13 +879,29 @@ class TestDashboardSourceAndRelayProjections:
                 recipient_endpoint_id=ids["other"], delivery_id="active-delivery",
                 session_ref="other", container_ref="c3",
             ) is not None
+            moved = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "other", "container_ref": "c4",
+                "max_chars": 1, "max_messages": 1,
+                "previous_container_ref": "c3", "previous_endpoint_id": ids["other"],
+                "previous_scope_generation": 0,
+            })
+            assert moved.status_code == 200 and moved.json()["deliveries"] == []
             page = client.get("/dashboard/api/relay/messages", params={"endpoint_id": ids["sender"], "peer_endpoint_id": ids["second"], "delivery_state": "pending"}).json()
             assert page["total"] == 1 and len(page["messages"][0]["deliveries"]) == 3
             activations = {
                 item["id"]: item["activation"]
                 for item in page["messages"][0]["deliveries"]
             }
+            active = next(
+                item for item in page["messages"][0]["deliveries"]
+                if item["id"] == "active-delivery"
+            )
+            assert active["recipient_endpoint_id"] == ids["other"]
+            assert active["recipient_session_ref"] == "other"
+            assert active["recipient_container_ref"] == "c3"
             assert activations["active-delivery"]["availability"] == "attempt_inflight"
+            assert activations["active-delivery"]["qualification"] == "qualified"
+            assert activations["active-delivery"]["fallback"] == "next_natural_turn"
             assert activations["second-delivery"]["availability"] == "closed"
             assert activations["second-delivery"]["qualification"] == "unknown"
             assert client.get("/dashboard/api/relay/messages?limit=201").status_code == 422

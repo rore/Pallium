@@ -748,8 +748,12 @@ def build_router(
                     sessions = relay_service.list_sessions(**scope, include_inactive=True)
                 except (RelayNotFoundError, RelayUnavailableError, ValueError):
                     sessions = []
-                if len(sessions) == 1 and sessions[0].get("endpoint_id") == endpoint_id:
-                    projection = {**row, **sessions[0], "recipient_endpoint_id": endpoint_id}
+                current = [
+                    session for session in sessions
+                    if session.get("endpoint_id") == endpoint_id
+                ]
+                if len(current) == 1:
+                    projection = dict(current[0])
         session_ref = projection.get("session_ref", projection.get("recipient_session_ref"))
         container_ref = projection.get("container_ref", projection.get("recipient_container_ref"))
         runtime = projection.get("runtime", projection.get("recipient_runtime"))

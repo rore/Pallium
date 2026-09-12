@@ -1086,3 +1086,113 @@ def test_corrupt_scoped_intent_cannot_suppress_valid_legacy_fence(
         container_ref=PAYLOAD["container_ref"],
         transport=lambda *_: pytest.fail("corrupt scoped intent must not suppress fence"),
     )
+
+
+@pytest.mark.parametrize("outcome", ("accepted", "uncertain"))
+def test_durable_attempt_fences_same_endpoint_after_scope_move(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+) -> None:
+    from app import claude_wake
+    from core.relay import RelayService
+
+    relay = RelayService(client.app.state.pallium_service._storage)
+    source = {"container_ref": "git:example/source"}
+    old = {"container_ref": "git:example/old"}
+    new = {"container_ref": "git:example/new"}
+    relay.turn(runtime="codex", session_ref="sender", **source)
+    registered = relay.turn(
+        runtime="claude-code", session_ref=PAYLOAD["session_ref"], **old,
+    )["session"]
+    endpoint_id = registered["endpoint_id"]
+    old_payload = {**PAYLOAD, **old}
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, old_payload, "old")
+    sent = relay.send(
+        sender_runtime="codex",
+        sender_session_ref="sender",
+        recipient=endpoint_id,
+        payload="scope movement fence",
+        **source,
+    )
+    delivery = sent["deliveries"][0]
+    result = {
+        "recipient": "claude-code:" + PAYLOAD["session_ref"],
+        "deliveries": [{
+            "delivery_id": delivery["delivery_id"],
+            "state": "pending",
+            "recipient_endpoint_id": endpoint_id,
+            "recipient_runtime": "claude-code",
+            "recipient_session_ref": PAYLOAD["session_ref"],
+            "recipient_container_ref": old["container_ref"],
+        }],
+    }
+    native_writes = []
+
+    def transport(socket_path: str, token: str) -> ActivationAttemptResult:
+        native_writes.append((socket_path, token))
+        evidence = (
+            ("submission_attempted", "transport_accepted")
+            if outcome == "accepted" else ("submission_attempted",)
+        )
+        return ActivationAttemptResult(outcome, "controlled", evidence)
+
+    monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
+    worker = claude_wake.schedule_claude_relay_wake(
+        result, old, registry=registry, relay_service=relay,
+    )
+    assert worker is not None
+    worker.join(timeout=1)
+    assert not worker.is_alive() and len(native_writes) == 1
+    retained = registry.recovery_candidates()
+    assert len(retained) == 1
+    assert retained[0]["state"] == "wake_inflight"
+    assert retained[0]["delivery_id"] == delivery["delivery_id"]
+
+    moved = relay.turn(
+        runtime="claude-code",
+        session_ref=PAYLOAD["session_ref"],
+        max_chars=1,
+        max_messages=1,
+        previous_container_ref=old["container_ref"],
+        previous_endpoint_id=endpoint_id,
+        previous_scope_generation=0,
+        **new,
+    )
+    assert moved["session"]["endpoint_id"] == endpoint_id
+    assert moved["deliveries"] == []
+    new_payload = {**PAYLOAD, **new}
+    assert _register(registry, tmp_path, new_payload, "new")
+
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path)
+    retry_result = {
+        "recipient": "claude-code:" + PAYLOAD["session_ref"],
+        "deliveries": [{
+            **result["deliveries"][0],
+            "recipient_container_ref": new["container_ref"],
+        }],
+    }
+    retry = claude_wake.schedule_claude_relay_wake(
+        retry_result, new, registry=restarted,
+    )
+    assert retry is not None
+    retry.join(timeout=1)
+    assert not retry.is_alive()
+    assert len(native_writes) == 1
+    retained = [
+        item for item in restarted.recovery_candidates()
+        if item["state"] == "wake_inflight"
+    ]
+    assert len(retained) == 1
+    assert retained[0]["delivery_id"] == delivery["delivery_id"]
+    stored = relay.message_status(
+        message_id=sent["message_id"], **source,
+    )["deliveries"][0]
+    assert stored["delivery_id"] == delivery["delivery_id"]
+    assert stored["recipient_endpoint_id"] == endpoint_id
+    assert stored["recipient_container_ref"] == old["container_ref"]
+    assert stored["state"] == "pending"
+    assert restarted.release_delivery(delivery["delivery_id"])
+    assert all(
+        item["state"] != "wake_inflight"
+        for item in restarted.recovery_candidates()
+    )

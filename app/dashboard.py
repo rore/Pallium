@@ -215,7 +215,7 @@ def mount_dashboard(
         projection = row
         if "recipient_endpoint_id" in row and "endpoint_id" not in row:
             projection = (
-                {**row, **endpoint, "recipient_endpoint_id": endpoint_id}
+                dict(endpoint)
                 if endpoint is not None and (endpoint.get("endpoint_id") or endpoint.get("id")) == endpoint_id
                 else {}
             )

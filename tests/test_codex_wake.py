@@ -2136,3 +2136,171 @@ def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservatio
     )["activation"]
     assert closed["availability"] == "closed"
     assert closed["qualification"] == "unknown"
+
+
+def test_ack_before_reserve_cannot_create_codex_fence_or_native_write(monkeypatch) -> None:
+    registry = CodexWakeRegistry()
+    checked = []
+
+    class AckedRelay:
+        def pending_candidate(self, **kwargs):
+            checked.append(kwargs)
+            assert registry.release_delivery(kwargs["delivery_id"]) is None
+            return None
+
+    with patch("app.codex_wake.threading.Thread") as thread, patch(
+        "app.codex_wake._start_launch",
+    ) as native_start:
+        worker = codex_wake.schedule_codex_relay_wake(
+            _delivery(), SCOPE, relay_service=AckedRelay(), registry=registry,
+        )
+
+    assert worker is None
+    assert checked == [{
+        "runtime": "codex",
+        "session_ref": "target-session",
+        "container_ref": SCOPE["container_ref"],
+        "delivery_id": "delivery-1",
+    }]
+    assert registry.snapshot("relay-session-" + "a" * 32) is None
+    thread.assert_not_called()
+    native_start.assert_not_called()
+
+
+def test_ack_after_pending_validation_before_native_start_wins_generation_fence(monkeypatch) -> None:
+    registry = CodexWakeRegistry()
+    endpoint_id = "relay-session-" + "a" * 32
+    validated = []
+    reservation = registry.reserve(
+        recipient_endpoint_id=endpoint_id,
+        delivery_id="delivery-validated",
+        session_ref="target-session",
+        container_ref=SCOPE["container_ref"],
+        still_pending=lambda: validated.append(True) or True,
+    )
+    assert reservation is not None and validated == [True]
+    after_debounce = threading.Event()
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: after_debounce.set())
+
+    with patch("app.codex_wake._start_launch") as native_start:
+        with registry._lock:
+            worker = threading.Thread(
+                target=codex_wake._wake_after_debounce,
+                args=(reservation, registry),
+            )
+            worker.start()
+            assert after_debounce.wait(1)
+            assert codex_wake.release_codex_relay_wake(
+                "delivery-validated", registry=registry,
+            )
+        worker.join(timeout=1)
+
+    assert not worker.is_alive()
+    assert registry.snapshot(endpoint_id) is None
+    native_start.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("native_outcome", "durable_outcome"),
+    (("queued", "accepted"), ("ambiguous", "uncertain")),
+)
+def test_http_scope_move_reads_current_endpoint_activation_and_historical_delivery(
+    client, tmp_path, monkeypatch, native_outcome: str, durable_outcome: str,
+) -> None:
+    registry_root = tmp_path / native_outcome
+    registry = CodexWakeRegistry(registry_root)
+    storage = client.app.state.pallium_service._storage
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=storage,
+        codex_wake_registry=registry,
+    ))
+    route = TestClient(app)
+    source = {"container_ref": "git:example.test/scope-source"}
+    old = {"container_ref": "git:example.test/scope-old"}
+    new = {"container_ref": "git:example.test/scope-new"}
+    assert route.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender", **source,
+    }).status_code == 200
+    registered = route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", **old,
+    }).json()["session"]
+    endpoint_id = registered["endpoint_id"]
+    assert route.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "new-scope-peer", **new,
+    }).status_code == 200
+
+    process = MagicMock(returncode=0)
+    if native_outcome == "queued":
+        process.communicate.return_value = (None, "")
+    else:
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired([], 30), (None, ""),
+        ]
+    workers = []
+
+    def schedule(result, scope, **kwargs):
+        worker = codex_wake.schedule_codex_relay_wake(result, scope, **kwargs)
+        workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
+    with patch("app.codex_wake._popen", return_value=process) as native_write, patch(
+        "app.dependencies.schedule_codex_relay_wake", side_effect=schedule,
+    ):
+        sent = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": endpoint_id,
+            "payload": "durable scope movement",
+            **source,
+        }).json()
+        assert len(workers) == 1 and workers[0] is not None
+        workers[0].join(timeout=1)
+        assert not workers[0].is_alive()
+        native_write.assert_called_once()
+
+    delivery = sent["deliveries"][0]
+    assert registry.snapshot(endpoint_id).outcome == durable_outcome
+    moved = route.post("/relay/turn", json={
+        "runtime": "codex",
+        "session_ref": "target",
+        "max_chars": 1,
+        "max_messages": 1,
+        "previous_container_ref": old["container_ref"],
+        "previous_endpoint_id": endpoint_id,
+        "previous_scope_generation": 0,
+        **new,
+    })
+    assert moved.status_code == 200 and moved.json()["deliveries"] == []
+
+    restarted = CodexWakeRegistry(registry_root)
+    read_app = FastAPI()
+    read_app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=storage,
+        codex_wake_registry=restarted,
+    ))
+    status = TestClient(read_app).get(
+        f"/relay/messages/{sent['message_id']}", params=source,
+    ).json()["deliveries"][0]
+    assert {
+        key: status[key]
+        for key in (
+            "delivery_id", "recipient_endpoint_id", "recipient_runtime",
+            "recipient_session_ref", "recipient_container_ref", "state",
+        )
+    } == {
+        "delivery_id": delivery["delivery_id"],
+        "recipient_endpoint_id": endpoint_id,
+        "recipient_runtime": "codex",
+        "recipient_session_ref": "target",
+        "recipient_container_ref": old["container_ref"],
+        "state": "pending",
+    }
+    assert status["activation"]["availability"] == "attempt_inflight"
+    assert status["activation"]["qualification"] == "qualified"
+    assert status["activation"]["fallback"] == "next_natural_turn"
+    assert restarted.snapshot(endpoint_id).outcome == durable_outcome

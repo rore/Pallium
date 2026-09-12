@@ -1,7 +1,7 @@
 ---
 id: add-relay-activation-capability-contract
 title: Define explicit Relay activation capabilities and outcomes
-status: done
+status: queued
 priority: high
 commitment: committed
 milestone: pallium-relay

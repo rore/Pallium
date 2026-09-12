@@ -1800,3 +1800,29 @@ def test_cross_container_duplicate_native_claude_endpoints_wake_independently(
     assert sorted(observed) == [("socket-a", "token-a"), ("socket-b", "token-b")]
     assert [item["payload"] for item in turn("claude-code", "duplicate", source)["deliveries"]] == ["left"]
     assert [item["payload"] for item in turn("claude-code", "duplicate", target)["deliveries"]] == ["right"]
+
+def test_posix_transport_post_frame_failure_is_uncertain(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.claude_wake_transport as transport
+
+    writes = []
+
+    class BrokenAfterAuth:
+        def settimeout(self, _seconds):
+            pass
+        def connect(self, _path):
+            pass
+        def sendall(self, value):
+            writes.append(value)
+            if len(writes) == 2:
+                raise socket.timeout()
+        def close(self):
+            pass
+
+    monkeypatch.setattr(transport.socket, "AF_UNIX", 1, raising=False)
+    monkeypatch.setattr(transport.socket, "socket", lambda *_: BrokenAfterAuth())
+    result = transport._posix_transport("ignored", "token")
+    assert len(writes) == 2
+    assert result.outcome == "uncertain"
+    assert result.reason == "peer_frame_uncertain"
+    assert result.evidence == ("submission_attempted",)
+    assert result.native_retry_safe is False
