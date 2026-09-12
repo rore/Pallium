@@ -59,7 +59,7 @@ Approved by user 2026-09-12: "Second, the relay to operational tasks. You can ad
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Exact design for acceptance
@@ -125,6 +125,7 @@ Context budget rule: HTTP and dashboard may show the full bounded object. MCP de
 - Focused verification so far: Codex wake 54 passed; Claude durability 45 passed; Claude dispatch/registration 99 passed with 2 platform skips; activation contract 8 passed; ACK-family HTTP 1 passed; MCP budget 2 passed; dashboard projection 1 passed. `tests/test_relay_wake_contract.py` is an existing file materially expanded for the activation contract. The first `apply_patch` attempt failed with Windows error 1327; every subsequent edit used the documented narrowly scoped deterministic replacement fallback.
 
 - Final focused aggregate: `python -m pytest tests/test_codex_wake.py tests/test_claude_wake_durability.py tests/test_claude_wake_dispatch.py tests/test_claude_wake_registration.py tests/test_relay_wake_contract.py tests/test_mcp_server.py tests/test_dashboard.py -q -n 0 --tb=short` completed with 307 passed and 2 skipped in 69.79 seconds; `python -m pytest --lf --lfnf=none -q -n 0` completed with 43 passed and 144 deselected in 18.20 seconds. `git diff --check` passed with line-ending warnings only. The import-boundary backend passed with no violations. Redline classified the staged change RED because `api/routes.py` and `api/schemas.py` are red-zone files; its only unsatisfied checkpoint is `api-review` in shadow/advisory mode, and the workflow checker therefore returned advisory (exit 1) with every blocking predicate passed. Per the assigned stop condition, the full suite, PR, merge, and service restart were intentionally not run.
+- Required full-suite verification at commit 0cb5a097fd6eccd1adaf04c50e80e08bb157424e: exact command .venv\\Scripts\\python.exe -m pytest tests/ -x -q failed to start pytest because .venv\\Scripts\\python.exe reported No module named pytest; duration 0.17 seconds, no test counts.
 
 ## Evidence
 
