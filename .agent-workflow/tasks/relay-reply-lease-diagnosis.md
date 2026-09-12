@@ -44,7 +44,7 @@
 ## Evidence
 
 - Incident evidence: first reply began about 140.329 seconds after its lease expired; the reclaim reply began about 6.557 seconds after its new lease expired. A third claim completed normally five seconds after claim. This distinguishes valid expiry from race, stale copy, or immediate-expiry implementation failure.
-- Focused corrected expiry and guidance tests: `10 passed in 2.57s`.
+- Initial focused corrected expiry and guidance tests: `10 passed in 2.57s`; after review-guidance correction: `11 passed in 1.87s`.
 - Full suite: `4868 passed, 33 skipped, 2 xfailed in 212.35s`.
 - Last-failure command found no cached failures (`5118 deselected`); pytest returned its no-tests-selected status.
 - `git diff --check`: clean apart from Git's line-ending notice.
@@ -55,4 +55,5 @@
 
 - Clean-context Astra review first identified the original-message TTL inconsistency and lease-guidance gap while confirming both incident failures were valid expiry and the transaction design was sound.
 - Final Astra review caught and verified correction of a test-order masking risk: persisted expiry is asserted before the public status read can normalize state.
-- Final verdict: `MERGEABLE_FOR_PR: yes`; no remaining correctness, boundary, privacy, transaction, or overengineering findings.
+- CodeRabbit then identified that source TTL may precede the 60-second lease. MCP/docs/skills now require action before either deadline while preserving late reply after ACK; focused assertions pass.
+- Astra re-reviewed that follow-up and returned `MERGEABLE_FOR_PR: yes` with no remaining correctness, boundary, privacy, transaction, or overengineering findings.

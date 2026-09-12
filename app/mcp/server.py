@@ -1186,7 +1186,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         expires_in_seconds: int | None = None,
         container_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery with at most 16,000 Unicode code points. A delivery permits one idempotent reply. For MCP receive, reply with its receipt before the 60-second lease ends, or ACK before long work and reply later with the same receipt. If this MCP configuration lacks Relay scope, copy container_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt."""
+        """Reply once to a received Relay delivery with at most 16,000 Unicode code points. A delivery permits one idempotent reply. For MCP receive, reply with its receipt or ACK before either the source message expiry or 60-second claim lease ends; after ACK, reply later with the same receipt. If this MCP configuration lacks Relay scope, copy container_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
@@ -1224,7 +1224,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         container_ref: str | None = None,
         request_ctx: object | None = None,
     ) -> str:
-        """Claim one bounded Relay delivery for this runtime session. The claim lasts 60 seconds. After paging, reply within the lease or ACK before long work and reply later with the same receipt. max_chars=0 uses 2,000; larger values clamp to 2,000. Continue truncated bodies with pallium_relay_status(message_id, next_offset). If this MCP configuration lacks Relay scope, copy container_ref from injected scope. Call pallium_relay_ack(delivery_id, receipt), or pallium_relay_reply to reply and ACK atomically."""
+        """Claim one bounded Relay delivery for this runtime session. The claim lasts 60 seconds. After paging, reply or ACK before either the source message expiry or claim lease ends; after ACK, reply later with the same receipt. max_chars=0 uses 2,000; larger values clamp to 2,000. Continue truncated bodies with pallium_relay_status(message_id, next_offset). If this MCP configuration lacks Relay scope, copy container_ref from injected scope. Call pallium_relay_ack(delivery_id, receipt), or pallium_relay_reply to reply and ACK atomically."""
         if max_chars < 0 or 0 < max_chars < _MCP_RELAY_MIN_CHARS:
             return _json_text({
                 "error": f"max_chars must be 0 or at least {_MCP_RELAY_MIN_CHARS}",
@@ -1274,7 +1274,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         receipt: str,
         container_ref: str | None = None,
     ) -> str:
-        """Acknowledge a Relay delivery after receiving its payload. ACK within the 60-second claim before long work; a later reply may reuse the receipt. If this MCP configuration lacks Relay scope, copy container_ref from injected scope. Pass the receipt from pallium_relay_receive; use pallium_relay_reply when replying atomically. If the result says already_delivered=true, this is a duplicate: do not act on it again."""
+        """Acknowledge a Relay delivery after receiving its payload. ACK before either the source message expiry or 60-second claim ends and before long work; a later reply may reuse the receipt. If this MCP configuration lacks Relay scope, copy container_ref from injected scope. Pass the receipt from pallium_relay_receive; use pallium_relay_reply when replying atomically. If the result says already_delivered=true, this is a duplicate: do not act on it again."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error

@@ -11,7 +11,7 @@ description: Use Pallium Relay, Session History, or optional derived memory.
 - Injected `agent_ref`/`thread_ref` identify self; never infer.
 - Role target: current `@name`; rediscover before endpoint reuse. Check returned admission session/container if scope matters. Aliases/endpoints move; neither proves scope. No broadcast/bare runtime; ask before takeover unless requested; ignore ACK-only.
 - For exact work or link correction, load [work associations](references/work-associations.md).
-- MCP lease: 60s. After paging, ACK before long work; reply later with its receipt. Reply via `pallium_relay_reply`; page `pallium_relay_status` to `next_offset=null`. On `already_delivered=true` or conflict, only that delivery copy is stale: do not retry/reply/use its payload, but continue the surrounding user task and independently established work.
+- MCP: reply/ACK before source TTL or 60s lease ends; ACK permits later reply. Reply via `pallium_relay_reply`; page `pallium_relay_status` to `next_offset=null`. On `already_delivered=true` or conflict, only that delivery copy is stale: do not retry/reply/use its payload, but continue the surrounding user task and independently established work.
 
 ## Session History
 

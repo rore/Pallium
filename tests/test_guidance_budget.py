@@ -79,7 +79,7 @@ def test_relay_guidance_covers_stale_delivery_and_recipient_identity() -> None:
     movement = "Aliases/endpoints move; neither proves scope"
     stale_trigger = "On `already_delivered=true` or conflict"
     assert all(all(item in skill.read_text(encoding="utf-8") for item in (routing, snapshot, movement, stale_trigger)) for skill in skills)
-    lease_rule = "MCP lease: 60s. After paging, ACK before long work; reply later with its receipt."
+    lease_rule = "MCP: reply/ACK before source TTL or 60s lease ends; ACK permits later reply."
     assert all(lease_rule in skill.read_text(encoding="utf-8") for skill in skills)
 
 def test_history_guidance_distinguishes_modes_without_dropping_safety() -> None:
