@@ -18,6 +18,25 @@ import httpx
 from app.mcp.context import PalliumContext
 from redaction import redact_sensitive
 
+def _relay_transport_error(method: str, exc: Exception) -> dict[str, Any]:
+    """Return a fixed, privacy-safe diagnostic for Relay transport failures."""
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+        category = "connect"
+    elif isinstance(exc, (httpx.ReadTimeout, httpx.ReadError)):
+        category = "read_timeout"
+    elif isinstance(exc, (httpx.WriteTimeout, httpx.WriteError)):
+        category = "write_timeout"
+    elif isinstance(exc, httpx.PoolTimeout):
+        category = "pool_timeout"
+    else:
+        category = "transport"
+    return {
+        "error": f"Relay {method} {category} failure",
+        "error_kind": "transport_unavailable",
+        "retryable": method == "GET" and category == "connect",
+        "action": "check service health and retry once",
+    }
+
 
 class PalliumMcpClient:
     """Thin HTTP client that proxies MCP tool calls to Pallium's REST API."""
@@ -269,10 +288,10 @@ class PalliumMcpClient:
                         break
                     try:
                         response = await http.get(path, params=params, timeout=max(0.1, remaining))
-                    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
                         last_connect_error = exc
                         if attempt + 1 >= self._RELAY_BUSY_ATTEMPTS or deadline <= time.monotonic():
-                            return {"error": redact_sensitive(str(exc))}
+                            return _relay_transport_error("GET", exc)
                         await asyncio.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
                         continue
                     try:
@@ -585,13 +604,13 @@ class PalliumMcpClient:
                             response = await http.post(path, json=payload)
                         else:
                             response = await http.post(path, json=payload, timeout=request_timeout)
-                    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
                         last_connect_error = exc
                         if not retry_relay_busy or attempt + 1 >= attempts:
-                            return {"error": redact_sensitive(str(exc))}
+                            return _relay_transport_error("POST", exc)
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
-                            return {"error": redact_sensitive(str(exc))}
+                            return _relay_transport_error("POST", exc)
                         await asyncio.sleep(min(1.0, remaining))
                         continue
                     parse_error = None
@@ -641,7 +660,7 @@ class PalliumMcpClient:
                 "detail": body,
             }
         except Exception as exc:
-            return {"error": redact_sensitive(str(exc))}
+            return _relay_transport_error("POST", exc)
     async def remember_memory(
         self,
         *,

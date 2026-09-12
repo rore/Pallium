@@ -20,7 +20,7 @@ pytest.importorskip("mcp", reason="mcp[cli] not installed")
 
 from app.config import AppConfig
 from app.main import create_app
-from app.mcp.client import PalliumMcpClient
+from app.mcp.client import PalliumMcpClient, _relay_transport_error
 from app.mcp.server import create_server
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
@@ -1278,3 +1278,22 @@ async def test_get_transport_redacts_secret_from_http_error(monkeypatch):
     rendered = json.dumps(result)
     assert secret not in rendered
     assert result["error"] == "HTTP 422 from /relay/work-refs/participants"
+
+@pytest.mark.parametrize(
+    ("method", "exc", "category", "retryable"),
+    [
+        ("GET", httpx.ConnectError("secret-endpoint"), "connect", True),
+        ("GET", httpx.ReadTimeout("secret-read"), "read_timeout", False),
+        ("POST", httpx.WriteTimeout("secret-write"), "write_timeout", False),
+        ("POST", httpx.PoolTimeout("secret-pool"), "pool_timeout", False),
+    ],
+)
+def test_relay_transport_diagnostic_is_allowlisted(method, exc, category, retryable):
+    result = _relay_transport_error(method, exc)
+    assert result == {
+        "error": f"Relay {method} {category} failure",
+        "error_kind": "transport_unavailable",
+        "retryable": retryable,
+        "action": "check service health and retry once",
+    }
+    assert "secret" not in json.dumps(result)

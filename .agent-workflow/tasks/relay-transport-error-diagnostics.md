@@ -41,7 +41,7 @@
 ## Implementation
 
 - Pre-edit file list: `app/mcp/client.py`, focused `tests/test_relay_mcp_tools.py` and `tests/test_mcp_server.py`, and this Work Record only. Supervisor/service/API/storage/hook/wake files are explicitly excluded.
-- Work Record only. No production files, service state, installed integrations, or parallel task state changed.
+- Added the shared fixed allowlisted Relay transport formatter and applied it to Relay GET/POST timeout/connection paths without changing retry loops, deadlines, HTTP handling, or cancellation.\n- Added focused category/retryability/privacy regression coverage; no supervisor logging change was needed for this slice.
 
 ## Evidence
 
