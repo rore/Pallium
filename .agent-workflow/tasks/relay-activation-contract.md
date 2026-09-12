@@ -174,4 +174,14 @@ APPROVE on `adf53462e84d825a51cc0c5f06aa07149159ef28` from a fresh clean-context
 
 ## Result review
 
-Pending.
+PASS on `0fea4c1af6dfcb093277805714430ca05463acf3` against current main
+`df407c27f624e19c737f12cdcd5b31aabc1126f0` from the independent clean-context
+smart reviewer. The 24 rebased patches were unchanged; the added PR176
+integration regression proves an expired atomic reply returns 409, creates no
+reply, and retains the exact activation reservation. Evidence accepted: the
+pre-rebase full suite passed 4,882 tests with 33 skipped and 2 expected xfails;
+post-rebase checks passed 189 MCP tests, 210 wake tests with 2 platform skips,
+and 4 exact integration cases. No remaining correctness or integration blocker
+was found. The user explicitly approved proceeding on 2026-09-12 after the
+duplicate/missed paid-turn risk was stated. The structurally separate
+`api-review` checkpoint remains for the pull request.
