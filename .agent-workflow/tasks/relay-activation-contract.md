@@ -59,7 +59,7 @@ Approved by user 2026-09-12: "Second, the relay to operational tasks. You can ad
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Exact design for acceptance
@@ -116,7 +116,7 @@ Context budget rule: HTTP and dashboard may show the full bounded object. MCP de
 - Manager accepted the additive core/projector/surface shape and implementation scope. The accepted constraints omit unsupported `turn_started`, require generation/native-write interleaving coverage, preserve unresolved reservations indefinitely with honest natural-turn fallback, and require fail-closed corrupt/read/write/capacity behavior under the documented single-service-process ownership assumption.
 - Recorded the user's scoped authorization relayed by `astra-reviewer`; no additional permission question is required while implementation stays faithful to the approved roadmap contract.
 - Refreshed pre-edit classification after manager acceptance: API_CHANGE, High/Moderate remains adequate, api-review is required, no boundary risk exists in the accepted dependency direction, and no Relay candidate-reader/storage change is needed.
-- Implementation remains paused after the one permitted retry of the wake-scheduler mutation: managed approval rejected it because the authorization was relayed through assistant context rather than a trusted user message. No workaround was attempted. The two new core modules are inert and unintegrated; resume only after a direct user message explicitly authorizes the accepted Claude/Codex durable wake reservation and scheduler changes despite duplicate or missed paid-turn risk.
+- Implementation resumed after the user directly replied "Approve" to the explicit request authorizing the accepted Claude/Codex durable wake reservation and scheduler changes despite duplicate or missed paid-turn risk. No workaround or alternate execution path was used.
 
 ## Evidence
 
@@ -124,6 +124,10 @@ Context budget rule: HTTP and dashboard may show the full bounded object. MCP de
 - Pre-edit redline review: clean-context `/root/activation_redline` returned API_CHANGE, High/Moderate, no boundary violation in the recommended dependency direction, with `api-review` required.
 - Read-only inventories: `/root/activation_inventory` and `/root/activation_surfaces` identified existing authority, mappings, public projection seams, and focused tests.
 - Relay work association: `work:v1:7b792ebce40247954da55a8ce3d3fab316f28c56713e12feee195560ad8025fc`; participant lookup returned `pall-arc` and `astra-reviewer` only.
+- External managed-execution approval evidence (separate from agent-workflow), sanitized and preserved exactly:
+  - First rejection: "This action was rejected due to unacceptable risk. Reason: This replaces production wake scheduling and introduces durable reservation and native process-launch behavior that could cause duplicate or missed paid turns; the trusted transcript does not authorize this exact side effect. The agent must not attempt to achieve the same outcome via workaround, indirect execution, or policy circumvention. Proceed only with a materially safer alternative, or if the user explicitly approves the action after being informed of the risk. Otherwise, stop and request user input."
+  - Permitted retry rejection: "This action was rejected due to unacceptable risk. Reason: This is the previously rejected production scheduler mutation with durable native wake reservations and duplicate/missed-turn risk; the claimed approval appears only in untrusted assistant context, not a trusted user message. The agent must not attempt to achieve the same outcome via workaround, indirect execution, or policy circumvention. Proceed only with a materially safer alternative, or if the user explicitly approves the action after being informed of the risk. Otherwise, stop and request user input."
+  - Rejected command scope: working directory C:\Dev\rore\Pallium\.worktrees\relay-activation-contract; only app/codex_wake.py; deterministically preserve the suffix from def _wake onward and replace the scheduler prefix using [IO.File]::WriteAllText. Intended change was to integrate the approved CodexWakeRegistry/ActivationAttemptResult gate, require recipient_endpoint_id, reserve durably before worker creation, make the generation check indivisible with native wake, retain accepted/uncertain reservations, clear only durably recorded retry-safe pre-submit failures, keep turn admission as a compatibility no-op, and never infer recipient unreachable from local launch failure. No other file, checkout, shell, agent, native probe, service, or runtime was in the rejected command.
 
 ## Plan review
 
