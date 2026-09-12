@@ -21,7 +21,12 @@
 
 **Plan:** 1. Invoke agent-workflow, record the task, and classify redline risk before production edits (completed). 2. Trace callers of `_get_or_error`, `_post_or_error`, `_post`, and existing retry tests (completed); keep supervisor crash-cause work separate. 3. Obtain clean-context plan review before code edits. 4. Add one fixed allowlist formatter keyed only by `GET|POST` and `connection|timeout`, used by Relay GET and retry-enabled Relay POST paths. Connect failures remain retryable; GET timeouts may be retried; POST read/write/pool timeout output is explicitly ambiguous/non-retryable. Preserve non-Relay calls, retries, deadlines, HTTP errors, and cancellation. 5. Extend existing focused tests for attempt and deadline exhaustion, single-attempt receive, empty/non-empty exception messages, connect/read/write/pool timeouts, no secret/URL/path/payload leakage, unchanged HTTP errors, cancellation, and MCP-visible serialization. 6. Run focused and affected MCP/Relay tests, workflow/redline checks, and smart result review. Stop and re-plan for retry-budget, API/schema, persistence, authorization, hook, wake, supervisor, or service-management changes.
 
-**Verification plan:**`n- Fixed category output and privacy -> existing MCP client tests extended for empty/non-empty connect exceptions and connect/read/write/pool timeouts on GET/POST, asserting no exception message, URL, path, payload, credential, or arbitrary class name.`n- Retry and ambiguity semantics -> focused tests for attempt exhaustion, deadline exhaustion, single-attempt receive, unchanged count/backoff/budget, GET retryability, and POST timeout non-retryability.`n- Compatibility -> focused tests proving retry-disabled memory/source writes keep existing behavior, HTTP errors are unchanged, and cancellation propagates.`n- Caller surface -> MCP tool tests asserting bounded ToolError JSON preserves fixed `error`, `error_kind`, `retryable`, and `action` fields.`n- Repository readiness -> focused/affected Relay-MCP tests, workflow check, fresh redline report, and smart result review.
+**Verification plan:**
+- Fixed category output and privacy -> existing MCP client tests extended for empty/non-empty connect exceptions and connect/read/write/pool timeouts on GET/POST, asserting no exception message, URL, path, payload, credential, or arbitrary class name.
+- Retry and ambiguity semantics -> focused tests for attempt exhaustion, deadline exhaustion, single-attempt receive, unchanged count/backoff/budget, GET retryability, and POST timeout non-retryability.
+- Compatibility -> focused tests proving retry-disabled memory/source writes keep existing behavior, HTTP errors are unchanged, and cancellation propagates.
+- Caller surface -> MCP tool tests asserting bounded ToolError JSON preserves fixed `error`, `error_kind`, `retryable`, and `action` fields.
+- Repository readiness -> focused/affected Relay-MCP tests, workflow check, fresh redline report, and smart result review.
 
 **Plan review:** Clean-context smart review on `da5cacc8` withheld for fixed allowlisted categories, timeout ambiguity, non-Relay caller compatibility, complete retry/cancellation/MCP coverage, and removal of supervisor work. This revision incorporates every correction; re-review is pending. Final implementation requires smart result review.
 
@@ -40,7 +45,8 @@
 ## Evidence
 
 - Branch/worktree created from current `main` at `df407c27`.
-- Initial incident evidence and current client behavior are recorded in Discovery. Read-only supervisor inspection confirmed crash-cause retention is a separate task.`n- Clean-context plan review withheld on five bounded contract gaps; all are incorporated in the revised plan, with no production edit.
+- Initial incident evidence and current client behavior are recorded in Discovery. Read-only supervisor inspection confirmed crash-cause retention is a separate task.
+- Clean-context plan review withheld on five bounded contract gaps; all are incorporated in the revised plan, with no production edit.
 
 ## Result review
 
