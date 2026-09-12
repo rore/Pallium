@@ -29,22 +29,30 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Work Record created before code inspection or edits. Exact caller evidence and persisted delivery state classify both reported failures as valid lease expiry; no production code has changed.
-- Focused current-main tests for valid atomic reply, expired redelivery, and stale-receipt rejection pass.
-- Clean-context review confirmed the incident is valid expiry and found a separate atomic-reply message-TTL inconsistency plus a lease-guidance gap. Plan updated and approved before production edits.
+- Classified both reported 409 replies as valid expiry from exact claim/reclaim and call-start timestamps; no lease-duration or reclaim code changed.
+- Added the missing original-message TTL check to `relay_reply_atomic`, matching ACK semantics: an undelivered claimed delivery becomes `expired`, its claim token is cleared, the transition commits, then the caller receives `409 message has expired`.
+- Preserved delivered/idempotent reply behavior so a prompt ACK can safely precede long work and the same receipt can create the one allowed reply later, even after the original TTL and claim lease pass.
+- Documented the 60-second MCP claim and ACK-before-long-work flow in MCP descriptions, Relay docs, and the three identical runtime skills. Restored the already-requested takeover exception and kept each skill within its measured budget.
+- Added caller-surface E2E coverage for explicit TTL, exact expiry boundary, simultaneous message/lease expiry, persisted and public terminal state, no reply on expiry, and late reply after prompt ACK.
+- `apply_patch` failed once with machine-local Windows error 1327; per local instructions, all edits used narrowly scoped deterministic PowerShell replacements instead.
 
 ## Evidence
 
-- Caller evidence reply at 12:39:12Z supplies exact delivery, receipt generations, claim/expiry timestamps, tool-call timing, and absence of intervening claimers. Both reply calls began after their returned lease deadlines.
-- Current persisted state shows the same delivery claimed a third time at 12:03:54.185344Z and delivered at 12:03:59.394422Z with `attempts=3`, proving ordinary recovery completed.
-- `tests/test_relay_mcp_lifecycle.py::{test_lease_expiry_causes_redelivery,test_atomic_reply_from_claimed_state,test_mcp_ack_stale_receipt_returns_409}`: 3 passed in 1.85s.
-- Independent review found `relay_reply_atomic` omits the original-message expiry check present in `relay_ack_by_receipt`; current reply tests cover claim expiry but not message TTL expiry.
+- Incident evidence: first reply began about 140.329 seconds after its lease expired; the reclaim reply began about 6.557 seconds after its new lease expired. A third claim completed normally five seconds after claim. This distinguishes valid expiry from race, stale copy, or immediate-expiry implementation failure.
+- Focused corrected expiry and guidance tests: `10 passed in 2.57s`.
+- Full suite: `4868 passed, 33 skipped, 2 xfailed in 212.35s`.
+- Last-failure command found no cached failures (`5118 deselected`); pytest returned its no-tests-selected status.
+- `git diff --check`: clean apart from Git's line-ending notice.
+- Import-linter report: zero violations.
+- Redline report: `GRAY` advisory for watched storage/MCP and integration files; no red paths, boundary violations, API/schema/security/runtime-config changes, or required checkpoints.
 
 ## Result review
 
-- Pending.
+- Clean-context Astra review first identified the original-message TTL inconsistency and lease-guidance gap while confirming both incident failures were valid expiry and the transaction design was sound.
+- Final Astra review caught and verified correction of a test-order masking risk: persisted expiry is asserted before the public status read can normalize state.
+- Final verdict: `MERGEABLE_FOR_PR: yes`; no remaining correctness, boundary, privacy, transaction, or overengineering findings.

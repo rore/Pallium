@@ -999,8 +999,10 @@ class SQLiteRelayMixin:
     ) -> dict[str, Any]:
         """Validate, create reply, and optionally ACK the delivery in one transaction."""
         current = _now(now)
+        expired = False
 
         def run(db):
+            nonlocal expired
             row = db.execute(
                 select(RelayDeliveryRecord, RelayMessageRecord)
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
@@ -1011,6 +1013,11 @@ class SQLiteRelayMixin:
             delivery, message = row
 
             if delivery.state == "claimed":
+                if _now(message.expires_at) <= current:
+                    delivery.state = "expired"
+                    delivery.claim_token = None
+                    expired = True
+                    return None
                 if delivery.lease_expires_at is None or _now(delivery.lease_expires_at) <= current:
                     raise RelayConflictError("claim lease has expired")
                 if receipt is None:
@@ -1090,7 +1097,11 @@ class SQLiteRelayMixin:
             return self._relay_status_in_session(db, reply_msg, current)
 
         with self._begin_relay_immediate() as db:
-            return run(db)
+            result = run(db)
+        if expired:
+            raise RelayConflictError("message has expired")
+        return result
+
     def _relay_status_in_session(
         self, db, message: RelayMessageRecord, current: datetime,
         *, payload_offset: int = 0, payload_limit: int | None = None,

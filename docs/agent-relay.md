@@ -35,7 +35,7 @@ until delivery; callers can opt into an explicit expiry from 60 seconds through
 7 days. HTTP and hook turns claim three messages by default; a positive
 `max_messages` sets an explicit cap, while `0` means unlimited. MCP receive
 claims one delivery per call and keeps its compact JSON response within 2,000
-characters.
+characters. Its claim lease lasts 60 seconds. After paging, reply within the lease or acknowledge with `pallium_relay_ack` before long work, then reply later with the same receipt.
 
 Codex, Claude, and OpenCode hooks claim within 2,360 characters, reserving 40
 characters for a compact backlog notice inside their 2,400-character output budget.

@@ -25,15 +25,24 @@ def _register(client: TestClient, runtime: str = RUNTIME, session: str = SESSION
     return resp.json()
 
 
-def _send(client: TestClient, payload: str = "hello", *, sender_session: str = "sender-s1") -> dict:
+def _send(
+    client: TestClient,
+    payload: str = "hello",
+    *,
+    sender_session: str = "sender-s1",
+    expires_in_seconds: int | None = None,
+) -> dict:
     client.post("/relay/turn", json={"runtime": "codex", "session_ref": sender_session, **SCOPE})
-    resp = client.post("/relay/messages", json={
+    body = {
         "sender_runtime": "codex",
         "sender_session_ref": sender_session,
         "recipient": f"{RUNTIME}:{SESSION}",
         "payload": payload,
         **SCOPE,
-    })
+    }
+    if expires_in_seconds is not None:
+        body["expires_in_seconds"] = expires_in_seconds
+    resp = client.post("/relay/messages", json=body)
     assert resp.status_code == 200, resp.text
     return resp.json()
 
@@ -464,6 +473,66 @@ def test_atomic_reply_from_claimed_state(client: TestClient):
 
     # Delivery is now delivered — cannot ACK again (idempotent → 200) or re-reply
     assert _mcp_ack(client, d["delivery_id"], d["receipt"]).status_code == 200  # idempotent
+
+
+@pytest.mark.parametrize("lease_delta_seconds", [30, 0], ids=["live-claim", "also-expired"])
+def test_reply_rejects_message_expired_at_boundary(
+    client: TestClient,
+    relay_storage,
+    monkeypatch: pytest.MonkeyPatch,
+    lease_delta_seconds: int,
+):
+    _register(client)
+    sent = _send(client, "expires after claim", expires_in_seconds=60)
+    delivery = _turn(client)["deliveries"][0]
+    boundary = datetime.now(timezone.utc)
+
+    import storage.sqlite_relay as sqlite_relay
+    from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord
+    real_now = sqlite_relay._now
+    monkeypatch.setattr(
+        sqlite_relay,
+        "_now",
+        lambda value=None: boundary if value is None else real_now(value),
+    )
+    with relay_storage._begin_relay_immediate() as db:
+        db.get(RelayMessageRecord, sent["message_id"]).expires_at = boundary
+        db.get(RelayDeliveryRecord, delivery["delivery_id"]).lease_expires_at = (
+            boundary + timedelta(seconds=lease_delta_seconds)
+        )
+
+    response = _reply(client, delivery["delivery_id"], delivery["receipt"])
+    assert response.status_code == 409
+    assert response.json()["detail"] == "message has expired"
+    with relay_storage._begin_relay_immediate() as db:
+        stored = db.get(RelayDeliveryRecord, delivery["delivery_id"])
+        assert stored.state == "expired"
+        assert stored.claim_token is None
+    status = client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE)
+    assert status.status_code == 200, status.text
+    assert status.json()["deliveries"][0]["state"] == "expired"
+    assert _turn(client, runtime="codex", session="sender-s1")["deliveries"] == []
+
+
+def test_ack_before_long_work_allows_late_reply(client: TestClient, relay_storage):
+    _register(client)
+    sent = _send(client, "long work", expires_in_seconds=60)
+    delivery = _turn(client)["deliveries"][0]
+    assert _mcp_ack(client, delivery["delivery_id"], delivery["receipt"]).status_code == 200
+
+    from storage.sqlite_schema import RelayDeliveryRecord, RelayMessageRecord
+    past = datetime.now(timezone.utc) - timedelta(seconds=1)
+    with relay_storage._begin_relay_immediate() as db:
+        db.get(RelayMessageRecord, sent["message_id"]).expires_at = past
+        db.get(RelayDeliveryRecord, delivery["delivery_id"]).lease_expires_at = past
+
+    response = _reply(client, delivery["delivery_id"], delivery["receipt"], "finished later")
+    assert response.status_code == 200
+    status = client.get(f"/relay/messages/{sent['message_id']}", params=SCOPE)
+    assert status.status_code == 200, status.text
+    assert status.json()["deliveries"][0]["state"] == "delivered"
+    replies = _turn(client, runtime="codex", session="sender-s1")["deliveries"]
+    assert [item["payload"] for item in replies] == ["finished later"]
 
 
 def test_reply_requires_receipt(client: TestClient):

@@ -857,6 +857,9 @@ async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> No
     assert "16,000 Unicode code points" in tools["pallium_relay_reply"].description
     assert "next_offset" in tools["pallium_relay_status"].description
     assert "one idempotent reply" in tools["pallium_relay_reply"].description
+    assert "60-second lease" in tools["pallium_relay_reply"].description
+    assert "60 seconds" in tools["pallium_relay_receive"].description
+    assert "ACK within the 60-second claim" in tools["pallium_relay_ack"].description
 
 
 @pytest.mark.asyncio
