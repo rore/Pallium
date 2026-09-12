@@ -28,13 +28,13 @@
 - Public lifecycle correctness -> HTTP/status/dashboard and existing claim/ACK/reply/wake tests proving `suppressed` is visible/filterable, excluded from expired/failure counts, terminal, and never selected, ACKed, replied to, woken, or replayed.
 - PR readiness -> focused nodes/files, affected Relay suites, `python -m pytest --lf --lfnf=none -q -n 0`, one `python -m pytest tests/ -x -q`, workflow/redline/API/persistence checks, and `git diff --check`.
 
-**Plan review:** Pallium architecture direction from `@astra-reviewer` approved explicit operator recovery but prohibited automatic convergence, partial repair, provenance loss, unguarded generation checks, live claim/reservation clearing, alias takeover, visibility copying, and non-idempotent retargeting. Independent clean-context review on `820487b8` withheld implementation until this revision defined a real maintenance fence, exact fail-closed activation inspection, audit-only source restrictions, the public `suppressed` contract, one-ledger persistence, and replay-before-preimage ordering. The first revision incorporated five corrections; re-review withheld on shutdown proof. This revision adds strict post-lock manager/process revalidation and fail-closed StopOnly checks; re-review is pending.
+**Plan review:** Pallium architecture direction from `@astra-reviewer` approved explicit operator recovery but prohibited automatic convergence, partial repair, provenance loss, unguarded generation checks, live claim/reservation clearing, alias takeover, visibility copying, and non-idempotent retargeting. Independent clean-context review on `820487b8` withheld implementation until this revision defined a real maintenance fence, exact fail-closed activation inspection, audit-only source restrictions, the public `suppressed` contract, one-ledger persistence, and replay-before-preimage ordering. The first revision incorporated five corrections; re-review withheld on shutdown proof. Commit `609c4baf` added strict post-lock manager/process revalidation and fail-closed StopOnly checks; clean-context smart architecture/persistence re-review returned APPROVE with no remaining blocker.
 
 **Approvals:** Approved by user 2026-09-12: "This in itself sounds like a bug. Investigate what happened and why and how you got confused, validate with the architect to see if this is really a bug, if so fix it till ready and done"; reconfirmed with "Approve" after architecture returned the guarded operator-recovery direction.
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
