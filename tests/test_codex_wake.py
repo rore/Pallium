@@ -2139,6 +2139,72 @@ def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservatio
     assert closed["qualification"] == "unknown"
 
 
+def test_expired_atomic_reply_keeps_exact_codex_activation_reservation(
+    client, isolated_codex_registry: CodexWakeRegistry,
+) -> None:
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+        codex_wake_registry=isolated_codex_registry,
+    ))
+    route = TestClient(app)
+    scope = {"container_ref": "git:example.test/expired-reply-fence"}
+    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+        assert route.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": session, **scope,
+        }).status_code == 200
+
+    with patch("app.codex_wake._wake_after_debounce"), patch(
+        "app.dependencies.schedule_codex_relay_wake",
+        wraps=codex_wake.schedule_codex_relay_wake,
+    ) as schedule:
+        response = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": "codex:target",
+            "payload": "expired atomic reply",
+            **scope,
+        })
+    assert response.status_code == 200, response.text
+    schedule.assert_called_once()
+    sent = response.json()
+    delivery = sent["deliveries"][0]
+    endpoint_id = delivery["recipient_endpoint_id"]
+    assert isolated_codex_registry.reserved(endpoint_id)
+
+    claimed = route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", **scope,
+    }).json()["deliveries"][0]
+    from storage.sqlite_schema import RelayMessageRecord
+    with client.app.state.pallium_service._storage._begin_relay_immediate() as db:
+        db.get(RelayMessageRecord, sent["message_id"]).expires_at = (
+            datetime.now(timezone.utc) - timedelta(seconds=1)
+        )
+
+    rejected = route.post("/relay/replies", json={
+        "delivery_id": claimed["delivery_id"],
+        "receipt": claimed["receipt"],
+        "payload": "must not be created",
+        **scope,
+    })
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"] == "message has expired"
+    assert isolated_codex_registry.reserved(endpoint_id)
+
+    status = route.get(
+        f"/relay/messages/{sent['message_id']}", params=scope,
+    ).json()
+    stored = status["deliveries"][0]
+    assert stored["delivery_id"] == delivery["delivery_id"]
+    assert stored["state"] == "expired"
+    assert stored["activation"]["availability"] == "attempt_inflight"
+    assert stored["activation"]["fallback"] == "next_natural_turn"
+    assert route.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender", **scope,
+    }).json()["deliveries"] == []
+    assert isolated_codex_registry.reserved(endpoint_id)
+
 def _public_ack_route(client, runtime: str):
     scope = {"container_ref": f"git:example.test/public-ack-{runtime}"}
     source_runtime = "claude-code" if runtime == "codex" else "codex"
