@@ -59,7 +59,7 @@ Approved by user 2026-09-12: "Second, the relay to operational tasks. You can ad
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Exact design for acceptance
@@ -108,6 +108,7 @@ Exact file plan:
 Context budget rule: HTTP and dashboard may show the full bounded object. MCP derives from that same object but emits one compact row per recipient: selector, behavior/availability, qualification, and fallback are mandatory; topology, platform/integration, provenance, then supported evidence are elided in that order only when the existing 2,000-character budget requires it. Elision is field-aware and UTF-8-safe; it never emits partial JSON/tokens or hides fallback/unknown state.
 ## Implementation
 
+- Implementation file list before production edits: `.agent-workflow/tasks/relay-activation-contract.md`; new `core/relay_activation.py` and `core/codex_wake.py`; existing `core/claude_wake.py`, `app/claude_wake_transport.py`, `app/claude_wake.py`, `app/codex_wake.py`, `app/dependencies.py`, `api/routes.py`, `api/schemas.py`, `core/relay.py`, `app/mcp/server.py`, `app/dashboard.py`, and `app/dashboard.html`; focused existing `tests/test_claude_wake_dispatch.py`, `tests/test_claude_wake_durability.py`, `tests/test_claude_wake_registration.py`, `tests/test_codex_wake.py`, `tests/test_agent_relay_e2e.py`, `tests/test_mcp_server.py`, and `tests/test_dashboard.py`; `docs/designs/017-relay-wake-phase0.md`, `docs/agent-relay.md`, `roadmap/features/add-relay-activation-capability-contract.md`, `roadmap/board.md`, and `roadmap/scope.md`. No storage/schema, candidate-reader, architecture-core red, CI, service-runtime, dependency, or integration-hook file is included.
 - Created isolated worktree `C:\Dev\rore\Pallium\.worktrees\relay-activation-contract` on branch `feat/relay-activation-contract` from `27313e4e53f1baa502fbb3ef6e9331bdf7316ec6`.
 - Evaluated applicability: production HTTP/MCP/dashboard and adapter changes require the normal workflow; no documentation-only exemption applies.
 - Completed bounded read-only inventory and pre-edit redline classification. No production code has been edited.
@@ -115,6 +116,7 @@ Context budget rule: HTTP and dashboard may show the full bounded object. MCP de
 - Manager accepted the additive core/projector/surface shape and implementation scope. The accepted constraints omit unsupported `turn_started`, require generation/native-write interleaving coverage, preserve unresolved reservations indefinitely with honest natural-turn fallback, and require fail-closed corrupt/read/write/capacity behavior under the documented single-service-process ownership assumption.
 - Recorded the user's scoped authorization relayed by `astra-reviewer`; no additional permission question is required while implementation stays faithful to the approved roadmap contract.
 - Refreshed pre-edit classification after manager acceptance: API_CHANGE, High/Moderate remains adequate, api-review is required, no boundary risk exists in the accepted dependency direction, and no Relay candidate-reader/storage change is needed.
+- Implementation remains paused after the one permitted retry of the wake-scheduler mutation: managed approval rejected it because the authorization was relayed through assistant context rather than a trusted user message. No workaround was attempted. The two new core modules are inert and unintegrated; resume only after a direct user message explicitly authorizes the accepted Claude/Codex durable wake reservation and scheduler changes despite duplicate or missed paid-turn risk.
 
 ## Evidence
 
