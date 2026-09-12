@@ -288,7 +288,7 @@ class PalliumMcpClient:
                         break
                     try:
                         response = await http.get(path, params=params, timeout=max(0.1, remaining))
-                    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+                    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                         last_connect_error = exc
                         if attempt + 1 >= self._RELAY_BUSY_ATTEMPTS or deadline <= time.monotonic():
                             return _relay_transport_error("GET", exc)
@@ -604,7 +604,7 @@ class PalliumMcpClient:
                             response = await http.post(path, json=payload)
                         else:
                             response = await http.post(path, json=payload, timeout=request_timeout)
-                    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+                    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                         last_connect_error = exc
                         if not retry_relay_busy or attempt + 1 >= attempts:
                             return _relay_transport_error("POST", exc)
