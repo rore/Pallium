@@ -18,7 +18,7 @@ import httpx
 from app.mcp.context import PalliumContext
 from redaction import redact_sensitive
 
-def _relay_transport_error(method: str, exc: Exception) -> dict[str, Any]:
+def _relay_transport_error(method: str, exc: Exception | None = None) -> dict[str, Any]:
     """Return a fixed, privacy-safe diagnostic for Relay transport failures."""
     if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
         category = "connect"
@@ -319,7 +319,7 @@ class PalliumMcpClient:
                         return response.json()
                     return body
                 if response is None:
-                    return {"error": redact_sensitive(str(last_connect_error or "Relay retry budget exhausted"))}
+                    return _relay_transport_error("GET", last_connect_error)
                 response.raise_for_status()
                 raise AssertionError("unreachable")
         except httpx.HTTPStatusError as exc:
@@ -593,7 +593,7 @@ class PalliumMcpClient:
                     if deadline is not None and attempt and time.monotonic() >= deadline:
                         if response is not None:
                             break
-                        return {"error": redact_sensitive(str(last_connect_error or "Relay retry budget exhausted"))}
+                        return _relay_transport_error("POST", last_connect_error)
                     request_timeout = (
                         max(0.1, deadline - time.monotonic())
                         if deadline is not None
@@ -645,7 +645,7 @@ class PalliumMcpClient:
                         raise parse_error
                     return body
                 if response is None:
-                    return {"error": redact_sensitive(str(last_connect_error or "Relay retry budget exhausted"))}
+                    return _relay_transport_error("POST", last_connect_error)
                 response.raise_for_status()
                 raise AssertionError("unreachable")
         except httpx.HTTPStatusError as exc:
@@ -660,7 +660,9 @@ class PalliumMcpClient:
                 "detail": body,
             }
         except Exception as exc:
-            return _relay_transport_error("POST", exc)
+            if path.startswith("/relay/"):
+                return _relay_transport_error("POST", exc)
+            return {"error": redact_sensitive(str(exc))}
     async def remember_memory(
         self,
         *,
