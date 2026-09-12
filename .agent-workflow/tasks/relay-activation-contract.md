@@ -51,7 +51,7 @@ When legacy callers and session lifecycle transitions operate, existing fields, 
 Before PR review, redline/workflow checks and `python -m pytest tests/ -x -q` shall pass once with the exact revision recorded.
 
 **Plan review:**
-Clean-context reviews of `587200ae`, `f00888dc`, and `90b11f9d` returned CHANGES_REQUIRED. The second review found same-delivery claim-generation races and Codex replay entry points beyond periodic recovery; the third found missing fresh attempt baselines plus close/scope-movement races. The corrected stable-endpoint durable-reservation design above is pending a final clean-context review and architect acceptance; implementation remains blocked.
+Clean-context reviews of `587200ae`, `f00888dc`, and `90b11f9d` returned CHANGES_REQUIRED and were incorporated. A fresh clean-context smart review of `427a813f` found no remaining concrete blocker and returned APPROVE. Architect acceptance is still pending; implementation remains blocked.
 
 **Approvals:**
 Approved by user 2026-09-12: "Second, the relay to operational tasks. You can advance with that and let's get them completed."
@@ -111,7 +111,7 @@ Context budget rule: HTTP and dashboard may show the full bounded object. MCP de
 - Evaluated applicability: production HTTP/MCP/dashboard and adapter changes require the normal workflow; no documentation-only exemption applies.
 - Completed bounded read-only inventory and pre-edit redline classification. No production code has been edited.
 - The first follow-up `apply_patch` hit the machine-local Windows process failure; the Work Record-only correction used one deterministic exact-string replacement as the repository-approved fallback.
-- Sent the first concrete design and adapter mapping to `astra-reviewer`; clean-context reviews of `587200ae`, `f00888dc`, and `90b11f9d` found safety holes in correlation, replay coverage, fresh baselines, and lifecycle/scope races. The exact corrected durable current-reservation design is recorded above and implementation remains blocked pending final review and architect acceptance.
+- Sent the first concrete design and adapter mapping to `astra-reviewer`; three clean-context reviews found and drove corrections for correlation, replay coverage, fresh baselines, and lifecycle/scope races. A fresh smart gate review approved `427a813f`; implementation remains blocked only on architect acceptance.
 - Recorded the user's scoped authorization relayed by `astra-reviewer`; no additional permission question is required while implementation stays faithful to the approved roadmap contract.
 
 ## Evidence
@@ -123,7 +123,7 @@ Context budget rule: HTTP and dashboard may show the full bounded object. MCP de
 
 ## Plan review
 
-Pending.
+APPROVE on `427a813f` from fresh clean-context smart reviewer; no production files changed or tests run.
 
 ## Result review
 
