@@ -331,6 +331,18 @@ def test_windows_resolver_survives_service_path_without_codex(monkeypatch, tmp_p
     assert codex_wake._codex_executable() == "codex.exe"
 
 
+def test_thread_start_failure_releases_reservation(
+    isolated_codex_registry: CodexWakeRegistry,
+) -> None:
+    endpoint_id = _delivery()["deliveries"][0]["recipient_endpoint_id"]
+    with patch("app.codex_wake.threading.Thread") as thread:
+        thread.return_value.start.side_effect = RuntimeError("thread unavailable")
+        assert codex_wake.schedule_codex_relay_wake(
+            _delivery(), SCOPE, registry=isolated_codex_registry,
+        ) is None
+    assert not isolated_codex_registry.reserved(endpoint_id)
+
+
 def test_alias_and_exact_selectors_start_one_child() -> None:
     with patch("app.codex_wake.threading.Thread") as thread:
         _schedule(_delivery())
@@ -2045,7 +2057,10 @@ def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservatio
         }).status_code == 200
 
     def send_and_claim(payload: str) -> tuple[dict, dict]:
-        with patch("app.codex_wake.threading.Thread"):
+        with patch("app.codex_wake._wake_after_debounce"), patch(
+            "app.dependencies.schedule_codex_relay_wake",
+            wraps=codex_wake.schedule_codex_relay_wake,
+        ) as schedule:
             sent = route.post("/relay/messages", json={
                 "sender_runtime": "claude-code",
                 "sender_session_ref": "sender",
@@ -2053,18 +2068,14 @@ def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservatio
                 "payload": payload,
                 **scope,
             }).json()
+        schedule.assert_called_once()
+        assert schedule.call_args.kwargs["registry"] is isolated_codex_registry
         delivery = sent["deliveries"][0]
         activation = delivery["activation"]
         assert activation["contract"] == "relay-activation/v1"
         assert activation["behavior"] == "busy_queue"
         assert activation["fallback"] == "next_natural_turn"
         assert "turn_started" not in activation["supported_evidence"]
-        if not isolated_codex_registry.reserved(delivery["recipient_endpoint_id"]):
-            assert isolated_codex_registry.reserve(
-                recipient_endpoint_id=delivery["recipient_endpoint_id"],
-                delivery_id=delivery["delivery_id"],
-                session_ref="target", container_ref=scope["container_ref"],
-            ) is not None
         assert isolated_codex_registry.reserved(delivery["recipient_endpoint_id"])
         turn = route.post("/relay/turn", json={
             "runtime": "codex", "session_ref": "target", **scope,
@@ -2084,6 +2095,12 @@ def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservatio
     }
     assert route.post("/relay/deliveries/ack", json=ack_body).status_code == 200
     assert not isolated_codex_registry.reserved(normal["recipient_endpoint_id"])
+    assert isolated_codex_registry.reserve(
+        recipient_endpoint_id=normal["recipient_endpoint_id"],
+        delivery_id=normal["delivery_id"],
+        session_ref="target", container_ref=scope["container_ref"],
+    ) is not None
+    assert isolated_codex_registry.reserved(normal["recipient_endpoint_id"])
     repeated = route.post("/relay/deliveries/ack", json=ack_body)
     assert repeated.status_code == 200 and repeated.json()["already_delivered"] is True
     assert not isolated_codex_registry.reserved(normal["recipient_endpoint_id"])
@@ -2106,3 +2123,16 @@ def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservatio
     assert response.status_code == 200
     assert not isolated_codex_registry.reserved(reply["recipient_endpoint_id"])
     assert "turn_started" not in response.text
+
+    assert route.post("/relay/sessions/close", json={
+        "runtime": "codex", "session_ref": "target", **scope,
+    }).status_code == 200
+    status = route.get(
+        f"/relay/messages/{reply['message_id']}", params=scope,
+    ).json()
+    closed = next(
+        item for item in status["deliveries"]
+        if item["delivery_id"] == reply["delivery_id"]
+    )["activation"]
+    assert closed["availability"] == "closed"
+    assert closed["qualification"] == "unknown"

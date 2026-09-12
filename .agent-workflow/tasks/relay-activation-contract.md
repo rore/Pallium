@@ -59,7 +59,7 @@ Approved by user 2026-09-12: "Second, the relay to operational tasks. You can ad
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Exact design for acceptance
@@ -128,6 +128,10 @@ Context budget rule: HTTP and dashboard may show the full bounded object. MCP de
 - Required full-suite verification at commit 0cb5a097fd6eccd1adaf04c50e80e08bb157424e: exact command .venv\\Scripts\\python.exe -m pytest tests/ -x -q failed to start pytest because .venv\\Scripts\\python.exe reported No module named pytest; duration 0.17 seconds, no test counts.
 
 - Authorized full-suite verification at commit 0cb5a097fd6eccd1adaf04c50e80e08bb157424e: command C:\\Dev\\rore\\Pallium\\.venv\\Scripts\\python.exe -m pytest tests/ -x -q ran for 188.12 seconds and stopped at the first actual failure: 1 failed, 3928 passed, 24 skipped, 2 xfailed. First failure: tests/test_relay_mcp_tools.py::TestBoundedReceive::test_receive_returns_one_delivery_per_bounded_call; ToolError: relay receive response exceeds the response budget.
+
+- Corrective implementation resumed from `29aee1f1` after the authorized full-suite run exposed a bounded MCP receive regression. This pass is limited to `app/mcp/server.py`, `app/dependencies.py`, `app/dashboard.py`, focused `tests/test_relay_mcp_tools.py`, `tests/test_mcp_server.py`, `tests/test_dashboard.py`, `tests/test_codex_wake.py`, and this Work Record. It will compact required activation without losing the one-delivery receive/status contract, key delivery projection by `recipient_endpoint_id`, derive delivery activation from the current endpoint session lifecycle, and make ACK reconciliation tests start from real scheduler-created reservations. No schema, candidate reader, storage, service, CI, or native-probe change is required.
+
+- Corrective phase completed: MCP Relay formatting now compacts activation before normal sizing, shortens claimed payload pages with advancing offsets when activation consumes budget, and preserves compact delivery activation in oversized status pages. HTTP/dashboard delivery projection now prefers `recipient_endpoint_id` and overlays the authoritative current endpoint session so delivery state cannot masquerade as lifecycle. Explicit empty wake registries are preserved instead of replaced by truthiness fallback. ACK coverage now proves real scheduler-created reservations, thread-start cleanup, repeated already-delivered ACK reconciliation from a present fence, and closed-endpoint projection. Exact five-node regression run passed 5 tests in 2.03 seconds; `python -m pytest tests/test_relay_mcp_tools.py tests/test_mcp_server.py tests/test_dashboard.py tests/test_codex_wake.py -q -n 0 --tb=short` passed 246 tests in 54.52 seconds. The required full suite was not rerun per the corrective assignment, so State remains `Ready to implement` for root verification.
 
 ## Evidence
 

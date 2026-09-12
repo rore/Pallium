@@ -1047,7 +1047,23 @@ async def test_relay_status_page_is_bounded_escape_safe_and_advancing(monkeypatc
         "in_reply_to": None,
         "created_at": "2026-09-07T00:00:00Z",
         "expires_at": "2026-09-08T00:00:00Z",
-        "deliveries": [{"state": "claimed"}, {"state": "delivered"}],
+        "deliveries": [{
+            "delivery_id": "d-claimed",
+            "recipient_endpoint_id": "relay-session-" + "a" * 32,
+            "recipient_runtime": "codex",
+            "state": "claimed",
+            "activation": {
+                "contract": "relay-activation/v1", "runtime": "codex",
+                "platform": "windows", "integration": "codex_queue",
+                "topology": "existing_session", "behavior": "busy_queue",
+                "qualification": "qualified",
+                "qualification_source": "installed_witness",
+                "availability": "attempt_inflight",
+                "availability_source": "durable_reservation",
+                "fallback": "next_natural_turn",
+                "supported_evidence": ["submission_attempted", "transport_accepted", "payload_admitted"],
+            },
+        }, {"state": "delivered"}],
     }
     status = AsyncMock(return_value=page)
     with patch("app.mcp.client.PalliumMcpClient.relay_status", new=status):
@@ -1059,6 +1075,9 @@ async def test_relay_status_page_is_bounded_escape_safe_and_advancing(monkeypatc
     assert result["payload_offset"] == 0
     assert 0 < result["next_offset"] <= len(payload)
     assert result["delivery_states"] == {"claimed": 1, "delivered": 1}
+    assert result["deliveries"][0]["delivery_id"] == "d-claimed"
+    assert result["deliveries"][0]["activation"]["behavior"] == "busy_queue"
+    assert result["deliveries"][0]["activation"]["fallback"] == "next_natural_turn"
     status.assert_awaited_once_with("m-1", offset=0, page_size=2000)
 
 

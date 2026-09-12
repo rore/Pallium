@@ -685,8 +685,8 @@ def build_router(
             relay_service = RelayService(relay_storage)
         except RelayUnavailableError:
             pass
-    registry = claude_wake_registry or build_claude_wake_registry()
-    codex_registry = codex_wake_registry or get_codex_wake_registry()
+    registry = claude_wake_registry if claude_wake_registry is not None else build_claude_wake_registry()
+    codex_registry = codex_wake_registry if codex_wake_registry is not None else get_codex_wake_registry()
 
     _relay_wake_dispatch = partial(
         dispatch_relay_wake, relay_service=relay_service, registry=registry,
@@ -738,13 +738,24 @@ def build_router(
                 {"container_ref": live_scope["container_ref"]},
             )
     def _relay_activation(row: dict[str, Any]) -> dict[str, object]:
-        endpoint_id = row.get("endpoint_id", row.get("id", row.get("recipient_endpoint_id")))
-        session_ref = row.get("session_ref", row.get("recipient_session_ref"))
-        container_ref = row.get("container_ref", row.get("recipient_container_ref"))
-        runtime = row.get("runtime", row.get("recipient_runtime"))
+        endpoint_id = row.get("endpoint_id") or row.get("recipient_endpoint_id") or row.get("id")
+        projection = row
+        if relay_service is not None and "recipient_endpoint_id" in row and "endpoint_id" not in row:
+            projection = {}
+            if isinstance(endpoint_id, str):
+                try:
+                    scope = relay_service.session_scope_by_endpoint(endpoint_id)
+                    sessions = relay_service.list_sessions(**scope, include_inactive=True)
+                except (RelayNotFoundError, RelayUnavailableError, ValueError):
+                    sessions = []
+                if len(sessions) == 1 and sessions[0].get("endpoint_id") == endpoint_id:
+                    projection = {**row, **sessions[0], "recipient_endpoint_id": endpoint_id}
+        session_ref = projection.get("session_ref", projection.get("recipient_session_ref"))
+        container_ref = projection.get("container_ref", projection.get("recipient_container_ref"))
+        runtime = projection.get("runtime", projection.get("recipient_runtime"))
         claude_state = registry.state_for(recipient_endpoint_id=endpoint_id, session_ref=session_ref, container_ref=container_ref) if runtime == "claude-code" and all(isinstance(value, str) for value in (endpoint_id, session_ref, container_ref)) else None
         codex_reserved = codex_registry.usable and isinstance(endpoint_id, str) and codex_registry.snapshot(endpoint_id) is not None
-        return relay_activation_snapshot(row, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved)
+        return relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved)
 
     def _relay_turn_admission(request: object) -> None:
         if not isinstance(request, dict):
