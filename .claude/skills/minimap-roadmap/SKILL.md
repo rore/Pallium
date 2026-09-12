@@ -44,6 +44,8 @@ For metadata-first roadmaps, keep classification in item metadata and the single
 
 For ownership rules, item shape, board rules, and edit constraints, read [references/roadmap-contract.md](references/roadmap-contract.md).
 
+When explicitly taking or leaving a known roadmap item, and only when Pallium MCP work-reference tools are available, follow [references/pallium-participants.md](references/pallium-participants.md). Pallium is optional: never install it, shell out to it, or block ordinary Minimap work when those tools are absent.
+
 ## Composing With Spec Review
 
 A roadmap item is just a markdown file. To open a review thread on one item (anchored comments, suggestions), attach the item file via the `minimap-spec-review` skill if it is installed alongside this one. Spec sessions never auto-mutate the file, so the layers compose safely.

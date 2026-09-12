@@ -162,6 +162,10 @@ const stateContainer = createState({
   scopeCollapsed: loadStoredScopePreference(),
   scopeWidth: loadStoredScopeWidth(),
   boardWidth: loadStoredBoardWidth(),
+  itemLoadGeneration: 0,
+  itemLoadController: null,
+  itemParticipantsController: null,
+  itemParticipants: null,
   spec: {
     filesCollapsed: loadStoredSpecFilesPreference(),
     bodyFrac: loadStoredSpecBodyFrac(),
@@ -265,6 +269,14 @@ const refreshButton = document.querySelector("#refresh-button");
 const statusBanner = document.querySelector("#status-banner");
 const form = document.querySelector("#item-form");
 const previewElement = document.querySelector("#item-preview");
+const itemParticipantsElement = document.querySelector("#item-participants");
+const itemParticipantsStatusElement = document.querySelector("#item-participants-status");
+const itemParticipantsRefreshButton = document.querySelector("#item-participants-refresh");
+const itemParticipantsReferenceElement = document.querySelector("#item-participants-reference");
+const itemParticipantsScopeElement = document.querySelector("#item-participants-scope");
+const itemParticipantsLocalElement = document.querySelector("#item-participants-local");
+const itemParticipantsCopyButton = document.querySelector("#item-participants-copy");
+const itemParticipantsListElement = document.querySelector("#item-participants-list");
 const rawTextElement = document.querySelector("#raw-text");
 const sectionsContainer = document.querySelector("#sections-container");
 const editorTabsElement = document.querySelector("#editor-tabs");
@@ -1700,9 +1712,8 @@ function toggleGroup(name) {
   renderBoard();
 }
 
-function toggleColumn(name) {
+function captureColumnScrollState() {
   const columns = boardGroupsElement.querySelector(".board-columns");
-  const scrollLeft = columns?.scrollLeft || 0;
   for (const column of columns?.querySelectorAll(".board-column") || []) {
     const groupName = column.querySelector("[data-group-toggle]")?.dataset.groupToggle;
     const list = column.querySelector(".board-column-list");
@@ -1710,17 +1721,24 @@ function toggleColumn(name) {
       state.columnScrollTops.set(collapsedGroupKey(groupName), list.scrollTop);
     }
   }
+  return columns?.scrollLeft || 0;
+}
 
-  toggleGroup(name);
-
-  const nextColumns = boardGroupsElement.querySelector(".board-columns");
-  if (nextColumns) nextColumns.scrollLeft = scrollLeft;
-  for (const column of nextColumns?.querySelectorAll(".board-column") || []) {
+function restoreColumnScrollState(scrollLeft) {
+  const columns = boardGroupsElement.querySelector(".board-columns");
+  if (columns) columns.scrollLeft = scrollLeft;
+  for (const column of columns?.querySelectorAll(".board-column") || []) {
     const groupName = column.querySelector("[data-group-toggle]")?.dataset.groupToggle;
     const list = column.querySelector(".board-column-list");
     const storedScrollTop = groupName ? state.columnScrollTops.get(collapsedGroupKey(groupName)) : null;
     if (list && storedScrollTop != null) list.scrollTop = storedScrollTop;
   }
+}
+
+function toggleColumn(name) {
+  const scrollLeft = captureColumnScrollState();
+  toggleGroup(name);
+  restoreColumnScrollState(scrollLeft);
 
   const nextToggle = [...boardGroupsElement.querySelectorAll("[data-group-toggle]")]
     .find((button) => button.dataset.groupToggle === name);
@@ -2076,8 +2094,9 @@ function buildBoardGroupsWithPlacedItem(itemId, targetGroupIndex, beforeItemId =
 function clearBoardDragState() {
   state.dragItemId = null;
   state.dragColumnIndex = null;
-  for (const dropZone of boardGroupsElement.querySelectorAll("[data-lens-drop-value], [data-board-drop-group-index], [data-board-column-drop-index]")) {
+  for (const dropZone of boardGroupsElement.querySelectorAll("[data-lens-drop-value], [data-board-drop-group-index], [data-board-column-drop-index], [data-item-order-drop-id]")) {
     dropZone.classList.remove("is-drop-target");
+    delete dropZone.dataset.orderDropPlacement;
   }
   for (const element of boardGroupsElement.querySelectorAll(".is-dragging")) {
     element.classList.remove("is-dragging");
@@ -2277,7 +2296,7 @@ function restoreOrderActionFocus(kind, key, placement) {
   const target = buttons.find((button) => button.dataset.placement === placement && !button.disabled)
     || buttons.find((button) => !button.disabled)
     || buttons[0];
-  target?.focus();
+  target?.focus({ preventScroll: true });
 }
 
 function bindItemOrderShortcuts() {
@@ -2293,10 +2312,73 @@ function bindItemOrderShortcuts() {
   }
 }
 
+function bindItemOrderDropTargets() {
+  const targets = [...boardGroupsElement.querySelectorAll("[data-item-order-drop-id]")];
+  const targetsByItemId = new Map(targets.map((target) => [target.dataset.itemOrderDropId, target]));
+  const getDropKind = (itemId, target) => {
+    const source = targetsByItemId.get(itemId);
+    if (!source) return "";
+    if (itemId === target.dataset.itemOrderDropId) return "blocked";
+    if (source.dataset.itemOrderGroupValue !== target.dataset.itemOrderGroupValue) {
+      return target.dataset.itemOrderDropValue ? "move" : "blocked";
+    }
+    return canReorderRelative(itemId, target.dataset.itemOrderDropId) ? "order" : "blocked";
+  };
+
+  for (const target of targets) {
+    target.addEventListener("dragover", (event) => {
+      if (!state.dragItemId) return;
+      const dropKind = getDropKind(state.dragItemId, target);
+      if (!dropKind) return;
+      event.stopPropagation();
+      if (dropKind === "blocked") {
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+        return;
+      }
+      event.preventDefault();
+      const bounds = target.getBoundingClientRect();
+      target.dataset.orderDropPlacement = dropKind === "move"
+        ? "inside"
+        : (event.clientY < bounds.top + (bounds.height / 2) ? "before" : "after");
+      target.classList.add("is-drop-target");
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    });
+
+    target.addEventListener("dragleave", (event) => {
+      if (target.contains(event.relatedTarget)) return;
+      target.classList.remove("is-drop-target");
+      delete target.dataset.orderDropPlacement;
+    });
+
+    target.addEventListener("drop", (event) => {
+      const itemId = event.dataTransfer?.getData("application/x-minimap-item-id")
+        || event.dataTransfer?.getData("text/plain")
+        || state.dragItemId
+        || "";
+      const dropKind = getDropKind(itemId, target);
+      if (dropKind !== "move" && dropKind !== "order") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const bounds = target.getBoundingClientRect();
+      const placement = event.clientY < bounds.top + (bounds.height / 2) ? "before" : "after";
+      const anchorItemId = target.dataset.itemOrderDropId;
+      const dropValue = target.dataset.itemOrderDropValue || "";
+      state.dragClickSuppressUntil = Date.now() + 350;
+      clearBoardDragState();
+      if (dropKind === "move") {
+        void persistDerivedLensMove(itemId, dropValue);
+        return;
+      }
+      void persistMetadataOrder(itemId, anchorItemId, placement, null);
+    });
+  }
+}
+
 async function persistMetadataOrder(itemId, anchorItemId, placement, triggerButton) {
   const item = state.workspace?.items?.[itemId];
   if (!state.workspace || !item || !anchorItemId) return;
 
+  const columnScrollLeft = captureColumnScrollState();
   setBanner("Updating shared item order...");
   try {
     const workspace = await api.reorderMetadata({
@@ -2309,6 +2391,7 @@ async function persistMetadataOrder(itemId, anchorItemId, placement, triggerButt
     state.workspace = workspace;
     syncWorkspaceChrome();
     renderBoard();
+    restoreColumnScrollState(columnScrollLeft);
     if (restoreFocus) restoreOrderActionFocus("item", itemId, placement);
     setBanner("Shared item order saved.", "success");
   } catch (error) {
@@ -2389,12 +2472,15 @@ function renderBoardColumnsMode() {
       const orderAttributes = allowItemReorder
         ? `data-item-id-order="${escapeHtml(item.id)}" data-order-previous-id="${escapeHtml(canMoveUp ? previous.id : "")}" data-order-next-id="${escapeHtml(canMoveDown ? next.id : "")}" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-description="Press Alt+ArrowUp or Alt+ArrowDown to reorder."`
         : "";
+      const itemOrderDropAttributes = allowItemReorder
+        ? `data-item-order-drop-id="${escapeHtml(item.id)}" data-item-order-group-value="${escapeHtml(group.groupKey)}" data-item-order-drop-value="${escapeHtml(group.dropValue || "")}"`
+        : "";
       const placementAttributes = boardGrouping && allowColumnDrag
         ? `data-board-drop-group-index="${group.originalIndex}" data-board-drop-before-id="${escapeHtml(item.id)}"`
         : "";
 
       return `
-        <article class="board-column-card${activeClass}${placementAttributes ? " board-column-dropzone" : ""}" title="${escapeHtml(item.title)}" ${placementAttributes}>
+        <article class="board-column-card${activeClass}${placementAttributes ? " board-column-dropzone" : ""}" title="${escapeHtml(item.title)}" ${placementAttributes} ${itemOrderDropAttributes}>
           <div class="board-column-card-main" data-item-dblopen="${escapeHtml(item.id)}" title="${escapeHtml(item.title)}">
             ${buildBoardCardBodyMarkup(item, activeLens?.key)}
           </div>
@@ -2453,6 +2539,7 @@ function renderBoardColumnsMode() {
   }
 
   bindItemOrderShortcuts();
+  bindItemOrderDropTargets();
 
   for (const button of boardGroupsElement.querySelectorAll("[data-move-lens-group]")) {
     button.addEventListener("click", () => {
@@ -2682,9 +2769,12 @@ function renderBoardReadMode() {
       const orderAttributes = allowItemReorder
         ? `data-item-id-order="${escapeHtml(item.id)}" data-order-previous-id="${escapeHtml(canMoveUp ? previous.id : "")}" data-order-next-id="${escapeHtml(canMoveDown ? next.id : "")}" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" aria-description="Press Alt+ArrowUp or Alt+ArrowDown to reorder."`
         : "";
+      const itemOrderDropAttributes = allowItemReorder
+        ? `data-item-order-drop-id="${escapeHtml(item.id)}" data-item-order-group-value="${escapeHtml(group.groupKey)}" data-item-order-drop-value="${escapeHtml(group.dropValue || "")}"`
+        : "";
       return `
         <div class="board-item-row">
-          <button class="board-item${active}" data-item-id="${escapeHtml(item.id)}" type="button" title="${escapeHtml(item.title)}" aria-label="Open ${escapeHtml(item.title)}" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}" ${orderAttributes}>
+          <button class="board-item${active}" data-item-id="${escapeHtml(item.id)}" type="button" title="${escapeHtml(item.title)}" aria-label="Open ${escapeHtml(item.title)}" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}" ${orderAttributes} ${itemOrderDropAttributes}>
             ${buildBoardCardBodyMarkup(item, activeLens?.key, dragHandle)}
           </button>
         </div>
@@ -2756,6 +2846,7 @@ function renderBoardReadMode() {
   }
 
   bindItemOrderShortcuts();
+  bindItemOrderDropTargets();
 
   for (const button of boardGroupsElement.querySelectorAll("[data-move-lens-group]")) {
     button.addEventListener("click", () => {
@@ -3024,7 +3115,173 @@ function autosizeStructuredTextareas() {
   }
 }
 
+function isAbortError(error) {
+  return error?.name === "AbortError";
+}
+
+function invalidateItemRequests() {
+  state.itemLoadGeneration += 1;
+  state.itemLoadController?.abort();
+  state.itemParticipantsController?.abort();
+  state.itemLoadController = null;
+  state.itemParticipantsController = null;
+  state.itemParticipants = null;
+  renderItemParticipants();
+}
+
+function beginItemLoad(itemId) {
+  invalidateItemRequests();
+  const controller = new AbortController();
+  state.itemLoadController = controller;
+  return {
+    generation: state.itemLoadGeneration,
+    itemId,
+    repoPath: state.repoPath,
+    controller,
+  };
+}
+
+function itemIntentIsCurrent(intent, { requireSelected = false } = {}) {
+  return Boolean(
+    intent
+    && intent.generation === state.itemLoadGeneration
+    && intent.repoPath === state.repoPath
+    && (!requireSelected || intent.itemId === state.selectedItemId)
+  );
+}
+
+function participantStatusText(result) {
+  if (!result) return "";
+  if (result.status === "loading") return "Refreshing…";
+  if (result.status === "ok") {
+    const count = result.participants?.length || 0;
+    return result.partial ? `${count}+` : (count === 1 ? "1 participant" : `${count} participants`);
+  }
+  return {
+    "identity-unavailable": "Reference unavailable",
+    unsupported: "Pallium unsupported",
+    unreachable: "Pallium unavailable",
+    timeout: "Lookup timed out",
+    "invalid-response": "Invalid response",
+    "over-limit": "Response too large",
+  }[result.status] || "Unavailable";
+}
+
+function formatParticipantTime(value) {
+  if (!value) return "unknown";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "unknown";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function renderItemParticipants() {
+  if (!itemParticipantsElement) return;
+  const result = state.itemParticipants;
+  const quietlyHidden = !state.currentItem
+    || !result
+    || result.status === "disabled"
+    || (result.status === "loading" && !result.reference);
+  itemParticipantsElement.hidden = quietlyHidden;
+  if (quietlyHidden) return;
+
+  itemParticipantsStatusElement.textContent = participantStatusText(result);
+  itemParticipantsRefreshButton.disabled = result.status === "loading";
+
+  const reference = result.reference;
+  itemParticipantsReferenceElement.hidden = !reference;
+  itemParticipantsScopeElement.textContent = reference?.scope_ref || "";
+  itemParticipantsLocalElement.textContent = reference?.local_ref || "";
+  itemParticipantsCopyButton.disabled = !reference;
+
+  if (result.status === "loading") {
+    itemParticipantsListElement.innerHTML = '<p class="muted">Refreshing participant associations…</p>';
+    return;
+  }
+
+  if (result.status !== "ok") {
+    const messages = {
+      "identity-unavailable": "This repository has no safe canonical Git origin, so Minimap cannot create an exact participant reference.",
+      unsupported: "The configured local Pallium service does not support participant lookup.",
+      unreachable: "The configured local Pallium service could not be reached.",
+      timeout: "The participant lookup exceeded its overall time limit.",
+      "invalid-response": "Pallium returned a response Minimap could not safely validate.",
+      "over-limit": "The participant response exceeded Minimap's safety bounds.",
+    };
+    itemParticipantsListElement.innerHTML = `<p class="muted">${escapeHtml(messages[result.status] || "Participant lookup is unavailable.")}</p>`;
+    return;
+  }
+
+  const participants = Array.isArray(result.participants) ? result.participants : [];
+  if (participants.length === 0) {
+    itemParticipantsListElement.innerHTML = '<p class="muted">No sessions are associated with this item.</p>';
+    return;
+  }
+
+  const rows = participants.map((participant) => {
+    const name = participant.alias || participant.title || participant.session_ref;
+    const availability = [["Session", participant.state], ["Lifecycle", participant.lifecycle], ["Destination", participant.destination_health]].filter(([, value]) => Boolean(value));
+    const origins = participant.association?.origins || [];
+    return `
+      <article class="item-participant" role="listitem">
+        <div class="item-participant-heading">
+          <strong>${escapeHtml(name)}</strong>
+          <span class="badge">${escapeHtml(participant.runtime)}</span>
+        </div>
+        <div class="item-participant-reference-row"><span class="muted">Session</span><code>${escapeHtml(participant.session_ref)}</code></div>
+        <div class="item-participant-reference-row"><span class="muted">Container</span><code>${escapeHtml(participant.container_ref)}</code></div>
+        <div class="item-participant-badges">${availability.map(([label, value]) => `<span class="badge">${escapeHtml(label)}: ${escapeHtml(value)}</span>`).join("")}</div>
+        <p class="muted item-participant-freshness" title="Last seen: ${escapeHtml(participant.last_seen_at)}; association updated: ${escapeHtml(participant.association?.updated_at || "")}">
+          Seen ${escapeHtml(formatParticipantTime(participant.last_seen_at))} · association updated ${escapeHtml(formatParticipantTime(participant.association?.updated_at))}
+          ${origins.length ? ` · ${escapeHtml(origins.join(", "))}` : ""}
+        </p>
+      </article>
+    `;
+  }).join("");
+
+  itemParticipantsListElement.innerHTML = `${result.partial ? '<p class="muted">Showing the first 200 participants; more may exist.</p>' : ""}${rows}`;
+}
+
+async function loadItemParticipants(itemId, generation = state.itemLoadGeneration) {
+  const intent = { generation, itemId, repoPath: state.repoPath };
+  if (!itemIntentIsCurrent(intent, { requireSelected: true })) return;
+
+  state.itemParticipantsController?.abort();
+  const controller = new AbortController();
+  state.itemParticipantsController = controller;
+  const previous = state.itemParticipants?.itemId === itemId ? state.itemParticipants : null;
+  state.itemParticipants = {
+    status: "loading",
+    reference: previous?.reference || null,
+    participants: previous?.participants || [],
+    partial: previous?.partial || false,
+    refreshedAt: previous?.refreshedAt || null,
+    itemId,
+  };
+  renderItemParticipants();
+
+  try {
+    const result = await api.readItemParticipants(itemId, { signal: controller.signal });
+    if (!itemIntentIsCurrent(intent, { requireSelected: true }) || controller.signal.aborted) return;
+    state.itemParticipants = { ...result, itemId };
+    renderItemParticipants();
+  } catch (error) {
+    if (isAbortError(error) || controller.signal.aborted || !itemIntentIsCurrent(intent, { requireSelected: true })) return;
+    state.itemParticipants = {
+      status: "invalid-response",
+      reference: previous?.reference || null,
+      participants: [],
+      partial: false,
+      refreshedAt: null,
+      itemId,
+    };
+    renderItemParticipants();
+  } finally {
+    if (state.itemParticipantsController === controller) state.itemParticipantsController = null;
+  }
+}
+
 function resetEditor() {
+  invalidateItemRequests();
   state.currentItem = null;
   state.dirtyStructured = false;
   state.dirtyRaw = false;
@@ -3920,6 +4177,7 @@ async function applyRouteStateFromLocation() {
   clearTransientBanner();
 }
 async function loadWorkspace(preferredItemId = state.selectedItemId, options = {}) {
+  invalidateItemRequests();
   try {
     const workspace = await api.loadWorkspace();
     resetAncillaryEditModes();
@@ -3969,14 +4227,17 @@ async function loadWorkspace(preferredItemId = state.selectedItemId, options = {
 }
 
 async function loadItem(itemId, rerenderBoard = true, options = {}) {
+  if (options.mode) {
+    state.editorMode = normalizeEditorMode(options.mode);
+  }
+  if (typeof options.openOverlay === "boolean") {
+    state.editorOverlayOpen = options.openOverlay;
+  }
+  const intent = beginItemLoad(itemId);
+
   try {
-    if (options.mode) {
-      state.editorMode = normalizeEditorMode(options.mode);
-    }
-    if (typeof options.openOverlay === "boolean") {
-      state.editorOverlayOpen = options.openOverlay;
-    }
-    const item = await api.readItem(itemId);
+    const item = await api.readItem(itemId, { signal: intent.controller.signal });
+    if (!itemIntentIsCurrent(intent) || intent.controller.signal.aborted) return;
     state.selectedItemId = itemId;
     renderItem(item);
     applyEditorMode();
@@ -3988,8 +4249,11 @@ async function loadItem(itemId, rerenderBoard = true, options = {}) {
       syncRouteState({ replace: options.replaceRoute === true });
     }
     clearTransientBanner();
+    void loadItemParticipants(itemId, intent.generation);
   } catch (error) {
-    setBanner(error.message, "error");
+    if (!isAbortError(error) && itemIntentIsCurrent(intent)) setBanner(error.message, "error");
+  } finally {
+    if (state.itemLoadController === intent.controller) state.itemLoadController = null;
   }
 }
 async function openBoardItemPreview(itemId) {
@@ -4000,6 +4264,7 @@ async function openBoardItemPreview(itemId) {
   const useOverlay = shouldUseEditorOverlay();
   if (itemId === state.selectedItemId && state.currentItem) {
     state.editorOverlayOpen = useOverlay;
+    void loadItemParticipants(itemId);
     switchEditorMode("preview", { replaceRoute: false });
     syncWorkspaceChrome();
     renderBoard();
@@ -5040,6 +5305,20 @@ editorOverlayCloseButton?.addEventListener("click", () => {
 
 editorCancelButton?.addEventListener("click", () => {
   cancelCurrentItemEdits();
+});
+
+itemParticipantsRefreshButton?.addEventListener("click", () => {
+  if (state.selectedItemId) void loadItemParticipants(state.selectedItemId);
+});
+
+itemParticipantsCopyButton?.addEventListener("click", () => {
+  const reference = state.itemParticipants?.reference;
+  if (!reference) return;
+  void navigator.clipboard.writeText(`scope_ref: ${reference.scope_ref}\nlocal_ref: ${reference.local_ref}`).then(() => {
+    setBanner("Participant reference copied.", "success");
+  }).catch(() => {
+    setBanner("Could not copy the participant reference.", "error");
+  });
 });
 
 openInSpecButton?.addEventListener("click", () => {

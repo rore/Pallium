@@ -21,6 +21,12 @@ Exit codes follow `systemctl` conventions for `status` (0/1/3 = running/stale/no
 
 The server is repo-agnostic. Every roadmap request carries its own repo identity via the `X-Minimap-Repo` header (set by the UI from the `#repo=...` URL hash). One server can serve any number of repos at once.
 
+## Optional Pallium participants
+
+Set `MINIMAP_PALLIUM_ENDPOINT` before starting or restarting Minimap to enable read-only participant lookup. The value must be an explicit local HTTP origin such as `http://127.0.0.1:19836`; Minimap rejects remote, credential-bearing, redirected, or path-bearing endpoints. When unset, Minimap makes no Pallium HTTP requests and all normal roadmap behavior remains available.
+
+The configured upstream URL and upstream errors never reach the browser. The public item reference remains available through `minimap roadmap item-ref` even when participant transport is disabled, so optional Pallium MCP participation does not depend on this server setting.
+
 ## URL
 
 ```text

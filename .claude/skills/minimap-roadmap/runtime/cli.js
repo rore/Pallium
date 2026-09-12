@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { AppError } from "./src/roadmap.js";
+import { AppError, loadWorkspace } from "./src/roadmap.js";
+import { resolveRoadmapItemReference } from "./src/pallium.js";
 import {
   addFileSessionSuggestion,
   addFileSessionComment,
@@ -35,6 +36,7 @@ function parseFlags(args) {
 
 function usage() {
   return `Usage:
+  minimap roadmap item-ref <item-id> [--repo <absolute-repo-path>] [--json]
   minimap attach <file> [--json]
   minimap context <file> --json [--summary] [--filter <open|resolved|all>]
   minimap comment add <file> --by <actor> --kind <kind> --text <text> [--global|--heading <path>|--quote <text>] [--json]
@@ -248,6 +250,28 @@ async function main(argv) {
 
   if (!command || command === "help" || command === "--help" || command === "-h") {
     process.stdout.write(usage());
+    return;
+  }
+
+  if (command === "roadmap" && subcommand === "item-ref") {
+    const itemId = rest[0];
+    if (!itemId || itemId.startsWith("--")) {
+      throw new AppError("roadmap item-ref requires an item id.", 400, "bad_request");
+    }
+    const repoRoot = valueAfter(rest, "--repo") || process.cwd();
+    const workspace = await loadWorkspace(repoRoot);
+    if (!Object.hasOwn(workspace.items || {}, itemId)) {
+      throw new AppError(`Unknown roadmap item id "${itemId}".`, 404, "not_found");
+    }
+    const reference = await resolveRoadmapItemReference(repoRoot, workspace.roadmapPath, itemId);
+    if (!reference) {
+      throw new AppError("Canonical Git repository identity is unavailable for this roadmap.", 422, "identity_unavailable");
+    }
+    if (rest.includes("--json")) {
+      printJson(reference);
+    } else {
+      process.stdout.write(`scope_ref: ${reference.scope_ref}\nlocal_ref: ${reference.local_ref}\n`);
+    }
     return;
   }
 

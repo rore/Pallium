@@ -33,6 +33,12 @@ import {
 } from "./src/sessions.js";
 import { writeServerRegistry, deleteServerRegistry } from "./src/server-registry.js";
 import { matchRoute } from "./src/router.js";
+import {
+  isTrustedParticipantRequest,
+  lookupPalliumParticipants,
+  parsePalliumEndpoint,
+  resolveRoadmapItemReference,
+} from "./src/pallium.js";
 
 // Re-exported so test/server-router.test.js can import the matcher without
 // booting the HTTP server here. (server.js still auto-starts on import — that
@@ -45,6 +51,7 @@ const staticRoot = path.join(__dirname, "ui");
 const cwdFallback = process.cwd();
 const requestedPort = Number(process.env.PORT || 4312);
 const maxPortAttempts = 20;
+const palliumConfig = parsePalliumEndpoint(process.env.MINIMAP_PALLIUM_ENDPOINT);
 
 const packageJsonPath = path.join(__dirname, "package.json");
 const serverVersion = JSON.parse(await fs.readFile(packageJsonPath, "utf8")).version || "0.0.0";
@@ -365,6 +372,36 @@ async function handleScope(request, response) {
   sendJson(response, 200, workspace);
 }
 
+async function handleItemParticipants(request, response, ctx) {
+  if (!isTrustedParticipantRequest(request)) {
+    throw new AppError("Participant lookup is available only from this local Minimap origin.", 403, "forbidden");
+  }
+  if (!palliumConfig.configured) {
+    sendJson(response, 200, await lookupPalliumParticipants(palliumConfig, null));
+    return;
+  }
+
+  const repoRoot = await resolveRoadmapRepo(request);
+  const id = decodeURIComponent(ctx.params[0]);
+  const item = await readItemById(repoRoot, id);
+  const workspace = await loadWorkspace(repoRoot);
+  const reference = await resolveRoadmapItemReference(repoRoot, workspace.roadmapPath, item.id);
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.once("aborted", abort);
+  response.once("close", abort);
+
+  try {
+    const result = await lookupPalliumParticipants(palliumConfig, reference, { signal: controller.signal });
+    if (!response.destroyed) sendJson(response, 200, result);
+  } catch (error) {
+    if (!controller.signal.aborted) throw error;
+  } finally {
+    request.off("aborted", abort);
+    response.off("close", abort);
+  }
+}
+
 async function handleGetItem(request, response, ctx) {
   const repoRoot = await resolveRoadmapRepo(request);
   const item = await readItemById(repoRoot, decodeURIComponent(ctx.params[0]));
@@ -411,6 +448,7 @@ const routes = [
   { method: "POST",   pattern: /^\/api\/metadata-order$/, handler: handleMetadataOrder },
   { method: "POST",   pattern: /^\/api\/lenses\/([^/]+)\/order$/, handler: handleLensOrder },
   { method: "POST",   pattern: /^\/api\/scope$/, handler: handleScope },
+  { method: "GET",    pattern: /^\/api\/items\/([^/]+)\/participants$/, handler: handleItemParticipants },
   { method: "GET",    pattern: /^\/api\/items\/([^/]+)$/, handler: handleGetItem },
   { method: "POST",   pattern: /^\/api\/items\/([^/]+)$/, handler: handleSaveItem },
 ];

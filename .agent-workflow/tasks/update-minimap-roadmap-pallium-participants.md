@@ -27,16 +27,20 @@ After the source pin and this plan are reviewed, export the full upstream `packa
 **Verification:**
 Compare relative file inventories and SHA-256 hashes source-to-destination; run the bundled status/lifecycle smoke check during activation. Rely on the already-passing upstream suite for runtime behavior rather than duplicating broad tests in Pallium.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Planning complete in isolated branch `chore/update-minimap-roadmap-pallium-participants` at Pallium base `27313e4e53f1baa502fbb3ef6e9331bdf7316ec6`.
 - Upstream PR 13 was confirmed merged at `9742bd7b7d1fd29757267fce6dde6e9df21bb013`; verify that exact commit locally before exporting.
-- Replacement is intentionally held pending plan/risk review. No vendored Minimap content, Pallium service, or installed checkout has changed.
+- Verified the exact merge commit exists locally, is an ancestor of Minimap `origin/main`, and contains the packaged skill subtree.
+- Exported the full pinned subtree and mirrored only `.claude/skills/minimap-roadmap`; no selective runtime edits were made.
+- The shared preview/server, Pallium stable checkout, and roadmap/config data were not touched; activation remains pending parent review and merge.
 
 ## Evidence
 
 - Upstream validation supplied at pickup: 249 passing tests, 2 expected skips; independent review approved all three fixes; live List/Columns cross-container and worktree attach/detach acceptance passed.
 - Clean-context Redline review: `BLUE`, no checkpoints or boundary/contract impacts.
+- Complete export comparison: 38 source files, 38 destination files, 0 missing, 0 extra, 0 SHA-256 mismatches.
+- Final diff scope check: 0 paths outside `.claude/skills/minimap-roadmap/**` and this Work Record.
