@@ -16,9 +16,19 @@ work with less noise, time, and token cost?
 
 ## Time-boxed comparisons
 
+Current baseline (2026-09-12): PR #169 already ships compact response-local session
+groups, exact expansion handoff, and live-state guidance. Reuse that presentation;
+do not implement it again or call the control an ungrouped legacy response.
+PR #173's candidate-study preflight did not support a comparison. Its observational
+audit suggests reviewing content-equivalent groups prospectively while retaining
+distinct provenance, dates, and source-opening paths. That narrow follow-up belongs
+first to `improve-session-history-search-quality`; coordinate cases rather than
+launching this broader representation study in parallel with the same question.
+The access structures below are still unvalidated alternatives, not selected work.
+
 Compare access structures:
 
-1. Flat raw-turn search, the baseline.
+1. Current raw-turn search with its shipped response-local session labels, the baseline.
 2. Results grouped by exact work references or request-centered landmarks.
 3. Index-first navigation: show a compact list of historical work, then open the
    selected raw evidence.

@@ -11,8 +11,8 @@ milestone: pallium-relay
 
 Test Pallium as a local durable context-exchange layer alongside, not after,
 Pallium vNext. Agent Relay lets an agent explicitly send a bounded, scoped message
-to one session or all sessions of a supported runtime. Pallium persists the message
-and attempts to wake each resolved recipient immediately. If waking is unsupported,
+to one exact session or global alias. Pallium persists the message
+and attempts to wake the resolved recipient immediately. If waking is unsupported,
 unsafe, or unavailable, Pallium delivers it at that recipient's next applicable
 natural turn with attribution.
 
@@ -35,8 +35,8 @@ historical-work hypothesis.
 An agent explicitly sends a message with:
 
 - sender identity and provenance
-- an explicit runtime-wide or session-specific recipient selector
-- repository/container scope
+- an exact endpoint or service-global alias recipient selector
+- original repository/container scope retained for attribution; exact Relay routing may cross containers
 - bounded payload
 - expiry and delivery state
 
@@ -51,26 +51,22 @@ not create a continuously running conversation.
 
 ## Addressing Boundary
 
-The first slice supports both runtime-wide and individual-session addressing
-within a repository/container. Illustrative selectors are:
-
-- `codex` — all eligible Codex sessions in the container
-- `codex:<session_ref>` — one exact session by immutable harness session ID
-- `codex:@migration-review` — one session by an explicit Pallium-managed alias
-
-The immutable `session_ref` is the canonical delivery identity. A mutable title
-shown by a harness is discovery metadata only and must not silently route a
-message. An optional Relay alias is unique within its container and harness and
-resolves to a `session_ref` when sending, so renaming it cannot redirect an already
-queued delivery.
+Current contract (2026-09-12): send to one canonical `relay-session-<32 lowercase hex>`
+endpoint or service-global `@name`. Exact routing crosses containers; container-local
+recipient discovery and History scope remain separate. Bare runtime selectors and
+broadcast are unsupported. PR #174's exact resolution and #175's destination
+snapshot make the chosen recipient inspectable without guessing a similarly named
+session. A mutable native title is discovery metadata, not a delivery address.
+Alias changes never redirect an already persisted delivery. Transfer an occupied
+alias only with explicit user authorization.
 
 Pallium can address only sessions exposed by an integration as distinct delivery
 endpoints. A delegated or child agent sharing its parent's session is not
 independently addressable merely because the harness displays a name for it.
 
-R1 design must explicitly settle whether a runtime-wide send snapshots the
-currently registered sessions or also applies to matching sessions created before
-expiry. It must not leave future-session membership implicit.
+Broadcast and future-recipient addressing remain separate uncommitted investigations;
+regular send never gains an implicit audience. Work associations discover existing
+participants; the caller still selects one exact recipient.
 
 Extracted `work_refs` must not route Relay messages. They are optional retrieval
 hints, may be absent, and two agents cannot be assumed to derive the same value.
@@ -79,6 +75,11 @@ not a promised mechanism. It requires a reliable shared identity supplied by an
 integration or external system; Pallium must not infer one semantically.
 
 ## Roadmap
+
+The dated R0/R1 results below preserve historical decisions. Their runtime-wide
+addressing references are superseded by the current contract above. Current next
+work is activation capabilities, delivery traces, and parallel dependency-workflow
+validation. Associations and agent guidance shipped in PRs #157/#158.
 
 ### R0 — Contract
 
@@ -188,7 +189,7 @@ remains neutral because delivery is next-turn; expiry in the recent window is
 the actionable failure signal. This is operational telemetry only and does not
 claim that a delivered message was useful.
 
-#### R1 retention and lifecycle hardening — queued
+#### R1 retention and lifecycle hardening — paused residual
 
 Relay expiry currently prevents further delivery and stops causing an operational
 alert after the recent-failure window, but expired and old terminal records remain
@@ -197,13 +198,13 @@ stored indefinitely. Track the bounded cleanup slice in
 pending and active claims, delete terminal message/delivery state without orphans,
 and keep dashboard metrics useful without turning Relay into a message archive.
 
-### R1.5 — Wake-first delivery — active
+### R1.5 — Wake-first delivery — shipped foundation, queued qualification
 
-Priority (2026-08-31): ship Codex↔Codex dogfood first. The existing architect and
-developer must exchange Relay sends and replies with automatic exact-session wake
-in both directions, without separate human/agent pings. Build only the coordinator
-and Codex adapter needed for that safe milestone; Claude↔Codex follows, then
-OpenCode. The full multi-runtime feature stays active after the Codex milestone.
+The Windows/Linux Claude Code and Codex wake/fallback foundation and no-ping
+reply/remediation witness are shipped. Remaining interruption/restart combinations,
+demand-driven macOS qualification, and OpenCode activation are queued in
+`add-wake-first-relay-delivery`. They do not block validation on already qualified
+runtimes or the next activation-contract and trace features.
 
 Make wake the default delivery policy, without requiring sender syntax or an LLM
 poll. Pallium must persist the message before attempting activation. An eligible
@@ -211,8 +212,7 @@ idle session starts a new turn; a busy session receives the message at a safe ne
 turn boundary; an unsupported, unavailable, stale, or explicitly passive session
 retains the delivery for its next natural turn.
 
-This applies independently to every resolved recipient, including runtime-wide
-fan-out. A wake attempt is not delivery: Pallium marks a delivery complete only
+For the explicitly selected recipient, a wake attempt is not delivery: Pallium marks a delivery complete only
 after the runtime confirms that the message entered the recipient's context, and
 the fallback must not inject a successfully admitted message twice. Missing wake
 capability and ambiguous or retryable wake failures remain observable durable
@@ -226,8 +226,8 @@ and Codex `queue --thread` exact-session admission are proven candidates; Claude
 Channels were unavailable and Codex App Server was rejected for this use. Pallium
 must deduplicate before ingress, admit Claude only when verified idle, correlate
 model-visible admission, and retain durable fallback for busy, stale, restart, or
-ambiguous outcomes. OpenCode is deferred until Claude↔Codex handoff works. Track
-implementation in `add-wake-first-relay-delivery`.
+ambiguous outcomes. Claude↔Codex handoff is qualified; OpenCode activation remains
+unqualified. Track the remaining qualification in `add-wake-first-relay-delivery`.
 
 R1.5 does not restart exited processes, spawn agents, infer recipients, or supervise
 work. Resuming an agent that is no longer running is a separate orchestration
@@ -254,7 +254,7 @@ path, successful correlation, duplicate Stop/idle events, failed admission,
 bounded output, exact scope/session isolation, and notification-loop prevention
 across each supported runtime.
 
-### R1.6 — Dependency-workflow validation and positioning — queued after R1.5
+### R1.6 — Dependency-workflow validation and positioning — ready in parallel
 
 Turn the strongest observed Relay uses into durable E2E journeys: an unexpected
 cross-workstream dependency, a blocked decision round trip, and a cross-model
@@ -266,8 +266,8 @@ docs, quickstarts, and guidance about when agents should and should not send.
 
 Track the complete research, evidence limits, scenario contracts, runtime coverage,
 metrics, documentation outputs, and non-goals in
-`validate-relay-dependency-workflows`. Do not begin it until wake-first delivery is
-implemented and its adapter contract is stable.
+`validate-relay-dependency-workflows`. The qualified Claude/Codex foundation permits
+these scenarios now; add OpenCode only after its activation is qualified.
 
 ### R2 — Future-recipient addressing investigation
 

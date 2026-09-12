@@ -17,6 +17,8 @@ search and its use, not whether history can help in principle.
 
 ### Shipped: response-local navigation and Relay-wake availability
 
+Merged in PR #169 (0b37a03f).
+
 History responses now label session relationship as current, deterministic first-seen other-N, or non-identifying unknown, and state the source_item_id/lookup_event_id handoff for bounded expansion plus live-state verification. Connection-establishment failures are distinct from valid empty results. Regenerate the Codex Relay profile to expose only the read-only History search/expansion tools beside Relay. This change measures presentation/navigation and tool availability only; it makes no candidate-recovery, injection-precision, or downstream-task-effect claim.
 
 Separate retrieval quality, result/excerpt usability, and agent search behavior.
@@ -189,10 +191,31 @@ The independently runnable no-model pilot produced one usable scripted pair, zer
 pairs, two completed attempts, 40 charged input tokens, 10 charged output tokens, and
 USD 0.00.
 
-This is infrastructure qualification only: it measures no agent quality, search quality,
-candidate effect, or downstream task effect. Production remains unchanged. The feature
-stays queued, and no real model evaluation may begin until the architect separately
-verifies the pilot artifacts and authorizes the adapter/run.
+PR #166 (cad04e01) is merged. Its Work Record records a fresh corrected pilot,
+45 passing focused tests, and final independent Sol review with no findings;
+that infrastructure acceptance is complete.
+The test command requires `-m slow`. This measures no agent quality, search quality,
+candidate effect, or downstream task effect. A real model adapter/run still needs
+its own bounded execution plan; do not repeat runner qualification as unfinished work.
+
+## Completed investigation: candidate-study preflight and observational audit
+
+PR #173 (987973b6) records the latest study in
+[its Work Record](../../.agent-workflow/tasks/history-candidate-study.md).
+Only three untouched reconstructible broad-search episodes from one session and
+one container remained; the predeclared confirmation gate failed before candidate
+comparison. No ranking change or downstream improvement was established.
+
+The observational audit found content-equivalent results across different sessions
+in one container. Some of those sources were opened, so deleting duplicate handles
+without checking their distinct evidence would be unjustified. The narrow remaining
+question is whether prospective review of those groups supports a presentation
+change that preserves each source's provenance, date, and expansion path.
+
+Keep this umbrella queued for that evidence-driven follow-up and other unresolved
+retrieval/guidance findings. Reuse the shipped #169 presentation and #166 runner.
+Do not restart the failed frozen-cohort studies or treat a 4,000-character budget
+as validated. This reconciliation does not authorize another paid study.
 
 ## Exact-work scope contract
 

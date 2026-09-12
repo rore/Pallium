@@ -1,8 +1,6 @@
 # Next · Agent Relay
-- add-relay-session-work-associations
 - add-relay-activation-capability-contract
 - add-relay-delivery-trace
-- add-copilot-relay-integration
 
 # Parallel · Session History
 - improve-session-history-search-quality
@@ -13,6 +11,9 @@
 
 # Follow-up · Relay Qualification
 - add-wake-first-relay-delivery
+
+# Later · Runtime Expansion
+- add-copilot-relay-integration
 
 # P1 · Reuse Measurement
 - idea-pull-real-corpus-validation
@@ -49,6 +50,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-relay-session-work-associations
 - idea-exact-relay-recipient-resolution
 - add-dashboard-operations-and-relay-workspace
 - investigate-cross-repository-relay-coordination

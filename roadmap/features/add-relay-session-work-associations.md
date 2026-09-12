@@ -1,7 +1,7 @@
 ---
 id: add-relay-session-work-associations
 title: Associate Relay sessions with multiple work references
-status: in_progress
+status: done
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -27,10 +27,10 @@ also avoids writing transient session addresses into divergent Minimap documents
 
 ## Priority and Dependencies
 
-First in the Relay product queue (user priority, 2026-09-09): connecting sessions
-to real work provides the clearest visible product value and demonstrates the
-collection's integration. Implement before activation-capability normalization,
-delivery traces, and further runtime expansion.
+Shipped after being prioritized first in the Relay product queue (user priority,
+2026-09-09): connecting sessions to real work provides visible product value and
+demonstrates the collection's integration. Activation-capability normalization
+and delivery traces are now next; further runtime expansion follows them.
 
 Use the existing session registry, routing, and public availability facts. Neither
 the activation-capability feature nor delivery traces are prerequisites for
@@ -45,21 +45,19 @@ Pallium owns the association API and generic reference rules. Minimap owns its i
 reference producer and optional UI. Agree the shared contract before either
 implementation; Pallium remains usable without Minimap or a tracker connector.
 
-## Discovery Before Implementation
+## Shipped Baseline and Follow-up Boundaries
 
-Recheck current main and record a compact contract/change inventory in the Work
-Record. Start with `core/work_ref.py`, `core/relay.py`, `storage/sqlite_relay.py`,
-`storage/sqlite_schema.py`, `api/schemas.py`, `api/routes.py`, `app/mcp/server.py`,
-runtime hook reference discovery/ingestion, and `app/dashboard.py`/dashboard UI.
-Read the shipped structural-work-reference, current-work injection, exact-search,
-and dashboard feature records; older audit prose may describe pre-shipping state.
+PR #157 shipped endpoint-owned work associations, HTTP/MCP/dashboard reads and
+mutations, structural refresh, and immutable hook snapshots. PR #158 shipped the
+cross-runtime agent guidance. Manager acceptance included an isolated two-session
+MCP/dashboard journey; implementation and guidance are merged, not pending review.
 
-At planning time, history accepts bounded `pallium_work_refs` metadata (five refs),
-and supported hooks discover branches and exact Agent Workflow Work Records.
-The injected scalar current-work ref is structurally selected, not an arbitrary
-explicit ref. Relay session registration/listing does not yet carry work refs.
-The shipped dashboard is observational/administrative, not a human message composer.
-Do not claim these new behaviors already exist or bypass existing runtime limits.
+History retains its five-reference limit and structurally selected scalar
+current-work ref. Explicit references use qualified scope/local identifiers;
+attaching work never rewrites old history or changes access. Physical endpoint
+pruning remains deferred with the lifecycle feature. The Minimap UI belongs to its
+companion feature and does not keep this Pallium feature open. The requirements
+below describe the delivered contract, not a fresh implementation queue.
 
 ## Intended Developer Journey
 
@@ -194,4 +192,4 @@ and Minimap UI implementation (owned by the companion feature).
    consumer contract for Minimap. Tests use controlled sessions without paid turns;
    run focused coverage and repository-required checks before implementation review.
 
-Implemented in PR #157 with endpoint-owned associations, HTTP/MCP/dashboard surfaces, immutable hook capture, cross-runtime identity vectors, public-surface E2E coverage, and an isolated runnable demonstration. Manager acceptance remediation is in progress; the feature is not shipped or approved for merge until the dashboard journey and final review pass.
+Completed: PR #157 merged as 86020cef; PR #158 merged as c59b31c2. The manager verified the corrected dashboard journey and isolated MCP demo before merge. Caller-surface tests cover association identity, lifecycle, and History boundaries. This is implementation/UX evidence, not a measured productivity claim.

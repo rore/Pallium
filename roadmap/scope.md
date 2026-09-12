@@ -47,7 +47,7 @@ Shipped since last major scope update:
 - **Shared prompt-role governance**: contract ownership for `write_extraction`, `write_enrichment`, `query_ambiguity_resolution`
 - **Live improvement loop**: drift metrics, shadow routing comparison, replay-promotion tooling
 
-Current focus — Session History vNext (refined 2026-09-05):
+Current focus — Session History vNext (reconciled 2026-09-12):
 
 The active milestone is **Session History vNext: historical agent work as a
 first-class context layer** (strategy: `docs/context/strategy-vnext.md`; execution plan:
@@ -77,14 +77,17 @@ followed by the broader access/representation investigation:
    `fix-disabled-derived-memory-injection-observability` slice makes disabled
    automatic queries telemetry-silent and exposes the real injection mode.
    Existing code and stored outputs remain usable.
-4. `improve-session-history-search-quality` — widen the real-data diagnostic and
-   implement the smallest supported retrieval, presentation, or guidance fixes.
-   Exact-work search stays exact; missing old references do not justify default
-   scope expansion. The immediate question is how to recover the right evidence,
-   not whether history can help in principle.
-5. `investigate-history-navigation-and-on-demand-compression` — compare flat,
-   grouped, and index-first access plus raw, temporary on-demand compression, and
-   persistent-derived representations before committing to another structure.
+4. `improve-session-history-search-quality` — PR #169 shipped compact session
+   grouping, expansion handoff, connection-error clarity, and read-only History
+   tools in the generated Codex Relay profile. PR #166 shipped the independently
+   accepted paired runner. PR #173 closed a candidate-study preflight without a
+   comparison; the current narrow follow-up is prospective review of equivalent
+   result groups while preserving provenance, dates, and expansion paths. Ranking
+   and downstream benefit remain unvalidated; do not restart completed studies.
+   Exact-work search stays exact.
+5. `investigate-history-navigation-and-on-demand-compression` — broader access
+   and representation investigation, queued behind that narrow evidence question.
+   Start from the shipped #169 presentation, not the old ungrouped baseline.
 
 Primary KPI: fraction of
 *eligible* sessions with ≥1 confirmed historical-reuse × 100 (session incidence,
@@ -143,7 +146,7 @@ but orchestrated manually today. This argues for changing the interaction model
 (deliberate pull + continuity), not abandoning historical memory — with derivation
 demoted to a continuously-evaluated optimization layer.
 
-Agent Relay capability (2026-08):
+Agent Relay capability (reconciled 2026-09-12):
 
 Agent Relay tests a separate product hypothesis: Pallium's durable local service
 and agent integration points may be valuable as a context-exchange layer, even
@@ -174,15 +177,18 @@ follow-up for still-unproven interruption/restart combinations, demand-driven
 macOS qualification, and OpenCode activation. The closed-recipient correction
 shipped in PR #148; remaining retention cleanup is paused pending operational
 need. Neither umbrella blocks the next product slices. Any newly confirmed
-correctness incident still takes priority. The in-review
+correctness incident still takes priority. The shipped
 `add-relay-session-work-associations` slice in PR #157 joins existing sessions to
-multiple exact work references for agents, the Relay dashboard, and optional
-Minimap integration. It uses endpoint-owned readable associations, preserves
-existing History scope, and never treats association as ownership or liveness.
+multiple exact work references through agent interfaces and the Relay dashboard;
+PR #158 supplies agent guidance. Minimap's companion UI is separate. Associations
+preserve existing History scope and never imply ownership or liveness.
+PRs #174/#175 also shipped exact-recipient resolution, destination observability,
+and claim-token redaction. These corrections do not complete the queued activation
+contract or persisted delivery-trace features.
 Next, `add-relay-activation-capability-contract` makes qualified
 activation behavior and outcomes explicit, followed by `add-relay-delivery-trace`
 for bounded diagnostic evidence through message detail, HTTP, and MCP.
-All three precede Copilot adapter expansion, which also requires OpenCode wake
+Copilot is later runtime expansion, blocked on those two features and OpenCode wake
 qualification. Existing lifecycle hardening retains ownership of
 delivery/session state and retention; trace recording never becomes delivery
 authority. Dependency-workflow validation remains parallel and drives public
