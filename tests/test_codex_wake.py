@@ -523,15 +523,20 @@ def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> 
     assert len(workers) == 1
     assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
 
-def test_turn_observation_during_queued_submission_does_not_release(monkeypatch) -> None:
+def test_turn_observation_during_queued_submission_does_not_release(
+    monkeypatch, isolated_codex_registry: CodexWakeRegistry,
+) -> None:
     workers = []
+    delivery_id = "delivery-turn-observation"
+    delivery = _delivery(delivery_id)
+    endpoint_id = delivery["deliveries"][0]["recipient_endpoint_id"]
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
             type("Worker", (), {"start": lambda self: None})(),
         )[1]
-        _schedule(_delivery())
+        _schedule(delivery)
 
     process = MagicMock(returncode=0)
     def turn_observed(*, timeout: float):
@@ -543,8 +548,11 @@ def test_turn_observation_during_queued_submission_does_not_release(monkeypatch)
     with patch("app.codex_wake._popen", return_value=process):
         codex_wake._wake_after_debounce(*workers[0])
 
-    assert codex_wake._scheduled_delivery_ids == {"delivery-1"}
-
+    reservation = isolated_codex_registry.snapshot(endpoint_id)
+    assert reservation is not None
+    assert reservation.delivery_id == delivery_id
+    assert reservation.outcome == "accepted"
+    assert codex_wake._scheduled_delivery_ids == {delivery_id}
 
 def test_pre_submit_failure_releases_without_marking_unreachable(monkeypatch) -> None:
     workers = []
