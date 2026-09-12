@@ -117,6 +117,8 @@ success only when `/health`, `/status`, and `/debug/queue/health` satisfy their
 documented readiness contracts; failures name the last check and Pallium log.
 The default readiness budget is three minutes; an explicit
 `-ReadinessTimeoutSeconds` value keeps its exact finite deadline.
+For offline Relay endpoint repair, run `scripts/restart-service.ps1 -StopOnly` first. It stops the installed task without starting it again and fails if the task, listener, or managed process tree cannot be conclusively drained.
+
 The installed launcher must use a dependency-complete Python and the supported
 `python -m app.run service run --port <port>` path: `service run` applies the
 managed `~/.pallium/config/.env` and service configuration. Do not use the

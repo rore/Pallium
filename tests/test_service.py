@@ -30,6 +30,7 @@ from app.cli.service import (
     _systemctl,
     _service_ready,
     _wait_for_service,
+    assert_service_stopped,
     service_main,
 )
 
@@ -803,3 +804,14 @@ class TestLinuxServiceLifecycle:
     def test_remove_data_refuses_filesystem_root(self, unsafe: str):
         with pytest.raises(ValueError, match="unsafe"):
             _remove_service_data(Path(unsafe).resolve())
+
+
+def test_windows_stop_verifier_is_read_only_and_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / "port").write_text("21987", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr("app.cli.service.sys.platform", "win32")
+    monkeypatch.setattr("app.cli.service.subprocess.run", lambda argv, **kwargs: calls.append((argv, kwargs)) or subprocess.CompletedProcess(argv, 1, "", "enumeration failed"))
+    with pytest.raises(RuntimeError, match="enumeration failed"):
+        assert_service_stopped(tmp_path)
+    assert calls and "-StopOnly" not in calls[0][0] and calls[0][0][-2] == "-Command"

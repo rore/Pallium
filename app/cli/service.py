@@ -537,6 +537,41 @@ def _stop_linux() -> None:
     _systemctl("stop", _SERVICE_NAME)
 
 
+def assert_service_stopped(home: Path) -> None:
+    """Fail unless the installed service manager conclusively reports stopped."""
+    if sys.platform == "linux":
+        _assert_linux_unit_home(home)
+        state = _linux_unit_state()
+        tasks = state.get("TasksCurrent")
+        if (state.get("ActiveState") != "inactive" or state.get("MainPID") != "0"
+                or tasks is None or not tasks.isdecimal() or int(tasks) != 0):
+            raise RuntimeError(f"{_SERVICE_NAME} is not conclusively stopped: {state}")
+        return
+    if sys.platform == "win32":
+        port_file = home / "run" / "port"
+        try:
+            port = int(port_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"cannot read installed service port from {port_file}") from exc
+        probe = rf"""$ErrorActionPreference = "Stop"
+$task = Get-ScheduledTask -TaskName "Pallium" -ErrorAction Stop
+if ($task.State -notin @("Ready", "Disabled")) {{ throw "Pallium scheduled task remains $($task.State)" }}
+$listeners = @(Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction Stop)
+if ($listeners.Count) {{ throw "Pallium listener(s) survived: $($listeners.OwningProcess -join ", ")" }}
+$procs = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {{
+    $c = [string]$_.CommandLine
+    ($c -match "(?i)app\.run\s+service\s+run") -or
+    ($c -match "(?i)app\.(api|processor|cleaner)(?:\s|$)") -or
+    ($c -match "(?i)\bcodex(?:\.exe)?\s+queue\s+--profile\s+pallium-relay\b")
+}})
+if ($procs.Count) {{ throw "Managed Pallium process(es) survived: $($procs.ProcessId -join ", ")" }}"""
+        result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", probe], capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "service stop verification failed")
+        return
+    raise RuntimeError("installed service verification is unsupported on this platform")
+
+
 def _restart_linux() -> None:
     _systemctl("restart", _SERVICE_NAME)
 
@@ -816,7 +851,8 @@ def _cmd_stop(args: argparse.Namespace) -> int:
         if (
             stopped.get("ActiveState") == "inactive"
             and stopped.get("MainPID") == "0"
-            and stopped.get("TasksCurrent", "") in {"", "0", "[not set]"}
+            and stopped.get("TasksCurrent", "").isdecimal()
+            and int(stopped["TasksCurrent"]) == 0
         ):
             print(" stopped.")
             return 0

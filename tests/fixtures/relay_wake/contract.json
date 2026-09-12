@@ -27,7 +27,7 @@
       "capability_disabled": "fallback", "capability_expired": "fallback", "session_closed": "fallback", "session_reopened": "fallback", "adapter_replaced": "fallback", "begin_external_call": "reject", "trigger_admitted": "reject", "trigger_accepted": "reject", "trigger_failed": "fallback", "admission_deadline": "fallback", "message_expired": "expire", "natural_turn_claim": "claim", "wake_callback": "reject", "pallium_restart": "fallback", "runtime_restart": "fallback"
     }
   },
-  "delivery_states": ["pending", "claimed", "delivered", "expired"],
+  "delivery_states": ["pending", "claimed", "delivered", "expired", "suppressed"],
   "valid_combined_states": ["pending/not_eligible", "claimed/not_eligible", "pending/queued", "pending/triggering", "pending/triggered", "delivered/admitted", "pending/fallback", "claimed/fallback", "delivered/fallback", "expired/*"],
   "delivery_transitions": {
     "natural_turn_claim": {"pending/not_eligible": "claimed/not_eligible", "pending/fallback": "claimed/fallback"},
