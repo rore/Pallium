@@ -59,7 +59,7 @@ Approved by user 2026-09-12: "Second, the relay to operational tasks. You can ad
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Exact design for acceptance
@@ -150,6 +150,8 @@ Context budget rule: HTTP and dashboard may show the full bounded object. MCP de
 - Final correction workflow check returned advisory exit 1 only because the pre-existing api/schemas.py red-zone change still lacks the shadow api-review checkpoint; every blocking predicate passed and no boundary violation was reported.
 
 - Final full-suite verification at commit da10c396ffa5b86cd445f2f5ac75b76835ddd1dd: command C:\\Dev\\rore\\Pallium\\.venv\\Scripts\\python.exe -m pytest tests/ -x -q ran for 150.69 seconds and stopped at the first actual failure: 1 failed, 1761 passed, 2 skipped, 1 xfailed. First failure: tests/test_codex_integration.py::test_codex_public_lifecycle_converges_across_checkouts_and_uninstall; second setup raised PermissionError [WinError 5] while renaming the staged pallium-memory skill directory.
+
+- Final full-suite verification at commit f1628ee9c7be77bce37a5a9f7e40ee01f0216128: command C:\\Dev\\rore\\Pallium\\.venv\\Scripts\\python.exe -m pytest tests/ -x -q passed in 266.10 seconds with 4882 passed, 33 skipped, and 2 xfailed.
 
 ## Evidence
 
