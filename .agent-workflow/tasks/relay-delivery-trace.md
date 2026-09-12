@@ -58,7 +58,7 @@ When inputs are unknown, legacy, malformed, Unicode, redacted, aliased, transfer
 Clean-context review of `7bcd6c55` by `/root/delivery_trace_plan_review` returned revise-before-implementation. Addressed in this revision: no fabricated historical claim chronology; explicit always-best-effort completeness; immutable stage-event sequences and frozen-page/MCP continuation semantics; 25 ms no-retry diagnostic transactions outside correctness locks; trace cleanup in the existing cleaner even when memory retention is disabled; nonmutating trace reads; and the six required contention/interleaving E2E cases. Re-review remains pending after `@pall-arc` and manager feedback settles the shared producer contract.
 
 **Approvals:**
-Pending explicit human approval of the reviewed High-risk plan.
+Approved by user 2026-09-12: "Second, the relay to operational tasks. You can advance with that and let's get them completed." Scope confirmed by the architect as faithful implementation of the two fully specified Relay roadmap features; this does not approve an unreviewed material scope or contract departure, which must return for a decision. Concrete architect acceptance of this feature's reviewed design remains pending before implementation.
 
 **Exceptions:**
 —
