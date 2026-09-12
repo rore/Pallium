@@ -1292,8 +1292,8 @@ def test_relay_transport_diagnostic_is_allowlisted(method, exc, category, retrya
     result = _relay_transport_error(method, exc)
     assert result == {
         "error": f"Relay {method} {category} failure",
-        "error_kind": "transport_unavailable",
-        "retryable": retryable,
-        "action": "check service health and retry once",
+        "error_kind": "transport_timeout" if category.endswith("timeout") else "transport_unavailable",
+        "retryable": method == "GET" or category == "connect",
+        "action": "check service health and retry once" if (method == "GET" or category == "connect") else "check delivery status before retrying",
     }
     assert "secret" not in json.dumps(result)

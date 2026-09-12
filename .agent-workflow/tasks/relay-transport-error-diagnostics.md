@@ -35,13 +35,13 @@
 **Exceptions:** —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Pre-edit file list: `app/mcp/client.py`, focused `tests/test_relay_mcp_tools.py` and `tests/test_mcp_server.py`, and this Work Record only. Supervisor/service/API/storage/hook/wake files are explicitly excluded.
-- Added the shared fixed allowlisted Relay transport formatter and applied it to Relay GET/POST timeout/connection paths without changing retry loops, deadlines, HTTP handling, or cancellation.`n- Added focused category/retryability/privacy regression coverage; no supervisor logging change was needed for this slice.
+- Added the shared fixed allowlisted Relay transport formatter and applied it to Relay GET/POST timeout/connection paths without changing retry loops, deadlines, HTTP handling, or cancellation.`n- Added focused category/retryability/privacy regression coverage; no supervisor logging change was needed for this slice.\n- Smart review corrections: retry catches remain connection-only; outer catches normalize only `httpx.TransportError`; generic parse/non-Relay behavior stays unchanged; timeout error kinds and actions are explicit.
 
 ## Evidence
 

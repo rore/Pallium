@@ -22,9 +22,9 @@ def _relay_transport_error(method: str, exc: Exception | None = None) -> dict[st
     """Return a fixed, privacy-safe diagnostic for Relay transport failures."""
     if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
         category = "connect"
-    elif isinstance(exc, (httpx.ReadTimeout, httpx.ReadError)):
+    elif isinstance(exc, httpx.ReadTimeout):
         category = "read_timeout"
-    elif isinstance(exc, (httpx.WriteTimeout, httpx.WriteError)):
+    elif isinstance(exc, httpx.WriteTimeout):
         category = "write_timeout"
     elif isinstance(exc, httpx.PoolTimeout):
         category = "pool_timeout"
@@ -32,9 +32,9 @@ def _relay_transport_error(method: str, exc: Exception | None = None) -> dict[st
         category = "transport"
     return {
         "error": f"Relay {method} {category} failure",
-        "error_kind": "transport_unavailable",
-        "retryable": method == "GET" and category == "connect",
-        "action": "check service health and retry once",
+        "error_kind": "transport_timeout" if category.endswith("timeout") else "transport_unavailable",
+        "retryable": method == "GET" or category == "connect",
+        "action": "check service health and retry once" if (method == "GET" or category == "connect") else "check delivery status before retrying",
     }
 
 
@@ -334,6 +334,8 @@ class PalliumMcpClient:
                 "detail": body,
             }
         except Exception as exc:
+            if isinstance(exc, httpx.TransportError):
+                return _relay_transport_error("GET", exc)
             return {"error": str(exc)}
 
     async def relay_recipients(
@@ -660,7 +662,7 @@ class PalliumMcpClient:
                 "detail": body,
             }
         except Exception as exc:
-            if path.startswith("/relay/"):
+            if path.startswith("/relay/") and isinstance(exc, httpx.TransportError):
                 return _relay_transport_error("POST", exc)
             return {"error": redact_sensitive(str(exc))}
     async def remember_memory(

@@ -394,7 +394,7 @@ class TestRelay:
         kwargs = {"relay_recipients": {}, "relay_send": {"message": "handoff", "recipient": "codex:session-1", "sender_runtime": "codex", "sender_session_ref": "sender"}, "relay_reply": {"delivery_id": "delivery-1", "message": "ack"}, "relay_mcp_ack": {"delivery_id": "delivery-1", "receipt": "receipt-1"}}[method]
         with patch.object(PalliumMcpClient, "_RELAY_BUSY_ATTEMPTS", 3), patch("httpx.AsyncClient.post", side_effect=error) as post, patch("httpx.AsyncClient.get", side_effect=error) as get, patch("app.mcp.client.asyncio.sleep", new=AsyncMock()):
             result = await getattr(PalliumMcpClient(ctx), method)(**kwargs)
-        assert str(error) in result["error"]
+        assert result["error"].startswith("Relay ")
         assert (post if method != "relay_recipients" else get).call_count == 3
 
     @pytest.mark.asyncio
@@ -433,7 +433,7 @@ class TestRelay:
         ):
             result = await getattr(PalliumMcpClient(ctx), method)(**kwargs)
         assert request.call_count == 1
-        assert str(error) in result["error"]
+        assert result["error"].startswith("Relay ")
 
     @pytest.mark.asyncio
     async def test_relay_cancellation_propagates_without_retry(self, ctx: PalliumContext) -> None:
