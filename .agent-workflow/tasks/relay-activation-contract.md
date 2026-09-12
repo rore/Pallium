@@ -59,7 +59,7 @@ Approved by user 2026-09-12: "Second, the relay to operational tasks. You can ad
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Exact design for acceptance
@@ -132,6 +132,8 @@ Context budget rule: HTTP and dashboard may show the full bounded object. MCP de
 - Corrective implementation resumed from `29aee1f1` after the authorized full-suite run exposed a bounded MCP receive regression. This pass is limited to `app/mcp/server.py`, `app/dependencies.py`, `app/dashboard.py`, focused `tests/test_relay_mcp_tools.py`, `tests/test_mcp_server.py`, `tests/test_dashboard.py`, `tests/test_codex_wake.py`, and this Work Record. It will compact required activation without losing the one-delivery receive/status contract, key delivery projection by `recipient_endpoint_id`, derive delivery activation from the current endpoint session lifecycle, and make ACK reconciliation tests start from real scheduler-created reservations. No schema, candidate reader, storage, service, CI, or native-probe change is required.
 
 - Corrective phase completed: MCP Relay formatting now compacts activation before normal sizing, shortens claimed payload pages with advancing offsets when activation consumes budget, and preserves compact delivery activation in oversized status pages. HTTP/dashboard delivery projection now prefers `recipient_endpoint_id` and overlays the authoritative current endpoint session so delivery state cannot masquerade as lifecycle. Explicit empty wake registries are preserved instead of replaced by truthiness fallback. ACK coverage now proves real scheduler-created reservations, thread-start cleanup, repeated already-delivered ACK reconciliation from a present fence, and closed-endpoint projection. Exact five-node regression run passed 5 tests in 2.03 seconds; `python -m pytest tests/test_relay_mcp_tools.py tests/test_mcp_server.py tests/test_dashboard.py tests/test_codex_wake.py -q -n 0 --tb=short` passed 246 tests in 54.52 seconds. The required full suite was not rerun per the corrective assignment, so State remains `Ready to implement` for root verification.
+
+- Full-suite verification at commit 222166c990f6a610ba08dd026e1c6db9ecbaa3a8: command C:\\Dev\\rore\\Pallium\\.venv\\Scripts\\python.exe -m pytest tests/ -x -q ran for 142.84 seconds and stopped at the first actual failure: 1 failed, 1984 passed, 2 skipped, 1 xfailed. First failure: tests/test_agent_relay_hooks.py::test_relay_turn_replays_without_claiming_until_final_destination[ integrations/claude-code/hooks/common.py-claude-code ]; assertion result is not None failed (actual None).
 
 ## Evidence
 
