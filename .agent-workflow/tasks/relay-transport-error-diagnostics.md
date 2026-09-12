@@ -28,18 +28,19 @@
 - Caller surface -> MCP tool tests asserting bounded ToolError JSON preserves fixed `error`, `error_kind`, `retryable`, and `action` fields.
 - Repository readiness -> focused/affected Relay-MCP tests, workflow check, fresh redline report, and smart result review.
 
-**Plan review:** Clean-context smart review on `da5cacc8` withheld for fixed allowlisted categories, timeout ambiguity, non-Relay caller compatibility, complete retry/cancellation/MCP coverage, and removal of supervisor work. The first revision incorporated every initial correction; re-review caught that retry-policy gating excluded single-attempt Relay receive/name/work-ref calls. This revision gates by `/relay/` path instead; re-review is pending. Final implementation requires smart result review.
+**Plan review:** Clean-context smart review on `da5cacc8` withheld for fixed allowlisted categories, timeout ambiguity, non-Relay caller compatibility, complete retry/cancellation/MCP coverage, and removal of supervisor work. The first revision incorporated every initial correction; re-review caught that retry-policy gating excluded single-attempt Relay receive/name/work-ref calls. This revision gates by `/relay/` path instead; clean-context smart re-review returned APPROVE. Final implementation requires smart result review.
 
 **Approvals:** Approved by user 2026-09-12: "Approve"
 
 **Exceptions:** —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
+- Pre-edit file list: `app/mcp/client.py`, focused `tests/test_relay_mcp_tools.py` and `tests/test_mcp_server.py`, and this Work Record only. Supervisor/service/API/storage/hook/wake files are explicitly excluded.
 - Work Record only. No production files, service state, installed integrations, or parallel task state changed.
 
 ## Evidence
