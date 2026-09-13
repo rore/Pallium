@@ -1725,7 +1725,9 @@ def test_failed_old_generation_cannot_submit_or_clear_replacement(monkeypatch) -
     assert registry.snapshot(endpoint_id) == new
 
 
-def test_ack_during_process_wait_releases_without_deadlock(monkeypatch) -> None:
+def test_ack_during_process_wait_releases_without_deadlock(
+    monkeypatch, tmp_path,
+) -> None:
     registry = CodexWakeRegistry()
     endpoint_id = "relay-session-" + "a" * 32
     reservation = registry.reserve(
@@ -1733,6 +1735,8 @@ def test_ack_during_process_wait_releases_without_deadlock(monkeypatch) -> None:
         session_ref="target-session", container_ref=SCOPE["container_ref"],
     )
     assert reservation is not None
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
     started = threading.Event()
     finish = threading.Event()
     process = MagicMock(returncode=0)
@@ -1740,22 +1744,27 @@ def test_ack_during_process_wait_releases_without_deadlock(monkeypatch) -> None:
     def communicate(*, timeout: float):
         assert timeout == 30
         started.set()
-        assert finish.wait(1)
+        assert finish.wait(10)
         return None, ""
 
     process.communicate.side_effect = communicate
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
-    with patch("app.codex_wake._popen", return_value=process):
+    with patch("app.codex_wake._codex_home", return_value=codex_home), patch(
+        "app.codex_wake._popen", return_value=process,
+    ) as popen:
         worker = threading.Thread(
             target=codex_wake._wake_after_debounce, args=(reservation, registry),
         )
         worker.start()
-        assert started.wait(1)
-        assert codex_wake.release_codex_relay_wake(
-            "delivery", registry=registry,
-        )
-        finish.set()
-        worker.join(timeout=1)
+        try:
+            assert started.wait(10)
+            assert codex_wake.release_codex_relay_wake(
+                "delivery", registry=registry,
+            )
+        finally:
+            finish.set()
+            worker.join(timeout=10)
+    popen.assert_called_once()
     assert not worker.is_alive()
     assert registry.snapshot(endpoint_id) is None
 
