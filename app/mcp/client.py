@@ -609,10 +609,18 @@ class PalliumMcpClient:
                     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                         last_connect_error = exc
                         if not retry_relay_busy or attempt + 1 >= attempts:
-                            return _relay_transport_error("POST", exc)
+                            return (
+                                _relay_transport_error("POST", exc)
+                                if path.startswith("/relay/")
+                                else {"error": redact_sensitive(str(exc))}
+                            )
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
-                            return _relay_transport_error("POST", exc)
+                            return (
+                                _relay_transport_error("POST", exc)
+                                if path.startswith("/relay/")
+                                else {"error": redact_sensitive(str(exc))}
+                            )
                         await asyncio.sleep(min(1.0, remaining))
                         continue
                     parse_error = None

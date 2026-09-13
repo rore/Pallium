@@ -1280,15 +1280,15 @@ async def test_get_transport_redacts_secret_from_http_error(monkeypatch):
     assert result["error"] == "HTTP 422 from /relay/work-refs/participants"
 
 @pytest.mark.parametrize(
-    ("method", "exc", "category", "retryable"),
+    ("method", "exc", "category"),
     [
-        ("GET", httpx.ConnectError("secret-endpoint"), "connect", True),
-        ("GET", httpx.ReadTimeout("secret-read"), "read_timeout", False),
-        ("POST", httpx.WriteTimeout("secret-write"), "write_timeout", False),
-        ("POST", httpx.PoolTimeout("secret-pool"), "pool_timeout", False),
+        ("GET", httpx.ConnectError("secret-endpoint"), "connect"),
+        ("GET", httpx.ReadTimeout("secret-read"), "read_timeout"),
+        ("POST", httpx.WriteTimeout("secret-write"), "write_timeout"),
+        ("POST", httpx.PoolTimeout("secret-pool"), "pool_timeout"),
     ],
 )
-def test_relay_transport_diagnostic_is_allowlisted(method, exc, category, retryable):
+def test_relay_transport_diagnostic_is_allowlisted(method, exc, category):
     result = _relay_transport_error(method, exc)
     assert result == {
         "error": f"Relay {method} {category} failure",
@@ -1297,3 +1297,9 @@ def test_relay_transport_diagnostic_is_allowlisted(method, exc, category, retrya
         "action": "check service health and retry once" if (method == "GET" or category == "connect") else "check delivery status before retrying",
     }
     assert "secret" not in json.dumps(result)
+@pytest.mark.asyncio
+async def test_relay_transport_diagnostic_survives_tool_error():
+    diagnostic = _relay_transport_error("GET", httpx.ConnectError("secret endpoint"))
+    with patch.object(PalliumMcpClient, "relay_recipients", new=AsyncMock(return_value=diagnostic)):
+        text = await assert_tool_error(create_server(), "pallium_relay_recipients", _SCOPE)
+    assert tool_error_payload(text) == diagnostic
