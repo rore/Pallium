@@ -675,7 +675,7 @@ class TestLinuxServiceLifecycle:
     ):
         states = iter([
             {"LoadState": "loaded", "ActiveState": "active", "MainPID": "123"},
-            {"LoadState": "loaded", "ActiveState": "inactive", "MainPID": "0", "TasksCurrent": ""},
+            {"LoadState": "loaded", "ActiveState": "inactive", "MainPID": "0", "TasksCurrent": "0"},
         ])
         monkeypatch.setattr("app.cli.service._assert_linux_unit_home", lambda _home: None)
         monkeypatch.setattr("app.cli.service._linux_unit_state", lambda: next(states))
@@ -688,6 +688,19 @@ class TestLinuxServiceLifecycle:
 
         assert _cmd_stop(argparse.Namespace(home=str(tmp_path))) == 0
         assert stop_calls == [True]
+
+    def test_stop_refuses_unknown_systemd_task_count(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        states = iter([
+            {"LoadState": "loaded", "ActiveState": "active", "MainPID": "123"},
+            {"LoadState": "loaded", "ActiveState": "inactive", "MainPID": "0", "TasksCurrent": ""},
+        ])
+        monkeypatch.setattr("app.cli.service._assert_linux_unit_home", lambda _home: None)
+        monkeypatch.setattr("app.cli.service._linux_unit_state", lambda: next(states))
+        monkeypatch.setattr("app.cli.service._stop_linux", lambda: None)
+
+        assert _cmd_stop(argparse.Namespace(home=str(tmp_path))) == 1
 
     def test_status_uses_systemd_main_pid_not_pid_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
