@@ -129,6 +129,12 @@ def test_shared_attempt_completion_is_visible_to_every_associated_delivery(relay
         "completed",
     ]
     assert len({event["attempt_id"] for event in trace["events"]}) == 1
+    assert [event["shared"] for event in trace["events"]] == [True, False, True]
+    assert [event["delivery_id"] for event in trace["events"]] == [
+        None,
+        second["deliveries"][0]["delivery_id"],
+        None,
+    ]
 
 
 def test_duplicate_conflict_and_completion_before_association(relay):
@@ -565,6 +571,7 @@ def test_api_and_dashboard_share_projection_and_unknown_is_404(client):
     )
     assert api.status_code == dashboard.status_code == 200
     assert api.json() == dashboard.json()
+    assert "incomplete page: more events are available" in client.get("/dashboard").text
     unknown = "relay-msg-" + "0" * 32
     assert client.get(f"/relay/messages/{unknown}/trace").status_code == 404
     assert (
@@ -650,13 +657,28 @@ def test_cleanup_marks_every_known_associate_and_discloses_page_gap(relay):
 def test_trace_writer_failure_is_best_effort_and_releases_slot(client):
     service = client.app.state.pallium_service
     called = threading.Event()
+    release_writer = threading.Event()
 
     def fail(_event):
         called.set()
+        assert release_writer.wait(timeout=2)
         raise RuntimeError("diagnostic storage unavailable")
 
     assert service.enqueue_relay_trace_event(fail, {"stage": "prepared"})
     assert called.wait(timeout=2)
+    for _ in range(63):
+        assert service._relay_trace_slots.acquire(blocking=False)
+    assert not service._relay_trace_slots.acquire(blocking=False)
+    release_writer.set()
+    for _ in range(200):
+        if service._relay_trace_slots.acquire(blocking=False):
+            break
+        threading.Event().wait(0.01)
+    else:
+        pytest.fail("failed trace writer did not release its slot")
+    for _ in range(64):
+        service._relay_trace_slots.release()
+
     completed = threading.Event()
     assert service.enqueue_relay_trace_event(
         lambda _event: completed.set(), {"stage": "prepared"}

@@ -153,8 +153,11 @@ projection is available in the message detail dashboard and at
 `GET /relay/messages/{message_id}/trace`.
 
 The ordered `prepared`, `associated`, and `completed` events describe bounded
-native activation evidence. Several deliveries can share one activation attempt.
-The delivery snapshots remain authoritative for pending, claimed, expired, and
+native activation evidence. Several deliveries can share one activation attempt. A shared stage is returned with
+`shared: true` and `delivery_id: null`; only message-local delivery IDs are exposed.
+Message IDs are service-global capabilities so either side of a cross-container Relay
+can inspect the same persisted delivery; `container_ref` selects Relay context but is
+not an authentication boundary. The delivery snapshots remain authoritative for pending, claimed, expired, and
 delivered state; native acceptance does not prove payload admission, and delivery
 does not imply a reply or completed work. Missing, legacy, truncated, or pruned
 evidence is always labeled `best_effort`. Never resend a persisted delivery merely

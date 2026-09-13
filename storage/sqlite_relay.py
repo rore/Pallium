@@ -1894,11 +1894,15 @@ class SQLiteRelayMixin:
             has_more = len(rows) > limit
             rows = rows[:limit]
 
+            delivery_id_set = set(delivery_ids)
             events = [
                 {
                     "sequence": row.recorded_sequence,
                     "attempt_id": row.attempt_id,
-                    "delivery_id": row.delivery_id,
+                    "delivery_id": (
+                        row.delivery_id if row.delivery_id in delivery_id_set else None
+                    ),
+                    "shared": row.delivery_id not in delivery_id_set,
                     "stage": row.stage,
                     "outcome": row.outcome,
                     "reason": row.reason,

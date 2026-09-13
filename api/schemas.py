@@ -1021,7 +1021,8 @@ class RelayMessageResponse(BaseModel):
 class RelayTraceEventResponse(BaseModel):
     sequence: int = Field(ge=1)
     attempt_id: str
-    delivery_id: str
+    delivery_id: str | None = None
+    shared: bool
     stage: Literal["prepared", "associated", "completed"]
     outcome: Literal["accepted", "deferred", "uncertain", "failed"] | None = None
     reason: str | None = None
