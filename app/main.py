@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 
 from app.asyncio_windows_accept import apply_patch as _apply_accept_patch
 from app.config import AppConfig
+from app import codex_wake
 from app.dashboard import mount_dashboard
 from app.claude_wake import start_claude_wake_reconciler
 from app.dependencies import (
@@ -595,10 +596,13 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         dashboard_relay_service = RelayService(build_result.storage)
     except RelayUnavailableError:
         dashboard_relay_service = None
+    codex_wake_registry = codex_wake.get_codex_wake_registry()
+    app.state.codex_wake_registry = codex_wake_registry
     mount_dashboard(
         app,
         show_roi=resolved_config.features.dashboard_roi,
         relay_service=dashboard_relay_service,
+        codex_wake_registry=codex_wake_registry,
     )
     claude_wake_registry = build_claude_wake_registry()
     app.state.claude_wake_registry = claude_wake_registry
@@ -607,6 +611,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         audit_log_enabled=resolved_config.observability.query_audit_log,
         relay_storage=build_result.storage,
         claude_wake_registry=claude_wake_registry,
+        codex_wake_registry=codex_wake_registry,
         relay_runner=run_relay_operation,
         diagnostic_runner=run_diagnostic_operation,
     ))

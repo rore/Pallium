@@ -15,6 +15,7 @@ from sqlalchemy import and_, case, func, or_, select
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
 from app.codex_wake import get_codex_wake_registry
+from core.codex_wake import CodexWakeRegistry
 from core.filters import source_item_matches_filters
 from core.relay_activation import current_platform, relay_activation_snapshot
 from core.relay import (
@@ -203,9 +204,18 @@ def _read_effectiveness_report(path: Path) -> dict:
 
 
 def mount_dashboard(
-    app: FastAPI, *, show_roi: bool = False, relay_service: RelayService | None = None
+    app: FastAPI,
+    *,
+    show_roi: bool = False,
+    relay_service: RelayService | None = None,
+    codex_wake_registry: CodexWakeRegistry | None = None,
 ) -> None:
     assets_dir = Path(__file__).resolve().parent.parent / "assets"
+    dashboard_codex_registry = codex_wake_registry
+    if dashboard_codex_registry is None:
+        dashboard_codex_registry = getattr(app.state, "codex_wake_registry", None)
+    if dashboard_codex_registry is None:
+        dashboard_codex_registry = get_codex_wake_registry()
     app.mount("/static", StaticFiles(directory=str(assets_dir)), name="static")
 
     def relay_activation(
@@ -224,8 +234,7 @@ def mount_dashboard(
         runtime = projection.get("runtime", projection.get("recipient_runtime"))
         registry = getattr(app.state, "claude_wake_registry", None)
         claude_state = registry.state_for(recipient_endpoint_id=endpoint_id, session_ref=session_ref, container_ref=container_ref) if runtime == "claude-code" and registry is not None and all(isinstance(value, str) for value in (endpoint_id, session_ref, container_ref)) else None
-        codex_registry = get_codex_wake_registry()
-        codex_reserved = codex_registry.usable and isinstance(endpoint_id, str) and codex_registry.snapshot(endpoint_id) is not None
+        codex_reserved = dashboard_codex_registry.usable and isinstance(endpoint_id, str) and dashboard_codex_registry.snapshot(endpoint_id) is not None
         return relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved)
 
     @app.get("/dashboard", response_class=HTMLResponse)

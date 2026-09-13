@@ -11,6 +11,8 @@ ActivationOutcome = Literal["accepted", "deferred", "uncertain", "failed"]
 ActivationEvidence = Literal["submission_attempted", "transport_accepted", "payload_admitted"]
 _OUTCOMES = {"accepted", "deferred", "uncertain", "failed"}
 _EVIDENCE = {"submission_attempted", "transport_accepted", "payload_admitted"}
+_SESSION_STATES = {"active", "unreachable", "recent", "dormant", "closed"}
+_SESSION_LIFECYCLES = {"recent", "dormant", "closed"}
 _ENDPOINT_RE = re.compile(r"^relay-session-[0-9a-f]{32}$")
 
 
@@ -69,13 +71,21 @@ def relay_activation_snapshot(
 
     state = row.get("state")
     lifecycle = row.get("lifecycle")
-    state_conflict = (
-        state == "closed" and lifecycle not in {None, "closed"}
-    ) or (
-        lifecycle == "closed" and state not in {None, "closed"}
+    state_ok = state is None or isinstance(state, str) and state in _SESSION_STATES
+    lifecycle_ok = (
+        lifecycle is None
+        or isinstance(lifecycle, str) and lifecycle in _SESSION_LIFECYCLES
     )
-    closed = state == "closed" or lifecycle == "closed"
-    stale = state == "dormant" or lifecycle == "dormant"
+    state_conflict = state_ok and lifecycle_ok and (
+        state == "closed" and lifecycle not in {None, "closed"}
+        or lifecycle == "closed" and state not in {None, "closed"}
+        or state in {"recent", "dormant"}
+        and lifecycle in {"recent", "dormant"}
+        and state != lifecycle
+    )
+    status_ok = state_ok and lifecycle_ok and not state_conflict
+    closed = status_ok and (state == "closed" or lifecycle == "closed")
+    stale = status_ok and (state == "dormant" or lifecycle == "dormant")
     identity_ok = (
         runtime_ok and endpoint_ok and session_ok and container_ok
         and runtime != "unknown"
@@ -87,7 +97,7 @@ def relay_activation_snapshot(
         and isinstance(container_ref, str)
         and 0 < len(container_ref) <= 512
         and container_ref.isprintable()
-        and not state_conflict
+        and status_ok
     )
     topology = "existing_session" if identity_ok else "unknown"
     qualified = identity_ok and not closed and not stale and runtime in {"codex", "claude-code"} and platform in {"windows", "linux"}

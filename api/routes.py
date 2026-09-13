@@ -592,7 +592,10 @@ def create_router(
         if relay_ack_callback is not None:
             try:
                 relay_ack_callback(
-                    {"delivery_id": request.delivery_id},
+                    {
+                        "delivery_id": request.delivery_id,
+                        "recipient_endpoint_id": result.get("sender_endpoint_id"),
+                    },
                     {"container_ref": request.container_ref},
                 )
             except Exception:

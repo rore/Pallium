@@ -136,6 +136,32 @@ def test_activation_projection_fails_closed_for_stale_closed_malformed_and_confl
     assert closed["qualification"] == "unknown"
 
 
+def test_activation_projection_rejects_malformed_status_without_exceptions() -> None:
+    participant = relay_activation_snapshot(
+        {**BASE_SESSION, "state": "active", "lifecycle": "recent"},
+        platform="windows",
+    )
+    assert participant["qualification"] == "qualified"
+
+    invalid_statuses = (
+        {"state": "unknown-state"},
+        {"lifecycle": "unknown-lifecycle"},
+        {"state": 1},
+        {"lifecycle": False},
+        {"state": []},
+        {"lifecycle": {}},
+        {"state": "recent", "lifecycle": "dormant"},
+    )
+    for values in invalid_statuses:
+        projection = relay_activation_snapshot(
+            {**BASE_SESSION, **values}, platform="windows",
+        )
+        assert projection["qualification"] == "unknown"
+        assert projection["availability"] == "unknown"
+        assert projection["fallback"] == "unknown"
+        assert projection["supported_evidence"] == []
+
+
 def test_attempt_result_rejects_unbounded_or_unsupported_evidence() -> None:
     for kwargs in (
         {"outcome": "accepted", "reason": "x" * 129},

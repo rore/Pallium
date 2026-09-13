@@ -179,7 +179,7 @@ Preserve current endpoint targeting and history/memory scope rules.
    native behavior requires a bounded installed witness with explicit cost limits.
 
 Update the board and applicable Relay/integration docs only after implementation
-and verification. The implemented contract is the current source of truth; delivery tracing remains a separate follow-up.
+and verification.
 
 ## Awaiting final verification
 

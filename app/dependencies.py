@@ -703,19 +703,19 @@ def build_router(
         registry.release_delivery(delivery_id)
         release_codex_relay_wake(delivery_id, registry=codex_registry)
 
-        runtime = result.get("recipient_runtime")
-        session_ref = result.get("recipient_session_ref")
         endpoint_id = result.get("recipient_endpoint_id")
-        container_ref = result.get("recipient_container_ref")
-        if not all(isinstance(value, str) and value for value in (
-            runtime, session_ref, endpoint_id, container_ref,
-        )):
+        if not isinstance(endpoint_id, str):
             return
         try:
             live_scope = relay_service.session_scope_by_endpoint(endpoint_id)
         except (RelayNotFoundError, RelayUnavailableError, ValueError):
             return
-        if live_scope.get("runtime") != runtime:
+        runtime = live_scope.get("runtime")
+        session_ref = live_scope.get("session_ref")
+        container_ref = live_scope.get("container_ref")
+        if not all(isinstance(value, str) and value for value in (
+            runtime, session_ref, container_ref,
+        )):
             return
         candidate = relay_service.pending_candidate(
             runtime=runtime,

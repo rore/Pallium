@@ -120,6 +120,49 @@ def test_queue_timeout_is_ambiguous(tmp_path) -> None:
         assert codex_wake._launch("target-session", "wake") == "ambiguous"
     process.kill.assert_called_once_with()
 
+@pytest.mark.parametrize("error_type", (OSError, ValueError))
+def test_post_start_wait_failure_kills_and_reaps_bounded(error_type) -> None:
+    process = MagicMock()
+    process.communicate.side_effect = [error_type("wait failed"), (None, "")]
+
+    assert codex_wake._finish_launch((process, None)) == (
+        "ambiguous", "post_start_error", None,
+    )
+    process.kill.assert_called_once()
+    assert [item.kwargs for item in process.communicate.call_args_list] == [
+        {"timeout": 30}, {"timeout": 30},
+    ]
+
+
+def test_post_start_cleanup_exceptions_preserve_uncertain_reservation(
+    monkeypatch,
+) -> None:
+    registry = CodexWakeRegistry()
+    endpoint_id = "relay-session-" + "b" * 32
+    reservation = registry.reserve(
+        recipient_endpoint_id=endpoint_id,
+        delivery_id="delivery-post-start-cleanup",
+        session_ref="target-session",
+        container_ref=SCOPE["container_ref"],
+    )
+    assert reservation is not None
+    process = MagicMock()
+    process.kill.side_effect = ValueError("kill failed")
+    process.communicate.side_effect = [
+        OSError("wait failed"), subprocess.TimeoutExpired([], 30),
+    ]
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake._start_launch", return_value=(process, None)):
+        codex_wake._wake_after_debounce(reservation, registry)
+
+    process.kill.assert_called_once()
+    assert process.communicate.call_count == 2
+    retained = registry.snapshot(endpoint_id)
+    assert retained is not None
+    assert retained.delivery_id == reservation.delivery_id
+    assert retained.outcome == "uncertain"
+
+
 def test_launch_result_classifies_without_exposing_process_details(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2303,6 +2346,129 @@ def _assert_public_ack_readback(route, scope, message_id, delivery_id, endpoint_
         "state": "delivered",
     }
 
+
+@pytest.mark.parametrize("runtime", ("codex", "claude-code"))
+def test_atomic_reply_releases_first_and_dispatches_next_pending_once(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path, runtime: str,
+) -> None:
+    monkeypatch.setattr("app.dependencies.current_platform", lambda: "windows")
+    route, claim_route, scope, source_runtime, endpoint_id, registry = (
+        _public_ack_route(client, runtime)
+    )
+    scheduled: list[str] = []
+    native_writes: list[object] = []
+    target_scheduler = (
+        "app.dependencies.schedule_codex_relay_wake"
+        if runtime == "codex"
+        else "app.dependencies.schedule_claude_relay_wake"
+    )
+    other_scheduler = (
+        "app.dependencies.schedule_claude_relay_wake"
+        if runtime == "codex"
+        else "app.dependencies.schedule_codex_relay_wake"
+    )
+    real_schedule = (
+        codex_wake.schedule_codex_relay_wake
+        if runtime == "codex"
+        else claude_wake.schedule_claude_relay_wake
+    )
+
+    def schedule(result, wake_scope, **kwargs):
+        scheduled.append(result["deliveries"][0]["delivery_id"])
+        worker = real_schedule(result, wake_scope, **kwargs)
+        if worker is not None:
+            worker.join(timeout=5)
+            assert not worker.is_alive()
+        return worker
+
+    if runtime == "codex":
+        monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+        monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
+
+        def popen(*_args, **_kwargs):
+            native_writes.append(True)
+            process = MagicMock(returncode=0)
+            process.communicate.return_value = (None, "")
+            return process
+
+        monkeypatch.setattr(codex_wake, "_popen", popen)
+    else:
+        monkeypatch.setattr(
+            claude_wake,
+            "claude_wake_transport",
+            lambda *_args: native_writes.append(True) or "accepted",
+        )
+
+    with patch(target_scheduler, side_effect=schedule), patch(
+        other_scheduler, return_value=None,
+    ):
+        sent = []
+        for index in (1, 2):
+            response = route.post("/relay/messages", json={
+                "sender_runtime": source_runtime,
+                "sender_session_ref": "sender",
+                "recipient": endpoint_id,
+                "message_id": f"atomic-next-{runtime}-{index}",
+                "payload": f"pending {index}",
+                **scope,
+            })
+            assert response.status_code == 200, response.text
+            sent.append(response.json())
+        first_id = sent[0]["deliveries"][0]["delivery_id"]
+        second_id = sent[1]["deliveries"][0]["delivery_id"]
+        assert native_writes == [True]
+
+        claimed = claim_route.post("/relay/turn", json={
+            "runtime": runtime,
+            "session_ref": "target",
+            "max_messages": 1,
+            **scope,
+        })
+        assert claimed.status_code == 200, claimed.text
+        claim = claimed.json()["deliveries"][0]
+        assert claim["delivery_id"] == first_id
+        reply = route.post("/relay/replies", json={
+            "delivery_id": first_id,
+            "receipt": claim["receipt"],
+            "payload": "atomic continuation",
+            **scope,
+        })
+
+    assert reply.status_code == 200, reply.text
+    assert {
+        key: reply.json().get(key)
+        for key in ("sender_endpoint_id", "sender_runtime", "sender_session_ref")
+    } == {
+        "sender_endpoint_id": endpoint_id,
+        "sender_runtime": runtime,
+        "sender_session_ref": "target",
+    }
+    assert scheduled == [first_id, second_id, second_id]
+    first_status = route.get(
+        f"/relay/messages/{sent[0]['message_id']}", params=scope,
+    ).json()["deliveries"][0]
+    second_status = route.get(
+        f"/relay/messages/{sent[1]['message_id']}", params=scope,
+    ).json()["deliveries"][0]
+    assert (first_status["delivery_id"], first_status["state"]) == (
+        first_id, "delivered",
+    )
+    assert (second_status["delivery_id"], second_status["state"]) == (
+        second_id, "pending",
+    )
+    if runtime == "codex":
+        assert native_writes == [True, True]
+        retained = registry.snapshot(endpoint_id)
+        assert retained is not None
+        assert (retained.delivery_id, retained.outcome) == (second_id, "accepted")
+    else:
+        # ACK releases Claude to busy, so the exact next candidate is dispatched
+        # once but safely defers its native write until a later idle observation.
+        assert native_writes == [True]
+        assert all(
+            item["state"] != "wake_inflight"
+            for item in registry.recovery_candidates()
+        )
 
 @pytest.mark.parametrize("runtime", ("codex", "claude-code"))
 def test_http_ack_before_reserve_prevents_fence_and_native_write(

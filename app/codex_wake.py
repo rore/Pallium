@@ -278,16 +278,24 @@ def _finish_launch(start: _LaunchStart) -> _LaunchResult:
     if immediate is not None:
         return immediate
     assert process is not None
+
+    def stop_and_reap() -> None:
+        try:
+            process.kill()
+        except (OSError, ValueError):
+            pass
+        try:
+            process.communicate(timeout=_QUEUE_TIMEOUT_SECONDS)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            pass
+
     try:
         process.communicate(timeout=_QUEUE_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        try:
-            process.kill()
-            process.communicate()
-        except (OSError, ValueError):
-            pass
+        stop_and_reap()
         return "ambiguous", "timeout", None
     except (OSError, ValueError):
+        stop_and_reap()
         return "ambiguous", "post_start_error", None
     if process.returncode == 0:
         return "queued", None, 0
