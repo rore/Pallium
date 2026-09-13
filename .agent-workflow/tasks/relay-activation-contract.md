@@ -172,6 +172,8 @@ Context budget rule: HTTP and dashboard may show the full bounded object. MCP de
 - Follow-up workflow check returned advisory exit 1 only for the branch's pre-existing shadow api-review checkpoint on api/schemas.py. All blocking predicates passed; no boundary violation or new checkpoint was introduced.
 ## Evidence
 
+- Final PR verification passed on 2026-09-13: full local suite 4892 passed, 33 skipped, 2 xfailed; GitHub Linux 3.12, Linux 3.13, Windows smoke, agent-workflow, redline, and CodeRabbit checks passed; all nine inline review threads were resolved; independent smart result review returned PASS. The roadmap item is therefore moved from Next/queued to Done.
+
 - Roadmap requirement: `roadmap/features/add-relay-activation-capability-contract.md`.
 - Pre-edit redline review: clean-context `/root/activation_redline` returned API_CHANGE, High/Moderate, no boundary violation in the recommended dependency direction, with `api-review` required.
 - Read-only inventories: `/root/activation_inventory` and `/root/activation_surfaces` identified existing authority, mappings, public projection seams, and focused tests.
