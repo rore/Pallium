@@ -6,7 +6,7 @@ Operators can inspect a bounded, non-secret, end-to-end evidence trail for one R
 Pallium.
 
 **Scope:**
-Owning production files: storage/sqlite_schema.py, storage/sqlite_relay.py, storage/sqlite_retention.py, core/relay.py, core/service.py, app/dependencies.py, app/codex_wake.py, app/claude_wake.py, app/mcp/client.py, app/mcp/server.py, api/schemas.py, api/routes.py, app/dashboard.py, and app/dashboard.html. Also focused lifecycle/E2E tests plus docs/agent-relay.md, docs/http-api.md, the phase-zero design terminology if still applicable after rebase, and the owning roadmap/board files. If the merged prerequisite changes ownership beyond these files, stop and return to planning.
+Owning production files: storage/base.py, storage/sqlite_schema.py, storage/sqlite_relay.py, storage/sqlite_retention.py, core/relay.py, core/service.py, app/cleaner.py, app/dependencies.py, app/main.py, app/codex_wake.py, app/claude_wake.py, app/mcp/client.py, app/mcp/server.py, api/schemas.py, api/routes.py, app/dashboard.py, and app/dashboard.html. Also focused lifecycle/E2E tests plus docs/agent-relay.md, docs/http-api.md, the phase-zero design terminology if still applicable after rebase, and the owning roadmap/board files. If the merged prerequisite changes ownership beyond these files, stop and return to planning.
 
 **Constraints:**
 Reuse the existing Relay store and cleaner; one shared projection must feed HTTP/MCP/dashboard; diagnostic writes are best-effort and can never fail, retry, or mutate delivery behavior; expose no payload text, secrets, claim tokens, receipts, or raw provider output; coordinate shared outcome vocabulary with `@pall-arc`; do not edit the prerequisite activation-contract worktree or merge/restart before coordination.
@@ -66,9 +66,15 @@ Approved by user 2026-09-12: "Second, the relay to operational tasks. You can ad
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Production implementation has not started. Isolated branch `feat/relay-delivery-trace` was created from `origin/main` at `27313e4e`; workflow applicability required the normal path, and pre-edit redline classified the intended surface High risk before any code inspection or edit. Relay message relay-reply-f526fc7028f6ec778d3046d01ee0a11f55a25b80c06deec21c0237172046ba05 closed the producer/correlation agreement with no mismatch. On 2026-09-13 the branch rebased cleanly onto `origin/main` at `ce7ae8a0`; focused inspection verified `ActivationAttemptResult` is available in `app/codex_wake.py::_wake_after_debounce` and `app/claude_wake.py::schedule_claude_relay_wake.run`, satisfying the prerequisite gate without design changes.
+Implemented the accepted bounded trace contract on the isolated `feat/relay-delivery-trace` branch rebased onto activation-contract main `ce7ae8a0`. New and reply deliveries are marked trace-capable at creation; migrated rows retain null version as honest legacy evidence. SQLite stores immutable `prepared`, `associated`, and `completed` facts with native monotonic sequence allocation, deterministic duplicate handling, redacted canonical outcomes, per-delivery/attempt/global bounds, and known truncation/pruning markers. The shared nonmutating projection supplies HTTP, MCP, and dashboard reads without payloads or delivery-control secrets.
+
+Both Codex and Claude schedulers mint attempt IDs at reservation entry, correlate coalesced deliveries, and enqueue normalized completion through one bounded nonblocking diagnostic worker outside correctness locks. Direct Claude reconciliation, startup recovery, send/reply, ACK rearm, and normal router dispatch share that callback; diagnostic queue, worker, storage, and cleanup failures cannot alter Relay delivery or native retry decisions. The existing cleaner removes at most sixty-four old/over-cap trace rows per transaction after thirty days and marks every then-known delivery associated with a pruned attempt.
+
+Verification added eighteen focused lifecycle/boundary tests covering delivered state, coalescing, direct recovery, worker-start/write failure, duplicates/conflicts, completion ordering, redaction/Unicode, nonmutating expiry reads, legacy migration, separate Relay storage, stable frozen pagination, monotonic sequence after pruning, exact-cap recovery, per-delivery and per-attempt association caps, shared pruning gaps, API/dashboard parity, and MCP trimming/cursors. Affected suites passed `532 passed, 2 skipped` before review and `277 passed, 2 skipped` after fixes. Final full suite passed `4945 passed, 34 skipped, 2 xfailed` in 243.03 seconds; import-linter, compilation, and `git diff --check` pass.
+
+Independent Astra result review initially returned REVISE for five concrete edge defects: sequence reuse after pruning, cleanup not firing at exact global capacity, missing direct-Claude-recovery tracing, fresh deliveries mislabeled legacy, and MCP no-progress trimming. All five were fixed with focused regressions; clean-context re-review returned APPROVE. `apply_patch` was attempted once and failed with the documented Windows process-creation error, so all edits used narrowly scoped deterministic replacements limited to named files.

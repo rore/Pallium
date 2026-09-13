@@ -1,6 +1,3 @@
-# Next · Agent Relay
-- add-relay-delivery-trace
-
 # Parallel · Session History
 - improve-session-history-search-quality
 - investigate-history-navigation-and-on-demand-compression
@@ -49,6 +46,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-relay-delivery-trace
 - add-relay-activation-capability-contract
 - add-relay-session-work-associations
 - idea-exact-relay-recipient-resolution

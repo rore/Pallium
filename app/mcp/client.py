@@ -491,6 +491,24 @@ class PalliumMcpClient:
             params["page_size"] = page_size
         return await self._get_or_error(f"/relay/messages/{message_id}", params)
 
+    async def relay_trace(
+        self,
+        message_id: str,
+        *,
+        after_sequence: int = 0,
+        as_of_sequence: int | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "after_sequence": after_sequence,
+            "limit": limit,
+        }
+        if as_of_sequence is not None:
+            params["as_of_sequence"] = as_of_sequence
+        return await self._get_or_error(
+            f"/relay/messages/{message_id}/trace", params
+        )
+
     async def relay_receive(
         self, runtime: str, session_ref: str, max_response_chars: int
     ) -> Any:

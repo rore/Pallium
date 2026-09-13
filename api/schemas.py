@@ -1018,6 +1018,57 @@ class RelayMessageResponse(BaseModel):
     deliveries: list[RelayDeliveryResponse]
 
 
+class RelayTraceEventResponse(BaseModel):
+    sequence: int = Field(ge=1)
+    attempt_id: str
+    delivery_id: str
+    stage: Literal["prepared", "associated", "completed"]
+    outcome: Literal["accepted", "deferred", "uncertain", "failed"] | None = None
+    reason: str | None = None
+    evidence: list[
+        Literal["submission_attempted", "transport_accepted", "payload_admitted"]
+    ] | None = None
+    native_retry_safe: bool | None = None
+    destination_health_update: Literal["unreachable"] | None = None
+    scope_generation: int | None = Field(default=None, ge=0)
+    recorded_at: datetime
+
+
+class RelayTraceDeliverySnapshotResponse(BaseModel):
+    delivery_id: str
+    state: str
+    stored_state: str
+    attempts: int = Field(ge=0)
+    claimed_at: datetime | None = None
+    lease_expires_at: datetime | None = None
+    delivered_at: datetime | None = None
+    recipient_runtime: str
+    recipient_session_ref: str
+    recipient_endpoint_id: str | None = None
+    recipient_container_ref: str | None = None
+    recipient_endpoint_state: str | None = None
+    trace_version: int | None = Field(default=None, ge=1)
+    trace_truncated: bool
+    trace_pruned: bool
+
+
+class RelayDeliveryTraceResponse(BaseModel):
+    contract: Literal["relay-delivery-trace/v1"]
+    message_id: str
+    events: list[RelayTraceEventResponse]
+    delivery_snapshots: list[RelayTraceDeliverySnapshotResponse]
+    next_sequence: int = Field(ge=0)
+    as_of_sequence: int = Field(ge=0)
+    has_more: bool
+    completeness: Literal["best_effort"]
+    legacy: bool
+    absent: bool
+    truncated: bool
+    pruned: bool
+    gap: bool
+    explanation: str
+
+
 class RelayAckResponse(BaseModel):
     delivery_id: str
     state: str

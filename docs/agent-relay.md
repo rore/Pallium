@@ -145,6 +145,29 @@ still arrive on the next natural hook turn; Pallium does not blindly resubmit.
 The trusted-local reservation files assume one Pallium service process; atomic
 replacement provides crash recovery, not multi-process coordination.
 
+## Inspecting a delivery trace
+
+Use `pallium_relay_trace(message_id)` when a delivery looks delayed or a native
+wake result was uncertain. The same nonmutating `relay-delivery-trace/v1`
+projection is available in the message detail dashboard and at
+`GET /relay/messages/{message_id}/trace`.
+
+The ordered `prepared`, `associated`, and `completed` events describe bounded
+native activation evidence. Several deliveries can share one activation attempt.
+The delivery snapshots remain authoritative for pending, claimed, expired, and
+delivered state; native acceptance does not prove payload admission, and delivery
+does not imply a reply or completed work. Missing, legacy, truncated, or pruned
+evidence is always labeled `best_effort`. Never resend a persisted delivery merely
+because trace evidence is absent or uncertain.
+
+Pass the exact returned `next_cursor` to continue an MCP trace. HTTP callers freeze
+a page with `as_of_sequence` and continue with `after_sequence`; current delivery
+state remains a live snapshot. Trace reasons are bounded and secret-redacted. The
+store keeps at most eight activation attempts and twenty-four events per delivery,
+sixty-four delivery associations per attempt, and 100,000 events total. The shared
+cleaner removes events after thirty days and marks known affected deliveries as
+pruned without changing Relay state.
+
 Pallium can start a new turn in an existing supported session. It does not
 create agents, assign work, restart sessions, or supervise a workflow.
 
@@ -197,6 +220,7 @@ Normal use:
 - `pallium_relay_send`
 - `pallium_relay_reply`
 - `pallium_relay_status`
+- `pallium_relay_trace`
 - `pallium_relay_work_refs`
 - `pallium_relay_attach_work_ref`
 - `pallium_relay_detach_work_ref`

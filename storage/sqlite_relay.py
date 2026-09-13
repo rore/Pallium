@@ -10,13 +10,20 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
-from core.relay import RelayConflictError, RelayNotFoundError
+from core.relay import (
+    RELAY_TRACE_MAX_ROWS,
+    RELAY_TRACE_MAX_SEQUENCE,
+    RelayConflictError,
+    RelayNotFoundError,
+)
+from redaction import redact_sensitive
 from storage.sqlite_schema import (
     RelayAliasRecord,
     RelayDeliveryRecord,
+    RelayDeliveryTraceRecord,
     RelayEndpointGenerationRecord,
     RelayEndpointRepairRecord,
     RelayMessageRecord,
@@ -27,6 +34,13 @@ from storage.sqlite_schema import (
 
 _REPAIR_ENDPOINT_RE = re.compile(r"^relay-session-[0-9a-f]{32}$")
 _REPAIR_DELIVERY_RE = re.compile(r"^relay-delivery-[0-9a-f]{32}$")
+_TRACE_ATTEMPT_RE = re.compile(r"^relay-activation-[0-9a-f]{32}$")
+_TRACE_STAGES = frozenset({"prepared", "associated", "completed"})
+_TRACE_OUTCOMES = frozenset({"accepted", "deferred", "uncertain", "failed"})
+_TRACE_EVIDENCE = frozenset(
+    {"submission_attempted", "transport_accepted", "payload_admitted"}
+)
+_TRACE_REDACTED_REASON = "[REDACTED: diagnostic reason omitted]"
 
 
 def _now(value: datetime | None = None) -> datetime:
@@ -1154,6 +1168,7 @@ class SQLiteRelayMixin:
                     recipient_container_ref=target.container_ref,
                     state="pending",
                     attempts=0,
+                    trace_version=1,
                 )
             )
             db.flush()
@@ -1261,6 +1276,7 @@ class SQLiteRelayMixin:
                     recipient_container_ref=recipient_session.container_ref,
                     state="pending",
                     attempts=0,
+                    trace_version=1,
                 )
             )
             db.flush()
@@ -1605,3 +1621,414 @@ class SQLiteRelayMixin:
         if expired:
             raise RelayConflictError("message has expired")
         return result
+
+    def relay_trace_record(
+        self,
+        *,
+        attempt_id: str,
+        delivery_id: str,
+        stage: str,
+        outcome: str | None = None,
+        reason: str | None = None,
+        evidence: list[str] | tuple[str, ...] | None = None,
+        native_retry_safe: bool | None = None,
+        destination_health_update: str | None = None,
+        scope_generation: int | None = None,
+        recorded_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Append one immutable diagnostic fact without correctness-path retries."""
+        if not isinstance(attempt_id, str) or not _TRACE_ATTEMPT_RE.fullmatch(attempt_id):
+            raise ValueError("invalid trace attempt_id")
+        if not isinstance(delivery_id, str) or not _REPAIR_DELIVERY_RE.fullmatch(delivery_id):
+            raise ValueError("invalid trace delivery_id")
+        if stage not in _TRACE_STAGES:
+            raise ValueError("invalid trace stage")
+        if scope_generation is not None and (
+            type(scope_generation) is not int or scope_generation < 0
+        ):
+            raise ValueError("invalid trace scope_generation")
+        result_fields = (
+            outcome,
+            reason,
+            evidence,
+            native_retry_safe,
+            destination_health_update,
+        )
+        if stage != "completed" and any(value is not None for value in result_fields):
+            raise ValueError("activation result is only valid for completed trace")
+        safe_reason = redact_sensitive(reason) if isinstance(reason, str) else reason
+        if isinstance(safe_reason, str) and len(safe_reason) > 128:
+            safe_reason = _TRACE_REDACTED_REASON
+        if stage == "completed":
+            if outcome not in _TRACE_OUTCOMES:
+                raise ValueError("completed trace requires a valid outcome")
+            if (
+                not isinstance(safe_reason, str)
+                or not 0 < len(safe_reason) <= 128
+                or not _single_line_render_safe(safe_reason)
+            ):
+                raise ValueError("completed trace requires a bounded safe reason")
+            if (
+                not isinstance(evidence, (list, tuple))
+                or len(evidence) > 3
+                or len(set(evidence)) != len(evidence)
+                or any(item not in _TRACE_EVIDENCE for item in evidence)
+                or type(native_retry_safe) is not bool
+                or destination_health_update not in {None, "unreachable"}
+            ):
+                raise ValueError("invalid completed trace result")
+        if recorded_at is not None and not isinstance(recorded_at, datetime):
+            raise ValueError("invalid trace recorded_at")
+
+        evidence_json = (
+            json.dumps(list(evidence), separators=(",", ":"))
+            if evidence is not None
+            else None
+        )
+        current = _now(recorded_at)
+        with self._begin_immediate_for(
+            self._relay_session_factory,
+            attempts=1,
+            busy_timeout_ms=25,
+        ) as db:
+            delivery = db.get(RelayDeliveryRecord, delivery_id)
+            if delivery is None:
+                return {"recorded": False, "missing": True}
+            message = db.get(RelayMessageRecord, delivery.message_id)
+            if message is None:
+                return {"recorded": False, "missing": True}
+
+            existing = db.execute(
+                select(RelayDeliveryTraceRecord).where(
+                    RelayDeliveryTraceRecord.attempt_id == attempt_id,
+                    RelayDeliveryTraceRecord.delivery_id == delivery_id,
+                    RelayDeliveryTraceRecord.stage == stage,
+                )
+            ).scalar_one_or_none()
+            values = (
+                outcome,
+                safe_reason,
+                evidence_json,
+                None if native_retry_safe is None else int(native_retry_safe),
+                destination_health_update,
+                scope_generation,
+            )
+            if existing is not None:
+                same = (
+                    existing.outcome,
+                    existing.reason,
+                    existing.evidence_json,
+                    existing.native_retry_safe,
+                    existing.destination_health_update,
+                    existing.scope_generation,
+                ) == values
+                return {
+                    "recorded": False,
+                    "duplicate": same,
+                    "conflict": not same,
+                    "sequence": existing.recorded_sequence,
+                }
+
+            attempt_for_delivery = db.execute(
+                select(RelayDeliveryTraceRecord.id)
+                .where(
+                    RelayDeliveryTraceRecord.attempt_id == attempt_id,
+                    RelayDeliveryTraceRecord.delivery_id == delivery_id,
+                )
+                .limit(1)
+            ).first()
+            associated_deliveries = db.execute(
+                select(func.count(RelayDeliveryTraceRecord.delivery_id.distinct()))
+                .where(RelayDeliveryTraceRecord.attempt_id == attempt_id)
+            ).scalar_one()
+            total_rows = db.execute(
+                select(func.count()).select_from(RelayDeliveryTraceRecord)
+            ).scalar_one()
+            delivery_rows = db.execute(
+                select(func.count())
+                .select_from(RelayDeliveryTraceRecord)
+                .where(RelayDeliveryTraceRecord.delivery_id == delivery_id)
+            ).scalar_one()
+            delivery_attempts = db.execute(
+                select(func.count(RelayDeliveryTraceRecord.attempt_id.distinct()))
+                .where(RelayDeliveryTraceRecord.delivery_id == delivery_id)
+            ).scalar_one()
+            if (
+                total_rows >= RELAY_TRACE_MAX_ROWS
+                or delivery_rows >= 24
+                or (attempt_for_delivery is None and delivery_attempts >= 8)
+                or (attempt_for_delivery is None and associated_deliveries >= 64)
+            ):
+                delivery.trace_version = delivery.trace_version or 1
+                delivery.trace_truncated = 1
+                return {"recorded": False, "dropped": True}
+
+            record = RelayDeliveryTraceRecord(
+                id=f"relay-trace-{uuid.uuid4().hex}",
+                attempt_id=attempt_id,
+                delivery_id=delivery_id,
+                message_id=message.id,
+                stage=stage,
+                outcome=outcome,
+                reason=safe_reason,
+                evidence_json=evidence_json,
+                native_retry_safe=(
+                    None if native_retry_safe is None else int(native_retry_safe)
+                ),
+                destination_health_update=destination_health_update,
+                scope_generation=scope_generation,
+                recorded_at=current,
+            )
+            db.add(record)
+            db.flush()
+            delivery.trace_version = delivery.trace_version or 1
+            return {"recorded": True, "sequence": record.recorded_sequence}
+
+    def relay_record_trace_event(self, event: dict[str, Any]) -> bool:
+        if not isinstance(event, dict):
+            return False
+        try:
+            result = self.relay_trace_record(
+                attempt_id=event["attempt_id"],
+                delivery_id=event["delivery_id"],
+                stage=event["stage"],
+                outcome=event.get("outcome"),
+                reason=event.get("reason"),
+                evidence=event.get("evidence"),
+                native_retry_safe=event.get("native_retry_safe"),
+                destination_health_update=event.get("destination_health_update"),
+                scope_generation=event.get("scope_generation"),
+                recorded_at=event.get("recorded_at"),
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+        return bool(result.get("recorded") or result.get("duplicate"))
+
+    def relay_trace_message(
+        self,
+        *,
+        message_id: str,
+        limit: int = 100,
+        after_sequence: int = 0,
+        as_of_sequence: int | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Read shared activation evidence without mutating delivery state."""
+        if (
+            not 1 <= limit <= 100
+            or type(after_sequence) is not int
+            or not 0 <= after_sequence <= RELAY_TRACE_MAX_SEQUENCE
+            or (
+                as_of_sequence is not None
+                and (
+                    type(as_of_sequence) is not int
+                    or not 0 <= as_of_sequence <= RELAY_TRACE_MAX_SEQUENCE
+                    or after_sequence > as_of_sequence
+                )
+            )
+        ):
+            raise ValueError("invalid trace page")
+        current = _now(now)
+        with self._relay_session_factory() as db:
+            message = db.get(RelayMessageRecord, message_id)
+            if message is None:
+                raise RelayNotFoundError(
+                    "relay entity not found in the requested scope"
+                )
+            deliveries = db.execute(
+                select(RelayDeliveryRecord)
+                .where(RelayDeliveryRecord.message_id == message_id)
+                .order_by(RelayDeliveryRecord.id)
+            ).scalars().all()
+            upper = as_of_sequence
+            if upper is None:
+                upper = (
+                    db.execute(
+                        select(func.max(RelayDeliveryTraceRecord.recorded_sequence))
+                    ).scalar_one()
+                    or 0
+                )
+            delivery_ids = [row.id for row in deliveries]
+            attempt_ids = (
+                db.execute(
+                    select(RelayDeliveryTraceRecord.attempt_id)
+                    .where(
+                        RelayDeliveryTraceRecord.delivery_id.in_(delivery_ids),
+                        RelayDeliveryTraceRecord.recorded_sequence <= upper,
+                    )
+                    .distinct()
+                ).scalars().all()
+                if delivery_ids
+                else []
+            )
+            rows = []
+            if attempt_ids:
+                statement = (
+                    select(RelayDeliveryTraceRecord)
+                    .where(
+                        RelayDeliveryTraceRecord.attempt_id.in_(attempt_ids),
+                        RelayDeliveryTraceRecord.recorded_sequence > after_sequence,
+                        RelayDeliveryTraceRecord.recorded_sequence <= upper,
+                        or_(
+                            RelayDeliveryTraceRecord.delivery_id.in_(delivery_ids),
+                            RelayDeliveryTraceRecord.stage.in_(
+                                ("prepared", "completed")
+                            ),
+                        ),
+                    )
+                    .order_by(RelayDeliveryTraceRecord.recorded_sequence)
+                    .limit(limit + 1)
+                )
+                rows = db.execute(statement).scalars().all()
+            latest_completion = (
+                db.execute(
+                    select(RelayDeliveryTraceRecord)
+                    .where(
+                        RelayDeliveryTraceRecord.attempt_id.in_(attempt_ids),
+                        RelayDeliveryTraceRecord.stage == "completed",
+                        RelayDeliveryTraceRecord.recorded_sequence <= upper,
+                    )
+                    .order_by(RelayDeliveryTraceRecord.recorded_sequence.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                if attempt_ids
+                else None
+            )
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+
+            events = [
+                {
+                    "sequence": row.recorded_sequence,
+                    "attempt_id": row.attempt_id,
+                    "delivery_id": row.delivery_id,
+                    "stage": row.stage,
+                    "outcome": row.outcome,
+                    "reason": row.reason,
+                    "evidence": (
+                        json.loads(row.evidence_json)
+                        if row.evidence_json is not None
+                        else None
+                    ),
+                    "native_retry_safe": (
+                        None
+                        if row.native_retry_safe is None
+                        else bool(row.native_retry_safe)
+                    ),
+                    "destination_health_update": row.destination_health_update,
+                    "scope_generation": row.scope_generation,
+                    "recorded_at": _iso(row.recorded_at),
+                }
+                for row in rows
+            ]
+            snapshots = []
+            for delivery in deliveries:
+                state = delivery.state
+                if (
+                    state in {"pending", "claimed"}
+                    and _now(message.expires_at) <= current
+                ):
+                    state = "expired"
+                elif (
+                    state == "claimed"
+                    and delivery.lease_expires_at is not None
+                    and _now(delivery.lease_expires_at) <= current
+                ):
+                    state = "pending"
+                endpoint = self._relay_session_by_endpoint(
+                    db, endpoint_id=delivery.recipient_endpoint_id
+                )
+                snapshots.append(
+                    {
+                        "delivery_id": delivery.id,
+                        "state": state,
+                        "stored_state": delivery.state,
+                        "attempts": int(delivery.attempts or 0),
+                        "claimed_at": _iso(delivery.claimed_at),
+                        "lease_expires_at": _iso(delivery.lease_expires_at),
+                        "delivered_at": _iso(delivery.delivered_at),
+                        "recipient_runtime": delivery.recipient_runtime,
+                        "recipient_session_ref": delivery.recipient_session_ref,
+                        "recipient_endpoint_id": delivery.recipient_endpoint_id,
+                        "recipient_container_ref": delivery.recipient_container_ref,
+                        "recipient_endpoint_state": (
+                            None if endpoint is None else endpoint.state
+                        ),
+                        "trace_version": delivery.trace_version,
+                        "trace_truncated": bool(delivery.trace_truncated),
+                        "trace_pruned": bool(delivery.trace_pruned),
+                    }
+                )
+            truncated = any(bool(row.trace_truncated) for row in deliveries)
+            pruned = any(bool(row.trace_pruned) for row in deliveries)
+            legacy = bool(deliveries) and all(
+                row.trace_version is None for row in deliveries
+            )
+            states = {item["state"] for item in snapshots}
+            endpoint_states = {
+                item["recipient_endpoint_state"] for item in snapshots
+            }
+            if "delivered" in states:
+                explanation = (
+                    "Delivered to the recipient session; no reply or action is implied."
+                )
+            elif "expired" in states:
+                explanation = (
+                    "Expired without current delivery; missing diagnostics cannot "
+                    "prove whether activation ran."
+                )
+            elif latest_completion is not None and latest_completion.outcome == "uncertain":
+                explanation = (
+                    "Native activation outcome is uncertain. The stored delivery "
+                    "remains authoritative; do not resend it."
+                )
+            elif "unreachable" in endpoint_states:
+                explanation = (
+                    "The target is currently unavailable. A pending delivery remains "
+                    "stored and must not be resent."
+                )
+            elif latest_completion is not None and latest_completion.outcome == "accepted":
+                explanation = (
+                    "Native activation was accepted, but that alone does not prove "
+                    "payload admission."
+                )
+            elif latest_completion is not None and latest_completion.outcome in {
+                "deferred", "failed",
+            }:
+                explanation = (
+                    "Native activation did not complete. A pending delivery remains "
+                    "stored for a natural eligible turn."
+                )
+            elif legacy:
+                explanation = (
+                    "This delivery predates trace support; activation evidence is "
+                    "unavailable."
+                )
+            elif truncated or pruned:
+                explanation = (
+                    "Trace evidence has a known gap; use the current delivery state "
+                    "as authoritative."
+                )
+            else:
+                explanation = (
+                    "No activation outcome is recorded. A pending delivery remains "
+                    "stored for a natural eligible turn."
+                )
+            return {
+                "contract": "relay-delivery-trace/v1",
+                "message_id": message_id,
+                "events": events,
+                "delivery_snapshots": snapshots,
+                "next_sequence": (
+                    events[-1]["sequence"] if events else after_sequence
+                ),
+                "as_of_sequence": upper,
+                "has_more": has_more,
+                "completeness": "best_effort",
+                "legacy": legacy,
+                "absent": not events,
+                "truncated": truncated,
+                "pruned": pruned,
+                "gap": legacy or truncated or pruned,
+                "explanation": explanation,
+            }

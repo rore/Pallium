@@ -578,6 +578,7 @@ def dispatch_relay_wake(
     relay_service: RelayService | None,
     registry: ClaudeWakeRegistry,
     codex_registry: CodexWakeRegistry,
+    trace_callback: Callable[[dict[str, object]], object] | None = None,
 ) -> None:
     """Route a persisted Relay candidate through its existing runtime adapter."""
     if relay_service is None or not isinstance(result, dict) or not isinstance(scope, dict):
@@ -606,6 +607,7 @@ def dispatch_relay_wake(
                 container_ref=container_ref,
                 attempt_started_at=attempt_started_at,
             ),
+            trace_callback=trace_callback,
         )
     elif runtime == "codex":
         schedule_codex_relay_wake(
@@ -613,12 +615,14 @@ def dispatch_relay_wake(
             target_scope,
             relay_service=relay_service,
             registry=codex_registry,
+            trace_callback=trace_callback,
         )
 
 def recover_expired_relay_wakes(
     relay_service: RelayService,
     registry: ClaudeWakeRegistry,
     codex_registry: CodexWakeRegistry | None = None,
+    trace_callback: Callable[[dict[str, object]], object] | None = None,
 ) -> None:
     """Recheck and dispatch persisted pending work without changing Relay state."""
     codex_registry = codex_registry or get_codex_wake_registry()
@@ -664,6 +668,7 @@ def recover_expired_relay_wakes(
                 relay_service=relay_service,
                 registry=registry,
                 codex_registry=codex_registry,
+                trace_callback=trace_callback,
             )
         except Exception:
             logger.exception("Relay wake recovery failed")
@@ -688,9 +693,16 @@ def build_router(
     registry = claude_wake_registry if claude_wake_registry is not None else build_claude_wake_registry()
     codex_registry = codex_wake_registry if codex_wake_registry is not None else get_codex_wake_registry()
 
+    def _relay_trace(event: dict[str, object]) -> bool:
+        if relay_service is None:
+            return False
+        return service.enqueue_relay_trace_event(
+            relay_service.record_trace_event, event
+        )
+
     _relay_wake_dispatch = partial(
         dispatch_relay_wake, relay_service=relay_service, registry=registry,
-        codex_registry=codex_registry
+        codex_registry=codex_registry, trace_callback=_relay_trace,
     )
 
     def _relay_ack_release(result: object, scope: object) -> None:

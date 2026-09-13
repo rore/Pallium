@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from core.contracts import MemoryRetentionPolicy
+from core.relay import RELAY_TRACE_MAX_ROWS
 from core.models import utc_now
 from core.observability import OBSERVABILITY_METADATA_KEY
 from core.retention import (
@@ -28,12 +29,47 @@ from storage.sqlite_schema import (
     MemoryObjectRecord,
     RelationRecord,
     SourceItemRecord,
+    RelayDeliveryRecord,
+    RelayDeliveryTraceRecord,
 )
 
 
 class SQLiteRetentionMixin:
     _RETENTION_LEASE_RENEWAL_BATCH = 50
 
+    def relay_cleanup_trace(self, *, now: datetime | None = None, limit: int = 64) -> int:
+        if type(limit) is not int or not 1 <= limit <= 64:
+            raise ValueError("trace cleanup limit must be between 1 and 64")
+        cutoff = (self._normalize_datetime(now) or now or utc_now()) - timedelta(days=30)
+        try:
+            with self._begin_immediate_for(self._relay_session_factory, attempts=1, busy_timeout_ms=25) as session:
+                total = session.scalar(select(func.count()).select_from(RelayDeliveryTraceRecord)) or 0
+                rows = session.scalars(select(RelayDeliveryTraceRecord).where(or_(RelayDeliveryTraceRecord.recorded_at < cutoff, total >= RELAY_TRACE_MAX_ROWS)).order_by(RelayDeliveryTraceRecord.recorded_at, RelayDeliveryTraceRecord.recorded_sequence).limit(limit)).all()
+                if not rows:
+                    return 0
+                ids = [row.id for row in rows]
+                attempt_ids = {row.attempt_id for row in rows}
+                delivery_ids = set(
+                    session.scalars(
+                        select(RelayDeliveryTraceRecord.delivery_id).where(
+                            RelayDeliveryTraceRecord.attempt_id.in_(attempt_ids)
+                        )
+                    ).all()
+                )
+                session.execute(
+                    delete(RelayDeliveryTraceRecord).where(
+                        RelayDeliveryTraceRecord.id.in_(ids)
+                    )
+                )
+                if delivery_ids:
+                    session.execute(
+                        update(RelayDeliveryRecord)
+                        .where(RelayDeliveryRecord.id.in_(delivery_ids))
+                        .values(trace_pruned=1)
+                    )
+                return len(rows)
+        except Exception:
+            return 0
     def claim_retention_lease(
         self,
         *,
@@ -166,7 +202,9 @@ class SQLiteRetentionMixin:
 
         normalized_now = self._normalize_datetime(now) or now
         remaining = max(0, batch_size)
-        stats = RetentionRunStats()
+        stats = RetentionRunStats(
+            deleted_relay_trace_events=self.relay_cleanup_trace(now=normalized_now)
+        )
         if remaining == 0:
             return stats
         if lease is not None and lease_seconds is None:
@@ -766,4 +804,5 @@ class SQLiteRetentionMixin:
             deleted_index_entries=left.deleted_index_entries + right.deleted_index_entries,
             stripped_debug_metadata=left.stripped_debug_metadata + right.stripped_debug_metadata,
             skipped_protected_source_items=left.skipped_protected_source_items + right.skipped_protected_source_items,
+            deleted_relay_trace_events=left.deleted_relay_trace_events + right.deleted_relay_trace_events,
         )

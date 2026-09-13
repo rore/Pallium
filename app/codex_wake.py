@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,7 @@ _LaunchStart = tuple[subprocess.Popen[str] | None, _LaunchResult | None]
 _scheduled_delivery_ids: set[str] = set()
 _scheduled_session_generations: dict[tuple[str, str], int] = {}
 _scheduled_session_delivery_ids: dict[tuple[str, str], str] = {}
+_scheduled_session_attempt_ids: dict[tuple[str, str], str] = {}
 _scheduled_lock = threading.Lock()
 _registry_lock = threading.Lock()
 _default_registry: CodexWakeRegistry | None = None
@@ -74,6 +76,36 @@ def _log_fingerprint(value: str) -> str:
     return f"sha256:{digest}"
 
 
+def _emit_trace(
+    callback: Callable[[dict[str, object]], object] | None,
+    attempt_id: str,
+    delivery_id: str,
+    endpoint_id: str,
+    stage: str,
+    result: ActivationAttemptResult | None = None,
+) -> None:
+    if callback is None:
+        return
+    event: dict[str, object] = {
+        "attempt_id": attempt_id,
+        "delivery_id": delivery_id,
+        "stage": stage,
+        "runtime": "codex",
+        "recipient_endpoint_id": endpoint_id,
+    }
+    if result is not None:
+        event.update(
+            outcome=result.outcome,
+            reason=result.reason,
+            evidence=list(result.evidence),
+            native_retry_safe=result.native_retry_safe,
+            destination_health_update=result.destination_health_update,
+        )
+    try:
+        callback(event)
+    except Exception:
+        logger.exception("codex relay trace callback failed")
+
 def schedule_codex_relay_wake(
     result: object,
     scope: object,
@@ -81,6 +113,7 @@ def schedule_codex_relay_wake(
     relay_service: Any | None = None,
     registry: CodexWakeRegistry | None = None,
     on_unreachable: Callable[[datetime], None] | None = None,
+    trace_callback: Callable[[dict[str, object]], object] | None = None,
 ) -> threading.Thread | None:
     """Reserve durably, then schedule one exact Codex native submission."""
     del on_unreachable
@@ -134,6 +167,7 @@ def schedule_codex_relay_wake(
             and candidate.get("state") == "pending"
         )
 
+    wake_key = (session_ref, container_ref)
     reservation = registry.reserve(
         recipient_endpoint_id=endpoint_id,
         delivery_id=delivery_id,
@@ -142,16 +176,22 @@ def schedule_codex_relay_wake(
         still_pending=still_pending,
     )
     if reservation is None:
+        with _scheduled_lock:
+            attempt_id = _scheduled_session_attempt_ids.get(wake_key)
+        if attempt_id is not None:
+            _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "associated")
         return None
 
-    wake_key = (session_ref, container_ref)
+    attempt_id = f"relay-activation-{uuid.uuid4().hex}"
     with _scheduled_lock:
         _scheduled_delivery_ids.add(delivery_id)
         _scheduled_session_delivery_ids[wake_key] = delivery_id
         _scheduled_session_generations[wake_key] = reservation.generation
+        _scheduled_session_attempt_ids[wake_key] = attempt_id
+    _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "prepared")
     worker = threading.Thread(
         target=_wake_after_debounce,
-        args=(reservation, registry),
+        args=(reservation, registry, attempt_id, trace_callback),
         daemon=True,
     )
     try:
@@ -159,6 +199,10 @@ def schedule_codex_relay_wake(
     except RuntimeError:
         if registry.release_generation(reservation):
             _clear_schedule(reservation)
+        _emit_trace(
+            trace_callback, attempt_id, delivery_id, endpoint_id, "completed",
+            ActivationAttemptResult("deferred", "worker_start_failed", native_retry_safe=True),
+        )
         return None
     return worker
 
@@ -169,12 +213,15 @@ def _clear_schedule(reservation: CodexWakeReservation) -> None:
         if _scheduled_session_generations.get(wake_key) == reservation.generation:
             _scheduled_session_generations.pop(wake_key, None)
             _scheduled_session_delivery_ids.pop(wake_key, None)
+            _scheduled_session_attempt_ids.pop(wake_key, None)
         _scheduled_delivery_ids.discard(reservation.delivery_id)
 
 
 def _wake_after_debounce(
     reservation: CodexWakeReservation,
     registry: CodexWakeRegistry,
+    attempt_id: str | None = None,
+    trace_callback: Callable[[dict[str, object]], object] | None = None,
 ) -> None:
     time.sleep(_DEBOUNCE_SECONDS)
     attempt_started = time.monotonic()
@@ -211,9 +258,13 @@ def _wake_after_debounce(
     )
     if attempt.outcome in {"accepted", "uncertain"}:
         registry.record_outcome(reservation, attempt.outcome)
-        return
-    if attempt.native_retry_safe and registry.release_generation(reservation):
+    elif attempt.native_retry_safe and registry.release_generation(reservation):
         _clear_schedule(reservation)
+    if attempt_id is not None:
+        _emit_trace(
+            trace_callback, attempt_id, reservation.delivery_id,
+            reservation.recipient_endpoint_id, "completed", attempt,
+        )
 
 
 def release_codex_relay_wake(

@@ -1,7 +1,7 @@
 ---
 id: add-relay-delivery-trace
 title: Explain Relay delivery with bounded activation-attempt traces
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: pallium-relay

@@ -7,9 +7,11 @@ import logging
 import re
 import threading
 import time
+import uuid
 from typing import TYPE_CHECKING, Any, Callable
 
 from app.claude_wake_transport import claude_wake_transport
+from core.relay_activation import ActivationAttemptResult
 
 if TYPE_CHECKING:
     from core.claude_wake import ClaudeWakeRegistry
@@ -17,6 +19,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _workers: set[tuple[int, str]] = set()
+_worker_attempt_ids: dict[tuple[int, str], str] = {}
 _workers_lock = threading.Lock()
 
 
@@ -33,6 +36,36 @@ def _log_outcome(delivery_id: str, session_ref: str, category: str, started: flo
         pass
 
 
+def _emit_trace(
+    callback: Callable[[dict[str, object]], object] | None,
+    attempt_id: str,
+    delivery_id: str,
+    endpoint_id: str,
+    stage: str,
+    result: ActivationAttemptResult | None = None,
+) -> None:
+    if callback is None:
+        return
+    event: dict[str, object] = {
+        "attempt_id": attempt_id,
+        "delivery_id": delivery_id,
+        "stage": stage,
+        "runtime": "claude-code",
+        "recipient_endpoint_id": endpoint_id,
+    }
+    if result is not None:
+        event.update(
+            outcome=result.outcome,
+            reason=result.reason,
+            evidence=list(result.evidence),
+            native_retry_safe=result.native_retry_safe,
+            destination_health_update=result.destination_health_update,
+        )
+    try:
+        callback(event)
+    except Exception:
+        logger.exception("claude relay trace callback failed")
+
 def schedule_claude_relay_wake(
     result: object,
     scope: object,
@@ -40,6 +73,7 @@ def schedule_claude_relay_wake(
     registry: ClaudeWakeRegistry,
     relay_service: Any | None = None,
     on_unreachable: Callable[[datetime], None] | None = None,
+    trace_callback: Callable[[dict[str, object]], object] | None = None,
 ) -> threading.Thread | None:
     """Schedule one bounded wake for one exact pending Claude delivery."""
     if not isinstance(result, dict) or not isinstance(scope, dict):
@@ -76,9 +110,15 @@ def schedule_claude_relay_wake(
 
     key = (id(registry), endpoint_id)
     with _workers_lock:
-        if key in _workers:
-            return None
-        _workers.add(key)
+        existing_attempt_id = _worker_attempt_ids.get(key)
+        if existing_attempt_id is None:
+            attempt_id = f"relay-activation-{uuid.uuid4().hex}"
+            _workers.add(key)
+            _worker_attempt_ids[key] = attempt_id
+    if existing_attempt_id is not None:
+        _emit_trace(trace_callback, existing_attempt_id, delivery_id, endpoint_id, "associated")
+        return None
+    _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "prepared")
 
     def still_pending() -> bool:
         if relay_service is None:
@@ -122,11 +162,14 @@ def schedule_claude_relay_wake(
             )
             category = attempt.outcome
         except Exception:
-            category = "worker_error"
+            attempt = ActivationAttemptResult("uncertain", "worker_error", ("submission_attempted",))
+            category = attempt.reason
         finally:
             _log_outcome(delivery_id, session_ref, category, started)
             with _workers_lock:
                 _workers.discard(key)
+                _worker_attempt_ids.pop(key, None)
+            _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "completed", attempt)
 
     worker = threading.Thread(target=run, name="pallium-claude-wake", daemon=True)
     started = time.monotonic()
@@ -135,11 +178,21 @@ def schedule_claude_relay_wake(
     except Exception:
         with _workers_lock:
             _workers.discard(key)
+            _worker_attempt_ids.pop(key, None)
         _log_outcome(delivery_id, session_ref, "worker_start_failed", started)
+        _emit_trace(
+            trace_callback, attempt_id, delivery_id, endpoint_id, "completed",
+            ActivationAttemptResult("deferred", "worker_start_failed", native_retry_safe=True),
+        )
         return None
     return worker
 
-def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any) -> None:
+def recover_claude_relay_wakes(
+    registry: ClaudeWakeRegistry,
+    relay_service: Any,
+    *,
+    trace_callback: Callable[[dict[str, object]], object] | None = None,
+) -> None:
     """Schedule only idle capabilities; unresolved reservations stay fenced."""
     registry.recover_intents()
     for candidate in registry.recovery_candidates():
@@ -174,6 +227,7 @@ def recover_claude_relay_wakes(registry: ClaudeWakeRegistry, relay_service: Any)
             {"container_ref": candidate["container_ref"]},
             registry=registry,
             relay_service=relay_service,
+            trace_callback=trace_callback,
             on_unreachable=lambda attempt_started_at, candidate=candidate: relay_service.mark_unreachable(
                 runtime="claude-code",
                 session_ref=candidate["session_ref"],
@@ -194,6 +248,7 @@ class ClaudeWakeReconciler:
         relay_service: Any,
         *,
         claim_recovery: Callable[[], None] | None = None,
+        trace_callback: Callable[[dict[str, object]], object] | None = None,
         interval_seconds: float = 1.0,
         claim_interval_seconds: float = _CLAIM_RECOVERY_INTERVAL_SECONDS,
         clock: Callable[[], float] = time.monotonic,
@@ -201,6 +256,7 @@ class ClaudeWakeReconciler:
         self._registry = registry
         self._relay_service = relay_service
         self._claim_recovery = claim_recovery
+        self._trace_callback = trace_callback
         self._interval_seconds = interval_seconds
         self._claim_interval_seconds = claim_interval_seconds
         self._clock = clock
@@ -235,7 +291,11 @@ class ClaudeWakeReconciler:
             if self._stop.is_set():
                 continue
             try:
-                recover_claude_relay_wakes(self._registry, self._relay_service)
+                recover_claude_relay_wakes(
+                    self._registry,
+                    self._relay_service,
+                    trace_callback=self._trace_callback,
+                )
             except Exception:
                 logger.exception("Claude wake reconciliation failed")
             now = self._clock()
@@ -253,12 +313,14 @@ def start_claude_wake_reconciler(
     relay_service: Any,
     *,
     claim_recovery: Callable[[], None] | None = None,
+    trace_callback: Callable[[dict[str, object]], object] | None = None,
 ) -> ClaudeWakeReconciler:
     # ponytail: reuse one service loop; split by runtime only if recovery workloads diverge.
     reconciler = ClaudeWakeReconciler(
         registry,
         relay_service,
         claim_recovery=claim_recovery,
+        trace_callback=trace_callback,
     )
     reconciler.start()
     return reconciler

@@ -33,6 +33,7 @@ shape.
 | `POST /relay/messages` | Persist and send a new message. |
 | `POST /relay/replies` | Reply to one received delivery. |
 | `GET /relay/messages/{message_id}` | Read delivery status. |
+| `GET /relay/messages/{message_id}/trace` | Read bounded, nonmutating activation evidence and current delivery snapshots. |
 | `POST /relay/deliveries/ack` | Acknowledge automatic hook delivery. |
 | `POST /relay/deliveries/mcp-ack` | Acknowledge MCP recovery delivery. |
 

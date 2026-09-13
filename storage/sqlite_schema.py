@@ -575,12 +575,43 @@ class RelayDeliveryRecord(Base):
     lease_expires_at = Column(DateTime(timezone=True), nullable=True)
     delivered_at = Column(DateTime(timezone=True), nullable=True)
     attempts = Column(Integer, nullable=False, default=0)
+    trace_version = Column(Integer, nullable=True)
+    trace_truncated = Column(Integer, nullable=False, default=0)
+    trace_pruned = Column(Integer, nullable=False, default=0)
 
     __table_args__ = (
         UniqueConstraint(
             "message_id", "recipient_runtime", "recipient_session_ref",
             name="uq_relay_delivery_recipient",
         ),
+    )
+
+
+class RelayDeliveryTraceRecord(Base):
+    """Immutable best-effort activation evidence for one Relay delivery."""
+
+    __tablename__ = "relay_delivery_trace"
+
+    id = Column(String, nullable=False, unique=True)
+    recorded_sequence = Column(Integer, primary_key=True, autoincrement=True)
+    attempt_id = Column(String, nullable=False)
+    delivery_id = Column(String, nullable=False)
+    message_id = Column(String, nullable=False)
+    stage = Column(String, nullable=False)
+    outcome = Column(String, nullable=True)
+    reason = Column(String, nullable=True)
+    evidence_json = Column(Text, nullable=True)
+    native_retry_safe = Column(Integer, nullable=True)
+    destination_health_update = Column(String, nullable=True)
+    scope_generation = Column(Integer, nullable=True)
+    recorded_at = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id", "delivery_id", "stage",
+            name="uq_relay_delivery_trace_fact",
+        ),
+        {"sqlite_autoincrement": True},
     )
 
 
@@ -614,6 +645,7 @@ _RELAY_TABLE_NAMES = frozenset({
     RelaySessionWorkRefRecord.__tablename__,
     RelayMessageRecord.__tablename__,
     RelayDeliveryRecord.__tablename__,
+    RelayDeliveryTraceRecord.__tablename__,
     RelayAliasRecord.__tablename__,
     RelayEndpointGenerationRecord.__tablename__,
     RelayEndpointRepairRecord.__tablename__,
@@ -718,6 +750,22 @@ class SQLiteSchemaMixin:
         "idx_relay_deliveries_recipient_endpoint": (
             "CREATE INDEX IF NOT EXISTS idx_relay_deliveries_recipient_endpoint "
             "ON relay_deliveries(recipient_endpoint_id, state, lease_expires_at)"
+        ),
+        "idx_relay_trace_message_sequence": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_trace_message_sequence "
+            "ON relay_delivery_trace(message_id, recorded_sequence)"
+        ),
+        "idx_relay_trace_delivery_sequence": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_trace_delivery_sequence "
+            "ON relay_delivery_trace(delivery_id, recorded_sequence)"
+        ),
+        "idx_relay_trace_attempt_sequence": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_trace_attempt_sequence "
+            "ON relay_delivery_trace(attempt_id, recorded_sequence)"
+        ),
+        "idx_relay_trace_recorded_at": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_trace_recorded_at "
+            "ON relay_delivery_trace(recorded_at, recorded_sequence)"
         ),
         # General container+lifecycle lookup. The hot retrieval / consolidation
         # / thread-rebuild / work-trace paths all call
@@ -997,6 +1045,8 @@ class SQLiteSchemaMixin:
                     if include_relay or name not in _RELAY_TABLE_NAMES
                 ],
             )
+            if include_relay:
+                self._ensure_relay_delivery_trace_columns(self._engine)
             self._ensure_thread_processing_lease_nullable_thread_ref()
             self._ensure_thread_processing_lease_columns()
             self._ensure_source_item_columns()
@@ -1032,16 +1082,41 @@ class SQLiteSchemaMixin:
                     RelaySessionWorkRefRecord.__table__,
                     RelayMessageRecord.__table__,
                     RelayDeliveryRecord.__table__,
+                    RelayDeliveryTraceRecord.__table__,
                     RelayAliasRecord.__table__,
                     RelayEndpointGenerationRecord.__table__,
                     RelayEndpointRepairRecord.__table__,
                 ],
             )
+            self._ensure_relay_delivery_trace_columns(engine)
             with engine.begin() as connection:
                 for name, create_sql in self._INDEX_MIGRATIONS.items():
                     if name.startswith("idx_relay_"):
                         connection.execute(text(create_sql))
             self._optimize_query_planner_stats(engine)
+
+    @staticmethod
+    def _ensure_relay_delivery_trace_columns(engine) -> None:
+        with engine.begin() as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(relay_deliveries)"))
+            }
+            for name, sql in {
+                "trace_version": (
+                    "ALTER TABLE relay_deliveries ADD COLUMN trace_version INTEGER"
+                ),
+                "trace_truncated": (
+                    "ALTER TABLE relay_deliveries ADD COLUMN "
+                    "trace_truncated INTEGER NOT NULL DEFAULT 0"
+                ),
+                "trace_pruned": (
+                    "ALTER TABLE relay_deliveries ADD COLUMN "
+                    "trace_pruned INTEGER NOT NULL DEFAULT 0"
+                ),
+            }.items():
+                if name not in columns:
+                    connection.execute(text(sql))
 
     @contextmanager
     def _schema_initialization_lock(self, engine=None):
