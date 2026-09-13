@@ -6,10 +6,12 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import event
 
 from app import claude_wake, codex_wake
 from core.claude_wake import ClaudeWakeRegistry
 from core.codex_wake import CodexWakeRegistry
+from core.errors import is_transient_error
 from core.relay import RelayService
 from core.relay_activation import ActivationAttemptResult
 from storage.sqlite import SQLiteStorageProvider
@@ -240,6 +242,53 @@ def test_trace_paging_freezes_later_appends(relay):
             after_sequence=upper + 1,
             as_of_sequence=upper,
         )
+
+
+def test_trace_bound_checks_do_not_reserve_the_correctness_writer(relay):
+    storage, service, _ = relay
+    message = _message(service)
+    reached = threading.Event()
+    release = threading.Event()
+    trace_errors = []
+
+    def pause_trace_read(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ):
+        if (
+            threading.current_thread().name == "trace-contention-test"
+            and "count(" in statement.lower()
+            and "relay_delivery_trace" in statement.lower()
+            and not reached.is_set()
+        ):
+            reached.set()
+            assert release.wait(timeout=2)
+
+    def record_trace():
+        try:
+            _event(
+                storage,
+                message,
+                "relay-activation-" + "8" * 32,
+                "prepared",
+            )
+        except Exception as exc:
+            trace_errors.append(exc)
+
+    event.listen(storage._relay_engine, "before_cursor_execute", pause_trace_read)
+    worker = threading.Thread(target=record_trace, name="trace-contention-test")
+    worker.start()
+    try:
+        assert reached.wait(timeout=2)
+        result = service.turn(
+            runtime="codex", session_ref="receiver", container_ref="git:test"
+        )
+        assert result["session"]["session_ref"] == "receiver"
+    finally:
+        release.set()
+        worker.join(timeout=2)
+        event.remove(storage._relay_engine, "before_cursor_execute", pause_trace_read)
+    assert not worker.is_alive()
+    assert all(is_transient_error(exc) for exc in trace_errors)
 
 
 def test_trace_per_delivery_and_association_caps_mark_truncation(relay):

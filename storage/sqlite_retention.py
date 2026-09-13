@@ -42,7 +42,7 @@ class SQLiteRetentionMixin:
             raise ValueError("trace cleanup limit must be between 1 and 64")
         cutoff = (self._normalize_datetime(now) or now or utc_now()) - timedelta(days=30)
         try:
-            with self._begin_immediate_for(self._relay_session_factory, attempts=1, busy_timeout_ms=25) as session:
+            with self._begin_low_priority_relay_write() as session:
                 total = session.scalar(select(func.count()).select_from(RelayDeliveryTraceRecord)) or 0
                 rows = session.scalars(select(RelayDeliveryTraceRecord).where(or_(RelayDeliveryTraceRecord.recorded_at < cutoff, total >= RELAY_TRACE_MAX_ROWS)).order_by(RelayDeliveryTraceRecord.recorded_at, RelayDeliveryTraceRecord.recorded_sequence).limit(limit)).all()
                 if not rows:

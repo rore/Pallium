@@ -1686,11 +1686,8 @@ class SQLiteRelayMixin:
             else None
         )
         current = _now(recorded_at)
-        with self._begin_immediate_for(
-            self._relay_session_factory,
-            attempts=1,
-            busy_timeout_ms=25,
-        ) as db:
+        with self._begin_low_priority_relay_write() as db:
+
             delivery = db.get(RelayDeliveryRecord, delivery_id)
             if delivery is None:
                 return {"recorded": False, "missing": True}
