@@ -8,6 +8,8 @@ import socket
 import threading
 import uuid
 
+from core.relay_activation import ActivationAttemptResult
+
 
 # ponytail: unresolved Windows I/O remains process-local until signal or exit; add completion callbacks only if leak telemetry warrants it.
 _pending_windows_writes: list[tuple[object, object]] = []
@@ -32,43 +34,37 @@ def _reap_pending_windows_writes(win32event, win32file) -> None:
         with _pending_windows_writes_lock:
             _pending_windows_writes.extend(retained)
 
-def claude_wake_transport(socket_path: str, token: str) -> str:
-    """Write auth and peer message to a registered Claude Code session endpoint.
-
-    Args:
-        socket_path: Unix domain socket path (POSIX) or named pipe path (Windows).
-        token: Authentication token (never stored or logged).
-
-    Returns:
-        ``"accepted"`` on clean write, ``"unreachable"`` only for a proven missing endpoint, and ``"retryable"`` for all uncertainty.
-
-    Platform-specific:
-        POSIX: AF_UNIX socket with ~2s timeout.
-        Windows: Named pipe via win32file.CreateFile.
-
-    ponytail: clean-write == success; skips reading peer_message_status receipt (add in S1).
-    """
-    if os.name == "nt":
-        return _windows_transport(socket_path, token)
-    else:
-        return _posix_transport(socket_path, token)
+def claude_wake_transport(socket_path: str, token: str) -> ActivationAttemptResult:
+    """Write auth and one peer frame, preserving pre/post-frame certainty."""
+    return _windows_transport(socket_path, token) if os.name == "nt" else _posix_transport(socket_path, token)
 
 
-def _posix_transport(socket_path: str, token: str) -> str:
-    """Connect, authenticate, and classify a local Unix socket wake."""
+def _posix_transport(socket_path: str, token: str) -> ActivationAttemptResult:
     sock = None
+    frame_started = False
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(2.0)
         sock.connect(socket_path)
         sock.sendall((json.dumps({"type": "auth", "token": token}) + "\n").encode("utf-8"))
         frame = {"msgV": 1, "msg_id": uuid.uuid4().hex, "type": "user", "message": {"role": "user", "content": "Pallium Relay wake notice: new messages available."}, "priority": "next", "from": "pallium-relay"}
+        frame_started = True
         sock.sendall((json.dumps(frame) + "\n").encode("utf-8"))
-        return "accepted"
+        return ActivationAttemptResult(
+            "accepted", "peer_frame_written",
+            ("submission_attempted", "transport_accepted"),
+        )
     except FileNotFoundError:
-        return "unreachable"
+        return ActivationAttemptResult(
+            "failed", "endpoint_missing", native_retry_safe=True,
+            destination_health_update="unreachable",
+        )
     except (OSError, ValueError, socket.timeout):
-        return "retryable"
+        if frame_started:
+            return ActivationAttemptResult(
+                "uncertain", "peer_frame_uncertain", ("submission_attempted",)
+            )
+        return ActivationAttemptResult("deferred", "pre_frame_failure", native_retry_safe=True)
     finally:
         if sock is not None:
             try:
@@ -76,27 +72,49 @@ def _posix_transport(socket_path: str, token: str) -> str:
             except OSError:
                 pass
 
-def _windows_transport(socket_path: str, token: str) -> str:
-    """Open a named pipe and classify only proven endpoint absence as unreachable."""
+
+def _windows_transport(socket_path: str, token: str) -> ActivationAttemptResult:
     try:
         import pywintypes
         import win32event
         import win32file
         import winerror
     except ImportError:
-        return "retryable"
+        return ActivationAttemptResult("deferred", "transport_unavailable", native_retry_safe=True)
     handle = None
+    frame_started = False
     try:
         handle = win32file.CreateFile(socket_path, win32file.GENERIC_WRITE, 0, None, win32file.OPEN_EXISTING, win32file.FILE_FLAG_OVERLAPPED, None)
         auth = (json.dumps({"type": "auth", "token": token}) + "\n").encode("utf-8")
         if not _windows_write(handle, auth, pywintypes, win32event, win32file, winerror):
-            return "retryable"
+            return ActivationAttemptResult("deferred", "auth_write_failed", native_retry_safe=True)
         frame = {"msgV": 1, "msg_id": uuid.uuid4().hex, "type": "user", "message": {"role": "user", "content": "Pallium Relay wake notice: new messages available."}, "priority": "next", "from": "pallium-relay"}
-        return "accepted" if _windows_write(handle, (json.dumps(frame) + "\n").encode("utf-8"), pywintypes, win32event, win32file, winerror) else "retryable"
+        frame_started = True
+        if not _windows_write(handle, (json.dumps(frame) + "\n").encode("utf-8"), pywintypes, win32event, win32file, winerror):
+            return ActivationAttemptResult(
+                "uncertain", "peer_frame_uncertain", ("submission_attempted",)
+            )
+        return ActivationAttemptResult(
+            "accepted", "peer_frame_written",
+            ("submission_attempted", "transport_accepted"),
+        )
     except pywintypes.error as exc:
-        return "unreachable" if exc.winerror == winerror.ERROR_FILE_NOT_FOUND else "retryable"
+        if not frame_started and exc.winerror == winerror.ERROR_FILE_NOT_FOUND:
+            return ActivationAttemptResult(
+                "failed", "endpoint_missing", native_retry_safe=True,
+                destination_health_update="unreachable",
+            )
+        if frame_started:
+            return ActivationAttemptResult(
+                "uncertain", "peer_frame_exception", ("submission_attempted",)
+            )
+        return ActivationAttemptResult("deferred", "pre_frame_failure", native_retry_safe=True)
     except Exception:
-        return "retryable"
+        if frame_started:
+            return ActivationAttemptResult(
+                "uncertain", "peer_frame_exception", ("submission_attempted",)
+            )
+        return ActivationAttemptResult("deferred", "pre_frame_failure", native_retry_safe=True)
     finally:
         if handle is not None:
             try:

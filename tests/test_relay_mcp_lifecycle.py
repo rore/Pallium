@@ -17,6 +17,11 @@ RUNTIME = "claude-code"
 SESSION = "session-mcp-test"
 
 
+@pytest.fixture(autouse=True)
+def _pin_activation_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.dependencies.current_platform", lambda: "windows")
+
+
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _register(client: TestClient, runtime: str = RUNTIME, session: str = SESSION) -> dict:

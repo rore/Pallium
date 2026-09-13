@@ -183,13 +183,14 @@ multiple exact work references through agent interfaces and the Relay dashboard;
 PR #158 supplies agent guidance. Minimap's companion UI is separate. Associations
 preserve existing History scope and never imply ownership or liveness.
 PRs #174/#175 also shipped exact-recipient resolution, destination observability,
-and claim-token redaction. These corrections do not complete the queued activation
-contract or persisted delivery-trace features.
-Next, `add-relay-activation-capability-contract` makes qualified
-activation behavior and outcomes explicit, followed by `add-relay-delivery-trace`
-for bounded diagnostic evidence through message detail, HTTP, and MCP.
-Copilot is later runtime expansion, blocked on those two features and OpenCode wake
-qualification. Existing lifecycle hardening retains ownership of
+and claim-token redaction. The activation-capability contract shipped in PR #178
+and makes
+qualified behavior, current availability, fallback, and native-attempt evidence
+explicit across HTTP, MCP, and dashboard without turning acceptance into delivery.
+Next, `add-relay-delivery-trace` adds bounded diagnostic evidence
+through message detail, HTTP, and MCP.
+Copilot is later runtime expansion, still blocked on delivery tracing and OpenCode
+wake qualification. Existing lifecycle hardening retains ownership of
 delivery/session state and retention; trace recording never becomes delivery
 authority. Dependency-workflow validation remains parallel and drives public
 positioning and usage guidance. Add only further extensions repeatedly

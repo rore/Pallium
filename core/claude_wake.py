@@ -6,11 +6,14 @@ from dataclasses import asdict, dataclass, field, replace
 import json
 import math
 import os
+import re
 from pathlib import Path
 import threading
 import time
-from typing import Callable, Literal
+from typing import Callable
 import unicodedata
+
+from core.relay_activation import ActivationAttemptResult
 
 RUNTIME = "claude-code"
 TTL_SECONDS = 900  # Compatibility only for memory-only test registries.
@@ -20,6 +23,7 @@ MAX_SESSION_CHARS = 512
 MAX_CONTAINER_CHARS = 512
 MAX_SOCKET_CHARS = 4096
 MAX_TOKEN_CHARS = 8192
+_ENDPOINT_RE = re.compile(r"^relay-session-[0-9a-f]{32}$")
 
 
 @dataclass(frozen=True)
@@ -35,9 +39,10 @@ class _Registration:
     state: str = "busy"
     delivery_id: str | None = None
     attempted_at: float | None = None
+    recipient_endpoint_id: str | None = None
 
 
-Transport = Callable[[str, str], Literal["accepted", "retryable", "unreachable"]]
+Transport = Callable[[str, str], object]
 
 
 def _valid(value: object, maximum: int) -> bool:
@@ -97,6 +102,8 @@ class ClaudeWakeRegistry:
         if self._state_dir is not None and not _valid(intent_id, 128):
             raise ValueError("invalid registration")
         with self._lock:
+            if self._rehydration_refused:
+                return False
             key = (runtime, session_ref, container_ref)
             if self._state_dir is None:
                 now = self._clock()
@@ -114,16 +121,20 @@ class ClaudeWakeRegistry:
             elif key not in self._registrations and len(self._registrations) >= MAX_REGISTRATIONS:
                 raise ValueError("registration capacity reached")
             self._generation += 1
-            registration = _Registration(
-                runtime=runtime,
-                session_ref=session_ref,
-                container_ref=container_ref,
-                socket_path=socket_path,
-                token=token,
-                generation=self._generation,
-                expires_at=(float("inf") if self._state_dir else self._clock() + TTL_SECONDS),
-                idle=idle,
-                state="idle" if idle else "busy",
+            existing = self._registrations.get(key)
+            registration = (
+                replace(
+                    existing, socket_path=socket_path, token=token,
+                    generation=self._generation,
+                    expires_at=(float("inf") if self._state_dir else self._clock() + TTL_SECONDS),
+                )
+                if existing is not None and existing.state == "wake_inflight"
+                else _Registration(
+                    runtime=runtime, session_ref=session_ref, container_ref=container_ref,
+                    socket_path=socket_path, token=token, generation=self._generation,
+                    expires_at=(float("inf") if self._state_dir else self._clock() + TTL_SECONDS),
+                    idle=idle, state="idle" if idle else "busy",
+                )
             )
             if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, key: registration}):
                 return False
@@ -146,8 +157,10 @@ class ClaudeWakeRegistry:
             registration = self._active_locked(runtime, session_ref, container_ref)
             if registration is None or registration.container_ref != container_ref:
                 return False
+            if registration.state == "wake_inflight":
+                return True
             self._generation += 1
-            busy = replace(registration, generation=self._generation, idle=False, state="busy", delivery_id=None, attempted_at=None)
+            busy = replace(registration, generation=self._generation, idle=False, state="busy", delivery_id=None, attempted_at=None, recipient_endpoint_id=None)
             key = (runtime, session_ref, container_ref)
             if self._state_dir is None or self._write_canonical_locked({**self._registrations, key: busy}):
                 self._registrations[key] = busy
@@ -166,59 +179,150 @@ class ClaudeWakeRegistry:
         container_ref: str,
         transport: Transport | None,
         delivery_id: str | None = None,
+        recipient_endpoint_id: str | None = None,
+        still_pending: Callable[[], bool] | None = None,
         on_unreachable: Callable[[], None] | None = None,
     ) -> bool:
+        return self.attempt(
+            runtime=runtime, session_ref=session_ref, container_ref=container_ref,
+            transport=transport, delivery_id=delivery_id,
+            recipient_endpoint_id=recipient_endpoint_id,
+            still_pending=still_pending, on_unreachable=on_unreachable,
+        ).outcome == "accepted"
+
+    def attempt(
+        self,
+        *,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        transport: Transport | None,
+        delivery_id: str | None = None,
+        recipient_endpoint_id: str | None = None,
+        still_pending: Callable[[], bool] | None = None,
+        on_unreachable: Callable[[], None] | None = None,
+    ) -> ActivationAttemptResult:
         if transport is None:
-            return False
+            return ActivationAttemptResult("deferred", "transport_unavailable", native_retry_safe=True)
+        if delivery_id is not None and (
+            not _valid(delivery_id, 128)
+            or not isinstance(recipient_endpoint_id, str)
+            or not _ENDPOINT_RE.fullmatch(recipient_endpoint_id)
+        ):
+            return ActivationAttemptResult("deferred", "invalid_reservation")
+        notify = False
         with self._lock:
             registration = self._active_locked(runtime, session_ref, container_ref)
-            if (
-                registration is None
-                or registration.container_ref != container_ref
-                or not registration.idle
-            ):
-                return False
+            if registration is None or registration.container_ref != container_ref or not registration.idle:
+                return ActivationAttemptResult("deferred", "not_eligible")
+            for current in self._registrations.values():
+                if current.state != "wake_inflight":
+                    continue
+                same_endpoint = recipient_endpoint_id is not None and current.recipient_endpoint_id == recipient_endpoint_id
+                legacy_same_session = current.recipient_endpoint_id is None and current.runtime == runtime and current.session_ref == session_ref
+                if same_endpoint or legacy_same_session:
+                    return ActivationAttemptResult("deferred", "reservation_exists")
+            try:
+                if still_pending is not None and still_pending() is not True:
+                    return ActivationAttemptResult("deferred", "delivery_not_pending")
+            except Exception:
+                return ActivationAttemptResult("deferred", "pending_check_failed")
+
             self._generation += 1
             consumed = replace(
-                registration,
-                generation=self._generation,
-                idle=False,
-                state="wake_inflight",
-                delivery_id=delivery_id,
+                registration, generation=self._generation, idle=False,
+                state="wake_inflight", delivery_id=delivery_id,
                 attempted_at=self._wall_clock(),
+                recipient_endpoint_id=recipient_endpoint_id,
             )
             key = (runtime, session_ref, container_ref)
             if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, key: consumed}):
-                return False
+                return ActivationAttemptResult("deferred", "reservation_write_failed")
             self._registrations[key] = consumed
+
+            try:
+                raw = transport(consumed.socket_path, consumed.token)
+            except Exception:
+                raw = ActivationAttemptResult("uncertain", "transport_exception", ("submission_attempted",))
+            if isinstance(raw, ActivationAttemptResult):
+                result = raw
+            elif raw is True or raw == "accepted":
+                result = ActivationAttemptResult("accepted", "transport_accepted", ("submission_attempted", "transport_accepted"))
+            elif raw == "unreachable":
+                result = ActivationAttemptResult("failed", "endpoint_missing", native_retry_safe=True, destination_health_update="unreachable")
+            else:
+                result = ActivationAttemptResult("uncertain", "transport_uncertain", ("submission_attempted",))
+
+            if result.outcome in {"accepted", "uncertain"} or not result.native_retry_safe:
+                return result
+            updated = replace(
+                consumed,
+                idle=result.destination_health_update is None,
+                state="unreachable" if result.destination_health_update == "unreachable" else "idle",
+                delivery_id=None, attempted_at=None, recipient_endpoint_id=None,
+            )
+            if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, key: updated}):
+                self._rehydration_refused = True
+                self._durability_degraded = not self._quarantine_or_mark_unusable_locked()
+                return ActivationAttemptResult("uncertain", "safe_reset_write_failed", ("submission_attempted",))
+            self._registrations[key] = updated
+            notify = result.destination_health_update == "unreachable"
+
+        if notify and on_unreachable is not None:
+            try:
+                on_unreachable()
+            except Exception:
+                pass
+        return result
+
+    def release_delivery(self, delivery_id: str) -> bool:
+        """Release only the exact ACK-authoritative activation reservation."""
+        if not _valid(delivery_id, 128):
+            return False
+        with self._lock:
+            matches = [
+                (key, item)
+                for key, item in self._registrations.items()
+                if item.state == "wake_inflight" and item.delivery_id == delivery_id
+            ]
+            if len(matches) != 1:
+                return False
+            key, current = matches[0]
+            self._generation += 1
+            released = replace(
+                current, generation=self._generation, idle=False, state="busy",
+                delivery_id=None, attempted_at=None, recipient_endpoint_id=None,
+            )
+            if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, key: released}):
+                self._rehydration_refused = True
+                self._durability_degraded = not self._quarantine_or_mark_unusable_locked()
+                return False
+            self._registrations[key] = released
+            return True
+
+    def state_for(
+        self,
+        *,
+        recipient_endpoint_id: str,
+        session_ref: str,
+        container_ref: str,
+    ) -> str | None:
+        # Read paths must not wait behind a native write; unknown is truthful here.
+        if not self._lock.acquire(blocking=False):
+            return None
         try:
-            outcome = transport(consumed.socket_path, consumed.token)
-        except Exception:
-            outcome = "retryable"
-        if outcome is True:
-            outcome = "accepted"
-        elif outcome is False or outcome not in {"accepted", "retryable", "unreachable"}:
-            outcome = "retryable"
-        if outcome == "unreachable" and on_unreachable is not None:
-            with self._lock:
-                current = self._active_locked(runtime, session_ref, container_ref)
-                notify = current is not None and current.generation == consumed.generation
-            if notify:
-                try:
-                    on_unreachable()
-                except Exception:
-                    outcome = "retryable"
-        if outcome != "accepted":
-            with self._lock:
-                current = self._active_locked(runtime, session_ref, container_ref)
-                if current is not None and current.generation == consumed.generation:
-                    if outcome == "unreachable":
-                        updated = replace(current, idle=False, state="unreachable", delivery_id=None, attempted_at=None)
-                    else:
-                        updated = replace(current, idle=True, state="idle", delivery_id=None, attempted_at=None)
-                    if self._state_dir is None or self._write_canonical_locked({**self._registrations, (runtime, session_ref, container_ref): updated}):
-                        self._registrations[(runtime, session_ref, container_ref)] = updated
-        return outcome == "accepted"
+            if self._rehydration_refused:
+                return None
+            for item in self._registrations.values():
+                if (
+                    item.state == "wake_inflight"
+                    and item.recipient_endpoint_id == recipient_endpoint_id
+                ):
+                    return item.state
+            item = self._active_locked(RUNTIME, session_ref, container_ref)
+            return item.state if item is not None else None
+        finally:
+            self._lock.release()
 
     @property
     def persistent(self) -> bool:
@@ -289,7 +393,11 @@ class ClaudeWakeRegistry:
 
                 # Pre-scoped intents cannot safely compete with exact-scope state.
                 # Fence unless a newer scoped intent was successfully applied.
-                if scope not in applied_scopes:
+                current = self._registrations.get(scope)
+                if (
+                    scope not in applied_scopes
+                    and (current is None or current.state != "wake_inflight")
+                ):
                     updated = dict(self._registrations)
                     updated.pop(scope, None)
                     if not self._write_canonical_locked(updated):
@@ -307,23 +415,13 @@ class ClaudeWakeRegistry:
                     except OSError:
                         pass
 
-    def rearm_inflight(self, *, runtime: str, session_ref: str, container_ref: str, delivery_id: str, grace_seconds: float) -> bool:
-        """Make an observed pending inflight delivery eligible after bounded grace."""
-        with self._lock:
-            current = self._active_locked(runtime, session_ref, container_ref)
-            if (current is None or current.container_ref != container_ref
-                    or current.state != "wake_inflight" or current.delivery_id != delivery_id
-                    or current.attempted_at is None or 0 <= self._wall_clock() - current.attempted_at < grace_seconds):
-                return False
-            idle = replace(current, generation=current.generation + 1, idle=True, state="idle", delivery_id=None, attempted_at=None)
-            if self._state_dir is not None and not self._write_canonical_locked({**self._registrations, (runtime, session_ref, container_ref): idle}):
-                return False
-            self._generation = max(self._generation, idle.generation)
-            self._registrations[(runtime, session_ref, container_ref)] = idle
-            return True
+    def rearm_inflight(self, **_kwargs: object) -> bool:
+        """Compatibility no-op: elapsed time never releases a reservation."""
+        return False
 
-    def clear_inflight(self, *, runtime: str, session_ref: str, container_ref: str, delivery_id: str) -> bool:
-        return self.rearm_inflight(runtime=runtime, session_ref=session_ref, container_ref=container_ref, delivery_id=delivery_id, grace_seconds=0)
+    def clear_inflight(self, **_kwargs: object) -> bool:
+        """Compatibility no-op: pending/absence reads never release a reservation."""
+        return False
     def close(
         self, *, runtime: str, session_ref: str, container_ref: str, intent_id: str | None = None
     ) -> bool:
@@ -340,6 +438,9 @@ class ClaudeWakeRegistry:
             registration = self._registrations.get((runtime, session_ref, container_ref))
             if registration is not None and (registration.container_ref != container_ref):
                 return False
+            if registration is not None and registration.state == "wake_inflight":
+                self._delete_intent_locked(runtime, session_ref, container_ref, expected_intent_id=intent_id)
+                return True
             return self._remove_locked(
                 runtime, session_ref, container_ref,
                 expected_intent_id=intent_id,
@@ -349,8 +450,9 @@ class ClaudeWakeRegistry:
             registration = self._registrations.get((runtime, session_ref, container_ref))
             if registration is None or registration.container_ref != container_ref:
                 return False
+            if registration.state == "wake_inflight":
+                return True
             return self._remove_locked(runtime, session_ref, container_ref)
-
     def _remove_locked(
         self,
         runtime: str,
@@ -378,7 +480,11 @@ class ClaudeWakeRegistry:
         registration = self._registrations.get((runtime, session_ref, container_ref))
         if registration is None:
             return None
-        if self._state_dir is not None or registration.expires_at > self._clock():
+        if (
+            registration.state == "wake_inflight"
+            or self._state_dir is not None
+            or registration.expires_at > self._clock()
+        ):
             return registration
         if self._registrations.get((runtime, session_ref, container_ref)) is registration:
             del self._registrations[(runtime, session_ref, container_ref)]
@@ -400,40 +506,97 @@ class ClaudeWakeRegistry:
         if self._unusable.exists():
             self._rehydration_refused = True
             return
+        if not self._canonical.exists():
+            return
         raw = self._read_json(self._canonical)
-        if not isinstance(raw, dict) or raw.get("version") != 1 or not isinstance(raw.get("registrations"), list):
+        if (
+            not isinstance(raw, dict)
+            or raw.get("version") != 1
+            or not isinstance(raw.get("registrations"), list)
+            or len(raw["registrations"]) > MAX_REGISTRATIONS
+        ):
+            self._rehydration_refused = True
             return
         loaded: dict[tuple[str, str, str], _Registration] = {}
+        inflight_deliveries: set[str] = set()
+        inflight_endpoints: set[str] = set()
         for item in raw["registrations"]:
-            if not isinstance(item, dict):
-                continue
-            if not self._valid_loaded_item(item):
-                continue
+            if not isinstance(item, dict) or not self._valid_loaded_item(item):
+                self._rehydration_refused = True
+                self._registrations = {}
+                return
             registration = _Registration(**item)
-            if self._valid_registration(registration.runtime, registration.session_ref, registration.container_ref, registration.socket_path, registration.token):
-                loaded[(
-                    registration.runtime,
-                    registration.session_ref,
-                    registration.container_ref,
-                )] = registration
-                self._generation = max(self._generation, registration.generation)
+            key = (registration.runtime, registration.session_ref, registration.container_ref)
+            if (
+                not self._valid_registration(
+                    registration.runtime, registration.session_ref,
+                    registration.container_ref, registration.socket_path,
+                    registration.token,
+                )
+                or key in loaded
+                or (
+                    registration.state == "wake_inflight"
+                    and (
+                        registration.delivery_id in inflight_deliveries
+                        or (
+                            registration.recipient_endpoint_id is not None
+                            and registration.recipient_endpoint_id in inflight_endpoints
+                        )
+                    )
+                )
+            ):
+                self._rehydration_refused = True
+                self._registrations = {}
+                return
+            loaded[key] = registration
+            if registration.state == "wake_inflight":
+                assert registration.delivery_id is not None
+                inflight_deliveries.add(registration.delivery_id)
+                if registration.recipient_endpoint_id is not None:
+                    inflight_endpoints.add(registration.recipient_endpoint_id)
+            self._generation = max(self._generation, registration.generation)
         self._registrations = loaded
 
     @staticmethod
     def _valid_loaded_item(item: dict) -> bool:
-        required = {"runtime", "session_ref", "container_ref", "socket_path", "token", "generation", "expires_at", "idle", "state", "delivery_id", "attempted_at"}
-        if set(item) != required or type(item["generation"]) is not int or item["generation"] < 0 or type(item["idle"]) is not bool or type(item["state"]) is not str or not isinstance(item["expires_at"], (int, float)):
+        required = {
+            "runtime", "session_ref", "container_ref", "socket_path", "token",
+            "generation", "expires_at", "idle", "state", "delivery_id",
+            "attempted_at",
+        }
+        if set(item) not in (required, required | {"recipient_endpoint_id"}):
             return False
-        state, delivery_id, attempted_at = item["state"], item["delivery_id"], item["attempted_at"]
+        if (
+            type(item["generation"]) is not int
+            or item["generation"] < 0
+            or type(item["idle"]) is not bool
+            or type(item["state"]) is not str
+            or type(item["expires_at"]) not in (int, float)
+        ):
+            return False
+        state = item["state"]
+        delivery_id = item["delivery_id"]
+        attempted_at = item["attempted_at"]
+        endpoint_id = item.get("recipient_endpoint_id")
         if state not in {"idle", "busy", "wake_inflight", "unreachable"} or item["idle"] != (state == "idle"):
             return False
-        return (state == "wake_inflight" and _valid(delivery_id, 128) and type(attempted_at) in (int, float) and math.isfinite(attempted_at)) or (state != "wake_inflight" and delivery_id is None and attempted_at is None)
+        if state != "wake_inflight":
+            return delivery_id is None and attempted_at is None and endpoint_id is None
+        return (
+            _valid(delivery_id, 128)
+            and type(attempted_at) in (int, float)
+            and math.isfinite(attempted_at)
+            and (endpoint_id is None or (
+                isinstance(endpoint_id, str)
+                and bool(_ENDPOINT_RE.fullmatch(endpoint_id))
+            ))
+        )
     def _ensure_capacity_locked(self) -> bool:
         if len(self._registrations) < MAX_REGISTRATIONS:
             return True
         # Capacity cleanup is deliberately non-admitting: only an absent endpoint is proof.
         for key, registration in list(self._registrations.items()):
-            if not self._endpoint_is_provably_absent(registration.socket_path):
+            if registration.state == "wake_inflight" or not self._endpoint_is_provably_absent(registration.socket_path):
                 continue
             updated = dict(self._registrations)
             del updated[key]

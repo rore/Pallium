@@ -149,6 +149,7 @@ def test_relay_text_compact_response_keeps_resolved_delivery_identity() -> None:
         "state": "pending",
         "destination_health": "active",
     }]
+    assert "activation" not in compact["deliveries"][0]
     assert "must-not-leak" not in rendered
 
 
