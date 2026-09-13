@@ -607,7 +607,7 @@ def test_schedule_returns_before_child_exits(
     def slow_wait(*, timeout: float):
         assert timeout == 30
         started.set()
-        release.wait()
+        assert release.wait(10)
         return None, ""
 
     process.communicate.side_effect = slow_wait
