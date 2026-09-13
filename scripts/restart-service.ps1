@@ -56,12 +56,17 @@ function Stop-ProcessTree([int]$ProcessId, [switch]$Strict) {
 }
 
 function Get-ListenerPids([int]$Port, [switch]$Strict) {
-    @(
-        Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction $(if ($Strict) { "Stop" } else { "SilentlyContinue" }) |
-            ForEach-Object { $_.OwningProcess } |
-            Where-Object { $_ } |
-            Sort-Object -Unique
-    )
+    try {
+        @(
+            Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction $(if ($Strict) { "Stop" } else { "SilentlyContinue" }) |
+                ForEach-Object { $_.OwningProcess } |
+                Where-Object { $_ } |
+                Sort-Object -Unique
+        )
+    } catch {
+        if ($Strict -and $_.FullyQualifiedErrorId -notlike 'CmdletizationQuery_NotFound*') { throw }
+        @()
+    }
 }
 
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -101,6 +106,23 @@ $pythonPath = if ($pythonMatch.Success) {
 }
 if (-not $pythonPath -or -not (Test-Path -LiteralPath $pythonPath)) {
     Stop-WithError "Could not resolve the installed Python executable from $vbsPath"
+}
+$pythonPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+[void]$pythonPaths.Add([IO.Path]::GetFullPath($pythonPath))
+$venvConfig = Join-Path (Split-Path (Split-Path $pythonPath -Parent) -Parent) "pyvenv.cfg"
+if (Test-Path -LiteralPath $venvConfig) {
+    $homeLine = Get-Content -LiteralPath $venvConfig -ErrorAction Stop | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
+    $baseMatch = [regex]::Match([string]$homeLine, '^\s*home\s*=\s*(.+?)\s*$')
+    if (-not $baseMatch.Success) { Stop-WithError "Could not resolve the installed Python base from $venvConfig" }
+    $baseFound = $false
+    foreach ($name in @("python.exe", "pythonw.exe")) {
+        $candidate = Join-Path ([Environment]::ExpandEnvironmentVariables($baseMatch.Groups[1].Value)) $name
+        if (Test-Path -LiteralPath $candidate) {
+            [void]$pythonPaths.Add([IO.Path]::GetFullPath($candidate))
+            $baseFound = $true
+        }
+    }
+    if (-not $baseFound) { Stop-WithError "Could not resolve the installed Python base from $venvConfig" }
 }
 
 $portMatch = [regex]::Match(
@@ -209,7 +231,7 @@ foreach ($sig in $signatures) {
         -Filter "(Name='python.exe' OR Name='pythonw.exe') AND CommandLine LIKE '$pattern'" `
         -ErrorAction $(if ($StopOnly) { "Stop" } else { "SilentlyContinue" })
     foreach ($p in $procs) {
-        $samePython = $p.ExecutablePath -and ([IO.Path]::GetFullPath([string]$p.ExecutablePath) -ieq [IO.Path]::GetFullPath($pythonPath))
+        $samePython = $p.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$p.ExecutablePath))
         $sameLauncher = $sig -ne "service_launcher.py" -or ([string]$p.CommandLine -match $serviceHomePattern)
         if (-not $samePython -or -not $sameLauncher) { continue }
         Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) $sig)..."
@@ -223,7 +245,7 @@ $serviceProcs = Get-CimInstance Win32_Process `
     -Filter "(Name='python.exe' OR Name='pythonw.exe') AND CommandLine LIKE '$servicePattern'" `
     -ErrorAction $(if ($StopOnly) { "Stop" } else { "SilentlyContinue" })
 foreach ($p in $serviceProcs) {
-    $samePython = $p.ExecutablePath -and ([IO.Path]::GetFullPath([string]$p.ExecutablePath) -ieq [IO.Path]::GetFullPath($pythonPath))
+    $samePython = $p.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$p.ExecutablePath))
     if (-not $samePython -or $p.CommandLine -notmatch $servicePortPattern -or $p.CommandLine -notmatch $serviceHomePattern) {
         continue
     }
@@ -243,7 +265,7 @@ if ($StopOnly) {
     $allManagedProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)
     $roots = @($allManagedProcesses | Where-Object {
         $c = [string]$_.CommandLine
-        $_.ExecutablePath -and ([IO.Path]::GetFullPath([string]$_.ExecutablePath) -ieq [IO.Path]::GetFullPath($pythonPath)) -and ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $servicePortPattern) -and ($c -match $serviceHomePattern)
+        $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath)) -and ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $servicePortPattern) -and ($c -match $serviceHomePattern)
     } | ForEach-Object { [int]$_.ProcessId })
     $managedIds = [Collections.Generic.HashSet[int]]::new()
     foreach ($root in $roots) { [void]$managedIds.Add($root) }
@@ -256,8 +278,8 @@ if ($StopOnly) {
     $survivors = @($allManagedProcesses | Where-Object {
         $c = [string]$_.CommandLine
         $inTree = $managedIds.Contains([int]$_.ProcessId)
-        $managedComponent = $_.ExecutablePath -and ([IO.Path]::GetFullPath([string]$_.ExecutablePath) -ieq [IO.Path]::GetFullPath($pythonPath)) -and ($c -match '(?i)(?:app\.(?:processor|cleaner|snapshot)|app\.run\s+(?:serve|all))')
-        $codexQueue = $c -match '(?i)\bcodex(?:\.exe)?\s+queue\s+--profile\s+pallium-relay\b'
+        $managedComponent = $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath)) -and ($c -match '(?i)(?:app\.(?:processor|cleaner|snapshot)|app\.run\s+(?:serve|all))')
+        $codexQueue = $c -match '(?i)^\s*(?:"[^"]*[\\/]codex(?:\.exe)?"|(?:\S*[\\/])?codex(?:\.exe)?)\s+queue\s+--profile\s+pallium-relay\b'
         (($inTree -and $c -match '(?i)app\.run\s+service\s+run' -and $c -match $servicePortPattern) -or $managedComponent -or $codexQueue)
     })
     if ($survivors.Count) { Stop-WithError "Managed Pallium process(es) survived stop: $($survivors.ProcessId -join ', ')" }

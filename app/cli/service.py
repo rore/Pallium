@@ -8,6 +8,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -537,6 +540,54 @@ def _stop_linux() -> None:
     _systemctl("stop", _SERVICE_NAME)
 
 
+def _linux_service_python() -> Path:
+    try:
+        line = next(line for line in _linux_unit_file().read_text(encoding="utf-8").splitlines() if line.startswith("ExecStart="))
+        launcher = Path(shlex.split(line.removeprefix("ExecStart="))[0]).resolve()
+        if launcher.name.startswith("python"):
+            return launcher
+        shebang = launcher.read_text(encoding="utf-8").splitlines()[0]
+        parts = shlex.split(shebang.removeprefix("#!"))
+        if not shebang.startswith("#!") or not parts:
+            raise ValueError
+        if Path(parts[0]).name == "env":
+            resolved = shutil.which(parts[1]) if len(parts) > 1 else None
+            if not resolved:
+                raise ValueError
+            return Path(resolved).resolve()
+        return Path(parts[0]).resolve()
+    except (OSError, StopIteration, UnicodeError, ValueError) as exc:
+        raise RuntimeError("cannot resolve installed Linux service interpreter") from exc
+
+
+def _linux_process_executable(pid: int) -> Path:
+    return Path(f"/proc/{pid}/exe").resolve(strict=True)
+
+
+def _assert_linux_no_managed_processes(home: Path) -> None:
+    del home  # systemd already bound and verified the installed home.
+    expected_python = _linux_service_python()
+    result = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError("cannot enumerate Linux processes for repair")
+    codex = re.compile(r'^\s*(?:"[^"]*/codex"|(?:\S*/)?codex)\s+queue\s+--profile\s+pallium-relay\b', re.IGNORECASE)
+    managed = re.compile(r"(?:app\.run\s+(?:service\s+run|serve|all)|app\.(?:processor|cleaner|snapshot))(?:\s|$)", re.IGNORECASE)
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(maxsplit=1)
+        if len(parts) != 2 or not parts[0].isdecimal():
+            continue
+        pid, command = int(parts[0]), parts[1]
+        if codex.search(command):
+            raise RuntimeError("managed Pallium or Relay wake process survived service stop")
+        if not managed.search(command):
+            continue
+        try:
+            executable = _linux_process_executable(pid)
+        except OSError as exc:
+            raise RuntimeError("cannot verify a possible surviving Pallium process") from exc
+        if executable == expected_python:
+            raise RuntimeError("managed Pallium or Relay wake process survived service stop")
+
 def assert_service_stopped(home: Path) -> None:
     """Fail unless the installed service manager conclusively reports stopped."""
     if sys.platform == "linux":
@@ -546,6 +597,7 @@ def assert_service_stopped(home: Path) -> None:
         if (state.get("ActiveState") != "inactive" or state.get("MainPID") != "0"
                 or tasks is None or not tasks.isdecimal() or int(tasks) != 0):
             raise RuntimeError(f"{_SERVICE_NAME} is not conclusively stopped: {state}")
+        _assert_linux_no_managed_processes(home)
         return
     if sys.platform == "win32":
         port_file = home / "run" / "port"
@@ -570,16 +622,37 @@ if (-not $homeMatch.Success -or -not $pythonMatch.Success) { throw "Installed ta
 $installedHome = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($homeMatch.Groups[1].Value)).TrimEnd('\')
 $pythonPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($pythonMatch.Groups[1].Value))
 if ($installedHome -ine $expectedHome) { throw "Installed service home does not match the repair home" }
-$listeners = @(Get-NetTCPConnection -LocalPort $expectedPort -State Listen -ErrorAction Stop)
+$pythonPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+[void]$pythonPaths.Add($pythonPath)
+$venvConfig = Join-Path (Split-Path (Split-Path $pythonPath -Parent) -Parent) "pyvenv.cfg"
+if (Test-Path -LiteralPath $venvConfig) {
+    $homeLine = Get-Content -LiteralPath $venvConfig -ErrorAction Stop | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
+    $baseMatch = [regex]::Match([string]$homeLine, '^\s*home\s*=\s*(.+?)\s*$')
+    if (-not $baseMatch.Success) { throw "Could not resolve installed Python base" }
+    $baseFound = $false
+    foreach ($name in @("python.exe", "pythonw.exe")) {
+        $candidate = Join-Path ([Environment]::ExpandEnvironmentVariables($baseMatch.Groups[1].Value)) $name
+        if (Test-Path -LiteralPath $candidate) {
+            [void]$pythonPaths.Add([IO.Path]::GetFullPath($candidate))
+            $baseFound = $true
+        }
+    }
+    if (-not $baseFound) { throw "Could not resolve installed Python base" }
+}
+try {
+    $listeners = @(Get-NetTCPConnection -LocalPort $expectedPort -State Listen -ErrorAction Stop)
+} catch {
+    if ($_.FullyQualifiedErrorId -like 'CmdletizationQuery_NotFound*') { $listeners = @() } else { throw }
+}
 if ($listeners.Count) { throw "Pallium listener(s) survived: $($listeners.OwningProcess -join ', ')" }
 $portPattern = '(?i)(?:^|\s)--port\s+{0}(?=\s|$)' -f [regex]::Escape($expectedPort.ToString())
 $homePattern = [regex]::Escape($expectedHome)
 $procs = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
     $c = [string]$_.CommandLine
-    $isInstalledPython = $_.ExecutablePath -and ([IO.Path]::GetFullPath([string]$_.ExecutablePath) -ieq $pythonPath)
+    $isInstalledPython = $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath))
     $service = $isInstalledPython -and ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $portPattern) -and ($c -match $homePattern)
     $managed = $isInstalledPython -and (($c -match '(?i)app\.run\s+serve') -or ($c -match '(?i)app\.(?:processor|cleaner|snapshot)(?:\s|$)'))
-    $codexQueue = $c -match '(?i)\bcodex(?:\.exe)?\s+queue\s+--profile\s+pallium-relay\b'
+    $codexQueue = $c -match '(?i)^\s*(?:"[^"]*[\\/]codex(?:\.exe)?"|(?:\S*[\\/])?codex(?:\.exe)?)\s+queue\s+--profile\s+pallium-relay\b'
     $service -or $managed -or $codexQueue
 })
 if ($procs.Count) { throw "Managed Pallium process(es) survived: $($procs.ProcessId -join ', ')" }'''

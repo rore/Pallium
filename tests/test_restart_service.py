@@ -38,6 +38,7 @@ function Get-ScheduledTask {
         $env:RW010_WORKDIR
     }
     [pscustomobject]@{
+        State = "Ready"
         Actions = @([pscustomobject]@{
             Execute = "wscript.exe"
             Arguments = '"' + $env:RW010_VBS + '"'
@@ -95,6 +96,10 @@ function Get-NetTCPConnection {
     param($LocalPort, $State, $ErrorAction)
     $script:NetTcpCalls++
     Log-Call "Get-NetTCPConnection:$LocalPort"
+    if ($env:RW010_SCENARIO -eq "empty_listener_notfound") {
+        Write-Error "No matching objects" -ErrorId "CmdletizationQuery_NotFound" -Category ObjectNotFound -ErrorAction $ErrorAction
+        return
+    }
     if ($env:RW010_SCENARIO -eq "multiple_initial_listeners" -and $script:NetTcpCalls -eq 1) {
         return @(
             [pscustomobject]@{ OwningProcess = 6161 },
@@ -122,6 +127,15 @@ function Get-Process {
 function Get-CimInstance {
     param($ClassName, $Filter, $ErrorAction)
     Log-Call "Get-CimInstance:$Filter"
+    if ($env:RW010_SCENARIO -eq "enumeration_failure" -and -not $Filter) {
+        throw "simulated process enumeration failure"
+    }
+    if ($env:RW010_SCENARIO -eq "quoted_codex_survivor" -and -not $Filter) {
+        return [pscustomobject]@{ ProcessId = 7373; ParentProcessId = 1; Name = "codex.exe"; ExecutablePath = "C:\Program Files\Codex\codex.exe"; CommandLine = '"C:\Program Files\Codex\codex.exe" queue --profile pallium-relay --thread x' }
+    }
+    if ($env:RW010_SCENARIO -eq "redirected_worker_survivor" -and (-not $Filter -or $Filter -like "*app.processor*")) {
+        return [pscustomobject]@{ ProcessId = 8484; ParentProcessId = 1; Name = "python.exe"; ExecutablePath = $env:RW010_NATIVE_PYTHON; CommandLine = ('"' + $env:RW010_PYTHON + '" -m app.processor --processor-id orphan') }
+    }
     if ($env:RW010_SCENARIO -eq "canonical_survivor" -and $Filter -like "*app.run service run*") {
         return @(
             [pscustomobject]@{
@@ -206,7 +220,11 @@ function Invoke-WebRequest {
 }
 
 $env:USERPROFILE = $env:RW010_HOME
-& $env:RW010_SCRIPT -ReadinessTimeoutSeconds ([double]$env:RW010_READINESS_TIMEOUT_SECONDS)
+if ($env:RW010_STOP_ONLY -eq "1") {
+    & $env:RW010_SCRIPT -ReadinessTimeoutSeconds ([double]$env:RW010_READINESS_TIMEOUT_SECONDS) -StopOnly
+} else {
+    & $env:RW010_SCRIPT -ReadinessTimeoutSeconds ([double]$env:RW010_READINESS_TIMEOUT_SECONDS)
+}
 exit $LASTEXITCODE
 '''
 
@@ -221,6 +239,7 @@ def _run_restart(
     service_home: Path | None = None,
     pid_file_value: int | None = None,
     readiness_timeout_seconds: float = 2.0,
+    stop_only: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     shell = shutil.which("pwsh") or shutil.which("powershell")
     assert shell is not None, "PowerShell is required on Windows"
@@ -265,6 +284,7 @@ def _run_restart(
         RW010_SCENARIO=scenario,
         RW010_SCRIPT=str(RESTART_SCRIPT),
         RW010_PYTHON=str(sys.executable),
+        RW010_NATIVE_PYTHON=str(sys._base_executable),
         RW010_SERVICE_HOME=str(service_home),
         RW010_TASK_SHAPE=task_shape,
         RW010_VBS=str(vbs),
@@ -275,6 +295,7 @@ def _run_restart(
         ),
         RW016_PID="" if pid_file_value is None else str(pid_file_value),
         RW010_READINESS_TIMEOUT_SECONDS=str(readiness_timeout_seconds),
+        RW010_STOP_ONLY="1" if stop_only else "0",
     )
     result = subprocess.run(
         [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness)],
@@ -455,6 +476,22 @@ def test_nonzero_taskkill_error_continues_cleanup_and_restarts(tmp_path: Path) -
     _assert_port(result, calls, 21987)
 
 
+def test_stop_only_rejects_nonzero_taskkill(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "nonzero_taskkill", pid_file_value=5151, stop_only=True)
+
+    assert "taskkill failed for PID 5151" in _assert_failure(result)
+    assert "Start-ScheduledTask" not in calls
+
+
+def test_stop_only_rejects_failed_process_enumeration(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "enumeration_failure", stop_only=True)
+
+    assert result.returncode != 0
+    assert "simulated process enumeration failure" in _output(result)
+    assert "Pallium restarted." not in _output(result)
+    assert "Start-ScheduledTask" not in calls
+
+
 def test_multiple_initial_listeners_are_killed_once_each(tmp_path: Path) -> None:
     result, calls = _run_restart(tmp_path, "multiple_initial_listeners")
 
@@ -526,3 +563,28 @@ def test_terminal_readiness_exhausts_exact_budget_without_success(
     assert "failed the 2.1-second readiness budget" in output
     assert last_check in output
     assert calls.count(last_endpoint) >= 1
+
+def test_stop_only_accepts_empty_listener_not_found(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "empty_listener_notfound", stop_only=True)
+
+    assert result.returncode == 0, _output(result)
+    assert "Pallium stopped." in _output(result)
+    assert "Start-ScheduledTask" not in calls
+    assert not any(call.startswith("URI:") for call in calls)
+
+
+def test_stop_only_rejects_orphan_redirected_worker(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "redirected_worker_survivor", stop_only=True)
+
+    output = _assert_failure(result)
+    assert "taskkill /F /T /PID 8484" in calls
+    assert "Managed Pallium process(es) survived stop: 8484" in output
+    assert "Start-ScheduledTask" not in calls
+
+
+def test_stop_only_rejects_quoted_codex_queue_survivor(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "quoted_codex_survivor", stop_only=True)
+
+    output = _assert_failure(result)
+    assert "Managed Pallium process(es) survived stop: 7373" in output
+    assert "Start-ScheduledTask" not in calls

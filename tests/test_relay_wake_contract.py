@@ -41,7 +41,7 @@ def test_delivery_and_wake_state_combinations_have_complete_terminal_rules() -> 
     valid = set(CONTRACT["valid_combined_states"])
     transitions = CONTRACT["delivery_transitions"]
     assert set(CONTRACT["delivery_states"]) == {"pending", "claimed", "delivered", "expired", "suppressed"}
-    assert "suppressed" not in {state.split("/", 1)[0] for state in valid}
+    assert "suppressed/*" in valid
     assert all("suppressed" not in transitions.values() for transitions in CONTRACT["delivery_transitions"].values())
     assert transitions["natural_turn_claim"] == {
         "pending/not_eligible": "claimed/not_eligible",

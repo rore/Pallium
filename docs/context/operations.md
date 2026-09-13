@@ -117,7 +117,44 @@ success only when `/health`, `/status`, and `/debug/queue/health` satisfy their
 documented readiness contracts; failures name the last check and Pallium log.
 The default readiness budget is three minutes; an explicit
 `-ReadinessTimeoutSeconds` value keeps its exact finite deadline.
-For offline Relay endpoint repair, run `scripts/restart-service.ps1 -StopOnly` first. It stops the installed task without starting it again and fails if the task, listener, or managed process tree cannot be conclusively drained.
+For offline Relay endpoint repair, first start the upgraded service once so it creates the repair ledger, then run `scripts/restart-service.ps1 -StopOnly`. The wrapper stops the installed task without starting it again and fails if the task, listener, or managed process tree cannot be conclusively drained.
+
+Create a disposition file that classifies every live pending delivery on the source endpoints:
+
+```json
+[
+  {"delivery_id": "relay-delivery-...", "disposition": "suppress"},
+  {"delivery_id": "relay-delivery-...", "disposition": "adopt"}
+]
+```
+
+Generate the review manifest against the installed Relay database. Supply the service and hooks' exact effective Claude wake directory explicitly; never infer it from the service home. Supply every same-runtime/session source, the one destination, and each endpoint's exact current scope:
+
+```powershell
+python -m app.tools.relay_endpoint_repair --dry-run `
+  --home "$env:USERPROFILE\.pallium" `
+  --db-url "sqlite:///$env:USERPROFILE/.pallium/data/pallium-relay.db" `
+  --manifest .\relay-repair.json `
+  --claude-wake-dir "$env:USERPROFILE\.pallium\claude-wake" `
+  --dispositions .\relay-dispositions.json `
+  --source relay-session-... --scope relay-session-...=git:old-a `
+  --source relay-session-... --scope relay-session-...=git:old-b `
+  --destination relay-session-... --scope relay-session-...=git:destination
+```
+
+Review the complete endpoint/message/delivery preimage, reservation evidence, dispositions, and printed SHA-256. Codex wake history is process-local, so historical Codex deliveries remain `unknown` and cannot be adopted; use explicit `suppress` only after confirming the work is duplicate or will be resent. Claude adoption is allowed only when the installed durable capability and intent stores are valid, unchanged, and clean for that exact delivery/session/scope.
+
+Apply only the reviewed file and exact digest:
+
+```powershell
+python -m app.tools.relay_endpoint_repair --apply `
+  --home "$env:USERPROFILE\.pallium" `
+  --db-url "sqlite:///$env:USERPROFILE/.pallium/data/pallium-relay.db" `
+  --manifest .\relay-repair.json `
+  --acknowledge-digest <sha256>
+```
+
+An identical committed retry returns the ledgered result. Any database, endpoint, TTL, inventory, or wake-evidence drift refuses before delivery mutation; rerun dry-run and review a new digest. Repair never merges endpoints: alias sends still route to the destination, exact sends/replies to a source still route to that source, and occupied scopes remain occupied. When finished, restart with `scripts/restart-service.ps1` and verify `/health`, `/status` (including `embedding_provider_ok`), and `/debug/queue/health` on the installed port.
 
 The installed launcher must use a dependency-complete Python and the supported
 `python -m app.run service run --port <port>` path: `service run` applies the

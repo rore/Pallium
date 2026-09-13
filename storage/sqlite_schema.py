@@ -600,6 +600,15 @@ class RelayAliasRecord(Base):
 
 
 
+class RelayEndpointRepairRecord(Base):
+    __tablename__ = "relay_endpoint_repairs"
+
+    manifest_digest = Column(String, primary_key=True)
+    manifest_json = Column(Text, nullable=False)
+    result_json = Column(Text, nullable=False)
+    committed_at = Column(DateTime(timezone=True), nullable=False)
+
+
 _RELAY_TABLE_NAMES = frozenset({
     RelaySessionRecord.__tablename__,
     RelaySessionWorkRefRecord.__tablename__,
@@ -607,6 +616,7 @@ _RELAY_TABLE_NAMES = frozenset({
     RelayDeliveryRecord.__tablename__,
     RelayAliasRecord.__tablename__,
     RelayEndpointGenerationRecord.__tablename__,
+    RelayEndpointRepairRecord.__tablename__,
 })
 
 
@@ -1024,6 +1034,7 @@ class SQLiteSchemaMixin:
                     RelayDeliveryRecord.__table__,
                     RelayAliasRecord.__table__,
                     RelayEndpointGenerationRecord.__table__,
+                    RelayEndpointRepairRecord.__table__,
                 ],
             )
             with engine.begin() as connection:
