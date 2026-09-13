@@ -107,8 +107,8 @@ trace retention remains part of the trace feature.
 
 ## Notes
 
-Operational follow-ons are queued separately as
-`add-relay-activation-capability-contract` and `add-relay-delivery-trace`. This
+The completed `add-relay-activation-capability-contract` follow-on now normalizes
+activation outcomes; `add-relay-delivery-trace` remains queued separately. This
 feature continues to own delivery/session lifecycle and retention. The activation
 feature normalizes existing S2 outcomes; the trace feature owns bounded diagnostic
 attempt evidence and its cleanup through the existing cleaner. Do not expand this
