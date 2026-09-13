@@ -49,8 +49,9 @@
 
 - Branch/worktree created from current `main` at `df407c27`.
 - Initial incident evidence and current client behavior are recorded in Discovery. Read-only supervisor inspection confirmed crash-cause retention is a separate task.
-- Clean-context plan review withheld on five bounded contract gaps; all are incorporated in the revised plan, with no production edit.
+- Clean-context plan review withheld on five bounded contract gaps; all were incorporated before production edits.
+- Post-rebase focused MCP/Relay verification passed 152 tests; workflow and diff checks passed. The pre-rebase PR CI passed Python 3.12, Python 3.13, Windows smoke, agent-workflow, and redline; the rebased push will rerun those gates.
 
 ## Result review
 
-- Pending clean-context plan review and subsequent implementation/result review.
+- Final independent smart result review at rebased head `1ecf93fe` returned `MERGEABLE_FOR_PR`: no correctness, privacy, retry, cancellation, HTTP, or non-Relay compatibility blocker. An isolated MCP probe confirmed bounded `isError=true` connection/timeout diagnostics without request-data exposure.
