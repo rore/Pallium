@@ -155,6 +155,8 @@ There is no delayed or scheduled Relay product.
 A busy or temporarily unavailable recipient keeps the delivery pending. Claims
 that are interrupted become eligible again after their lease expires.
 
+Offline operator repair may mark an explicitly classified duplicate `suppressed`. Suppressed deliveries are terminal audit records: they are visible in Relay inspection but are never claimed, woken, acknowledged, or counted as expiry failures.
+
 Recent sessions appear in recipient discovery by default. A session becomes
 dormant after 24 hours without a turn but remains exactly addressable. A close
 event marks it closed and releases its name; a later turn reactivates the same

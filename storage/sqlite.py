@@ -243,6 +243,17 @@ class SQLiteStorageProvider(
         target = relay_database_url.removeprefix("sqlite:///")
         return (source == target == ":memory:") or (source != ":memory:" and target != ":memory:" and Path(source).resolve() == Path(target).resolve())
 
+    @classmethod
+    def open_relay_maintenance(cls, relay_database_url: str) -> "SQLiteStorageProvider":
+        """Open an existing Relay database without running schema migrations."""
+        cls._validate_relay_schema(relay_database_url, require_tables=True)
+        instance = cls.__new__(cls)
+        engine = cls._create_engine(relay_database_url)
+        factory = sessionmaker(engine, expire_on_commit=False, class_=Session)
+        instance._engine = instance._relay_engine = engine
+        instance._session_factory = instance._relay_session_factory = factory
+        return instance
+
     def close(self) -> None:
         """Release both SQLite engine pools owned by this provider."""
         self._engine.dispose()

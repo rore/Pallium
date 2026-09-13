@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Restart the Pallium Windows scheduled task service.
 
@@ -7,7 +7,8 @@
 #>
 
 param(
-    [double]$ReadinessTimeoutSeconds = 180
+    [double]$ReadinessTimeoutSeconds = 180,
+    [switch]$StopOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,7 +41,7 @@ function Get-ReadinessProbeTimeoutSeconds(
     return [int][Math]::Min(2, $remaining)
 }
 
-function Stop-ProcessTree([int]$ProcessId) {
+function Stop-ProcessTree([int]$ProcessId, [switch]$Strict) {
     $failed = $false
     try {
         taskkill /F /T /PID $ProcessId 2>$null | Out-Null
@@ -49,17 +50,23 @@ function Stop-ProcessTree([int]$ProcessId) {
         $failed = $true
     }
     if ($failed) {
+        if ($Strict) { Stop-WithError "taskkill failed for PID $ProcessId" }
         Write-Host "    taskkill reported a partial failure for PID $ProcessId; continuing cleanup verification..."
     }
 }
 
-function Get-ListenerPids([int]$Port) {
-    @(
-        Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
-            ForEach-Object { $_.OwningProcess } |
-            Where-Object { $_ } |
-            Sort-Object -Unique
-    )
+function Get-ListenerPids([int]$Port, [switch]$Strict) {
+    try {
+        @(
+            Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction $(if ($Strict) { "Stop" } else { "SilentlyContinue" }) |
+                ForEach-Object { $_.OwningProcess } |
+                Where-Object { $_ } |
+                Sort-Object -Unique
+        )
+    } catch {
+        if ($Strict -and $_.FullyQualifiedErrorId -notlike 'CmdletizationQuery_NotFound*') { throw }
+        @()
+    }
 }
 
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -99,6 +106,23 @@ $pythonPath = if ($pythonMatch.Success) {
 }
 if (-not $pythonPath -or -not (Test-Path -LiteralPath $pythonPath)) {
     Stop-WithError "Could not resolve the installed Python executable from $vbsPath"
+}
+$pythonPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+[void]$pythonPaths.Add([IO.Path]::GetFullPath($pythonPath))
+$venvConfig = Join-Path (Split-Path (Split-Path $pythonPath -Parent) -Parent) "pyvenv.cfg"
+if (Test-Path -LiteralPath $venvConfig) {
+    $homeLine = Get-Content -LiteralPath $venvConfig -ErrorAction Stop | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
+    $baseMatch = [regex]::Match([string]$homeLine, '^\s*home\s*=\s*(.+?)\s*$')
+    if (-not $baseMatch.Success) { Stop-WithError "Could not resolve the installed Python base from $venvConfig" }
+    $baseFound = $false
+    foreach ($name in @("python.exe", "pythonw.exe")) {
+        $candidate = Join-Path ([Environment]::ExpandEnvironmentVariables($baseMatch.Groups[1].Value)) $name
+        if (Test-Path -LiteralPath $candidate) {
+            [void]$pythonPaths.Add([IO.Path]::GetFullPath($candidate))
+            $baseFound = $true
+        }
+    }
+    if (-not $baseFound) { Stop-WithError "Could not resolve the installed Python base from $venvConfig" }
 }
 
 $portMatch = [regex]::Match(
@@ -156,15 +180,15 @@ if ($preflight.ExitCode -ne 0) {
 }
 
 Write-Host "Stopping Pallium..."
-Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+Stop-ScheduledTask -TaskName $TaskName -ErrorAction $(if ($StopOnly) { "Stop" } else { "SilentlyContinue" })
 
 # Kill the process tree — Stop-ScheduledTask only marks the task stopped,
 # it doesn't kill the VBS → pythonw → supervisor → server process chain.
 # Strategy 1: kill by listening port (normal case)
-$listenerPids = @(Get-ListenerPids $Port)
+$listenerPids = @(Get-ListenerPids $Port -Strict:$StopOnly)
 foreach ($procId in $listenerPids) {
     Write-Host "  Killing process tree (PID $procId) on port $Port..."
-    Stop-ProcessTree ([int]$procId)
+    Stop-ProcessTree ([int]$procId) -Strict:$StopOnly
 }
 
 # Strategy 2: kill by PID file (handles WinError 64 stuck-socket where port is
@@ -176,7 +200,7 @@ if (Test-Path $PidFile) {
         $proc = Get-Process -Id $filePid -ErrorAction SilentlyContinue
         if ($proc) {
             Write-Host "  Killing stale process tree (PID $filePid) from PID file..."
-            Stop-ProcessTree $filePid
+            Stop-ProcessTree $filePid -Strict:$StopOnly
         }
     }
 }
@@ -188,6 +212,7 @@ if (Test-Path $PidFile) {
 # one disconnects its Codex task permanently, so service restart leaves them
 # running. They proxy the newly started HTTP service without stale service code.
 Write-Host "  Sweeping surviving Pallium subprocesses by commandline..."
+$serviceHomePattern = [regex]::Escape($ServiceHome)
 $signatures = @(
     "service_launcher.py",
     "app.processor",
@@ -204,10 +229,13 @@ foreach ($sig in $signatures) {
     # pythonw branch, the scheduled-task service is never swept.
     $procs = Get-CimInstance Win32_Process `
         -Filter "(Name='python.exe' OR Name='pythonw.exe') AND CommandLine LIKE '$pattern'" `
-        -ErrorAction SilentlyContinue
+        -ErrorAction $(if ($StopOnly) { "Stop" } else { "SilentlyContinue" })
     foreach ($p in $procs) {
+        $samePython = $p.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$p.ExecutablePath))
+        $sameLauncher = $sig -ne "service_launcher.py" -or ([string]$p.CommandLine -match $serviceHomePattern)
+        if (-not $samePython -or -not $sameLauncher) { continue }
         Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) $sig)..."
-        Stop-ProcessTree $p.ProcessId
+        Stop-ProcessTree $p.ProcessId -Strict:$StopOnly
     }
 }
 
@@ -215,21 +243,50 @@ $servicePattern = "%app.run service run%"
 $servicePortPattern = '(?i)(?:^|\s)--port\s+{0}(?=\s|$)' -f [regex]::Escape($Port.ToString())
 $serviceProcs = Get-CimInstance Win32_Process `
     -Filter "(Name='python.exe' OR Name='pythonw.exe') AND CommandLine LIKE '$servicePattern'" `
-    -ErrorAction SilentlyContinue
+    -ErrorAction $(if ($StopOnly) { "Stop" } else { "SilentlyContinue" })
 foreach ($p in $serviceProcs) {
-    if ($p.CommandLine -notmatch $servicePortPattern) {
+    $samePython = $p.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$p.ExecutablePath))
+    if (-not $samePython -or $p.CommandLine -notmatch $servicePortPattern -or $p.CommandLine -notmatch $serviceHomePattern) {
         continue
     }
     Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) app.run service run on port $Port)..."
-    Stop-ProcessTree $p.ProcessId
+    Stop-ProcessTree $p.ProcessId -Strict:$StopOnly
 }
 
 Start-Sleep -Seconds 2
 
-$remainingPids = @(Get-ListenerPids $Port)
+$remainingPids = @(Get-ListenerPids $Port -Strict:$StopOnly)
 if ($remainingPids.Count -gt 0) {
     $pidDetail = "; listener PID(s): $($remainingPids -join ', ')"
     Stop-WithError "Could not stop Pallium; port $Port is still listening$pidDetail"
+}
+
+if ($StopOnly) {
+    $allManagedProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    $roots = @($allManagedProcesses | Where-Object {
+        $c = [string]$_.CommandLine
+        $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath)) -and ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $servicePortPattern) -and ($c -match $serviceHomePattern)
+    } | ForEach-Object { [int]$_.ProcessId })
+    $managedIds = [Collections.Generic.HashSet[int]]::new()
+    foreach ($root in $roots) { [void]$managedIds.Add($root) }
+    do {
+        $before = $managedIds.Count
+        foreach ($proc in $allManagedProcesses) {
+            if ($managedIds.Contains([int]$proc.ParentProcessId)) { [void]$managedIds.Add([int]$proc.ProcessId) }
+        }
+    } while ($managedIds.Count -gt $before)
+    $survivors = @($allManagedProcesses | Where-Object {
+        $c = [string]$_.CommandLine
+        $inTree = $managedIds.Contains([int]$_.ProcessId)
+        $managedComponent = $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath)) -and ($c -match '(?i)(?:app\.(?:processor|cleaner|snapshot)|app\.run\s+(?:serve|all))')
+        $codexQueue = $c -match '(?i)^\s*(?:"[^"]*[\\/]codex(?:\.exe)?"|(?:\S*[\\/])?codex(?:\.exe)?)\s+queue\s+--profile\s+pallium-relay\b'
+        (($inTree -and $c -match '(?i)app\.run\s+service\s+run' -and $c -match $servicePortPattern) -or $managedComponent -or $codexQueue)
+    })
+    if ($survivors.Count) { Stop-WithError "Managed Pallium process(es) survived stop: $($survivors.ProcessId -join ', ')" }
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    if ($task.State -notin @('Ready', 'Disabled')) { Stop-WithError "Pallium scheduled task remains $($task.State) after stop" }
+    Write-Host "Pallium stopped."
+    exit 0
 }
 
 Write-Host "Starting Pallium..."

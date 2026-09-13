@@ -8,6 +8,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -537,6 +540,134 @@ def _stop_linux() -> None:
     _systemctl("stop", _SERVICE_NAME)
 
 
+def _linux_service_python() -> Path:
+    try:
+        line = next(line for line in _linux_unit_file().read_text(encoding="utf-8").splitlines() if line.startswith("ExecStart="))
+        launcher = Path(shlex.split(line.removeprefix("ExecStart="))[0]).resolve()
+        if launcher.name.startswith("python"):
+            return launcher
+        shebang = launcher.read_text(encoding="utf-8").splitlines()[0]
+        parts = shlex.split(shebang.removeprefix("#!"))
+        if not shebang.startswith("#!") or not parts:
+            raise ValueError
+        if Path(parts[0]).name == "env":
+            resolved = shutil.which(parts[1]) if len(parts) > 1 else None
+            if not resolved:
+                raise ValueError
+            return Path(resolved).resolve()
+        return Path(parts[0]).resolve()
+    except (OSError, StopIteration, UnicodeError, ValueError) as exc:
+        raise RuntimeError("cannot resolve installed Linux service interpreter") from exc
+
+
+def _linux_process_executable(pid: int) -> Path:
+    return Path(f"/proc/{pid}/exe").resolve(strict=True)
+
+
+def _assert_linux_no_managed_processes(home: Path) -> None:
+    del home  # systemd already bound and verified the installed home.
+    expected_python = _linux_service_python()
+    result = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError("cannot enumerate Linux processes for repair")
+    codex = re.compile(r'^\s*(?:"[^"]*/codex"|(?:\S*/)?codex)\s+queue\s+--profile\s+pallium-relay\b', re.IGNORECASE)
+    managed = re.compile(r"(?:app\.run\s+(?:service\s+run|serve|all)|app\.(?:processor|cleaner|snapshot))(?:\s|$)", re.IGNORECASE)
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(maxsplit=1)
+        if len(parts) != 2 or not parts[0].isdecimal():
+            continue
+        pid, command = int(parts[0]), parts[1]
+        if codex.search(command):
+            raise RuntimeError("managed Pallium or Relay wake process survived service stop")
+        if not managed.search(command):
+            continue
+        try:
+            executable = _linux_process_executable(pid)
+        except OSError as exc:
+            raise RuntimeError("cannot verify a possible surviving Pallium process") from exc
+        if executable == expected_python:
+            raise RuntimeError("managed Pallium or Relay wake process survived service stop")
+
+def assert_service_stopped(home: Path) -> None:
+    """Fail unless the installed service manager conclusively reports stopped."""
+    if sys.platform == "linux":
+        _assert_linux_unit_home(home)
+        state = _linux_unit_state()
+        tasks = state.get("TasksCurrent")
+        if (state.get("ActiveState") != "inactive" or state.get("MainPID") != "0"
+                or tasks is None or not tasks.isdecimal() or int(tasks) != 0):
+            raise RuntimeError(f"{_SERVICE_NAME} is not conclusively stopped: {state}")
+        _assert_linux_no_managed_processes(home)
+        return
+    if sys.platform == "win32":
+        port_file = home / "run" / "port"
+        try:
+            port = int(port_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"cannot read installed service port from {port_file}") from exc
+        probe_env = os.environ.copy()
+        probe_env["PALLIUM_VERIFY_HOME"] = str(home.resolve())
+        probe_env["PALLIUM_VERIFY_PORT"] = str(port)
+        probe = r'''$ErrorActionPreference = "Stop"
+$expectedHome = [IO.Path]::GetFullPath($env:PALLIUM_VERIFY_HOME).TrimEnd('\')
+$expectedPort = [int]$env:PALLIUM_VERIFY_PORT
+$task = Get-ScheduledTask -TaskName "Pallium" -ErrorAction Stop
+if ($task.State -notin @("Ready", "Disabled")) { throw "Pallium scheduled task remains $($task.State)" }
+$action = @($task.Actions)[0]
+$vbsPath = [Environment]::ExpandEnvironmentVariables(([string]$action.Arguments).Trim().Trim('"'))
+$vbs = Get-Content -Raw -LiteralPath $vbsPath -ErrorAction Stop
+$homeMatch = [regex]::Match($vbs, '--home\s+""([^"\r\n]+)""', 'IgnoreCase')
+$pythonMatch = [regex]::Match($vbs, 'WshShell\.Run\s+"""([^"\r\n]+pythonw?\.exe)""', 'IgnoreCase')
+if (-not $homeMatch.Success -or -not $pythonMatch.Success) { throw "Installed task metadata is incomplete" }
+$installedHome = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($homeMatch.Groups[1].Value)).TrimEnd('\')
+$pythonPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($pythonMatch.Groups[1].Value))
+if ($installedHome -ine $expectedHome) { throw "Installed service home does not match the repair home" }
+$pythonPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+[void]$pythonPaths.Add($pythonPath)
+$venvConfig = Join-Path (Split-Path (Split-Path $pythonPath -Parent) -Parent) "pyvenv.cfg"
+if (Test-Path -LiteralPath $venvConfig) {
+    $homeLine = Get-Content -LiteralPath $venvConfig -ErrorAction Stop | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
+    $baseMatch = [regex]::Match([string]$homeLine, '^\s*home\s*=\s*(.+?)\s*$')
+    if (-not $baseMatch.Success) { throw "Could not resolve installed Python base" }
+    $baseFound = $false
+    foreach ($name in @("python.exe", "pythonw.exe")) {
+        $candidate = Join-Path ([Environment]::ExpandEnvironmentVariables($baseMatch.Groups[1].Value)) $name
+        if (Test-Path -LiteralPath $candidate) {
+            [void]$pythonPaths.Add([IO.Path]::GetFullPath($candidate))
+            $baseFound = $true
+        }
+    }
+    if (-not $baseFound) { throw "Could not resolve installed Python base" }
+}
+try {
+    $listeners = @(Get-NetTCPConnection -LocalPort $expectedPort -State Listen -ErrorAction Stop)
+} catch {
+    if ($_.FullyQualifiedErrorId -like 'CmdletizationQuery_NotFound*') { $listeners = @() } else { throw }
+}
+if ($listeners.Count) { throw "Pallium listener(s) survived: $($listeners.OwningProcess -join ', ')" }
+$portPattern = '(?i)(?:^|\s)--port\s+{0}(?=\s|$)' -f [regex]::Escape($expectedPort.ToString())
+$homePattern = [regex]::Escape($expectedHome)
+$procs = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+    $c = [string]$_.CommandLine
+    $isInstalledPython = $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath))
+    $service = $isInstalledPython -and ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $portPattern) -and ($c -match $homePattern)
+    $managed = $isInstalledPython -and (($c -match '(?i)app\.run\s+serve') -or ($c -match '(?i)app\.(?:processor|cleaner|snapshot)(?:\s|$)'))
+    $codexQueue = $c -match '(?i)^\s*(?:"[^"]*[\\/]codex(?:\.exe)?"|(?:\S*[\\/])?codex(?:\.exe)?)\s+queue\s+--profile\s+pallium-relay\b'
+    $service -or $managed -or $codexQueue
+})
+if ($procs.Count) { throw "Managed Pallium process(es) survived: $($procs.ProcessId -join ', ')" }'''
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", probe],
+            capture_output=True,
+            text=True,
+            env=probe_env,
+        )
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "service stop verification failed")
+        return
+    raise RuntimeError("installed service verification is unsupported on this platform")
+
+
 def _restart_linux() -> None:
     _systemctl("restart", _SERVICE_NAME)
 
@@ -816,7 +947,8 @@ def _cmd_stop(args: argparse.Namespace) -> int:
         if (
             stopped.get("ActiveState") == "inactive"
             and stopped.get("MainPID") == "0"
-            and stopped.get("TasksCurrent", "") in {"", "0", "[not set]"}
+            and stopped.get("TasksCurrent", "").isdecimal()
+            and int(stopped["TasksCurrent"]) == 0
         ):
             print(" stopped.")
             return 0

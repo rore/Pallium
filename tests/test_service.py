@@ -30,6 +30,7 @@ from app.cli.service import (
     _systemctl,
     _service_ready,
     _wait_for_service,
+    assert_service_stopped,
     service_main,
 )
 
@@ -674,7 +675,7 @@ class TestLinuxServiceLifecycle:
     ):
         states = iter([
             {"LoadState": "loaded", "ActiveState": "active", "MainPID": "123"},
-            {"LoadState": "loaded", "ActiveState": "inactive", "MainPID": "0", "TasksCurrent": ""},
+            {"LoadState": "loaded", "ActiveState": "inactive", "MainPID": "0", "TasksCurrent": "0"},
         ])
         monkeypatch.setattr("app.cli.service._assert_linux_unit_home", lambda _home: None)
         monkeypatch.setattr("app.cli.service._linux_unit_state", lambda: next(states))
@@ -687,6 +688,19 @@ class TestLinuxServiceLifecycle:
 
         assert _cmd_stop(argparse.Namespace(home=str(tmp_path))) == 0
         assert stop_calls == [True]
+
+    def test_stop_refuses_unknown_systemd_task_count(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        states = iter([
+            {"LoadState": "loaded", "ActiveState": "active", "MainPID": "123"},
+            {"LoadState": "loaded", "ActiveState": "inactive", "MainPID": "0", "TasksCurrent": ""},
+        ])
+        monkeypatch.setattr("app.cli.service._assert_linux_unit_home", lambda _home: None)
+        monkeypatch.setattr("app.cli.service._linux_unit_state", lambda: next(states))
+        monkeypatch.setattr("app.cli.service._stop_linux", lambda: None)
+
+        assert _cmd_stop(argparse.Namespace(home=str(tmp_path))) == 1
 
     def test_status_uses_systemd_main_pid_not_pid_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
@@ -803,3 +817,55 @@ class TestLinuxServiceLifecycle:
     def test_remove_data_refuses_filesystem_root(self, unsafe: str):
         with pytest.raises(ValueError, match="unsafe"):
             _remove_service_data(Path(unsafe).resolve())
+
+
+def test_windows_stop_verifier_is_read_only_and_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / "port").write_text("21987", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr("app.cli.service.sys.platform", "win32")
+    monkeypatch.setattr("app.cli.service.subprocess.run", lambda argv, **kwargs: calls.append((argv, kwargs)) or subprocess.CompletedProcess(argv, 1, "", "enumeration failed"))
+    with pytest.raises(RuntimeError, match="enumeration failed"):
+        assert_service_stopped(tmp_path)
+    assert calls and "-StopOnly" not in calls[0][0] and calls[0][0][-2] == "-Command"
+    argv, kwargs = calls[0]
+    assert kwargs["env"]["PALLIUM_VERIFY_HOME"] == str(tmp_path.resolve())
+    assert kwargs["env"]["PALLIUM_VERIFY_PORT"] == "21987"
+    assert "ExecutablePath" in argv[-1]
+    assert "pyvenv.cfg" in argv[-1]
+    assert "$pythonPaths.Contains" in argv[-1]
+    assert r"app\.run\s+serve" in argv[-1]
+
+def test_linux_stop_verifier_rejects_quoted_codex_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.cli.service.sys.platform", "linux")
+    monkeypatch.setattr("app.cli.service._assert_linux_unit_home", lambda _home: None)
+    monkeypatch.setattr("app.cli.service._linux_unit_state", lambda: {"ActiveState": "inactive", "MainPID": "0", "TasksCurrent": "0"})
+    command = '123 "/opt/Codex/codex" queue --profile pallium-relay --thread x'
+    monkeypatch.setattr("app.cli.service._linux_service_python", lambda: Path("/opt/pallium/python"))
+    monkeypatch.setattr("app.cli.service.subprocess.run", lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, command, ""))
+
+    with pytest.raises(RuntimeError, match="process survived"):
+        assert_service_stopped(tmp_path)
+
+
+def test_linux_stop_verifier_accepts_empty_process_scan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.cli.service.sys.platform", "linux")
+    monkeypatch.setattr("app.cli.service._assert_linux_unit_home", lambda _home: None)
+    monkeypatch.setattr("app.cli.service._linux_unit_state", lambda: {"ActiveState": "inactive", "MainPID": "0", "TasksCurrent": "0"})
+    monkeypatch.setattr("app.cli.service._linux_service_python", lambda: Path("/opt/pallium/python"))
+    monkeypatch.setattr("app.cli.service.subprocess.run", lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "", ""))
+
+    assert_service_stopped(tmp_path)
+
+def test_linux_stop_verifier_rejects_actual_supervisor_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.cli.service.sys.platform", "linux")
+    monkeypatch.setattr("app.cli.service._assert_linux_unit_home", lambda _home: None)
+    monkeypatch.setattr("app.cli.service._linux_unit_state", lambda: {"ActiveState": "inactive", "MainPID": "0", "TasksCurrent": "0"})
+    interpreter = Path("/opt/pallium/.venv/bin/python")
+    monkeypatch.setattr("app.cli.service._linux_service_python", lambda: interpreter)
+    monkeypatch.setattr("app.cli.service._linux_process_executable", lambda pid: interpreter if pid == 321 else Path("/other/python"))
+    output = "321 /opt/pallium/.venv/bin/python -m app.processor --processor-id p1\n"
+    monkeypatch.setattr("app.cli.service.subprocess.run", lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, output, ""))
+
+    with pytest.raises(RuntimeError, match="process survived"):
+        assert_service_stopped(tmp_path)

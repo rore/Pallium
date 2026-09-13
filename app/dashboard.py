@@ -384,7 +384,7 @@ def mount_dashboard(
                 .where(
                     RelayMessageRecord.expires_at >= cutoff,
                     RelayMessageRecord.expires_at <= now,
-                    RelayDeliveryRecord.state != "delivered",
+                    RelayDeliveryRecord.state.notin_(("delivered", "suppressed")),
                 )
             ) or 0
             oldest_pending = session.scalar(
@@ -734,7 +734,7 @@ def mount_dashboard(
         until: datetime | None = Query(None), before_created_at: datetime | None = Query(None), before_id: str | None = Query(None),
         since: datetime | None = Query(None), runtime: str | None = Query(None), container_ref: str | None = Query(None),
         endpoint_id: str | None = Query(None), peer_endpoint_id: str | None = Query(None),
-        delivery_state: Literal["pending", "claimed", "delivered", "expired"] | None = Query(None),
+        delivery_state: Literal["pending", "claimed", "delivered", "expired", "suppressed"] | None = Query(None),
     ) -> JSONResponse:
         if (before_created_at is None) != (before_id is None):
             raise HTTPException(status_code=422, detail="before_created_at and before_id must be supplied together")
