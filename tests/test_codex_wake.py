@@ -1739,12 +1739,14 @@ def test_ack_during_process_wait_releases_without_deadlock(
     codex_home.mkdir()
     started = threading.Event()
     finish = threading.Event()
+    completed = threading.Event()
     process = MagicMock(returncode=0)
 
     def communicate(*, timeout: float):
         assert timeout == 30
         started.set()
         assert finish.wait(10)
+        completed.set()
         return None, ""
 
     process.communicate.side_effect = communicate
@@ -1766,6 +1768,7 @@ def test_ack_during_process_wait_releases_without_deadlock(
             worker.join(timeout=10)
     popen.assert_called_once()
     assert not worker.is_alive()
+    assert completed.is_set()
     assert registry.snapshot(endpoint_id) is None
 
 def test_idempotent_send_schedules_one_codex_wake(client, monkeypatch) -> None:
