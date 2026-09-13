@@ -188,7 +188,7 @@ verification; once verified, it makes
 qualified behavior, current availability, fallback, and native-attempt evidence
 explicit across HTTP, MCP, and dashboard without turning acceptance into delivery.
 Next, `add-relay-delivery-trace` adds bounded diagnostic evidence
-for bounded diagnostic evidence through message detail, HTTP, and MCP.
+through message detail, HTTP, and MCP.
 Copilot is later runtime expansion, blocked on those two features and OpenCode wake
 qualification. Existing lifecycle hardening retains ownership of
 delivery/session state and retention; trace recording never becomes delivery

@@ -747,6 +747,8 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
     monkeypatch: pytest.MonkeyPatch, relay_app, asgi_post, asgi_get,
 ):
     """FastMCP callers can route by endpoint or global alias across containers."""
+    monkeypatch.setattr("core.relay_activation.sys.platform", "darwin")
+    monkeypatch.setattr("app.dependencies.current_platform", lambda: "windows")
     bind_asgi_post(monkeypatch, asgi_post)
 
     async def get_from_app(_client, path, params):

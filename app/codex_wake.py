@@ -287,7 +287,10 @@ def _finish_launch(start: _LaunchStart) -> _LaunchResult:
         try:
             process.communicate(timeout=_QUEUE_TIMEOUT_SECONDS)
         except (subprocess.TimeoutExpired, OSError, ValueError):
-            pass
+            try:
+                process.wait(timeout=_QUEUE_TIMEOUT_SECONDS)
+            except (subprocess.TimeoutExpired, OSError, ValueError):
+                pass
 
     try:
         process.communicate(timeout=_QUEUE_TIMEOUT_SECONDS)

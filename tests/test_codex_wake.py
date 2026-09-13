@@ -112,18 +112,25 @@ def test_queue_timeout_is_ambiguous(tmp_path) -> None:
     process = MagicMock()
     process.communicate.side_effect = [
         subprocess.TimeoutExpired([], 30),
-        (None, ""),
+        subprocess.TimeoutExpired([], 30),
     ]
     with patch("app.codex_wake._codex_home", return_value=codex_home), patch(
         "app.codex_wake._popen", return_value=process,
     ):
         assert codex_wake._launch("target-session", "wake") == "ambiguous"
     process.kill.assert_called_once_with()
+    assert [item.kwargs for item in process.communicate.call_args_list] == [
+        {"timeout": 30}, {"timeout": 30},
+    ]
+    process.wait.assert_called_once_with(timeout=30)
+
 
 @pytest.mark.parametrize("error_type", (OSError, ValueError))
 def test_post_start_wait_failure_kills_and_reaps_bounded(error_type) -> None:
     process = MagicMock()
-    process.communicate.side_effect = [error_type("wait failed"), (None, "")]
+    process.communicate.side_effect = [
+        error_type("wait failed"), error_type("cleanup failed"),
+    ]
 
     assert codex_wake._finish_launch((process, None)) == (
         "ambiguous", "post_start_error", None,
@@ -132,10 +139,14 @@ def test_post_start_wait_failure_kills_and_reaps_bounded(error_type) -> None:
     assert [item.kwargs for item in process.communicate.call_args_list] == [
         {"timeout": 30}, {"timeout": 30},
     ]
+    process.wait.assert_called_once_with(timeout=30)
 
 
+@pytest.mark.parametrize(
+    "wait_error_type", (subprocess.TimeoutExpired, OSError, ValueError),
+)
 def test_post_start_cleanup_exceptions_preserve_uncertain_reservation(
-    monkeypatch,
+    monkeypatch, wait_error_type,
 ) -> None:
     registry = CodexWakeRegistry()
     endpoint_id = "relay-session-" + "b" * 32
@@ -151,12 +162,18 @@ def test_post_start_cleanup_exceptions_preserve_uncertain_reservation(
     process.communicate.side_effect = [
         OSError("wait failed"), subprocess.TimeoutExpired([], 30),
     ]
+    process.wait.side_effect = (
+        subprocess.TimeoutExpired([], 30)
+        if wait_error_type is subprocess.TimeoutExpired
+        else wait_error_type("reap failed")
+    )
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     with patch("app.codex_wake._start_launch", return_value=(process, None)):
         codex_wake._wake_after_debounce(reservation, registry)
 
     process.kill.assert_called_once()
     assert process.communicate.call_count == 2
+    process.wait.assert_called_once_with(timeout=30)
     retained = registry.snapshot(endpoint_id)
     assert retained is not None
     assert retained.delivery_id == reservation.delivery_id
