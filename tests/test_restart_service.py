@@ -127,12 +127,14 @@ function Get-CimInstance {
             [pscustomobject]@{
                 ProcessId = 4242
                 Name = "python.exe"
-                CommandLine = "python -m app.run service run --port 2198"
+                ExecutablePath = $env:RW010_PYTHON
+                CommandLine = "python -m app.run service run --port 2198 --home `"`"$env:RW010_SERVICE_HOME`"`""
             },
             [pscustomobject]@{
                 ProcessId = 4343
                 Name = "python.exe"
-                CommandLine = "python -m app.run service run --port 21987"
+                ExecutablePath = $env:RW010_PYTHON
+                CommandLine = "python -m app.run service run --port 21987 --home `"`"$env:RW010_SERVICE_HOME`"`""
             }
         )
     }
@@ -262,6 +264,8 @@ def _run_restart(
         RW010_HOME=str(tmp_path / "home"),
         RW010_SCENARIO=scenario,
         RW010_SCRIPT=str(RESTART_SCRIPT),
+        RW010_PYTHON=str(sys.executable),
+        RW010_SERVICE_HOME=str(service_home),
         RW010_TASK_SHAPE=task_shape,
         RW010_VBS=str(vbs),
         RW010_WORKDIR=(

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Restart the Pallium Windows scheduled task service.
 
@@ -190,6 +190,7 @@ if (Test-Path $PidFile) {
 # one disconnects its Codex task permanently, so service restart leaves them
 # running. They proxy the newly started HTTP service without stale service code.
 Write-Host "  Sweeping surviving Pallium subprocesses by commandline..."
+$serviceHomePattern = [regex]::Escape($ServiceHome)
 $signatures = @(
     "service_launcher.py",
     "app.processor",
@@ -208,6 +209,9 @@ foreach ($sig in $signatures) {
         -Filter "(Name='python.exe' OR Name='pythonw.exe') AND CommandLine LIKE '$pattern'" `
         -ErrorAction $(if ($StopOnly) { "Stop" } else { "SilentlyContinue" })
     foreach ($p in $procs) {
+        $samePython = $p.ExecutablePath -and ([IO.Path]::GetFullPath([string]$p.ExecutablePath) -ieq [IO.Path]::GetFullPath($pythonPath))
+        $sameLauncher = $sig -ne "service_launcher.py" -or ([string]$p.CommandLine -match $serviceHomePattern)
+        if (-not $samePython -or -not $sameLauncher) { continue }
         Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) $sig)..."
         Stop-ProcessTree $p.ProcessId -Strict:$StopOnly
     }
@@ -219,7 +223,8 @@ $serviceProcs = Get-CimInstance Win32_Process `
     -Filter "(Name='python.exe' OR Name='pythonw.exe') AND CommandLine LIKE '$servicePattern'" `
     -ErrorAction $(if ($StopOnly) { "Stop" } else { "SilentlyContinue" })
 foreach ($p in $serviceProcs) {
-    if ($p.CommandLine -notmatch $servicePortPattern) {
+    $samePython = $p.ExecutablePath -and ([IO.Path]::GetFullPath([string]$p.ExecutablePath) -ieq [IO.Path]::GetFullPath($pythonPath))
+    if (-not $samePython -or $p.CommandLine -notmatch $servicePortPattern -or $p.CommandLine -notmatch $serviceHomePattern) {
         continue
     }
     Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) app.run service run on port $Port)..."
@@ -236,11 +241,9 @@ if ($remainingPids.Count -gt 0) {
 
 if ($StopOnly) {
     $allManagedProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-    $serviceHomePattern = [regex]::Escape($ServiceHome)
-    $pythonPattern = [regex]::Escape($pythonPath)
     $roots = @($allManagedProcesses | Where-Object {
         $c = [string]$_.CommandLine
-        ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $servicePortPattern) -and ($c -match $serviceHomePattern)
+        $_.ExecutablePath -and ([IO.Path]::GetFullPath([string]$_.ExecutablePath) -ieq [IO.Path]::GetFullPath($pythonPath)) -and ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $servicePortPattern) -and ($c -match $serviceHomePattern)
     } | ForEach-Object { [int]$_.ProcessId })
     $managedIds = [Collections.Generic.HashSet[int]]::new()
     foreach ($root in $roots) { [void]$managedIds.Add($root) }
@@ -253,7 +256,7 @@ if ($StopOnly) {
     $survivors = @($allManagedProcesses | Where-Object {
         $c = [string]$_.CommandLine
         $inTree = $managedIds.Contains([int]$_.ProcessId)
-        $managedComponent = $inTree -and ([string]$_.ExecutablePath -match $pythonPattern) -and ($c -match '(?i)(?:app\.(?:api|processor|cleaner)|app\.run\s+(?:serve|all))')
+        $managedComponent = $_.ExecutablePath -and ([IO.Path]::GetFullPath([string]$_.ExecutablePath) -ieq [IO.Path]::GetFullPath($pythonPath)) -and ($c -match '(?i)(?:app\.(?:processor|cleaner|snapshot)|app\.run\s+(?:serve|all))')
         $codexQueue = $c -match '(?i)\bcodex(?:\.exe)?\s+queue\s+--profile\s+pallium-relay\b'
         (($inTree -and $c -match '(?i)app\.run\s+service\s+run' -and $c -match $servicePortPattern) -or $managedComponent -or $codexQueue)
     })

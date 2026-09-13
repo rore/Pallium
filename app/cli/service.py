@@ -553,19 +553,42 @@ def assert_service_stopped(home: Path) -> None:
             port = int(port_file.read_text(encoding="utf-8").strip())
         except (OSError, ValueError) as exc:
             raise RuntimeError(f"cannot read installed service port from {port_file}") from exc
-        probe = rf"""$ErrorActionPreference = "Stop"
+        probe_env = os.environ.copy()
+        probe_env["PALLIUM_VERIFY_HOME"] = str(home.resolve())
+        probe_env["PALLIUM_VERIFY_PORT"] = str(port)
+        probe = r'''$ErrorActionPreference = "Stop"
+$expectedHome = [IO.Path]::GetFullPath($env:PALLIUM_VERIFY_HOME).TrimEnd('\')
+$expectedPort = [int]$env:PALLIUM_VERIFY_PORT
 $task = Get-ScheduledTask -TaskName "Pallium" -ErrorAction Stop
-if ($task.State -notin @("Ready", "Disabled")) {{ throw "Pallium scheduled task remains $($task.State)" }}
-$listeners = @(Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction Stop)
-if ($listeners.Count) {{ throw "Pallium listener(s) survived: $($listeners.OwningProcess -join ", ")" }}
-$procs = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {{
+if ($task.State -notin @("Ready", "Disabled")) { throw "Pallium scheduled task remains $($task.State)" }
+$action = @($task.Actions)[0]
+$vbsPath = [Environment]::ExpandEnvironmentVariables(([string]$action.Arguments).Trim().Trim('"'))
+$vbs = Get-Content -Raw -LiteralPath $vbsPath -ErrorAction Stop
+$homeMatch = [regex]::Match($vbs, '--home\s+""([^"\r\n]+)""', 'IgnoreCase')
+$pythonMatch = [regex]::Match($vbs, 'WshShell\.Run\s+"""([^"\r\n]+pythonw?\.exe)""', 'IgnoreCase')
+if (-not $homeMatch.Success -or -not $pythonMatch.Success) { throw "Installed task metadata is incomplete" }
+$installedHome = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($homeMatch.Groups[1].Value)).TrimEnd('\')
+$pythonPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($pythonMatch.Groups[1].Value))
+if ($installedHome -ine $expectedHome) { throw "Installed service home does not match the repair home" }
+$listeners = @(Get-NetTCPConnection -LocalPort $expectedPort -State Listen -ErrorAction Stop)
+if ($listeners.Count) { throw "Pallium listener(s) survived: $($listeners.OwningProcess -join ', ')" }
+$portPattern = '(?i)(?:^|\s)--port\s+{0}(?=\s|$)' -f [regex]::Escape($expectedPort.ToString())
+$homePattern = [regex]::Escape($expectedHome)
+$procs = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
     $c = [string]$_.CommandLine
-    ($c -match "(?i)app\.run\s+service\s+run") -or
-    ($c -match "(?i)app\.(api|processor|cleaner)(?:\s|$)") -or
-    ($c -match "(?i)\bcodex(?:\.exe)?\s+queue\s+--profile\s+pallium-relay\b")
-}})
-if ($procs.Count) {{ throw "Managed Pallium process(es) survived: $($procs.ProcessId -join ", ")" }}"""
-        result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", probe], capture_output=True, text=True)
+    $isInstalledPython = $_.ExecutablePath -and ([IO.Path]::GetFullPath([string]$_.ExecutablePath) -ieq $pythonPath)
+    $service = $isInstalledPython -and ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $portPattern) -and ($c -match $homePattern)
+    $managed = $isInstalledPython -and (($c -match '(?i)app\.run\s+serve') -or ($c -match '(?i)app\.(?:processor|cleaner|snapshot)(?:\s|$)'))
+    $codexQueue = $c -match '(?i)\bcodex(?:\.exe)?\s+queue\s+--profile\s+pallium-relay\b'
+    $service -or $managed -or $codexQueue
+})
+if ($procs.Count) { throw "Managed Pallium process(es) survived: $($procs.ProcessId -join ', ')" }'''
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", probe],
+            capture_output=True,
+            text=True,
+            env=probe_env,
+        )
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "service stop verification failed")
         return

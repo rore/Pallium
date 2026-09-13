@@ -815,3 +815,8 @@ def test_windows_stop_verifier_is_read_only_and_fail_closed(tmp_path: Path, monk
     with pytest.raises(RuntimeError, match="enumeration failed"):
         assert_service_stopped(tmp_path)
     assert calls and "-StopOnly" not in calls[0][0] and calls[0][0][-2] == "-Command"
+    argv, kwargs = calls[0]
+    assert kwargs["env"]["PALLIUM_VERIFY_HOME"] == str(tmp_path.resolve())
+    assert kwargs["env"]["PALLIUM_VERIFY_PORT"] == "21987"
+    assert "ExecutablePath" in argv[-1]
+    assert "app\\.run\\s+serve" in argv[-1]
