@@ -5,6 +5,7 @@ import json
 import logging
 import threading
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -380,6 +381,12 @@ class PalliumService:
         self._logger = logging.getLogger(__name__)
         self._audit_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="usage-audit")
         self._audit_slots = threading.BoundedSemaphore(2)
+        self._relay_trace_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-trace")
+        try:
+            self._relay_trace_executor.submit(lambda: None).result()
+        except Exception:
+            self._logger.warning("relay trace worker unavailable", exc_info=True)
+        self._relay_trace_slots = threading.BoundedSemaphore(64)
         self._metrics_store = metrics_store
         self._metrics_retention_days = metrics_retention_days
 
@@ -584,7 +591,12 @@ class PalliumService:
         batch_size: int | None = None,
     ) -> RetentionRunStats | None:
         if not self._retention_enabled:
-            return None
+            try:
+                return RetentionRunStats(
+                    deleted_relay_trace_events=self._storage.relay_cleanup_trace(now=now or utc_now())
+                )
+            except Exception:
+                return RetentionRunStats()
         claimed_at = now or utc_now()
         resolved_lease_seconds = lease_seconds or self._retention_lease_seconds
         resolved_batch_size = batch_size or self._retention_batch_size
@@ -1847,6 +1859,36 @@ class PalliumService:
             self._logger.warning("memory_usage_audit enqueue failed", exc_info=True)
             return False
 
+    def enqueue_relay_trace_event(
+        self,
+        writer: Callable[[dict[str, object]], object],
+        event: dict[str, object],
+    ) -> bool:
+        """Best-effort bounded handoff; Relay correctness never waits on diagnostics."""
+        if not self._relay_trace_slots.acquire(blocking=False):
+            return False
+        try:
+            self._relay_trace_executor.submit(
+                self._run_relay_trace_job, writer, dict(event)
+            )
+            return True
+        except Exception:
+            self._relay_trace_slots.release()
+            self._logger.warning("relay trace enqueue failed", exc_info=True)
+            return False
+
+    def _run_relay_trace_job(
+        self,
+        writer: Callable[[dict[str, object]], object],
+        event: dict[str, object],
+    ) -> None:
+        try:
+            writer(event)
+        except Exception:
+            self._logger.warning("relay trace write failed", exc_info=True)
+        finally:
+            self._relay_trace_slots.release()
+
     def _run_audit_job(self, source_item_id: str) -> None:
         try:
             item = self._storage.get_source_item(source_item_id)
@@ -1867,6 +1909,9 @@ class PalliumService:
 
     def close(self) -> None:
         self._audit_executor.shutdown(wait=True, cancel_futures=True)
+        relay_trace_executor = getattr(self, "_relay_trace_executor", None)
+        if relay_trace_executor is not None:
+            relay_trace_executor.shutdown(wait=True, cancel_futures=True)
 
     def list_memory_usage_audit(self, query_audit_log_id: str) -> list[dict]:
         """Phase 5: list usage-audit rows for a given query.

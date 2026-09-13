@@ -293,12 +293,21 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         try:
             claude_wake_registry.recover_intents()
             relay_service = RelayService(build_result.storage)
+
+            def relay_trace(event: dict[str, object]) -> bool:
+                return service.enqueue_relay_trace_event(
+                    relay_service.record_trace_event, event
+                )
+
             claude_wake_reconciler = start_claude_wake_reconciler(
                 claude_wake_registry,
                 relay_service,
                 claim_recovery=lambda: recover_expired_relay_wakes(
-                    relay_service, claude_wake_registry
+                    relay_service,
+                    claude_wake_registry,
+                    trace_callback=relay_trace,
                 ),
+                trace_callback=relay_trace,
             )
             claude_wake_registry.set_reconcile_signal(
                 None if claude_wake_reconciler is None else claude_wake_reconciler.signal,

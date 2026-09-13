@@ -24,6 +24,8 @@ RELAY_MIN_EXPIRY_SECONDS = 60
 RELAY_MAX_EXPIRY_SECONDS = 7 * 24 * 60 * 60
 RELAY_RECENT_SECONDS = 24 * 60 * 60
 RELAY_CLAIM_LEASE_SECONDS = 60
+RELAY_TRACE_MAX_SEQUENCE = 2**63 - 1
+RELAY_TRACE_MAX_ROWS = 100_000
 _REDACTED_OVERFLOW = "[REDACTED: payload omitted because sanitization exceeded the Relay limit]"
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
@@ -591,6 +593,49 @@ class RelayService:
             delivery_id=None
             if delivery_id is None
             else _opaque(delivery_id, "delivery_id", maximum=128)
+        )
+
+    def record_trace_event(self, event: dict[str, Any]) -> bool:
+        """Best-effort internal diagnostic write; callers must ignore failure."""
+        operation = getattr(self._store, "relay_record_trace_event", None)
+        if not callable(operation):
+            return False
+        try:
+            return bool(operation(dict(event)))
+        except Exception:
+            return False
+
+    def trace_message(
+        self,
+        *,
+        message_id: str,
+        limit: int = 50,
+        after_sequence: int = 0,
+        as_of_sequence: int | None = None,
+    ) -> dict[str, Any]:
+        operation = getattr(self._store, "relay_trace_message", None)
+        if not callable(operation):
+            raise RelayUnavailableError(
+                "relay delivery trace is not supported by the configured storage"
+            )
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if (
+            type(after_sequence) is not int
+            or not 0 <= after_sequence <= RELAY_TRACE_MAX_SEQUENCE
+        ):
+            raise ValueError("after_sequence is outside the supported range")
+        if as_of_sequence is not None and (
+            type(as_of_sequence) is not int
+            or not 0 <= as_of_sequence <= RELAY_TRACE_MAX_SEQUENCE
+            or after_sequence > as_of_sequence
+        ):
+            raise ValueError("as_of_sequence is outside the supported range")
+        return operation(
+            message_id=_opaque(message_id, "message_id", maximum=128),
+            limit=limit,
+            after_sequence=after_sequence,
+            as_of_sequence=as_of_sequence,
         )
 
     def message_status(

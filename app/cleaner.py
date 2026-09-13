@@ -105,6 +105,7 @@ def run_cleaner(
                         + stats.deleted_memory_objects
                         + stats.deleted_relations
                         + stats.deleted_index_entries
+                        + stats.deleted_relay_trace_events
                     )
                     if deleted:
                         try:
@@ -141,7 +142,8 @@ def _log_retention_stats(cleaner_id: str, stats: RetentionRunStats) -> None:
             f"deleted_relations={stats.deleted_relations} "
             f"deleted_index_entries={stats.deleted_index_entries} "
             f"stripped_debug_metadata={stats.stripped_debug_metadata} "
-            f"skipped_protected_source_items={stats.skipped_protected_source_items}"
+            f"skipped_protected_source_items={stats.skipped_protected_source_items} "
+            f"deleted_relay_trace_events={stats.deleted_relay_trace_events}"
         ),
     )
 

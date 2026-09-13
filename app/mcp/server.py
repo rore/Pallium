@@ -15,6 +15,7 @@ from pydantic import BeforeValidator
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
+from core.relay import RELAY_TRACE_MAX_SEQUENCE
 from core.work_ref import readable_work_ref
 from redaction import redact_sensitive
 from retrieval.common import build_excerpt
@@ -266,6 +267,93 @@ def _relay_text(result: object) -> str:
                 summary.pop("payload")
         return _json_text(summary)
     return _relay_error_text({"error": "relay response exceeds the response budget"})
+
+def _relay_trace_cursor(value: str | None) -> tuple[int, int | None] | None:
+    if value is None:
+        return 0, None
+    upper, separator, after = value.partition(":")
+    if (
+        not separator
+        or not upper.isdigit()
+        or not after.isdigit()
+        or len(upper) > 20
+        or len(after) > 20
+    ):
+        return None
+    after_sequence, as_of_sequence = int(after), int(upper)
+    if (
+        after_sequence > as_of_sequence
+        or as_of_sequence > RELAY_TRACE_MAX_SEQUENCE
+    ):
+        return None
+    return after_sequence, as_of_sequence
+
+
+def _relay_trace_text(result: object, after_sequence: int) -> str:
+    if isinstance(result, dict) and "error" in result:
+        return _relay_error_text(result)
+    if not isinstance(result, dict):
+        return _relay_error_text({"error": "invalid relay trace response"})
+    events = result.get("events")
+    snapshots = result.get("delivery_snapshots")
+    upper = result.get("as_of_sequence")
+    if (
+        result.get("contract") != "relay-delivery-trace/v1"
+        or not isinstance(events, list)
+        or not isinstance(snapshots, list)
+        or type(upper) is not int
+        or upper < 0
+        or any(not isinstance(item, dict) for item in events)
+    ):
+        return _relay_error_text({"error": "invalid relay trace response"})
+
+    if any(not isinstance(item, dict) for item in snapshots):
+        return _relay_error_text({"error": "invalid relay trace response"})
+    page = dict(result)
+    page_events = list(events)
+    page_snapshots = [dict(item) for item in snapshots]
+    page["delivery_snapshots"] = page_snapshots
+    omitted_snapshot_fields: list[str] = []
+    while True:
+        page["events"] = page_events
+        more = bool(result.get("has_more")) or len(page_events) < len(events)
+        page["has_more"] = more
+        if more and not page_events:
+            return _relay_error_text(
+                {"error": "relay trace response exceeds the response budget"}
+            )
+        if more:
+            sequence = page_events[-1].get("sequence")
+            if type(sequence) is not int or sequence <= after_sequence:
+                return _relay_error_text(
+                    {"error": "invalid relay trace pagination metadata"}
+                )
+            page["next_sequence"] = sequence
+            page["next_cursor"] = f"{upper}:{sequence}"
+        else:
+            page["next_cursor"] = None
+        rendered = _json_text(page)
+        if len(rendered) <= _MCP_RELAY_MAX_CHARS:
+            return rendered
+        if len(page_events) > 1:
+            page_events.pop()
+            continue
+        removed = False
+        for field in ("recipient_container_ref", "recipient_session_ref"):
+            for snapshot in page_snapshots:
+                if field in snapshot:
+                    snapshot.pop(field)
+                    if field not in omitted_snapshot_fields:
+                        omitted_snapshot_fields.append(field)
+                        page["snapshot_fields_omitted"] = omitted_snapshot_fields
+                    removed = True
+            if removed:
+                break
+        if not removed:
+            return _relay_error_text(
+                {"error": "relay trace response exceeds the response budget"}
+            )
+
 
 def _relay_status_text(result: object, offset: int) -> str:
     if isinstance(result, dict) and "error" in result:
@@ -1292,6 +1380,33 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             message_id, offset=offset, page_size=_MCP_RELAY_MAX_CHARS,
         )
         return _relay_status_text(result, offset)
+
+    @server.tool()
+    @relay_tool
+    async def pallium_relay_trace(
+        message_id: str,
+        cursor: str | None = None,
+        container_ref: str | None = None,
+    ) -> str:
+        """Explain one Relay delivery with bounded best-effort activation evidence. Pass next_cursor to continue; absence or an uncertain outcome is not a reason to resend."""
+        parsed = _relay_trace_cursor(cursor)
+        if parsed is None:
+            return _relay_error_text(
+                {"error": "cursor must be the exact next_cursor from a prior trace page"}
+            )
+        after_sequence, as_of_sequence = parsed
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
+        if scope_error:
+            return scope_error
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        result = await PalliumMcpClient(ctx).relay_trace(
+            message_id,
+            after_sequence=after_sequence,
+            as_of_sequence=as_of_sequence,
+            limit=50,
+        )
+        return _relay_trace_text(result, after_sequence)
 
     async def pallium_relay_receive(
         max_chars: int = 0,

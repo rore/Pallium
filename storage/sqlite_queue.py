@@ -111,6 +111,31 @@ class SQLiteQueueMixin:
             yield session
 
     @contextmanager
+    def _begin_low_priority_relay_write(self):
+        """Let correctness writes win while diagnostics inspect their bounds."""
+        session = self._relay_session_factory()
+        conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+        try:
+            conn.execute(text("PRAGMA busy_timeout=25"))
+            conn.execute(text("BEGIN DEFERRED"))
+            yield session
+            session.flush()
+            conn.execute(text("COMMIT"))
+        except BaseException:
+            try:
+                conn.execute(text("ROLLBACK"))
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                conn.execute(text(f"PRAGMA busy_timeout={self._DEFAULT_BUSY_TIMEOUT_MS}"))
+            except Exception:
+                pass
+            finally:
+                session.close()
+
+    @contextmanager
     def _begin_immediate_for(
         self,
         session_factory,

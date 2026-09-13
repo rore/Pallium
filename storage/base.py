@@ -136,6 +136,7 @@ class RetentionRunStats:
     deleted_index_entries: int = 0
     stripped_debug_metadata: int = 0
     skipped_protected_source_items: int = 0
+    deleted_relay_trace_events: int = 0
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -145,6 +146,7 @@ class RetentionRunStats:
             "deleted_index_entries": self.deleted_index_entries,
             "stripped_debug_metadata": self.stripped_debug_metadata,
             "skipped_protected_source_items": self.skipped_protected_source_items,
+            "deleted_relay_trace_events": self.deleted_relay_trace_events,
         }
 
 

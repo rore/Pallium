@@ -15,6 +15,7 @@ from api.schemas import (
     RelayAckResponse,
     RelayMcpAckRequest,
     RelayMessageResponse,
+    RelayDeliveryTraceResponse,
     RelayReplyRequest,
     RelaySendRequest,
     RelaySessionMutationRequest,
@@ -622,6 +623,26 @@ def create_router(
                 page_size=page_size,
             ),
         ))
+    @router.get(
+        "/relay/messages/{message_id}/trace",
+        response_model=RelayDeliveryTraceResponse,
+    )
+    async def relay_message_trace(
+        message_id: str,
+        limit: int = Query(default=50, ge=1, le=100),
+        after_sequence: int = Query(default=0, ge=0),
+        as_of_sequence: int | None = Query(default=None, ge=0),
+    ):
+        return await _relay_call(
+            "message_trace",
+            lambda: _relay().trace_message(
+                message_id=message_id,
+                limit=limit,
+                after_sequence=after_sequence,
+                as_of_sequence=as_of_sequence,
+            ),
+        )
+
     @router.post("/relay/deliveries/ack", response_model=RelayAckResponse)
     async def relay_ack(request: RelayAckRequest):
         result = await _relay_call("ack", lambda: _relay().acknowledge(**request.model_dump()))
