@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -51,7 +51,7 @@
 - Smart persistence/API/result review found historical Codex adoption, installed-path binding, pre-validation migration, TTL timing, Windows empty-listener, quoted executable, Linux verification, lifecycle coverage, and documentation blockers. The implementation and regression suite now address each finding.
 - Current focused verification: 18 repair/wake-contract tests passed; after the final review fixes, 84 repair/service/StopOnly tests passed with 17 platform skips. The affected Relay/dashboard/service gate passed 377 tests with 17 platform skips. `--lf --lfnf=none` passed 26 tests. The final full suite passed 4,892 tests with 33 skips and 2 expected failures.
 - Skill feedback trigger 1 dropped: repeated `apply_patch`/sandbox launch failures are the documented machine-local Windows 1327 constraint, not an upstream agent-workflow defect.
-- First Linux CI run exposed one stale test fixture that modeled unknown `TasksCurrent` as successful shutdown. The fixture now requires numeric zero and a complementary regression asserts unknown counts fail closed; authoritative Linux rerun is pending.
+- First Linux CI run exposed one stale test fixture that modeled unknown `TasksCurrent` as successful shutdown. The fixture now requires numeric zero and a complementary regression asserts unknown counts fail closed. The authoritative rerun passed on Python 3.12 and 3.13; Windows smoke, agent-workflow, and redline also passed.
 - Database repair opens the already-upgraded Relay schema without constructor migrations; a regression proves refusal leaves an unupgraded schema unchanged.
 - Exact local endpoint inventory and counts remain recorded in Discovery. The two-source/one-destination incident has not been mutated.
 
