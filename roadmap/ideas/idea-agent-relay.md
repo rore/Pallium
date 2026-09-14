@@ -252,9 +252,11 @@ Claude evidence remains separate: one ready endpoint has a delivered
 Claude round trip was added to this acceptance pass.
 
 A payload-free post-recovery snapshot contains 25 pending deliveries: 19 for
-recent qualified endpoints and six for dormant endpoints, including three marked
-unreachable. Four are older than 24 hours and nine belong to a diagnosed endpoint
-identity collision. They remain durable evidence requiring recipient turns or
+recent qualified endpoints and six targeting dormant sessions, split between three
+active-health and three unreachable-health destinations. Dormant is a session-lifecycle
+label; active and unreachable describe destination health and do not terminalize an
+existing pending delivery. Four are older than 24 hours and nine belong to a
+diagnosed endpoint identity collision. They remain durable evidence requiring recipient turns or
 explicit disposition, not stale wake fences to delete. This closes the bounded
 Codex recovery/association collection item, not all of R1.5: the queued
 interruption/restart, macOS, OpenCode, fresh-Claude, reply-consumption, and
