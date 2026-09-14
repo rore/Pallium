@@ -10,9 +10,9 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     assert len(module.get_claude_md_block("base")) <= 3736
     assert len(module.get_claude_md_block("strong")) <= 3962
     assert len(Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")) <= 3620
-    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2530
-    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2530
-    assert len(Path("integrations/opencode/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2530
+    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
+    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
+    assert len(Path("integrations/opencode/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
     tree = ast.parse(Path("app/mcp/server.py").read_text(encoding="utf-8"))
     names = {node.name for node in ast.walk(tree)
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -125,27 +125,40 @@ def test_work_association_guidance_is_lazy_aligned_and_safe() -> None:
     assert references[1:] == references[:-1]
     for path in skill_paths:
         skill = path.read_text(encoding="utf-8")
-        assert "For exact work or link correction" in skill
-        assert "[work associations](references/work-associations.md)" in skill
+        assert "For exact work or link correction, load [work associations](references/work-associations.md)." in skill
+        assert "For an explicit Minimap implementation or substantive-review assignment" in skill
+        assert "passive browsing, inspection, and clerical edits do not qualify for Minimap participation" in skill
         assert (path.parent / "references" / "work-associations.md").is_file()
 
     detail = reference_paths[0].read_text(encoding="utf-8")
-    for required in (
-        "Branch and Agent Workflow references are structural",
-        "Hooks refresh them automatically",
-        "do not attach explicit duplicates",
-        "`pallium_relay_work_refs`",
-        "stable, known scope and reference",
-        "three explicit references in addition to its structural references",
-        "`pallium_relay_detach_work_ref` when the session stops that work",
-        "`pallium_relay_participants(scope_ref, local_ref)`",
-        "does not send or wake",
-        "grant routing permission or memory access",
-        "prove Session History coverage",
-        "Associated work references",
-    ):
-        assert required in detail
-
+    generic, minimap = detail.split("## Explicit Minimap workflow", 1)
+    assert "## Generic exact-work workflow" in generic
+    assert "explicit Minimap implementation or substantive-review assignment" in minimap
+    assert "passive browsing, inspection, and clerical edits do not qualify for Minimap participation" in minimap
+    assert "node <skill>/runtime/cli.js roadmap item-ref <item-id> --repo <absolute-repo-path> --json" in detail
+    assert "returned exact `scope_ref` and `local_ref`" in detail
+    assert detail.index("If the exact pair is absent") < detail.index("attach the exact CLI-returned pair")
+    assert "A successful list is authoritative" in generic
+    assert "Invoke each named Pallium MCP operation only when that operation is callable" in generic
+    assert "only its successful result is authoritative" in generic
+    for operation in ("pallium_relay_work_refs", "pallium_relay_attach_work_ref", "pallium_relay_detach_work_ref", "pallium_relay_participants", "pallium_search_history_by_work_ref", "pallium_search_history"):
+        assert f"`{operation}`" in generic
+    assert "only a successful attach proves mutation" in generic
+    assert "only when the operation is callable" in generic
+    assert "Only a successful detach result proves mutation" in generic
+    assert "required tool is unavailable or fails" in generic
+    assert "missing or invalid scope/local refs" in minimap
+    assert "skip attachment, continue ordinary work" in generic
+    assert "capacity prevents attach" in generic
+    assert "A successful attach does not backfill untagged prior turns" in minimap
+    assert "Older eligible items already carrying the same canonical key" in minimap
+    assert "eligible later turns can carry it only when per-turn association lookup succeeds" in minimap
+    assert "Detach only the exact pair this flow successfully attached" in detail
+    assert "API removes only the current session's explicit origin" in detail
+    assert "may report `structural_remains`" in detail
+    assert "Never attempt to remove a structural origin or detach merely because an optional provider is absent" in detail
+    assert "task ownership, activity, acceptance, completion, receipt, or History/memory access" in detail
+    assert "custom/resumed scope gap is not solved" in detail
 def test_field_feedback_guidance_is_lazy_aligned_and_safe() -> None:
     skill_paths = [
         Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md")
