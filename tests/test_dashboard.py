@@ -282,11 +282,22 @@ class TestDashboardRelaySummary:
                 for item in client.get("/dashboard/api/relay/sessions").json()["sessions"]
                 if item["container_ref"] == "c1"
             )
+            now = datetime.now(timezone.utc)
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                session.execute(text(
+                    "UPDATE relay_sessions SET state='closed', closed_at=:at "
+                    "WHERE container_ref='c2'"
+                ), {"at": now})
+                session.execute(text(
+                    "UPDATE relay_sessions SET last_seen_at=:at "
+                    "WHERE container_ref='c3'"
+                ), {"at": now - timedelta(days=2)})
+                session.commit()
             assert client.post("/relay/messages", json={
                 "sender_runtime": "codex", "sender_session_ref": "hidden",
                 "recipient": endpoint_id, "container_ref": "c1", "payload": "waiting",
             }).status_code == 200
-            visible = client.get("/dashboard/api/relay/sessions?container_ref=c1&limit=1").json()
+            visible = client.get("/dashboard/api/relay/sessions?lifecycle=recent&limit=1").json()
             summary = client.get("/dashboard/api/relay/summary").json()
             assert visible["total"] == 1
             visible_collision = visible["sessions"][0]["possible_identity_collision"]
@@ -492,6 +503,11 @@ class TestDashboardRelayIdentityCollisionBoundaries:
                 "runtime": "codex", "session_ref": "journey",
                 "container_ref": "journey-a",
             }).json()["deliveries"][0]
+            live_claim = client.get(
+                "/dashboard/api/relay/summary"
+            ).json()["possible_identity_collisions"]
+            assert live_claim["group_count"] == 0
+            assert live_claim["claimable_delivery_count"] == 0
             client.post("/relay/deliveries/ack", json={
                 "delivery_id": claimed["delivery_id"],
                 "claim_token": claimed["claim_token"],
@@ -513,10 +529,18 @@ class TestDashboardRelayIdentityCollisionBoundaries:
             assert moved.status_code == 200
             moved_session = moved.json()["session"]
             assert moved_session["endpoint_id"] == first["endpoint_id"]
-            client.post("/relay/turn", json={
+            independent = client.post("/relay/turn", json={
                 "runtime": "codex", "session_ref": "journey",
                 "container_ref": "journey-b",
-            }).raise_for_status()
+            }).json()
+            assert independent["deliveries"] == []
+            retained = client.get(
+                "/dashboard/api/relay/summary"
+            ).json()["possible_identity_collisions"]
+            retained_group = next(
+                row for row in retained["groups"] if row["session_ref"] == "journey"
+            )
+            assert retained_group["claimable_delivery_count"] == 1
 
             page = client.get("/dashboard/api/relay/messages").json()
             message = next(row for row in page["messages"] if row["id"] == historical["message_id"])
