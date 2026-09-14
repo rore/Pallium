@@ -7,7 +7,7 @@
 
 **Constraints:** Do not change Relay admission, claim, ACK, alias, endpoint, schema, or automatic convergence semantics. Do not infer that two endpoints may be merged merely from matching runtime/session identity. Do not mutate live deliveries until every affected delivery has an explicit consumer disposition and the existing repair fence accepts it.
 
-**Completion criteria:** At one response timestamp, the dashboard shall report a possible endpoint-identity collision when one runtime/session identity has multiple endpoint rows and at least one of those endpoints owns claimable deliveries. SQL shall report complete group counts, delivery totals, and oldest age independently of two fixed detail bounds: maximum returned groups and maximum returned endpoint details. A group is included only when all its siblings fit both remaining budgets; an oversized group is omitted intact and reported through total/truncation metadata. A delivery is diagnostic-claimable only when its message expires after the response timestamp and it is pending, or it is claimed with a non-null lease expiry at or before that timestamp. Live claims, null-lease claims, exact message expiry, and terminal/suppressed rows are excluded. The unique most-recent sibling across all states may be labelled only as the display candidate when it is active and seen within 24 hours; if the latest timestamp is tied, or that sibling is closed, unreachable, or dormant, there is no candidate. Existing `pending_now` semantics remain unchanged. The live 24-delivery incident shall have a reviewed per-delivery handoff or an explicit guarded blocker, never silent deletion or automatic retargeting.
+**Completion criteria:** At one response timestamp, the dashboard shall report a possible endpoint-identity collision when one runtime/session identity has multiple endpoint rows and at least one of those endpoints owns claimable deliveries. SQL shall report complete group counts, delivery totals, and oldest age independently of two fixed detail bounds: maximum returned groups and maximum returned endpoint details. A group is included only when all its siblings fit both remaining budgets; an oversized group is omitted intact and reported through total/truncation metadata. A delivery is diagnostic-claimable only when its message was created at or before and expires after the response timestamp and it is pending, or it is claimed with a non-null lease expiry at or before that timestamp. Live claims, null-lease claims, exact message expiry, and terminal/suppressed rows are excluded. The unique most-recent sibling across all states may be labelled only as the display candidate when it is active and seen within 24 hours; if the latest timestamp is tied, or that sibling is closed, unreachable, or dormant, there is no candidate. Existing `pending_now` semantics remain unchanged. The live 24-delivery incident shall have a reviewed per-delivery handoff or an explicit guarded blocker, never silent deletion or automatic retargeting.
 
 **Risk:** Elevated
 
@@ -29,12 +29,12 @@
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Implementation and independent result review reached revision bbb8f4be. Result review is blocked on two reproduced diagnostic correctness issues and the recorded coverage gaps; see Result review for evidence and next actions.
+- Result-review findings were remediated at c7e5921f: one SQLite read snapshot now covers aggregate/detail evidence; frozen diagnostics exclude later-created messages; candidate/lifecycle/history/non-mutation/renderer regressions cover the recorded gaps; the UI shows the qualified display candidate.
 
 - Work Record created before production edits. Read-only incident evidence and clean-context redline classification completed; production code is untouched pending plan review.
 - Second plan review completed on feat/relay-split-detection at c8a597e2. Production code remains untouched. Next: define both group and endpoint-detail budgets, add the oversized-single-group E2E, then repeat the clean-context plan review.
@@ -44,6 +44,7 @@
 ## Evidence
 
 - Pre-edit redline: dashboard/tests/docs/roadmap/Work Record are blue; app paths watched; no boundary, API, schema, security, or persistence checkpoint. storage/sqlite_relay.py is intentionally excluded from the planned diff.
+- Verification at c7e5921f: `tests/test_dashboard.py tests/test_agent_relay_e2e.py` passed 100 tests; `tests/dashboard_plain_language_renderer.mjs app/dashboard.html` passed; full `tests/ -x -q` passed 4,955 with 34 skipped and 2 expected xfails in 303.38s; `git diff --check` passed.
 
 ## Result review
 
