@@ -44,6 +44,7 @@
 - Focused/affected after final changes: `python -m pytest tests/test_codex_wake.py tests/test_agent_relay_hooks.py tests/test_relay_delivery_trace.py tests/test_relay_mcp_tools.py tests/test_claude_wake_dispatch.py tests/test_codex_integration.py -q -n 0` -> 349 passed, 2 skipped.
 - Full suite after final changes: `python -m pytest tests/ -x -q` -> 5,009 passed, 34 skipped, 2 xfailed.
 - Smart correctness/API review: `/root/empty_wake_result_review` -> APPROVE after persisted recovery, raw-state nonmutation, batch-write failure, and active-claim ordering gaps were closed; no remaining findings.
+- CodeRabbit review: one valid test-isolation finding fixed by resetting `_scheduled_session_attempt_ids`; `python -m pytest tests/test_codex_wake.py -q -n 0` -> 77 passed.
 - Import boundary: `python scripts/run-import-linter.py --out build/import-linter-report.json` -> exit 0, no violations.
 - Fresh redline verdict: RED because `api/routes.py` is a routing surface; `api-review` required, no boundary/schema/security/runtime-config findings.
 

@@ -71,6 +71,7 @@ def setup_function() -> None:
     codex_wake._scheduled_delivery_ids.clear()
     codex_wake._scheduled_session_generations.clear()
     codex_wake._scheduled_session_delivery_ids.clear()
+    codex_wake._scheduled_session_attempt_ids.clear()
 
 
 def test_delivery_specific_wake_prompt_is_truthful_and_narrow() -> None:
