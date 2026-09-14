@@ -18,6 +18,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from app import codex_readiness
+
 
 def _pallium_repo_root() -> Path:
     """Walk up from this file to find the repo root (contains app/run.py)."""
@@ -644,6 +646,11 @@ def install(port: int = 19836, guidance_strength: str = "base") -> int:
         print(f"  Registered hooks in {hooks_path}")
     else:
         print(f"  Hooks already current in {hooks_path}")
+    readiness = codex_readiness.setup(
+        python=_python_executable(),
+        script=str(_hooks_dir() / "user_prompt_submit.py"),
+        changed=hooks_changed,
+    )
 
     # 3. Append AGENTS.md block
     _append_agents_md_block(guidance_strength)
@@ -666,12 +673,21 @@ def install(port: int = 19836, guidance_strength: str = "base") -> int:
         print(f"  Start it with: python -m app.run all --port {port}")
 
     print("\nConfiguration installed.")
+    print("Service reachability was checked above.")
+    print("Hook execution state: " + str(readiness.get("state", "unknown")) + " (execution-observed only).")
+    print("Codex-owned hook trust: unknown; MCP tool exposure: unknown until Codex confirms both.")
     print("Restart Codex to load this configuration.")
     if hooks_changed:
-        print("Hook configuration changed. Approve the Pallium hook review if prompted.")
+        print("Hook configuration changed. Review and restart Codex are required.")
+        print("Approve the Pallium hook review if prompted.")
         print("Relay wake is ready only after that review.")
+        print("Matching hook execution is the readiness evidence; review alone is not verification.")
+    elif readiness["state"] == "review_required":
+        print("Hook configuration is unchanged, but its existing review and restart are still required.")
+    elif readiness["state"] == "verified":
+        print("Hook configuration is unchanged; matching UserPromptSubmit execution was observed.")
     else:
-        print("Hook configuration is unchanged; no new hook review should be required.")
+        print("Hook configuration is unchanged; execution remains unverified and no new review was created.")
     return 0
 
 
@@ -710,6 +726,11 @@ def uninstall() -> int:
         import shutil
         shutil.rmtree(state_dir, ignore_errors=True)
         print("  Removed hook state directory")
+
+    try:
+        codex_readiness.marker_path().unlink(missing_ok=True)
+    except OSError:
+        pass
 
     print("\nDone. Pallium integration removed.")
     return 0

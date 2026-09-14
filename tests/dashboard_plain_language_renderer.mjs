@@ -491,6 +491,40 @@ renderRelaySummaryContract({
 });
 assert.match(relaySummaryElements['relay-note'].textContent, /usually expected/i);
 assert.match(relaySummaryElements['relay-waiting-guidance'].textContent, /waiting is usually normal/i);
+renderRelaySummaryContract({
+  status: 'attention', messages: {}, deliveries: { pending_now: 3 }, latency_seconds: {}, sessions: {},
+  codex_readiness: { state: 'review_required' },
+  awaiting_recipient_checkin: { status: 'actionable', count: 3, failure_count: 0, causes: ['hook_review_required'] },
+  possible_identity_collisions: { claimable_delivery_count: 0 },
+});
+assert.match(relaySummaryElements['relay-note'].textContent, /review them and restart Codex/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /3 Codex deliveries.*hook review is required/i);
+assert.match(relaySummaryElements['relay-waiting-guidance'].textContent, /hook review and restart required/i);
+renderRelaySummaryContract({
+  status: 'attention', messages: {}, deliveries: { pending_now: 4 }, latency_seconds: {}, sessions: {},
+  codex_readiness: { state: 'verified' },
+  awaiting_recipient_checkin: { status: 'actionable', count: 4, failure_count: 1, causes: ['explicit_failure'] },
+  possible_identity_collisions: { claimable_delivery_count: 0 },
+});
+assert.match(relaySummaryElements['relay-note'].textContent, /1 of 4 awaiting Codex deliveries have explicit failed wake evidence/i);
+assert.doesNotMatch(relaySummaryElements['relay-note'].textContent, /4 Codex deliveries have explicit failed wake evidence/i);
+assert.match(relaySummaryElements['relay-waiting-guidance'].textContent, /wake evidence needs review/i);
+renderRelaySummaryContract({
+  status: 'active', messages: {}, deliveries: { pending_now: 2 }, latency_seconds: {}, sessions: {},
+  codex_readiness: { state: 'verified' },
+  awaiting_recipient_checkin: { status: 'neutral', count: 2, failure_count: 0, causes: [] },
+  possible_identity_collisions: { claimable_delivery_count: 0 },
+});
+assert.match(relaySummaryElements['relay-note'].textContent, /can be normal while a task is busy/i);
+assert.doesNotMatch(relaySummaryElements['relay-note'].textContent, /delivery failure evidence\..*explicit failed/i);
+renderRelaySummaryContract({
+  status: 'active', messages: {}, deliveries: { pending_now: 1 }, latency_seconds: {}, sessions: {},
+  codex_readiness: { state: 'unknown' },
+  awaiting_recipient_checkin: { status: 'unknown', count: 0, unknown_count: 1, causes: ['incomplete_trace'] },
+  possible_identity_collisions: { claimable_delivery_count: 0 },
+});
+assert.match(relaySummaryElements['relay-note'].textContent, /hook execution is unverified/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /check-in evidence is incomplete/i);
 assert.match(html, /id="relay-waiting-guidance"[^>]*>cross-agent delivery - waiting is usually normal/);
 const sessionRendererStart = html.indexOf('function rf(');
 const sessionRendererEnd = html.indexOf('function renderRelay(){', sessionRendererStart);

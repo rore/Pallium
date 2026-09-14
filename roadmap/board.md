@@ -1,12 +1,12 @@
+# First · Relay Reliability
+- add-wake-first-relay-delivery
+
 # Parallel · Session History
 - improve-session-history-search-quality
 - investigate-history-navigation-and-on-demand-compression
 
 # Parallel · Agent Relay
 - validate-relay-dependency-workflows
-
-# Follow-up · Relay Qualification
-- add-wake-first-relay-delivery
 
 # Later · Runtime Expansion
 - add-copilot-relay-integration

@@ -6,6 +6,7 @@ Standalone — stdlib only, no imports from Pallium core.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -114,6 +115,20 @@ DEDUP_EXPIRY_SECONDS = 300
 RELAY_OUTPUT_BUDGET = 2400
 RELAY_NOTICE_RESERVE = len("[Relay: 999+ more; Pallium continues.]") + 2
 RELAY_TURN_BUDGET = RELAY_OUTPUT_BUDGET - RELAY_NOTICE_RESERVE
+
+
+def record_codex_hook_execution(*, script: str) -> bool:
+    """Best-effort execution evidence; marker failures never affect delivery."""
+    try:
+        path = Path(__file__).resolve().parents[3] / "app" / "codex_readiness.py"
+        spec = importlib.util.spec_from_file_location("pallium_codex_readiness", path)
+        if spec is None or spec.loader is None:
+            return False
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return bool(module.observe_execution(python=sys.executable, script=script))
+    except Exception:
+        return False
 _WORK_REF_PREFIXES = ("slice/", "feat/", "feature/", "fix/", "bug/", "chore/", "demo/")
 _BASE_BRANCHES = frozenset({"main", "master", "develop", "trunk", "head"})
 _GIT_PATH_ENV = (

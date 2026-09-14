@@ -47,7 +47,19 @@ Shipped since last major scope update:
 - **Shared prompt-role governance**: contract ownership for `write_extraction`, `write_enrichment`, `query_ambiguity_resolution`
 - **Live improvement loop**: drift metrics, shadow routing comparison, replay-promotion tooling
 
-Current focus — Session History vNext (reconciled 2026-09-12):
+Current focus — Relay reliability (reconciled 2026-09-14):
+
+`add-wake-first-relay-delivery` is the first execution item because unreliable
+agent delivery blocks work on every other track. Its current owned slices are:
+Codex hook definition/review readiness in
+`.agent-workflow/tasks/codex-integration-readiness.md`; separate Codex-owned MCP
+tool-exposure diagnosis; and guarded disposition of stranded split-identity
+deliveries. The shipped dashboard diagnosis is not repair. No bulk retarget or
+ACK occurs without reviewed per-delivery dispositions. New feature work waits
+until the real installed send → hook delivery/ACK → reply → work-reference
+attach/detach witness passes or an explicit blocker is recorded.
+
+Parallel focus — Session History vNext (reconciled 2026-09-12):
 
 The active milestone is **Session History vNext: historical agent work as a
 first-class context layer** (strategy: `docs/context/strategy-vnext.md`; execution plan:

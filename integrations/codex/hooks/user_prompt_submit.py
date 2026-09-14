@@ -43,6 +43,7 @@ discover_work_refs = _common.discover_work_refs
 injected_work_ref = _common.injected_work_ref
 work_ref_warning = _common.work_ref_warning
 start_hook_deadline = _common.start_hook_deadline
+record_codex_hook_execution = _common.record_codex_hook_execution
 
 _IDE_TAG_RE = re.compile(
     r"<ide_(?:opened_file|selection)>.*?</ide_(?:opened_file|selection)>",
@@ -60,6 +61,7 @@ def _strip_ide_context(text: str) -> str:
 def main() -> None:
     try:
         start_hook_deadline(8, host_reserve=1)
+        record_codex_hook_execution(script=__file__)
         payload = read_hook_input()
         session_id = payload.get("session_id")
         cwd = payload.get("cwd", ".")

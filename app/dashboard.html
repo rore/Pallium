@@ -1645,13 +1645,35 @@ function renderRelaySummary(data) {
   if (latency.acknowledgement_p95 != null) healthDetails.push('hook ack p95 ' + formatUptime(latency.acknowledgement_p95));
   healthDetails.push(fmtNum(deliveries.redeliveries_last_24h || 0) + ' redeliveries');
   healthDetails.push(fmtNum(messages.replies_last_24h || 0) + ' replies');
-  const waitingNote = collisionCount
+  const readiness = data.codex_readiness || {}, readinessState = readiness.state || 'unknown';
+  const readinessNote = readinessState === 'review_required'
+    ? 'Codex hook definitions changed; review them and restart Codex. Pallium cannot approve Codex-owned hook trust.'
+    : readinessState === 'verified'
+    ? 'Codex UserPromptSubmit execution was observed. MCP tool exposure remains separately unknown to Pallium.'
+    : 'Codex hook execution is unverified. Hook trust and MCP tool exposure are Codex-owned and unknown to Pallium.';
+  const awaiting = data.awaiting_recipient_checkin || {}, causes = awaiting.causes || [];
+  const awaitingNote = awaiting.status === 'actionable' && causes.includes('hook_review_required')
+    ? fmtNum(awaiting.count || 0) + ' Codex deliveries have wake evidence but no later exact-recipient check-in while hook review is required.'
+    : awaiting.status === 'actionable'
+    ? fmtNum(awaiting.failure_count || 0) + ' of ' + fmtNum(awaiting.count || 0) + ' awaiting Codex deliveries have explicit failed wake evidence and no later exact-recipient check-in.'
+    : awaiting.status === 'neutral'
+    ? fmtNum(awaiting.count || 0) + ' Codex deliveries are awaiting exact-recipient check-in; this can be normal while a task is busy and is not delivery failure evidence.'
+    : awaiting.status === 'unknown'
+    ? 'Codex recipient check-in evidence is incomplete; current delivery state remains authoritative.'
+    : '';
+  const collisionNote = collisionCount
     ? fmtNum(collisionCount) + ' claimable deliveries are on endpoints that share a runtime/session identity. This may be intentional; inspect the affected endpoints before repair.'
-    : (deliveries.pending_now || 0) > 0
+    : '';
+  const normalNote = (deliveries.pending_now || 0) > 0
     ? 'Waiting is usually expected until the recipient takes another turn.'
     : 'No delivery is currently waiting for a recipient turn.';
+  const waitingNote = [readinessNote, awaitingNote, collisionNote, awaitingNote || collisionNote ? '' : normalNote].filter(Boolean).join(' ');
   const guidance = document.getElementById('relay-waiting-guidance');
-  if (guidance) guidance.textContent = collisionCount
+  if (guidance) guidance.textContent = readinessState === 'review_required'
+    ? 'cross-agent delivery - Codex hook review and restart required'
+    : awaiting.status === 'actionable'
+    ? 'cross-agent delivery - Codex wake evidence needs review'
+    : collisionCount
     ? 'cross-agent delivery - shared endpoint identities need review'
     : "cross-agent delivery - waiting is usually normal until the recipient's next turn";
   document.getElementById('relay-note').textContent = waitingNote + ' ' + healthDetails.join(' - ');
