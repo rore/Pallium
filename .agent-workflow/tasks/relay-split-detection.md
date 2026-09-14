@@ -23,7 +23,7 @@
 
 **Verification plan:** Split identity with claimable work shall be reported without changing Relay state -> dashboard HTTP E2E asserting summary and per-session fields before/after identical reads. Healthy and terminal cases shall not be mislabeled -> E2E matrix for single endpoint, current endpoint, expired, delivered, suppressed, and split-without-work. Ambiguous identity shall not imply a repair destination -> deterministic tie/missing-time response assertion. UI shall replace the generic normal-wait message when stranded work exists -> dashboard rendering contract test. Live incident shall remain safe -> existing repair dry-run/apply fences plus reviewed disposition inventory and post-action dashboard/status evidence.
 
-**Plan review:** Pending clean-context smart review.
+**Plan review:** Clean-context review completed on 2026-09-14; blocked findings and required corrections are recorded in the Plan review section below.
 
 **Approvals:** Not required at this risk level. User authorized ownership and implementation on 2026-09-14: "so take ownership of this and fix".
 
@@ -43,3 +43,19 @@
 ## Result review
 
 - Pending.
+
+## Plan review
+
+Verdict: Blocked; revise affected planning fields and repeat review before implementation. Reviewed independently against the workflow Plan and Review checkpoint, repo instructions, dashboard routes/renderers, Relay schema, registration/claim/repair code, dashboard E2E tests, and docs/agent-relay.md. The read-only dashboard approach is the smallest suitable implementation; no storage or routing change is needed.
+
+1. **Narrow the asserted failure.** The material assumption's stop condition is met: RelaySessionRecord is unique on (container_ref, runtime, session_ref); relay_turn registers separate scoped endpoints without transition intent; test_overview_container_ties_are_deterministic creates two through HTTP. Both remain exactly addressable and can poll independently. Replace definitive "stranded"/"non-current" claims with "possible split identity" and "claimable backlog on another endpoint". Matching identity and last_seen_at prove neither abandonment nor consumer equivalence. Update Outcome, Completion criteria, and Material assumptions. The documented project-transition contract preserves one endpoint only for an explicit valid transition; this diagnostic is not convergence or repair.
+
+2. **Define candidate and ambiguity.** Label the candidate "most recently seen endpoint", not authoritative current destination. Specify closed/unreachable/dormant eligibility; a conservative choice is a unique most-recent active/recent sibling, otherwise no candidate. Endpoint ID may stabilize display but cannot break an evidence tie. Evaluate all siblings, including those hidden by container/lifecycle/page filters. Independently polling siblings remain possible regardless of timestamp ordering; alias ownership does not settle this. No diagnostic enables or recommends retargeting.
+
+3. **Define queue semantics.** At one response timestamp, eligibility is message.expires_at > as_of AND (pending OR claimed with non-null lease_expires_at <= as_of). Exclude live/null claimed leases and exact expiry. Count deliveries; derive oldest age from those rows, clamped to zero. Join recipient_endpoint_id, not historical recipient container or runtime/session alone. Preserve pending_now, which already includes live claims. GET must not expire, reclaim, register, or ACK. Repair independently rejects every stored claimed source row, including elapsed leases; diagnostic eligibility is not repair eligibility.
+
+4. **Make bounds concrete.** Use SQL aggregates for complete totals instead of loading all endpoints/deliveries. Bound returned detail lists with total/truncation metadata, evaluating whole sibling groups before limiting results. Reuse one calculation for bounded session/message endpoint pages without per-endpoint queries. Never infer global health from a partial page. Use the configured Relay database. Resolve message-page frozen-until time versus live diagnostic time explicitly.
+
+5. **Close E2E gaps.** Name tests/test_dashboard.py and the existing renderer harness. Add HTTP-observed coverage for 3+ siblings, independent polling, candidate lifecycle states, ties, live/elapsed/null/exact-boundary leases, exact expiry, terminal/suppressed rows, same session_ref across runtimes, moved endpoint with historical container, missing endpoint metadata, Unicode/HTML-sensitive identity, page/filter-hidden siblings, empty/max/over-max bounds, and a separate Relay database. Cover create -> send -> claim -> ACK -> close/reopen through dashboard reads. Repeated GETs must preserve state, attempts, tokens, and timestamps. Missing last_seen_at violates the current non-null schema: specify defensive handling only if intended. Renderer checks must qualify both the dynamic waiting note and static "waiting is normal" subtitle when attention exists.
+
+The live incident remains a separate guarded operational action. Preserve complete per-delivery dispositions, current reservation evidence, and existing approval/preimage fences; this review does not authorize apply. Roadmap/docs alignment must describe diagnostic uncertainty, not proven delivery failure or completed repair.
