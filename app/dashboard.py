@@ -108,6 +108,10 @@ def _dashboard_relay_identity_collisions(
     include_details: bool = False,
 ) -> tuple[dict, dict[str, dict]]:
     """Read-only evidence for ambiguous runtime/session identities."""
+    connection = session.connection()
+    driver_connection = connection.connection.driver_connection
+    if not driver_connection.in_transaction:
+        connection.exec_driver_sql("BEGIN")
     as_of = _dashboard_utc(as_of)
     cutoff = as_of - timedelta(hours=24)
     claimable = (
@@ -119,6 +123,7 @@ def _dashboard_relay_identity_collisions(
         .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
         .where(
             RelayDeliveryRecord.recipient_endpoint_id.isnot(None),
+            RelayMessageRecord.created_at <= as_of,
             RelayMessageRecord.expires_at > as_of,
             or_(
                 RelayDeliveryRecord.state == "pending",

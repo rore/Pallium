@@ -492,4 +492,39 @@ renderRelaySummaryContract({
 assert.match(relaySummaryElements['relay-note'].textContent, /usually expected/i);
 assert.match(relaySummaryElements['relay-waiting-guidance'].textContent, /waiting is usually normal/i);
 assert.match(html, /id="relay-waiting-guidance"[^>]*>cross-agent delivery - waiting is usually normal/);
+const sessionRendererStart = html.indexOf('function rf(');
+const sessionRendererEnd = html.indexOf('function renderRelay(){', sessionRendererStart);
+assert.ok(sessionRendererStart >= 0 && sessionRendererEnd > sessionRendererStart);
+const sessionElements = {
+  'relay-sessions': { innerHTML: '', querySelectorAll: () => [] },
+  'relay-sessions-more': { hidden: false, textContent: '' },
+  'relay-session-discovery': { textContent: '' },
+  'relay-session-search': { value: '' },
+};
+sessionElements.getElementById = id => sessionElements[id] || null;
+const sessionRenderer = new Function('document', `
+  let _relay = {
+    sessions: [{ id: 'endpoint-1', runtime: 'codex', session_ref: '<東京&>', container_ref: 'workspace',
+      last_seen_at: '2026-09-14T10:00:00Z', possible_identity_collision: {
+        endpoint_claimable_delivery_count: 1, group_claimable_delivery_count: 2,
+        is_most_recent_candidate: true,
+      } }], endpointSessions: {}, messages: [], showAllSessions: false,
+    selected: null, sessionOffset: 0, sessionTotal: 1,
+  };
+  function scoped(id) { return (document.getElementById(id) || {}).value || ''; }
+  function escapeHtml(value) { return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function esc(value) { return escapeHtml(value); }
+  function shortContainer(value) { return String(value || 'unknown'); }
+  function formatDate(value) { return String(value || ''); }
+  function fmtNum(value) { return String(value ?? 0); }
+  function relayLifecycle() { return ''; }
+  function selectRelaySession() {}
+  ${html.slice(sessionRendererStart, sessionRendererEnd)}
+  return renderRelaySessions;
+`)(sessionElements);
+sessionRenderer();
+assert.match(sessionElements['relay-sessions'].innerHTML, /&lt;東京&amp;&gt;/);
+assert.match(sessionElements['relay-sessions'].innerHTML, /possible shared identity/);
+assert.match(sessionElements['relay-sessions'].innerHTML, /display candidate/);
+assert.doesNotMatch(sessionElements['relay-sessions'].innerHTML, /<東京&>/);
 console.log('plain-language dashboard renderers: all cases passed');
