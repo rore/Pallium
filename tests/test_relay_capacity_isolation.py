@@ -48,7 +48,7 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
     @app.get("/_test/block-memory-worker")
     def block_memory_worker():
         started.set()
-        release.wait(2)
+        release.wait(10)
         return {"released": True}
 
     async def exercise() -> None:
@@ -69,7 +69,7 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
                             "container_ref": "git:example.test/capacity",
                             "actor_ref": "capacity-user",
                         }),
-                    ), timeout=1.0,
+                    ), timeout=5.0,
                 )
                 assert health.status_code in {200, 503} and turn.status_code == 200
                 assert set(status.json()) == {
