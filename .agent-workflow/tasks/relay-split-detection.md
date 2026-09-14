@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -48,6 +48,20 @@
 - Final coverage remediation 2f5718df: exact 20-group and over-limit boundaries, filter-hidden and oversized-group endpoint badges, stored expired exclusion, pending historical attribution across endpoint move, independent sibling polling, and diagnostic reads after ACK/close/reopen. The affected suites passed 102 tests in 53.26s; renderer and diff checks passed.
 
 ## Result review
+
+### Focused final re-review (2026-09-14)
+
+Verdict: Blocked on three remaining assertions in prior finding 3. Independently reviewed the complete main...07f8043657e7bcaaf1916bf828d184d756d05115 diff, Work Record, workflow Result Review checkpoint, redline policy/Python extension, dashboard callers, SQLite setup, renderer, and authoritative Relay/dashboard/roadmap context. Elevated/Moderate remains appropriate: all seven changed paths are blue, app paths are watched, and no new boundary, schema, security, runtime-config, or API-model checkpoint is introduced.
+
+Prior production findings 1, 2, and 4 remain resolved: aggregate/detail evidence shares an explicit deferred SQLite read transaction; frozen diagnostics exclude later-created messages; the escaped session badge renders the qualified display candidate. The nine focused diagnostic HTTP cases and shipped renderer pass. The 2f5718df tests now verify a badge for the omitted 101-endpoint group, exact 20-group untruncated output and 21-group truncation, stored expired exclusion, pending historical backlog after a valid endpoint move, and diagnostic reads after ACK, close, and reopen.
+
+**[P2] Finish the previously required filtered/polling assertions** - tests/test_dashboard.py:274 and 455. The hidden-sibling test filters only by container; no collision case requests a lifecycle filter while a hidden sibling contributes backlog/candidate evidence. The lifecycle test claims then ACKs without reading the diagnostic during the live claim. It invokes the journey-b poll but discards its response, so it never asserts that this sibling receives no delivery while the canonical target retains its claimable item. Add those three assertions through the existing HTTP cases. These are the remaining recorded Plan/Verification commitments, not new scope. Other portions of the prior coverage blocker are resolved.
+
+Verification adequacy: retain the recorded content-equivalent pre-rebase full suite (4,955 passed, 34 skipped, 2 expected xfails) and affected post-rebase dashboard/Relay suite (102 passed), including the final 2f5718df run. Independently ran the two collision tests under TestDashboardRelaySummary and all TestDashboardRelayIdentityCollisionBoundaries with the existing virtual environment and -q -n 0: 9 passed in 4.70s. node tests/dashboard_plain_language_renderer.mjs app/dashboard.html passed; git diff --check main...HEAD passed. These successful runs do not discharge the absent assertions.
+
+Scope and drift: the shared helper uses the configured Relay database and existing SQLAlchemy dependency, preserves endpoint-ID attribution and complete SQL totals under bounded whole-group materialization, and introduces no mutation or credential exposure. The renderer escapes identity text and preserves button semantics. Docs and the canonical roadmap accurately distinguish possible identity collision from proven consumer equivalence and guarded repair eligibility; no additional drift was found. The older dashboard redesign remains done. Merge/installation/service checks and the live incident's complete per-delivery dispositions or explicit guarded blocker remain subsequent work; this review does not authorize repair or complete the broader outcome.
+
+Recovery: feat/relay-split-detection; reviewed head 07f8043657e7bcaaf1916bf828d184d756d05115. Complete the three assertions, run focused verification, and obtain a final independent re-review. This reviewer edits only the Work Record. Skill feedback trigger 3 dropped: Windows process-creation failure is machine/runtime-owned rather than an agent-workflow defect. apply_patch failed with CreateProcessWithLogonW error 1327; deterministic PowerShell replacement edited only this Work Record.
 
 ### Final clean-context re-review (2026-09-14)
 
