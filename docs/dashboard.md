@@ -13,7 +13,7 @@ The default service binds locally and the dashboard has no authentication. If a 
 
 ## Operations
 
-Operations opens with an always-visible Overview: separate totals for original Session History source items and all stored Memory objects, the current operating summary, and System Health. System Health reports semantic-search readiness, absolute database inventory, and current/24-hour processing counts without inventing capacity limits or success rates. Relay Health follows as an always-visible status surface, then Session History. Only the Session History browser and lower-level diagnostics use progressive disclosure. Pending Relay delivery is neutral; expired delivery and impaired dependencies are called out with actionable links.
+Operations opens with an always-visible Overview: separate totals for original Session History source items and all stored Memory objects, the current operating summary, and System Health. System Health reports semantic-search readiness, absolute database inventory, and current/24-hour processing counts without inventing capacity limits or success rates. Relay Health follows as an always-visible status surface, then Session History. Only the Session History browser and lower-level diagnostics use progressive disclosure. Ordinary pending Relay delivery is neutral; expired delivery, impaired dependencies, and possible split-identity backlog are called out with actionable links.
 
 ### Session History
 
@@ -39,6 +39,10 @@ For an isolated acceptance journey, run `python examples/relay_session_work_asso
 A canonical session can be opened directly with `/dashboard#relay?session=<percent-encoded relay-session endpoint_id>`; only one canonical `session` parameter is accepted, and malformed or unknown targets leave the current selection unchanged. The communication map and recorded-message timeline stay visible together. The map initially fits the complete loaded projection, hides browser scrollbars, pans by background drag, allows node dragging, and provides zoom and Fit controls. Reciprocal traffic collapses into one bidirectional connection while preserving direction counts. Messages are newest-first with recorded time visually primary; selected delivery detail stays beside the bounded scrolling list. Aliases are endpoint-only and disappear from message detail. The expired-delivery KPI in Operations opens Relay with the expired filter selected.
 
 The graph and list use the same bounded, redacted projection, fixed `until` boundary, and deterministic `(created_at, id)` ordering. Legacy null endpoint IDs remain unresolved. Delivery admission never implies recipient action, and claim tokens or receipts are never exposed.
+
+### Relay identity diagnostics
+
+Relay Health may flag a possible identity collision when claimable backlog exists on one of multiple scoped endpoints sharing a runtime/session identity. This is diagnostic uncertainty: matching identity does not prove the endpoints have the same consumer, and the dashboard never recommends retargeting or repair. The display candidate is only the unique latest active endpoint seen within 24 hours; ties and closed, unreachable, or dormant latest endpoints have no candidate. Diagnostic claimability is read-only and differs from guarded repair eligibility, which rejects every stored claimed source delivery, including claims whose lease has elapsed.
 ## Read behavior and states
 
 Dashboard projections are bounded app-local reads over existing records and allowlisted report files; they do not alter storage, claim deliveries, expand context, or expose pre-redaction content. Every panel has honest loading, empty, error, stale, and partial states with retry or next-page affordances. Narrow layouts stack capability cards and Relay panes without page overflow; keyboard users can reach tabs, collapsibles, filters, list/detail controls, graph nodes/edges, names, and linear graph alternatives with visible focus and status/error announcements.

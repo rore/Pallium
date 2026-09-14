@@ -747,7 +747,7 @@
   </div>
 
   <!-- Agent Relay is a parallel operational track, not memory processing. -->
-  <div class="section-title">Agent Relay <span class="scope-tag">cross-agent delivery - waiting is normal until the recipient's next turn</span></div>
+  <div class="section-title">Agent Relay <span id="relay-waiting-guidance" class="scope-tag">cross-agent delivery - waiting is usually normal until the recipient's next turn</span></div>
   <div class="card">
     <div class="relay-grid">
       <div><div class="tile-label">messages · 24h</div><div class="dual"><span id="relay-messages-24h" class="v24 blue">&mdash;</span></div><div class="tile-sub">all-time <span id="relay-messages-total">&mdash;</span></div></div>
@@ -1616,6 +1616,7 @@ function renderOperationalSummary() {
 // renderer-test boundary: function renderRelay(data) {
 function renderRelaySummary(data) {
   const messages = data.messages || {}, deliveries = data.deliveries || {}, latency = data.latency_seconds || {};
+  const collisions = data.possible_identity_collisions || {}, collisionCount = collisions.claimable_delivery_count || 0;
   document.getElementById('relay-messages-24h').textContent = fmtNum(messages.last_24h || 0);
   document.getElementById('relay-messages-total').textContent = fmtNum(messages.total || 0);
   document.getElementById('relay-delivered-24h').textContent = fmtNum(deliveries.last_24h || 0);
@@ -1644,9 +1645,15 @@ function renderRelaySummary(data) {
   if (latency.acknowledgement_p95 != null) healthDetails.push('hook ack p95 ' + formatUptime(latency.acknowledgement_p95));
   healthDetails.push(fmtNum(deliveries.redeliveries_last_24h || 0) + ' redeliveries');
   healthDetails.push(fmtNum(messages.replies_last_24h || 0) + ' replies');
-  const waitingNote = (deliveries.pending_now || 0) > 0
-    ? 'Waiting is expected until the recipient takes another turn.'
+  const waitingNote = collisionCount
+    ? fmtNum(collisionCount) + ' claimable deliveries are on endpoints that share a runtime/session identity. This may be intentional; inspect the affected endpoints before repair.'
+    : (deliveries.pending_now || 0) > 0
+    ? 'Waiting is usually expected until the recipient takes another turn.'
     : 'No delivery is currently waiting for a recipient turn.';
+  const guidance = document.getElementById('relay-waiting-guidance');
+  if (guidance) guidance.textContent = collisionCount
+    ? 'cross-agent delivery - shared endpoint identities need review'
+    : "cross-agent delivery - waiting is usually normal until the recipient's next turn";
   document.getElementById('relay-note').textContent = waitingNote + ' ' + healthDetails.join(' - ');
   const relaySummary = document.getElementById('relay-capability-state');
   if (relaySummary) relaySummary.textContent = (data.status || 'unknown') + ' · ' + fmtNum(deliveries.pending_now || 0) + ' pending · ' + fmtNum(deliveries.expired_last_24h || 0) + ' expired';
@@ -2810,7 +2817,7 @@ function relayVisibleSessions(){
 }
 function renderRelaySessions(){
   const sessions=relayVisibleSessions(),list=document.getElementById('relay-sessions');
-  list.innerHTML=sessions.length?sessions.map(session=>{const id=rf(session,['endpoint_id','id','session_id']),missing=session._metadataMissing;return'<button type="button" class="relay-session" role="listitem" aria-pressed="'+(_relay.selected===id)+'" data-rsession="'+esc(id)+'" title="'+esc(id)+'"><strong>'+esc(missing?rname(id):rsessionName(session))+'</strong><small>'+(missing?'Session metadata is missing from Relay storage.':esc(rf(session,['runtime','agent_ref'],'runtime unknown'))+' · '+esc(shortContainer(rf(session,['container_ref'],'container unknown'))))+'</small><small>'+esc(missing?rshort(id):formatDate(session.last_seen_at))+'</small></button>'}).join(''):'No sessions match this loaded scope.';
+  list.innerHTML=sessions.length?sessions.map(session=>{const id=rf(session,['endpoint_id','id','session_id']),missing=session._metadataMissing,collision=session.possible_identity_collision,attention=collision?' · possible shared identity ('+fmtNum(collision.endpoint_claimable_delivery_count||0)+' here / '+fmtNum(collision.group_claimable_delivery_count||0)+' total'+(collision.is_most_recent_candidate?'; display candidate':'')+')':'';return'<button type="button" class="relay-session" role="listitem" aria-pressed="'+(_relay.selected===id)+'" data-rsession="'+esc(id)+'" title="'+esc(id)+'"><strong>'+esc(missing?rname(id):rsessionName(session))+'</strong><small>'+(missing?'Session metadata is missing from Relay storage.':esc(rf(session,['runtime','agent_ref'],'runtime unknown'))+' · '+esc(shortContainer(rf(session,['container_ref'],'container unknown'))))+'</small><small>'+esc(missing?rshort(id):formatDate(session.last_seen_at))+esc(attention)+'</small></button>'}).join(''):'No sessions match this loaded scope.';
   list.querySelectorAll('[data-rsession]').forEach(button=>button.onclick=()=>selectRelaySession(button.dataset.rsession));
   const partial=_relay.sessionTotal!=null&&_relay.sessionOffset<_relay.sessionTotal,more=document.getElementById('relay-sessions-more'),toggle=document.getElementById('relay-session-discovery');
   more.hidden=!(_relay.showAllSessions&&partial);more.textContent='Load more sessions ('+_relay.sessionOffset+' of '+_relay.sessionTotal+')';

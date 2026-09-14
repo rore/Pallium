@@ -12,7 +12,7 @@ from app.config import AppConfig
 from app.main import create_app
 from core.codex_wake import CodexWakeRegistry
 from core.models import MemoryObject, SourceItem
-from storage.sqlite_schema import HistoricalLookupReuseEventRecord, HistoricalLookupReuseLabelRecord, MemoryFlagRecord, RelayDeliveryRecord, RelaySessionRecord
+from storage.sqlite_schema import HistoricalLookupReuseEventRecord, HistoricalLookupReuseLabelRecord, MemoryFlagRecord, RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
@@ -220,6 +220,512 @@ class TestDashboardRelaySummary:
             assert expired["deliveries"]["expired_total"] == 1
             assert sent["message_id"] != expiring["message_id"]
 
+
+    def test_possible_identity_collision_is_complete_bounded_and_read_only(self, tmp_path: Path) -> None:
+        """The diagnostic is conservative, delivery-scoped, and independent of page filters."""
+        config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
+        app = create_app(config)
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        with TestClient(app) as client:
+            endpoint_ids = {}
+            for container, session_ref in (("c1", "same"), ("c2", "same"), ("c3", "same"), ("other", "other")):
+                response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session_ref, "container_ref": container})
+                assert response.status_code == 200
+            endpoint_ids = {
+                item["container_ref"]: item["id"]
+                for item in client.get("/dashboard/api/relay/sessions").json()["sessions"]
+            }
+            storage = app.state.pallium_service._storage
+            with storage._relay_session_factory() as session:
+                session.execute(text("UPDATE relay_sessions SET last_seen_at=:at WHERE id=:id"), {"at": now - timedelta(minutes=5), "id": endpoint_ids["c1"]})
+                session.execute(text("UPDATE relay_sessions SET last_seen_at=:at, state='closed', closed_at=:at WHERE id=:id"), {"at": now - timedelta(minutes=4), "id": endpoint_ids["c2"]})
+                session.execute(text("UPDATE relay_sessions SET last_seen_at=:at WHERE id=:id"), {"at": now, "id": endpoint_ids["c3"]})
+                session.commit()
+                def add_delivery(name: str, state: str, *, expires_at: datetime, lease_expires_at: datetime | None = None) -> None:
+                    message_id = f"message-{name}"
+                    session.add(RelayMessageRecord(id=message_id, sender_runtime="codex", sender_session_ref="sender", sender_endpoint_id=None, recipient_selector="codex:same", container_ref="sender", payload=name, redacted=0, created_at=now - timedelta(minutes=1), expires_at=expires_at))
+                    session.add(RelayDeliveryRecord(id=f"delivery-{name}", message_id=message_id, recipient_runtime="codex", recipient_session_ref="same", recipient_endpoint_id=endpoint_ids["c1"], recipient_container_ref="c1", state=state, attempts=1, lease_expires_at=lease_expires_at))
+                future = now + timedelta(hours=1)
+                add_delivery("pending", "pending", expires_at=future)
+                add_delivery("elapsed", "claimed", expires_at=future, lease_expires_at=now - timedelta(seconds=1))
+                add_delivery("live", "claimed", expires_at=future, lease_expires_at=now + timedelta(minutes=5))
+                add_delivery("null-lease", "claimed", expires_at=future)
+                add_delivery("exact-expiry", "pending", expires_at=now)
+                add_delivery("delivered", "delivered", expires_at=future)
+                add_delivery("suppressed", "suppressed", expires_at=future)
+                add_delivery("stored-expired", "expired", expires_at=future)
+                session.commit()
+            before = client.get("/dashboard/api/relay/summary").json()
+            sessions = client.get("/dashboard/api/relay/sessions?limit=1&container_ref=c1").json()
+            messages = client.get("/dashboard/api/relay/messages?limit=1").json()
+            after = client.get("/dashboard/api/relay/summary").json()
+        diagnostic = before["possible_identity_collisions"]
+        assert diagnostic["group_count"] == 1
+        assert diagnostic["endpoint_count"] == 3
+        assert diagnostic["claimable_delivery_count"] == 2
+        group = next(item for item in diagnostic["groups"] if item["most_recent_endpoint_id"] == endpoint_ids["c3"])
+        assert group["claimable_delivery_count"] == 2
+        assert any(item["is_most_recent_candidate"] for item in group["endpoints"])
+        assert sessions["sessions"][0]["possible_identity_collision"]["endpoint_claimable_delivery_count"] == 2
+        assert messages["endpoint_sessions"]
+        assert before["deliveries"]["pending_now"] == after["deliveries"]["pending_now"]
+        assert before == after
+
+    def test_possible_identity_collision_evaluates_hidden_siblings_and_separate_relay_store(self, tmp_path: Path) -> None:
+        config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
+        app = create_app(config)
+        with TestClient(app) as client:
+            for container in ("c1", "c2", "c3"):
+                assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "hidden", "container_ref": container}).status_code == 200
+            endpoint_id = next(
+                item["id"]
+                for item in client.get("/dashboard/api/relay/sessions").json()["sessions"]
+                if item["container_ref"] == "c1"
+            )
+            now = datetime.now(timezone.utc)
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                session.execute(text(
+                    "UPDATE relay_sessions SET state='closed', closed_at=:at "
+                    "WHERE container_ref='c2'"
+                ), {"at": now})
+                session.execute(text(
+                    "UPDATE relay_sessions SET last_seen_at=:at "
+                    "WHERE container_ref='c3'"
+                ), {"at": now - timedelta(days=2)})
+                session.commit()
+            assert client.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "hidden",
+                "recipient": endpoint_id, "container_ref": "c1", "payload": "waiting",
+            }).status_code == 200
+            visible = client.get("/dashboard/api/relay/sessions?lifecycle=recent&limit=1").json()
+            summary = client.get("/dashboard/api/relay/summary").json()
+            assert visible["total"] == 1
+            visible_collision = visible["sessions"][0]["possible_identity_collision"]
+            assert visible_collision["group_endpoint_count"] == 3
+            assert visible_collision["group_claimable_delivery_count"] == 1
+            assert summary["possible_identity_collisions"]["endpoint_count"] == 3
+            assert summary["possible_identity_collisions"]["details_truncated"] is False
+            assert client.get("/dashboard/api/relay/sessions?container_ref=missing").json()["total"] == 0
+
+class TestDashboardRelayIdentityCollisionBoundaries:
+    def test_collision_details_are_whole_group_bounded_with_complete_totals(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        with TestClient(app) as client:
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                for index in range(101):
+                    session.add(RelaySessionRecord(
+                        id=f"bound-{index}", runtime="codex", session_ref="bounded",
+                        container_ref=f"container-{index}", state="active",
+                        first_seen_at=now, last_seen_at=now,
+                    ))
+                for index in range(100):
+                    session.add(RelaySessionRecord(
+                        id=f"exact-{index}", runtime="codex", session_ref="exact",
+                        container_ref=f"exact-container-{index}", state="active",
+                        first_seen_at=now, last_seen_at=now,
+                    ))
+                for name, endpoint_id in (("bounded", "bound-0"), ("exact", "exact-0")):
+                    session.add(RelayMessageRecord(
+                        id=f"{name}-message", sender_runtime="codex", sender_session_ref="sender",
+                        recipient_selector=endpoint_id, container_ref="sender", payload=name,
+                        created_at=now - timedelta(minutes=1), expires_at=now + timedelta(hours=1),
+                    ))
+                    session.add(RelayDeliveryRecord(
+                        id=f"{name}-delivery", message_id=f"{name}-message",
+                        recipient_runtime="codex", recipient_session_ref=name,
+                        recipient_endpoint_id=endpoint_id, recipient_container_ref=name,
+                        state="pending", attempts=0,
+                    ))
+                session.commit()
+            body = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
+            oversized = client.get("/dashboard/api/relay/sessions", params={
+                "container_ref": "container-0", "limit": 1,
+            }).json()["sessions"][0]["possible_identity_collision"]
+        assert oversized["group_endpoint_count"] == 101
+        assert oversized["group_claimable_delivery_count"] == 1
+        assert body["group_count"] == 2
+        assert body["endpoint_count"] == 201
+        assert body["detail_group_limit"] == 20
+        assert body["detail_endpoint_limit"] == 100
+        assert body["details_truncated"] is True
+        assert {group["session_ref"] for group in body["groups"]} == {"exact"}
+        assert len(body["groups"][0]["endpoints"]) == 100
+
+    def test_candidate_requires_unique_latest_active_recent_endpoint(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        with TestClient(app) as client:
+            for index, state in enumerate(("active", "active", "closed", "unreachable")):
+                response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "candidate", "container_ref": f"cand-{index}"})
+                assert response.status_code == 200
+            endpoints = client.get("/dashboard/api/relay/sessions?limit=10").json()["sessions"]
+            target_id = next(row["id"] for row in endpoints if row["container_ref"] == "cand-0")
+            assert client.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "candidate",
+                "recipient": target_id, "container_ref": "cand-0", "payload": "candidate",
+            }).status_code == 200
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                for index, row in enumerate(endpoints):
+                    session.execute(text("UPDATE relay_sessions SET state=:state, last_seen_at=:at, closed_at=:closed WHERE id=:id"), {
+                        "state": "active", "at": now - timedelta(minutes=index), "closed": None, "id": row["id"],
+                    })
+                session.execute(text("UPDATE relay_sessions SET state='closed', last_seen_at=:at, closed_at=:at WHERE container_ref='cand-2'"), {"at": now - timedelta(minutes=2)})
+                session.execute(text("UPDATE relay_sessions SET state='unreachable', last_seen_at=:at WHERE container_ref='cand-3'"), {"at": now - timedelta(minutes=1)})
+                session.commit()
+            diagnostic = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
+            group = next(item for item in diagnostic["groups"] if item["session_ref"] == "candidate")
+            assert group["most_recent_endpoint_id"] is None
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                session.execute(text("UPDATE relay_sessions SET state='active', last_seen_at=:at WHERE container_ref='cand-3'"), {"at": now - timedelta(seconds=1)})
+                session.commit()
+            diagnostic = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
+            group = next(item for item in diagnostic["groups"] if item["session_ref"] == "candidate")
+            assert group["most_recent_endpoint_id"] == next(row["id"] for row in endpoints if row["container_ref"] == "cand-3")
+            anchor = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=1)
+
+            def frozen_candidate() -> str | None:
+                page = client.get("/dashboard/api/relay/messages", params={"until": anchor.isoformat()}).json()
+                endpoint = next(row for row in page["endpoint_sessions"] if row["id"] == target_id)
+                return endpoint["possible_identity_collision"]["most_recent_endpoint_id"]
+
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                session.execute(text("UPDATE relay_sessions SET state='active', closed_at=NULL, last_seen_at=:at WHERE session_ref='candidate'"), {"at": anchor - timedelta(hours=26)})
+                session.execute(text("UPDATE relay_sessions SET state='closed', closed_at=:at, last_seen_at=:at WHERE container_ref='cand-2'"), {"at": anchor - timedelta(hours=1)})
+                session.commit()
+            assert frozen_candidate() is None
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                session.execute(text("UPDATE relay_sessions SET state='active', closed_at=NULL, last_seen_at=:at WHERE container_ref IN ('cand-2', 'cand-3')"), {"at": anchor - timedelta(hours=1)})
+                session.commit()
+            assert frozen_candidate() is None
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                session.execute(text("UPDATE relay_sessions SET state='active', closed_at=NULL, last_seen_at=:at WHERE session_ref='candidate'"), {"at": anchor - timedelta(hours=26)})
+                session.execute(text("UPDATE relay_sessions SET last_seen_at=:at WHERE container_ref='cand-3'"), {"at": anchor - timedelta(hours=24, seconds=1)})
+                session.commit()
+            assert frozen_candidate() is None
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                session.execute(text("UPDATE relay_sessions SET last_seen_at=:at WHERE container_ref='cand-3'"), {"at": anchor - timedelta(hours=24)})
+                session.commit()
+            assert frozen_candidate() == next(row["id"] for row in endpoints if row["container_ref"] == "cand-3")
+
+    def test_identity_key_is_runtime_scoped_and_missing_endpoint_metadata_is_safe(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            for runtime in ("codex", "claude-code"):
+                assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": "same", "container_ref": runtime}).status_code == 200
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                session.add(RelayDeliveryRecord(id="missing-endpoint-delivery", message_id="missing-endpoint-message", recipient_runtime="codex", recipient_session_ref="same", recipient_endpoint_id=None, recipient_container_ref=None, state="pending", attempts=0))
+                session.add(RelayMessageRecord(id="missing-endpoint-message", sender_runtime="codex", sender_session_ref="sender", recipient_selector="codex:same", container_ref="sender", payload="<safe>", created_at=datetime.now(timezone.utc), expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
+                session.commit()
+            body = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
+        assert body["group_count"] == 0
+
+    def test_collision_group_detail_limit_preserves_complete_totals(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+
+        def add_group(session, index: int) -> None:
+            session_ref = f"group-{index:02d}"
+            for sibling in range(2):
+                session.add(RelaySessionRecord(
+                    id=f"{session_ref}-{sibling}", runtime="codex", session_ref=session_ref,
+                    container_ref=f"{session_ref}-container-{sibling}", state="active",
+                    first_seen_at=now, last_seen_at=now,
+                ))
+            session.add(RelayMessageRecord(
+                id=f"{session_ref}-message", sender_runtime="codex", sender_session_ref="sender",
+                recipient_selector=f"{session_ref}-0", container_ref="sender", payload=session_ref,
+                created_at=now - timedelta(minutes=1), expires_at=now + timedelta(hours=1),
+            ))
+            session.add(RelayDeliveryRecord(
+                id=f"{session_ref}-delivery", message_id=f"{session_ref}-message",
+                recipient_runtime="codex", recipient_session_ref=session_ref,
+                recipient_endpoint_id=f"{session_ref}-0", recipient_container_ref=session_ref,
+                state="pending", attempts=0,
+            ))
+
+        with TestClient(app) as client:
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                for index in range(20):
+                    add_group(session, index)
+                session.commit()
+            exact = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
+            assert exact["group_count"] == exact["detail_group_limit"] == 20
+            assert len(exact["groups"]) == 20
+            assert exact["details_truncated"] is False
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                add_group(session, 20)
+                session.commit()
+            body = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
+        assert body["group_count"] == 21
+        assert body["endpoint_count"] == 42
+        assert body["claimable_delivery_count"] == 21
+        assert len(body["groups"]) == body["detail_group_limit"] == 20
+        assert sum(len(group["endpoints"]) for group in body["groups"]) == 40
+        assert body["details_truncated"] is True
+    def test_collision_diagnostic_tracks_send_ack_move_close_and_reopen_lifecycle(
+        self, tmp_path: Path,
+    ) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            sender = client.post("/relay/turn", json={
+                "runtime": "claude-code", "session_ref": "sender",
+                "container_ref": "journey-sender",
+            }).json()["session"]
+            first = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "journey",
+                "container_ref": "journey-a",
+            }).json()["session"]
+            client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "journey",
+                "container_ref": "journey-b",
+            }).raise_for_status()
+
+            def send(payload: str) -> dict:
+                return client.post("/relay/messages", json={
+                    "sender_runtime": "claude-code",
+                    "sender_session_ref": sender["session_ref"],
+                    "recipient": first["endpoint_id"],
+                    "container_ref": "journey-sender",
+                    "payload": payload,
+                }).json()
+
+            sent = send("lifecycle")
+            group = next(
+                row for row in client.get(
+                    "/dashboard/api/relay/summary"
+                ).json()["possible_identity_collisions"]["groups"]
+                if row["session_ref"] == "journey"
+            )
+            assert group["claimable_delivery_count"] == 1
+
+            claimed = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "journey",
+                "container_ref": "journey-a",
+            }).json()["deliveries"][0]
+            live_claim = client.get(
+                "/dashboard/api/relay/summary"
+            ).json()["possible_identity_collisions"]
+            assert live_claim["group_count"] == 0
+            assert live_claim["claimable_delivery_count"] == 0
+            client.post("/relay/deliveries/ack", json={
+                "delivery_id": claimed["delivery_id"],
+                "claim_token": claimed["claim_token"],
+                "container_ref": "journey-a",
+            }).raise_for_status()
+            assert client.get(
+                "/dashboard/api/relay/summary"
+            ).json()["possible_identity_collisions"]["group_count"] == 0
+
+            historical = send("pending across move")
+            moved = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "journey",
+                "container_ref": "journey-c",
+                "previous_container_ref": "journey-a",
+                "previous_endpoint_id": first["endpoint_id"],
+                "previous_scope_generation": first["scope_generation"],
+                "max_chars": 1,
+            })
+            assert moved.status_code == 200
+            moved_session = moved.json()["session"]
+            assert moved_session["endpoint_id"] == first["endpoint_id"]
+            independent = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "journey",
+                "container_ref": "journey-b",
+            }).json()
+            assert independent["deliveries"] == []
+            retained = client.get(
+                "/dashboard/api/relay/summary"
+            ).json()["possible_identity_collisions"]
+            retained_group = next(
+                row for row in retained["groups"] if row["session_ref"] == "journey"
+            )
+            assert retained_group["claimable_delivery_count"] == 1
+
+            page = client.get("/dashboard/api/relay/messages").json()
+            message = next(row for row in page["messages"] if row["id"] == historical["message_id"])
+            delivery = message["deliveries"][0]
+            assert delivery["state"] == "pending"
+            assert delivery["recipient_endpoint_id"] == first["endpoint_id"]
+            assert delivery["recipient_container_ref"] == "journey-a"
+            current = next(row for row in page["endpoint_sessions"] if row["id"] == first["endpoint_id"])
+            assert current["container_ref"] == "journey-c"
+            assert current["possible_identity_collision"]["endpoint_claimable_delivery_count"] == 1
+
+            moved_claim = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "journey",
+                "container_ref": "journey-c",
+            }).json()["deliveries"][0]
+            client.post("/relay/deliveries/ack", json={
+                "delivery_id": moved_claim["delivery_id"],
+                "claim_token": moved_claim["claim_token"],
+                "container_ref": "journey-c",
+            }).raise_for_status()
+            assert client.get(
+                "/dashboard/api/relay/summary"
+            ).json()["possible_identity_collisions"]["group_count"] == 0
+
+            client.post("/relay/sessions/close", json={
+                "runtime": "codex", "session_ref": "journey",
+                "container_ref": "journey-c",
+            }).raise_for_status()
+            closed = client.get("/dashboard/api/relay/sessions", params={
+                "endpoint_id": first["endpoint_id"],
+            }).json()["sessions"][0]
+            assert closed["lifecycle"] == "closed"
+            assert "possible_identity_collision" not in closed
+            reopened = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "journey",
+                "container_ref": "journey-c",
+            }).json()["session"]
+            assert reopened["endpoint_id"] == moved_session["endpoint_id"]
+            assert reopened["state"] == "recent"
+            recent = client.get("/dashboard/api/relay/sessions", params={
+                "endpoint_id": first["endpoint_id"],
+            }).json()["sessions"][0]
+            assert recent["lifecycle"] == "recent"
+            assert "possible_identity_collision" not in recent
+            delivered = next(
+                row for row in client.get("/dashboard/api/relay/messages").json()["messages"]
+                if row["id"] == sent["message_id"]
+            )
+            assert delivered["deliveries"][0]["state"] == "delivered"
+    def test_collision_aggregate_and_details_share_one_sqlite_snapshot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        app = create_app(_test_config(tmp_path))
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        storage = app.state.pallium_service._storage
+        factory = storage._relay_session_factory
+        with factory.begin() as session:
+            for index in range(100):
+                session.add(RelaySessionRecord(
+                    id=f"snapshot-{index}", runtime="codex", session_ref="snapshot",
+                    container_ref=f"snapshot-container-{index}", state="active",
+                    first_seen_at=now, last_seen_at=now,
+                ))
+            session.add(RelayMessageRecord(
+                id="snapshot-message", sender_runtime="codex", sender_session_ref="sender",
+                recipient_selector="snapshot-0", container_ref="sender", payload="snapshot",
+                created_at=now - timedelta(minutes=1), expires_at=now + timedelta(hours=1),
+            ))
+            session.add(RelayDeliveryRecord(
+                id="snapshot-delivery", message_id="snapshot-message",
+                recipient_runtime="codex", recipient_session_ref="snapshot",
+                recipient_endpoint_id="snapshot-0", recipient_container_ref="snapshot",
+                state="pending", attempts=0,
+            ))
+        original_execute = factory.class_.execute
+        inserted = False
+
+        def interleave(session, statement, *args, **kwargs):
+            nonlocal inserted
+            result = original_execute(session, statement, *args, **kwargs)
+            sql = str(statement)
+            if not inserted and "group_count" in sql and "dashboard_relay_collision_groups" in sql:
+                inserted = True
+                with factory.begin() as writer:
+                    writer.add(RelaySessionRecord(
+                        id="snapshot-100", runtime="codex", session_ref="snapshot",
+                        container_ref="snapshot-container-100", state="active",
+                        first_seen_at=now, last_seen_at=now,
+                    ))
+            return result
+
+        monkeypatch.setattr(factory.class_, "execute", interleave)
+        with TestClient(app) as client:
+            first = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
+            assert inserted is True
+            assert first["endpoint_count"] == 100
+            assert len(first["groups"][0]["endpoints"]) == 100
+            assert first["details_truncated"] is False
+            monkeypatch.setattr(factory.class_, "execute", original_execute)
+            second = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
+        assert second["endpoint_count"] == 101
+        assert second["groups"] == []
+        assert second["details_truncated"] is True
+
+    def test_unicode_identity_exact_time_boundaries_and_reads_are_non_mutating(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        identity = "<東京&>"
+        with TestClient(app) as client:
+            for container in ("unicode-a", "unicode-b"):
+                assert client.post("/relay/turn", json={
+                    "runtime": "codex", "session_ref": identity, "container_ref": container,
+                }).status_code == 200
+            endpoints = client.get("/dashboard/api/relay/sessions").json()["sessions"]
+            endpoint_id = next(row["id"] for row in endpoints if row["container_ref"] == "unicode-a")
+            anchor = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=1)
+            storage = app.state.pallium_service._storage
+            with storage._relay_session_factory() as session:
+                for name, expires_at, state, lease in (
+                    ("lease", anchor + timedelta(hours=1), "claimed", anchor),
+                    ("expiry", anchor, "pending", None),
+                ):
+                    session.add(RelayMessageRecord(
+                        id=f"boundary-{name}-message", sender_runtime="codex", sender_session_ref="sender",
+                        recipient_selector=endpoint_id, container_ref="sender", payload=name,
+                        created_at=anchor - timedelta(minutes=1), expires_at=expires_at,
+                    ))
+                    session.add(RelayDeliveryRecord(
+                        id=f"boundary-{name}-delivery", message_id=f"boundary-{name}-message",
+                        recipient_runtime="codex", recipient_session_ref=identity,
+                        recipient_endpoint_id=endpoint_id, recipient_container_ref="unicode-a",
+                        state=state, attempts=3, claim_token="secret-token" if state == "claimed" else None,
+                        claimed_at=anchor - timedelta(minutes=2) if state == "claimed" else None,
+                        lease_expires_at=lease,
+                    ))
+                session.commit()
+                before = session.execute(text(
+                    "SELECT d.state, d.attempts, d.claim_token, d.claimed_at, d.lease_expires_at, m.expires_at "
+                    "FROM relay_deliveries d JOIN relay_messages m ON m.id=d.message_id "
+                    "WHERE d.id='boundary-lease-delivery'"
+                )).one()
+            page = client.get("/dashboard/api/relay/messages", params={"until": anchor.isoformat()}).json()
+            endpoint = next(row for row in page["endpoint_sessions"] if row["id"] == endpoint_id)
+            collision = endpoint["possible_identity_collision"]
+            assert collision["group_endpoint_count"] == 2
+            assert collision["group_claimable_delivery_count"] == 1
+            assert collision["endpoint_claimable_delivery_count"] == 1
+            assert identity in str(page)
+            assert "secret-token" not in str(page)
+            with storage._relay_session_factory() as session:
+                after = session.execute(text(
+                    "SELECT d.state, d.attempts, d.claim_token, d.claimed_at, d.lease_expires_at, m.expires_at "
+                    "FROM relay_deliveries d JOIN relay_messages m ON m.id=d.message_id "
+                    "WHERE d.id='boundary-lease-delivery'"
+                )).one()
+            assert before == after
+            def relay_state():
+                with storage._relay_session_factory() as session:
+                    return tuple(
+                        tuple(session.execute(text(
+                            f"SELECT * FROM {table} ORDER BY id"
+                        )).all())
+                        for table in ("relay_sessions", "relay_messages", "relay_deliveries")
+                    )
+            before_read = relay_state()
+            frozen_again = client.get("/dashboard/api/relay/messages", params={"until": anchor.isoformat()}).json()
+            assert frozen_again == page
+            assert relay_state() == before_read
+            with storage._relay_session_factory() as session:
+                session.add(RelayMessageRecord(
+                    id="after-anchor-message", sender_runtime="codex", sender_session_ref="sender",
+                    recipient_selector=endpoint_id, container_ref="sender", payload="after-anchor",
+                    created_at=anchor + timedelta(seconds=1), expires_at=anchor + timedelta(hours=1),
+                ))
+                session.add(RelayDeliveryRecord(
+                    id="after-anchor-delivery", message_id="after-anchor-message", recipient_runtime="codex",
+                    recipient_session_ref=identity, recipient_endpoint_id=endpoint_id,
+                    recipient_container_ref="unicode-a", state="pending", attempts=0,
+                ))
+                session.commit()
+            before_frozen_read = relay_state()
+            frozen_page = client.get("/dashboard/api/relay/messages", params={"until": anchor.isoformat()}).json()
+            frozen_endpoint = next(row for row in frozen_page["endpoint_sessions"] if row["id"] == endpoint_id)
+            assert not any(row["id"] == "after-anchor-message" for row in frozen_page["messages"])
+            assert frozen_endpoint["possible_identity_collision"]["group_claimable_delivery_count"] == 1
+            assert relay_state() == before_frozen_read
 
 class TestDashboardPage:
 

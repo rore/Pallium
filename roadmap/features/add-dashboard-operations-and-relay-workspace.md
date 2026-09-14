@@ -167,6 +167,15 @@ delivered/pending/expired counts, delivery latency, redeliveries, runtime lifecy
 counts, and persisted destination health. It answers **Is Relay healthy?** and does
 not duplicate the Relay workspace.
 
+The shipped dashboard diagnostic also distinguishes ordinary neutral waiting from
+possible split identity: it highlights claimable backlog when multiple scoped
+endpoints share a runtime/session identity, without asserting that they are the
+same consumer or recommending repair. A display candidate is shown only when the
+unique latest endpoint is active and recent (within 24 hours); ties and closed,
+unreachable, or dormant latest endpoints remain ambiguous. Diagnostic eligibility
+is read-only and separate from guarded repair, which rejects every stored claimed
+source delivery, including elapsed leases.
+
 #### Derived Memory
 
 Treat Derived Memory as optional, not deprecated. Preserve Memory Browser and
