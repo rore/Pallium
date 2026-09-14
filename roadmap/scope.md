@@ -56,7 +56,10 @@ Codex hook definition/review readiness in
 `.agent-workflow/tasks/codex-integration-readiness.md`; separate Codex-owned MCP
 tool-exposure diagnosis; and guarded disposition of stranded split-identity
 deliveries. The shipped dashboard diagnosis is not repair. No bulk retarget or
-ACK occurs without reviewed per-delivery dispositions. New wake-first activation
+ACK occurs without reviewed per-delivery dispositions. Codex setup now refuses
+accidental replacement of hooks owned by another live checkout; deliberate moves
+require `--replace-existing-checkout` and the existing review/restart boundary. New
+wake-first activation
 qualification waits until the real installed send → hook delivery/ACK → reply →
 work-reference attach/detach witness passes or an explicit blocker is recorded.
 Parallel Session History vNext work and independent activation capabilities,

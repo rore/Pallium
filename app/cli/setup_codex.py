@@ -12,6 +12,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import sys
 import tempfile
 import urllib.error
@@ -321,8 +322,8 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def _managed_hook_script(hook: object) -> str | None:
-    """Return the Pallium script owned by a direct Python hook command."""
+def _parsed_managed_hook(hook: object) -> tuple[str, str, str] | None:
+    """Return the script name, Python, and path for one owned direct hook."""
     if not isinstance(hook, dict) or hook.get("type") != "command":
         return None
     command = hook.get("command")
@@ -359,9 +360,90 @@ def _managed_hook_script(hook: object) -> str | None:
     for script_name in ("session_start.py", "user_prompt_submit.py", "stop.py"):
         suffix = f"/integrations/codex/hooks/{script_name}"
         if normalized_script.endswith(suffix):
-            return script_name
+            return script_name, python, script
     return None
 
+
+def _managed_hook_script(hook: object) -> str | None:
+    """Return the Pallium script owned by a direct Python hook command."""
+    parsed = _parsed_managed_hook(hook)
+    return parsed[0] if parsed else None
+
+
+def _file_state(path: Path) -> str:
+    try:
+        mode = path.stat().st_mode
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "unknown"
+    return "live" if stat.S_ISREG(mode) else "missing"
+
+
+def _executable_state(command: str) -> str:
+    if "/" not in command:
+        try:
+            resolved = shutil.which(command)
+        except OSError:
+            return "unknown"
+        return "unknown" if resolved is None else _file_state(Path(resolved))
+    return _file_state(Path(command))
+
+
+def _checkout_identity(script: str, script_name: str) -> str | None:
+    suffix = f"/integrations/codex/hooks/{script_name}"
+    if not script.casefold().endswith(suffix):
+        return None
+    try:
+        root = Path(script[: -len(suffix)]).resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return os.path.normcase(os.path.normpath(str(root)))
+
+
+def _existing_hook_checkout_state(hooks_data: dict) -> tuple[bool, bool]:
+    """Return (live foreign checkout found, inspection uncertain)."""
+    desired = _checkout_identity(
+        str(_hooks_dir() / "user_prompt_submit.py").replace("\\", "/"),
+        "user_prompt_submit.py",
+    )
+    if desired is None:
+        return False, True
+
+    foreign = False
+    hooks_by_event = hooks_data.get("hooks", {})
+    if not isinstance(hooks_by_event, dict):
+        return False, False
+    for entries in hooks_by_event.values():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if (
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("hooks"), list)
+            ):
+                continue
+            for hook in entry["hooks"]:
+                parsed = _parsed_managed_hook(hook)
+                if parsed is None:
+                    continue
+                script_name, python, script = parsed
+                source = _checkout_identity(script, script_name)
+                if source is None:
+                    return False, True
+                if source == desired:
+                    continue
+                script_state = _file_state(Path(script))
+                if script_state == "missing":
+                    continue
+                python_state = _executable_state(python)
+                if python_state == "missing":
+                    continue
+                if "unknown" in {python_state, script_state}:
+                    return False, True
+                if python_state == script_state == "live":
+                    foreign = True
+    return foreign, False
 
 def _without_managed_hooks(entries: list) -> list:
     """Remove Pallium hook objects while preserving peer wrappers and order."""
@@ -411,7 +493,10 @@ def _register_hooks(hooks_data: dict) -> dict:
         current_kept = False
         reconciled: list = []
         for entry in hooks_by_event.get(event, []):
-            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+            if (
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("hooks"), list)
+            ):
                 reconciled.append(entry)
                 continue
             entry_matcher = entry.get("matcher")
@@ -623,8 +708,32 @@ def _verify_service(port: int) -> bool:
 # -- Main install/uninstall --
 
 
-def install(port: int = 19836, guidance_strength: str = "base") -> int:
+def install(
+    port: int = 19836,
+    guidance_strength: str = "base",
+    *,
+    replace_existing_checkout: bool = False,
+) -> int:
     print(f"Setting up Pallium Codex integration (port {port})...")
+
+    hooks_path = _codex_hooks_path()
+    hooks_data = _read_json(hooks_path)
+    foreign, uncertain = _existing_hook_checkout_state(hooks_data)
+    if uncertain:
+        print(
+            "ERROR: Could not safely inspect an existing Pallium Codex hook. "
+            "No configuration was changed.",
+            file=sys.stderr,
+        )
+        return 2
+    if foreign and not replace_existing_checkout:
+        print(
+            "ERROR: Existing live Pallium Codex hooks use another checkout. "
+            "No configuration was changed. Re-run with "
+            "--replace-existing-checkout only for an intentional move.",
+            file=sys.stderr,
+        )
+        return 2
 
     # 1. Feature flag + MCP in config.toml
     config_path = _codex_config_path()
@@ -636,8 +745,7 @@ def install(port: int = 19836, guidance_strength: str = "base") -> int:
     print(f"  Configured feature flags and MCP server in {config_path}")
 
     # 2. Register hooks in hooks.json
-    hooks_path = _codex_hooks_path()
-    hooks_data = _read_json(hooks_path)
+
     hooks_before = json.dumps(hooks_data, sort_keys=True)
     hooks_data = _register_hooks(hooks_data)
     hooks_changed = json.dumps(hooks_data, sort_keys=True) != hooks_before
@@ -774,9 +882,21 @@ def main(args: list[str] | None = None) -> int:
             "setup output and inside the installed block."
         ),
     )
+    parser.add_argument(
+        "--replace-existing-checkout",
+        action="store_true",
+        help=(
+            "Replace live Pallium hooks owned by another checkout. "
+            "Requires Codex hook review and restart."
+        ),
+    )
     parsed = parser.parse_args(args)
 
     if parsed.uninstall:
         return uninstall()
     guidance_strength = _normalize_guidance_strength(parsed.guidance_strength)
-    return install(port=parsed.port, guidance_strength=guidance_strength)
+    return install(
+        port=parsed.port,
+        guidance_strength=guidance_strength,
+        replace_existing_checkout=parsed.replace_existing_checkout,
+    )

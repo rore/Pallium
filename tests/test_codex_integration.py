@@ -165,6 +165,8 @@ def test_codex_setup_docs_require_owned_hook_review() -> None:
     assert "prompted. Until that review" in docs
     assert "Do not use `--dangerously-bypass-hook-trust`" in docs
     assert "persisted hashes are owned by Codex" in docs
+    assert "setup stops before changing any Codex/Pallium configuration" in docs
+    assert "`--replace-existing-checkout`" in docs
 
 def test_codex_hooks_use_absolute_commands_without_literal_quotes(
     monkeypatch: pytest.MonkeyPatch,
@@ -885,6 +887,178 @@ def test_codex_hook_reconciliation_preserves_mixed_peer_wrappers_and_matchers(
     ]
     assert len(managed) == 1
     assert entries[-1]["matcher"] == "startup|resume"
+
+
+def test_codex_setup_refuses_accidental_live_checkout_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from app.run import run
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(setup_codex, "_verify_service", lambda _port: True)
+    stable = tmp_path / "Stable Checkout"
+    development = tmp_path / "Dévelopment Checkout"
+    for root in (stable, development):
+        hooks = root / "integrations" / "codex" / "hooks"
+        hooks.mkdir(parents=True)
+        for name in ("session_start.py", "user_prompt_submit.py", "stop.py"):
+            (hooks / name).write_text("# synthetic\n", encoding="utf-8")
+
+    current = [stable]
+    monkeypatch.setattr(
+        setup_codex,
+        "_hooks_dir",
+        lambda: current[0] / "integrations" / "codex" / "hooks",
+    )
+    monkeypatch.setattr(
+        setup_codex,
+        "_mcp_pythonpath_entries",
+        lambda: [str(current[0])],
+    )
+
+    assert run(["setup", "codex"]) == 0
+    assert codex_readiness.observe_execution(
+        python=sys.executable,
+        script=str(stable / "integrations/codex/hooks/user_prompt_submit.py"),
+        home=tmp_path,
+    )
+
+    def snapshot() -> dict[str, bytes]:
+        return {
+            str(path.relative_to(tmp_path)): path.read_bytes()
+            for path in tmp_path.rglob("*")
+            if path.is_file()
+        }
+
+    before = snapshot()
+    current[0] = development
+    assert run(["setup", "codex"]) == 2
+    assert snapshot() == before
+    error = capsys.readouterr().err
+    assert "another checkout" in error
+    assert "--replace-existing-checkout" in error
+    assert codex_readiness.read(tmp_path)["state"] == "verified"
+
+    hooks_path = tmp_path / ".codex" / "hooks.json"
+    hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+    for entries in hooks["hooks"].values():
+        for entry in entries:
+            for hook in entry["hooks"]:
+                parsed = setup_codex._parsed_managed_hook(hook)
+                assert parsed is not None
+                _, _, script = parsed
+                hook["command"] = f"python {setup_codex._quote_hook_arg(script)}"
+    hooks_path.write_text(json.dumps(hooks, indent=2) + "\n", encoding="utf-8")
+    before = snapshot()
+    monkeypatch.setattr(setup_codex.shutil, "which", lambda _name: None)
+    assert run(["setup", "codex"]) == 2
+    assert snapshot() == before
+    monkeypatch.setattr(
+        setup_codex.shutil, "which", lambda _name: sys.executable
+    )
+
+    assert run(["setup", "codex", "--replace-existing-checkout"]) == 0
+    hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+    commands = [
+        hook["command"]
+        for entries in hooks["hooks"].values()
+        for entry in entries
+        for hook in entry["hooks"]
+    ]
+    assert all(
+        str(development).replace("\\", "/") in command
+        for command in commands
+    )
+    assert all(
+        str(stable).replace("\\", "/") not in command for command in commands
+    )
+    assert codex_readiness.read(tmp_path)["state"] == "review_required"
+    assert codex_readiness.observe_execution(
+        python=sys.executable,
+        script=str(
+            development / "integrations/codex/hooks/user_prompt_submit.py"
+        ),
+        home=tmp_path,
+    )
+    assert codex_readiness.read(tmp_path)["state"] == "verified"
+
+
+def test_codex_checkout_preflight_covers_partial_mixed_and_broken_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    desired = tmp_path / "Desired Checkout"
+    foreign = tmp_path / "F\u00f8reign Checkout"
+    for root in (desired, foreign):
+        hooks = root / "integrations" / "codex" / "hooks"
+        hooks.mkdir(parents=True)
+        for name in ("session_start.py", "user_prompt_submit.py", "stop.py"):
+            (hooks / name).write_text("# synthetic\n", encoding="utf-8")
+    monkeypatch.setattr(
+        setup_codex,
+        "_hooks_dir",
+        lambda: desired / "integrations" / "codex" / "hooks",
+    )
+
+    def hook(root: Path, name: str, python: str = sys.executable) -> dict:
+        script = root / "integrations" / "codex" / "hooks" / name
+        return {
+            "type": "command",
+            "command": (
+                f"{setup_codex._quote_hook_arg(python)} "
+                f"{setup_codex._quote_hook_arg(str(script))}"
+            ),
+        }
+
+    def config(*hooks: dict) -> dict:
+        return {"hooks": {"UnexpectedEvent": [{"hooks": list(hooks)}]}}
+
+    partial = setup_codex._existing_hook_checkout_state(
+        config(hook(foreign, "stop.py"))
+    )
+    mixed = setup_codex._existing_hook_checkout_state(
+        config(
+            hook(desired, "session_start.py"),
+            hook(foreign, "user_prompt_submit.py"),
+        )
+    )
+    assert partial == (True, False)
+    assert mixed == (True, False)
+
+    (foreign / "integrations/codex/hooks/stop.py").unlink()
+    assert setup_codex._existing_hook_checkout_state(
+        config(hook(foreign, "stop.py"))
+    ) == (False, False)
+
+    live_script = foreign / "integrations/codex/hooks/user_prompt_submit.py"
+    missing_python = tmp_path / "missing" / "python3"
+    assert setup_codex._existing_hook_checkout_state(
+        config(hook(foreign, "user_prompt_submit.py", str(missing_python)))
+    ) == (False, False)
+
+    monkeypatch.setattr(setup_codex.shutil, "which", lambda _name: sys.executable)
+    bare = {
+        "type": "command",
+        "command": f"python {setup_codex._quote_hook_arg(str(live_script))}",
+    }
+    assert setup_codex._existing_hook_checkout_state(config(bare)) == (
+        True,
+        False,
+    )
+
+    monkeypatch.setattr(setup_codex, "_file_state", lambda _path: "unknown")
+    assert setup_codex._existing_hook_checkout_state(config(bare)) == (
+        False,
+        True,
+    )
+
+    monkeypatch.setattr(setup_codex.shutil, "which", lambda _name: None)
+    assert setup_codex._existing_hook_checkout_state(config(bare)) == (
+        False,
+        True,
+    )
 
 
 def test_codex_public_lifecycle_converges_across_checkouts_and_uninstall(
