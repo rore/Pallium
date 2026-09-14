@@ -187,8 +187,8 @@ and claim-token redaction. The activation-capability contract shipped in PR #178
 and makes
 qualified behavior, current availability, fallback, and native-attempt evidence
 explicit across HTTP, MCP, and dashboard without turning acceptance into delivery.
-Next, `add-relay-delivery-trace` adds bounded diagnostic evidence
-through message detail, HTTP, and MCP.
+`add-relay-delivery-trace` shipped bounded diagnostic evidence through message
+detail, HTTP, and MCP.
 Copilot is later runtime expansion, still blocked on delivery tracing and OpenCode
 wake qualification. Existing lifecycle hardening retains ownership of
 delivery/session state and retention; trace recording never becomes delivery
