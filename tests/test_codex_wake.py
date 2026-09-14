@@ -71,6 +71,438 @@ def setup_function() -> None:
     codex_wake._scheduled_delivery_ids.clear()
     codex_wake._scheduled_session_generations.clear()
     codex_wake._scheduled_session_delivery_ids.clear()
+    codex_wake._scheduled_session_attempt_ids.clear()
+
+
+def test_delivery_specific_wake_prompt_is_truthful_and_narrow() -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    delivery_id = "relay-delivery-" + "a" * 32
+    prompt = codex_wake._wake_prompt(delivery_id)
+
+    assert delivery_id in prompt
+    assert "do not conclude the inbox is empty" in prompt
+    assert "do not call pallium_relay_receive or resend" in prompt
+    assert "pallium_relay_trace" in prompt
+    assert hook._RELAY_WAKE_RE.fullmatch(prompt)
+    assert not hook._RELAY_WAKE_RE.fullmatch(prompt + " changed")
+    assert codex_wake._wake_prompt("delivery-legacy") == hook.RELAY_WAKE_PROMPT
+
+
+def test_reconciliation_releases_only_exact_terminal_or_missing(tmp_path) -> None:
+    from core.relay import RelayNotFoundError, RelayUnavailableError
+
+    registry = CodexWakeRegistry(tmp_path)
+    reservations = []
+    for index in range(6):
+        item = registry.reserve(
+            recipient_endpoint_id=f"relay-session-{index:032x}",
+            delivery_id=f"relay-delivery-{index:032x}",
+            session_ref="target",
+            container_ref="git:example.test/reconcile",
+        )
+        assert item is not None
+        reservations.append(item)
+
+    class Relay:
+        def codex_wake_reservation_state(self, *, delivery_id):
+            index = int(delivery_id.removeprefix("relay-delivery-"), 16)
+            if index == 0:
+                raise RelayNotFoundError("missing")
+            if index == 1:
+                return {
+                    "delivery_id": delivery_id,
+                    "recipient_endpoint_id": reservations[index].recipient_endpoint_id,
+                    "state": "delivered",
+                }
+            if index == 2:
+                return {
+                    "delivery_id": delivery_id,
+                    "recipient_endpoint_id": reservations[index].recipient_endpoint_id,
+                    "state": "claimed",
+                }
+            if index == 3:
+                return {
+                    "delivery_id": delivery_id,
+                    "recipient_endpoint_id": "relay-session-" + "f" * 32,
+                    "state": "expired",
+                }
+            if index == 4:
+                return {
+                    "delivery_id": delivery_id,
+                    "recipient_endpoint_id": reservations[index].recipient_endpoint_id,
+                    "state": [],
+                }
+            raise RelayUnavailableError("uncertain")
+
+    assert codex_wake.reconcile_codex_relay_wake_reservations(
+        Relay(), registry=registry
+    ) == 2
+    assert registry.snapshot(reservations[0].recipient_endpoint_id) is None
+    assert registry.snapshot(reservations[1].recipient_endpoint_id) is None
+    assert {
+        item.delivery_id for item in registry.reservations()
+    } == {
+        reservations[index].delivery_id for index in (2, 3, 4, 5)
+    }
+    assert {
+        item.delivery_id for item in CodexWakeRegistry(tmp_path).reservations()
+    } == {
+        reservations[index].delivery_id for index in (2, 3, 4, 5)
+    }
+
+
+def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    import storage.sqlite_relay as sqlite_relay
+    from dataclasses import asdict
+    from core.codex_wake import MAX_RESERVATIONS
+
+    clock = [datetime(2030, 1, 1, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return (
+            current
+            if current.tzinfo is not None
+            else current.replace(tzinfo=timezone.utc)
+        )
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    registry = CodexWakeRegistry()
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=storage,
+        codex_wake_registry=registry,
+    ))
+    route = TestClient(app)
+    scope = {"container_ref": "git:example.test/real-reconcile"}
+    assert route.post(
+        "/relay/turn",
+        json={"runtime": "claude-code", "session_ref": "sender", **scope},
+    ).status_code == 200
+    endpoints = {}
+    for name in ("delivered", "expired", "pending", "claimed", "lease"):
+        response = route.post(
+            "/relay/turn",
+            json={"runtime": "codex", "session_ref": name, **scope},
+        )
+        assert response.status_code == 200
+        endpoints[name] = response.json()["session"]["endpoint_id"]
+
+    def send(name: str, *, expiry=None) -> dict:
+        body = {
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": f"codex:{name}",
+            "payload": name,
+            **scope,
+        }
+        if expiry is not None:
+            body["expires_in_seconds"] = expiry
+        else:
+            body["expires_in_seconds"] = None
+        response = route.post("/relay/messages", json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    old = clock[0] - timedelta(seconds=120)
+    clock[0] = old
+    messages = {"expired": send("expired", expiry=60), "lease": send("lease")}
+    lease_claim = route.post(
+        "/relay/turn",
+        json={"runtime": "codex", "session_ref": "lease", **scope},
+    )
+    assert lease_claim.status_code == 200
+    clock[0] = old + timedelta(seconds=120)
+    messages.update({name: send(name) for name in ("delivered", "pending", "claimed")})
+    delivered_claim = route.post(
+        "/relay/turn",
+        json={"runtime": "codex", "session_ref": "delivered", **scope},
+    ).json()["deliveries"][0]
+    assert route.post(
+        "/relay/deliveries/ack",
+        json={
+            "delivery_id": delivered_claim["delivery_id"],
+            "claim_token": delivered_claim["claim_token"],
+            **scope,
+        },
+    ).status_code == 200
+    assert route.post(
+        "/relay/turn",
+        json={"runtime": "codex", "session_ref": "claimed", **scope},
+    ).status_code == 200
+
+    for name, message in messages.items():
+        assert registry.reserve(
+            recipient_endpoint_id=endpoints[name],
+            delivery_id=message["deliveries"][0]["delivery_id"],
+            session_ref=name,
+            container_ref=scope["container_ref"],
+        ) is not None
+    orphan_index = 0
+    while len(registry.reservations()) < MAX_RESERVATIONS:
+        assert registry.reserve(
+            recipient_endpoint_id=f"relay-session-{orphan_index:032x}",
+            delivery_id=f"relay-delivery-{orphan_index:032x}",
+            session_ref=f"orphan-{orphan_index}",
+            container_ref=scope["container_ref"],
+        ) is not None
+        orphan_index += 1
+    assert registry.reserve(
+        recipient_endpoint_id="relay-session-" + "f" * 32,
+        delivery_id="relay-delivery-" + "f" * 32,
+        session_ref="over-capacity",
+        container_ref=scope["container_ref"],
+    ) is None
+
+    state_dir = tmp_path / "persisted-capacity"
+    state_dir.mkdir()
+    (state_dir / "reservations.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "reservations": [asdict(item) for item in registry.reservations()],
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    registry = CodexWakeRegistry(state_dir)
+    assert registry.usable and len(registry.reservations()) == MAX_RESERVATIONS
+    recovered_app = FastAPI()
+    recovered_app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=storage,
+        codex_wake_registry=registry,
+    ))
+    route = TestClient(recovered_app)
+    workers = []
+    native_prompts = []
+
+    def schedule(result, wake_scope, **kwargs):
+        worker = codex_wake.schedule_codex_relay_wake(
+            result, wake_scope, **kwargs
+        )
+        workers.append(worker)
+        return worker
+
+    def launch(session_ref, prompt):
+        native_prompts.append((session_ref, prompt))
+        return None, ("queued", None, 0)
+
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", schedule)
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    monkeypatch.setattr(codex_wake, "_start_launch", launch)
+    from app.dependencies import recover_expired_relay_wakes
+
+    recover_expired_relay_wakes(
+        relay, ClaudeWakeRegistry(), codex_registry=registry
+    )
+    assert native_prompts == []
+    assert {item.delivery_id for item in registry.reservations()} == {
+        messages[name]["deliveries"][0]["delivery_id"]
+        for name in ("pending", "claimed", "lease")
+    }
+    assert len(CodexWakeRegistry(state_dir).reservations()) == 3
+    expected_states = {"pending": "pending", "claimed": "claimed", "lease": "claimed"}
+    for name, expected in expected_states.items():
+        status = route.get(
+            f"/relay/messages/{messages[name]['message_id']}", params=scope
+        )
+        assert status.status_code == 200
+        assert status.json()["deliveries"][0]["state"] == expected
+    replacement = send("delivered")
+    queued_behind_it = send("delivered")
+    for worker in workers:
+        if worker is not None:
+            worker.join(timeout=2)
+            assert not worker.is_alive()
+    assert len(native_prompts) == 1
+    assert native_prompts[0] == (
+        "delivered",
+        codex_wake._wake_prompt(replacement["deliveries"][0]["delivery_id"]),
+    )
+    assert registry.snapshot(endpoints["delivered"]).delivery_id == (
+        replacement["deliveries"][0]["delivery_id"]
+    )
+    queued_status = route.get(
+        f"/relay/messages/{queued_behind_it['message_id']}", params=scope
+    )
+    assert queued_status.status_code == 200
+    assert queued_status.json()["deliveries"][0]["state"] == "pending"
+
+def test_reconciliation_generation_cas_preserves_newer_fence(tmp_path) -> None:
+    registry = CodexWakeRegistry(tmp_path)
+    endpoint_id = "relay-session-" + "a" * 32
+    old = registry.reserve(
+        recipient_endpoint_id=endpoint_id,
+        delivery_id="relay-delivery-" + "1" * 32,
+        session_ref="target",
+        container_ref=SCOPE["container_ref"],
+    )
+    assert old is not None
+    replacement = []
+
+    class Relay:
+        def codex_wake_reservation_state(self, *, delivery_id):
+            assert registry.release_generation(old)
+            replacement.append(registry.reserve(
+                recipient_endpoint_id=endpoint_id,
+                delivery_id="relay-delivery-" + "2" * 32,
+                session_ref="target",
+                container_ref=SCOPE["container_ref"],
+            ))
+            return {
+                "delivery_id": delivery_id,
+                "recipient_endpoint_id": endpoint_id,
+                "state": "delivered",
+            }
+
+    assert codex_wake.reconcile_codex_relay_wake_reservations(
+        Relay(), registry=registry, reservations=(old,)
+    ) == 0
+    assert replacement[0] is not None
+    assert registry.snapshot(endpoint_id) == replacement[0]
+
+def test_reconciliation_batch_write_failure_retains_fences_and_schedule(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    registry = CodexWakeRegistry(tmp_path)
+    reservations = []
+    for index in range(2):
+        item = registry.reserve(
+            recipient_endpoint_id=f"relay-session-{index:032x}",
+            delivery_id=f"relay-delivery-{index:032x}",
+            session_ref=f"target-{index}",
+            container_ref=SCOPE["container_ref"],
+        )
+        assert item is not None
+        reservations.append(item)
+    first = reservations[0]
+    wake_key = (first.session_ref, first.container_ref)
+    codex_wake._scheduled_delivery_ids.add(first.delivery_id)
+    codex_wake._scheduled_session_delivery_ids[wake_key] = first.delivery_id
+    codex_wake._scheduled_session_generations[wake_key] = first.generation
+    codex_wake._scheduled_session_attempt_ids[wake_key] = (
+        "relay-activation-" + "a" * 32
+    )
+
+    class Relay:
+        def codex_wake_reservation_state(self, *, delivery_id):
+            item = next(
+                current for current in reservations
+                if current.delivery_id == delivery_id
+            )
+            return {
+                "delivery_id": delivery_id,
+                "recipient_endpoint_id": item.recipient_endpoint_id,
+                "state": "delivered",
+            }
+
+        def pending_candidate(self, **kwargs):
+            return {
+                "delivery_id": kwargs["delivery_id"],
+                "recipient_endpoint_id": first.recipient_endpoint_id,
+                "state": "pending",
+            }
+
+    monkeypatch.setattr(registry, "_write_locked", lambda *_: False)
+    assert codex_wake.reconcile_codex_relay_wake_reservations(
+        Relay(), registry=registry
+    ) == 0
+    assert not registry.usable
+    assert registry.reservations() == tuple(reservations)
+    assert CodexWakeRegistry(tmp_path).reservations() == tuple(reservations)
+    assert codex_wake._scheduled_delivery_ids == {first.delivery_id}
+    assert codex_wake._scheduled_session_delivery_ids[wake_key] == first.delivery_id
+    assert codex_wake._scheduled_session_generations[wake_key] == first.generation
+
+    replacement = _delivery("relay-delivery-" + "f" * 32)
+    replacement["deliveries"][0]["recipient_endpoint_id"] = (
+        first.recipient_endpoint_id
+    )
+    replacement["deliveries"][0]["recipient_session_ref"] = first.session_ref
+    with patch("app.codex_wake.threading.Thread") as worker_type:
+        assert codex_wake.schedule_codex_relay_wake(
+            replacement,
+            SCOPE,
+            relay_service=Relay(),
+            registry=registry,
+        ) is None
+    worker_type.assert_not_called()
+    assert registry.reservations() == tuple(reservations)
+    assert codex_wake._scheduled_delivery_ids == {first.delivery_id}
+
+def test_schedule_replaces_only_definitively_stale_endpoint_fence(
+    monkeypatch, tmp_path,
+) -> None:
+    registry = CodexWakeRegistry(tmp_path)
+    endpoint_id = "relay-session-" + "a" * 32
+    old = registry.reserve(
+        recipient_endpoint_id=endpoint_id,
+        delivery_id="relay-delivery-" + "0" * 32,
+        session_ref="target-session",
+        container_ref=SCOPE["container_ref"],
+    )
+    assert old is not None
+    new = _delivery("relay-delivery-" + "1" * 32)
+
+    class Relay:
+        def codex_wake_reservation_state(self, *, delivery_id):
+            assert delivery_id == old.delivery_id
+            return {
+                "delivery_id": delivery_id,
+                "recipient_endpoint_id": endpoint_id,
+                "state": "delivered",
+            }
+
+        def pending_candidate(self, **kwargs):
+            return {
+                "delivery_id": kwargs["delivery_id"],
+                "recipient_endpoint_id": endpoint_id,
+                "state": "pending",
+            }
+
+    with patch("app.codex_wake.threading.Thread") as thread:
+        assert codex_wake.schedule_codex_relay_wake(
+            new, SCOPE, relay_service=Relay(), registry=registry
+        ) is thread.return_value
+    assert registry.snapshot(endpoint_id).delivery_id == new["deliveries"][0]["delivery_id"]
+
+
+def test_schedule_retains_active_claim_fence_without_second_wake(tmp_path) -> None:
+    registry = CodexWakeRegistry(tmp_path)
+    endpoint_id = "relay-session-" + "a" * 32
+    old = registry.reserve(
+        recipient_endpoint_id=endpoint_id,
+        delivery_id="relay-delivery-" + "0" * 32,
+        session_ref="target-session",
+        container_ref=SCOPE["container_ref"],
+    )
+    assert old is not None
+
+    class Relay:
+        def codex_wake_reservation_state(self, *, delivery_id):
+            return {
+                "delivery_id": delivery_id,
+                "recipient_endpoint_id": endpoint_id,
+                "state": "claimed",
+            }
+
+    with patch("app.codex_wake.threading.Thread") as thread:
+        assert codex_wake.schedule_codex_relay_wake(
+            _delivery("relay-delivery-" + "1" * 32),
+            SCOPE,
+            relay_service=Relay(),
+            registry=registry,
+        ) is None
+    thread.assert_not_called()
+    assert registry.snapshot(endpoint_id) == old
 
 
 def test_queue_writes_once_from_neutral_codex_home(tmp_path) -> None:
@@ -932,7 +1364,7 @@ def test_profile_is_idempotent_and_narrow(monkeypatch, tmp_path) -> None:
     assert "required = true" in profile
     assert 'pallium_expand_source' in profile
     assert 'default_tools_approval_mode = "prompt"' in profile
-    assert profile.count('approval_mode = "approve"') == 7
+    assert profile.count('approval_mode = "approve"') == 8
     setup_codex._remove_relay_profile()
     assert not (tmp_path / ".codex" / "pallium-relay.config.toml").exists()
 
@@ -1193,7 +1625,9 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     queue_command, queue_kwargs = queue_calls[0]
     assert queue_kwargs["cwd"] == str(codex_home)
     queued_prompt = queue_command[queue_command.index("--message") + 1]
-    assert queued_prompt == codex_wake._wake_prompt()
+    assert queued_prompt == codex_wake._wake_prompt(
+        sent["deliveries"][0]["delivery_id"]
+    )
     assert route.get(
         f"/relay/messages/{sent['message_id']}", params=scope
     ).json()["deliveries"][0]["state"] == "pending"
@@ -1935,7 +2369,9 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     monkeypatch.setattr(hook, "read_hook_input", lambda: {
         "cwd": str(tmp_path),
         "session_id": "crash-target",
-        "prompt": codex_wake._wake_prompt(),
+        "prompt": codex_wake._wake_prompt(
+            sent["deliveries"][0]["delivery_id"]
+        ),
     })
     with pytest.raises(SystemExit):
         hook.main()
@@ -1985,7 +2421,9 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     monkeypatch.setattr(hook, "read_hook_input", lambda: {
         "cwd": str(tmp_path),
         "session_id": "crash-target",
-        "prompt": codex_wake._wake_prompt(),
+        "prompt": codex_wake._wake_prompt(
+            sent["deliveries"][0]["delivery_id"]
+        ),
     })
 
     with pytest.raises(SystemExit):
@@ -2138,10 +2576,9 @@ def test_relay_profile_parses_to_exact_read_only_tools(monkeypatch, tmp_path) ->
     monkeypatch.setattr(setup_codex.Path, "home", lambda: tmp_path)
     setup_codex._install_relay_profile()
     profile = tomllib.loads((tmp_path / ".codex" / "pallium-relay.config.toml").read_text(encoding="utf-8"))["mcp_servers"]["pallium"]
-    expected = {"pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive", "pallium_search_history_by_work_ref", "pallium_search_history", "pallium_expand_source"}
+    expected = {"pallium_relay_send", "pallium_relay_reply", "pallium_relay_ack", "pallium_relay_receive", "pallium_relay_trace", "pallium_search_history_by_work_ref", "pallium_search_history", "pallium_expand_source"}
     assert set(profile["enabled_tools"]) == expected == set(profile["tools"])
     assert {tool["approval_mode"] for tool in profile["tools"].values()} == {"approve"}
-
 
 def test_http_repeat_ack_mcp_ack_and_atomic_reply_release_exact_codex_reservation(
     client, isolated_codex_registry: CodexWakeRegistry,
@@ -2419,8 +2856,7 @@ def test_atomic_reply_releases_first_and_dispatches_next_pending_once(
     with patch(target_scheduler, side_effect=schedule), patch(
         other_scheduler, return_value=None,
     ):
-        sent = []
-        for index in (1, 2):
+        def send(index: int) -> dict:
             response = route.post("/relay/messages", json={
                 "sender_runtime": source_runtime,
                 "sender_session_ref": "sender",
@@ -2430,11 +2866,11 @@ def test_atomic_reply_releases_first_and_dispatches_next_pending_once(
                 **scope,
             })
             assert response.status_code == 200, response.text
-            sent.append(response.json())
-        first_id = sent[0]["deliveries"][0]["delivery_id"]
-        second_id = sent[1]["deliveries"][0]["delivery_id"]
-        assert native_writes == [True]
+            return response.json()
 
+        sent = [send(1)]
+        first_id = sent[0]["deliveries"][0]["delivery_id"]
+        assert native_writes == [True]
         claimed = claim_route.post("/relay/turn", json={
             "runtime": runtime,
             "session_ref": "target",
@@ -2444,6 +2880,15 @@ def test_atomic_reply_releases_first_and_dispatches_next_pending_once(
         assert claimed.status_code == 200, claimed.text
         claim = claimed.json()["deliveries"][0]
         assert claim["delivery_id"] == first_id
+        if runtime == "codex":
+            assert codex_wake.reconcile_codex_relay_wake_reservations(
+                RelayService(client.app.state.pallium_service._storage),
+                registry=registry,
+            ) == 0
+            assert registry.snapshot(endpoint_id).delivery_id == first_id
+        sent.append(send(2))
+        second_id = sent[1]["deliveries"][0]["delivery_id"]
+        assert native_writes == [True]
         reply = route.post("/relay/replies", json={
             "delivery_id": first_id,
             "receipt": claim["receipt"],
@@ -2728,6 +3173,22 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
         **new,
     })
     assert moved.status_code == 200 and moved.json()["deliveries"] == []
+
+    from app.dependencies import recover_expired_relay_wakes
+    from core.claude_wake import ClaudeWakeRegistry
+
+    relay = RelayService(storage)
+    assert codex_wake.reconcile_codex_relay_wake_reservations(
+        relay, registry=registry
+    ) == 0
+    with patch("app.codex_wake._popen") as duplicate_native_write:
+        recover_expired_relay_wakes(
+            relay,
+            ClaudeWakeRegistry(),
+            codex_registry=registry,
+        )
+    duplicate_native_write.assert_not_called()
+    assert registry.snapshot(endpoint_id).outcome == durable_outcome
 
     restarted = CodexWakeRegistry(registry_root)
     read_app = FastAPI()

@@ -99,10 +99,30 @@ class CodexWakeRegistry:
             return True
 
     def release_generation(self, reservation: CodexWakeReservation) -> bool:
+        return bool(self.release_generations((reservation,)))
+
+    def release_generations(
+        self, reservations: tuple[CodexWakeReservation, ...]
+    ) -> tuple[CodexWakeReservation, ...]:
+        """Atomically remove only generations that are still current."""
         with self._lock:
-            if self._reservations.get(reservation.recipient_endpoint_id) != reservation:
-                return False
-            return self._remove_locked(reservation.recipient_endpoint_id)
+            matches = {
+                item.recipient_endpoint_id: item
+                for item in reservations
+                if self._reservations.get(item.recipient_endpoint_id) == item
+            }
+            if not matches:
+                return ()
+            updated = {
+                endpoint_id: item
+                for endpoint_id, item in self._reservations.items()
+                if endpoint_id not in matches
+            }
+            if not self._write_locked(updated):
+                self._usable = False
+                return ()
+            self._reservations = updated
+            return tuple(matches.values())
 
     def release_delivery(self, delivery_id: str) -> CodexWakeReservation | None:
         with self._lock:
@@ -118,6 +138,10 @@ class CodexWakeRegistry:
     def snapshot(self, recipient_endpoint_id: str) -> CodexWakeReservation | None:
         with self._lock:
             return self._reservations.get(recipient_endpoint_id)
+
+    def reservations(self) -> tuple[CodexWakeReservation, ...]:
+        with self._lock:
+            return tuple(self._reservations.values())
 
     def _remove_locked(self, endpoint_id: str) -> bool:
         updated = dict(self._reservations)

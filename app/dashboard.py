@@ -1106,7 +1106,7 @@ def mount_dashboard(
         except RelayUnavailableError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
         return JSONResponse(content=result)
-    @app.get("/dashboard/api/relay/messages/{message_id}/trace")
+    @app.get("/dashboard/api/relay/messages/{message_id:path}/trace")
     def dashboard_relay_message_trace(
         message_id: str,
         limit: int = Query(50, ge=1, le=100),

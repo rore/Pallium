@@ -54,6 +54,13 @@ RELAY_WAKE_PROMPT = (
     "Pallium Relay wake: a persisted delivery may be pending. "
     "The installed UserPromptSubmit hook will claim and inject it for this turn."
 )
+_RELAY_WAKE_RE = re.compile(
+    r"^Pallium Relay wake for relay-delivery-[0-9a-f]{32}\. "
+    r"If no \[Pallium Relay message \.\.\.\] block accompanies this turn, "
+    r"do not conclude the inbox is empty and do not call pallium_relay_receive "
+    r"or resend\. Inspect this exact delivery with pallium_relay_trace by "
+    r"passing it as message_id\.$"
+)
 
 def _strip_ide_context(text: str) -> str:
     return _IDE_TAG_RE.sub("", text).strip()
@@ -75,7 +82,9 @@ def main() -> None:
         content = _strip_ide_context(prompt)
         if not content:
             return
-        internal_wake = prompt == RELAY_WAKE_PROMPT
+        internal_wake = (
+            prompt == RELAY_WAKE_PROMPT or bool(_RELAY_WAKE_RE.fullmatch(prompt))
+        )
 
         discovery = discover_work_refs(cwd)
         current_work_ref = injected_work_ref(discovery)

@@ -624,7 +624,7 @@ def create_router(
             ),
         ))
     @router.get(
-        "/relay/messages/{message_id}/trace",
+        "/relay/messages/{message_id:path}/trace",
         response_model=RelayDeliveryTraceResponse,
     )
     async def relay_message_trace(

@@ -4,6 +4,7 @@ import json
 import threading
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import event
@@ -112,6 +113,109 @@ def test_trace_full_delivery_lifecycle_is_nonmutating_and_payload_free(relay):
     assert "שלום" not in str(trace) and "supersecret" not in str(trace)
 
 
+def test_trace_accepts_delivery_alias_after_exact_message_precedence(relay):
+    from core.relay import RelayNotFoundError
+
+    _storage, service, _endpoint = relay
+    message = _message(service)
+    by_message = service.trace_message(message_id=message["message_id"])
+    by_delivery = service.trace_message(
+        message_id=message["deliveries"][0]["delivery_id"]
+    )
+    assert by_delivery == by_message
+
+    delivery_shaped_message_id = "relay-delivery-" + "f" * 32
+    custom = service.send(
+        sender_runtime="codex",
+        sender_session_ref="sender",
+        recipient="codex:receiver",
+        payload="custom id keeps message precedence",
+        container_ref="git:test",
+        message_id=delivery_shaped_message_id,
+    )
+    with patch(
+        "storage.sqlite_relay.uuid.uuid4",
+        return_value=SimpleNamespace(hex="f" * 32),
+    ):
+        colliding = service.send(
+            sender_runtime="codex",
+            sender_session_ref="sender",
+            recipient="codex:receiver",
+            payload="delivery collides with another message ID",
+            container_ref="git:test",
+            message_id="other-message",
+        )
+    assert colliding["deliveries"][0]["delivery_id"] == delivery_shaped_message_id
+    custom_trace = service.trace_message(message_id=delivery_shaped_message_id)
+    assert custom_trace["message_id"] == delivery_shaped_message_id
+    assert custom_trace["delivery_snapshots"][0]["delivery_id"] == (
+        custom["deliveries"][0]["delivery_id"]
+    )
+
+    with pytest.raises(RelayNotFoundError):
+        service.trace_message(
+            message_id="relay-delivery-" + "0" * 32
+        )
+
+
+def test_delivery_alias_trace_preserves_claim_ack_and_reply_lifecycle(relay):
+    storage, service, _endpoint = relay
+    message = service.send(
+        sender_runtime="codex",
+        sender_session_ref="sender",
+        recipient="codex:receiver",
+        payload="lifecycle",
+        container_ref="git:test",
+        message_id="stable-message",
+    )
+    delivery_id = message["deliveries"][0]["delivery_id"]
+
+    assert service.trace_message(message_id=delivery_id)["message_id"] == (
+        "stable-message"
+    )
+    claimed = service.turn(
+        runtime="codex",
+        session_ref="receiver",
+        container_ref="git:test",
+    )["deliveries"][0]
+    with storage._relay_session_factory() as db:
+        row = db.get(RelayDeliveryRecord, delivery_id)
+        before = (
+            row.state,
+            row.claim_token,
+            row.claimed_at,
+            row.lease_expires_at,
+            row.delivered_at,
+        )
+
+    for _ in range(2):
+        trace = service.trace_message(message_id=delivery_id)
+        assert trace["delivery_snapshots"][0]["state"] == "claimed"
+
+    with storage._relay_session_factory() as db:
+        row = db.get(RelayDeliveryRecord, delivery_id)
+        assert (
+            row.state,
+            row.claim_token,
+            row.claimed_at,
+            row.lease_expires_at,
+            row.delivered_at,
+        ) == before
+
+    reply = service.reply(
+        delivery_id=delivery_id,
+        receipt=claimed["receipt"],
+        payload="reply",
+        container_ref="git:test",
+    )
+    assert reply["message_id"].startswith("relay-reply-")
+    assert service.trace_message(message_id=reply["message_id"])[
+        "message_id"
+    ] == reply["message_id"]
+    delivered = service.trace_message(message_id=delivery_id)
+    assert delivered["delivery_snapshots"][0]["state"] == "delivered"
+
+
 def test_shared_attempt_completion_is_visible_to_every_associated_delivery(relay):
     storage, service, _ = relay
     first = _message(service)
@@ -196,7 +300,7 @@ def test_trace_validation_redaction_and_nonmutating_expired_read(relay):
     )
 
     trace = storage.relay_trace_message(
-        message_id=message["message_id"],
+        message_id=delivery["delivery_id"],
         now=datetime(2020, 1, 1, 0, 2, tzinfo=timezone.utc),
     )
     assert trace["delivery_snapshots"][0]["state"] == "expired"
@@ -566,11 +670,16 @@ def test_api_and_dashboard_share_projection_and_unknown_is_404(client):
     )
 
     api = client.get(f"/relay/messages/{message['message_id']}/trace")
+    delivery_api = client.get(
+        f"/relay/messages/{message['deliveries'][0]['delivery_id']}/trace"
+    )
     dashboard = client.get(
         f"/dashboard/api/relay/messages/{message['message_id']}/trace"
     )
-    assert api.status_code == dashboard.status_code == 200
-    assert api.json() == dashboard.json()
+    assert (
+        api.status_code == delivery_api.status_code == dashboard.status_code == 200
+    )
+    assert api.json() == delivery_api.json() == dashboard.json()
     assert "incomplete page: more events are available" in client.get("/dashboard").text
     unknown = "relay-msg-" + "0" * 32
     assert client.get(f"/relay/messages/{unknown}/trace").status_code == 404

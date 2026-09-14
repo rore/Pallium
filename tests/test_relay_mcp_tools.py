@@ -10,6 +10,7 @@ Tests the FastMCP tool wrapper behaviors that HTTP-layer tests cannot reach:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -118,6 +119,199 @@ def bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get) -> None:
             }
 
     monkeypatch.setattr(PalliumMcpClient, "_get_or_error", _get)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message_id",
+    [".", "..", "stable/message?part#fragment", "unicode-שלום space", "x" * 128],
+)
+async def test_registered_trace_preserves_opaque_message_id_as_one_path_segment(
+    monkeypatch: pytest.MonkeyPatch,
+    asgi_post,
+    asgi_get,
+    message_id: str,
+) -> None:
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+    await asgi_post(
+        "/relay/turn",
+        {"runtime": "codex", "session_ref": "trace-sender", **_SCOPE},
+    )
+    await asgi_post(
+        "/relay/turn",
+        {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE},
+    )
+    sent = await asgi_post(
+        "/relay/messages",
+        {
+            "sender_runtime": "codex",
+            "sender_session_ref": "trace-sender",
+            "recipient": f"{_RUNTIME}:{_SESSION}",
+            "payload": "trace path encoding",
+            "message_id": message_id,
+            **_SCOPE,
+        },
+    )
+
+    server = create_server()
+    content, _ = await server.call_tool(
+        "pallium_relay_trace", {"message_id": message_id}
+    )
+    trace = json.loads(content[0].text)
+    assert trace["message_id"] == message_id
+
+    content, _ = await server.call_tool(
+        "pallium_relay_trace",
+        {"message_id": sent["deliveries"][0]["delivery_id"]},
+    )
+    assert json.loads(content[0].text)["message_id"] == message_id
+@pytest.mark.asyncio
+async def test_registered_delivery_alias_trace_is_nonmutating_across_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+    relay_app,
+    asgi_post,
+    asgi_get,
+) -> None:
+    import storage.sqlite_relay as sqlite_relay
+    from storage.sqlite_schema import RelayDeliveryRecord
+
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+    clock = [datetime(2030, 1, 1, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return (
+            current
+            if current.tzinfo is not None
+            else current.replace(tzinfo=timezone.utc)
+        )
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    await asgi_post(
+        "/relay/turn",
+        {"runtime": "codex", "session_ref": "trace-sender", **_SCOPE},
+    )
+    targets = ("lease", "expired", "reply")
+    for target in targets:
+        await asgi_post(
+            "/relay/turn",
+            {"runtime": _RUNTIME, "session_ref": target, **_SCOPE},
+        )
+
+    async def send(target: str, *, expiry=None):
+        body = {
+            "sender_runtime": "codex",
+            "sender_session_ref": "trace-sender",
+            "recipient": f"{_RUNTIME}:{target}",
+            "payload": target,
+            **_SCOPE,
+        }
+        if expiry is not None:
+            body["expires_in_seconds"] = expiry
+        elif target in {"lease", "reply"}:
+            body["expires_in_seconds"] = None
+        return await asgi_post("/relay/messages", body)
+
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", "git:example.test/other-container")
+    server = create_server()
+    storage = relay_app.state.pallium_service._storage
+
+    def stored(delivery_id: str) -> tuple:
+        with storage._relay_session_factory() as db:
+            row = db.get(RelayDeliveryRecord, delivery_id)
+            return (
+                row.state,
+                row.attempts,
+                row.claim_token,
+                row.claimed_at,
+                row.lease_expires_at,
+                row.delivered_at,
+            )
+
+    async def trace(identifier: str) -> dict:
+        content, _ = await server.call_tool(
+            "pallium_relay_trace",
+            {
+                "message_id": identifier,
+                "container_ref": "git:example.test/other-container",
+            },
+        )
+        return json.loads(content[0].text)
+
+    lease = await send("lease")
+    lease_id = lease["deliveries"][0]["delivery_id"]
+    assert (await trace(lease_id))["delivery_snapshots"][0]["state"] == "pending"
+    claimed = (
+        await asgi_post(
+            "/relay/turn",
+            {"runtime": _RUNTIME, "session_ref": "lease", **_SCOPE},
+        )
+    )["deliveries"][0]
+    assert claimed["delivery_id"] == lease_id
+    assert (await trace(lease_id))["delivery_snapshots"][0]["state"] == "claimed"
+    claimed_stored = stored(lease_id)
+    assert claimed_stored[0] == "claimed" and claimed_stored[1] == 1
+    clock[0] += timedelta(seconds=61)
+    for _ in range(2):
+        lease_trace = await trace(lease_id)
+        assert lease_trace["delivery_snapshots"][0]["state"] == "pending"
+        assert lease_trace["delivery_snapshots"][0]["stored_state"] == "claimed"
+    assert stored(lease_id) == claimed_stored
+
+    expiring = await send("expired", expiry=60)
+    expiring_id = expiring["deliveries"][0]["delivery_id"]
+    pending_stored = stored(expiring_id)
+    assert pending_stored[0] == "pending" and pending_stored[1] == 0
+    clock[0] += timedelta(seconds=61)
+    expired_trace = await trace(expiring_id)
+    assert expired_trace["delivery_snapshots"][0]["state"] == "expired"
+    assert expired_trace["delivery_snapshots"][0]["stored_state"] == "pending"
+    assert stored(expiring_id) == pending_stored
+
+    reply_source = await send("reply")
+    reply_delivery_id = reply_source["deliveries"][0]["delivery_id"]
+    reply_claim = (
+        await asgi_post(
+            "/relay/turn",
+            {"runtime": _RUNTIME, "session_ref": "reply", **_SCOPE},
+        )
+    )["deliveries"][0]
+    reply = await asgi_post(
+        "/relay/replies",
+        {
+            "delivery_id": reply_delivery_id,
+            "receipt": reply_claim["receipt"],
+            "payload": "done",
+            **_SCOPE,
+        },
+    )
+    assert (await trace(reply_delivery_id))["delivery_snapshots"][0][
+        "state"
+    ] == "delivered"
+    assert (await trace(reply["message_id"]))["message_id"] == reply["message_id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message_id", "status_code"),
+    [
+        ("relay-delivery-" + "0" * 32, 404),
+        ("relay-delivery-" + "g" * 32, 404),
+        ("x" * 129, 422),
+    ],
+)
+async def test_registered_trace_rejects_unknown_malformed_and_over_max_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    asgi_post,
+    asgi_get,
+    message_id: str,
+    status_code: int,
+) -> None:
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+    error = await assert_tool_error(
+        create_server(), "pallium_relay_trace", {"message_id": message_id}
+    )
+    assert tool_error_payload(error)["status_code"] == status_code
 
 @pytest.fixture(autouse=True)
 def base_env(monkeypatch: pytest.MonkeyPatch):

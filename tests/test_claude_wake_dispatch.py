@@ -1826,3 +1826,52 @@ def test_posix_transport_post_frame_failure_is_uncertain(monkeypatch: pytest.Mon
     assert result.reason == "peer_frame_uncertain"
     assert result.evidence == ("submission_attempted",)
     assert result.native_retry_safe is False
+
+def test_default_router_codex_wake_registry_stays_in_test_directory(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app import codex_wake
+    from app.dependencies import build_router
+
+    expected_dir = Path(os.environ["PALLIUM_CODEX_WAKE_DIR"])
+    assert expected_dir.parent == tmp_path
+    registry = codex_wake.get_codex_wake_registry()
+    assert registry._path == expected_dir / "reservations.json"
+    monkeypatch.setattr(
+        "app.dependencies.schedule_codex_relay_wake",
+        codex_wake.schedule_codex_relay_wake,
+    )
+    monkeypatch.setattr(codex_wake, "_wake_after_debounce", lambda *_: None)
+
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+    ))
+    http = TestClient(app, client=("127.0.0.1", 50000))
+    scope = {"container_ref": "git:example.test/codex-test-state"}
+    for runtime, session in (("codex", "target"), ("claude-code", "sender")):
+        assert http.post(
+            "/relay/turn",
+            json={"runtime": runtime, "session_ref": session, **scope},
+        ).status_code == 200
+    sent = http.post(
+        "/relay/messages",
+        json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": "codex:target",
+            "payload": "isolated state",
+            **scope,
+        },
+    )
+    assert sent.status_code == 200, sent.text
+    delivery = sent.json()["deliveries"][0]
+    assert registry.snapshot(delivery["recipient_endpoint_id"]).delivery_id == (
+        delivery["delivery_id"]
+    )
+    assert registry._path.is_file()
+    assert registry._path.is_relative_to(tmp_path)

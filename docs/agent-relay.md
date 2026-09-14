@@ -148,9 +148,15 @@ replacement provides crash recovery, not multi-process coordination.
 ## Inspecting a delivery trace
 
 Use `pallium_relay_trace(message_id)` when a delivery looks delayed or a native
-wake result was uncertain. The same nonmutating `relay-delivery-trace/v1`
-projection is available in the message detail dashboard and at
-`GET /relay/messages/{message_id}/trace`.
+wake result was uncertain. Pass either the original message ID or the exact
+`relay-delivery-<32 lowercase hex>` ID from a delivery-specific Codex wake.
+The same nonmutating `relay-delivery-trace/v1` projection is available in the
+message detail dashboard and at `GET /relay/messages/{message_id}/trace`.
+
+A Codex wake turn accompanied by a `[Pallium Relay message ...]` block is normal.
+If the delivery-specific wake appears without that block, inspect its exact
+delivery ID with `pallium_relay_trace`; do not call receive or resend merely
+because the injection is absent.
 
 The ordered `prepared`, `associated`, and `completed` events describe bounded
 native activation evidence. Several deliveries can share one activation attempt. A shared stage is returned with

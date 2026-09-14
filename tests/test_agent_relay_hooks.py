@@ -151,7 +151,14 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
 
 
 def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
-    payload = {"cwd": ".", "session_id": "target-session", "prompt": "hi"}
+    embedded_delivery_id = "relay-delivery-" + "f" * 32
+    if codex:
+        from app import codex_wake
+
+        prompt = codex_wake._wake_prompt(embedded_delivery_id)
+    else:
+        prompt = "hi"
+    payload = {"cwd": ".", "session_id": "target-session", "prompt": prompt}
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
@@ -196,6 +203,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     assert output and output[0][0].startswith("[Pallium Relay message")
     relay_text, scope_line = output[0][0].rsplit("\n\n", 1)
     assert "Review the migration before editing." in relay_text
+    assert not codex or embedded_delivery_id not in relay_text
     injected_scope = json.loads(
         scope_line.removeprefix("[Pallium scope — ").removesuffix("]")
     )
@@ -265,12 +273,17 @@ def test_codex_confirmed_empty_internal_wake_blocks_before_model(monkeypatch, ca
 def test_codex_internal_wake_blocks_without_confirmed_empty(
     monkeypatch, capsys, relay_response, expected_outcome,
 ):
+    from app import codex_wake
     from integrations.codex.hooks import user_prompt_submit as hook
 
     monkeypatch.setattr(
         hook,
         "read_hook_input",
-        lambda: {"cwd": ".", "session_id": "target", "prompt": hook.RELAY_WAKE_PROMPT},
+        lambda: {
+            "cwd": ".",
+            "session_id": "target",
+            "prompt": codex_wake._wake_prompt("relay-delivery-" + "e" * 32),
+        },
     )
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
@@ -290,12 +303,17 @@ def test_codex_internal_wake_blocks_without_confirmed_empty(
 
 
 def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):
+    from app import codex_wake
     from integrations.codex.hooks import user_prompt_submit as hook
 
     monkeypatch.setattr(
         hook,
         "read_hook_input",
-        lambda: {"cwd": ".", "session_id": "target", "prompt": hook.RELAY_WAKE_PROMPT},
+        lambda: {
+            "cwd": ".",
+            "session_id": "target",
+            "prompt": codex_wake._wake_prompt("relay-delivery-" + "e" * 32),
+        },
     )
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "bad\nscope")
