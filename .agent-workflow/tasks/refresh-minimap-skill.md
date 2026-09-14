@@ -27,7 +27,7 @@
 - Discovery found Agent Workflow already matches upstream exactly. Minimap's 11 raw-file differences reduce to one real Git-normalized change: package version 0.3.0 to 0.3.1; the other differences are Windows line endings.
 - Copied all 38 upstream files without deletion; Git normalization retains only the real package-version change.
 - Trigger 2 dropped: the user's correction addressed my request misread, not missing product or skill guidance.
-- Trigger 3 dropped: pply_patch failed because of the documented machine-local Windows sandbox constraint; the unsupported --version probe was not a documented Minimap command and package status supplied the supported evidence.
+- Trigger 3 dropped: apply_patch failed because of the documented machine-local Windows sandbox constraint; the unsupported --version probe was not a documented Minimap command and package status supplied the supported evidence.
 
 ## Evidence
 
