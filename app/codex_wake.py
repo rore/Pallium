@@ -94,7 +94,7 @@ def _reservation_is_stale(
         and state.get("delivery_id") == reservation.delivery_id
         and state.get("recipient_endpoint_id") == reservation.recipient_endpoint_id
         and isinstance(state.get("state"), str)
-        and state["state"] in {"delivered", "expired"}
+        and state["state"] in {"delivered", "expired", "suppressed"}
     )
 
 
