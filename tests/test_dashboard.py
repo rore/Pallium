@@ -253,6 +253,7 @@ class TestDashboardRelaySummary:
                 add_delivery("exact-expiry", "pending", expires_at=now)
                 add_delivery("delivered", "delivered", expires_at=future)
                 add_delivery("suppressed", "suppressed", expires_at=future)
+                add_delivery("stored-expired", "expired", expires_at=future)
                 session.commit()
             before = client.get("/dashboard/api/relay/summary").json()
             sessions = client.get("/dashboard/api/relay/sessions?limit=1&container_ref=c1").json()
@@ -288,6 +289,9 @@ class TestDashboardRelaySummary:
             visible = client.get("/dashboard/api/relay/sessions?container_ref=c1&limit=1").json()
             summary = client.get("/dashboard/api/relay/summary").json()
             assert visible["total"] == 1
+            visible_collision = visible["sessions"][0]["possible_identity_collision"]
+            assert visible_collision["group_endpoint_count"] == 3
+            assert visible_collision["group_claimable_delivery_count"] == 1
             assert summary["possible_identity_collisions"]["endpoint_count"] == 3
             assert summary["possible_identity_collisions"]["details_truncated"] is False
             assert client.get("/dashboard/api/relay/sessions?container_ref=missing").json()["total"] == 0
@@ -324,6 +328,11 @@ class TestDashboardRelayIdentityCollisionBoundaries:
                     ))
                 session.commit()
             body = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
+            oversized = client.get("/dashboard/api/relay/sessions", params={
+                "container_ref": "container-0", "limit": 1,
+            }).json()["sessions"][0]["possible_identity_collision"]
+        assert oversized["group_endpoint_count"] == 101
+        assert oversized["group_claimable_delivery_count"] == 1
         assert body["group_count"] == 2
         assert body["endpoint_count"] == 201
         assert body["detail_group_limit"] == 20
@@ -403,27 +412,38 @@ class TestDashboardRelayIdentityCollisionBoundaries:
     def test_collision_group_detail_limit_preserves_complete_totals(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
         now = datetime.now(timezone.utc).replace(microsecond=0)
+
+        def add_group(session, index: int) -> None:
+            session_ref = f"group-{index:02d}"
+            for sibling in range(2):
+                session.add(RelaySessionRecord(
+                    id=f"{session_ref}-{sibling}", runtime="codex", session_ref=session_ref,
+                    container_ref=f"{session_ref}-container-{sibling}", state="active",
+                    first_seen_at=now, last_seen_at=now,
+                ))
+            session.add(RelayMessageRecord(
+                id=f"{session_ref}-message", sender_runtime="codex", sender_session_ref="sender",
+                recipient_selector=f"{session_ref}-0", container_ref="sender", payload=session_ref,
+                created_at=now - timedelta(minutes=1), expires_at=now + timedelta(hours=1),
+            ))
+            session.add(RelayDeliveryRecord(
+                id=f"{session_ref}-delivery", message_id=f"{session_ref}-message",
+                recipient_runtime="codex", recipient_session_ref=session_ref,
+                recipient_endpoint_id=f"{session_ref}-0", recipient_container_ref=session_ref,
+                state="pending", attempts=0,
+            ))
+
         with TestClient(app) as client:
             with app.state.pallium_service._storage._relay_session_factory() as session:
-                for index in range(21):
-                    session_ref = f"group-{index:02d}"
-                    for sibling in range(2):
-                        session.add(RelaySessionRecord(
-                            id=f"{session_ref}-{sibling}", runtime="codex", session_ref=session_ref,
-                            container_ref=f"{session_ref}-container-{sibling}", state="active",
-                            first_seen_at=now, last_seen_at=now,
-                        ))
-                    session.add(RelayMessageRecord(
-                        id=f"{session_ref}-message", sender_runtime="codex", sender_session_ref="sender",
-                        recipient_selector=f"{session_ref}-0", container_ref="sender", payload=session_ref,
-                        created_at=now - timedelta(minutes=1), expires_at=now + timedelta(hours=1),
-                    ))
-                    session.add(RelayDeliveryRecord(
-                        id=f"{session_ref}-delivery", message_id=f"{session_ref}-message",
-                        recipient_runtime="codex", recipient_session_ref=session_ref,
-                        recipient_endpoint_id=f"{session_ref}-0", recipient_container_ref=session_ref,
-                        state="pending", attempts=0,
-                    ))
+                for index in range(20):
+                    add_group(session, index)
+                session.commit()
+            exact = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
+            assert exact["group_count"] == exact["detail_group_limit"] == 20
+            assert len(exact["groups"]) == 20
+            assert exact["details_truncated"] is False
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                add_group(session, 20)
                 session.commit()
             body = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
         assert body["group_count"] == 21
@@ -432,7 +452,6 @@ class TestDashboardRelayIdentityCollisionBoundaries:
         assert len(body["groups"]) == body["detail_group_limit"] == 20
         assert sum(len(group["endpoints"]) for group in body["groups"]) == 40
         assert body["details_truncated"] is True
-
     def test_collision_diagnostic_tracks_send_ack_move_close_and_reopen_lifecycle(
         self, tmp_path: Path,
     ) -> None:
@@ -451,17 +470,22 @@ class TestDashboardRelayIdentityCollisionBoundaries:
                 "container_ref": "journey-b",
             }).raise_for_status()
 
-            sent = client.post("/relay/messages", json={
-                "sender_runtime": "claude-code",
-                "sender_session_ref": sender["session_ref"],
-                "recipient": first["endpoint_id"],
-                "container_ref": "journey-sender",
-                "payload": "lifecycle",
-            }).json()
-            collision = client.get(
-                "/dashboard/api/relay/summary"
-            ).json()["possible_identity_collisions"]
-            group = next(row for row in collision["groups"] if row["session_ref"] == "journey")
+            def send(payload: str) -> dict:
+                return client.post("/relay/messages", json={
+                    "sender_runtime": "claude-code",
+                    "sender_session_ref": sender["session_ref"],
+                    "recipient": first["endpoint_id"],
+                    "container_ref": "journey-sender",
+                    "payload": payload,
+                }).json()
+
+            sent = send("lifecycle")
+            group = next(
+                row for row in client.get(
+                    "/dashboard/api/relay/summary"
+                ).json()["possible_identity_collisions"]["groups"]
+                if row["session_ref"] == "journey"
+            )
             assert group["claimable_delivery_count"] == 1
 
             claimed = client.post("/relay/turn", json={
@@ -473,40 +497,75 @@ class TestDashboardRelayIdentityCollisionBoundaries:
                 "claim_token": claimed["claim_token"],
                 "container_ref": "journey-a",
             }).raise_for_status()
-            cleared = client.get(
+            assert client.get(
                 "/dashboard/api/relay/summary"
-            ).json()["possible_identity_collisions"]
-            assert cleared["group_count"] == 0
-            assert cleared["claimable_delivery_count"] == 0
+            ).json()["possible_identity_collisions"]["group_count"] == 0
 
+            historical = send("pending across move")
             moved = client.post("/relay/turn", json={
                 "runtime": "codex", "session_ref": "journey",
                 "container_ref": "journey-c",
                 "previous_container_ref": "journey-a",
                 "previous_endpoint_id": first["endpoint_id"],
                 "previous_scope_generation": first["scope_generation"],
+                "max_chars": 1,
             })
             assert moved.status_code == 200
             moved_session = moved.json()["session"]
-            message = next(
-                row for row in client.get("/dashboard/api/relay/messages").json()["messages"]
-                if row["id"] == sent["message_id"]
-            )
+            assert moved_session["endpoint_id"] == first["endpoint_id"]
+            client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "journey",
+                "container_ref": "journey-b",
+            }).raise_for_status()
+
+            page = client.get("/dashboard/api/relay/messages").json()
+            message = next(row for row in page["messages"] if row["id"] == historical["message_id"])
             delivery = message["deliveries"][0]
+            assert delivery["state"] == "pending"
             assert delivery["recipient_endpoint_id"] == first["endpoint_id"]
             assert delivery["recipient_container_ref"] == "journey-a"
+            current = next(row for row in page["endpoint_sessions"] if row["id"] == first["endpoint_id"])
+            assert current["container_ref"] == "journey-c"
+            assert current["possible_identity_collision"]["endpoint_claimable_delivery_count"] == 1
+
+            moved_claim = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "journey",
+                "container_ref": "journey-c",
+            }).json()["deliveries"][0]
+            client.post("/relay/deliveries/ack", json={
+                "delivery_id": moved_claim["delivery_id"],
+                "claim_token": moved_claim["claim_token"],
+                "container_ref": "journey-c",
+            }).raise_for_status()
+            assert client.get(
+                "/dashboard/api/relay/summary"
+            ).json()["possible_identity_collisions"]["group_count"] == 0
 
             client.post("/relay/sessions/close", json={
                 "runtime": "codex", "session_ref": "journey",
                 "container_ref": "journey-c",
             }).raise_for_status()
+            closed = client.get("/dashboard/api/relay/sessions", params={
+                "endpoint_id": first["endpoint_id"],
+            }).json()["sessions"][0]
+            assert closed["lifecycle"] == "closed"
+            assert "possible_identity_collision" not in closed
             reopened = client.post("/relay/turn", json={
                 "runtime": "codex", "session_ref": "journey",
                 "container_ref": "journey-c",
             }).json()["session"]
             assert reopened["endpoint_id"] == moved_session["endpoint_id"]
             assert reopened["state"] == "recent"
-
+            recent = client.get("/dashboard/api/relay/sessions", params={
+                "endpoint_id": first["endpoint_id"],
+            }).json()["sessions"][0]
+            assert recent["lifecycle"] == "recent"
+            assert "possible_identity_collision" not in recent
+            delivered = next(
+                row for row in client.get("/dashboard/api/relay/messages").json()["messages"]
+                if row["id"] == sent["message_id"]
+            )
+            assert delivered["deliveries"][0]["state"] == "delivered"
     def test_collision_aggregate_and_details_share_one_sqlite_snapshot(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
