@@ -23,19 +23,21 @@
 
 **Verification plan:** Possible identity collision with diagnostic-claimable work shall be reported without changing Relay state -> dashboard HTTP E2E for summary, filtered/paginated sessions, and message endpoint projections before/after identical reads. Queue eligibility and candidate ambiguity shall match the exact completion criteria -> boundary matrix in tests/test_dashboard.py, including full sibling evaluation. Exact group/endpoint budgets, multiple groups, and one oversized group shall retain complete totals while bounding output to whole groups -> HTTP E2E. Healthy, independent, and terminal cases shall not be labelled proven failures -> single/split lifecycle assertions. UI shall qualify both the banner and dynamic waiting note while retaining ordinary waiting language outside the diagnostic -> existing renderer harness. Separate Relay storage shall remain authoritative -> split-database E2E. Live incident shall remain safe -> existing repair dry-run/apply fences plus reviewed disposition inventory and post-action dashboard/status evidence.
 
-**Plan review:** The second clean-context review's remaining endpoint-detail bound is incorporated above; final repeat review pending.
+**Plan review:** Approved by the final clean-context review (2026-09-14); see Final revision review under Plan review. Both detail budgets and the unique latest-sibling rule resolve the prior findings.
 
 **Approvals:** Not required at this risk level. User authorized ownership and implementation on 2026-09-14: "so take ownership of this and fix".
 
 **Exceptions:** —
 
-**State:** In review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Work Record created before production edits. Read-only incident evidence and clean-context redline classification completed; production code is untouched pending plan review.
 - Second plan review completed on feat/relay-split-detection at c8a597e2. Production code remains untouched. Next: define both group and endpoint-detail budgets, add the oversized-single-group E2E, then repeat the clean-context plan review.
+
+- Final clean-context plan review approved the revised plan at b69247ad on feat/relay-split-detection. Production code remains untouched. Next: implement the bounded read-only dashboard helper and its caller-facing tests; live repair remains subject to its existing separate fences.
 
 ## Evidence
 
@@ -72,3 +74,19 @@ Implementation clarification, not another blocker: select the unique most-recent
 Reviewed against the complete workflow Plan and Review and risk instructions, agent-redline policy, app/dashboard.py summary/session/message queries, app/dashboard.html waiting labels, RelaySessionRecord constraints, storage/sqlite_relay.py claim and repair predicates, existing dashboard tests/renderer harness, docs/dashboard.md, and docs/testing-conventions.md. This is plan review only; production tests were not rerun, and live apply is not authorized by this verdict.
 
 Review verification: git diff --check passed. The workflow checker accepted all Work Record fields and Blocked state; its only failure was the missing build/redline-verdict.json artifact. apply_patch could not run because the Windows sandbox returned CreateProcessWithLogonW error 1327; a deterministic PowerShell replacement edited only this Work Record.
+
+### Final revision review (2026-09-14)
+
+Verdict: Approved for implementation. Independently checked the current Work Record against the complete workflow Plan and Review, applicability and risk instructions, agent-redline policy and Python extension, dashboard summary/session/message routes, Relay schema and registration/claim/repair code, existing HTTP tests and renderer harness, README, architecture context, Relay/dashboard documentation, and the canonical dashboard roadmap. Elevated/Moderate remains appropriate. The intended paths are blue, app paths are watched, and the proposed helper adds no dependency boundary, API-model, schema, security, or persistence change.
+
+The remaining bound is resolved: complete identity-group counts, claimable delivery totals, oldest ages, and candidate evidence are computed in SQL independently of two fixed output budgets. Whole groups alone are selected; a single group exceeding the endpoint-detail budget is omitted intact and represented in total/truncation metadata. Bounded endpoint-page badges still use complete sibling aggregates when nested detail is omitted. The explicit oversized-single-group, exact-budget, and multiple-group HTTP checks cover the prior failure mode.
+
+The candidate rule is now unambiguous: find the unique latest sibling across all states, then require that same endpoint to be active and within 24 hours. A tied latest timestamp, closed/unreachable latest endpoint, or dormant latest endpoint produces no candidate; an older active sibling is not substituted. This agrees with scoped endpoint uniqueness and permits independent consumers. The diagnostic remains a possible collision, never evidence authorizing convergence or retargeting.
+
+The timestamp/queue contract agrees with Relay claims: unexpired messages with pending deliveries or non-null elapsed claimed leases, joined by recipient_endpoint_id. Existing pending_now and stored claims remain unchanged. Use eligible message creation times for oldest age, clamped to zero. The frozen message-page until timestamp is explicit. The configured Relay session factory and existing HTTP/renderer harnesses support the planned implementation without another storage abstraction.
+
+Documentation alignment is accounted for: docs/dashboard.md currently calls pending delivery neutral, and both dashboard waiting labels need qualification when the new diagnostic is present. The roadmap is already marked done and contains historical pre-redesign audit text; record the added diagnostic as an incremental shipped update rather than implying the original redesign or live repair is newly complete. No additional blocking code/docs drift was found in the reviewed contract.
+
+This approval closes only the Plan and Review checkpoint. Production validation and result review remain pending. Live apply still requires complete reviewed per-delivery dispositions, current reservation/preimage evidence, and the existing High-risk approval conditions; diagnostic-claimable elapsed claims remain ineligible for repair.
+
+Review verification: git diff --check passed. The workflow checker accepted the expanded fields, clean-context review, and Ready to implement state; its only blocking predicate was the absent build/redline-verdict.json artifact, which must be generated with the implementation checks. No production tests were rerun for this plan-only review. apply_patch failed with Windows sandbox CreateProcessWithLogonW error 1327; deterministic PowerShell replacement edited only this Work Record.
