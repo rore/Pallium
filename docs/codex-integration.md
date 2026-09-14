@@ -270,11 +270,11 @@ outcome when Pallium abstains; use `pallium_query_debug` to inspect why.
 
 | Symptom | Check |
 |---|---|
-| Pallium tools are unavailable | Run `pallium service status`, then re-run `pallium setup codex`. |
+| Pallium tools are unavailable and the `pallium` server is missing or invalid | Run `pallium service status`, re-run `pallium setup codex`, then restart Codex. |
 | Relay recipient is missing | Make a normal turn in both tasks and confirm they use the same local Pallium service. Ordinary discovery is container-local; use a known exact endpoint ID or service-global `@name` for cross-container routing. |
 | Relay message remains pending | Make a normal recipient turn or inspect `pallium_relay_status`; active wake is not qualified on every path. |
 | Session History search is empty | Confirm hooks exist in `~/.codex/hooks.json` and search for a distinctive phrase from the earlier turn. |
-| MCP tools are missing | Check `[mcp_servers.pallium]` in `~/.codex/config.toml` and re-run setup. |
+| The `pallium` server is enabled, but a long-running task has no Pallium MCP tools | In Codex Desktop, open **Settings → MCP servers → Pallium → Restart**. If the current task remains stale, restart Codex; create a new task only as a last resort because it loses task continuity. Hook delivery is independent of MCP tool exposure. This matches the host-side symptom tracked in [openai/codex#26196](https://github.com/openai/codex/issues/26196). |
 | Hooks do not run | Ensure `hooks = true` under `[features]` in `~/.codex/config.toml`, and approve the Pallium hooks if Codex asks you to review new or changed hook commands. |
 | MCP reports “Relay scope requires container_ref” | Copy the injected `container_ref` exactly. If none was injected, check that hooks are enabled and trusted; an intentional hookless MCP integration may configure a trusted `PALLIUM_CONTAINER_REF`. Never infer scope from the working directory or session IDs. |
 | Derived memory is absent or irrelevant | Derived memory is optional. Use `pallium_query_debug` before changing prompts or policy. |
