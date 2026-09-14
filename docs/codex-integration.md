@@ -127,10 +127,12 @@ execution-observed hook evidence; missing or unreadable evidence is unknown.
 Codex-owned hook trust and MCP tool exposure remain unknown to Pallium. A
 changed definition requires Codex review and restart; an unchanged reinstall
 preserves verified evidence. The Relay dashboard shows an
-`awaiting_recipient_checkin` observation when wake evidence is newer than the
-exact endpoint check-in. This is neutral until current `review_required` or an
-explicit persisted failure corroborates it; claim, delivery, or expiry remains
-authoritative.
+`awaiting_recipient_checkin` observation only for an unexpired, pending Codex
+delivery with zero receiver attempts and unpruned trace evidence whose latest
+`prepared` or `completed` trace is newer than the exact recipient endpoint
+check-in. Absent or pruned trace evidence is `unknown`. This is neutral until
+current `review_required` or an explicit persisted failure corroborates it;
+claim, delivery, or expiry remains authoritative.
 
 Restart Codex after setup. On the first start, or whenever a hook command changes,
 Codex asks you to review the new or changed hooks. Approve the Pallium hooks if

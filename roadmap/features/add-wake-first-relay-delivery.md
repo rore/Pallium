@@ -36,8 +36,9 @@ new implementation tasks.
 | Track | Owner | Next action |
 |---|---|---|
 | `RW-027` hook readiness | `.agent-workflow/tasks/codex-integration-readiness.md` | Keep hook definition stability and review visibility observable; run the real installed Codex task witness after stable reinstall. |
-| `RW-028` MCP exposure | `add-wake-first-relay-delivery` follow-up | Diagnose Codex-owned MCP tool exposure separately; do not infer it from service reachability or hook execution. |
+| `RW-028` Codex MCP exposure | host recovery follow-up | Same-host/project tasks expose different tool catalogs, including zero Pallium tools after successful hook delivery. Treat this as a Codex host registry/rehydration blocker; do not infer MCP health from hook/service health or add a speculative Pallium workaround. |
 | `RW-029` stranded split identity | guarded Relay operations | Produce reviewed per-delivery dispositions for the diagnosed endpoints before any retarget, ACK, or suppression. |
+| `RW-030` Claude install drift | installed integration lifecycle | Repoint the user-scoped Claude MCP and hooks from the development checkout to the stable installed checkout in the coordinated post-merge install window. Existing hosts retain old subprocesses until their normal restart. |
 
 The dashboard diagnostic is shipped as read-only evidence, not repair. Do not bulk-repair stranded deliveries. The real installed witness gate remains required for send -> next-turn hook claim/injection/ACK -> reply and work-reference attach/detach qualification.
 ## Summary
@@ -189,7 +190,7 @@ concrete wake-correlation diagnosis gap without changing delivery behavior. The
 remediation journey.
 The closed-recipient lifecycle slice subsequently shipped in PR #148 and
 first-run setup qualification completed on 2026-09-08. Retention cleanup is paused
-pending operational evidence. Relay reliability remains first: qualify the current hook-definition readiness and exact-recipient diagnostics before any new activation work. Wake-first retains the residual qualification listed at the top of this file; macOS is demand-driven and OpenCode activation precedes Copilot.
+pending operational evidence. Relay reliability remains first: qualify the current hook-definition readiness and exact-recipient diagnostics before new wake-first activation qualification. Other activation capabilities, traces, work associations, and Claude/Codex validation may proceed independently. Wake-first retains the residual qualification listed at the top of this file; macOS is demand-driven and OpenCode activation precedes Copilot.
 
 1. **S2 contract gate — complete in PR #98.** Delivery lifecycle
    (`pending`, `claimed`, `delivered`, `expired`; `failed` only on separate

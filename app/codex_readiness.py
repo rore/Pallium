@@ -5,16 +5,82 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 _MAX_BYTES = 32 * 1024
 _STATES = {"unknown", "review_required", "verified"}
+_LOCK_WAIT_SECONDS = 2.0
+_HOOK_LOCK_WAIT_SECONDS = 0.15
 
 
 def marker_path(home: Path | None = None) -> Path:
     return (home or Path.home()) / ".pallium" / "hooks" / "readiness" / "codex.json"
+
+
+@contextmanager
+def _marker_lock(
+    home: Path | None = None,
+    *,
+    wait_seconds: float | None = _LOCK_WAIT_SECONDS,
+):
+    """Serialize one bounded marker transition across setup and hook processes."""
+    path = marker_path(home).with_suffix(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = path.open("a+b")
+    try:
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+        if wait_seconds is None:
+            lock_file.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        else:
+            deadline = time.monotonic() + max(0.0, wait_seconds)
+            while True:
+                try:
+                    lock_file.seek(0)
+                    if os.name == "nt":
+                        import msvcrt
+
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(
+                            lock_file.fileno(),
+                            fcntl.LOCK_EX | fcntl.LOCK_NB,
+                        )
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("readiness marker lock timed out")
+                    time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
+        try:
+            yield
+        finally:
+            lock_file.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock_file.close()
 
 
 def _path(value: object) -> str:
@@ -99,34 +165,100 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _setup_value(
+    *,
+    definition: dict[str, str],
+    current: dict[str, Any] | None,
+    changed: bool,
+) -> dict[str, Any]:
+    if not changed and (
+        current is not None
+        and current.get("definition") == definition
+        and current.get("state") in {"review_required", "verified"}
+    ):
+        return current
+    return {
+        "version": 1,
+        "state": "review_required" if changed else "unknown",
+        "definition": definition,
+        "updated_at": _now(),
+    }
+
+
+def reconcile_setup(
+    *,
+    python: str,
+    script: str,
+    install_definition: Callable[[], bool],
+    home: Path | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """Install a hook definition and readiness transition under one process lock."""
+    definition = expected(python, script)
+    with _marker_lock(home, wait_seconds=None):
+        current = _read(marker_path(home))
+        _write(
+            {
+                "version": 1,
+                "state": "unknown",
+                "definition": definition,
+                "updated_at": _now(),
+            },
+            home,
+        )
+        changed = bool(install_definition())
+        value = _setup_value(
+            definition=definition,
+            current=current,
+            changed=changed,
+        )
+        _write(value, home)
+    return changed, _public(value)
+
+
+def reconcile_uninstall(
+    *,
+    uninstall_definition: Callable[[], None],
+    home: Path | None = None,
+) -> None:
+    """Remove the hook definition and marker without a delayed observer race."""
+    with _marker_lock(home, wait_seconds=None):
+        current = _read(marker_path(home))
+        if current is not None:
+            try:
+                _write(
+                    {
+                        "version": 1,
+                        "state": "unknown",
+                        "definition": current["definition"],
+                        "updated_at": _now(),
+                    },
+                    home,
+                )
+            except Exception:
+                pass
+        uninstall_definition()
+        marker_path(home).unlink(missing_ok=True)
+
+
 def setup(
     *, python: str, script: str, changed: bool, home: Path | None = None
 ) -> dict[str, Any]:
     """Record definition reconciliation; never infer Codex-owned trust."""
     definition = expected(python, script)
-    current = _read(marker_path(home))
-    if changed:
-        value = {
-            "version": 1,
-            "state": "review_required",
-            "definition": definition,
-            "updated_at": _now(),
-        }
-    elif (
-        current is not None
-        and current.get("definition") == definition
-        and current.get("state") in {"review_required", "verified"}
-    ):
-        value = current
-    else:
-        value = {
-            "version": 1,
-            "state": "unknown",
-            "definition": definition,
-            "updated_at": _now(),
-        }
+    value = _setup_value(
+        definition=definition,
+        current=None,
+        changed=changed,
+    )
     try:
-        _write(value, home)
+        with _marker_lock(home):
+            current = _read(marker_path(home))
+            value = _setup_value(
+                definition=definition,
+                current=current,
+                changed=changed,
+            )
+            _write(value, home)
     except Exception:
         pass
     return _public(value)
@@ -137,21 +269,22 @@ def observe_execution(
 ) -> bool:
     """Record execution only when it matches the reconciled definition."""
     try:
-        current = _read(marker_path(home))
         definition = expected(python, script)
-        if current is None or current.get("definition") != definition:
-            return False
-        now = _now()
-        _write(
-            {
-                "version": 1,
-                "state": "verified",
-                "definition": definition,
-                "observed_at": now,
-                "updated_at": now,
-            },
-            home,
-        )
+        with _marker_lock(home, wait_seconds=_HOOK_LOCK_WAIT_SECONDS):
+            current = _read(marker_path(home))
+            if current is None or current.get("definition") != definition:
+                return False
+            now = _now()
+            _write(
+                {
+                    "version": 1,
+                    "state": "verified",
+                    "definition": definition,
+                    "observed_at": now,
+                    "updated_at": now,
+                },
+                home,
+            )
         return True
     except Exception:
         return False

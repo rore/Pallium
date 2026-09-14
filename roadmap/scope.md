@@ -49,15 +49,18 @@ Shipped since last major scope update:
 
 Current focus — Relay reliability (reconciled 2026-09-14):
 
-`add-wake-first-relay-delivery` is the first execution item because unreliable
-agent delivery blocks work on every other track. Its current owned slices are:
+`add-wake-first-relay-delivery` is the first execution item for Relay
+reliability and new wake-first activation qualification. Its current owned
+slices are:
 Codex hook definition/review readiness in
 `.agent-workflow/tasks/codex-integration-readiness.md`; separate Codex-owned MCP
 tool-exposure diagnosis; and guarded disposition of stranded split-identity
 deliveries. The shipped dashboard diagnosis is not repair. No bulk retarget or
-ACK occurs without reviewed per-delivery dispositions. New feature work waits
-until the real installed send → hook delivery/ACK → reply → work-reference
-attach/detach witness passes or an explicit blocker is recorded.
+ACK occurs without reviewed per-delivery dispositions. New wake-first activation
+qualification waits until the real installed send → hook delivery/ACK → reply →
+work-reference attach/detach witness passes or an explicit blocker is recorded.
+Parallel Session History vNext work and independent activation capabilities,
+traces, work associations, and Claude/Codex validation remain allowed.
 
 Parallel focus — Session History vNext (reconciled 2026-09-12):
 

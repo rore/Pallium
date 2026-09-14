@@ -38,9 +38,11 @@
   reconciled hook-definition state and exact matching UserPromptSubmit execution.
   Missing, malformed, oversized, unreadable, or mismatched evidence stays
   `unknown`; marker failure is fail-open for Relay delivery.
-- Setup preserves Codex-owned trust data, reports service/configuration,
-  execution evidence, hook trust, and MCP exposure separately, and removes its
-  marker best-effort on uninstall.
+- Setup preserves Codex-owned trust data and reports service/configuration,
+  execution evidence, hook trust, and MCP exposure separately. Hook-definition
+  install and uninstall now share a blocking cross-process transition lock with
+  the marker, while hook observation has a separate bounded lock/deadline so it
+  never blocks Relay delivery.
 - The Relay dashboard now reports bounded exact-delivery/endpoint
   `awaiting_recipient_checkin` evidence. Accepted busy work is neutral; current
   `review_required` or persisted `failed`/`deferred` evidence makes the signal
@@ -66,11 +68,12 @@
 
 - Smart clean-context result review found and drove fixes for exact entrypoint
   identity, anti-self-verification, bounded reads, mixed failure wording,
-  renderer coverage, and test-state isolation; final review approved with no
-  remaining correctness or security finding.
-- `tests/test_codex_integration.py`: 41 passed before review corrections; the
-  corrected suite plus exact lifecycle target passed 44 tests. Final full-file
-  rerun is part of the pre-PR verification below.
+  renderer coverage, test-state isolation, setup/observer serialization,
+  uninstall/observer serialization, and a delivery-independent hook deadline.
+  Final amended review approved with no remaining blocking finding.
+- `tests/test_codex_integration.py`: 47 passed after the review corrections,
+  including Windows/POSIX subprocess lock contention, delayed observer versus
+  uninstall, bounded slow module loading, and exact execution-before-input order.
 - `tests/test_dashboard.py`: 57 passed, including exact recipient check-in,
   review-required, explicit failure, associated trace, pruned/unknown, expiry,
   no-expiry persistence, and real claim clearing.
@@ -81,12 +84,22 @@
 - Python syntax compilation passed for every changed Python file. `git diff
   --check` passed. The repository virtual environment does not include Ruff, so
   Ruff was not claimed locally.
-- Full repository suite: 4,969 passed, 34 skipped, 2 expected failures in
-  202.65 seconds. Its only first-run failure was an existing byte-for-byte
+- Final full repository suite: 4,973 passed, 34 skipped, 2 expected failures
+  in 220.35 seconds. Its only earlier first-run failure was
+  an existing byte-for-byte
   dashboard snapshot assertion over live age counters; the test now excludes only
   `*_age_seconds`, its exact node passed, and the full rerun is green.
 - Import-boundary report passed. Final redline is Gray/Elevated with no boundary
   violation or checkpoint; the agent-workflow checker exits clean.
+- One Python 3.13 CI run hit the expected retryable `relay_busy` contract in an
+  unchanged Claude cross-container wake test. The failed job reran green and the
+  exact test passed ten consecutive local runs, so this remains tracked
+  contention evidence rather than a blocker or proof of a Claude routing fault.
+- Claude Windows and Linux wake evidence already exists, but current live
+  attach/detach coverage is unverified. A separate user-scope installation drift
+  from the development checkout to the stable checkout is tracked for the
+  coordinated post-merge install window; it is distinct from Codex readiness and
+  the Codex host tool-registry issue.
 - Installed real Codex qualification remains intentionally pending until merge,
   stable-checkout reinstall, Codex review/restart, and the bounded send -> hook
   claim/injection/ACK -> reply -> work-reference attach/detach witness.
