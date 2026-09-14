@@ -114,12 +114,19 @@ This command:
 5. Creates the hook state directory for dedup tracking
 6. Verifies the Pallium service is reachable
 
-Setup reconciles Pallium-managed hook registrations left by other checkout
-paths while preserving unrelated hooks. Setup reports whether the hook
-configuration changed. A changed absolute hook command is still new to Codex
-and requires review; repeated setup from the same checkout keeps an
-already-current hook definition in place and reports that no new review should
-be required.
+Setup preserves unrelated hooks and repairs recognized registrations whose old
+executable or script is gone. If recognized hooks still point at another live
+checkout, setup stops before changing any Codex/Pallium configuration. For an
+intentional checkout move, run:
+
+```bash
+pallium setup codex --replace-existing-checkout
+```
+
+That flag reconciles Pallium-managed hooks across checkout paths and repoints
+the MCP server. A changed absolute hook command is still new to Codex and
+requires review; repeated setup from the same checkout keeps an already-current
+definition in place and reports that no new review should be required.
 
 Setup also records a bounded readiness marker outside per-session hook state. It
 separates installed configuration and service reachability from
@@ -275,7 +282,7 @@ outcome when Pallium abstains; use `pallium_query_debug` to inspect why.
 | Relay message remains pending | Make a normal recipient turn or inspect `pallium_relay_status`; active wake is not qualified on every path. |
 | Session History search is empty | Confirm hooks exist in `~/.codex/hooks.json` and search for a distinctive phrase from the earlier turn. |
 | The `pallium` server is enabled, but a long-running task has no Pallium MCP tools | In Codex Desktop, open **Settings → MCP servers → Pallium → Restart**. If the current task remains stale, restart Codex; create a new task only as a last resort because it loses task continuity. Hook delivery is independent of MCP tool exposure. This matches the host-side symptom tracked in [openai/codex#26196](https://github.com/openai/codex/issues/26196). |
-| Hooks do not run | Ensure `hooks = true` under `[features]` in `~/.codex/config.toml`, and approve the Pallium hooks if Codex asks you to review new or changed hook commands. |
+| Hooks do not run | Ensure `hooks = true` under `[features]` in `~/.codex/config.toml`, and approve the Pallium hooks if Codex asks you to review new or changed hook commands. If setup reports another live checkout, rerun it from the intended installation with `--replace-existing-checkout`, then review and restart Codex. |
 | MCP reports “Relay scope requires container_ref” | Copy the injected `container_ref` exactly. If none was injected, check that hooks are enabled and trusted; an intentional hookless MCP integration may configure a trusted `PALLIUM_CONTAINER_REF`. Never infer scope from the working directory or session IDs. |
 | Derived memory is absent or irrelevant | Derived memory is optional. Use `pallium_query_debug` before changing prompts or policy. |
 | MCP reports “Pallium not configured” | Re-run setup; it supplies `PALLIUM_BASE_URL` automatically. |
