@@ -438,8 +438,9 @@ def test_reconciliation_batch_write_failure_retains_fences_and_schedule(
     assert registry.reservations() == tuple(reservations)
     assert codex_wake._scheduled_delivery_ids == {first.delivery_id}
 
+@pytest.mark.parametrize("terminal_state", ["delivered", "suppressed"])
 def test_schedule_replaces_only_definitively_stale_endpoint_fence(
-    monkeypatch, tmp_path,
+    monkeypatch, tmp_path, terminal_state: str,
 ) -> None:
     registry = CodexWakeRegistry(tmp_path)
     endpoint_id = "relay-session-" + "a" * 32
@@ -458,7 +459,7 @@ def test_schedule_replaces_only_definitively_stale_endpoint_fence(
             return {
                 "delivery_id": delivery_id,
                 "recipient_endpoint_id": endpoint_id,
-                "state": "delivered",
+                "state": terminal_state,
             }
 
         def pending_candidate(self, **kwargs):
@@ -468,11 +469,23 @@ def test_schedule_replaces_only_definitively_stale_endpoint_fence(
                 "state": "pending",
             }
 
-    with patch("app.codex_wake.threading.Thread") as thread:
-        assert codex_wake.schedule_codex_relay_wake(
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch(
+        "app.codex_wake._start_launch", return_value=(None, ("queued", None, 0))
+    ) as wake:
+        worker = codex_wake.schedule_codex_relay_wake(
             new, SCOPE, relay_service=Relay(), registry=registry
-        ) is thread.return_value
-    assert registry.snapshot(endpoint_id).delivery_id == new["deliveries"][0]["delivery_id"]
+        )
+        assert worker is not None
+        worker.join(timeout=2)
+        assert not worker.is_alive()
+    wake.assert_called_once_with(
+        "target-session", codex_wake._wake_prompt(new["deliveries"][0]["delivery_id"])
+    )
+    current = registry.snapshot(endpoint_id)
+    assert current is not None
+    assert current.delivery_id == new["deliveries"][0]["delivery_id"]
+    assert current.outcome == "accepted"
 
 
 def test_schedule_retains_active_claim_fence_without_second_wake(tmp_path) -> None:

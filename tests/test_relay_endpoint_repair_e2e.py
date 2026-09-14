@@ -13,7 +13,10 @@ import pytest
 from sqlalchemy import select
 
 from app.cli.service import _PalliumLock
+from app.dependencies import recover_expired_relay_wakes
 from app.tools.relay_endpoint_repair import _clean_adoption_ids, _digest, _maintenance_fence, _repair_storage, _validate_inputs, build_manifest
+from core.claude_wake import ClaudeWakeRegistry
+from core.codex_wake import CodexWakeRegistry
 from core.relay import RelayConflictError, RelayService
 from storage.sqlite import SQLiteStorageProvider
 from storage import sqlite_relay
@@ -95,10 +98,25 @@ def test_repair_adopts_suppresses_and_replays_before_revalidation(client, tmp_pa
 def test_suppressed_is_terminal_across_http_dashboard_and_wake(client, tmp_path, monkeypatch):
     storage = client.app.state.pallium_service._storage
     now = datetime.now(timezone.utc)
-    _clean_wake_stores(tmp_path, monkeypatch)
+    codex_dir, _ = _clean_wake_stores(tmp_path, monkeypatch)
+    registry = CodexWakeRegistry(codex_dir)
     _seed(storage, now)
+    assert registry.reserve(
+        recipient_endpoint_id=SOURCE_A,
+        delivery_id=DELIVERY_A,
+        session_ref="same-session",
+        container_ref="git:old-a",
+    ) is not None
     manifest = _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "suppress"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
     _apply(storage, manifest, now)
+
+    restarted = CodexWakeRegistry(codex_dir)
+    assert restarted.snapshot(SOURCE_A) is not None
+    recover_expired_relay_wakes(
+        RelayService(storage), ClaudeWakeRegistry(), codex_registry=restarted,
+    )
+    assert restarted.snapshot(SOURCE_A) is None
+    assert CodexWakeRegistry(codex_dir).snapshot(SOURCE_A) is None
 
     status = client.get(f"/relay/messages/{MESSAGE_A}", params={"container_ref": "git:sender"})
     assert status.status_code == 200 and status.json()["deliveries"][0]["state"] == "suppressed"
