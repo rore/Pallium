@@ -32,13 +32,14 @@ if (
 
 function Get-ReadinessProbeTimeoutSeconds(
     [Diagnostics.Stopwatch]$Timer,
-    [double]$BudgetSeconds
+    [double]$BudgetSeconds,
+    [int]$MaximumSeconds = 2
 ) {
     $remaining = [Math]::Floor($BudgetSeconds - $Timer.Elapsed.TotalSeconds)
     if ($remaining -lt 1) {
         throw "readiness deadline elapsed"
     }
-    return [int][Math]::Min(2, $remaining)
+    return [int][Math]::Min($MaximumSeconds, $remaining)
 }
 
 function Stop-ProcessTree([int]$ProcessId, [switch]$Strict) {
@@ -325,7 +326,7 @@ while (($ReadinessTimeoutSeconds - $readinessTimer.Elapsed.TotalSeconds) -ge 1) 
             throw $lastCheck
         }
 
-        $probeTimeout = Get-ReadinessProbeTimeoutSeconds $readinessTimer $ReadinessTimeoutSeconds
+        $probeTimeout = Get-ReadinessProbeTimeoutSeconds $readinessTimer $ReadinessTimeoutSeconds 10
         $lastCheck = "/debug/queue/health request"
         $queue = Invoke-WebRequest -Uri "$BaseUrl/debug/queue/health" -UseBasicParsing -TimeoutSec $probeTimeout
         if ($queue.StatusCode -lt 200 -or $queue.StatusCode -ge 300) {
