@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -47,6 +47,22 @@
 - Verification: content-equivalent pre-rebase production c7e5921f passed full `tests/ -x -q` (4,955 passed, 34 skipped, 2 expected xfails in 303.38s) and the renderer harness. After rebasing onto PR 184, production 958478f2 passed `tests/test_dashboard.py tests/test_agent_relay_e2e.py` (102 passed in 67.40s) and `git diff --check`.
 
 ## Result review
+
+### Final clean-context re-review (2026-09-14)
+
+Verdict: Blocked on the remaining E2E evidence in prior finding 3. Reviewed the complete main...06cc9502 diff as a non-implementer against the recorded completion criteria, workflow Result Review checkpoint, redline policy/Python extension, dashboard callers, SQLite transaction setup, renderer, tests, and authoritative dashboard/Relay/roadmap context. Elevated/Moderate remains appropriate: all seven changed paths are blue, the app paths are watched, and no new boundary, API-model, schema, security, persistence, or runtime-config checkpoint is introduced.
+
+Prior findings 1, 2, and 4 are resolved. The helper explicitly starts a deferred SQLite read transaction before its aggregate queries; aggregate selection, whole-group details, and endpoint evidence now share that snapshot. The deterministic HTTP interleave regression proves the first read retains 100 siblings and the next read omits the newly oversized 101-sibling group. The created_at <= as_of predicate excludes later messages from frozen-page evidence, with a two-read HTTP regression. The session renderer consumes is_most_recent_candidate and escapes the qualified display-candidate badge. The roadmap/display claim now agrees with the UI, and the earlier trailing blank-line issue is gone.
+
+**[P2] Finish the previously required observable diagnostic matrix** - tests/test_dashboard.py:295, 405, and 436. The exact-100/oversized-101 endpoint test checks summary details only; it never reads a session/message badge for an endpoint whose group is omitted. The group-limit test exercises 21 groups but not exactly 20. No collision test requests lifecycle-filtered siblings or excludes a stored expired delivery (exact message expiry is a different predicate). The new lifecycle test ACKs its only delivery before moving, then checks historical delivery fields; it cannot detect a regression that joins claimable backlog through the old container instead of the canonical endpoint ID. It also performs close/reopen without reading the diagnostic after either transition. Add the missing assertions to the existing HTTP cases: visible badges retain complete evidence for filtered and oversized groups; exactly 20 groups are complete/untruncated; stored expired rows remain excluded; pending/elapsed historical backlog follows a moved endpoint; and dashboard reads observe claim, ACK, close, and reopen, including independently polling siblings. These were explicit Plan/Verification commitments and prior result-review requirements, not new scope. The newly added candidate-state, full-row non-mutation, frozen-time, snapshot, and Unicode renderer checks satisfy the other parts of finding 3.
+
+Verification adequacy: accept the implementation owner's recorded full non-slow suite at pre-rebase c7e5921f (4,955 passed, 34 skipped, 2 expected xfails) together with 102 affected dashboard/Relay tests at 958478f2 after rebasing onto PR 184. The diagnostic production changes are content-equivalent across that rebase; the additional dashboard differences are the inherited exact-session/deep-link feature. This is adequate regression evidence for the implemented paths and does not discharge absent E2E assertions. Independently reran the four snapshot, frozen-time/non-mutation, candidate, and lifecycle nodes with the existing repository virtual environment and -q -n 0: 4 passed in 2.21s. The shipped plain-language renderer harness passed with app/dashboard.html. git diff --check main...HEAD passed. An initial invocation found no python on PATH and omitted the renderer's required input; both were corrected before the successful checks.
+
+Scope and drift: the single dashboard helper reuses the existing configured Relay database and SQLAlchemy dependency; no unnecessary abstraction or mutation path was added. Documentation accurately preserves diagnostic uncertainty and the stricter guarded-repair rule. The roadmap retains the original redesign's done status; its incremental diagnostic text describes the implemented behavior, but this slice is not approved until the missing checks pass. Live merge/installation/service validation and the 24-delivery incident's complete disposition inventory or explicit guarded blocker remain subsequent work; this review neither authorizes repair nor marks that outcome complete.
+
+Review-record verification: agent-workflow-check.py --repo-root . --slug relay-split-detection returned clean (exit 0), and git diff --check passed.
+
+Recovery: feat/relay-split-detection; reviewed head 06cc9502. Complete the single remaining coverage finding, run the affected checks, and request another independent result review. No production, test, or documentation files were edited by this reviewer. apply_patch failed with Windows sandbox CreateProcessWithLogonW error 1327; deterministic PowerShell replacement edited only this Work Record.
 
 ### Clean-context result review (2026-09-14)
 
