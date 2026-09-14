@@ -3,9 +3,9 @@
 
 **Target:** Pallium integration.
 
-**Scope:** Refresh `.claude/skills/minimap-roadmap/**` verbatim from Minimap's current packaged skill; record this Work Record.
+**Scope:** Refresh `.claude/skills/minimap-roadmap/**` verbatim from Minimap's current packaged skill, reconcile the stale Relay trace sentence in `roadmap/scope.md`, and record this Work Record.
 
-**Constraints:** Do not change Pallium runtime, data, roadmap content, Agent Workflow installation, or Minimap upstream. Use Minimap's packaged lifecycle scripts.
+**Constraints:** Do not change Pallium runtime, data, other roadmap content, Agent Workflow installation, or Minimap upstream. Use Minimap's packaged lifecycle scripts.
 
 **Completion criteria:** Installed and upstream skill trees have identical file lists and content modulo Windows line endings, the installed package reports Minimap 0.3.1, and its launcher successfully runs Minimap for Pallium.
 
@@ -15,7 +15,7 @@
 
 **Reason:** Redline excludes vendored `.claude/skills/**`; the Work Record is blue. This is a deterministic package copy with no behavior authored in Pallium.
 
-**Approach:** Copy the current 38-file upstream `minimap-roadmap` package over Pallium's installed copy without deleting unrelated paths, then verify exact tree parity.
+**Approach:** Copy the current 38-file upstream `minimap-roadmap` package over Pallium's installed copy without deleting unrelated paths, reconcile the completed Relay trace note in `roadmap/scope.md`, then verify exact tree parity.
 
 **Verification:** SHA-256 tree comparison, installed `start-server.mjs`, and Pallium's focused Minimap integration checks if present.
 
