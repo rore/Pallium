@@ -212,6 +212,10 @@ function Invoke-WebRequest {
     Log-Call "GET $path"
     Log-Call "Timeout:${path}:$TimeoutSec"
     $script:QueueCalls++
+    if ($env:RW010_SCENARIO -eq "slow_queue") {
+        if ($TimeoutSec -lt 3) { throw "simulated queue timeout" }
+        [Threading.Thread]::Sleep(3000)
+    }
     if ($env:RW010_SCENARIO -eq "terminal_queue" -or
         ($env:RW010_SCENARIO -eq "transient" -and $script:QueueCalls -le 21)) {
         return [pscustomobject]@{ StatusCode = 503 }
@@ -532,13 +536,39 @@ def test_transient_readiness_checks_all_contracts_before_success(tmp_path: Path)
     assert calls.count("GET /status") == 24
     assert calls.count("GET /debug/queue/health") == 22
     assert calls.count("Sleep:500") == 24
-    timeouts = [call for call in calls if call.startswith("Timeout:")]
-    assert {call.rsplit(":", 1)[0] for call in timeouts} == {
-        "Timeout:/health",
-        "Timeout:/status",
-        "Timeout:/debug/queue/health",
-    }
-    assert all(1 <= int(call.rsplit(":", 1)[1]) <= 2 for call in timeouts)
+    for path, maximum in (
+        ("/health", 2),
+        ("/status", 2),
+        ("/debug/queue/health", 10),
+    ):
+        timeouts = [
+            int(call.rsplit(":", 1)[1])
+            for call in calls
+            if call.startswith(f"Timeout:{path}:")
+        ]
+        assert timeouts
+        assert all(1 <= timeout <= maximum for timeout in timeouts)
+
+
+def test_queue_health_can_use_longer_timeout_within_same_deadline(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_restart(
+        tmp_path, "slow_queue", readiness_timeout_seconds=6.0,
+    )
+
+    assert result.returncode == 0, _output(result)
+    queue_timeouts = [
+        int(call.rsplit(":", 1)[1])
+        for call in calls
+        if call.startswith("Timeout:/debug/queue/health:")
+    ]
+    assert queue_timeouts and 2 < queue_timeouts[0] <= 10
+    assert all(
+        int(call.rsplit(":", 1)[1]) <= 2
+        for call in calls
+        if call.startswith(("Timeout:/health:", "Timeout:/status:"))
+    )
 
 
 @pytest.mark.parametrize(
@@ -563,6 +593,12 @@ def test_terminal_readiness_exhausts_exact_budget_without_success(
     assert "failed the 2.1-second readiness budget" in output
     assert last_check in output
     assert calls.count(last_endpoint) >= 1
+    if scenario == "terminal_queue":
+        assert all(
+            int(call.rsplit(":", 1)[1]) <= 2
+            for call in calls
+            if call.startswith("Timeout:/debug/queue/health:")
+        )
 
 def test_stop_only_accepts_empty_listener_not_found(tmp_path: Path) -> None:
     result, calls = _run_restart(tmp_path, "empty_listener_notfound", stop_only=True)

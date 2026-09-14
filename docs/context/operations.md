@@ -117,7 +117,9 @@ registered VBS, interpreter, optional working directory, configured port, and
 `app.run` imports before stopping a healthy process tree. After launch it reports
 success only when `/health`, `/status`, and `/debug/queue/health` satisfy their
 documented readiness contracts; failures name the last check and Pallium log.
-The default readiness budget is three minutes; an explicit
+Queue health is a live database query and may use up to ten seconds; health and
+status remain capped at two seconds, and every request is clipped to the one
+overall readiness deadline. The default readiness budget is three minutes; an explicit
 `-ReadinessTimeoutSeconds` value keeps its exact finite deadline.
 For offline Relay endpoint repair, first start the upgraded service once so it creates the repair ledger, then run `scripts/restart-service.ps1 -StopOnly`. The wrapper stops the installed task without starting it again and fails if the task, listener, or managed process tree cannot be conclusively drained.
 
