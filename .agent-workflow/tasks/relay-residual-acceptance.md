@@ -19,10 +19,23 @@
 
 **Verification:** Exact payload-free Relay recipient/status/trace reads; fresh send/reply evidence when available; final queue/record diff review; `git diff --check`; fresh Redline and agent-workflow checks; smart result review and PR CI.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - 2026-09-15: Applicability requires the normal workflow because Work Records are never documentation-exempt. Clean-context pre-edit Redline classified the bounded Work Record/roadmap scope BLUE/Routine with no checkpoint.
 - 2026-09-15: Initial live discovery found the prior architect completion reply still effective pending on an active Codex endpoint with no delivery attempt; native activation was accepted/queued but payload admission is not yet proven. The service rejected guessed runtime `claude`; address-book discovery established the canonical runtime is `claude-code`.
+- 2026-09-15: Rediscovered the two prior real Claude Code witnesses in their actual cross-container scopes. The ready qualified endpoint received fresh probe `relay-msg-db9718e914f14fd3ad72c072156a9028` as delivered on attempt one, then created linked reply `relay-reply-37841b1d30d26423d169651be8a303f6cc5d2645ef4283ff05dba02fa4789aaa`. Its return delivery is pending to this busy Codex session; no MCP receive or replay was used.
+- 2026-09-15: Payload-free backlog review at `2026-09-15T02:38:37.8905141+03:00` projected 27 effective pending deliveries: 21 recent/active and six dormant (three active-health, three unreachable-health). Four are older than 24 hours and nine remain in two diagnosed identity-collision groups. No row was changed.
+- 2026-09-15: `apply_patch` hit the documented Windows `1327` launcher failure; the three named record updates used one exact-anchor deterministic replacement.
+
+## Evidence and ownership
+
+- Fresh Claude return delivery `relay-delivery-d627a07565074ba9b8df499967143fd4` is stored pending with attempts `0` on this active Codex endpoint after native queue acceptance. Next owner: this session's next admitted hook turn must consume it, then exact trace must show delivered.
+- Architect completion reply delivery `relay-delivery-9b2cbf80d00e41c28fbd22beace78db5` remains stored pending with attempts `0` on the active architect Codex endpoint. Next owner: architect session `01a07bef-18c8-71b2-89ab-c0cbe91e73ad` at its next natural turn; exact trace, not the later heartbeat, must prove consumption.
+- Of the 27-item snapshot, 19 other recent qualified deliveries remain owned by their exact recipient sessions at the next eligible turn. Three dormant active-health deliveries require their originating session owners to resume or explicitly disposition them; three dormant unreachable-health deliveries require an explicit per-message user/product decision. Relay exposes no current cancellation operation, health does not terminalize delivery, and identity collisions prohibit blind retargeting. No user action is needed for the two live return legs; historical abandonment/cancellation cannot close without those individual decisions.
+- Coordination remains under `roadmap/board.md` First item `add-wake-first-relay-delivery`; the bounded acceptance links here from the original Work Record and R1.5 roadmap rather than creating a new feature or queue.
+- Verification passed: exact Relay recipient/status/trace reads, payload-free backlog projection, import-boundary report, fresh Redline verdict (BLUE/no checkpoint), agent-workflow all blocking predicates, and git diff --check. No broad tests were rerun because no runtime code changed.
+- Smart review caught a malformed first changed-files list that collapsed paths and produced false-empty Redline coverage. The list was regenerated as three exact lines; the fresh verdict classifies the roadmap file BLUE, excludes the two Work Records as bookkeeping, reports no checkpoint or contract surface, and the fresh workflow check passes.
+- Smart result review `/root/residual_acceptance_review`: APPROVE after independent exact-scope traces confirmed the Claude outbound delivery and both pending return legs, and after the corrected Redline/workflow rerun.

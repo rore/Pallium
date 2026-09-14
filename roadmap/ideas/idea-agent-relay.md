@@ -262,6 +262,28 @@ Codex recovery/association collection item, not all of R1.5: the queued
 interruption/restart, macOS, OpenCode, fresh-Claude, reply-consumption, and
 historical-disposition checks above remain honest residuals.
 
+#### Residual acceptance coordination — active (2026-09-15)
+
+The follow-up record is `.agent-workflow/tasks/relay-residual-acceptance.md`; queue
+ownership remains the `add-wake-first-relay-delivery` First item in
+`roadmap/board.md`. A fresh message reached a rediscovered real, ready Claude Code
+endpoint on its first attempt, and Claude created the linked reply. That reply is
+pending to the currently busy originating Codex session. The earlier architect
+completion reply is likewise pending to its active Codex endpoint. Their next
+owners are the exact receiving sessions at their next admitted hook turns; only an
+exact delivered trace closes consumption.
+
+The payload-free snapshot at `2026-09-15T02:38:37.8905141+03:00` contains 27
+effective pending deliveries: 21 recent/active and six dormant, split between
+three active-health and three unreachable-health destinations. Four are older
+than 24 hours and nine are in two diagnosed identity-collision groups. Nineteen
+other recent qualified deliveries stay with their exact recipient sessions.
+Dormant active-health deliveries require their originating session owners to
+resume or explicitly disposition them; dormant unreachable-health deliveries
+require an explicit per-message user/product decision. Relay has no current
+cancellation operation, destination health does not terminalize delivery, and
+identity collisions rule out blind retargeting. No backlog record was mutated.
+
 #### Optional correlated turn-end notification — proposed follow-up
 
 Dogfood exposed a narrower cross-runtime coordination gap: after an actionable
