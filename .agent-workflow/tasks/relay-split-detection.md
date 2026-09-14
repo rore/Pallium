@@ -29,10 +29,12 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
+
+- Implementation and independent result review reached revision bbb8f4be. Result review is blocked on two reproduced diagnostic correctness issues and the recorded coverage gaps; see Result review for evidence and next actions.
 
 - Work Record created before production edits. Read-only incident evidence and clean-context redline classification completed; production code is untouched pending plan review.
 - Second plan review completed on feat/relay-split-detection at c8a597e2. Production code remains untouched. Next: define both group and endpoint-detail budgets, add the oversized-single-group E2E, then repeat the clean-context plan review.
@@ -45,7 +47,27 @@
 
 ## Result review
 
-- Pending.
+### Clean-context result review (2026-09-14)
+
+Verdict: Blocked. Reviewed the complete branch diff from main through bbb8f4beea70f302fd3e08d2eab2989359562b22 independently of implementation. The read-only diagnostic is in scope and Elevated/Moderate remains appropriate: all seven changed paths are blue, app paths are watched, and no dependency boundary, schema, security, or red-zone checkpoint was added. The implementation needs the following corrections before result approval.
+
+1. **[P2] Preserve one SQLite read snapshot for aggregate and detail queries** — app/dashboard.py:223 (aggregate/selection queries at 186 and 205). The session context does not start a SQLite read transaction under the configured driver's default transaction behavior. A sibling registered after selection is included by the unbounded detail SELECT even though the earlier endpoint count was used to enforce the budget. An isolated reproduction using the shipped helper and SQLiteStorageProvider._create_engine inserted the 101st sibling immediately before the detail SELECT: driver in_transaction=False; advertised endpoint_count=100; group endpoint_count=100; actual details=101; detail_endpoint_limit=100; details_truncated=False. Concurrent claims or ACKs can likewise make group and endpoint counts disagree. Make these reads share a real read snapshot without a write lock or storage mutation, and add a deterministic HTTP regression that changes sibling/backlog state between query phases and asserts whole-group bounds and internally consistent evidence.
+
+2. **[P2] Exclude messages created after the frozen diagnostic timestamp** — app/dashboard.py:120. The claimable CTE checks expiry but not creation time. Message pages pass their frozen until timestamp to this helper, yet newly created messages outside that page's time boundary can produce a collision badge and count at the older timestamp. A temporary-database reproduction with the only message created at as_of + 10 minutes returned claimable_delivery_count=1 and endpoint_claimable_delivery_count=1 at as_of. Apply the message creation boundary to diagnostic evidence and add a two-read HTTP regression retaining the original until while a later message arrives.
+
+3. **[P2] Complete the promised collision E2E matrix** — tests/test_dashboard.py:335 and 411. The candidate test exercises latest-unreachable then latest-active; it does not assert latest-closed, dormant, tied-latest, or exact 24-hour eligibility. No diagnostic test drives create -> send -> claim -> ACK -> close/reopen or verifies a moved endpoint's historical delivery attribution. The non-mutation check reads only one claimed delivery and one message, omitting endpoint/session timestamps and other affected rows; the Unicode check checks JSON text but never executes the new badge renderer with HTML-sensitive identity. Add focused HTTP and existing-renderer cases for these recorded commitments, plus the two production regressions above. Include badges for siblings hidden by lifecycle/page filters and an oversized omitted group, exact group budget, and the stored expired state. The existing successful subsystem run does not discharge these absent assertions.
+
+4. **[P3] Align the candidate-display claim with the shipped UI** — roadmap/features/add-dashboard-operations-and-relay-workspace.md:173 and app/dashboard.html:2803. The roadmap says a display candidate is shown, but no browser renderer consumes most_recent_endpoint_id or is_most_recent_candidate; only the shared-identity count badge is displayed. Either show the qualified most-recent candidate using the existing session UI, or describe it explicitly as API evidence. Keep the roadmap's existing done status for the older dashboard redesign; this incremental diagnostic and live repair must not be represented as completed until their own checks finish.
+
+Other review conclusions: the SQL joins by canonical recipient_endpoint_id, computes global sibling evidence before page filters, uses the configured Relay session factory, and does not mutate claims, attempts, tokens, ACKs, or endpoints. Pending/live/elapsed/null-lease and exact-expiry predicates agree with the recorded eligibility contract. Unique-latest selection checks all lifecycle states before active/recent eligibility. Whole-group selection bounds Python materialization correctly in a stable snapshot. The SQLAlchemy CASE, aggregate, CTE, and tuple-IN usage is valid on the exercised SQLite backend. The added dependency is a SQLAlchemy import already installed; the single dashboard helper is an appropriate small implementation without a new storage abstraction. UI text uses textContent or esc and retains native button semantics; no direct escaping or keyboard regression was found. The repair-versus-diagnostic distinction in docs is accurate, subject to the display wording above.
+
+Verification evidence: the reviewer ran the two isolated temporary-SQLite reproductions above against the shipped helper; no live database was accessed or changed. The implementation owner supplied affected dashboard/Relay evidence of 98 passed and full-suite evidence of 1,869 passed, 2 skipped, and 1 xfailed before test_lost_response_replays_persisted_transition_intent failed under xdist; that exact node then passed with -n 0. This is not a clean full-suite result and is recorded without rerunning known passing work. The generated redline verdict lists BLUE, no boundary violations, and no required checkpoints. Reviewer git diff --check main...HEAD also reports a new blank line at tests/test_dashboard.py:1336; remove the trailing blank lines with the next test edit.
+
+Recovery: branch feat/relay-split-detection; reviewed production revision bbb8f4beea70f302fd3e08d2eab2989359562b22. Fix findings 1-3, reconcile finding 4, rerun the affected tests and workflow checks, then request an independent result re-review. Merge, installation/service validation, and the live incident's complete per-delivery disposition inventory or explicit guarded blocker remain outstanding; this review does not authorize live repair or mark the broader outcome complete.
+
+Review-record verification: agent-workflow-check.py --repo-root . --slug relay-split-detection returned clean (exit 0); git diff --check passed for this Work Record update.
+
+Skill feedback trigger 3 dropped: the Windows process-creation failure is machine/runtime-owned, not an agent-workflow defect. apply_patch failed with CreateProcessWithLogonW error 1327; deterministic PowerShell replacement edited only this Work Record.
 
 ## Plan review
 
