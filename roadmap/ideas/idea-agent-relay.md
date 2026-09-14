@@ -233,6 +233,35 @@ R1.5 does not restart exited processes, spawn agents, infer recipients, or super
 work. Resuming an agent that is no longer running is a separate orchestration
 hypothesis.
 
+#### Installed recovery acceptance — bounded complete (2026-09-15)
+
+The Codex empty-wake recovery slice is closed for its installed Windows boundary.
+An exact delivery-specific wake reached the intended session and became delivered;
+that session produced a delivery-derived Relay reply without MCP receive or a
+separate ACK. Fresh installed-state inspection confirms all managed Codex hooks and
+MCP configuration use the stable installed checkout, the Relay profile exposes
+send/receive/reply/trace, and matching UserPromptSubmit execution is observed.
+The reply itself remains pending at its recipient, so send acceptance is not
+reported as receipt.
+
+The same session also completed a real explicit work-association lifecycle for the
+existing empty-wake diagnostic task: attach, list and participant readback, detach,
+and final absence, while preserving an unrelated explicit association. Existing
+Claude evidence remains separate: one ready endpoint has a delivered
+`peer_frame_written` wake and one busy endpoint retains durable fallback; no fresh
+Claude round trip was added to this acceptance pass.
+
+A payload-free post-recovery snapshot contains 25 pending deliveries: 19 for
+recent qualified endpoints and six targeting dormant sessions, split between three
+active-health and three unreachable-health destinations. Dormant is a session-lifecycle
+label; active and unreachable describe destination health and do not terminalize an
+existing pending delivery. Four are older than 24 hours and nine belong to a
+diagnosed endpoint identity collision. They remain durable evidence requiring recipient turns or
+explicit disposition, not stale wake fences to delete. This closes the bounded
+Codex recovery/association collection item, not all of R1.5: the queued
+interruption/restart, macOS, OpenCode, fresh-Claude, reply-consumption, and
+historical-disposition checks above remain honest residuals.
+
 #### Optional correlated turn-end notification — proposed follow-up
 
 Dogfood exposed a narrower cross-runtime coordination gap: after an actionable
