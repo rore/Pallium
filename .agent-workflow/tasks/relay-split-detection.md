@@ -34,7 +34,7 @@
 
 ## Implementation
 
-- Result-review findings were remediated at c7e5921f: one SQLite read snapshot now covers aggregate/detail evidence; frozen diagnostics exclude later-created messages; candidate/lifecycle/history/non-mutation/renderer regressions cover the recorded gaps; the UI shows the qualified display candidate.
+- Result-review findings were remediated at 958478f2 after rebase: one SQLite read snapshot now covers aggregate/detail evidence; frozen diagnostics exclude later-created messages; candidate/lifecycle/history/non-mutation/renderer regressions cover the recorded gaps; the UI shows the qualified display candidate.
 
 - Work Record created before production edits. Read-only incident evidence and clean-context redline classification completed; production code is untouched pending plan review.
 - Second plan review completed on feat/relay-split-detection at c8a597e2. Production code remains untouched. Next: define both group and endpoint-detail budgets, add the oversized-single-group E2E, then repeat the clean-context plan review.
@@ -44,7 +44,7 @@
 ## Evidence
 
 - Pre-edit redline: dashboard/tests/docs/roadmap/Work Record are blue; app paths watched; no boundary, API, schema, security, or persistence checkpoint. storage/sqlite_relay.py is intentionally excluded from the planned diff.
-- Verification at c7e5921f: `tests/test_dashboard.py tests/test_agent_relay_e2e.py` passed 100 tests; `tests/dashboard_plain_language_renderer.mjs app/dashboard.html` passed; full `tests/ -x -q` passed 4,955 with 34 skipped and 2 expected xfails in 303.38s; `git diff --check` passed.
+- Verification: content-equivalent pre-rebase production c7e5921f passed full `tests/ -x -q` (4,955 passed, 34 skipped, 2 expected xfails in 303.38s) and the renderer harness. After rebasing onto PR 184, production 958478f2 passed `tests/test_dashboard.py tests/test_agent_relay_e2e.py` (102 passed in 67.40s) and `git diff --check`.
 
 ## Result review
 
