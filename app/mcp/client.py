@@ -12,6 +12,7 @@ import json
 import time
 import uuid
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -505,8 +506,10 @@ class PalliumMcpClient:
         }
         if as_of_sequence is not None:
             params["as_of_sequence"] = as_of_sequence
+        # Encode the ID as exactly one path segment. Dots are escaped too.
+        path_id = quote(message_id, safe="").replace(".", "%2E")
         return await self._get_or_error(
-            f"/relay/messages/{message_id}/trace", params
+            f"/relay/messages/{path_id}/trace", params
         )
 
     async def relay_receive(

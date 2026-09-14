@@ -1453,6 +1453,46 @@ class SQLiteRelayMixin:
                 "recipient_endpoint_id": session.id,
             }
 
+    def relay_codex_wake_reservation_state(
+        self,
+        *,
+        delivery_id: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Read exact payload-free state without mutable session scope."""
+        current = _now(now)
+        with self._relay_session_factory() as db:
+            row = db.execute(
+                select(RelayDeliveryRecord, RelayMessageRecord)
+                .join(
+                    RelayMessageRecord,
+                    RelayMessageRecord.id == RelayDeliveryRecord.message_id,
+                )
+                .where(RelayDeliveryRecord.id == delivery_id)
+            ).one_or_none()
+            if row is None:
+                raise RelayNotFoundError(
+                    "relay entity not found in the requested scope"
+                )
+            delivery, message = row
+            state = delivery.state
+            if (
+                state in {"pending", "claimed"}
+                and _now(message.expires_at) <= current
+            ):
+                state = "expired"
+            elif (
+                state == "claimed"
+                and delivery.lease_expires_at is not None
+                and _now(delivery.lease_expires_at) <= current
+            ):
+                state = "pending"
+            return {
+                "delivery_id": delivery.id,
+                "recipient_endpoint_id": delivery.recipient_endpoint_id,
+                "state": state,
+            }
+
     def relay_wake_candidates(
         self,
         *,
@@ -1881,6 +1921,11 @@ class SQLiteRelayMixin:
         current = _now(now)
         with self._relay_session_factory() as db:
             message = db.get(RelayMessageRecord, message_id)
+            if message is None and _REPAIR_DELIVERY_RE.fullmatch(message_id):
+                delivery = db.get(RelayDeliveryRecord, message_id)
+                if delivery is not None:
+                    message_id = delivery.message_id
+                    message = db.get(RelayMessageRecord, message_id)
             if message is None:
                 raise RelayNotFoundError(
                     "relay entity not found in the requested scope"

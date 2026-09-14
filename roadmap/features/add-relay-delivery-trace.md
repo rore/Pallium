@@ -19,6 +19,10 @@ to the existing Relay dashboard, with an HTTP read path and an agent-facing
 The trace explains delivery; it never controls or proves it independently of the
 existing authoritative delivery records.
 
+A stabilization follow-up also accepts an exact delivery ID after exact message-ID
+precedence, includes that ID in Codex wake diagnostics, reconciles only definitively
+stale durable wake reservations, and isolates test wake state from the installed profile.
+
 ## Why
 
 Current state and attempt counts cannot reconstruct every delayed-claim or

@@ -72,12 +72,17 @@ The service reconciliation loop scans eligible never-claimed pending deliveries 
 expired claims at startup and every 30 seconds, then dispatches through the existing
 runtime adapter without claiming early. Codex confirmed or ambiguous native wake
 submission retains the oldest per-session
-trigger without blind retry inside the live service because native queue writes are
-not idempotent; a real hook-time turn clears that ownership. Service restart still
-reconstructs pending work, but process-local ownership cannot deduplicate a prompt
-accepted by Codex before the restart. An exact internal Codex wake that cannot render a
-verified delivery is blocked before deduplication, memory ingestion, or model work;
-ordinary user prompts remain fail-open.
+trigger without blind retry because native queue writes are not idempotent. Exact
+ACK, MCP ACK, or atomic reply releases that delivery's durable ownership. Startup
+and send-time reconciliation remove only missing deliveries or exact
+endpoint-matching terminal reservations; pending, active claims, endpoint
+mismatches, and uncertain reads keep their fences. Service restart reloads those
+durable reservations before reconstructing pending work, preventing blind
+resubmission of accepted or uncertain prompts. An exact
+internal Codex wake is excluded from deduplication and memory ingestion. The native
+prompt can remain model-visible when no delivery block accompanies it, so it carries
+the exact delivery ID for nonmutating trace inspection. Ordinary user prompts remain
+fail-open.
 
 This protects concurrent users inside the supported single-Uvicorn-process service.
 Horizontal multi-process wake dispatch is not yet qualified because recovery

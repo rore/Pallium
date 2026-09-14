@@ -1388,7 +1388,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         cursor: str | None = None,
         container_ref: str | None = None,
     ) -> str:
-        """Explain one Relay delivery with bounded best-effort activation evidence. Pass next_cursor to continue; absence or an uncertain outcome is not a reason to resend."""
+        """Explain one Relay delivery with bounded best-effort activation evidence. message_id accepts an existing message ID or its exact delivery ID (relay-delivery- plus 32 lowercase hex characters). Pass next_cursor to continue; absence or an uncertain outcome is not a reason to resend."""
         parsed = _relay_trace_cursor(cursor)
         if parsed is None:
             return _relay_error_text(

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from core.codex_wake import CodexWakeRegistry, CodexWakeReservation
+from core.relay import RelayNotFoundError
 from core.relay_activation import ActivationAttemptResult
 
 
@@ -74,6 +75,49 @@ def relay_wake_log_refs(
 def _log_fingerprint(value: str) -> str:
     digest = hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()[:16]
     return f"sha256:{digest}"
+
+
+def _reservation_is_stale(
+    relay_service: Any,
+    reservation: CodexWakeReservation,
+) -> bool:
+    try:
+        state = relay_service.codex_wake_reservation_state(
+            delivery_id=reservation.delivery_id,
+        )
+    except RelayNotFoundError:
+        return True
+    except Exception:
+        return False
+    return (
+        isinstance(state, dict)
+        and state.get("delivery_id") == reservation.delivery_id
+        and state.get("recipient_endpoint_id") == reservation.recipient_endpoint_id
+        and isinstance(state.get("state"), str)
+        and state["state"] in {"delivered", "expired"}
+    )
+
+
+def reconcile_codex_relay_wake_reservations(
+    relay_service: Any,
+    *,
+    registry: CodexWakeRegistry | None = None,
+    reservations: tuple[CodexWakeReservation, ...] | None = None,
+) -> int:
+    """Release only exact terminal or missing durable wake fences."""
+    registry = registry or get_codex_wake_registry()
+    candidates = registry.reservations() if reservations is None else reservations
+    stale = tuple(
+        item for item in candidates if _reservation_is_stale(relay_service, item)
+    )
+    released = registry.release_generations(stale)
+    for reservation in released:
+        _clear_schedule(reservation)
+    if released:
+        logger.info(
+            "codex_relay_wake reconciled_stale_reservations=%d", len(released)
+        )
+    return len(released)
 
 
 def _emit_trace(
@@ -175,6 +219,22 @@ def schedule_codex_relay_wake(
         container_ref=container_ref,
         still_pending=still_pending,
     )
+    if reservation is None and relay_service is not None:
+        existing = registry.snapshot(endpoint_id)
+        if existing is not None:
+            reconcile_codex_relay_wake_reservations(
+                relay_service,
+                registry=registry,
+                reservations=(existing,),
+            )
+            if registry.snapshot(endpoint_id) is None:
+                reservation = registry.reserve(
+                    recipient_endpoint_id=endpoint_id,
+                    delivery_id=delivery_id,
+                    session_ref=session_ref,
+                    container_ref=container_ref,
+                    still_pending=still_pending,
+                )
     if reservation is None:
         with _scheduled_lock:
             attempt_id = _scheduled_session_attempt_ids.get(wake_key)
@@ -227,7 +287,9 @@ def _wake_after_debounce(
     attempt_started = time.monotonic()
 
     def start() -> _LaunchStart:
-        return _start_launch(reservation.session_ref, _wake_prompt())
+        return _start_launch(
+            reservation.session_ref, _wake_prompt(reservation.delivery_id)
+        )
 
     try:
         current, launch = registry.run_if_current(reservation, start)
@@ -414,10 +476,21 @@ def _windows_drive_is_local(drive: str) -> bool:
         return False
     return drive_type not in {0, 1, 4}
 
-def _wake_prompt() -> str:
-    return (
+
+def _wake_prompt(delivery_id: str | None = None) -> str:
+    legacy = (
         "Pallium Relay wake: a persisted delivery may be pending. "
         "The installed UserPromptSubmit hook will claim and inject it for this turn."
+    )
+    if not isinstance(delivery_id, str) or not re.fullmatch(
+        r"relay-delivery-[0-9a-f]{32}", delivery_id
+    ):
+        return legacy
+    return (
+        f"Pallium Relay wake for {delivery_id}. If no [Pallium Relay message ...] "
+        "block accompanies this turn, do not conclude the inbox is empty and do not "
+        "call pallium_relay_receive or resend. Inspect this exact delivery with "
+        "pallium_relay_trace by passing it as message_id."
     )
 
 

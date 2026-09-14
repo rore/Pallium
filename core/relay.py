@@ -565,6 +565,22 @@ class RelayService:
             raise RelayUnavailableError("relay endpoint scope lookup is not supported")
         return resolve(endpoint_id)
 
+    def codex_wake_reservation_state(
+        self, *, delivery_id: str
+    ) -> dict[str, Any]:
+        """Read exact payload-free state for durable Codex wake reconciliation."""
+        query = getattr(
+            self._store, "relay_codex_wake_reservation_state", None
+        )
+        if not callable(query):
+            raise RelayUnavailableError(
+                "relay Codex wake reconciliation is not supported "
+                "by the configured storage"
+            )
+        return query(
+            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128)
+        )
+
     def wake_candidates(
         self, *, delivery_id: str | None = None
     ) -> list[dict[str, Any]]:

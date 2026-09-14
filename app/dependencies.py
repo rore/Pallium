@@ -15,6 +15,7 @@ from core.relay_activation import current_platform, relay_activation_snapshot
 from app.codex_wake import (
     get_codex_wake_registry,
     mark_codex_relay_wake_admitted,
+    reconcile_codex_relay_wake_reservations,
     release_codex_relay_wake,
     relay_wake_log_refs,
     schedule_codex_relay_wake,
@@ -626,6 +627,9 @@ def recover_expired_relay_wakes(
 ) -> None:
     """Recheck and dispatch persisted pending work without changing Relay state."""
     codex_registry = codex_registry or get_codex_wake_registry()
+    reconcile_codex_relay_wake_reservations(
+        relay_service, registry=codex_registry
+    )
     for candidate in relay_service.wake_candidates():
         try:
             current = relay_service.wake_candidates(
