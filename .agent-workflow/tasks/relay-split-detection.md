@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -46,6 +46,7 @@
 - Pre-edit redline: dashboard/tests/docs/roadmap/Work Record are blue; app paths watched; no boundary, API, schema, security, or persistence checkpoint. storage/sqlite_relay.py is intentionally excluded from the planned diff.
 - Verification: content-equivalent pre-rebase production c7e5921f passed full `tests/ -x -q` (4,955 passed, 34 skipped, 2 expected xfails in 303.38s) and the renderer harness. After rebasing onto PR 184, production 958478f2 passed `tests/test_dashboard.py tests/test_agent_relay_e2e.py` (102 passed in 67.40s) and `git diff --check`.
 - Final coverage remediation 2f5718df: exact 20-group and over-limit boundaries, filter-hidden and oversized-group endpoint badges, stored expired exclusion, pending historical attribution across endpoint move, independent sibling polling, and diagnostic reads after ACK/close/reopen. The affected suites passed 102 tests in 53.26s; renderer and diff checks passed.
+- Narrowed re-review remediation 95c94df3 explicitly exercises a lifecycle-filter-hidden sibling badge, reads the diagnostic while the only delivery has a live claim, and proves an independently polling sibling receives nothing while the addressed endpoint retains the backlog. The complete nine-test matrix and renderer passed.
 
 ## Result review
 
