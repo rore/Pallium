@@ -178,6 +178,12 @@ def _compact_json_chars(value: object) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str))
 
 
+def _repair_claim_fingerprint(token: str | None) -> str | None:
+    if token is None:
+        return None
+    return hashlib.sha256(("pallium-relay-repair-claim-token\x00" + token).encode()).hexdigest()
+
+
 def _delivery_receipt(claim_token: str | None) -> str | None:
     if claim_token is None:
         return None
@@ -224,17 +230,34 @@ class SQLiteRelayMixin:
     def relay_endpoint_repair_apply(self, manifest: dict[str, Any], *, reservation_validator: Callable[[], set[str]] | None = None, now: datetime | None = None) -> dict[str, Any]:
         """Apply one exact, reviewed repair snapshot under one write transaction."""
         required = {"schema_version", "database_identity", "source_endpoint_ids", "destination_endpoint_id", "expected_scopes", "endpoint_preimage", "reservation_evidence", "dispositions"}
-        if not isinstance(manifest, dict) or set(manifest) != required or manifest["schema_version"] != 1:
+        if not isinstance(manifest, dict) or set(manifest) != required or manifest.get("schema_version") not in {1, 2}:
             raise RelayConflictError("repair manifest schema is invalid")
         source_ids, destination_id, scopes = manifest["source_endpoint_ids"], manifest["destination_endpoint_id"], manifest["expected_scopes"]
         dispositions = manifest["dispositions"]
         if (not isinstance(source_ids, list) or not 1 <= len(source_ids) <= 32 or len(set(source_ids)) != len(source_ids) or any(not isinstance(value, str) or not _REPAIR_ENDPOINT_RE.fullmatch(value) for value in source_ids) or not isinstance(destination_id, str) or not _REPAIR_ENDPOINT_RE.fullmatch(destination_id) or destination_id in source_ids or not isinstance(scopes, dict) or set(scopes) != {*source_ids, destination_id} or any(not isinstance(value, str) or not value for value in scopes.values()) or not isinstance(dispositions, list) or not 1 <= len(dispositions) <= 512):
             raise RelayConflictError("repair manifest endpoint or disposition bounds are invalid")
         required_disposition = {"delivery_id", "disposition", "preimage"}
-        required_delivery = {"delivery_id", "message_id", "recipient_runtime", "recipient_session_ref", "recipient_endpoint_id", "recipient_container_ref", "state", "claim_token", "claimed_at", "lease_expires_at", "delivered_at", "attempts"}
+        schema_version = manifest["schema_version"]
+        required_delivery = {"delivery_id", "message_id", "recipient_runtime", "recipient_session_ref", "recipient_endpoint_id", "recipient_container_ref", "state", "claim_token" if schema_version == 1 else "claim_token_fingerprint", "claimed_at", "lease_expires_at", "delivered_at", "attempts"}
         required_message = {"message_id", "sender_runtime", "sender_session_ref", "sender_endpoint_id", "recipient_selector", "container_ref", "payload_sha256", "payload_length", "redacted", "in_reply_to", "created_at", "expires_at"}
         if any(not isinstance(item, dict) or set(item) != required_disposition or not isinstance(item["delivery_id"], str) or not _REPAIR_DELIVERY_RE.fullmatch(item["delivery_id"]) or item["disposition"] not in {"adopt", "suppress"} or not isinstance(item["preimage"], dict) or set(item["preimage"]) != {"delivery", "message"} or not isinstance(item["preimage"]["delivery"], dict) or set(item["preimage"]["delivery"]) != required_delivery or not isinstance(item["preimage"]["message"], dict) or set(item["preimage"]["message"]) != required_message or item["preimage"]["delivery"].get("delivery_id") != item["delivery_id"] or item["preimage"]["delivery"].get("message_id") != item["preimage"]["message"].get("message_id") for item in dispositions):
             raise RelayConflictError("repair manifest disposition preimage is invalid")
+        if any(
+            item["preimage"]["delivery"]["state"] not in {"pending", "claimed"}
+            or (
+                schema_version == 2
+                and (
+                    (item["preimage"]["delivery"]["state"] == "pending" and item["preimage"]["delivery"]["claim_token_fingerprint"] is not None)
+                    or (item["preimage"]["delivery"]["state"] == "claimed" and (not isinstance(item["preimage"]["delivery"]["claim_token_fingerprint"], str) or re.fullmatch(r"[0-9a-f]{64}", item["preimage"]["delivery"]["claim_token_fingerprint"]) is None))
+                )
+            )
+            for item in dispositions
+        ):
+            raise RelayConflictError("repair manifest delivery state or claim fingerprint is invalid")
+        if schema_version == 1 and any(item["preimage"]["delivery"]["state"] != "pending" for item in dispositions):
+            raise RelayConflictError("version 1 repair manifests support pending deliveries only")
+        if schema_version == 2 and any(item["preimage"]["delivery"]["state"] == "claimed" and item["disposition"] != "suppress" for item in dispositions):
+            raise RelayConflictError("expired claimed delivery may only be suppressed")
         delivery_ids = [item["delivery_id"] for item in dispositions]
         if len(set(delivery_ids)) != len(delivery_ids):
             raise RelayConflictError("repair manifest has duplicate delivery IDs")
@@ -306,7 +329,7 @@ class SQLiteRelayMixin:
                         hashlib.sha256(previous_canonical.encode()).hexdigest() != record.manifest_digest
                         or not isinstance(previous, dict)
                         or set(previous) != required
-                        or previous.get("schema_version") != 1
+                        or previous.get("schema_version") not in {1, 2}
                         or not isinstance(previous_dispositions, list)
                         or not 1 <= len(previous_dispositions) <= 512
                         or any(not isinstance(item, dict) or set(item) != required_disposition or not isinstance(item.get("delivery_id"), str) or not _REPAIR_DELIVERY_RE.fullmatch(item["delivery_id"]) for item in previous_dispositions)
@@ -360,10 +383,27 @@ class SQLiteRelayMixin:
             siblings = db.execute(select(RelaySessionRecord).where(RelaySessionRecord.runtime == destination.runtime, RelaySessionRecord.session_ref == destination.session_ref)).scalars().all()
             if {row.id for row in siblings} != {*source_ids, destination.id}:
                 raise RelayConflictError("same runtime/session endpoint set is incomplete")
-            claimed = db.execute(select(RelayDeliveryRecord.id).where(RelayDeliveryRecord.recipient_endpoint_id.in_(source_ids), RelayDeliveryRecord.state == "claimed").limit(1)).first()
-            if claimed is not None:
+            claimed_rows = db.execute(select(RelayDeliveryRecord).where(RelayDeliveryRecord.recipient_endpoint_id.in_(source_ids), RelayDeliveryRecord.state == "claimed")).scalars().all()
+            if schema_version == 1 and claimed_rows:
                 raise RelayConflictError("a source has claimed work")
-            live = db.execute(select(RelayDeliveryRecord.id).join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id).where(RelayDeliveryRecord.recipient_endpoint_id.in_(source_ids), RelayDeliveryRecord.state == "pending", RelayMessageRecord.expires_at > current)).scalars().all()
+            if schema_version == 2 and any(
+                not claimed.claim_token
+                or claimed.lease_expires_at is None
+                or _now(claimed.lease_expires_at) > current
+                for claimed in claimed_rows
+            ):
+                raise RelayConflictError("a source has active or malformed claimed work")
+            repairable_state = RelayDeliveryRecord.state == "pending"
+            if schema_version == 2:
+                repairable_state = or_(
+                    repairable_state,
+                    and_(
+                        RelayDeliveryRecord.state == "claimed",
+                        RelayDeliveryRecord.lease_expires_at.is_not(None),
+                        RelayDeliveryRecord.lease_expires_at <= current,
+                    ),
+                )
+            live = db.execute(select(RelayDeliveryRecord.id).join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id).where(RelayDeliveryRecord.recipient_endpoint_id.in_(source_ids), repairable_state, RelayMessageRecord.expires_at > current)).scalars().all()
             if set(live) != set(delivery_ids):
                 raise RelayConflictError("repair manifest does not classify the complete live source inventory")
             result = {"manifest_digest": digest, "adopted_delivery_ids": [], "suppressed_delivery_ids": [], "residual_split": {"alias_sends": "destination", "exact_source_sends_and_replies": "source", "occupied_scopes": "unchanged"}}
@@ -373,8 +413,18 @@ class SQLiteRelayMixin:
                 if delivery is None or message is None:
                     raise RelayConflictError("repair delivery is missing")
                 payload = message.payload.encode()
-                actual = {"delivery": {"delivery_id": delivery.id, "message_id": delivery.message_id, "recipient_runtime": delivery.recipient_runtime, "recipient_session_ref": delivery.recipient_session_ref, "recipient_endpoint_id": delivery.recipient_endpoint_id, "recipient_container_ref": delivery.recipient_container_ref, "state": delivery.state, "claim_token": delivery.claim_token, "claimed_at": _iso(delivery.claimed_at), "lease_expires_at": _iso(delivery.lease_expires_at), "delivered_at": _iso(delivery.delivered_at), "attempts": delivery.attempts}, "message": {"message_id": message.id, "sender_runtime": message.sender_runtime, "sender_session_ref": message.sender_session_ref, "sender_endpoint_id": message.sender_endpoint_id, "recipient_selector": message.recipient_selector, "container_ref": message.container_ref, "payload_sha256": hashlib.sha256(payload).hexdigest(), "payload_length": len(payload), "redacted": bool(message.redacted), "in_reply_to": message.in_reply_to, "created_at": _iso(message.created_at), "expires_at": _iso(message.expires_at)}}
-                if actual != item["preimage"] or delivery.recipient_endpoint_id not in source_ids or delivery.state != "pending" or _now(message.expires_at) <= current:
+                actual = {"delivery": {"delivery_id": delivery.id, "message_id": delivery.message_id, "recipient_runtime": delivery.recipient_runtime, "recipient_session_ref": delivery.recipient_session_ref, "recipient_endpoint_id": delivery.recipient_endpoint_id, "recipient_container_ref": delivery.recipient_container_ref, "state": delivery.state, ("claim_token" if schema_version == 1 else "claim_token_fingerprint"): delivery.claim_token if schema_version == 1 else _repair_claim_fingerprint(delivery.claim_token), "claimed_at": _iso(delivery.claimed_at), "lease_expires_at": _iso(delivery.lease_expires_at), "delivered_at": _iso(delivery.delivered_at), "attempts": delivery.attempts}, "message": {"message_id": message.id, "sender_runtime": message.sender_runtime, "sender_session_ref": message.sender_session_ref, "sender_endpoint_id": message.sender_endpoint_id, "recipient_selector": message.recipient_selector, "container_ref": message.container_ref, "payload_sha256": hashlib.sha256(payload).hexdigest(), "payload_length": len(payload), "redacted": bool(message.redacted), "in_reply_to": message.in_reply_to, "created_at": _iso(message.created_at), "expires_at": _iso(message.expires_at)}}
+                claim_expired = (
+                    delivery.state == "claimed"
+                    and delivery.lease_expires_at is not None
+                    and _now(delivery.lease_expires_at) <= current
+                )
+                repairable = delivery.state == "pending" or (
+                    schema_version == 2
+                    and claim_expired
+                    and item["disposition"] == "suppress"
+                )
+                if actual != item["preimage"] or delivery.recipient_endpoint_id not in source_ids or not repairable or _now(message.expires_at) <= current:
                     raise RelayConflictError("repair delivery or message preimage drifted")
                 if item["disposition"] == "adopt":
                     if evidence_by_id[delivery.id]["status"] != "clean" or delivery.id not in clean_adoption_ids:
@@ -383,6 +433,9 @@ class SQLiteRelayMixin:
                     result["adopted_delivery_ids"].append(delivery.id)
                 else:
                     delivery.state = "suppressed"
+                    if schema_version == 2 and actual["delivery"]["state"] == "claimed":
+                        delivery.claim_token = None
+                        delivery.lease_expires_at = None
                     result["suppressed_delivery_ids"].append(delivery.id)
             db.add(RelayEndpointRepairRecord(manifest_digest=digest, manifest_json=canonical, result_json=json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")), committed_at=current))
             return result

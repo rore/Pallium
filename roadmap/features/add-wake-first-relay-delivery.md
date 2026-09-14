@@ -37,7 +37,7 @@ new implementation tasks.
 |---|---|---|
 | `RW-027` hook readiness | `.agent-workflow/tasks/codex-integration-readiness.md` | Keep hook definition stability and review visibility observable; run the real installed Codex task witness after stable reinstall. |
 | `RW-028` Codex MCP exposure | host recovery follow-up | Same-host/project tasks expose different tool catalogs, including zero Pallium tools after successful hook delivery. Treat this as a Codex host registry/rehydration blocker; do not infer MCP health from hook/service health or add a speculative Pallium workaround. |
-| `RW-029` stranded split identity | guarded Relay operations | Produce reviewed per-delivery dispositions for the diagnosed endpoints before any retarget, ACK, or suppression. |
+| `RW-029` stranded split identity | guarded Relay operations | Use the offline repair manifest for reviewed per-delivery dispositions. Version 2 can explicitly suppress a finite expired claim; it still refuses adoption, active or ambiguous claims, and automatic cleanup. |
 | `RW-030` Claude install drift | installed integration lifecycle | Repoint the user-scoped Claude MCP and hooks from the development checkout to the stable installed checkout in the coordinated post-merge install window. Existing hosts retain old subprocesses until their normal restart. |
 
 The dashboard diagnostic is shipped as read-only evidence, not repair. Do not bulk-repair stranded deliveries. The real installed witness gate remains required for send -> next-turn hook claim/injection/ACK -> reply and work-reference attach/detach qualification.

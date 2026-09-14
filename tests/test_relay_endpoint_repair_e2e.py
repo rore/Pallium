@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -179,6 +180,130 @@ def test_claude_v1_numeric_fields_optional_endpoint_and_inflight_are_supported(c
     assert blocked["reservation_evidence"]["deliveries"][0]["status"] == "blocked"
 
 
+def test_expired_claim_suppression_is_secret_safe_and_terminal(client, tmp_path, monkeypatch):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    token = "repair-secret-token"
+    claimed_at = now - timedelta(minutes=2)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    _seed(storage, now)
+    with storage._begin_relay_immediate() as db:
+        delivery = db.get(RelayDeliveryRecord, DELIVERY_A)
+        delivery.state = "claimed"
+        delivery.claim_token = token
+        delivery.claimed_at = claimed_at
+        delivery.lease_expires_at = now
+        delivery.attempts = 3
+
+    manifest = _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "suppress"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
+    claim_preimage = next(item["preimage"]["delivery"] for item in manifest["dispositions"] if item["delivery_id"] == DELIVERY_A)
+    fingerprint = hashlib.sha256(("pallium-relay-repair-claim-token\x00" + token).encode()).hexdigest()
+    assert manifest["schema_version"] == 2
+    assert claim_preimage["claim_token_fingerprint"] == fingerprint
+    assert token not in json.dumps(manifest)
+    assert fingerprint != hashlib.sha256(token.encode()).hexdigest()[:32]
+    rejected_adoption = json.loads(json.dumps(manifest))
+    next(item for item in rejected_adoption["dispositions"] if item["delivery_id"] == DELIVERY_A)["disposition"] = "adopt"
+    with pytest.raises(RelayConflictError, match="only be suppressed"):
+        _apply(storage, rejected_adoption, now)
+
+    result = _apply(storage, manifest, now)
+    assert set(result["suppressed_delivery_ids"]) == {DELIVERY_A, DELIVERY_B}
+    with storage._relay_session_factory() as db:
+        repaired = db.get(RelayDeliveryRecord, DELIVERY_A)
+        assert repaired.state == "suppressed"
+        assert repaired.claim_token is None and repaired.lease_expires_at is None
+        assert (repaired.claimed_at, repaired.attempts) == (claimed_at.replace(tzinfo=None), 3)
+        ledger = db.get(RelayEndpointRepairRecord, result["manifest_digest"])
+        assert token not in ledger.manifest_json and token not in ledger.result_json
+    assert client.get(f"/relay/messages/{MESSAGE_A}", params={"container_ref": "git:sender"}).json()["deliveries"][0]["state"] == "suppressed"
+    assert client.post("/relay/deliveries/ack", json={"delivery_id": DELIVERY_A, "claim_token": token, "container_ref": "git:old-a"}).status_code == 409
+    assert client.post("/relay/replies", json={"delivery_id": DELIVERY_A, "payload": "must fail", "container_ref": "git:old-a"}).status_code == 409
+    assert RelayService(storage).wake_candidates(delivery_id=DELIVERY_A) == []
+
+
+@pytest.mark.parametrize(
+    ("case", "pattern"),
+    [
+        ("active", "active claimed work"),
+        ("missing_lease", "missing or malformed lease"),
+        ("malformed_lease", "missing or malformed lease"),
+        ("missing_token", "missing claim token"),
+    ],
+)
+def test_claim_builder_refuses_unsafe_claims(client, tmp_path, monkeypatch, case, pattern):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    _seed(storage, now)
+    token = None if case == "missing_token" else "token"
+    lease = {
+        "active": (now + timedelta(minutes=1)).isoformat(),
+        "missing_lease": None,
+        "malformed_lease": "not-a-date",
+        "missing_token": (now - timedelta(minutes=1)).isoformat(),
+    }[case]
+    with sqlite3.connect(storage._relay_engine.url.database) as conn:
+        conn.execute(
+            "UPDATE relay_deliveries SET state='claimed', claim_token=?, claimed_at=?, lease_expires_at=? WHERE id=?",
+            (token, now.isoformat(), lease, DELIVERY_A),
+        )
+    with pytest.raises(ValueError, match=pattern):
+        _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "suppress"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
+
+
+def test_expired_claim_adoption_is_refused(client, tmp_path, monkeypatch):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    _seed(storage, now)
+    with storage._begin_relay_immediate() as db:
+        delivery = db.get(RelayDeliveryRecord, DELIVERY_A)
+        delivery.state, delivery.claim_token = "claimed", "token"
+        delivery.claimed_at, delivery.lease_expires_at = now - timedelta(minutes=2), now - timedelta(minutes=1)
+    with pytest.raises(ValueError, match="only be suppressed"):
+        _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "adopt"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
+
+
+def test_late_preimage_failure_restores_prior_expired_claim(client, tmp_path, monkeypatch):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    claimed_at, lease = now - timedelta(minutes=2), now - timedelta(minutes=1)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    _seed(storage, now)
+    with storage._begin_relay_immediate() as db:
+        claimed = db.get(RelayDeliveryRecord, DELIVERY_A)
+        claimed.state, claimed.claim_token = "claimed", "rollback-token"
+        claimed.claimed_at, claimed.lease_expires_at, claimed.attempts = claimed_at, lease, 3
+    manifest = _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "suppress"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
+    with storage._begin_relay_immediate() as db:
+        db.get(RelayDeliveryRecord, DELIVERY_B).attempts += 1
+    with pytest.raises(RelayConflictError, match="preimage drifted"):
+        _apply(storage, manifest, now)
+    with storage._relay_session_factory() as db:
+        restored = db.get(RelayDeliveryRecord, DELIVERY_A)
+        assert (restored.state, restored.claim_token, restored.claimed_at, restored.lease_expires_at, restored.attempts) == (
+            "claimed", "rollback-token", claimed_at.replace(tzinfo=None), lease.replace(tzinfo=None), 3,
+        )
+        assert db.get(RelayDeliveryRecord, DELIVERY_B).state == "pending"
+        assert db.get(RelayEndpointRepairRecord, _digest(manifest)) is None
+
+
+def test_version_one_manifest_replay_and_version_two_overlap_remain_compatible(client, tmp_path, monkeypatch):
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    _seed(storage, now)
+    version_two = _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "suppress"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
+    version_one = json.loads(json.dumps(version_two))
+    version_one["schema_version"] = 1
+    for item in version_one["dispositions"]:
+        item["preimage"]["delivery"]["claim_token"] = item["preimage"]["delivery"].pop("claim_token_fingerprint")
+    result = _apply(storage, version_one, now)
+    assert storage.relay_endpoint_repair_apply(version_one, reservation_validator=lambda: (_ for _ in ()).throw(AssertionError("must replay")), now=now) == result
+    with pytest.raises(RelayConflictError, match="already dispositioned"):
+        _apply(storage, version_two, now)
+
 def test_partial_claimed_and_preimage_drift_are_rejected(client, tmp_path, monkeypatch):
     storage = client.app.state.pallium_service._storage
     now = datetime.now(timezone.utc)
@@ -355,8 +480,59 @@ def test_subprocess_cli_source_and_disposition_boundaries(tmp_path):
     assert too_many_dispositions.returncode == 2 and "1..512" in too_many_dispositions.stderr
     storage.close()
 
+@pytest.mark.parametrize("case", ["active_lease", "missing_lease", "malformed_lease", "token_drift", "lease_drift", "malformed_fingerprint"])
+def test_subprocess_cli_apply_refuses_unsafe_claim_without_mutation(tmp_path, monkeypatch, case):
+    now = datetime.now(timezone.utc)
+    home, data = tmp_path / "home", tmp_path / "home" / "data"
+    data.mkdir(parents=True)
+    (home / "run").mkdir()
+    main_url, relay_url = f"sqlite:///{data / 'pallium.db'}", f"sqlite:///{data / 'pallium-relay.db'}"
+    storage = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    _clean_wake_stores(tmp_path, monkeypatch)
+    _seed(storage, now)
+    with storage._begin_relay_immediate() as db:
+        claimed = db.get(RelayDeliveryRecord, DELIVERY_A)
+        claimed.state, claimed.claim_token = "claimed", "original-token"
+        claimed.claimed_at, claimed.lease_expires_at = now - timedelta(minutes=2), now - timedelta(minutes=1)
+    manifest = _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "suppress"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
+    claim_preimage = next(item["preimage"]["delivery"] for item in manifest["dispositions"] if item["delivery_id"] == DELIVERY_A)
+    with sqlite3.connect(storage._relay_engine.url.database) as conn:
+        if case == "active_lease":
+            value = (now + timedelta(minutes=1)).isoformat()
+            conn.execute("UPDATE relay_deliveries SET lease_expires_at=? WHERE id=?", (value, DELIVERY_A))
+            claim_preimage["lease_expires_at"] = value
+        elif case == "missing_lease":
+            conn.execute("UPDATE relay_deliveries SET lease_expires_at=NULL WHERE id=?", (DELIVERY_A,))
+            claim_preimage["lease_expires_at"] = None
+        elif case == "malformed_lease":
+            conn.execute("UPDATE relay_deliveries SET lease_expires_at='not-a-date' WHERE id=?", (DELIVERY_A,))
+            claim_preimage["lease_expires_at"] = "not-a-date"
+        elif case == "token_drift":
+            conn.execute("UPDATE relay_deliveries SET claim_token='changed-token' WHERE id=?", (DELIVERY_A,))
+        elif case == "lease_drift":
+            conn.execute("UPDATE relay_deliveries SET lease_expires_at=? WHERE id=?", ((now - timedelta(minutes=3)).isoformat(), DELIVERY_A))
+        else:
+            claim_preimage["claim_token_fingerprint"] = "not-a-fingerprint"
+        before = conn.execute("SELECT * FROM relay_deliveries WHERE id IN (?, ?) ORDER BY id", (DELIVERY_A, DELIVERY_B)).fetchall()
+    storage.close()
+
+    envelope = {"manifest": manifest, "sha256": _digest(manifest)}
+    manifest_path = tmp_path / f"{case}.json"
+    manifest_path.write_text(json.dumps(envelope), encoding="utf-8")
+    bootstrap = "from app.cli import service;service.assert_service_stopped=lambda home:None;from app.tools.relay_endpoint_repair import main;raise SystemExit(main())"
+    applied = subprocess.run(
+        [sys.executable, "-c", bootstrap, "--apply", "--db-url", relay_url, "--home", str(home), "--manifest", str(manifest_path), "--acknowledge-digest", envelope["sha256"]],
+        cwd=Path(__file__).parents[1], text=True, capture_output=True,
+    )
+    assert applied.returncode == 2 and "refusing:" in applied.stderr and "Traceback" not in applied.stderr
+    with sqlite3.connect(data / "pallium-relay.db") as conn:
+        after = conn.execute("SELECT * FROM relay_deliveries WHERE id IN (?, ?) ORDER BY id", (DELIVERY_A, DELIVERY_B)).fetchall()
+        assert after == before
+        assert conn.execute("SELECT COUNT(*) FROM relay_endpoint_repairs").fetchone()[0] == 0
+
 def test_subprocess_cli_dry_run_acknowledgement_and_apply(client, tmp_path, monkeypatch):
     now = datetime.now(timezone.utc)
+    token = "subprocess-secret-token"
     home = tmp_path / "home"
     data = home / "data"
     data.mkdir(parents=True)
@@ -364,6 +540,10 @@ def test_subprocess_cli_dry_run_acknowledgement_and_apply(client, tmp_path, monk
     relay_url = f"sqlite:///{data / 'pallium-relay.db'}"
     storage = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
     _seed(storage, now)
+    with storage._begin_relay_immediate() as db:
+        delivery = db.get(RelayDeliveryRecord, DELIVERY_A)
+        delivery.state, delivery.claim_token = "claimed", token
+        delivery.claimed_at, delivery.lease_expires_at = now - timedelta(minutes=2), now - timedelta(minutes=1)
     (home / "run").mkdir()
     (home / "claude-wake" / "intents").mkdir(parents=True)
     _write_store(home / "claude-wake" / "capabilities.json", {"version": 1, "registrations": []})
@@ -377,7 +557,9 @@ def test_subprocess_cli_dry_run_acknowledgement_and_apply(client, tmp_path, monk
     assert missing_wake.returncode == 2 and "--claude-wake-dir is required" in missing_wake.stderr
     dry = subprocess.run(base + ["--dry-run", *common, *wake_arg, "--source", SOURCE_A, "--source", SOURCE_B, "--destination", DESTINATION, "--scope", f"{SOURCE_A}=git:old-a", "--scope", f"{SOURCE_B}=git:old-b", "--scope", f"{DESTINATION}=git:new", "--dispositions", str(dispositions)], cwd=cwd, env=env, text=True, capture_output=True)
     assert dry.returncode == 0, dry.stderr
-    envelope = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_text = manifest_path.read_text(encoding="utf-8")
+    assert token not in dry.stdout and token not in manifest_text
+    envelope = json.loads(manifest_text)
     assert envelope["sha256"] == _digest(envelope["manifest"])
     assert envelope["manifest"]["reservation_evidence"]["stores"]["claude"]["path"] == str((home / "claude-wake" / "capabilities.json").resolve())
     held = _PalliumLock(home / "run" / "pallium.lock")
@@ -397,6 +579,8 @@ def test_subprocess_cli_dry_run_acknowledgement_and_apply(client, tmp_path, monk
     with storage._relay_session_factory() as db:
         assert db.get(RelayDeliveryRecord, DELIVERY_A).state == "suppressed"
         assert db.get(RelayDeliveryRecord, DELIVERY_B).state == "suppressed"
+        ledger = db.get(RelayEndpointRepairRecord, envelope["sha256"])
+        assert token not in ledger.manifest_json and token not in ledger.result_json
     storage.close()
 
     bad_home = tmp_path / "bad-home"

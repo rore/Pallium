@@ -19,11 +19,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from core.relay import RelayConflictError
 from storage.sqlite import SQLiteStorageProvider
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _ENVELOPE_KEYS = {"manifest", "sha256"}
 _MANIFEST_KEYS = {"schema_version", "database_identity", "source_endpoint_ids", "destination_endpoint_id", "expected_scopes", "endpoint_preimage", "reservation_evidence", "dispositions"}
 _ENDPOINT_KEYS = {"runtime", "session_ref", "container_ref", "title", "alias", "state", "first_seen_at", "last_seen_at", "closed_at", "generation", "aliases", "work_refs"}
-_DELIVERY_KEYS = {"delivery_id", "message_id", "recipient_runtime", "recipient_session_ref", "recipient_endpoint_id", "recipient_container_ref", "state", "claim_token", "claimed_at", "lease_expires_at", "delivered_at", "attempts"}
+_DELIVERY_KEYS = {"delivery_id", "message_id", "recipient_runtime", "recipient_session_ref", "recipient_endpoint_id", "recipient_container_ref", "state", "claim_token_fingerprint", "claimed_at", "lease_expires_at", "delivered_at", "attempts"}
 _MESSAGE_KEYS = {"message_id", "sender_runtime", "sender_session_ref", "sender_endpoint_id", "recipient_selector", "container_ref", "payload_sha256", "payload_length", "redacted", "in_reply_to", "created_at", "expires_at"}
 _ENDPOINT_RE = re.compile(r"^relay-session-[0-9a-f]{32}$")
 
@@ -40,6 +40,12 @@ def _canonical(value: object) -> str:
 
 def _digest(value: object) -> str:
     return hashlib.sha256(_canonical(value).encode()).hexdigest()
+
+
+def _claim_token_fingerprint(token: str | None) -> str | None:
+    if token is None:
+        return None
+    return hashlib.sha256(("pallium-relay-repair-claim-token\x00" + token).encode()).hexdigest()
 
 
 def _iso(value: object) -> str | None:
@@ -76,7 +82,7 @@ def _endpoint_preimage(conn: sqlite3.Connection, endpoint_id: str) -> dict[str, 
 
 def _delivery_preimage(row: sqlite3.Row) -> dict[str, Any]:
     payload = row["payload"].encode()
-    return {"delivery": {"delivery_id": row["delivery_id"], "message_id": row["message_id"], "recipient_runtime": row["recipient_runtime"], "recipient_session_ref": row["recipient_session_ref"], "recipient_endpoint_id": row["recipient_endpoint_id"], "recipient_container_ref": row["recipient_container_ref"], "state": row["state"], "claim_token": row["claim_token"], "claimed_at": _iso(row["claimed_at"]), "lease_expires_at": _iso(row["lease_expires_at"]), "delivered_at": _iso(row["delivered_at"]), "attempts": row["attempts"]}, "message": {"message_id": row["message_id"], "sender_runtime": row["sender_runtime"], "sender_session_ref": row["sender_session_ref"], "sender_endpoint_id": row["sender_endpoint_id"], "recipient_selector": row["recipient_selector"], "container_ref": row["message_container_ref"], "payload_sha256": hashlib.sha256(payload).hexdigest(), "payload_length": len(payload), "redacted": bool(row["redacted"]), "in_reply_to": row["in_reply_to"], "created_at": _iso(row["message_created_at"]), "expires_at": _iso(row["message_expires_at"])}}
+    return {"delivery": {"delivery_id": row["delivery_id"], "message_id": row["message_id"], "recipient_runtime": row["recipient_runtime"], "recipient_session_ref": row["recipient_session_ref"], "recipient_endpoint_id": row["recipient_endpoint_id"], "recipient_container_ref": row["recipient_container_ref"], "state": row["state"], "claim_token_fingerprint": _claim_token_fingerprint(row["claim_token"]), "claimed_at": _iso(row["claimed_at"]), "lease_expires_at": _iso(row["lease_expires_at"]), "delivered_at": _iso(row["delivered_at"]), "attempts": row["attempts"]}, "message": {"message_id": row["message_id"], "sender_runtime": row["sender_runtime"], "sender_session_ref": row["sender_session_ref"], "sender_endpoint_id": row["sender_endpoint_id"], "recipient_selector": row["recipient_selector"], "container_ref": row["message_container_ref"], "payload_sha256": hashlib.sha256(payload).hexdigest(), "payload_length": len(payload), "redacted": bool(row["redacted"]), "in_reply_to": row["in_reply_to"], "created_at": _iso(row["message_created_at"]), "expires_at": _iso(row["message_expires_at"])}}
 
 
 def _validate_inputs(source_ids: list[str], destination_id: str, expected_scopes: dict[str, str], dispositions: object) -> list[dict[str, str]]:
@@ -118,12 +124,25 @@ def build_manifest(db_url: str, source_ids: list[str], destination_id: str, expe
         siblings = {row["id"] for row in conn.execute("SELECT id FROM relay_sessions WHERE runtime=? AND session_ref=?", (endpoints[destination_id]["runtime"], endpoints[destination_id]["session_ref"]))}
         if siblings != {*source_ids, destination_id}:
             raise ValueError("same runtime/session endpoint set is incomplete")
-        if conn.execute(f"SELECT 1 FROM relay_deliveries WHERE recipient_endpoint_id IN ({placeholders}) AND state='claimed' LIMIT 1", source_ids).fetchone() is not None:
-            raise ValueError("a source has claimed work")
-        rows = conn.execute("SELECT d.id AS delivery_id, d.message_id, d.recipient_runtime, d.recipient_session_ref, d.recipient_endpoint_id, d.recipient_container_ref, d.state, d.claim_token, d.claimed_at, d.lease_expires_at, d.delivered_at, d.attempts, m.sender_runtime, m.sender_session_ref, m.sender_endpoint_id, m.recipient_selector, m.container_ref AS message_container_ref, m.payload, m.redacted, m.in_reply_to, m.created_at AS message_created_at, m.expires_at AS message_expires_at FROM relay_deliveries d JOIN relay_messages m ON m.id=d.message_id WHERE d.recipient_endpoint_id IN (" + placeholders + ") AND d.state='pending' AND m.expires_at > CURRENT_TIMESTAMP ORDER BY d.id", source_ids).fetchall()
+        current = datetime.now(timezone.utc)
+        claimed_rows = conn.execute("SELECT claim_token, lease_expires_at FROM relay_deliveries WHERE recipient_endpoint_id IN (" + placeholders + ") AND state='claimed'", source_ids).fetchall()
+        for claimed in claimed_rows:
+            if not isinstance(claimed["claim_token"], str) or not claimed["claim_token"]:
+                raise ValueError("claimed source has missing claim token")
+            try:
+                lease = datetime.fromisoformat(str(claimed["lease_expires_at"]).replace("Z", "+00:00"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("claimed source has missing or malformed lease") from exc
+            if (lease.replace(tzinfo=timezone.utc) if lease.tzinfo is None else lease.astimezone(timezone.utc)) > current:
+                raise ValueError("a source has active claimed work")
+        rows = conn.execute("SELECT d.id AS delivery_id, d.message_id, d.recipient_runtime, d.recipient_session_ref, d.recipient_endpoint_id, d.recipient_container_ref, d.state, d.claim_token, d.claimed_at, d.lease_expires_at, d.delivered_at, d.attempts, m.sender_runtime, m.sender_session_ref, m.sender_endpoint_id, m.recipient_selector, m.container_ref AS message_container_ref, m.payload, m.redacted, m.in_reply_to, m.created_at AS message_created_at, m.expires_at AS message_expires_at FROM relay_deliveries d JOIN relay_messages m ON m.id=d.message_id WHERE d.recipient_endpoint_id IN (" + placeholders + ") AND d.state IN ('pending','claimed') AND m.expires_at > CURRENT_TIMESTAMP ORDER BY d.id", source_ids).fetchall()
+        if any(row["state"] == "pending" and row["claim_token"] is not None for row in rows):
+            raise ValueError("pending source has unexpected claim token")
         by_id = {row["delivery_id"]: _delivery_preimage(row) for row in rows}
         if {item["delivery_id"] for item in dispositions} != set(by_id):
-            raise ValueError("dispositions must classify every and only live pending source delivery")
+            raise ValueError("dispositions must classify every and only live repairable source delivery")
+        if any(item["disposition"] == "adopt" and by_id[item["delivery_id"]]["delivery"]["state"] == "claimed" for item in dispositions):
+            raise ValueError("expired claimed delivery may only be suppressed")
         manifest = {"schema_version": _SCHEMA_VERSION, "database_identity": _identity(conn, path), "source_endpoint_ids": source_ids, "destination_endpoint_id": destination_id, "expected_scopes": expected_scopes, "endpoint_preimage": endpoints, "dispositions": [{"delivery_id": item["delivery_id"], "disposition": item["disposition"], "preimage": by_id[item["delivery_id"]]} for item in sorted(dispositions, key=lambda item: item["delivery_id"])]}
         manifest["reservation_evidence"] = _wake_evidence(manifest)
         conn.execute("COMMIT")
