@@ -1,52 +1,54 @@
 <!-- agent-workflow:start -->
 **Outcome:**
-Allow the Relay dashboard to deep-link to and select an exact session by canonical endpoint_id.
+Allow the Relay dashboard to deep-link to and select an exact session by canonical `endpoint_id`.
 
 **Target:**
 Pallium Relay dashboard.
 
 **Scope:**
-Dashboard hash/view initialization, Relay session selection/loading behavior, and focused dashboard/UI tests if implementation confirms they are needed; likely `app/dashboard.html` plus `tests/dashboard_plain_language_renderer.mjs` or a focused UI harness.
+`app/dashboard.py`, `app/dashboard.html`, `docs/dashboard.md`, `tests/test_dashboard.py`, and `tests/dashboard_relay_deep_link_ui.mjs`.
 
 **Constraints:**
-No unrelated product changes; preserve ordinary #relay and #operational behavior; no API change unless discovery proves the existing response lacks canonical endpoint_id; read-only behavior remains read-only.
+Preserve ordinary `#relay`, `#operational`, and optional evaluation behavior. Keep the feature read-only: no Relay send, wake, name, or association mutation. Accept one canonical endpoint ID only; never match aliases, session refs, or substrings. Preserve the current selection on malformed, missing, failed, or stale exact lookups.
 
 **Completion criteria:**
-When visiting `/dashboard#relay?session=<percent-encoded endpoint_id>`, the dashboard selects the exact matching session (including outside the initial page/default scope), survives reload and browser navigation, and reports malformed/not-found targets without mutating state.
+`/dashboard#relay?session=<percent-encoded endpoint_id>` selects the exact session, including one outside the initial/default recent page, across direct load, reload, and browser navigation. Malformed or unknown targets report a clear status without selection or persisted-state mutation.
 
 **Risk:** Routine
 
 **Complexity:** Simple
 
 **Reason:**
-Intended implementation and test surfaces are blue-zone dashboard/UI and test files; no API, persistence, security, or boundary changes are planned.
+All changed dashboard, documentation, test, and Work Record paths are blue-zone. The route change is one optional validated query parameter on an existing read-only operator endpoint; no persistence, security, schema, or package boundary changes occur.
 
 **Approach:**
-Use the existing read-only `/dashboard/api/relay/sessions` projection and browser state. Parse only `#relay?session=<encoded endpoint_id>`, select after the initial load, and page through the same filtered session endpoint when the target is not present; report malformed/not-found targets in the existing Relay status area without changing ordinary hashes or sending/waking.
+Add an optional validated exact `endpoint_id` filter to the existing read-only sessions route. Parse only `#relay?session=<one canonical relay-session-[0-9a-f]{32}>`, preserve the hash during initialization, and resolve it with one exact read independent of current/default filters. Apply a result only while generation, scope, and raw hash still match; keep the authoritative row visible and select only an exact ID. Report errors through `textContent` without changing prior selection.
 
 **Verification:**
-Run the workflow checker and focused read-only inspection; implementation follow-up should add focused dashboard tests for direct visit/reload/back-forward, page traversal, unchanged ordinary hashes, malformed/not-found targets, escaping, and no mutation.
+Run the dedicated JavaScript contract harness, the full dashboard test file, the workflow checker, `git diff --check`, the repository suite once before PR, and independent smart-model review. Coverage includes active/dormant/closed/non-first-page exact lookup, not-found, malformed validation, exact-not-alias/substring, direct/reload/back-forward, stale raw-hash/generation/scope responses, ordinary hashes, preserved selection, safe rendering, GET-only behavior, and storage read-only evidence.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Setup complete; isolated branch created from origin/main. Discovery and plan are recorded below. Pre-edit redline classified intended dashboard/test paths BLUE with no checkpoints or boundary violations. Workflow checker passes. No product, test, or documentation files have been edited.
+- Added the validated exact filter to `GET /dashboard/api/relay/sessions`; existing filters and pagination remain unchanged.
+- Added canonical deep-link parsing and exact selection with raw-hash, generation, and scope guards.
+- Query-bearing Relay navigation within the Relay view avoids the ordinary refresh/reset path, so invalid and not-found links retain the previous selection.
+- Exact authoritative rows are included in the visible session list.
+- Documented the external URL contract and added focused HTTP/JavaScript coverage.
+- `apply_patch` failed with machine-local Windows error 1327. Per `AGENTS.local.md`, edits used narrowly scoped deterministic PowerShell or Git-native patch fallbacks limited to the named files.
 
-## Discovery
+## Evidence
 
-- Dashboard is served at `GET /dashboard` (`app/dashboard.py:240`); view state is client-side hash-only. Existing `_initViewFromHash` accepts exact `#operational`, `#relay`, and optional `#evaluation`; any query-bearing hash currently falls back to Operations. `switchView` uses `history.replaceState`, and `hashchange` re-runs initialization, so direct visit/reload/back-forward must be handled there without replacing `#relay?session=...` with plain `#relay`.
-- Relay setup calls `fetchRelay(true)` on entering Relay. The initial session request is `/dashboard/api/relay/sessions?limit=100&offset=0` with current lifecycle/runtime/container filters; `loadMoreRelaySessions()` pages the same endpoint. Selection is local via `selectRelaySession(id, authoritative)`, and `renderRSession()` escapes metadata through `esc`/`escapeHtml`. No deep-link state exists today.
-- `/dashboard/api/relay/sessions` returns `id` (the `RelaySessionRecord.id`, which is the canonical endpoint ID) but not a separate `endpoint_id`; `app/dashboard.py:_dashboard_relay_session` is the projection. `/dashboard/api/relay/messages` exposes `sender_endpoint_id`/`recipient_endpoint_id` and `endpoint_sessions` keyed as `id`. `/relay/work-refs/participants` already exposes canonical `endpoint_id` through `storage/sqlite_relay.py:_session_view` and `RelayWorkRefParticipantResponse`; no API change is necessary.
-- Existing focused UI checks are Node scripts: `tests/dashboard_plain_language_renderer.mjs` extracts renderer/view code, while `tests/dashboard_work_ref_ui.mjs` exercises `selectRelaySession` and participant opening. `tests/test_dashboard.py` covers read-only route shape/pagination/filtering and verifies session IDs, but no hash deep-link behavior. `app/dashboard.html` is blue-zone UI; tests are blue; no API/persistence/security/boundary surface is intended.
-- Smallest compatible route contract: `/dashboard#relay?session=<percent-encoded canonical endpoint_id>`. Plain `#relay` and `#operational` remain unchanged. A valid target should be selected after initial data load; if absent from the first page, continue bounded session pagination under the current default scope (or make target lookup explicit if filters would exclude it), then show a clear not-found message without selection/mutation. Malformed/not-found targets show a clear status and leave selection unchanged. IDs and status text use existing escaped rendering; no send/wake or POST path is involved.
+- `node tests/dashboard_relay_deep_link_ui.mjs app/dashboard.html`: passed.
+- Focused deep-link pytest nodes: 2 passed.
+- `python -m pytest tests/test_dashboard.py -q -n 0`: 47 passed.
+- `python -m pytest tests/ -x -q`: 4,948 passed, 34 skipped, 2 xfailed.
+- `python scripts/agent-workflow-check.py --repo-root . --slug relay-session-deep-link`: clean.
+- `git diff --check`: clean.
+- Independent Sol review found and verified fixes for stale same-view fetches, exact-result visibility, GET-only selection, composed API filters, and preserved pagination offsets. Runtime/API/test code approved; only this evidence reconciliation remained.
 
-## Plan
+## Discovery and plan review
 
-1. Extend the existing hash parser/init and Relay load completion with a single pending canonical endpoint target, preserving ordinary hashes and history behavior.
-2. Resolve a target by exact endpoint ID, including later session pages, then call `selectRelaySession` only after a matching read-only session is present; avoid alias/session_ref matching and avoid mutating selection on malformed/not-found input.
-3. Add the smallest focused UI assertions for encoded IDs, direct init/reload/hashchange behavior, pagination/out-of-scope handling, malformed/not-found status, escaping, and unchanged ordinary hashes. Reuse `tests/dashboard_plain_language_renderer.mjs` unless a tiny dedicated harness is materially simpler.
-## Plan review
-
-Not applicable during read-only setup; implementation remains for a follow-up task/review.
+The initial discovery proposed paging the current session list. Independent Sol review rejected that plan because the default `recent` filter cannot reach dormant or closed sessions, `switchView` would erase the query-bearing hash, refresh would reset selection on invalid/not-found input, and generation-only guards miss navigation races. The corrected implementation uses one exact read, preserves the raw hash, checks raw hash plus generation and scope, and keeps the selected authoritative row visible. No general dashboard routing or pagination abstraction was added.

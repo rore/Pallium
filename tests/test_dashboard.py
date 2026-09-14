@@ -1094,3 +1094,77 @@ def test_work_reference_ui_executes_shipped_javascript() -> None:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "all cases passed" in result.stdout
+
+
+def test_dashboard_relay_exact_session_lookup_is_validated_and_read_only(tmp_path: Path) -> None:
+    app = create_app(_test_config(tmp_path))
+    now = datetime.now(timezone.utc)
+    with TestClient(app) as client:
+        ids = {}
+        for session_ref in ("recent", "dormant", "closed", "page-tail"):
+            turn = client.post(
+                "/relay/turn",
+                json={"runtime": "codex", "session_ref": session_ref, "container_ref": "git:deep-link"},
+            )
+            assert turn.status_code == 200
+            ids[session_ref] = turn.json()["session"]["endpoint_id"]
+        storage = app.state.pallium_service._storage
+        alias_target = "relay-session-" + "e" * 32
+        with storage._relay_session_factory() as session:
+            rows = {row.session_ref: row for row in session.query(RelaySessionRecord)}
+            rows["dormant"].last_seen_at = now - timedelta(days=2)
+            rows["closed"].state = "closed"
+            rows["recent"].alias = alias_target
+            session.commit()
+            before = [(row.id, row.state, row.last_seen_at.replace(tzinfo=None), row.alias) for row in session.query(RelaySessionRecord)]
+
+        first_page = client.get("/dashboard/api/relay/sessions", params={"limit": 1}).json()["sessions"]
+        assert any(endpoint_id not in {row["id"] for row in first_page} for endpoint_id in ids.values())
+        for session_ref in ("recent", "dormant", "closed", "page-tail"):
+            exact = client.get(
+                "/dashboard/api/relay/sessions",
+                params={"endpoint_id": ids[session_ref], "limit": 1},
+            )
+            assert exact.status_code == 200
+            assert [row["id"] for row in exact.json()["sessions"]] == [ids[session_ref]]
+        matching = client.get(
+            "/dashboard/api/relay/sessions",
+            params={"endpoint_id": ids["closed"], "runtime": "codex", "lifecycle": "closed", "limit": 1},
+        ).json()
+        assert matching["total"] == 1 and [row["id"] for row in matching["sessions"]] == [ids["closed"]]
+        contradictory = client.get(
+            "/dashboard/api/relay/sessions",
+            params={"endpoint_id": ids["closed"], "runtime": "claude-code", "lifecycle": "recent"},
+        ).json()
+        assert contradictory["total"] == 0 and contradictory["sessions"] == []
+        offset = client.get(
+            "/dashboard/api/relay/sessions",
+            params={"endpoint_id": ids["closed"], "offset": 1, "limit": 1},
+        ).json()
+        assert offset["total"] == 1 and offset["sessions"] == []
+
+        missing = "relay-session-" + "f" * 32
+        assert client.get("/dashboard/api/relay/sessions", params={"endpoint_id": missing}).json()["sessions"] == []
+        assert client.get("/dashboard/api/relay/sessions", params={"endpoint_id": alias_target}).json()["sessions"] == []
+        for malformed in ("@recent", ids["recent"][:-1], ids["recent"] + "0"):
+            assert client.get("/dashboard/api/relay/sessions", params={"endpoint_id": malformed}).status_code == 422
+
+        with storage._relay_session_factory() as session:
+            after = [(row.id, row.state, row.last_seen_at.replace(tzinfo=None), row.alias) for row in session.query(RelaySessionRecord)]
+        assert before == after
+
+
+def test_relay_deep_link_ui_executes_shipped_javascript() -> None:
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the Relay deep-link UI contract test")
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [node, str(Path(__file__).with_name("dashboard_relay_deep_link_ui.mjs")), str(repo_root / "app" / "dashboard.html")],
+        capture_output=True, text=True, check=False, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "all cases passed" in result.stdout

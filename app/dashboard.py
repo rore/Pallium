@@ -671,7 +671,7 @@ def mount_dashboard(
         runtime: str | None = Query(None),
         container_ref: str | None = Query(None),
         lifecycle: Literal["recent", "dormant", "closed"] | None = Query(None),
-        destination_health: Literal["active", "unreachable"] | None = Query(None), limit: int = Query(100, ge=1, le=200),
+        destination_health: Literal["active", "unreachable"] | None = Query(None), endpoint_id: str | None = Query(None, pattern=r"^relay-session-[0-9a-f]{32}$"), limit: int = Query(100, ge=1, le=200),
         offset: int = Query(0, ge=0),
     ) -> JSONResponse:
         storage = app.state.pallium_service._storage
@@ -680,6 +680,8 @@ def mount_dashboard(
         as_of = datetime.now(timezone.utc)
         cutoff = as_of - timedelta(hours=24)
         clause = True
+        if endpoint_id is not None:
+            clause = and_(clause, RelaySessionRecord.id == endpoint_id)
         if runtime is not None:
             clause = and_(clause, RelaySessionRecord.runtime == runtime)
         if container_ref is not None:
