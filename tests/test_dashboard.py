@@ -12,7 +12,7 @@ from app.config import AppConfig
 from app.main import create_app
 from core.codex_wake import CodexWakeRegistry
 from core.models import MemoryObject, SourceItem
-from storage.sqlite_schema import HistoricalLookupReuseEventRecord, HistoricalLookupReuseLabelRecord, MemoryFlagRecord, RelayDeliveryRecord, RelaySessionRecord
+from storage.sqlite_schema import HistoricalLookupReuseEventRecord, HistoricalLookupReuseLabelRecord, MemoryFlagRecord, RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
@@ -221,6 +221,64 @@ class TestDashboardRelaySummary:
             assert sent["message_id"] != expiring["message_id"]
 
 
+    def test_possible_identity_collision_is_complete_bounded_and_read_only(self, tmp_path: Path) -> None:
+        """The diagnostic is conservative, delivery-scoped, and independent of page filters."""
+        config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
+        app = create_app(config)
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        with TestClient(app) as client:
+            endpoint_ids = {}
+            for container, session_ref in (("c1", "same"), ("c2", "same"), ("c3", "same"), ("other", "other")):
+                response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session_ref, "container_ref": container})
+                assert response.status_code == 200
+                endpoint_ids[container] = response.json()["endpoint_id"]
+            storage = app.state.pallium_service._storage
+            with storage._relay_session_factory() as session:
+                session.execute(text("UPDATE relay_sessions SET last_seen_at=:at WHERE id=:id"), {"at": now - timedelta(minutes=5), "id": endpoint_ids["c1"]})
+                session.execute(text("UPDATE relay_sessions SET last_seen_at=:at, state='closed', closed_at=:at WHERE id=:id"), {"at": now - timedelta(minutes=4), "id": endpoint_ids["c2"]})
+                session.execute(text("UPDATE relay_sessions SET last_seen_at=:at WHERE id=:id"), {"at": now, "id": endpoint_ids["c3"]})
+                session.commit()
+                def add_delivery(name: str, state: str, *, expires_at: datetime, lease_expires_at: datetime | None = None) -> None:
+                    message_id = f"message-{name}"
+                    session.add(RelayMessageRecord(id=message_id, sender_runtime="codex", sender_session_ref="sender", sender_endpoint_id=None, recipient_selector="codex:same", container_ref="sender", payload=name, redacted=0, created_at=now - timedelta(minutes=1), expires_at=expires_at))
+                    session.add(RelayDeliveryRecord(id=f"delivery-{name}", message_id=message_id, recipient_runtime="codex", recipient_session_ref="same", recipient_endpoint_id=endpoint_ids["c1"], recipient_container_ref="c1", state=state, attempts=1, lease_expires_at=lease_expires_at))
+                future = now + timedelta(hours=1)
+                add_delivery("pending", "pending", expires_at=future)
+                add_delivery("elapsed", "claimed", expires_at=future, lease_expires_at=now - timedelta(seconds=1))
+                add_delivery("live", "claimed", expires_at=future, lease_expires_at=now + timedelta(minutes=5))
+                add_delivery("null-lease", "claimed", expires_at=future)
+                add_delivery("exact-expiry", "pending", expires_at=now)
+                add_delivery("delivered", "delivered", expires_at=future)
+                add_delivery("suppressed", "suppressed", expires_at=future)
+                session.commit()
+            before = client.get("/dashboard/api/relay/summary").json()
+            sessions = client.get("/dashboard/api/relay/sessions?limit=1&container_ref=c1").json()
+            messages = client.get("/dashboard/api/relay/messages?limit=1").json()
+            after = client.get("/dashboard/api/relay/summary").json()
+        diagnostic = before["possible_identity_collisions"]
+        assert diagnostic["group_count"] == 1
+        assert diagnostic["endpoint_count"] == 3
+        assert diagnostic["claimable_delivery_count"] == 2
+        group = next(item for item in diagnostic["groups"] if item["most_recent_endpoint_id"] == endpoint_ids["c3"])
+        assert group["is_most_recent_candidate"] is True
+        assert group["claimable_delivery_count"] == 2
+        assert sessions["sessions"][0]["possible_identity_collision"]["endpoint_claimable_delivery_count"] == 2
+        assert messages["endpoint_sessions"]
+        assert before["deliveries"]["pending_now"] == after["deliveries"]["pending_now"]
+        assert before == after
+
+    def test_possible_identity_collision_evaluates_hidden_siblings_and_separate_relay_store(self, tmp_path: Path) -> None:
+        config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
+        app = create_app(config)
+        with TestClient(app) as client:
+            for container in ("c1", "c2", "c3"):
+                assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "hidden", "container_ref": container}).status_code == 200
+            visible = client.get("/dashboard/api/relay/sessions?container_ref=c1&limit=1").json()
+            summary = client.get("/dashboard/api/relay/summary").json()
+            assert visible["total"] == 1
+            assert summary["possible_identity_collisions"]["endpoint_count"] == 3
+            assert summary["possible_identity_collisions"]["details_truncated"] is False
+            assert client.get("/dashboard/api/relay/sessions?container_ref=missing").json()["total"] == 0
 class TestDashboardPage:
 
     def test_dashboard_returns_html(self, tmp_path: Path) -> None:
