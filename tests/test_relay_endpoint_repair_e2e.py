@@ -6,7 +6,6 @@ import sqlite3
 from pathlib import Path
 import subprocess
 import sys
-import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -16,6 +15,7 @@ from app.cli.service import _PalliumLock
 from app.tools.relay_endpoint_repair import _clean_adoption_ids, _digest, _maintenance_fence, _repair_storage, _validate_inputs, build_manifest
 from core.relay import RelayConflictError, RelayService
 from storage.sqlite import SQLiteStorageProvider
+from storage import sqlite_relay
 from storage.sqlite_schema import RelayDeliveryRecord, RelayEndpointGenerationRecord, RelayEndpointRepairRecord, RelayMessageRecord, RelaySessionRecord, RelaySessionWorkRefRecord
 
 SOURCE_A = "relay-session-" + "a" * 32
@@ -215,12 +215,16 @@ def test_expiry_during_reservation_validation_rolls_back(client, tmp_path, monke
     _clean_wake_stores(tmp_path, monkeypatch)
     _seed(storage, now)
     with storage._begin_relay_immediate() as db:
-        db.get(RelayMessageRecord, MESSAGE_A).expires_at = now + timedelta(seconds=1)
-        db.get(RelayMessageRecord, MESSAGE_B).expires_at = now + timedelta(seconds=1)
+        expiry = now + timedelta(hours=1)
+        db.get(RelayMessageRecord, MESSAGE_A).expires_at = expiry
+        db.get(RelayMessageRecord, MESSAGE_B).expires_at = expiry
     manifest = _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "suppress"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
+    clock = [now]
+    real_now = sqlite_relay._now
+    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: clock[0] if value is None else real_now(value))
 
     def expire_then_validate():
-        time.sleep(1.1)
+        clock[0] = expiry + timedelta(seconds=1)
         return set()
 
     with pytest.raises(RelayConflictError, match="complete live source inventory"):
