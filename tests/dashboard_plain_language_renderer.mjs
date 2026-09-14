@@ -454,4 +454,42 @@ switchDashboardView('evaluation');
 assert.equal(viewElements['view-how-it-helps'].classList.contains('hidden'), false);
 assert.equal(viewElements['view-operational'].classList.contains('hidden'), true);
 assert.equal(evaluationLoads, 1);
+const relaySummaryStart = html.indexOf('function renderRelaySummary(data) {');
+const relaySummaryEnd = html.indexOf('async function fetchRelaySummary()', relaySummaryStart);
+assert.ok(relaySummaryStart >= 0 && relaySummaryEnd > relaySummaryStart);
+const relaySummaryElements = new Proxy({}, {
+  get(target, id) {
+    if (!target[id]) target[id] = { textContent: '', innerHTML: '', className: '' };
+    return target[id];
+  },
+});
+const renderRelaySummaryContract = new Function(
+  'document',
+  'function fmtNum(value) { return String(value ?? 0); }' +
+  'function formatUptime(value) { return String(value) + "s"; }' +
+  html.slice(relaySummaryStart, relaySummaryEnd) +
+  '; return renderRelaySummary;'
+)({ getElementById: id => relaySummaryElements[id] });
+renderRelaySummaryContract({
+  status: 'attention',
+  messages: {},
+  deliveries: { pending_now: 2 },
+  latency_seconds: {},
+  sessions: {},
+  possible_identity_collisions: { claimable_delivery_count: 2 },
+});
+assert.match(relaySummaryElements['relay-note'].textContent, /may be intentional/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /inspect the affected endpoints before repair/i);
+assert.match(relaySummaryElements['relay-waiting-guidance'].textContent, /shared endpoint identities need review/i);
+renderRelaySummaryContract({
+  status: 'active',
+  messages: {},
+  deliveries: { pending_now: 1 },
+  latency_seconds: {},
+  sessions: {},
+  possible_identity_collisions: { claimable_delivery_count: 0 },
+});
+assert.match(relaySummaryElements['relay-note'].textContent, /usually expected/i);
+assert.match(relaySummaryElements['relay-waiting-guidance'].textContent, /waiting is usually normal/i);
+assert.match(html, /id="relay-waiting-guidance"[^>]*>cross-agent delivery - waiting is usually normal/);
 console.log('plain-language dashboard renderers: all cases passed');

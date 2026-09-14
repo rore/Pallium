@@ -10,7 +10,7 @@ from typing import Literal
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select, tuple_
 
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
@@ -42,6 +42,8 @@ _DASHBOARD_HTML_PATH = Path(__file__).parent / "dashboard.html"
 # its own allowlist mirror. Kept in sync with the storage-layer default
 # ``_DEFAULT_VISIBLE_LIFECYCLES``; drift between the two is a bug.
 _DASHBOARD_VISIBLE_LIFECYCLES: tuple[str, ...] = ("active", "superseded", "suppressed")
+_RELAY_COLLISION_GROUP_DETAIL_LIMIT = 20
+_RELAY_COLLISION_ENDPOINT_DETAIL_LIMIT = 100
 
 # "How memory helps" view — offline eval reports surfaced read-only.
 # The dashboard serves the LAST-WRITTEN report files only; it never runs the
@@ -71,7 +73,12 @@ def _dashboard_time(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _dashboard_relay_session(record: RelaySessionRecord, cutoff: datetime, activation=None) -> dict:
+def _dashboard_relay_session(
+    record: RelaySessionRecord,
+    cutoff: datetime,
+    activation=None,
+    possible_identity_collision: dict | None = None,
+) -> dict:
     last_seen = _dashboard_utc(record.last_seen_at)
     lifecycle = "closed" if record.state == "closed" else (
         "recent" if last_seen >= cutoff else "dormant"
@@ -88,8 +95,200 @@ def _dashboard_relay_session(record: RelaySessionRecord, cutoff: datetime, activ
     }
     if activation is not None:
         result["activation"] = activation(result)
+    if possible_identity_collision is not None:
+        result["possible_identity_collision"] = possible_identity_collision
     return result
 
+
+def _dashboard_relay_identity_collisions(
+    session,
+    as_of: datetime,
+    *,
+    endpoint_ids: set[str] | None = None,
+    include_details: bool = False,
+) -> tuple[dict, dict[str, dict]]:
+    """Read-only evidence for ambiguous runtime/session identities."""
+    as_of = _dashboard_utc(as_of)
+    cutoff = as_of - timedelta(hours=24)
+    claimable = (
+        select(
+            RelayDeliveryRecord.recipient_endpoint_id.label("endpoint_id"),
+            func.count(RelayDeliveryRecord.id).label("delivery_count"),
+            func.min(RelayMessageRecord.created_at).label("oldest_created_at"),
+        )
+        .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+        .where(
+            RelayDeliveryRecord.recipient_endpoint_id.isnot(None),
+            RelayMessageRecord.expires_at > as_of,
+            or_(
+                RelayDeliveryRecord.state == "pending",
+                and_(
+                    RelayDeliveryRecord.state == "claimed",
+                    RelayDeliveryRecord.lease_expires_at.isnot(None),
+                    RelayDeliveryRecord.lease_expires_at <= as_of,
+                ),
+            ),
+        )
+        .group_by(RelayDeliveryRecord.recipient_endpoint_id)
+        .cte("dashboard_relay_claimable")
+    )
+    identities = (
+        select(
+            RelaySessionRecord.runtime.label("runtime"),
+            RelaySessionRecord.session_ref.label("session_ref"),
+            func.count(RelaySessionRecord.id).label("endpoint_count"),
+            func.max(RelaySessionRecord.last_seen_at).label("latest_seen_at"),
+        )
+        .group_by(RelaySessionRecord.runtime, RelaySessionRecord.session_ref)
+        .having(func.count(RelaySessionRecord.id) > 1)
+        .cte("dashboard_relay_identities")
+    )
+    is_latest = RelaySessionRecord.last_seen_at == identities.c.latest_seen_at
+    collision_groups = (
+        select(
+            identities.c.runtime,
+            identities.c.session_ref,
+            identities.c.endpoint_count,
+            identities.c.latest_seen_at,
+            func.sum(func.coalesce(claimable.c.delivery_count, 0)).label("claimable_delivery_count"),
+            func.min(claimable.c.oldest_created_at).label("oldest_claimable_at"),
+            func.sum(case((is_latest, 1), else_=0)).label("latest_count"),
+            func.max(case((is_latest, RelaySessionRecord.id), else_=None)).label("latest_endpoint_id"),
+            func.max(case((is_latest, RelaySessionRecord.state), else_=None)).label("latest_state"),
+        )
+        .join(
+            RelaySessionRecord,
+            and_(
+                RelaySessionRecord.runtime == identities.c.runtime,
+                RelaySessionRecord.session_ref == identities.c.session_ref,
+            ),
+        )
+        .outerjoin(claimable, claimable.c.endpoint_id == RelaySessionRecord.id)
+        .group_by(
+            identities.c.runtime,
+            identities.c.session_ref,
+            identities.c.endpoint_count,
+            identities.c.latest_seen_at,
+        )
+        .having(func.sum(func.coalesce(claimable.c.delivery_count, 0)) > 0)
+        .cte("dashboard_relay_collision_groups")
+    )
+
+    def candidate(row) -> str | None:
+        latest_seen = _dashboard_utc(row.latest_seen_at)
+        return row.latest_endpoint_id if (
+            row.latest_count == 1
+            and row.latest_state == "active"
+            and latest_seen is not None
+            and cutoff <= latest_seen <= as_of
+        ) else None
+
+    totals = session.execute(select(
+        func.count().label("group_count"),
+        func.coalesce(func.sum(collision_groups.c.endpoint_count), 0).label("endpoint_count"),
+        func.coalesce(func.sum(collision_groups.c.claimable_delivery_count), 0).label("delivery_count"),
+        func.min(collision_groups.c.oldest_claimable_at).label("oldest_claimable_at"),
+    ).select_from(collision_groups)).one()
+    oldest = _dashboard_utc(totals.oldest_claimable_at)
+    summary = {
+        "group_count": totals.group_count,
+        "endpoint_count": totals.endpoint_count,
+        "claimable_delivery_count": totals.delivery_count,
+        "oldest_claimable_age_seconds": max(0, int((as_of - oldest).total_seconds())) if oldest else None,
+        "detail_group_limit": _RELAY_COLLISION_GROUP_DETAIL_LIMIT,
+        "detail_endpoint_limit": _RELAY_COLLISION_ENDPOINT_DETAIL_LIMIT,
+        "details_truncated": False,
+        "groups": [],
+    }
+
+    if include_details and totals.group_count:
+        candidates = session.execute(
+            select(collision_groups)
+            .where(collision_groups.c.endpoint_count <= _RELAY_COLLISION_ENDPOINT_DETAIL_LIMIT)
+            .order_by(
+                collision_groups.c.oldest_claimable_at,
+                collision_groups.c.runtime,
+                collision_groups.c.session_ref,
+            )
+            .limit(_RELAY_COLLISION_GROUP_DETAIL_LIMIT)
+        ).all()
+        selected, used_endpoints = [], 0
+        for row in candidates:
+            if used_endpoints + row.endpoint_count <= _RELAY_COLLISION_ENDPOINT_DETAIL_LIMIT:
+                selected.append(row)
+                used_endpoints += row.endpoint_count
+        keys = [(row.runtime, row.session_ref) for row in selected]
+        details_by_key: dict[tuple[str, str], list[dict]] = {key: [] for key in keys}
+        if keys:
+            rows = session.execute(
+                select(
+                    RelaySessionRecord,
+                    func.coalesce(claimable.c.delivery_count, 0),
+                    claimable.c.oldest_created_at,
+                )
+                .outerjoin(claimable, claimable.c.endpoint_id == RelaySessionRecord.id)
+                .where(tuple_(RelaySessionRecord.runtime, RelaySessionRecord.session_ref).in_(keys))
+                .order_by(RelaySessionRecord.runtime, RelaySessionRecord.session_ref, RelaySessionRecord.id)
+            ).all()
+            selected_by_key = {(row.runtime, row.session_ref): row for row in selected}
+            for record, delivery_count, oldest_created_at in rows:
+                group = selected_by_key[(record.runtime, record.session_ref)]
+                endpoint_oldest = _dashboard_utc(oldest_created_at)
+                details_by_key[(record.runtime, record.session_ref)].append({
+                    "endpoint_id": record.id,
+                    "container_ref": record.container_ref,
+                    "lifecycle": "closed" if record.state == "closed" else (
+                        "recent" if _dashboard_utc(record.last_seen_at) >= cutoff else "dormant"
+                    ),
+                    "destination_health": None if record.state == "closed" else record.state,
+                    "last_seen_at": _dashboard_time(record.last_seen_at),
+                    "claimable_delivery_count": delivery_count,
+                    "oldest_claimable_age_seconds": max(0, int((as_of - endpoint_oldest).total_seconds())) if endpoint_oldest else None,
+                    "is_most_recent_candidate": record.id == candidate(group),
+                })
+        for row in selected:
+            group_oldest = _dashboard_utc(row.oldest_claimable_at)
+            summary["groups"].append({
+                "runtime": row.runtime,
+                "session_ref": row.session_ref,
+                "endpoint_count": row.endpoint_count,
+                "claimable_delivery_count": row.claimable_delivery_count,
+                "oldest_claimable_age_seconds": max(0, int((as_of - group_oldest).total_seconds())),
+                "most_recent_endpoint_id": candidate(row),
+                "endpoints": details_by_key[(row.runtime, row.session_ref)],
+            })
+        summary["details_truncated"] = len(selected) < totals.group_count
+
+    endpoint_evidence: dict[str, dict] = {}
+    if endpoint_ids:
+        rows = session.execute(
+            select(
+                RelaySessionRecord.id.label("endpoint_id"),
+                collision_groups,
+                func.coalesce(claimable.c.delivery_count, 0).label("endpoint_delivery_count"),
+                claimable.c.oldest_created_at.label("endpoint_oldest_at"),
+            )
+            .join(
+                collision_groups,
+                and_(
+                    RelaySessionRecord.runtime == collision_groups.c.runtime,
+                    RelaySessionRecord.session_ref == collision_groups.c.session_ref,
+                ),
+            )
+            .outerjoin(claimable, claimable.c.endpoint_id == RelaySessionRecord.id)
+            .where(RelaySessionRecord.id.in_(endpoint_ids))
+        ).all()
+        for row in rows:
+            endpoint_oldest = _dashboard_utc(row.endpoint_oldest_at)
+            endpoint_evidence[row.endpoint_id] = {
+                "group_endpoint_count": row.endpoint_count,
+                "group_claimable_delivery_count": row.claimable_delivery_count,
+                "endpoint_claimable_delivery_count": row.endpoint_delivery_count,
+                "endpoint_oldest_claimable_age_seconds": max(0, int((as_of - endpoint_oldest).total_seconds())) if endpoint_oldest else None,
+                "most_recent_endpoint_id": candidate(row),
+                "is_most_recent_candidate": row.endpoint_id == candidate(row),
+            }
+    return summary, endpoint_evidence
 
 def _dashboard_source_item(record: SourceItemRecord) -> SourceItem:
     try:
@@ -433,6 +632,7 @@ def mount_dashboard(
                     )
                 ) or 0
                 runtimes[runtime] = {"recent": recent, "dormant": dormant, "closed": closed}
+            collisions, _ = _dashboard_relay_identity_collisions(session, now, include_details=True)
 
         queue_wait = []
         acknowledgement = []
@@ -456,7 +656,7 @@ def mount_dashboard(
             oldest_pending_age = max(0, int((now - utc(oldest_pending)).total_seconds()))
 
         return JSONResponse(content={
-            "status": "attention" if expired_24h else ("active" if deliveries_total else "idle"),
+            "status": "attention" if expired_24h or collisions["claimable_delivery_count"] else ("active" if deliveries_total else "idle"),
             "messages": {"last_24h": messages_24h, "total": messages_total, "replies_last_24h": replies_24h},
             "deliveries": {
                 "last_24h": delivered_24h,
@@ -476,6 +676,7 @@ def mount_dashboard(
                 "total_p95": percentile(total_latency, 0.95),
             },
             "sessions": runtimes,
+            "possible_identity_collisions": collisions,
         })
 
     @app.get("/dashboard/api/relay/overview")
@@ -699,7 +900,12 @@ def mount_dashboard(
             total = session.scalar(select(func.count()).select_from(RelaySessionRecord).where(clause)) or 0
             records = session.scalars(select(RelaySessionRecord).where(clause).order_by(
                 RelaySessionRecord.last_seen_at.desc(), RelaySessionRecord.id.desc()).offset(offset).limit(limit)).all()
-        sessions = [_dashboard_relay_session(record, cutoff, relay_activation) for record in records]
+            _, collision_by_endpoint = _dashboard_relay_identity_collisions(
+                session, as_of, endpoint_ids={record.id for record in records},
+            )
+        sessions = [_dashboard_relay_session(
+            record, cutoff, relay_activation, collision_by_endpoint.get(record.id),
+        ) for record in records]
         return JSONResponse(content={"sessions": sessions, "total": total, "offset": offset, "limit": limit,
                                      "as_of": _dashboard_time(as_of)})
     @app.post("/dashboard/api/relay/sessions/{endpoint_id}/work-refs")
@@ -839,7 +1045,13 @@ def mount_dashboard(
             endpoint_records = session.scalars(select(RelaySessionRecord).where(
                 RelaySessionRecord.id.in_(endpoint_ids),
             )).all() if endpoint_ids else []
-        endpoint_views = {record.id: _dashboard_relay_session(record, as_of - timedelta(hours=24)) for record in endpoint_records}
+            _, collision_by_endpoint = _dashboard_relay_identity_collisions(
+                session, as_of, endpoint_ids=endpoint_ids,
+            )
+        endpoint_views = {record.id: _dashboard_relay_session(
+            record, as_of - timedelta(hours=24),
+            possible_identity_collision=collision_by_endpoint.get(record.id),
+        ) for record in endpoint_records}
         deliveries_by_message: dict[str, list[dict]] = {}
         message_by_id = {message.id: message for message in messages}
         for delivery in deliveries:
@@ -868,7 +1080,9 @@ def mount_dashboard(
                 "in_reply_to": message.in_reply_to, "created_at": _dashboard_time(message.created_at),
                 "expires_at": None if durable else _dashboard_time(expires), "effective_expired": not durable and expires <= as_of,
                 "deliveries": deliveries_by_message.get(message.id, [])})
-        endpoint_sessions = [_dashboard_relay_session(record, as_of - timedelta(hours=24), relay_activation) for record in endpoint_records]
+        endpoint_sessions = [_dashboard_relay_session(
+            record, as_of - timedelta(hours=24), relay_activation, collision_by_endpoint.get(record.id),
+        ) for record in endpoint_records]
         return JSONResponse(content={"messages": items, "endpoint_sessions": endpoint_sessions,
                                      "total": total, "limit": limit, "until": _dashboard_time(as_of),
                                      "as_of": _dashboard_time(as_of), "has_more": has_more,

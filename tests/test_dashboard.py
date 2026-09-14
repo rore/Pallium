@@ -298,27 +298,39 @@ class TestDashboardRelayIdentityCollisionBoundaries:
         now = datetime.now(timezone.utc).replace(microsecond=0)
         with TestClient(app) as client:
             with app.state.pallium_service._storage._relay_session_factory() as session:
-                for index in range(21):
+                for index in range(101):
                     session.add(RelaySessionRecord(
                         id=f"bound-{index}", runtime="codex", session_ref="bounded",
                         container_ref=f"container-{index}", state="active",
                         first_seen_at=now, last_seen_at=now,
                     ))
-                for index in range(20):
+                for index in range(100):
                     session.add(RelaySessionRecord(
                         id=f"exact-{index}", runtime="codex", session_ref="exact",
                         container_ref=f"exact-container-{index}", state="active",
                         first_seen_at=now, last_seen_at=now,
                     ))
+                for name, endpoint_id in (("bounded", "bound-0"), ("exact", "exact-0")):
+                    session.add(RelayMessageRecord(
+                        id=f"{name}-message", sender_runtime="codex", sender_session_ref="sender",
+                        recipient_selector=endpoint_id, container_ref="sender", payload=name,
+                        created_at=now - timedelta(minutes=1), expires_at=now + timedelta(hours=1),
+                    ))
+                    session.add(RelayDeliveryRecord(
+                        id=f"{name}-delivery", message_id=f"{name}-message",
+                        recipient_runtime="codex", recipient_session_ref=name,
+                        recipient_endpoint_id=endpoint_id, recipient_container_ref=name,
+                        state="pending", attempts=0,
+                    ))
                 session.commit()
             body = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
         assert body["group_count"] == 2
-        assert body["endpoint_count"] == 41
+        assert body["endpoint_count"] == 201
         assert body["detail_group_limit"] == 20
         assert body["detail_endpoint_limit"] == 100
         assert body["details_truncated"] is True
         assert {group["session_ref"] for group in body["groups"]} == {"exact"}
-        assert len(body["groups"][0]["endpoints"]) == 20
+        assert len(body["groups"][0]["endpoints"]) == 100
 
     def test_candidate_requires_unique_latest_active_recent_endpoint(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
@@ -328,23 +340,28 @@ class TestDashboardRelayIdentityCollisionBoundaries:
                 response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "candidate", "container_ref": f"cand-{index}"})
                 assert response.status_code == 200
             endpoints = client.get("/dashboard/api/relay/sessions?limit=10").json()["sessions"]
+            target_id = next(row["id"] for row in endpoints if row["container_ref"] == "cand-0")
+            assert client.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "candidate",
+                "recipient": target_id, "container_ref": "cand-0", "payload": "candidate",
+            }).status_code == 200
             with app.state.pallium_service._storage._relay_session_factory() as session:
                 for index, row in enumerate(endpoints):
                     session.execute(text("UPDATE relay_sessions SET state=:state, last_seen_at=:at, closed_at=:closed WHERE id=:id"), {
                         "state": "active", "at": now - timedelta(minutes=index), "closed": None, "id": row["id"],
                     })
-                session.execute(text("UPDATE relay_sessions SET state='closed', last_seen_at=:at, closed_at=:at WHERE container_ref='cand-2'"), {"at": now + timedelta(minutes=1)})
-                session.execute(text("UPDATE relay_sessions SET state='unreachable', last_seen_at=:at WHERE container_ref='cand-3'"), {"at": now + timedelta(minutes=2)})
+                session.execute(text("UPDATE relay_sessions SET state='closed', last_seen_at=:at, closed_at=:at WHERE container_ref='cand-2'"), {"at": now - timedelta(minutes=2)})
+                session.execute(text("UPDATE relay_sessions SET state='unreachable', last_seen_at=:at WHERE container_ref='cand-3'"), {"at": now - timedelta(minutes=1)})
                 session.commit()
             diagnostic = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
             group = next(item for item in diagnostic["groups"] if item["session_ref"] == "candidate")
-            assert group["is_most_recent_candidate"] is False
+            assert group["most_recent_endpoint_id"] is None
             with app.state.pallium_service._storage._relay_session_factory() as session:
-                session.execute(text("UPDATE relay_sessions SET state='active', last_seen_at=:at WHERE container_ref='cand-3'"), {"at": now + timedelta(minutes=3)})
+                session.execute(text("UPDATE relay_sessions SET state='active', last_seen_at=:at WHERE container_ref='cand-3'"), {"at": now - timedelta(seconds=1)})
                 session.commit()
             diagnostic = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
             group = next(item for item in diagnostic["groups"] if item["session_ref"] == "candidate")
-            assert group["is_most_recent_candidate"] is True
+            assert group["most_recent_endpoint_id"] == next(row["id"] for row in endpoints if row["container_ref"] == "cand-3")
 
     def test_identity_key_is_runtime_scoped_and_missing_endpoint_metadata_is_safe(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
@@ -357,6 +374,92 @@ class TestDashboardRelayIdentityCollisionBoundaries:
                 session.commit()
             body = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
         assert body["group_count"] == 0
+
+    def test_collision_group_detail_limit_preserves_complete_totals(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        with TestClient(app) as client:
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                for index in range(21):
+                    session_ref = f"group-{index:02d}"
+                    for sibling in range(2):
+                        session.add(RelaySessionRecord(
+                            id=f"{session_ref}-{sibling}", runtime="codex", session_ref=session_ref,
+                            container_ref=f"{session_ref}-container-{sibling}", state="active",
+                            first_seen_at=now, last_seen_at=now,
+                        ))
+                    session.add(RelayMessageRecord(
+                        id=f"{session_ref}-message", sender_runtime="codex", sender_session_ref="sender",
+                        recipient_selector=f"{session_ref}-0", container_ref="sender", payload=session_ref,
+                        created_at=now - timedelta(minutes=1), expires_at=now + timedelta(hours=1),
+                    ))
+                    session.add(RelayDeliveryRecord(
+                        id=f"{session_ref}-delivery", message_id=f"{session_ref}-message",
+                        recipient_runtime="codex", recipient_session_ref=session_ref,
+                        recipient_endpoint_id=f"{session_ref}-0", recipient_container_ref=session_ref,
+                        state="pending", attempts=0,
+                    ))
+                session.commit()
+            body = client.get("/dashboard/api/relay/summary").json()["possible_identity_collisions"]
+        assert body["group_count"] == 21
+        assert body["endpoint_count"] == 42
+        assert body["claimable_delivery_count"] == 21
+        assert len(body["groups"]) == body["detail_group_limit"] == 20
+        assert sum(len(group["endpoints"]) for group in body["groups"]) == 40
+        assert body["details_truncated"] is True
+
+    def test_unicode_identity_exact_time_boundaries_and_reads_are_non_mutating(self, tmp_path: Path) -> None:
+        app = create_app(_test_config(tmp_path))
+        identity = "<東京&>"
+        with TestClient(app) as client:
+            for container in ("unicode-a", "unicode-b"):
+                assert client.post("/relay/turn", json={
+                    "runtime": "codex", "session_ref": identity, "container_ref": container,
+                }).status_code == 200
+            endpoints = client.get("/dashboard/api/relay/sessions").json()["sessions"]
+            endpoint_id = next(row["id"] for row in endpoints if row["container_ref"] == "unicode-a")
+            anchor = datetime.now(timezone.utc).replace(microsecond=0)
+            storage = app.state.pallium_service._storage
+            with storage._relay_session_factory() as session:
+                for name, expires_at, state, lease in (
+                    ("lease", anchor + timedelta(hours=1), "claimed", anchor),
+                    ("expiry", anchor, "pending", None),
+                ):
+                    session.add(RelayMessageRecord(
+                        id=f"boundary-{name}-message", sender_runtime="codex", sender_session_ref="sender",
+                        recipient_selector=endpoint_id, container_ref="sender", payload=name,
+                        created_at=anchor - timedelta(minutes=1), expires_at=expires_at,
+                    ))
+                    session.add(RelayDeliveryRecord(
+                        id=f"boundary-{name}-delivery", message_id=f"boundary-{name}-message",
+                        recipient_runtime="codex", recipient_session_ref=identity,
+                        recipient_endpoint_id=endpoint_id, recipient_container_ref="unicode-a",
+                        state=state, attempts=3, claim_token="secret-token" if state == "claimed" else None,
+                        claimed_at=anchor - timedelta(minutes=2) if state == "claimed" else None,
+                        lease_expires_at=lease,
+                    ))
+                session.commit()
+                before = session.execute(text(
+                    "SELECT d.state, d.attempts, d.claim_token, d.claimed_at, d.lease_expires_at, m.expires_at "
+                    "FROM relay_deliveries d JOIN relay_messages m ON m.id=d.message_id "
+                    "WHERE d.id='boundary-lease-delivery'"
+                )).one()
+            page = client.get("/dashboard/api/relay/messages", params={"until": anchor.isoformat()}).json()
+            endpoint = next(row for row in page["endpoint_sessions"] if row["id"] == endpoint_id)
+            collision = endpoint["possible_identity_collision"]
+            assert collision["group_endpoint_count"] == 2
+            assert collision["group_claimable_delivery_count"] == 1
+            assert collision["endpoint_claimable_delivery_count"] == 1
+            assert identity in str(page)
+            assert "secret-token" not in str(page)
+            with storage._relay_session_factory() as session:
+                after = session.execute(text(
+                    "SELECT d.state, d.attempts, d.claim_token, d.claimed_at, d.lease_expires_at, m.expires_at "
+                    "FROM relay_deliveries d JOIN relay_messages m ON m.id=d.message_id "
+                    "WHERE d.id='boundary-lease-delivery'"
+                )).one()
+            assert before == after
+
 class TestDashboardPage:
 
     def test_dashboard_returns_html(self, tmp_path: Path) -> None:
