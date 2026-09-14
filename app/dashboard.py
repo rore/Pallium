@@ -15,6 +15,7 @@ from sqlalchemy import and_, case, func, or_, select, tuple_
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
 from app.codex_wake import get_codex_wake_registry
+from app import codex_readiness
 from core.codex_wake import CodexWakeRegistry
 from core.filters import source_item_matches_filters
 from core.relay_activation import current_platform, relay_activation_snapshot
@@ -29,7 +30,7 @@ from redaction import redact_sensitive
 from storage.sqlite_schema import (
     HistoricalLookupReuseEventRecord, HistoricalLookupReuseLabelRecord,
     MemoryFeedbackRecord, MemoryFlagRecord, MemoryObjectRecord,
-    RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord,
+    RelayDeliveryRecord, RelayDeliveryTraceRecord, RelayMessageRecord, RelaySessionRecord,
     SourceItemRecord,
 )
 
@@ -566,7 +567,10 @@ def mount_dashboard(
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
                 .where(
                     RelayDeliveryRecord.state.in_(active_states),
+                    or_(
+                    RelayMessageRecord.expires_at.is_(None),
                     RelayMessageRecord.expires_at > now,
+                ),
                 )
             ) or 0
             expired_total = session.scalar(
@@ -597,7 +601,10 @@ def mount_dashboard(
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
                 .where(
                     RelayDeliveryRecord.state.in_(active_states),
+                    or_(
+                    RelayMessageRecord.expires_at.is_(None),
                     RelayMessageRecord.expires_at > now,
+                ),
                 )
             )
             latency_rows = session.execute(
@@ -637,6 +644,162 @@ def mount_dashboard(
                     )
                 ) or 0
                 runtimes[runtime] = {"recent": recent, "dormant": dormant, "closed": closed}
+            latest_relevant_trace = (
+                select(
+                    RelayDeliveryTraceRecord.delivery_id.label("delivery_id"),
+                    func.max(RelayDeliveryTraceRecord.recorded_sequence).label("sequence"),
+                )
+                .where(RelayDeliveryTraceRecord.stage.in_(("prepared", "completed")))
+                .group_by(RelayDeliveryTraceRecord.delivery_id)
+                .subquery()
+            )
+            pending_codex_filters = (
+                RelayDeliveryRecord.recipient_runtime == "codex",
+                RelayDeliveryRecord.state == "pending",
+                RelayDeliveryRecord.attempts == 0,
+                or_(
+                    RelayMessageRecord.expires_at.is_(None),
+                    RelayMessageRecord.expires_at > now,
+                ),
+            )
+            awaiting_query = (
+                select(
+                    RelayDeliveryRecord.id.label("delivery_id"),
+                    RelayMessageRecord.id.label("message_id"),
+                    RelaySessionRecord.id.label("endpoint_id"),
+                    RelayDeliveryTraceRecord.stage.label("trace_stage"),
+                    RelayDeliveryTraceRecord.outcome.label("trace_outcome"),
+                    RelayDeliveryTraceRecord.recorded_at.label("trace_recorded_at"),
+                    RelaySessionRecord.last_seen_at.label("endpoint_last_seen_at"),
+                )
+                .join(
+                    RelayMessageRecord,
+                    RelayMessageRecord.id == RelayDeliveryRecord.message_id,
+                )
+                .join(
+                    RelaySessionRecord,
+                    RelaySessionRecord.id
+                    == RelayDeliveryRecord.recipient_endpoint_id,
+                )
+                .join(
+                    latest_relevant_trace,
+                    latest_relevant_trace.c.delivery_id == RelayDeliveryRecord.id,
+                )
+                .join(
+                    RelayDeliveryTraceRecord,
+                    and_(
+                        RelayDeliveryTraceRecord.recorded_sequence
+                        == latest_relevant_trace.c.sequence,
+                        RelayDeliveryTraceRecord.delivery_id
+                        == latest_relevant_trace.c.delivery_id,
+                    ),
+                )
+                .where(
+                    *pending_codex_filters,
+                    RelayDeliveryRecord.trace_pruned == 0,
+                    RelaySessionRecord.runtime == "codex",
+                    RelaySessionRecord.session_ref
+                    == RelayDeliveryRecord.recipient_session_ref,
+                    RelayDeliveryTraceRecord.recorded_at
+                    > RelaySessionRecord.last_seen_at,
+                )
+            )
+            awaiting_subquery = awaiting_query.subquery()
+            awaiting_count = session.scalar(
+                select(func.count()).select_from(awaiting_subquery)
+            ) or 0
+            awaiting_oldest = session.scalar(
+                select(func.min(awaiting_subquery.c.trace_recorded_at))
+            )
+            awaiting_failure_count = session.scalar(
+                select(func.count())
+                .select_from(awaiting_subquery)
+                .where(awaiting_subquery.c.trace_outcome.in_(("failed", "deferred")))
+            ) or 0
+            awaiting_rows = session.execute(
+                awaiting_query.order_by(
+                    RelayDeliveryTraceRecord.recorded_at,
+                    RelayDeliveryRecord.id,
+                ).limit(25)
+            ).mappings().all()
+            unknown_count = session.scalar(
+                select(func.count())
+                .select_from(RelayDeliveryRecord)
+                .join(
+                    RelayMessageRecord,
+                    RelayMessageRecord.id == RelayDeliveryRecord.message_id,
+                )
+                .outerjoin(
+                    latest_relevant_trace,
+                    latest_relevant_trace.c.delivery_id == RelayDeliveryRecord.id,
+                )
+                .where(
+                    *pending_codex_filters,
+                    or_(
+                        latest_relevant_trace.c.sequence.is_(None),
+                        RelayDeliveryRecord.trace_pruned != 0,
+                    ),
+                )
+            ) or 0
+            readiness = codex_readiness.read()
+            awaiting_actionable = bool(awaiting_count) and (
+                readiness["state"] == "review_required"
+                or bool(awaiting_failure_count)
+            )
+            awaiting_status = (
+                "actionable"
+                if awaiting_actionable
+                else "neutral"
+                if awaiting_count
+                else "unknown"
+                if unknown_count
+                else "clear"
+            )
+            awaiting_recipient_checkin = {
+                "status": awaiting_status,
+                "count": awaiting_count,
+                "unknown_count": unknown_count,
+                "failure_count": awaiting_failure_count,
+                "oldest_age_seconds": (
+                    max(0, int((now - utc(awaiting_oldest)).total_seconds()))
+                    if awaiting_oldest is not None
+                    else None
+                ),
+                "detail_limit": 25,
+                "details_truncated": awaiting_count > 25,
+                "details": [
+                    {
+                        "delivery_id": row["delivery_id"],
+                        "endpoint_id": row["endpoint_id"],
+                        "message_id": row["message_id"],
+                        "trace_stage": row["trace_stage"],
+                        "trace_outcome": row["trace_outcome"],
+                        "trace_recorded_at": _dashboard_time(
+                            row["trace_recorded_at"]
+                        ),
+                        "endpoint_last_seen_at": _dashboard_time(
+                            row["endpoint_last_seen_at"]
+                        ),
+                    }
+                    for row in awaiting_rows
+                ],
+                "actionable": awaiting_actionable,
+                "causes": (
+                    (["awaiting_recipient_checkin"] if awaiting_count else [])
+                    + (
+                        ["hook_review_required"]
+                        if awaiting_count
+                        and readiness["state"] == "review_required"
+                        else []
+                    )
+                    + (
+                        ["explicit_failure"]
+                        if awaiting_failure_count
+                        else []
+                    )
+                    + (["incomplete_trace"] if unknown_count else [])
+                ),
+            }
             collisions, _ = _dashboard_relay_identity_collisions(session, now, include_details=True)
 
         queue_wait = []
@@ -661,7 +824,7 @@ def mount_dashboard(
             oldest_pending_age = max(0, int((now - utc(oldest_pending)).total_seconds()))
 
         return JSONResponse(content={
-            "status": "attention" if expired_24h or collisions["claimable_delivery_count"] else ("active" if deliveries_total else "idle"),
+            "status": "attention" if expired_24h or collisions["claimable_delivery_count"] or awaiting_actionable or readiness["state"] == "review_required" else ("active" if deliveries_total else "idle"),
             "messages": {"last_24h": messages_24h, "total": messages_total, "replies_last_24h": replies_24h},
             "deliveries": {
                 "last_24h": delivered_24h,
@@ -682,6 +845,8 @@ def mount_dashboard(
             },
             "sessions": runtimes,
             "possible_identity_collisions": collisions,
+            "codex_readiness": readiness,
+            "awaiting_recipient_checkin": awaiting_recipient_checkin,
         })
 
     @app.get("/dashboard/api/relay/overview")

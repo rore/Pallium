@@ -15,7 +15,7 @@ setup, MCP recovery integration, and live no-manual-turn reply/remediation journ
 are shipped. RW-024 removed unsafe unattended Codex cold resume: unloaded tasks
 retain Pallium's pending next-turn delivery instead. This umbrella remains
 queued for residual qualification, not active reimplementation of those milestones.
-The board's next feature is session-to-work associations.
+Relay reliability remains first. Session-to-work associations are complete; the remaining readiness work is tracked below.
 
 Remaining work:
 - Qualify still-unproven interrupted/restart combinations with a bounded matrix
@@ -31,6 +31,16 @@ workflow validation. A new correctness incident takes priority if one is found.
 The milestone and incident history below preserves evidence; it is not a list of
 new implementation tasks.
 
+### Current readiness tracks
+
+| Track | Owner | Next action |
+|---|---|---|
+| `RW-027` hook readiness | `.agent-workflow/tasks/codex-integration-readiness.md` | Keep hook definition stability and review visibility observable; run the real installed Codex task witness after stable reinstall. |
+| `RW-028` Codex MCP exposure | host recovery follow-up | Same-host/project tasks expose different tool catalogs, including zero Pallium tools after successful hook delivery. Treat this as a Codex host registry/rehydration blocker; do not infer MCP health from hook/service health or add a speculative Pallium workaround. |
+| `RW-029` stranded split identity | guarded Relay operations | Produce reviewed per-delivery dispositions for the diagnosed endpoints before any retarget, ACK, or suppression. |
+| `RW-030` Claude install drift | installed integration lifecycle | Repoint the user-scoped Claude MCP and hooks from the development checkout to the stable installed checkout in the coordinated post-merge install window. Existing hosts retain old subprocesses until their normal restart. |
+
+The dashboard diagnostic is shipped as read-only evidence, not repair. Do not bulk-repair stranded deliveries. The real installed witness gate remains required for send -> next-turn hook claim/injection/ACK -> reply and work-reference attach/detach qualification.
 ## Summary
 
 Make immediate activation the default for every resolved Relay recipient while
@@ -180,10 +190,7 @@ concrete wake-correlation diagnosis gap without changing delivery behavior. The
 remediation journey.
 The closed-recipient lifecycle slice subsequently shipped in PR #148 and
 first-run setup qualification completed on 2026-09-08. Retention cleanup is paused
-pending operational evidence. The next value item is now
-`add-relay-session-work-associations`, followed by activation capabilities and
-delivery traces. Wake-first retains the residual qualification listed at the top of
-this file; macOS is demand-driven and OpenCode activation precedes Copilot.
+pending operational evidence. Relay reliability remains first: qualify the current hook-definition readiness and exact-recipient diagnostics before new wake-first activation qualification. Other activation capabilities, traces, work associations, and Claude/Codex validation may proceed independently. Wake-first retains the residual qualification listed at the top of this file; macOS is demand-driven and OpenCode activation precedes Copilot.
 
 1. **S2 contract gate — complete in PR #98.** Delivery lifecycle
    (`pending`, `claimed`, `delivered`, `expired`; `failed` only on separate

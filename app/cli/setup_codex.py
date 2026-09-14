@@ -18,6 +18,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from app import codex_readiness
+
 
 def _pallium_repo_root() -> Path:
     """Walk up from this file to find the repo root (contains app/run.py)."""
@@ -639,8 +641,18 @@ def install(port: int = 19836, guidance_strength: str = "base") -> int:
     hooks_before = json.dumps(hooks_data, sort_keys=True)
     hooks_data = _register_hooks(hooks_data)
     hooks_changed = json.dumps(hooks_data, sort_keys=True) != hooks_before
+
+    def install_hook_definition() -> bool:
+        if hooks_changed:
+            _write_json(hooks_path, hooks_data)
+        return hooks_changed
+
+    hooks_changed, readiness = codex_readiness.reconcile_setup(
+        python=_python_executable(),
+        script=str(_hooks_dir() / "user_prompt_submit.py"),
+        install_definition=install_hook_definition,
+    )
     if hooks_changed:
-        _write_json(hooks_path, hooks_data)
         print(f"  Registered hooks in {hooks_path}")
     else:
         print(f"  Hooks already current in {hooks_path}")
@@ -666,12 +678,21 @@ def install(port: int = 19836, guidance_strength: str = "base") -> int:
         print(f"  Start it with: python -m app.run all --port {port}")
 
     print("\nConfiguration installed.")
+    print("Service reachability was checked above.")
+    print("Hook execution state: " + str(readiness.get("state", "unknown")) + " (execution-observed only).")
+    print("Codex-owned hook trust: unknown; MCP tool exposure: unknown until Codex confirms both.")
     print("Restart Codex to load this configuration.")
     if hooks_changed:
-        print("Hook configuration changed. Approve the Pallium hook review if prompted.")
+        print("Hook configuration changed. Review and restart Codex are required.")
+        print("Approve the Pallium hook review if prompted.")
         print("Relay wake is ready only after that review.")
+        print("Matching hook execution is the readiness evidence; review alone is not verification.")
+    elif readiness["state"] == "review_required":
+        print("Hook configuration is unchanged, but its existing review and restart are still required.")
+    elif readiness["state"] == "verified":
+        print("Hook configuration is unchanged; matching UserPromptSubmit execution was observed.")
     else:
-        print("Hook configuration is unchanged; no new hook review should be required.")
+        print("Hook configuration is unchanged; execution remains unverified and no new review was created.")
     return 0
 
 
@@ -688,13 +709,25 @@ def uninstall() -> int:
         print(f"  Removed MCP server and feature flags from {config_path}")
     _remove_relay_profile()
 
-    # Remove hooks from hooks.json
+    # Remove hooks from hooks.json and the readiness marker as one transition.
     hooks_path = _codex_hooks_path()
-    if hooks_path.exists():
-        hooks_data = _read_json(hooks_path)
-        hooks_data = _unregister_hooks(hooks_data)
-        _write_json(hooks_path, hooks_data)
-        print(f"  Removed hooks from {hooks_path}")
+
+    def uninstall_hook_definition() -> None:
+        if hooks_path.exists():
+            hooks_data = _read_json(hooks_path)
+            hooks_data = _unregister_hooks(hooks_data)
+            _write_json(hooks_path, hooks_data)
+            print(f"  Removed hooks from {hooks_path}")
+
+    try:
+        codex_readiness.reconcile_uninstall(
+            uninstall_definition=uninstall_hook_definition,
+        )
+    except OSError as exc:
+        print(
+            f"  Warning: could not remove Codex readiness marker: {exc}",
+            file=sys.stderr,
+        )
 
     # Remove AGENTS.md block
     _remove_agents_md_block()

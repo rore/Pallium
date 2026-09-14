@@ -5,11 +5,15 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from app.cli import setup_codex
+from app import codex_readiness
 
 
 def test_codex_mcp_config_uses_python_module_launch_and_base_url(
@@ -959,3 +963,387 @@ def test_codex_public_lifecycle_converges_across_checkouts_and_uninstall(
     assert run(["setup", "codex", "--uninstall"]) == 0
     assert json.loads(hooks_path.read_text(encoding="utf-8")) == after_uninstall
     assert 'trusted_hash = "sha256:owned"' in config_path.read_text(encoding="utf-8")
+
+def test_codex_readiness_marker_transitions_and_stale_unicode_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    python = str(tmp_path / "пython.exe")
+    script = str(tmp_path / "hooks" / "user_prompt_submit.py")
+    changed = codex_readiness.setup(python=python, script=script, changed=True, home=tmp_path)
+    assert changed["state"] == "review_required"
+    assert not codex_readiness.observe_execution(
+        python=python, script=str(tmp_path / "hooks" / "stale.py"), home=tmp_path
+    )
+    assert codex_readiness.read(tmp_path)["state"] == "review_required"
+    assert codex_readiness.observe_execution(python=python, script=script, home=tmp_path)
+    assert codex_readiness.read(tmp_path)["state"] == "verified"
+    preserved = codex_readiness.setup(python=python, script=script, changed=False, home=tmp_path)
+    assert preserved["state"] == "verified"
+    changed_again = codex_readiness.setup(
+        python=python, script=str(tmp_path / "hooks" / "new.py"), changed=True, home=tmp_path
+    )
+    assert changed_again["state"] == "review_required"
+    codex_readiness.marker_path(tmp_path).write_text("{", encoding="utf-8")
+    assert codex_readiness.read(tmp_path)["state"] == "unknown"
+    monkeypatch.setattr(codex_readiness, "_write", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("blocked")))
+    assert codex_readiness.setup(python=python, script=script, changed=True, home=tmp_path)["state"] == "review_required"
+    assert codex_readiness.observe_execution(python=python, script=script, home=tmp_path) is False
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        b"{",
+        b"[]",
+        json.dumps({"state": "verified", "definition": {}}).encode(),
+        b"x" * (32 * 1024 + 1),
+    ],
+    ids=["malformed", "wrong_type", "missing_definition", "oversize"],
+)
+def test_codex_readiness_invalid_marker_is_public_unknown_without_paths(
+    tmp_path: Path, contents: bytes
+) -> None:
+    path = codex_readiness.marker_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(contents)
+    assert not codex_readiness.observe_execution(
+        python=sys.executable, script=str(tmp_path / "stale.py"), home=tmp_path
+    )
+    public = codex_readiness.read(tmp_path)
+    assert public == {
+        "state": "unknown",
+        "hook_trust": "unknown",
+        "mcp_tool_exposure": "unknown",
+    }
+    assert str(tmp_path) not in json.dumps(public)
+
+
+def test_codex_missing_marker_cannot_self_verify(
+    tmp_path: Path,
+) -> None:
+    assert not codex_readiness.observe_execution(
+        python=sys.executable,
+        script=str(tmp_path / "stale.py"),
+        home=tmp_path,
+    )
+    assert codex_readiness.read(tmp_path)["state"] == "unknown"
+
+def test_codex_setup_output_separates_config_execution_and_host_owned_unknowns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(setup_codex, "_verify_service", lambda _port: True)
+    assert setup_codex.install() == 0
+    output = capsys.readouterr().out
+    assert "Configuration installed." in output
+    assert "Service reachability was checked above." in output
+    assert "Hook execution state:" in output
+    assert "Codex-owned hook trust: unknown; MCP tool exposure: unknown" in output
+    assert "Hook configuration changed. Review and restart Codex are required." in output
+
+
+def test_codex_uninstall_removes_readiness_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    marker = codex_readiness.marker_path()
+    marker.parent.mkdir(parents=True)
+    marker.write_text("{}", encoding="utf-8")
+    assert setup_codex.uninstall() == 0
+    assert not marker.exists()
+
+
+def test_codex_uninstall_warns_when_readiness_marker_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(
+        codex_readiness,
+        "reconcile_uninstall",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("cleanup blocked")),
+    )
+
+    assert setup_codex.uninstall() == 0
+
+    assert "could not remove Codex readiness marker" in capsys.readouterr().err
+
+def test_codex_setup_then_actual_hook_execution_verifies_matching_entrypoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    marker = codex_readiness.setup(
+        python=sys.executable,
+        script=hook.__file__,
+        changed=True,
+        home=tmp_path,
+    )
+    assert marker["state"] == "review_required"
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"prompt": ""})
+
+    hook.main()
+
+    assert codex_readiness.read(tmp_path)["state"] == "verified"
+
+
+def test_codex_user_prompt_marker_failure_does_not_block_relay_delivery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    monkeypatch.setitem(
+        hook.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "sessions"
+    )
+    marker = codex_readiness.setup(
+        python=sys.executable,
+        script=hook.__file__,
+        changed=True,
+        home=tmp_path,
+    )
+    assert marker["state"] == "review_required"
+    monkeypatch.setattr(
+        codex_readiness,
+        "_write",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("blocked")),
+    )
+    events: list[str] = []
+    delivery = {"delivery_id": "delivery-marker-failure"}
+    monkeypatch.setattr(
+        hook,
+        "record_codex_hook_execution",
+        lambda **_kwargs: events.append("marker")
+        or codex_readiness.observe_execution(
+            python=sys.executable,
+            script=hook.__file__,
+            home=tmp_path,
+        ),
+    )
+    monkeypatch.setattr(
+        hook,
+        "read_hook_input",
+        lambda: {
+            "cwd": ".",
+            "session_id": "codex-marker-failure",
+            "prompt": "deliver despite marker write failure",
+        },
+    )
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
+    monkeypatch.setattr(
+        hook,
+        "relay_request",
+        lambda *_args, **_kwargs: events.append("relay") or {
+            "session": {
+                "endpoint_id": "relay-session-" + "a" * 32,
+                "container_ref": "git:example/repo",
+                "scope_generation": 0,
+            },
+            "deliveries": [delivery],
+            "has_more": False,
+            "remaining_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        hook,
+        "format_relay",
+        lambda _deliveries, **_kwargs: ("relay block", [delivery]),
+    )
+    monkeypatch.setattr(hook, "emit_context", lambda *_: events.append("emit"))
+    monkeypatch.setattr(
+        hook,
+        "acknowledge_relay",
+        lambda *_args, **_kwargs: events.append("ack"),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        hook.main()
+
+    assert exc.value.code == 0
+    assert events == ["marker", "relay", "emit", "ack"]
+    assert codex_readiness.read(tmp_path)["state"] == "review_required"
+
+def test_codex_user_prompt_entrypoint_observes_execution_before_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from integrations.codex.hooks import user_prompt_submit
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        user_prompt_submit,
+        "record_codex_hook_execution",
+        lambda **_kwargs: calls.append("observed"),
+    )
+    monkeypatch.setattr(
+        user_prompt_submit,
+        "read_hook_input",
+        lambda: calls.append("input") or {"prompt": ""},
+    )
+    user_prompt_submit.main()
+    assert calls == ["observed", "input"]
+
+
+def test_codex_setup_reconciliation_waits_for_process_lock(
+    tmp_path: Path,
+) -> None:
+    python = sys.executable
+    script = str(tmp_path / "user_prompt_submit.py")
+    codex_readiness.setup(
+        python=python,
+        script=script,
+        changed=True,
+        home=tmp_path,
+    )
+    assert codex_readiness.observe_execution(
+        python=python,
+        script=script,
+        home=tmp_path,
+    )
+
+    child_code = """
+import sys
+from pathlib import Path
+from app import codex_readiness
+
+with codex_readiness._marker_lock(Path(sys.argv[1]), wait_seconds=None):
+    print("locked", flush=True)
+    sys.stdin.readline()
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", child_code, str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[1],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    installed = threading.Event()
+    result: list[tuple[bool, dict]] = []
+
+    def reconcile() -> None:
+        result.append(
+            codex_readiness.reconcile_setup(
+                python=python,
+                script=script,
+                install_definition=lambda: installed.set() or True,
+                home=tmp_path,
+            )
+        )
+
+    worker = threading.Thread(target=reconcile)
+    try:
+        assert process.stdout is not None
+        assert process.stdout.readline().strip() == "locked"
+        worker.start()
+        worker.join(timeout=2.1)
+        assert worker.is_alive()
+        assert not installed.is_set()
+
+        assert process.stdin is not None
+        process.stdin.write("\n")
+        process.stdin.flush()
+        process.wait(timeout=5)
+        worker.join(timeout=2)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        if process.stdin is not None:
+            process.stdin.close()
+        if process.stdout is not None:
+            process.stdout.close()
+
+    assert not worker.is_alive()
+    assert result[0][0] is True
+    assert result[0][1]["state"] == "review_required"
+    assert codex_readiness.read(tmp_path)["state"] == "review_required"
+
+
+def test_codex_uninstall_waits_for_observer_before_removing_marker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    python = sys.executable
+    script = str(tmp_path / "user_prompt_submit.py")
+    codex_readiness.setup(
+        python=python,
+        script=script,
+        changed=True,
+        home=tmp_path,
+    )
+
+    original_write = codex_readiness._write
+    execution_writing = threading.Event()
+    release_execution = threading.Event()
+
+    def delayed_write(value, home=None):
+        if value.get("state") == "verified" and not execution_writing.is_set():
+            execution_writing.set()
+            assert release_execution.wait(timeout=2)
+        original_write(value, home)
+
+    monkeypatch.setattr(codex_readiness, "_write", delayed_write)
+    observer = threading.Thread(
+        target=lambda: codex_readiness.observe_execution(
+            python=python,
+            script=script,
+            home=tmp_path,
+        )
+    )
+    observer.start()
+    assert execution_writing.wait(timeout=1)
+
+    removed = threading.Event()
+    uninstall = threading.Thread(
+        target=lambda: codex_readiness.reconcile_uninstall(
+            uninstall_definition=removed.set,
+            home=tmp_path,
+        )
+    )
+    uninstall.start()
+    assert not removed.wait(timeout=0.05)
+
+    release_execution.set()
+    observer.join(timeout=2)
+    uninstall.join(timeout=2)
+
+    assert not observer.is_alive()
+    assert not uninstall.is_alive()
+    assert removed.is_set()
+    assert not codex_readiness.marker_path(tmp_path).exists()
+
+def test_codex_hook_execution_readiness_budget_is_independent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from integrations.codex.hooks import common
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowLoader:
+        def exec_module(self, _module) -> None:
+            started.set()
+            release.wait(timeout=2)
+
+    spec = SimpleNamespace(loader=SlowLoader())
+    monkeypatch.setattr(
+        common.importlib.util,
+        "spec_from_file_location",
+        lambda *_args, **_kwargs: spec,
+    )
+    monkeypatch.setattr(
+        common.importlib.util,
+        "module_from_spec",
+        lambda _spec: SimpleNamespace(),
+    )
+
+    before = time.monotonic()
+    try:
+        assert not common.record_codex_hook_execution(script=__file__)
+    finally:
+        release.set()
+    elapsed = time.monotonic() - before
+
+    assert started.is_set()
+    assert elapsed < 0.75

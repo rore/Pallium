@@ -12,7 +12,7 @@ from app.config import AppConfig
 from app.main import create_app
 from core.codex_wake import CodexWakeRegistry
 from core.models import MemoryObject, SourceItem
-from storage.sqlite_schema import HistoricalLookupReuseEventRecord, HistoricalLookupReuseLabelRecord, MemoryFlagRecord, RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
+from storage.sqlite_schema import HistoricalLookupReuseEventRecord, HistoricalLookupReuseLabelRecord, MemoryFlagRecord, RelayDeliveryRecord, RelayDeliveryTraceRecord, RelayMessageRecord, RelaySessionRecord
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
@@ -269,7 +269,18 @@ class TestDashboardRelaySummary:
         assert sessions["sessions"][0]["possible_identity_collision"]["endpoint_claimable_delivery_count"] == 2
         assert messages["endpoint_sessions"]
         assert before["deliveries"]["pending_now"] == after["deliveries"]["pending_now"]
-        assert before == after
+        def without_live_ages(value):
+            if isinstance(value, dict):
+                return {
+                    key: without_live_ages(item)
+                    for key, item in value.items()
+                    if not key.endswith("age_seconds")
+                }
+            if isinstance(value, list):
+                return [without_live_ages(item) for item in value]
+            return value
+
+        assert without_live_ages(before) == without_live_ages(after)
 
     def test_possible_identity_collision_evaluates_hidden_siblings_and_separate_relay_store(self, tmp_path: Path) -> None:
         config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
@@ -1674,3 +1685,177 @@ def test_relay_deep_link_ui_executes_shipped_javascript() -> None:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "all cases passed" in result.stdout
+
+
+def test_codex_awaiting_recipient_checkin_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.dashboard.codex_readiness.read",
+        lambda: {
+            "state": "verified",
+            "hook_trust": "unknown",
+            "mcp_tool_exposure": "unknown",
+        },
+    )
+    app = create_app(_test_config(tmp_path))
+    scope = {"container_ref": "codex-awaiting"}
+    with TestClient(app) as client:
+        client.post(
+            "/relay/turn",
+            json={"runtime": "codex", "session_ref": "target", **scope},
+        ).raise_for_status()
+        client.post(
+            "/relay/turn",
+            json={"runtime": "claude-code", "session_ref": "sender", **scope},
+        ).raise_for_status()
+        sent = client.post(
+            "/relay/messages",
+            json={
+                "sender_runtime": "claude-code",
+                "sender_session_ref": "sender",
+                "recipient": "codex:target",
+                "payload": "wake",
+                **scope,
+            },
+        ).json()
+        endpoint = next(
+            row
+            for row in client.get("/dashboard/api/relay/sessions").json()["sessions"]
+            if row["runtime"] == "codex"
+        )
+        storage = app.state.pallium_service._storage
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        with storage._relay_session_factory() as session:
+            session.execute(
+                text("UPDATE relay_sessions SET last_seen_at=:at WHERE id=:id"),
+                {"at": now - timedelta(minutes=1), "id": endpoint["id"]},
+            )
+            delivery_id = session.execute(
+                text("SELECT id FROM relay_deliveries WHERE message_id=:message_id"),
+                {"message_id": sent["message_id"]},
+            ).scalar_one()
+            session.add(
+                RelayDeliveryTraceRecord(
+                    id="awaiting-trace",
+                    attempt_id="awaiting-attempt",
+                    delivery_id=delivery_id,
+                    message_id=sent["message_id"],
+                    stage="completed",
+                    outcome="accepted",
+                    recorded_at=now,
+                )
+            )
+            session.commit()
+
+        summary = client.get("/dashboard/api/relay/summary").json()
+        neutral = summary["awaiting_recipient_checkin"]
+        assert summary["codex_readiness"]["state"] == "verified"
+        assert neutral["status"] == "neutral"
+        assert neutral["actionable"] is False
+        assert neutral["count"] == 1
+        assert neutral["failure_count"] == 0
+        assert neutral["unknown_count"] == 0
+
+        monkeypatch.setattr(
+            "app.dashboard.codex_readiness.read",
+            lambda: {
+                "state": "review_required",
+                "hook_trust": "unknown",
+                "mcp_tool_exposure": "unknown",
+            },
+        )
+        review_required = client.get("/dashboard/api/relay/summary").json()
+        assert review_required["status"] == "attention"
+        assert review_required["awaiting_recipient_checkin"]["actionable"] is True
+        assert "hook_review_required" in review_required["awaiting_recipient_checkin"]["causes"]
+
+        monkeypatch.setattr(
+            "app.dashboard.codex_readiness.read",
+            lambda: {
+                "state": "verified",
+                "hook_trust": "unknown",
+                "mcp_tool_exposure": "unknown",
+            },
+        )
+        with storage._relay_session_factory() as session:
+            session.add_all([
+                RelayDeliveryTraceRecord(
+                    id="awaiting-associated",
+                    attempt_id="awaiting-attempt",
+                    delivery_id=delivery_id,
+                    message_id=sent["message_id"],
+                    stage="associated",
+                    recorded_at=now + timedelta(seconds=1),
+                ),
+                RelayDeliveryTraceRecord(
+                    id="awaiting-failure",
+                    attempt_id="awaiting-attempt-2",
+                    delivery_id=delivery_id,
+                    message_id=sent["message_id"],
+                    stage="completed",
+                    outcome="deferred",
+                    recorded_at=now + timedelta(seconds=2),
+                ),
+            ])
+            session.commit()
+        failed = client.get("/dashboard/api/relay/summary").json()[
+            "awaiting_recipient_checkin"
+        ]
+        assert failed["status"] == "actionable"
+        assert failed["count"] == 1
+        assert failed["failure_count"] == 1
+        assert "explicit_failure" in failed["causes"]
+
+        with storage._relay_session_factory() as session:
+            session.execute(
+                text("UPDATE relay_deliveries SET trace_pruned=1 WHERE id=:id"),
+                {"id": delivery_id},
+            )
+            session.commit()
+        unknown = client.get("/dashboard/api/relay/summary").json()[
+            "awaiting_recipient_checkin"
+        ]
+        assert unknown["status"] == "unknown"
+        assert unknown["unknown_count"] == 1
+
+        with storage._relay_session_factory() as session:
+            session.execute(
+                text("UPDATE relay_messages SET expires_at=:at WHERE id=:id"),
+                {
+                    "at": now - timedelta(seconds=1),
+                    "id": sent["message_id"],
+                },
+            )
+            session.commit()
+        expired = client.get("/dashboard/api/relay/summary").json()[
+            "awaiting_recipient_checkin"
+        ]
+        assert expired["status"] == "clear"
+        assert expired["unknown_count"] == 0
+
+        with storage._relay_session_factory() as session:
+            session.execute(
+                text("UPDATE relay_messages SET expires_at=:at WHERE id=:id"),
+                {
+                    "at": now + timedelta(hours=1),
+                    "id": sent["message_id"],
+                },
+            )
+            session.execute(
+                text("UPDATE relay_deliveries SET trace_pruned=0 WHERE id=:id"),
+                {"id": delivery_id},
+            )
+            session.commit()
+        assert client.get("/dashboard/api/relay/summary").json()[
+            "awaiting_recipient_checkin"
+        ]["status"] == "actionable"
+
+        client.post(
+            "/relay/turn",
+            json={"runtime": "codex", "session_ref": "target", **scope},
+        ).raise_for_status()
+        cleared = client.get("/dashboard/api/relay/summary").json()
+        assert cleared["awaiting_recipient_checkin"]["status"] == "clear"
+        assert cleared["awaiting_recipient_checkin"]["count"] == 0
+        assert cleared["deliveries"]["pending_now"] == 1
