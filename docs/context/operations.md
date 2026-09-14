@@ -119,7 +119,7 @@ The default readiness budget is three minutes; an explicit
 `-ReadinessTimeoutSeconds` value keeps its exact finite deadline.
 For offline Relay endpoint repair, first start the upgraded service once so it creates the repair ledger, then run `scripts/restart-service.ps1 -StopOnly`. The wrapper stops the installed task without starting it again and fails if the task, listener, or managed process tree cannot be conclusively drained.
 
-Create a disposition file that classifies every live pending delivery on the source endpoints:
+Create a disposition file that classifies every live repairable delivery on the source endpoints: pending deliveries plus claimed deliveries whose finite lease has expired. An expired claim may only be `suppress`; `adopt`, active claims, missing claim tokens, and missing or malformed leases fail closed.
 
 ```json
 [
@@ -142,7 +142,7 @@ python -m app.tools.relay_endpoint_repair --dry-run `
   --destination relay-session-... --scope relay-session-...=git:destination
 ```
 
-Review the complete endpoint/message/delivery preimage, reservation evidence, dispositions, and printed SHA-256. Codex wake history is process-local, so historical Codex deliveries remain `unknown` and cannot be adopted; use explicit `suppress` only after confirming the work is duplicate or will be resent. Claude adoption is allowed only when the installed durable capability and intent stores are valid, unchanged, and clean for that exact delivery/session/scope.
+Review the complete endpoint/message/delivery preimage, reservation evidence, dispositions, and printed SHA-256. Version 2 manifests replace a claim token with a domain-separated SHA-256 fingerprint; the raw token is never written to the manifest or repair ledger. Canonical SQLite UTC-naive lease timestamps are interpreted as UTC. Codex wake history is process-local, so historical Codex deliveries remain `unknown` and cannot be adopted; use explicit `suppress` only after confirming the work is duplicate or will be resent. Claude adoption is allowed only when the installed durable capability and intent stores are valid, unchanged, and clean for that exact delivery/session/scope.
 
 Apply only the reviewed file and exact digest:
 
@@ -154,7 +154,7 @@ python -m app.tools.relay_endpoint_repair --apply `
   --acknowledge-digest <sha256>
 ```
 
-An identical committed retry returns the ledgered result. Any database, endpoint, TTL, inventory, or wake-evidence drift refuses before delivery mutation; rerun dry-run and review a new digest. Repair never merges endpoints: alias sends still route to the destination, exact sends/replies to a source still route to that source, and occupied scopes remain occupied. When finished, restart with `scripts/restart-service.ps1` and verify `/health`, `/status` (including `embedding_provider_ok`), and `/debug/queue/health` on the installed port.
+An identical committed retry returns the ledgered result. Any database, endpoint, TTL, claim lease/token fingerprint, inventory, or wake-evidence drift refuses before delivery mutation; rerun dry-run and review a new digest. Repair never merges endpoints: alias sends still route to the destination, exact sends/replies to a source still route to that source, and occupied scopes remain occupied. When finished, restart with `scripts/restart-service.ps1` and verify `/health`, `/status` (including `embedding_provider_ok`), and `/debug/queue/health` on the installed port.
 
 The installed launcher must use a dependency-complete Python and the supported
 `python -m app.run service run --port <port>` path: `service run` applies the
