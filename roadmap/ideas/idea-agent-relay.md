@@ -241,8 +241,9 @@ that session produced a delivery-derived Relay reply without MCP receive or a
 separate ACK. Fresh installed-state inspection confirms all managed Codex hooks and
 MCP configuration use the stable installed checkout, the Relay profile exposes
 send/receive/reply/trace, and matching UserPromptSubmit execution is observed.
-The reply itself remains pending at its recipient, so send acceptance is not
-reported as receipt.
+At that acceptance pass, the reply remained pending at its recipient, so send
+acceptance was not reported as receipt; its later manager-side hook consumption
+is recorded in the residual-acceptance closure below.
 
 The same session also completed a real explicit work-association lifecycle for the
 existing empty-wake diagnostic task: attach, list and participant readback, detach,
@@ -259,20 +260,21 @@ existing pending delivery. Four are older than 24 hours and nine belong to a
 diagnosed endpoint identity collision. They remain durable evidence requiring recipient turns or
 explicit disposition, not stale wake fences to delete. This closes the bounded
 Codex recovery/association collection item, not all of R1.5: the queued
-interruption/restart, macOS, OpenCode, fresh-Claude, reply-consumption, and
-historical-disposition checks above remain honest residuals.
+interruption/restart, macOS, OpenCode, and historical-disposition checks
+above remain honest residuals.
 
-#### Residual acceptance coordination — active (2026-09-15)
+#### Residual acceptance coordination — bounded complete (2026-09-15)
 
 The follow-up record is `.agent-workflow/tasks/relay-residual-acceptance.md`; queue
 ownership remains the `add-wake-first-relay-delivery` First item in
 `roadmap/board.md`. A fresh message reached a rediscovered real, ready Claude Code
 endpoint on its first attempt, and Claude created the linked reply. The return
 delivery was then hook-injected into the intended Codex session and exact trace
-records delivered on attempt one, closing the fresh Claude round-trip lane. The
-earlier architect completion reply remains pending to its active Codex endpoint.
-Its next owner is that exact receiving session at its next admitted hook turn;
-only an exact delivered trace closes consumption.
+records delivered on attempt one, closing the fresh Claude round-trip lane.
+The architect's next ordinary user-entered turn hook-injected both the earlier
+completion reply and the fresh RF-009 return; the architect confirmed it read
+both payloads, and their exact traces report delivered. That closes the bounded
+manager-consumption lane without claiming universal Relay reliability.
 
 The payload-free snapshot at `2026-09-15T02:38:37.8905141+03:00` contains 27
 effective pending deliveries: 21 recent/active and six dormant, split between
@@ -284,6 +286,9 @@ resume or explicitly disposition them; dormant unreachable-health deliveries
 require an explicit per-message user/product decision. Relay has no current
 cancellation operation, destination health does not terminalize delivery, and
 identity collisions rule out blind retargeting. No backlog record was mutated.
+These historical dispositions and the remaining interruption/restart, macOS,
+and OpenCode qualification stay open separately from the completed bounded
+acceptance record.
 
 #### Optional correlated turn-end notification — proposed follow-up
 
