@@ -48,7 +48,7 @@ The public Relay lifecycle documentation records the narrow lease-expiry excepti
 - Affected Relay hook/Codex wake/Claude callback/storage subsystem before the final one-line scheduling-key cleanup: `204 passed, 2 skipped in 57.48s`; the cleanup is covered by the final focused run and the required final repository suite below.
 - Final required post-review repository suite: `5016 passed, 34 skipped, 2 xfailed in 222.30s`.
 - `py_compile` for all changed Python modules/tests and `git diff --check`: passed.
-- Import-linter boundary report: zero violations. Agent-workflow: every blocking predicate passed; only the shadow API-review label remains until the PR exists.
+- Import-linter boundary report: zero violations. Agent-workflow: every blocking predicate passed; the smart API review approved and PR #198 carries `api-reviewed` for the shadow checkpoint.
 - The caller-surface lifecycle uses the real HTTP route, real persisted reservation file, actual hook, simulated client-side response loss after server commit, registry restart, 61-second lease advance, native-call counter, recovery turn, context injection, ACK readback, and a final no-third-wake assertion.
 
 ## API review
