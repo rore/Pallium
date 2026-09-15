@@ -6,6 +6,7 @@
 - investigate-history-navigation-and-on-demand-compression
 
 # Parallel · Agent Relay
+- optimize-always-loaded-guidance
 - validate-relay-dependency-workflows
 
 # Later · Runtime Expansion
