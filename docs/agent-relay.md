@@ -141,10 +141,13 @@ across worker completion, restart, clock changes, registration, close, and
 delivery-status reads. Successful ACK, MCP ACK, or atomic reply for that exact
 delivery releases it. A delivery-specific Codex wake adds one recovery case: when
 its successful `/relay/turn` result durably correlates the exact current
-reservation and claim attempt, reconciliation may release that generation after
-the claim lease expires, then the existing recovery sweep submits one replacement
-wake. Normal turns, mismatches, active claims, and legacy uncorrelated
-reservations remain fenced. A positively pre-submit failure becomes retryable
+reservation and claim attempt, reconciliation enters the same immediate database
+write boundary as Relay claims after the lease expires. Only a currently active
+Codex recipient remains eligible; recovery derives its current session and
+container from that boundary, atomically replaces the reservation with a fresh
+uncorrelated generation, clears old-scope scheduling keys, and schedules one
+replacement before claims resume. Normal turns, mismatches, active claims, and
+legacy uncorrelated reservations remain fenced. A positively pre-submit failure becomes retryable
 only after the safe reset durably commits. If a reservation cannot be resolved,
 later messages still arrive on the next natural hook turn; Pallium does not
 blindly resubmit. The Relay claim and trusted-local reservation update are

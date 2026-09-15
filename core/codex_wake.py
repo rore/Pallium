@@ -139,6 +139,43 @@ class CodexWakeRegistry:
             self._reservations = updated
             return True
 
+    def replace_generation(
+        self,
+        reservation: CodexWakeReservation,
+        *,
+        session_ref: str,
+        container_ref: str,
+    ) -> CodexWakeReservation | None:
+        """Replace one current fence without exposing an unfenced endpoint."""
+        if not self._valid(
+            reservation.recipient_endpoint_id,
+            reservation.delivery_id,
+            session_ref,
+            container_ref,
+        ):
+            return None
+        with self._lock:
+            if self._reservations.get(reservation.recipient_endpoint_id) != reservation:
+                return None
+            self._generation += 1
+            replacement = replace(
+                reservation,
+                session_ref=session_ref,
+                container_ref=container_ref,
+                generation=self._generation,
+                outcome="reserved",
+                correlated_claim_attempts=None,
+            )
+            updated = {
+                **self._reservations,
+                reservation.recipient_endpoint_id: replacement,
+            }
+            if not self._write_locked(updated):
+                self._usable = False
+                return None
+            self._reservations = updated
+            return replacement
+
     def release_generation(self, reservation: CodexWakeReservation) -> bool:
         return bool(self.release_generations((reservation,)))
 

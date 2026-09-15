@@ -153,7 +153,7 @@ def test_reconciliation_releases_only_exact_terminal_or_missing(tmp_path) -> Non
 
 
 def test_v1_registry_stays_fenced_until_exact_claim_correlation_persists(
-    tmp_path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     state_dir = tmp_path / "legacy-registry"
     state_dir.mkdir()
@@ -183,13 +183,23 @@ def test_v1_registry_stays_fenced_until_exact_claim_correlation_persists(
             "state": "pending",
             "stored_state": "claimed",
             "attempts": 2,
+            "wake_target": {
+                "runtime": "codex",
+                "session_ref": "target",
+                "container_ref": SCOPE["container_ref"],
+            },
         }
 
         def codex_wake_reservation_state(self, *, delivery_id):
             assert delivery_id == self.state["delivery_id"]
             return dict(self.state)
 
+        def reconcile_codex_wake_reservation(self, *, delivery_id, decision):
+            assert delivery_id == self.state["delivery_id"]
+            return decision(dict(self.state))
+
     relay = Relay()
+    monkeypatch.setattr(codex_wake.time, 'sleep', lambda _: None)
     assert codex_wake.reconcile_codex_relay_wake_reservations(
         relay, registry=registry
     ) == 0
@@ -223,8 +233,251 @@ def test_v1_registry_stays_fenced_until_exact_claim_correlation_persists(
     assert codex_wake.reconcile_codex_relay_wake_reservations(
         relay, registry=restarted
     ) == 1
-    assert restarted.snapshot(endpoint_id) is None
+    replacement = restarted.snapshot(endpoint_id)
+    assert replacement is not None
+    assert replacement.generation > current.generation
+    assert replacement.correlated_claim_attempts is None
 
+
+def test_expired_wake_reconciliation_serializes_an_ordinary_reclaim(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    import storage.sqlite_relay as sqlite_relay
+
+    clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return (
+            current
+            if current.tzinfo is not None
+            else current.replace(tzinfo=timezone.utc)
+        )
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    relay = RelayService(client.app.state.pallium_service._storage)
+    relay.turn(runtime="claude-code", session_ref="sender", **SCOPE)
+    target = relay.turn(runtime="codex", session_ref="target", **SCOPE)
+    sent = relay.send(
+        sender_runtime="claude-code",
+        sender_session_ref="sender",
+        recipient="codex:target",
+        payload="serialize the reversible recovery state",
+        **SCOPE,
+    )
+    delivery_id = sent["deliveries"][0]["delivery_id"]
+    endpoint_id = target["session"]["endpoint_id"]
+    registry = CodexWakeRegistry(tmp_path / "race-registry")
+    reservation = registry.reserve(
+        recipient_endpoint_id=endpoint_id,
+        delivery_id=delivery_id,
+        session_ref="target",
+        container_ref=SCOPE["container_ref"],
+    )
+    assert reservation is not None
+    claimed = relay.turn(
+        runtime="codex", session_ref="target", **SCOPE
+    )["deliveries"][0]
+    assert claimed["attempts"] == 1
+    assert registry.correlate_claim(
+        delivery_id=delivery_id,
+        recipient_endpoint_id=endpoint_id,
+        session_ref="target",
+        container_ref=SCOPE["container_ref"],
+        attempts=1,
+    )
+    reservation = registry.snapshot(endpoint_id)
+    assert reservation is not None
+    clock[0] += timedelta(seconds=61)
+
+    replacement_written = threading.Event()
+    allow_reconcile = threading.Event()
+    native_gate = threading.Event()
+    outcome_recorded = threading.Event()
+    original_replace = registry.replace_generation
+    original_record = registry.record_outcome
+
+    def replace_generation(current, **kwargs):
+        replacement = original_replace(current, **kwargs)
+        replacement_written.set()
+        assert allow_reconcile.wait(2)
+        return replacement
+
+    def record_outcome(current, outcome):
+        result = original_record(current, outcome)
+        outcome_recorded.set()
+        return result
+
+    monkeypatch.setattr(registry, "replace_generation", replace_generation)
+    monkeypatch.setattr(registry, "record_outcome", record_outcome)
+    monkeypatch.setattr(
+        codex_wake.time, "sleep", lambda _seconds: native_gate.wait(2)
+    )
+    monkeypatch.setattr(
+        codex_wake, "_start_launch",
+        lambda *_args: (None, ("queued", None, 0)),
+    )
+
+    reconciled = []
+    reclaim = []
+    claim_finished = threading.Event()
+    reconcile_thread = threading.Thread(
+        target=lambda: reconciled.append(
+            codex_wake.reconcile_codex_relay_wake_reservations(
+                relay, registry=registry
+            )
+        )
+    )
+    reconcile_thread.start()
+    assert replacement_written.wait(2)
+
+    def ordinary_reclaim():
+        reclaim.append(relay.turn(
+            runtime="codex", session_ref="target", **SCOPE
+        ))
+        claim_finished.set()
+
+    claim_thread = threading.Thread(target=ordinary_reclaim)
+    claim_thread.start()
+    assert not claim_finished.wait(0.05)
+    allow_reconcile.set()
+    reconcile_thread.join(timeout=2)
+    claim_thread.join(timeout=2)
+    assert not reconcile_thread.is_alive()
+    assert not claim_thread.is_alive()
+    assert reconciled == [1]
+    assert reclaim[0]["deliveries"][0]["attempts"] == 2
+    current = registry.snapshot(endpoint_id)
+    assert current is not None
+    assert current.generation > reservation.generation
+    assert current.correlated_claim_attempts is None
+
+    native_gate.set()
+    assert outcome_recorded.wait(2)
+    current = registry.snapshot(endpoint_id)
+    assert current is not None
+    assert current.outcome == "accepted"
+    assert current.correlated_claim_attempts is None
+
+@pytest.mark.parametrize("lifecycle", ("closed", "unreachable", "moved"))
+def test_expired_wake_reconciliation_requires_current_active_recipient(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path, lifecycle: str,
+) -> None:
+    import storage.sqlite_relay as sqlite_relay
+
+    clock = [datetime(2030, 9, 6, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return (
+            current
+            if current.tzinfo is not None
+            else current.replace(tzinfo=timezone.utc)
+        )
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    relay = RelayService(client.app.state.pallium_service._storage)
+    source_scope = {"container_ref": "git:example.test/wake-source"}
+    old_scope = {"container_ref": "git:example.test/wake-old"}
+    new_scope = {"container_ref": "git:example.test/wake-new"}
+    relay.turn(runtime="claude-code", session_ref="sender", **source_scope)
+    target = relay.turn(runtime="codex", session_ref="target", **old_scope)
+    endpoint_id = target["session"]["endpoint_id"]
+    sent = relay.send(
+        sender_runtime="claude-code",
+        sender_session_ref="sender",
+        recipient=endpoint_id,
+        payload="preserve current wake eligibility",
+        **source_scope,
+    )
+    delivery_id = sent["deliveries"][0]["delivery_id"]
+    registry = CodexWakeRegistry(tmp_path / lifecycle)
+    assert registry.reserve(
+        recipient_endpoint_id=endpoint_id,
+        delivery_id=delivery_id,
+        session_ref="target",
+        container_ref=old_scope["container_ref"],
+    ) is not None
+    claim = relay.turn(
+        runtime="codex", session_ref="target", **old_scope
+    )["deliveries"][0]
+    assert registry.correlate_claim(
+        delivery_id=delivery_id,
+        recipient_endpoint_id=endpoint_id,
+        session_ref="target",
+        container_ref=old_scope["container_ref"],
+        attempts=claim["attempts"],
+    )
+    correlated = registry.snapshot(endpoint_id)
+    assert correlated is not None
+
+    if lifecycle == "closed":
+        relay.close_session(runtime="codex", session_ref="target", **old_scope)
+    elif lifecycle == "unreachable":
+        assert relay.mark_unreachable(
+            runtime="codex",
+            session_ref="target",
+            attempt_started_at=clock[0] + timedelta(seconds=1),
+            **old_scope,
+        )
+    else:
+        moved = relay.turn(
+            runtime="codex",
+            session_ref="target",
+            previous_container_ref=old_scope["container_ref"],
+            previous_endpoint_id=endpoint_id,
+            previous_scope_generation=0,
+            **new_scope,
+        )
+        assert moved["session"]["endpoint_id"] == endpoint_id
+        assert moved["deliveries"] == []
+
+    old_wake_key = ("target", old_scope["container_ref"])
+    codex_wake._scheduled_delivery_ids.add(delivery_id)
+    codex_wake._scheduled_session_generations[old_wake_key] = correlated.generation
+    codex_wake._scheduled_session_delivery_ids[old_wake_key] = delivery_id
+    codex_wake._scheduled_session_attempt_ids[old_wake_key] = "old-attempt"
+    clock[0] += timedelta(seconds=61)
+    scheduled = []
+    workers = []
+    native_gate = threading.Event()
+    real_schedule = codex_wake._schedule_reserved_codex_relay_wake
+
+    def schedule(reservation, wake_registry, **kwargs):
+        scheduled.append(reservation)
+        worker = real_schedule(reservation, wake_registry, **kwargs)
+        workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _seconds: native_gate.wait(2))
+    monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", schedule)
+    reconciled = codex_wake.reconcile_codex_relay_wake_reservations(
+        relay, registry=registry
+    )
+
+    if lifecycle == "moved":
+        assert reconciled == 1
+        assert len(scheduled) == 1
+        replacement = registry.snapshot(endpoint_id)
+        assert replacement is not None
+        assert replacement.generation > correlated.generation
+        assert replacement.session_ref == "target"
+        assert replacement.container_ref == new_scope["container_ref"]
+        assert old_wake_key not in codex_wake._scheduled_session_generations
+        assert old_wake_key not in codex_wake._scheduled_session_delivery_ids
+        assert old_wake_key not in codex_wake._scheduled_session_attempt_ids
+        new_wake_key = ("target", new_scope["container_ref"])
+        assert codex_wake._scheduled_session_generations[new_wake_key] == replacement.generation
+        assert codex_wake._scheduled_session_delivery_ids[new_wake_key] == delivery_id
+        assert new_wake_key in codex_wake._scheduled_session_attempt_ids
+        assert len(workers) == 1 and workers[0] is not None
+        native_gate.set()
+        workers[0].join(timeout=2)
+        assert not workers[0].is_alive()
+    else:
+        assert reconciled == 0
+        assert scheduled == []
+        assert registry.snapshot(endpoint_id) == correlated
 
 def test_claim_correlation_rejects_mismatched_or_ambiguous_results() -> None:
     endpoint_id = "relay-session-" + "c" * 32
@@ -434,6 +687,8 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
 
     def launch(session_ref, prompt):
         native_prompts.append((session_ref, prompt))
+        if len(native_prompts) == 2:
+            retry_launched.set()
         return None, ("queued", None, 0)
 
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", schedule)
@@ -2511,6 +2766,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     registry = CodexWakeRegistry(registry_root)
     workers = []
     native_prompts = []
+    retry_launched = threading.Event()
 
     def schedule(result, scope, **kwargs):
         worker = codex_wake.schedule_codex_relay_wake(
@@ -2521,6 +2777,8 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
 
     def launch(session_ref, prompt):
         native_prompts.append((session_ref, prompt))
+        if len(native_prompts) == 2:
+            retry_launched.set()
         return None, ("queued", None, 0)
 
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", schedule)
@@ -2624,8 +2882,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     recover_expired_relay_wakes(
         relay, ClaudeWakeRegistry(), codex_registry=registry
     )
-    workers[-1].join(timeout=2)
-    assert not workers[-1].is_alive()
+    assert retry_launched.wait(2)
     assert len(native_prompts) == 2
     assert native_prompts[-1] == (
         "crash-target",

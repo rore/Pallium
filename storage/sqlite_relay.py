@@ -1453,6 +1453,58 @@ class SQLiteRelayMixin:
                 "recipient_endpoint_id": session.id,
             }
 
+    @staticmethod
+    def _relay_codex_wake_reservation_state(
+        db, *, delivery_id: str, current: datetime
+    ) -> dict[str, Any]:
+        row = db.execute(
+            select(RelayDeliveryRecord, RelayMessageRecord)
+            .join(
+                RelayMessageRecord,
+                RelayMessageRecord.id == RelayDeliveryRecord.message_id,
+            )
+            .where(RelayDeliveryRecord.id == delivery_id)
+        ).one_or_none()
+        if row is None:
+            raise RelayNotFoundError(
+                "relay entity not found in the requested scope"
+            )
+        delivery, message = row
+        state = delivery.state
+        if (
+            state in {"pending", "claimed"}
+            and _now(message.expires_at) <= current
+        ):
+            state = "expired"
+        elif (
+            state == "claimed"
+            and delivery.lease_expires_at is not None
+            and _now(delivery.lease_expires_at) <= current
+        ):
+            state = "pending"
+        session = db.get(RelaySessionRecord, delivery.recipient_endpoint_id)
+        wake_target = None
+        if (
+            session is not None
+            and session.state == "active"
+            and session.runtime == "codex"
+            and delivery.recipient_runtime == "codex"
+            and _render_safe(message.payload)
+        ):
+            wake_target = {
+                "runtime": session.runtime,
+                "session_ref": session.session_ref,
+                "container_ref": session.container_ref,
+            }
+        return {
+            "delivery_id": delivery.id,
+            "recipient_endpoint_id": delivery.recipient_endpoint_id,
+            "state": state,
+            "stored_state": delivery.state,
+            "attempts": int(delivery.attempts or 0),
+            "wake_target": wake_target,
+        }
+
     def relay_codex_wake_reservation_state(
         self,
         *,
@@ -1460,40 +1512,24 @@ class SQLiteRelayMixin:
         now: datetime | None = None,
     ) -> dict[str, Any]:
         """Read exact payload-free state without mutable session scope."""
-        current = _now(now)
         with self._relay_session_factory() as db:
-            row = db.execute(
-                select(RelayDeliveryRecord, RelayMessageRecord)
-                .join(
-                    RelayMessageRecord,
-                    RelayMessageRecord.id == RelayDeliveryRecord.message_id,
-                )
-                .where(RelayDeliveryRecord.id == delivery_id)
-            ).one_or_none()
-            if row is None:
-                raise RelayNotFoundError(
-                    "relay entity not found in the requested scope"
-                )
-            delivery, message = row
-            state = delivery.state
-            if (
-                state in {"pending", "claimed"}
-                and _now(message.expires_at) <= current
-            ):
-                state = "expired"
-            elif (
-                state == "claimed"
-                and delivery.lease_expires_at is not None
-                and _now(delivery.lease_expires_at) <= current
-            ):
-                state = "pending"
-            return {
-                "delivery_id": delivery.id,
-                "recipient_endpoint_id": delivery.recipient_endpoint_id,
-                "state": state,
-                "stored_state": delivery.state,
-                "attempts": int(delivery.attempts or 0),
-            }
+            return self._relay_codex_wake_reservation_state(
+                db, delivery_id=delivery_id, current=_now(now)
+            )
+
+    def relay_reconcile_codex_wake_reservation(
+        self,
+        *,
+        delivery_id: str,
+        decision: Callable[[dict[str, Any]], bool],
+        now: datetime | None = None,
+    ) -> bool:
+        """Evaluate and replace a wake fence while blocking Relay claims."""
+        with self._begin_relay_immediate() as db:
+            state = self._relay_codex_wake_reservation_state(
+                db, delivery_id=delivery_id, current=_now(now)
+            )
+            return decision(state) is True
 
     def relay_wake_candidates(
         self,

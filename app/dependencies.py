@@ -628,7 +628,7 @@ def recover_expired_relay_wakes(
     """Recheck and dispatch persisted pending work without changing Relay state."""
     codex_registry = codex_registry or get_codex_wake_registry()
     reconcile_codex_relay_wake_reservations(
-        relay_service, registry=codex_registry
+        relay_service, registry=codex_registry, trace_callback=trace_callback
     )
     for candidate in relay_service.wake_candidates():
         try:

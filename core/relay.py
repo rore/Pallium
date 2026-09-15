@@ -5,7 +5,7 @@ import re
 import unicodedata
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from core.container_ref import validate_explicit_container_ref
 from core.work_ref import readable_work_ref, validate_work_ref_key
@@ -579,6 +579,25 @@ class RelayService:
             )
         return query(
             delivery_id=_opaque(delivery_id, "delivery_id", maximum=128)
+        )
+
+    def reconcile_codex_wake_reservation(
+        self,
+        *,
+        delivery_id: str,
+        decision: Callable[[dict[str, Any]], bool],
+    ) -> bool:
+        """Evaluate one wake fence while serializing Relay claim writes."""
+        operation = getattr(
+            self._store, "relay_reconcile_codex_wake_reservation", None
+        )
+        if not callable(operation):
+            raise RelayUnavailableError(
+                "atomic Relay Codex wake reconciliation is not supported"
+            )
+        return operation(
+            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
+            decision=decision,
         )
 
     def wake_candidates(
