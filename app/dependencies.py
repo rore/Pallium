@@ -13,8 +13,8 @@ from core.claude_wake import ClaudeWakeRegistry
 from core.codex_wake import CodexWakeRegistry
 from core.relay_activation import current_platform, relay_activation_snapshot
 from app.codex_wake import (
+    correlate_codex_relay_wake_claim,
     get_codex_wake_registry,
-    mark_codex_relay_wake_admitted,
     reconcile_codex_relay_wake_reservations,
     release_codex_relay_wake,
     relay_wake_log_refs,
@@ -777,17 +777,22 @@ def build_router(
         codex_reserved = codex_registry.usable and isinstance(endpoint_id, str) and codex_registry.snapshot(endpoint_id) is not None
         return relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved)
 
-    def _relay_turn_admission(request: object) -> None:
+    def _relay_turn_admission(request: object, result: object) -> None:
         if not isinstance(request, dict):
             return
         session_ref = request.get("session_ref")
         if not isinstance(session_ref, str) or not session_ref:
             return
         if request.get("runtime") == "codex":
-            mark_codex_relay_wake_admitted(
-                session_ref,
-                request.get("container_ref", ""),
-            )
+            wake_delivery_id = request.get("wake_delivery_id")
+            if isinstance(wake_delivery_id, str):
+                correlate_codex_relay_wake_claim(
+                    wake_delivery_id,
+                    session_ref,
+                    request.get("container_ref", ""),
+                    result,
+                    registry=codex_registry,
+                )
         elif request.get("runtime") == "claude-code":
             registry.mark_busy(
                 runtime="claude-code",

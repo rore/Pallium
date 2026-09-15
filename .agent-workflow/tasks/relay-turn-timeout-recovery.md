@@ -31,12 +31,40 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-No production edit has started. Intended production files are the two Codex hook files, the Relay turn request/route, the Codex wake registry/adapter/dependency callback, and the payload-free wake-state projection; focused tests, the public Relay lifecycle paragraph, and the existing incident ledger complete the bounded slice.
+The delivery-specific Codex wake hook now copies its already-validated delivery ID into an optional, Codex-only `/relay/turn` field. The route strips that field before the core Relay call and gives the successful request/result pair to the existing callback. The callback persists the exact matching claimed attempt on the current wake reservation. Registry version 2 retains that correlation across restart while version 1 loads as uncorrelated; reconciliation releases only stored-claimed/effectively-pending reservations whose attempt still matches. The existing generation-CAS release and recovery dispatcher then create one replacement wake. ACK/reply and terminal cleanup remain unchanged.
+
+The public Relay lifecycle documentation records the narrow lease-expiry exception and the separate-commit crash window. RF-009 records the observed incident without claiming model-visible admission. A cheap delegated worker made the mechanical callback/test-contract updates; those edits were reviewed before acceptance. `apply_patch` failed once with the documented Windows process error, so all later edits used exact, asserted, file-scoped replacements as the repository's machine-local instructions require.
+
+## Evidence
+
+- Focused correlation, validation, and lifecycle nodes: `6 passed in 2.45s`.
+- Affected Relay hook/Codex wake/Claude callback subsystem: `178 passed, 2 skipped in 46.74s`.
+- Required repository suite: `5012 passed, 34 skipped, 2 xfailed in 238.08s`.
+- `py_compile` for all changed Python modules/tests and `git diff --check`: passed.
+- The caller-surface lifecycle uses the real HTTP route, real persisted reservation file, actual hook, simulated client-side response loss after server commit, registry restart, 61-second lease advance, native-call counter, recovery turn, context injection, ACK readback, and a final no-third-wake assertion.
+
+## API review
+
+Change shape: additive. `/relay/turn` gains one optional `wake_delivery_id` request field, so existing clients remain unchanged. Validation accepts only canonical lowercase Relay delivery IDs and only for runtime `codex`; the route removes it before invoking the core Relay service. The in-repo Codex hook is the only producer, Claude compatibility is covered, and the OpenAPI model contains the additive field. No deprecation or migration period is required. The trusted-local field is correlation evidence, not authentication or proof of model visibility.
+
+## Skill feedback (unsent)
+
+**Affected surface:** `templates/checkpoints/plan-and-review.md` in the vendored agent-workflow skill.
+
+**Expected:** A clean-context reviewer can read the required Work Record, relevant sources, and canonical SPEC.
+
+**Actual:** The checkpoint requires `SPEC`, and templates/checker cite `SPEC.md`, but the installed skill package contains no `docs/SPEC.md` or `SPEC.md`.
+
+**Minimal reproduction:** Install the skill package, follow the Elevated/High plan-review checkpoint, then list/search the package for the referenced specification.
+
+**Evidence:** The plan-review checkpoint names `SPEC`; `rg -i 'spec.md|specification'` finds references, while both expected specification paths are absent.
+
+**Suggested owner:** Package the canonical specification in the skill manifest or change the checkpoint to an available reference. Kept unsent because this task has no explicit authority for a public upstream defect report. Trigger 3 for the local `apply_patch` failure was dropped because the cause is machine/runtime-owned, not agent-workflow.
 
 ## Plan review
 

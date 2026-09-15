@@ -89,12 +89,21 @@ def _reservation_is_stale(
         return True
     except Exception:
         return False
-    return (
+    if not (
         isinstance(state, dict)
         and state.get("delivery_id") == reservation.delivery_id
         and state.get("recipient_endpoint_id") == reservation.recipient_endpoint_id
         and isinstance(state.get("state"), str)
-        and state["state"] in {"delivered", "expired", "suppressed"}
+    ):
+        return False
+    if state["state"] in {"delivered", "expired", "suppressed"}:
+        return True
+    return (
+        reservation.correlated_claim_attempts is not None
+        and state["state"] == "pending"
+        and state.get("stored_state") == "claimed"
+        and type(state.get("attempts")) is int
+        and state["attempts"] == reservation.correlated_claim_attempts
     )
 
 
@@ -340,6 +349,57 @@ def release_codex_relay_wake(
         return False
     _clear_schedule(released)
     return True
+
+
+def correlate_codex_relay_wake_claim(
+    wake_delivery_id: str,
+    session_ref: str,
+    container_ref: str,
+    turn_result: object,
+    *,
+    registry: CodexWakeRegistry | None = None,
+) -> bool:
+    """Correlate only the exact claimed delivery from a Codex wake turn."""
+    if (
+        re.fullmatch(r"relay-delivery-[0-9a-f]{32}", wake_delivery_id) is None
+        or not isinstance(turn_result, dict)
+    ):
+        return False
+    session = turn_result.get("session")
+    deliveries = turn_result.get("deliveries")
+    if not isinstance(session, dict) or not isinstance(deliveries, list):
+        return False
+    endpoint_id = session.get("endpoint_id")
+    if not (
+        session.get("runtime") == "codex"
+        and session.get("session_ref") == session_ref
+        and session.get("container_ref") == container_ref
+        and isinstance(endpoint_id, str)
+    ):
+        return False
+    matches = [
+        delivery
+        for delivery in deliveries
+        if isinstance(delivery, dict)
+        and delivery.get("delivery_id") == wake_delivery_id
+        and delivery.get("state") == "claimed"
+        and delivery.get("recipient_runtime") == "codex"
+        and delivery.get("recipient_session_ref") == session_ref
+        and delivery.get("recipient_endpoint_id") == endpoint_id
+        and delivery.get("recipient_container_ref") == container_ref
+        and type(delivery.get("attempts")) is int
+        and delivery["attempts"] > 0
+    ]
+    if len(matches) != 1:
+        return False
+    registry = registry or get_codex_wake_registry()
+    return registry.correlate_claim(
+        delivery_id=wake_delivery_id,
+        recipient_endpoint_id=endpoint_id,
+        session_ref=session_ref,
+        container_ref=container_ref,
+        attempts=matches[0]["attempts"],
+    )
 
 
 def mark_codex_relay_wake_admitted(

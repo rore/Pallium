@@ -1491,6 +1491,8 @@ class SQLiteRelayMixin:
                 "delivery_id": delivery.id,
                 "recipient_endpoint_id": delivery.recipient_endpoint_id,
                 "state": state,
+                "stored_state": delivery.state,
+                "attempts": int(delivery.attempts or 0),
             }
 
     def relay_wake_candidates(

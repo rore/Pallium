@@ -27,6 +27,7 @@ class CodexWakeReservation:
     container_ref: str
     generation: int
     outcome: str = "reserved"
+    correlated_claim_attempts: int | None = None
 
 
 class CodexWakeRegistry:
@@ -88,10 +89,50 @@ class CodexWakeRegistry:
             return False
         with self._lock:
             current = self._reservations.get(reservation.recipient_endpoint_id)
-            if current != reservation:
+            if (
+                current is None
+                or current.delivery_id != reservation.delivery_id
+                or current.generation != reservation.generation
+            ):
                 return False
             updated_item = replace(current, outcome=outcome)
             updated = {**self._reservations, current.recipient_endpoint_id: updated_item}
+            if not self._write_locked(updated):
+                self._usable = False
+                return False
+            self._reservations = updated
+            return True
+
+    def correlate_claim(
+        self,
+        *,
+        delivery_id: str,
+        recipient_endpoint_id: str,
+        session_ref: str,
+        container_ref: str,
+        attempts: int,
+    ) -> bool:
+        """Persist the exact hook claim correlated to the current wake fence."""
+        if (
+            not self._valid(
+                recipient_endpoint_id, delivery_id, session_ref, container_ref
+            )
+            or type(attempts) is not int
+            or attempts < 1
+        ):
+            return False
+        with self._lock:
+            current = self._reservations.get(recipient_endpoint_id)
+            if (
+                current is None
+                or current.delivery_id != delivery_id
+                or current.session_ref != session_ref
+                or current.container_ref != container_ref
+                or current.correlated_claim_attempts not in (None, attempts)
+            ):
+                return False
+            updated_item = replace(current, correlated_claim_attempts=attempts)
+            updated = {**self._reservations, recipient_endpoint_id: updated_item}
             if not self._write_locked(updated):
                 self._usable = False
                 return False
@@ -166,21 +207,50 @@ class CodexWakeRegistry:
             return
         try:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
+            version = raw.get("version")
             items = raw["reservations"]
-            if raw.get("version") != 1 or not isinstance(items, list) or len(items) > MAX_RESERVATIONS:
+            if version not in {1, 2} or not isinstance(items, list) or len(items) > MAX_RESERVATIONS:
                 raise ValueError
+            legacy_fields = {
+                "recipient_endpoint_id", "delivery_id", "session_ref",
+                "container_ref", "generation", "outcome",
+            }
             loaded: dict[str, CodexWakeReservation] = {}
             for value in items:
-                if not isinstance(value, dict) or set(value) != {
-                    "recipient_endpoint_id", "delivery_id", "session_ref", "container_ref", "generation", "outcome",
-                }:
+                if not isinstance(value, dict):
                     raise ValueError
-                item = CodexWakeReservation(**value)
-                if (not self._valid(item.recipient_endpoint_id, item.delivery_id, item.session_ref, item.container_ref)
-                        or type(item.generation) is not int or item.generation < 1
-                        or item.outcome not in {"reserved", "accepted", "uncertain"}
-                        or item.recipient_endpoint_id in loaded
-                        or any(current.delivery_id == item.delivery_id for current in loaded.values())):
+                expected = legacy_fields if version == 1 else {
+                    *legacy_fields, "correlated_claim_attempts",
+                }
+                if set(value) != expected:
+                    raise ValueError
+                item = CodexWakeReservation(
+                    **value,
+                    **({"correlated_claim_attempts": None} if version == 1 else {}),
+                )
+                if (
+                    not self._valid(
+                        item.recipient_endpoint_id,
+                        item.delivery_id,
+                        item.session_ref,
+                        item.container_ref,
+                    )
+                    or type(item.generation) is not int
+                    or item.generation < 1
+                    or item.outcome not in {"reserved", "accepted", "uncertain"}
+                    or (
+                        item.correlated_claim_attempts is not None
+                        and (
+                            type(item.correlated_claim_attempts) is not int
+                            or item.correlated_claim_attempts < 1
+                        )
+                    )
+                    or item.recipient_endpoint_id in loaded
+                    or any(
+                        current.delivery_id == item.delivery_id
+                        for current in loaded.values()
+                    )
+                ):
                     raise ValueError
                 loaded[item.recipient_endpoint_id] = item
                 self._generation = max(self._generation, item.generation)
@@ -196,7 +266,7 @@ class CodexWakeRegistry:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             temp = self._path.with_name(self._path.name + ".tmp")
             temp.write_text(json.dumps({
-                "version": 1,
+                "version": 2,
                 "reservations": [asdict(item) for item in reservations.values()],
             }, separators=(",", ":")), encoding="utf-8")
             os.replace(temp, self._path)

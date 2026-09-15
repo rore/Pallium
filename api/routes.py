@@ -404,7 +404,7 @@ def create_router(
     relay_service: RelayService | None = None,
     claude_wake_registry: ClaudeWakeRegistry | None = None,
     relay_send_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
-    relay_turn_callback: Callable[[dict[str, Any]], None] | None = None,
+    relay_turn_callback: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
     relay_ack_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
     relay_activation_callback: Callable[[dict[str, Any]], dict[str, object]] | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
@@ -479,10 +479,13 @@ def create_router(
 
     @router.post("/relay/turn", response_model=RelayTurnResponse)
     async def relay_turn(request: RelayTurnRequest):
-        result = await _relay_call("turn", lambda: _relay().turn(**request.model_dump()))
+        request_data = request.model_dump()
+        relay_request = dict(request_data)
+        relay_request.pop("wake_delivery_id", None)
+        result = await _relay_call("turn", lambda: _relay().turn(**relay_request))
         if relay_turn_callback is not None:
             try:
-                relay_turn_callback(request.model_dump())
+                relay_turn_callback(request_data, result)
             except Exception:
                 logger.exception("Relay turn callback failed after admission")
         return _with_relay_activation(result)

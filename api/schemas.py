@@ -818,6 +818,9 @@ class RelayTurnRequest(BaseModel):
     max_messages: int = Field(default=3, ge=0)
     register_session: bool = True
     structural_work_refs: Any = None
+    wake_delivery_id: str | None = Field(
+        default=None, pattern=r"^relay-delivery-[0-9a-f]{32}$"
+    )
     previous_container_ref: str | None = Field(default=None, min_length=1, max_length=512)
     previous_endpoint_id: str | None = Field(default=None, min_length=1, max_length=128)
     previous_scope_generation: int | None = Field(default=None, ge=0)
@@ -827,6 +830,8 @@ class RelayTurnRequest(BaseModel):
         values = (self.previous_container_ref, self.previous_endpoint_id, self.previous_scope_generation)
         if any(value is not None for value in values) and not all(value is not None for value in values):
             raise ValueError("previous_container_ref, previous_endpoint_id, and previous_scope_generation are required together")
+        if self.wake_delivery_id is not None and self.runtime != "codex":
+            raise ValueError("wake_delivery_id is supported only for codex")
         return self
 
 
