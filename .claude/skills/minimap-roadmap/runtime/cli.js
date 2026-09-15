@@ -58,7 +58,7 @@ function usage() {
 
 For multi-line markdown content (backticks, em-dashes, apostrophes, embedded newlines),
 use --json-stdin and pipe the JSON body on stdin. Avoids every shell's quoting rules.
-For HTTP-direct use, see references/http.md.
+For HTTP-direct spec review, use the minimap-spec-review skill.
 `;
 }
 

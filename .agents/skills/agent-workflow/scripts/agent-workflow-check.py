@@ -65,14 +65,18 @@ _INLINED_SCHEMA = { '$schema': 'https://json-schema.org/draft/2020-12/schema',
                                                                                                           'Work '
                                                                                                           'Record '
                                                                                                           'file. '
-                                                                                                          '{slug} '
-                                                                                                          'is '
-                                                                                                          'substituted '
-                                                                                                          'from '
+                                                                                                          'It '
+                                                                                                          'contains '
+                                                                                                          'exactly '
+                                                                                                          'one '
+                                                                                                          '{slug}; '
+                                                                                                          'resolved '
+                                                                                                          'paths '
+                                                                                                          'stay '
+                                                                                                          'within '
                                                                                                           'the '
-                                                                                                          'branch '
-                                                                                                          'or '
-                                                                                                          'PR. '
+                                                                                                          'selected '
+                                                                                                          'checkout. '
                                                                                                           'Example: '
                                                                                                           '.agent-workflow/tasks/{slug}.md'}},
                                                              'additionalProperties': False},
@@ -1046,9 +1050,76 @@ renderer on write.
 """
 
 
+from pathlib import Path, PurePosixPath, PureWindowsPath
+import unicodedata
 
 
 _PLACEHOLDER = "{slug}"
+_MAX_SLUG_BYTES = 255
+_MAX_PATH_BYTES = 4096
+_WINDOWS_INVALID = frozenset('<>:"|?*')
+_WINDOWS_DEVICES = frozenset(
+    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    | {f"COM{number}" for number in range(1, 10)}
+    | {f"LPT{number}" for number in range(1, 10)}
+)
+
+
+class InvalidSlugError(ValueError):
+    """The supplied Work Record slug is unsafe or outside the contract."""
+
+
+class InvalidTaskPathError(ValueError):
+    """The configured local taskPath is invalid."""
+
+
+class UnsafeWorkRecordPathError(ValueError):
+    """A resolved Work Record path escapes the selected checkout."""
+
+
+def validate_slug(slug: str) -> str:
+    """Return *slug* when it is safe as one filename component."""
+    try:
+        encoded = slug.encode("utf-8")
+    except (AttributeError, UnicodeEncodeError) as exc:
+        raise InvalidSlugError("slug must be valid UTF-8 text") from exc
+    if not encoded or len(encoded) > _MAX_SLUG_BYTES:
+        raise InvalidSlugError("slug must contain 1 to 255 UTF-8 bytes")
+    if any(ch.isspace() or unicodedata.category(ch) == "Cc" for ch in slug):
+        raise InvalidSlugError("slug must not contain whitespace or control characters")
+    if any(ch in _WINDOWS_INVALID or ch in "/\\" for ch in slug):
+        raise InvalidSlugError("slug contains a path separator or invalid filename character")
+    if slug.startswith(".") or slug.endswith((".", " ")) or slug in {".", ".."}:
+        raise InvalidSlugError("slug has an unsafe leading or trailing character")
+    if slug.split(".", 1)[0].upper() in _WINDOWS_DEVICES:
+        raise InvalidSlugError("slug uses a reserved Windows device basename")
+    return slug
+
+
+def validate_task_path_template(template: str) -> str:
+    """Validate and slash-normalize a repository-relative taskPath."""
+    try:
+        encoded = template.encode("utf-8")
+    except (AttributeError, UnicodeEncodeError) as exc:
+        raise InvalidTaskPathError("taskPath must be valid UTF-8 text") from exc
+    if not encoded or len(encoded) > _MAX_PATH_BYTES:
+        raise InvalidTaskPathError("taskPath must contain 1 to 4096 UTF-8 bytes")
+    if any(unicodedata.category(ch) == "Cc" for ch in template):
+        raise InvalidTaskPathError("taskPath must not contain control characters")
+    if template.count(_PLACEHOLDER) != 1:
+        raise InvalidTaskPathError("taskPath must contain exactly one '{slug}' placeholder")
+
+    normalized = template.replace("\\", "/")
+    windows_path = PureWindowsPath(template)
+    if (
+        PurePosixPath(normalized).is_absolute()
+        or windows_path.is_absolute()
+        or windows_path.drive
+    ):
+        raise InvalidTaskPathError("taskPath must be repository-relative")
+    if any(part in {".", ".."} for part in normalized.split("/")):
+        raise InvalidTaskPathError("taskPath must not contain '.' or '..' components")
+    return normalized
 
 
 class LocalBackend:
@@ -1066,14 +1137,8 @@ class LocalBackend:
     """
 
     def __init__(self, repo_root: Path, task_path_template: str) -> None:
-        if _PLACEHOLDER not in task_path_template:
-            raise ValueError(
-                f"taskPath template {task_path_template!r} is missing the "
-                f"{_PLACEHOLDER!r} placeholder — every task would collide "
-                "on the same file"
-            )
         self._repo_root = Path(repo_root).resolve()
-        self._template = task_path_template
+        self._template = validate_task_path_template(task_path_template)
 
     # ------------------------------------------------------------------
     # WorkRecordBackend protocol
@@ -1119,24 +1184,31 @@ class LocalBackend:
         path.write_text(existing[:start] + new_block + suffix, encoding="utf-8")
 
     def resolve_location(self, slug: str) -> str:
-        try:
-            return str(self._resolve_path(slug).relative_to(self._repo_root))
-        except ValueError:
-            # Path is outside the repo root (only possible with absolute
-            # taskPath templates). Fall back to the raw path.
-            return str(self._resolve_path(slug))
+        return self._resolve_path(slug).relative_to(self._repo_root).as_posix()
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
     def _resolve_path(self, slug: str) -> Path:
-        relative = self._template.replace(_PLACEHOLDER, slug)
-        # Treat the template as repo-relative even when it starts with
-        # '/' on Windows-style configs — bootstrap will normalise this,
-        # but we accept either.
-        relative = relative.lstrip("/\\")
-        return (self._repo_root / relative).resolve()
+        relative = self._template.replace(_PLACEHOLDER, validate_slug(slug))
+        if len(relative.encode("utf-8")) > _MAX_PATH_BYTES:
+            raise UnsafeWorkRecordPathError("resolved taskPath exceeds 4096 UTF-8 bytes")
+        try:
+            path = (self._repo_root / relative).resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise UnsafeWorkRecordPathError(
+                "could not safely resolve Work Record path"
+            ) from exc
+        try:
+            repo_relative = path.relative_to(self._repo_root)
+        except ValueError as exc:
+            raise UnsafeWorkRecordPathError(
+                "resolved Work Record path escapes the selected checkout"
+            ) from exc
+        if len(repo_relative.as_posix().encode("utf-8")) > _MAX_PATH_BYTES:
+            raise UnsafeWorkRecordPathError("resolved record path exceeds 4096 UTF-8 bytes")
+        return path
 
 # ----- core/config/applicability.py -----
 
@@ -1332,6 +1404,7 @@ incrementally as their owning backlog items are picked up.
 
 
 
+
 # ---------------------------------------------------------------------------
 # Public types
 # ---------------------------------------------------------------------------
@@ -1489,7 +1562,11 @@ def _to_config(data: dict[str, Any]) -> Config:
     local: LocalBackendConfig | None
     if backend == "local":
         local_block = work_record["local"]
-        local = LocalBackendConfig(task_path=local_block["taskPath"])
+        try:
+            task_path = validate_task_path_template(local_block["taskPath"])
+        except InvalidTaskPathError as exc:
+            raise ConfigError(f"config invalid at workRecord/local/taskPath: {exc}") from exc
+        local = LocalBackendConfig(task_path=task_path)
     else:
         # backend == "jira" — full options land with W18. Surface as
         # None so callers that try to use it before then see an
@@ -3869,7 +3946,19 @@ def _run_one(
     exception become advisory. Then aggregates per-record status and
     attaches the effective-rules list.
     """
-    ctx = _build_context(repo_root, slug, redline_verdict_path, base_ref=base_ref, head_ref=head_ref)
+    try:
+        ctx = _build_context(
+            repo_root, slug, redline_verdict_path, base_ref=base_ref, head_ref=head_ref
+        )
+    except (InvalidSlugError, UnsafeWorkRecordPathError) as exc:
+        results = [PredicateResult(
+            name="workrecord.exists",
+            passed=False,
+            detail=f"Work Record could not be resolved: {exc}",
+            blocking=True,
+        )]
+        record = aggregate_record(slug, results)
+        return dataclasses.replace(record, effective_rules=_effective_rules(results))
     results = [predicate(ctx) for predicate in PREDICATES]
     if require_implementation_ready:
         state = (
@@ -4157,6 +4246,163 @@ def _synthetic_verdict(
     )
     return aggregate([record])
 
+
+_WORK_RECORD_REF_PREFIX = "agent-workflow:"
+_RESOLVER_SLUG_PREFIXES = ("slice/", "feat/", "feature/", "fix/", "bug/", "chore/", "demo/")
+
+
+def _resolver_result(
+    status: str,
+    reason: str,
+    *,
+    work_record_ref: str | None = None,
+    slug: str | None = None,
+    record_path: str | None = None,
+    record_state: str | None = None,
+    message: str | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "status": status,
+        "reason": reason,
+        "work_record_ref": work_record_ref,
+        "slug": slug,
+        "record_path": record_path,
+        "record_state": record_state,
+        "message": None if message is None else message[:512],
+    }
+
+
+def _resolver_error(reason: str, exc: object) -> dict[str, object]:
+    return _resolver_result("error", reason, message=str(exc) or reason)
+
+
+def _resolve_work_record(
+    repo_root: Path,
+    supplied_ref: str | None,
+) -> dict[str, object]:
+    slug: str | None = None
+    if supplied_ref is not None:
+        if not supplied_ref.startswith(_WORK_RECORD_REF_PREFIX):
+            return _resolver_error(
+                "invalid_work_record_ref",
+                f"reference must start with {_WORK_RECORD_REF_PREFIX!r}",
+            )
+        slug = supplied_ref[len(_WORK_RECORD_REF_PREFIX):]
+        try:
+            validate_slug(slug)
+        except InvalidSlugError as exc:
+            return _resolver_error("invalid_work_record_ref", exc)
+
+    config_path = repo_root / "agent-workflow.yaml"
+    try:
+        config_path.stat()
+    except FileNotFoundError:
+        return _resolver_result("absent", "workflow_not_configured")
+    except OSError as exc:
+        return _resolver_error("invalid_config", exc)
+    if not config_path.is_file():
+        return _resolver_error("invalid_config", "agent-workflow.yaml is not a file")
+
+    try:
+        cfg = load(config_path)
+    except (ConfigError, OSError, UnicodeError) as exc:
+        return _resolver_error("invalid_config", exc)
+    if cfg.work_record.backend != "local" or cfg.work_record.local is None:
+        return _resolver_error(
+            "unsupported_backend",
+            f"backend {cfg.work_record.backend!r} does not support local resolution",
+        )
+    try:
+        backend = LocalBackend(repo_root, cfg.work_record.local.task_path)
+    except InvalidTaskPathError as exc:
+        return _resolver_error("invalid_config", exc)
+
+    if slug is None:
+        try:
+            current = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=20,
+                check=False,
+                creationflags=_WINDOWS_NO_WINDOW,
+            )
+        except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
+            return _resolver_error("git_unavailable", exc)
+        if current.returncode != 0:
+            return _resolver_error(
+                "git_unavailable",
+                current.stderr.strip() or f"git exited {current.returncode}",
+            )
+        branch = current.stdout.strip()
+        if not branch:
+            return _resolver_result("absent", "current_record_unavailable")
+        slug = branch
+        for prefix in _RESOLVER_SLUG_PREFIXES:
+            if slug.startswith(prefix):
+                slug = slug[len(prefix):]
+                break
+        slug = slug.replace("/", "-")
+        try:
+            validate_slug(slug)
+        except InvalidSlugError as exc:
+            return _resolver_error("invalid_work_record_ref", exc)
+
+    work_record_ref = f"{_WORK_RECORD_REF_PREFIX}{slug}"
+    try:
+        record_path = backend.resolve_location(slug)
+    except (InvalidSlugError, UnsafeWorkRecordPathError, OSError) as exc:
+        return _resolver_error("unsafe_record_path", exc)
+
+    try:
+        parsed = backend.read(slug)
+    except UnsafeWorkRecordPathError as exc:
+        return _resolver_error("unsafe_record_path", exc)
+    except WorkRecordParseError as exc:
+        return _resolver_error("malformed_record", exc)
+    except UnicodeError as exc:
+        return _resolver_error("malformed_record", exc)
+    except OSError as exc:
+        return _resolver_error("unreadable_record", exc)
+    if parsed is None:
+        return _resolver_result(
+            "absent",
+            "record_not_found",
+            work_record_ref=work_record_ref,
+            slug=slug,
+            record_path=record_path,
+        )
+
+    record_state = parsed.record["state"].strip()
+    if record_state.endswith("."):
+        record_state = record_state[:-1].rstrip()
+    if record_state not in _ALLOWED_STATES:
+        return _resolver_error(
+            "invalid_record_state",
+            f"unsupported Work Record state {record_state!r}",
+        )
+    return _resolver_result(
+        "found",
+        "record_found",
+        work_record_ref=work_record_ref,
+        slug=slug,
+        record_path=record_path,
+        record_state=record_state,
+    )
+
+
+def _emit_resolver_result(result: dict[str, object]) -> int:
+    payload = (json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(payload) > 8192:
+        result = _resolver_error("unsafe_record_path", "resolver output exceeds 8192 bytes")
+        payload = (json.dumps(result, separators=(",", ":")) + "\n").encode("utf-8")
+    sys.stdout.buffer.write(payload)
+    return 2 if result["status"] == "error" else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="agent-workflow-check",
@@ -4164,6 +4410,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--slug", default=None)
+    parser.add_argument("--resolve-work-record", action="store_true")
+    parser.add_argument("--work-record-ref")
     changed = parser.add_mutually_exclusive_group()
     changed.add_argument(
         "--changed-files",
@@ -4195,6 +4443,31 @@ def main(argv: list[str] | None = None) -> int:
         help="Query GitHub live before reporting direct-default-branch eligibility.",
     )
     args = parser.parse_args(argv)
+
+    if args.work_record_ref is not None and not args.resolve_work_record:
+        parser.error("--work-record-ref requires --resolve-work-record")
+    if args.resolve_work_record:
+        incompatible = any((
+            args.slug is not None,
+            args.changed_files is not None,
+            args.changed_files_z is not None,
+            args.redline_verdict is not None,
+            args.require_implementation_ready,
+            args.bootstrap_applicability_proposal_z is not None,
+            args.bootstrap_applicability_approved_z is not None,
+            args.bootstrap_direct_default_branch_approved,
+            args.bootstrap_protection_status is not None,
+            args.base_ref is not None,
+            args.head_ref is not None,
+            args.check_default_branch_protection,
+        ))
+        if incompatible:
+            parser.error(
+                "--resolve-work-record cannot be combined with validation or bootstrap options"
+            )
+        return _emit_resolver_result(
+            _resolve_work_record(args.repo_root.resolve(), args.work_record_ref)
+        )
 
     bootstrap_proposal = args.bootstrap_applicability_proposal_z
     if bootstrap_proposal is not None:

@@ -32,7 +32,7 @@ if (!probe) {
 
 // Trigger graceful shutdown via the HTTP endpoint (cross-platform, unlike signals).
 try {
-  const response = await fetch(`http://localhost:${entry.port}/api/shutdown`, { method: "POST" });
+  const response = await fetch(`http://127.0.0.1:${entry.port}/api/shutdown`, { method: "POST" });
   if (!response.ok) {
     process.stderr.write(`Shutdown request returned ${response.status}.\n`);
     process.exit(1);

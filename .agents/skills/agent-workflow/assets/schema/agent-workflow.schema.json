@@ -34,7 +34,7 @@
             "taskPath": {
               "type": "string",
               "minLength": 1,
-              "description": "Repo-relative path template for the per-task Work Record file. {slug} is substituted from the branch or PR. Example: .agent-workflow/tasks/{slug}.md"
+              "description": "Repo-relative path template for the per-task Work Record file. It contains exactly one {slug}; resolved paths stay within the selected checkout. Example: .agent-workflow/tasks/{slug}.md"
             }
           },
           "additionalProperties": false

@@ -1,8 +1,6 @@
 # agent-workflow
 
-This repository uses [agent-workflow](https://github.com/rore/agent-workflow) â€” a workflow harness for engineering tasks. Includes agent-redline risk classification.
-
-**Where things live:**
+This repository uses [agent-workflow](https://github.com/rore/agent-workflow) with agent-redline risk classification.
 
 | Path | What |
 |---|---|
@@ -26,6 +24,8 @@ This repository uses [agent-workflow](https://github.com/rore/agent-workflow) â€
 ```bash
 python scripts/agent-workflow-check.py --repo-root . --slug <slug>
 ```
+
+If `python` is unavailable, use repository/runtime-provided Python and record the complete invocation.
 
 Exit codes: `0` clean, `1` advisory, `2` blocking. CI runs the same check on PR open and posts a sticky verdict comment.
 
