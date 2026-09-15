@@ -481,7 +481,7 @@ def create_router(
     async def relay_turn(request: RelayTurnRequest):
         request_data = request.model_dump()
         relay_request = dict(request_data)
-        relay_request.pop("wake_delivery_id", None)
+        relay_request["exact_delivery_id"] = relay_request.pop("wake_delivery_id", None)
         result = await _relay_call("turn", lambda: _relay().turn(**relay_request))
         if relay_turn_callback is not None:
             try:

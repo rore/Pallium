@@ -560,6 +560,7 @@ class SQLiteRelayMixin:
         max_chars: int,
         max_messages: int,
         lease_seconds: int,
+        exact_delivery_id: str | None = None,
         max_response_chars: int = 0,
         register_session: bool = True,
         previous_container_ref: str | None = None,
@@ -682,6 +683,10 @@ class SQLiteRelayMixin:
                 (delivery, message)
                 for delivery, message in rows
                 if _delivery_render_safe(delivery, message)
+                and (
+                    exact_delivery_id is None
+                    or delivery.id == exact_delivery_id
+                )
             ]
             session_view = _session_view(registered, current, 24 * 60 * 60, generation)
             selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, dict[str, Any], int, str]] = []

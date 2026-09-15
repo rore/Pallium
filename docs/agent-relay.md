@@ -147,7 +147,7 @@ Codex recipient remains eligible; recovery derives its current session and
 container from that boundary, atomically replaces the reservation with a fresh
 uncorrelated generation, clears old-scope scheduling keys, and schedules one
 replacement before claims resume. Normal turns, mismatches, active claims, and
-legacy uncorrelated reservations remain fenced. A positively pre-submit failure becomes retryable
+legacy uncorrelated reservations remain fenced. A delivery-specific turn selects only its exact delivery, while `has_more` and `remaining_count` still describe all unclaimed inbox work. A positively pre-submit failure becomes retryable
 only after the safe reset durably commits. If a reservation cannot be resolved,
 later messages still arrive on the next natural hook turn; Pallium does not
 blindly resubmit. The Relay claim and trusted-local reservation update are

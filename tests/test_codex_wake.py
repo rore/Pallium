@@ -687,8 +687,6 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
 
     def launch(session_ref, prompt):
         native_prompts.append((session_ref, prompt))
-        if len(native_prompts) == 2:
-            retry_launched.set()
         return None, ("queued", None, 0)
 
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", schedule)
@@ -2603,6 +2601,68 @@ def test_relay_turn_callback_rearms_only_after_success(client) -> None:
     for body in invalid:
         assert route_client.post("/relay/turn", json=body).status_code == 422
     assert len(callbacks) == 2
+
+def test_delivery_specific_turn_claims_exact_message_beyond_normal_limit(client) -> None:
+    callbacks = []
+    app = FastAPI()
+    app.include_router(create_router(
+        client.app.state.pallium_service,
+        relay_service=RelayService(client.app.state.pallium_service._storage),
+        relay_turn_callback=lambda request, result: callbacks.append(
+            (request, result)
+        ),
+    ))
+    route = TestClient(app)
+    assert route.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender", **SCOPE,
+    }).status_code == 200
+    target = route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", **SCOPE,
+    }).json()["session"]
+    sent = []
+    for index in range(4):
+        response = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": target["endpoint_id"],
+            "message_id": f"exact-wake-order-{index}",
+            "payload": f"queued message {index}",
+            **SCOPE,
+        })
+        assert response.status_code == 200, response.text
+        sent.append(response.json())
+
+    expected = sent[-1]["deliveries"][0]["delivery_id"]
+    response = route.post("/relay/turn", json={
+        "runtime": "codex",
+        "session_ref": "target",
+        "max_messages": 1,
+        "wake_delivery_id": expected,
+        **SCOPE,
+    })
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert [item["delivery_id"] for item in result["deliveries"]] == [expected]
+    assert result["has_more"] is True
+    assert result["remaining_count"] == 3
+    assert callbacks[-1][0]["wake_delivery_id"] == expected
+    for unavailable in (expected, "relay-delivery-" + "f" * 32):
+        unavailable_result = route.post("/relay/turn", json={
+            "runtime": "codex",
+            "session_ref": "target",
+            "max_messages": 1,
+            "wake_delivery_id": unavailable,
+            **SCOPE,
+        }).json()
+        assert unavailable_result["deliveries"] == []
+        assert unavailable_result["has_more"] is True
+        assert unavailable_result["remaining_count"] == 3
+    for message in sent[:-1]:
+        status = route.get(
+            f"/relay/messages/{message['message_id']}", params=SCOPE
+        )
+        assert status.status_code == 200
+        assert status.json()["deliveries"][0]["state"] == "pending"
 
 def test_relay_turn_callback_failure_keeps_successful_response(client) -> None:
     app = FastAPI()
