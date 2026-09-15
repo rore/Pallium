@@ -47,6 +47,7 @@ The public Relay lifecycle documentation records the narrow lease-expiry excepti
 - Final focused reclaim-race, current-recipient lifecycle, scheduling-key, and real-hook recovery nodes: `5 passed in 2.63s`.
 - Final affected Relay hook/Codex wake/Claude callback/storage subsystem after CodeRabbit fixes: `205 passed, 2 skipped in 56.28s`.
 - Final post-CodeRabbit repository suite: `5017 passed, 34 skipped, 2 xfailed in 221.38s`.
+- CI Python 3.12 exposed a platform-dependent migration-test worker race; the test now captures the scheduled replacement directly, while the separate real native/hook lifecycle remains intact. Focused stabilization: `2 passed in 1.20s`; smart review APPROVE.
 - `py_compile` for all changed Python modules/tests and `git diff --check`: passed.
 - Import-linter boundary report: zero violations. Agent-workflow: every blocking predicate passed; the smart API review approved and PR #198 carries `api-reviewed` for the shadow checkpoint.
 - The caller-surface lifecycle uses the real HTTP route, real persisted reservation file, actual hook, simulated client-side response loss after server commit, registry restart, 61-second lease advance, native-call counter, recovery turn, context injection, ACK readback, and a final no-third-wake assertion.

@@ -199,7 +199,12 @@ def test_v1_registry_stays_fenced_until_exact_claim_correlation_persists(
             return decision(dict(self.state))
 
     relay = Relay()
-    monkeypatch.setattr(codex_wake.time, 'sleep', lambda _: None)
+    scheduled = []
+    monkeypatch.setattr(
+        codex_wake,
+        "_schedule_reserved_codex_relay_wake",
+        lambda reservation, _registry, **_kwargs: scheduled.append(reservation),
+    )
     assert codex_wake.reconcile_codex_relay_wake_reservations(
         relay, registry=registry
     ) == 0
@@ -237,6 +242,7 @@ def test_v1_registry_stays_fenced_until_exact_claim_correlation_persists(
     assert replacement is not None
     assert replacement.generation > current.generation
     assert replacement.correlated_claim_attempts is None
+    assert scheduled == [replacement]
 
 
 def test_expired_wake_reconciliation_serializes_an_ordinary_reclaim(
