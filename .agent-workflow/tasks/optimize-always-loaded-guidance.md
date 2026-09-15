@@ -23,13 +23,13 @@
 
 **Verification plan:** Deterministic: measure all five actual base/strong/runtime outputs with Python `len(text)` and `len(text.split())`; assert cross-runtime safeguard parity including claim/ACK/reply `already_delivered` or conflict versus non-stale trace `delivered`, operation recipes remain in skills/tool descriptions/references, the strong-arm delta and deprecated alias remain unchanged, marker-bounded fresh install/update preserves unrelated user text, and OpenCode still packages/registers its skill and AGENTS block. Behavior: run each of the same nine fixtures once against baseline guidance and once against proposed guidance, for 18 total runs—not 18 per runtime—with the same cheapest-capable model, prompt, safe stubs, normally exposed skill catalog, and tool metadata; do not preload the full skill or tell the model to use Pallium. Preassign Codex to cases 1, 3, 4, 6, and 7 (10 runs) and Claude to cases 2, 5, 8, and 9 (8 runs); unavailable native surfaces make those runs unexecuted/invalid and do not permit a cross-runtime model-behavior claim. OpenCode receives deterministic static/package coverage only unless separately reviewed. Cap each run at four assistant/tool cycles and six tool calls; a cap/cost stop is a measured failure, not grounds to extend the run. Record whether the skill was loaded when relevant and absent on the irrelevant case. Oracles: (1) injected exact work ref on resume → exact-work search; (2) resume without work ref → broad search; (3) hook delivery → process payload, no receive/raw-HTTP ACK, and reply only after completion/blocker; (4) exact empty wake → trace only, no receive/resend, and never treat trace `delivered` as stale; (5) missing scope → skip only the scoped operation without guessing and continue ordinary work; (6) inter-session coordination → targeted send using a known current `@name`, or discovery when unknown, with queued/wake evidence not treated as receipt or fallback trigger; (7) existing exact provider work association → reuse it without duplicate attachment; (8) explicit durable-memory request → private exact-provenance new write while correction/forget retain existing provenance; (9) irrelevant task → no Pallium skill load or call. Report paired outcomes and failure reasons separately from textual review; one pair per scenario is smoke/regression evidence, not statistical proof or proof of perfect behavior.
 
-**Plan review:** Full-history manager design review `relay-reply-a951944b7e3542919971e91899d0516a26a15bd5349a76e2586b5f6e25362c7e` approved direction, scope, and the corrected `928bd316` candidate, while explicitly requiring the separate clean-context gate. Clean-context reviewer `/root/guidance_clean_context_review` found three further blockers (correction/forget provenance, raw-HTTP ACK, and ambiguous runtime/run budget); those corrections passed re-review, and one final blocker remains: stale-copy recognition must include explicit ACK results. That correction is applied and final clean-context re-review is pending.
+**Plan review:** Full-history manager design review `relay-reply-a951944b7e3542919971e91899d0516a26a15bd5349a76e2586b5f6e25362c7e` approved direction, scope, and the corrected candidate while explicitly requiring the separate clean-context gate. Clean-context reviewer `/root/guidance_clean_context_review` resolved four blocking findings across serial passes and returned PASS on `4a5f6d9d`; no implementation edits or model evals were performed.
 
 **Approvals:** User authorized architect-assigned work, PRs, immediate bug fixes, and standing approvals in this task; this does not waive the required Elevated design review.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -44,12 +44,13 @@
 - 2026-09-15: The manager then read and approved the exact `928bd316` candidate, requiring the separate clean-context gate before implementation.
 - 2026-09-15: A high-reasoning clean-context read-only review found three additional blockers: correction/forget must retain provenance, raw HTTP ACK must remain prohibited, and 18 total runs must be allocated explicitly across runtimes. Those corrections are now in the plan. The review could not finish packaged-skill/test reads because automatic approval capacity rejected them, so it is not recorded as a pass.
 - 2026-09-15: Clean-context re-review completed the packaged-skill/test reads and accepted those three corrections. It found one final blocker from the MCP ACK tool contract: explicit `already_delivered` from claim, ACK, or reply marks only that copy stale; a normal trace `delivered` does not. The four-character candidate correction and focused assertion are applied; final re-review remains pending.
+- 2026-09-15: Final clean-context read-only review of `4a5f6d9d` passed with no findings, verified claim/ACK/reply stale evidence versus normal trace `delivered`, and found no control-character or prose corruption. The plan gate is closed and State moved to Ready to implement before any guidance source edit.
 
 ## Evidence
 
 - Task offer: Relay message `relay-msg-8845d20cfcb24926b7704ebcf63d7d9e`; trace delivered once with no gap/pruning.
 - Manager design review: Relay replies `relay-reply-9c416d855fcf7aafc17ec7a1360e9861ddfa7aa4afaa58e85588df118928dc7e` and `relay-reply-a951944b7e3542919971e91899d0516a26a15bd5349a76e2586b5f6e25362c7e`; first body paged to `next_offset=null`, then exact `928bd316` candidate independently read and approved. Exact delivery traces showed no gap/pruning.
-- Clean-context plan review: `/root/guidance_clean_context_review`, read-only high-reasoning review; three blocking findings returned, with remaining skill/test reads capacity-blocked.
+- Clean-context plan review: `/root/guidance_clean_context_review`, read-only high-reasoning serial review; packaged skills/references and targeted integration tests were read, four findings were resolved, and final `4a5f6d9d` review returned PASS with no edits or model evals.
 - Isolated base: `origin/main` / `0de8a89fc378e5aab693c9335050f67e0b498252`.
 - Work Record first commit: `31629a6d`.
 - Canonical item pair: `scope_ref=roadmap:v1:git:github.com/rore/pallium#roadmap`, `local_ref=item:v1:optimize-always-loaded-guidance`; attached exact key `work:v1:6ea00d2fb492c25b508f888fab87bd4bb081aec2ce6d307609d170c11b65062f`.
@@ -120,7 +121,7 @@ Use skill and tool descriptions for procedures; do not load them for unrelated w
 
 - `/root/guidance_clean_context_review` ran with no conversation context, read-only, against this Work Record, repository policies, the three current guidance owners, budget tests, and the changed-file list.
 - Blocking findings: preserve correction/forget provenance, retain the raw-HTTP ACK prohibition promised by the directive inventory, and make the 18-run cross-runtime allocation unambiguous.
-- All three findings were corrected and passed the completed packaged-skill/test re-review. One final blocker remained: the stale-operation set omitted explicit ACK results. The candidate and verification plan now use claim/ACK/reply while keeping trace `delivered` non-stale; final clean-context confirmation is pending.
+- All four findings were corrected across serial passes. Final clean-context review of `4a5f6d9d` returned PASS: claim/ACK/reply explicit stale results and normal trace `delivered` are distinguished, packaged procedures are sufficient and cross-runtime-identical, the 18-run allocation is coherent, and no scope/risk expansion or prose corruption remains.
 
 ## Result review
 
