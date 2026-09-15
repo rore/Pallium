@@ -34,3 +34,5 @@
 - 2026-09-15: Fresh pre-edit Redline classified the exact presentation-only paths BLUE with no checkpoint. Risk remains Routine; complexity remains Simple.
 - 2026-09-15: Implemented the presentation-only guidance in `app/dashboard.html` and extended `tests/dashboard_plain_language_renderer.mjs`. The full focused dashboard file passed: `57 passed in 28.18s`.
 - 2026-09-15: Roadmap evidence now records the bounded idle and busy Codex witnesses, the diagnosability fix, and the remaining limits without claiming universal reliability.
+- 2026-09-15: Full repository suite passed: `5017 passed, 34 skipped, 2 xfailed in 248.94s`. Final import-boundary report has zero violations; generated Redline verdict is BLUE with only the expected dashboard watch path; agent-workflow exits `0`; `git diff --check` passes.
+- 2026-09-15: Astra high-reasoning result review returned APPROVE with no actionable findings after the shipped renderer contract and an additional 45-case state/count matrix. Residual limits are documented: no direct aggregate-to-oldest-delivery link, no browser layout replay, and no automatic stalled-activation repair.
