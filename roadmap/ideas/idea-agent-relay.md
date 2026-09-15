@@ -267,11 +267,12 @@ historical-disposition checks above remain honest residuals.
 The follow-up record is `.agent-workflow/tasks/relay-residual-acceptance.md`; queue
 ownership remains the `add-wake-first-relay-delivery` First item in
 `roadmap/board.md`. A fresh message reached a rediscovered real, ready Claude Code
-endpoint on its first attempt, and Claude created the linked reply. That reply is
-pending to the currently busy originating Codex session. The earlier architect
-completion reply is likewise pending to its active Codex endpoint. Their next
-owners are the exact receiving sessions at their next admitted hook turns; only an
-exact delivered trace closes consumption.
+endpoint on its first attempt, and Claude created the linked reply. The return
+delivery was then hook-injected into the intended Codex session and exact trace
+records delivered on attempt one, closing the fresh Claude round-trip lane. The
+earlier architect completion reply remains pending to its active Codex endpoint.
+Its next owner is that exact receiving session at its next admitted hook turn;
+only an exact delivered trace closes consumption.
 
 The payload-free snapshot at `2026-09-15T02:38:37.8905141+03:00` contains 27
 effective pending deliveries: 21 recent/active and six dormant, split between
