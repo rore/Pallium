@@ -184,10 +184,12 @@ A live two-Codex run independently confirmed alias conflict/transfer, alias-addr
 The local dashboard now treats Relay as a peer operational subsystem. Its
 read-only summary reports activity, effective pending/expired state,
 send-to-delivery latency, retries, and recent/dormant/closed sessions for all three
-supported runtimes without exposing payloads or session identifiers. Waiting
-remains neutral because delivery is next-turn; expiry in the recent window is
-the actionable failure signal. This is operational telemetry only and does not
-claim that a delivered message was useful.
+supported runtimes without exposing payloads or session identifiers. The raw
+waiting total remains neutral because delivery is next-turn. Separate Codex
+recipient-check-in guidance flags known hook review or explicit wake failure, and
+shows wait age, incomplete evidence, and the exact-trace/no-resend next step
+without reclassifying age alone as delivery failure. This is operational telemetry
+only and does not claim that a delivered message was useful.
 
 #### R1 retention and lifecycle hardening — paused residual
 
@@ -289,6 +291,28 @@ identity collisions rule out blind retargeting. No backlog record was mutated.
 These historical dispositions and the remaining interruption/restart, macOS,
 and OpenCode qualification stay open separately from the completed bounded
 acceptance record.
+
+#### Unattended Codex acceptance and wait guidance — bounded complete (2026-09-15)
+
+A fresh message to a rediscovered idle Codex task started an autonomous turn
+without an app follow-up. The UserPromptSubmit hook injected exact delivery
+`relay-delivery-b4d46c3584284425b76d6ad03de2b45c`; the task read it and
+atomically returned the unique acceptance marker. That reply then remained queued
+while the originating Codex task was busy and entered its context at the next turn
+boundary. Exact trace records delivery
+`relay-delivery-f61a7d9ff7cf419b8c0d99dcf8b6a515` on attempt one. Together
+these witnesses close the bounded installed Windows idle and busy Codex lanes;
+they do not claim process restart, unloaded-session wake, other platforms, or
+universal reliability.
+
+The installed summary also exposed accepted deliveries awaiting later exact-recipient
+check-in, an oldest wait, and incomplete trace evidence. The dashboard now carries
+those existing signals into visible guidance: busy or unloaded tasks may wait
+normally, unexpected waits should be inspected through the exact delivery trace,
+and uncertain wake evidence is not a reason to resend. Hook-definition drift still
+has its separate review-and-restart warning. No timeout policy, automatic repair,
+or delivery-state behavior was added; historical disposition remains the separate
+residual above.
 
 #### Optional correlated turn-end notification — proposed follow-up
 

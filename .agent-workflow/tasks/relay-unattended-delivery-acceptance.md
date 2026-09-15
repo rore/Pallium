@@ -19,7 +19,7 @@
 
 **Verification:** Exact Relay recipient/status/trace reads; recipient hook-derived reply evidence; Codex turn timing; readiness/trace next-step inspection; `git diff --check`; fresh Redline and agent-workflow gates; smart result review and PR CI.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -32,3 +32,5 @@
 - 2026-09-15: Reply delivery `relay-delivery-f61a7d9ff7cf419b8c0d99dcf8b6a515` remained queued while this recipient was working, then entered this task at the next turn boundary. Exact trace records native acceptance at 08:00:54 UTC and delivery on attempt `1` at 08:02:29 UTC. This is the bounded busy-after-current-work witness.
 - 2026-09-15: The installed summary reports hook execution `verified`, two accepted Codex deliveries awaiting later exact-recipient check-in, an oldest wait of `69225` seconds, and four incomplete traces. The dashboard carries these fields but its visible neutral guidance omits wait age, incomplete evidence, and the safe `pallium_relay_trace` / do-not-resend next step. The planned fix is presentation-only and reuses existing data.
 - 2026-09-15: Fresh pre-edit Redline classified the exact presentation-only paths BLUE with no checkpoint. Risk remains Routine; complexity remains Simple.
+- 2026-09-15: Implemented the presentation-only guidance in `app/dashboard.html` and extended `tests/dashboard_plain_language_renderer.mjs`. The full focused dashboard file passed: `57 passed in 28.18s`.
+- 2026-09-15: Roadmap evidence now records the bounded idle and busy Codex witnesses, the diagnosability fix, and the remaining limits without claiming universal reliability.
