@@ -19,11 +19,11 @@
 
 **Material assumptions:** A supported updater can replace guidance without mutating hook definitions, trust, settings, or services; if not, stop and report its exact side effects before execution. Managed markers are unique and user additions are outside them; otherwise stop without writing.
 
-**Plan:** From stable isolated commit `c419981b`, snapshot the two guidance files plus Codex/Claude hook, settings, config, readiness, and trust files. Validate unique markers, base arms, exact helper previews, and preserved outside text. Invoke only the existing tested `_append_agents_md_block("base")` and `_append_claude_md_block("base")` helpers in one guarded process, retaining original bytes for rollback on failure; never call either full installer. Re-read and prove exact emitted blocks, preserved outside text, unchanged hook/settings/config/trust hashes and readiness state, then record actual sizes. Stop before writing on any snapshot or preview mismatch; restore originals if either helper fails.
+**Plan:** From stable isolated commit `c419981b`, create durable raw-byte backups and a manifest under ignored `.local/rollout-merged-global-guidance/` before either target write. The manifest records exact path/existence/SHA-256 for both guidance files and every frozen Codex/Claude hook, settings, config, readiness, and trust file, plus commit and SHA-256 provenance for both helper modules and guidance sources. Exercise each tested `_append_*_block("base")` helper against a same-filesystem staging copy; require exact raw prefix/suffix preservation and retain the complete expected output bytes. Immediately before final writes, rehash every target/frozen file against the manifest. Invoke only the same two helpers on the real targets; never call either full installer. Require final bytes to equal staged expected bytes, frozen hashes/readiness state to remain unchanged, and installed blocks/sizes to match merged output. On any write or verification failure, restore both raw backups, verify restoration hashes, and retain recovery artifacts; if restoration fails, stop and report exact recovery paths.
 
-**Verification plan:** Exact managed-block equality → compare normalized emitted merged blocks with installed marker spans. Preservation → hash and diff all text outside managed markers before/after. No hook/trust/settings mutation → snapshot relevant definitions and trust state before/after. No service restart → perform no service operation. Installed sizes → measure final managed blocks directly.
+**Verification plan:** Exact managed-block equality → normalized installed marker text equals merged emitted text and complete final raw files equal staged helper output. Preservation → raw prefix and suffix bytes outside each marker span equal their durable backups. No hook/trust/settings mutation → every frozen path hash and bounded readiness/trust state equals its immediate pre-write manifest. Recovery → inject no failure, but on any observed mismatch restore and hash-check both backups before reporting. No service restart → perform no service operation. Installed sizes → measure final managed blocks directly.
 
-**Plan review:** Pending clean-context high-reasoning review; see `## Plan review`.
+**Plan review:** Clean-context high-reasoning reviewer `/root/rollout_plan_review` found three recovery/evidence blockers; the plan now adds durable backups, post-write rollback, raw-byte equality, immediate drift checks, a complete frozen-file manifest, and exact source provenance. Re-review pending; see `## Plan review`.
 
 **Approvals:** Not required at this risk level; user explicitly requested local rollout.
 
@@ -39,7 +39,8 @@
 
 ## Plan review
 
-- Pending clean-context review.
+- `/root/rollout_plan_review` confirmed the private tested helpers are the narrowest existing updater path but blocked execution on three gaps: recovery covered exceptions rather than verification failures, helper newline reconstruction was not proven byte-preserving, and the snapshot/provenance manifest was underspecified.
+- Plan amended to stage through the actual helpers, preserve durable original bytes before either write, compare raw prefix/suffix and complete expected bytes, recheck all hashes immediately before writing, roll back both targets on write or verification failure, verify restoration, retain failed recovery artifacts, and record exact source/frozen-file provenance. Re-review pending.
 
 ## Evidence
 
