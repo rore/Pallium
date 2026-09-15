@@ -52,7 +52,8 @@ for that contract, not authority to redefine it.
 
 ## Out of Scope
 
-- implementing the suite, manifest, CI gate, or new runtime behavior in this item
+- implementing the suite, manifest, CI gate, or runtime behavior during this
+  roadmap-authoring change; the queued feature itself implements the suite and gate
 - protecting every test, fixture wording, internal call sequence, or current bug
 - treating renamed prompts or queue acceptance as proof of required end behavior
 - allowing an agent or automated equivalence check to approve weaker requirements

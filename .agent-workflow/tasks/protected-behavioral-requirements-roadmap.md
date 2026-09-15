@@ -38,4 +38,4 @@ Inspect the exact three-file diff and run the local workflow checker only; no fe
 - Added the queued high-priority item and placed it immediately after urgent wake reliability.
 - `apply_patch` failed with the machine-local Windows error 1327 for the roadmap edit; a deterministic exact-file PowerShell replacement was used instead.
 - Verification: `git diff --check`; import-boundary report; redline verdict BLUE; workflow checker. No feature tests or reviews were run, per scope.
-
+- Architect review clarified that implementation is deferred only by this roadmap-authoring change; the queued feature itself implements the protected suite and CI gate.
