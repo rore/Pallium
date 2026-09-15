@@ -50,11 +50,12 @@ evidence, not an arbitrary token target.
    split, file scope, risks, and behavior oracles before implementation.
 2. The same deterministic measurement shows a smaller always-loaded payload for
    every changed runtime without hiding critical safeguards behind skill loading.
-3. Fresh-context checks cover earlier-work discovery, inter-session coordination,
-   normal hook delivery, empty wake/recovery, missing scope, optional memory/work
-   references, and an irrelevant task that loads no extra guidance; observed runtime
-   coverage is reported honestly.
-4. Fresh install, update, and generator contracts pass for Codex and Claude Code;
+3. Nine paired baseline/proposed fresh-context scenarios (18 bounded runs) use
+   the same cheapest-capable model, prompt, safe stubs, normally exposed skill
+   catalog, and tool metadata without preloading the full skill. Each run has a
+   fixed tool-turn cap, records skill loading plus observable outcome, avoids
+   duplicate existing work-ref attachment, and is reported as smoke/regression
+   evidence rather than statistical proof.4. Fresh install, update, and generator contracts pass for Codex and Claude Code;
    OpenCode packaging/registration coverage passes; independent result review and CI
    are clean.
 5. The Work Record and this roadmap item preserve measured evidence, review findings,

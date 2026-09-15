@@ -19,11 +19,11 @@
 
 **Material assumptions:** Existing skills/references and MCP descriptions remain self-sufficient for operation-specific recipes after the global block is compacted. This is disproved by directive inventory, focused source tests, or a fresh-context run that misses a required action; then retain the missing directive always-visible and return to design. Codex/Claude can be exercised on this host; OpenCode runtime coverage is conditional on confirmed availability, otherwise only packaging/static behavior may be claimed. Any need to change installers, hooks, MCP runtime behavior, API, config, storage, or Relay reliability returns to planning and risk assessment.
 
-**Plan:** 1. Preserve the exact directive inventory, generated baseline, candidate wording, and file scope below. 2. Send this packet to `@astra-reviewer` through Relay and stop; implementation remains blocked until every finding is resolved. 3. After approval only, replace the three owning global block sources with the reviewed compact text, leaving existing generators/installers/skills/references/hooks/tool descriptions untouched. 4. Update only the focused semantic guidance assertions needed to prove the split and unchanged managed-block replacement behavior. 5. Run deterministic focused tests, then at most nine cheapest-capable fresh-context calls with predefined observable call/no-call oracles; rerun failures only and claim only exercised runtime coverage. 6. Obtain independent smart result review, run affected subsystem/workflow/CI checks, reconcile roadmap/record, resolve review threads, and merge.
+**Plan:** 1. Invoke the `/agent-workflow` skill to create the Work Record and classify risk before any code edit (completed in `31629a6d`; intended scope remains Gray / Elevated / Moderate). 2. Preserve the directive inventory, emitted baseline, corrected candidate wording, and exact file scope below. 3. Obtain manager design re-approval from `@astra-reviewer` after resolving every finding. 4. Obtain the separately required clean-context Elevated review from an agent that reads only this Work Record, policy, and relevant sources/tests; resolve its findings before changing implementation files. 5. Replace only the three owning global block sources with the doubly reviewed compact text, leaving generators/installers/skills/references/hooks/tool descriptions untouched. 6. Update only focused semantic guidance assertions and run deterministic checks plus nine paired baseline/proposed fresh-context scenarios under the fixed cap below. 7. Obtain independent smart result review, run affected subsystem/workflow/CI checks, reconcile roadmap/record, resolve review threads, and merge.
 
-**Verification plan:** Deterministic: measure all five actual base/strong/runtime outputs with the same character/word method; assert cross-runtime safeguard parity, operation recipes remain in skills/tool descriptions/references, strong-arm delta and deprecated alias remain unchanged, marker-bounded fresh install/update preserves unrelated user text, and OpenCode still packages/registers its skill and AGENTS block. Fresh-context model ceiling: nine calls, no evaluator/judge, cheapest capable runtime model, one call per case, normally available context only, no prompt saying to use Pallium. Cases and oracles: (1) injected exact work ref on resume → exact-work search; (2) resume without work ref → broad search; (3) hook delivery → no receive and reply only after completion/blocker; (4) exact empty wake → trace only, no receive/resend; (5) missing scope → no guessed scoped call and ordinary work continues; (6) explicit inter-session coordination → Relay discovery plus targeted send, no app fallback merely for queued state; (7) explicit Minimap implementation → provider item-ref then work-ref list/reuse/attach; (8) explicit durable-memory request → private exact-provenance write; (9) irrelevant ordinary task → no Pallium skill load or call. Run Codex and Claude cases where their native surfaces are available; run OpenCode behavior only if independently confirmed installed. Compare emitted calls/results to these oracles; textual review is reported separately from observed behavior.
+**Verification plan:** Deterministic: measure all five actual base/strong/runtime outputs with Python `len(text)` and `len(text.split())`; assert cross-runtime safeguard parity, operation recipes remain in skills/tool descriptions/references, the strong-arm delta and deprecated alias remain unchanged, marker-bounded fresh install/update preserves unrelated user text, and OpenCode still packages/registers its skill and AGENTS block. Behavior: run the same nine fixtures once against baseline guidance and once against proposed guidance (18 small runs), with the same cheapest-capable model, prompt, safe stubs, normally exposed skill catalog, and tool metadata; do not preload the full skill or tell the model to use Pallium. Cap each run at four assistant/tool cycles and six tool calls; a cap/cost stop is a measured failure, not grounds to extend the run. Record whether the skill was loaded when relevant and absent on the irrelevant case. Oracles: (1) injected exact work ref on resume → exact-work search; (2) resume without work ref → broad search; (3) hook delivery → process payload, no receive, and reply only after completion/blocker; (4) exact empty wake → trace only, no receive/resend, and never treat trace `delivered` as stale; (5) missing scope → skip only the scoped operation without guessing and continue ordinary work; (6) inter-session coordination → targeted send using a known current `@name`, or discovery when unknown, with queued/wake evidence not treated as receipt or fallback trigger; (7) existing exact provider work association → reuse it without duplicate attachment; (8) explicit durable-memory request → private exact-provenance write; (9) irrelevant task → no Pallium skill load or call. Run Codex and Claude where native surfaces are available; run OpenCode behavior only if independently confirmed installed, otherwise claim static/package coverage only. Report paired outcomes and failure reasons separately from textual review; one pair per scenario is smoke/regression evidence, not statistical proof or proof of perfect behavior.
 
-**Plan review:** Pending clean-context `@astra-reviewer` review through Relay; implementation must stop until findings are resolved.
+**Plan review:** Manager design review `relay-reply-9c416d855fcf7aafc17ec7a1360e9861ddfa7aa4afaa58e85588df118928dc7e` approved direction/scope in principle and raised five blocking corrections; this revised packet is pending manager re-approval. That full-history manager review does not discharge the separately required clean-context Elevated review, which remains pending.
 
 **Approvals:** User authorized architect-assigned work, PRs, immediate bug fixes, and standing approvals in this task; this does not waive the required Elevated design review.
 
@@ -40,10 +40,12 @@
 - 2026-09-15: Created canonical Minimap item `optimize-always-loaded-guidance`, derived its reference with Minimap's own CLI, listed existing session references, and attached only the exact returned pair.
 - 2026-09-15: `apply_patch` failed once with Windows 1327 while adding the roadmap files; per local instructions, the edit used a deterministic replacement limited to `roadmap/board.md` and `roadmap/features/optimize-always-loaded-guidance.md`.
 - 2026-09-15: Completed read-only rationale/source/test inspection and same-method baseline/candidate measurement. No guidance, generator, installer, hook, skill, tool-description, or test implementation file has been changed.
+- 2026-09-15: Manager design review approved direction and file scope in principle, then returned the plan for five blocking corrections: distinguish hook processing from explicit stale-operation results; scope History actor/work-ref rules; pair baseline/proposed bounded scenarios with normal catalog metadata; retain clear triggers plus queued/empty-wake semantics; and correct timing/review evidence. The plan and exact candidate were revised; implementation remains blocked.
 
 ## Evidence
 
 - Task offer: Relay message `relay-msg-8845d20cfcb24926b7704ebcf63d7d9e`; trace delivered once with no gap/pruning.
+- Manager design review: Relay reply `relay-reply-9c416d855fcf7aafc17ec7a1360e9861ddfa7aa4afaa58e85588df118928dc7e`; full 2,670-character body paged to `next_offset=null` and exact delivery trace showed no gap/pruning.
 - Isolated base: `origin/main` / `0de8a89fc378e5aab693c9335050f67e0b498252`.
 - Work Record first commit: `31629a6d`.
 - Canonical item pair: `scope_ref=roadmap:v1:git:github.com/rore/pallium#roadmap`, `local_ref=item:v1:optimize-always-loaded-guidance`; attached exact key `work:v1:6ea00d2fb492c25b508f888fab87bd4bb081aec2ce6d307609d170c11b65062f`.
@@ -66,15 +68,15 @@
 
 ## Measured proposed split
 
-Method: Unicode characters via Python `len(text)`; words via `len(text.split())`. Baselines are observed generated outputs. Proposed counts are deterministic textual projections from the exact block below plus the unchanged 40-character arm marker and unchanged runtime-specific strong directive (Claude +416 characters/+61 words; Codex +415/+61). They are not yet emitted behavior.
+Method: Unicode characters via Python `len(text)`; words via `len(text.split())`. Baselines are observed generated outputs. Proposed counts are deterministic textual projections from the corrected exact block below plus the unchanged 40-character arm marker and unchanged runtime-specific strong directive (Claude +416 characters/+61 words; Codex +415/+61). They are not yet emitted behavior.
 
 | Output | Baseline chars/words | Proposed chars/words | Character reduction |
 |---|---:|---:|---:|
-| Claude base | 3,521 / 452 | 2,215 / 307 | 1,306 (37.1%) |
-| Claude strong | 3,937 / 513 | 2,631 / 368 | 1,306 (33.2%) |
-| Codex base | 3,522 / 452 | 2,215 / 307 | 1,307 (37.1%) |
-| Codex strong | 3,937 / 513 | 2,630 / 368 | 1,307 (33.2%) |
-| OpenCode | 3,482 / 449 | 2,175 / 304 | 1,307 (37.5%) |
+| Claude base | 3,521 / 452 | 2,621 / 371 | 900 (25.6%) |
+| Claude strong | 3,937 / 513 | 3,037 / 432 | 900 (22.9%) |
+| Codex base | 3,522 / 452 | 2,621 / 371 | 901 (25.6%) |
+| Codex strong | 3,937 / 513 | 3,036 / 432 | 901 (22.9%) |
+| OpenCode | 3,482 / 449 | 2,581 / 368 | 901 (25.9%) |
 
 ## Proposed always-loaded block
 
@@ -84,18 +86,19 @@ Method: Unicode characters via Python `len(text)`; words via `len(text.split())`
 
 Pallium provides:
 
-- **Relay:** send useful context to another agent session when its work should change.
-- **Session History:** find relevant earlier work.
-- **Derived memory:** optional compact context that may be injected or queried with `pallium_query` and expanded with `pallium_expand`.
+- **Relay:** coordinate independent agent sessions when another agent's work should change.
+- **Session History:** resume earlier work from relevant prior sessions.
+- **Derived memory:** optional compact context that may be injected or queried.
 
-Load the `pallium-memory` skill when any applies. If its skill or tools are unavailable, continue ordinary work; never invent identity, scope, work references, or successful calls.
+Load the `pallium-memory` skill when any applies. If the skill or tools are unavailable, continue ordinary work; never invent identity, scope, work references, or successful calls.
 
 ### Always-safe rules
 
-- Copy injected `container_ref`, `thread_ref`, `actor_ref`, `agent_ref`, `request_source_item_id`, and `work_ref` exactly; never derive them from the working directory, recipient listings, or historical sources. Missing required scope fails closed.
-- Hook-injected Relay is current-turn work already claimed and ACKed by the hook: never call receive for it. Complete it or report a genuine blocker; do not send status-only replies. Never reply to ACK-only deliveries. A delivered or conflicting copy is stale only; continue independently established work.
-- Relay sends only to a canonical `relay-session-...` or global `@name`; broadcast and bare runtimes are unsupported. Ask before name takeover unless the user already authorized it. Cross-container routing never changes History or memory scope.
-- Picking up prior work? Search the injected exact `work_ref` when present; otherwise search broadly. Never guess a work reference. Pass injected `request_source_item_id` only to History search; expand a returned `source_item_id` with its `lookup_event_id` as `parent_lookup_id`. Omit `actor_ref` unless an exact metadata filter is requested.
+- Copy injected `container_ref`, `thread_ref`, `actor_ref`, `agent_ref`, `request_source_item_id`, and `work_ref` exactly when an operation requires them. Never derive identity or scope from the working directory, recipient listings, or historical sources. Missing required scope blocks only that scoped operation; continue ordinary work.
+- Process each hook-injected Relay payload as current-turn work. The hook owns claim and ACK, so never call receive for it. Complete it or report a genuine blocker; do not send status-only replies or reply to ACK-only deliveries. A trace state of `delivered` does not make its payload stale. Only an explicit `already_delivered` or conflict result from a claim/reply operation marks that copy stale; do not retry, reply to, or reuse that stale copy.
+- Relay sends only to a canonical `relay-session-...` or global `@name`; broadcast and bare runtimes are unsupported. Ask before name takeover unless already authorized. Cross-container routing never changes History or memory scope. Queued or wake evidence is not receipt. For an exact empty-wake instruction, trace only that delivery; do not receive or resend.
+- Picking up prior work? Search the injected exact `work_ref` when present; otherwise search broadly. Never guess a History search filter. Work associations use only exact provider-returned references.
+- For History searches, pass injected `request_source_item_id` only there, expand a returned `source_item_id` with its `lookup_event_id` as `parent_lookup_id`, and omit `actor_ref` unless an exact metadata filter is requested.
 - Retrieval alone never changes accessibility or ranking. Derived memory is optional and private by default; global writes require explicit intent, and writes copy exact injected provenance. Work associations are optional, grant no access or ownership, and are skipped when exact provider identity or tools are unavailable. Do not ingest routine turns or re-query content already injected.
 
 Use skill and tool descriptions for procedures; do not load them for unrelated work.
@@ -104,7 +107,7 @@ Use skill and tool descriptions for procedures; do not load them for unrelated w
 
 ## Friction observed
 
-- A persisted task offer arrived roughly one day after send; exact trace showed a single accepted queued delivery and no gap/pruning. Delayed coordination can revive stale plans, so the recipient verified current ownership and accepted only at a safe boundary.
+- This task offer was created at 07:43Z and the design packet was sent at 08:13Z on the same day. Earlier delayed wakes were different messages and are not evidence about this task.
 - Work-reference listing initially failed because approval-reviewer capacity blocked the MCP call; later success allowed exact provider-derived attachment. No identity/reference was guessed.
 - Two cheap clean-context agents and several read-only source/history checks were blocked by Windows 1327 plus approval-reviewer capacity. One separate cheap rationale pass succeeded; failed passes are not counted as review or coverage.
 - The normal patch helper failed once with Windows 1327; the documented narrow deterministic fallback succeeded.
