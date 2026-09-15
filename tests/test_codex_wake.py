@@ -1062,6 +1062,40 @@ def test_launch_result_classifies_without_exposing_process_details(
         assert "秘密" not in message
         assert registry.reserved(endpoint_id) is retained
 
+def test_nonzero_exit_log_keeps_code_without_stderr(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = CodexWakeRegistry(tmp_path)
+    endpoint_id = "relay-session-" + "7" * 32
+    reservation = registry.reserve(
+        recipient_endpoint_id=endpoint_id,
+        delivery_id="relay-delivery-" + "7" * 32,
+        session_ref="target-session",
+        container_ref=SCOPE["container_ref"],
+    )
+    assert reservation is not None
+    process = MagicMock(returncode=7)
+    process.communicate.return_value = (None, "SECRET raw stderr C:/private/秘密")
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+
+    with caplog.at_level(logging.INFO, logger="app.codex_wake"), patch(
+        "app.codex_wake._start_launch", return_value=(process, None),
+    ):
+        codex_wake._wake_after_debounce(reservation, registry)
+
+    message = next(
+        record.getMessage() for record in caplog.records
+        if record.getMessage().startswith("codex_relay_wake delivery_ref=")
+    )
+    assert "outcome=uncertain reason=nonzero_exit exit_code=7" in message
+    assert "SECRET" not in message
+    assert "private" not in message
+    assert "秘密" not in message
+    assert registry.reserved(endpoint_id) is True
+
+
 def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
     isolated_codex_registry: CodexWakeRegistry,
     monkeypatch: pytest.MonkeyPatch,

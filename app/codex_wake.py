@@ -382,7 +382,8 @@ def _wake_after_debounce(
             None,
             ("ambiguous", "unexpected_error", None),
         )
-    attempt = _attempt_from_launch(_finish_launch(launch)) if launch is not None else None
+    launch_result = _finish_launch(launch) if launch is not None else None
+    attempt = _attempt_from_launch(launch_result) if launch_result is not None else None
     if not current or attempt is None:
         _clear_schedule(reservation)
         return
@@ -394,12 +395,13 @@ def _wake_after_debounce(
     )
     logger.info(
         "codex_relay_wake delivery_ref=%s session_fp=%s container_fp=%s "
-        "outcome=%s reason=%s latency_ms=%d",
+        "outcome=%s reason=%s exit_code=%s latency_ms=%d",
         delivery_ref,
         session_fp,
         container_fp,
         attempt.outcome,
         attempt.reason,
+        launch_result[2] if launch_result[2] is not None else "none",
         int((time.monotonic() - attempt_started) * 1000),
     )
     if attempt.outcome in {"accepted", "uncertain"}:
