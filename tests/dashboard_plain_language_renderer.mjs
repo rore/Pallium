@@ -512,10 +512,14 @@ assert.match(relaySummaryElements['relay-waiting-guidance'].textContent, /wake e
 renderRelaySummaryContract({
   status: 'active', messages: {}, deliveries: { pending_now: 2 }, latency_seconds: {}, sessions: {},
   codex_readiness: { state: 'verified' },
-  awaiting_recipient_checkin: { status: 'neutral', count: 2, failure_count: 0, causes: [] },
+  awaiting_recipient_checkin: { status: 'neutral', count: 2, unknown_count: 1, failure_count: 0, oldest_age_seconds: 7200, causes: ['incomplete_trace'] },
   possible_identity_collisions: { claimable_delivery_count: 0 },
 });
-assert.match(relaySummaryElements['relay-note'].textContent, /can be normal while a task is busy/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /can be normal while a task is busy or unloaded/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /Oldest check-in wait: 7200s/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /1 additional pending Codex delivery has incomplete trace evidence/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /inspect the exact delivery trace/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /do not resend solely because wake evidence is uncertain/i);
 assert.doesNotMatch(relaySummaryElements['relay-note'].textContent, /delivery failure evidence\..*explicit failed/i);
 renderRelaySummaryContract({
   status: 'active', messages: {}, deliveries: { pending_now: 1 }, latency_seconds: {}, sessions: {},
@@ -525,6 +529,8 @@ renderRelaySummaryContract({
 });
 assert.match(relaySummaryElements['relay-note'].textContent, /hook execution is unverified/i);
 assert.match(relaySummaryElements['relay-note'].textContent, /check-in evidence is incomplete/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /1 pending Codex delivery has incomplete trace evidence/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /inspect the exact delivery trace/i);
 assert.match(html, /id="relay-waiting-guidance"[^>]*>cross-agent delivery - waiting is usually normal/);
 const sessionRendererStart = html.indexOf('function rf(');
 const sessionRendererEnd = html.indexOf('function renderRelay(){', sessionRendererStart);
