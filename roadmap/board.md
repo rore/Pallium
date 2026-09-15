@@ -1,5 +1,6 @@
 # First · Relay Reliability
 - add-wake-first-relay-delivery
+- add-protected-behavioral-requirements-regression-suite
 
 # Parallel · Session History
 - improve-session-history-search-quality
