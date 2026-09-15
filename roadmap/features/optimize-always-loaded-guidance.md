@@ -55,7 +55,9 @@ evidence, not an arbitrary token target.
    catalog, and tool metadata without preloading the full skill. Each run has a
    fixed tool-turn cap, records skill loading plus observable outcome, avoids
    duplicate existing work-ref attachment, and is reported as smoke/regression
-   evidence rather than statistical proof.4. Fresh install, update, and generator contracts pass for Codex and Claude Code;
+   evidence rather than statistical proof. Deterministic generated-output
+   tests, not these model runs, establish cross-runtime textual parity.
+4. Fresh install, update, and generator contracts pass for Codex and Claude Code;
    OpenCode packaging/registration coverage passes; independent result review and CI
    are clean.
 5. The Work Record and this roadmap item preserve measured evidence, review findings,
