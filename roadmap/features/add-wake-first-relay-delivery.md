@@ -8,14 +8,15 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-09-11)
+## Current execution status (reconciled 2026-09-15)
 
 The Windows/Linux Claude wake foundation, loaded-task Codex wake, Codex first-run
 setup, MCP recovery integration, and live no-manual-turn reply/remediation journey
 are shipped. RW-024 removed unsafe unattended Codex cold resume: unloaded tasks
 retain Pallium's pending next-turn delivery instead. This umbrella remains
 queued for residual qualification, not active reimplementation of those milestones.
-Relay reliability remains first. Session-to-work associations are complete; the remaining readiness work is tracked below.
+Relay reliability remains first. RW-031 reopens Codex native activation reliability;
+session-to-work associations are complete, and the remaining readiness work is tracked below.
 
 Remaining work:
 - Qualify still-unproven interrupted/restart combinations with a bounded matrix
@@ -39,6 +40,7 @@ new implementation tasks.
 | `RW-028` Codex MCP exposure | host recovery follow-up | Same-host/project tasks expose different tool catalogs, including zero Pallium tools after successful hook delivery. Treat this as a Codex host registry/rehydration blocker; do not infer MCP health from hook/service health or add a speculative Pallium workaround. |
 | `RW-029` stranded split identity | guarded Relay operations | Use the offline repair manifest for reviewed per-delivery dispositions. Version 2 can explicitly suppress a finite expired claim; it still refuses adoption, active or ambiguous claims, and automatic cleanup. |
 | `RW-030` Claude install drift | installed integration lifecycle | Repoint the user-scoped Claude MCP and hooks from the development checkout to the stable installed checkout in the coordinated post-merge install window. Existing hosts retain old subprocesses until their normal restart. |
+| `RW-031` Codex native activation reliability | wake-first Relay reliability | Compare the known successful idle witness with the two preserved fresh incidents and the runtime's supported activation paths. Establish whether native queue persistence guarantees enqueue only or an actual turn before changing wake behavior; do not implement an inferred active-owner fix. |
 
 The dashboard diagnostic is shipped as read-only evidence, not repair. Do not bulk-repair stranded deliveries. The real installed witness gate remains required for send -> next-turn hook claim/injection/ACK -> reply and work-reference attach/detach qualification.
 ## Summary
@@ -306,6 +308,7 @@ where the runtime exists locally, an installed witness close it.
 | `RW-024` | Codex wake launched `codex exec resume` without an explicit cwd, so the child inherited the Pallium service checkout. A resumed task then adopted that workspace, derived the wrong Relay container scope, and sender lookup correctly failed closed with 404. | **Fixed in this slice.** The adapter no longer cold-resumes or reads private Codex workspace state. It writes one exact-thread native queue item from a validated neutral Codex home; loaded tasks wake through their owner, while unloaded-task correctness relies only on Pallium's pending delivery and a later hook turn. Caller-surface regressions pin explicit cwd, fail-closed unsafe paths, pending-before-hook, exact delivery, and single-flight behavior. |
 | `RW-025` | A substantive hook-delivered assignment outlived its claim lease during investigation, so receiptless atomic reply returned the expected 409 even though the work completed. | **Tracked operational fallback.** The Relay error was surfaced and completion was sent as a new direct Relay message. Existing expired-claim recovery protects the original delivery; no automatic completion-message fallback is added unless this recurs as a product failure. |
 | `RW-026` | Near-simultaneous Codex sends produced anonymous `failed` and `queued` wake logs. Durable state and task JSONL proved one hook delivery and one pending delivery followed by a direct app-message fallback, but the wake outcomes could not be assigned to a delivery or safely explained. | **Fixed as a diagnosis gap only.** Every attempted Codex wake now logs the canonical delivery ID, bounded SHA-256 fingerprints for session and container scope, a fixed safe reason category, and an optional numeric exit code; recovery candidates use the same correlation values. Hostile-reference and full launch-outcome regressions prove prompts, stderr, exception text, environment values, secrets, and local paths are not logged. Delivery routing, queueing, retry, claim, ACK, and app-message hook behavior are unchanged; this does not claim the observed failed wake was repaired. |
+| `RW-031` | Two fresh Codex wake incidents diverged: delivery `relay-delivery-97f5bc2bcd794a799605f488520c6f20` was stored in native `queue_1.sqlite` at 11:07:24 UTC but the task did not resume, while delivery `relay-delivery-f432aa391eea49d8925f0bbbb70fe356` returned `nonzero_exit` with no native queue row. The installed path did not retain stderr or the numeric exit code; exclusive thread-writer ownership makes active-owner rejection a high-confidence inference for the second incident, not a proven exact error. | **Reopened; owner: wake-first Relay reliability.** Preserve both deliveries and the successful 2026-09-15 07:54 UTC idle witness as comparison evidence. Investigate the supported Codex activation contract read-only before changing behavior. Do not wake or message the affected tasks, restart hosts/services, change hooks, or implement a guessed fix. Native enqueue is not yet evidence that the target turn activated. |
 
 The Windows Claude regression floor remains: idle text and zero-tool turns, empty
 Stop rearm, busy delivery, ordered bursts, Unicode, recursive-Stop loop prevention,
