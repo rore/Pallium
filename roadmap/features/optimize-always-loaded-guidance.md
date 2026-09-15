@@ -1,7 +1,7 @@
 ---
 id: optimize-always-loaded-guidance
 title: Optimize always-loaded agent guidance
-status: active
+status: done
 priority: high
 commitment: committed
 milestone: integration-quality
@@ -72,3 +72,18 @@ the lazy-reference precedent from
 [`add-context-conscious-upstream-field-feedback`](add-context-conscious-upstream-field-feedback.md)
 and the behavior rationale from
 [`add-agent-historical-lookup-exposure`](add-agent-historical-lookup-exposure.md).
+## Outcome
+
+Completed with one reviewed compact block shared by Codex, Claude Code, and
+OpenCode. The final always-loaded candidate is 2,765 characters / 396 words,
+reducing emitted base guidance by 20.3% for Codex and Claude and 20.6% for
+OpenCode while keeping safety-critical rules visible.
+
+Paired read-only Codex decision smoke passed 9/9 for both baseline and candidate
+after two candidate findings were corrected. This is single-runtime
+decision-selection evidence, not executed Pallium workflow or statistical proof:
+Claude authentication failed before a model turn, and OpenCode has deterministic
+static/package coverage only. See
+[the Work Record](../../.agent-workflow/tasks/optimize-always-loaded-guidance.md)
+for the directive inventory, failed revisions, full oracle table, costs, limits,
+reviews, and verification.

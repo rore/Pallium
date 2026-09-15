@@ -21,7 +21,7 @@
 
 **Plan:** 1. Invoke the `/agent-workflow` skill to create the Work Record and classify risk before any code edit (completed in `31629a6d`; intended scope remains Gray / Elevated / Moderate). 2. Preserve the directive inventory, emitted baseline, corrected candidate wording, and exact file scope below. 3. Obtain manager design re-approval from `@astra-reviewer` after resolving every finding. 4. Obtain the separately required clean-context Elevated review from an agent that reads only this Work Record, policy, and relevant sources/tests; resolve its findings before changing implementation files. 5. Replace only the three owning global block sources with the doubly reviewed compact text, leaving generators/installers/skills/references/hooks/tool descriptions untouched. 6. Update only focused semantic guidance assertions and run deterministic checks plus nine paired baseline/proposed fresh-context scenarios under the fixed cap below. 7. Obtain independent smart result review, run affected subsystem/workflow/CI checks, reconcile roadmap/record, resolve review threads, and merge.
 
-**Verification plan:** Deterministic: measure all five actual base/strong/runtime outputs with Python `len(text)` and `len(text.split())`; assert cross-runtime safeguard parity including claim/ACK/reply `already_delivered` or conflict versus non-stale trace `delivered`, operation recipes remain in skills/tool descriptions/references, the strong-arm delta and deprecated alias remain unchanged, marker-bounded fresh install/update preserves unrelated user text, and OpenCode still packages/registers its skill and AGENTS block. Behavior: run each of the same nine fixtures once against baseline guidance and once against proposed guidance, for 18 total runs—not 18 per runtime—with the same cheapest-capable model, prompt, safe stubs, normally exposed skill catalog, and tool metadata; do not preload the full skill or tell the model to use Pallium. Preassign Codex to cases 1, 3, 4, 6, and 7 (10 runs) and Claude to cases 2, 5, 8, and 9 (8 runs); unavailable native surfaces make those runs unexecuted/invalid and do not permit a cross-runtime model-behavior claim. OpenCode receives deterministic static/package coverage only unless separately reviewed. Cap each run at four assistant/tool cycles and six tool calls; a cap/cost stop is a measured failure, not grounds to extend the run. Record whether the skill was loaded when relevant and absent on the irrelevant case. Oracles: (1) injected exact work ref on resume → exact-work search; (2) resume without work ref → broad search; (3) hook delivery → process payload, no receive/raw-HTTP ACK, and reply only after completion/blocker; (4) exact empty wake → trace only, no receive/resend, and never treat trace `delivered` as stale; (5) missing scope → skip only the scoped operation without guessing and continue ordinary work; (6) inter-session coordination → targeted send using a known current `@name`, or discovery when unknown, with queued/wake evidence not treated as receipt or fallback trigger; (7) existing exact provider work association → reuse it without duplicate attachment; (8) explicit durable-memory request → private exact-provenance new write while correction/forget retain existing provenance; (9) irrelevant task → no Pallium skill load or call. Report paired outcomes and failure reasons separately from textual review; one pair per scenario is smoke/regression evidence, not statistical proof or proof of perfect behavior.
+**Verification plan:** Deterministic: measure all five actual base/strong/runtime outputs with Python `len(text)` and `len(text.split())`; assert cross-runtime safeguard parity including claim/ACK/reply `already_delivered` or conflict versus non-stale trace `delivered`, operation recipes remain in skills/tool descriptions/references, the strong-arm delta and deprecated alias remain unchanged, marker-bounded fresh install/update preserves unrelated user text, and OpenCode still packages/registers its skill and AGENTS block. Behavior: run each of the same nine fixtures once against baseline guidance and once against proposed guidance, for 18 total runs—not 18 per runtime—with the same cheapest-capable model, prompt, safe stubs, normally exposed skill catalog, and tool metadata; do not preload the full skill or tell the model to use Pallium. The approved allocation was Codex cases 1, 3, 4, 6, and 7 (10 runs) and Claude cases 2, 5, 8, and 9 (8 runs). Native Claude initialized the isolated fixture and discovered the project skill but failed authentication before any model turn (zero model tokens and $0), so that attempt is preserved as invalid/unexecuted and is not retried. Under the user's standing approval, the four unavailable Claude pairs are reassigned to the same isolated Codex `gpt-5.6-luna` low fixture. All nine scenario pairs are therefore reported as single-runtime Codex evidence only; no Claude, OpenCode, or cross-runtime model-behavior claim is permitted. OpenCode receives deterministic static/package coverage only. Cap each run at four assistant/tool cycles and six tool calls; a cap/cost stop is a measured failure, not grounds to extend the run. Record whether the skill was loaded when relevant and absent on the irrelevant case. Oracles: (1) injected exact work ref on resume → exact-work search; (2) resume without work ref → broad search; (3) hook delivery → process payload, no receive/raw-HTTP ACK, and reply only after completion/blocker; (4) exact empty wake → trace only, no receive/resend, and never treat trace `delivered` as stale; (5) missing scope → skip only the scoped operation without guessing and continue ordinary work; (6) inter-session coordination → targeted send using a known current `@name`, or discovery when unknown, with queued/wake evidence not treated as receipt or fallback trigger; (7) existing exact provider work association → reuse it without duplicate attachment; (8) explicit durable-memory request → private exact-provenance new write while correction/forget retain existing provenance; (9) irrelevant task → no Pallium skill load or call. Report paired outcomes and failure reasons separately from textual review; one pair per scenario is smoke/regression evidence, not statistical proof or proof of perfect behavior.
 
 **Plan review:** Full-history manager design review `relay-reply-a951944b7e3542919971e91899d0516a26a15bd5349a76e2586b5f6e25362c7e` approved direction, scope, and the corrected candidate while explicitly requiring the separate clean-context gate. Clean-context reviewer `/root/guidance_clean_context_review` resolved four blocking findings across serial passes and returned PASS on `4a5f6d9d`; no implementation edits or model evals were performed.
 
@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -46,12 +46,18 @@
 - 2026-09-15: Clean-context re-review completed the packaged-skill/test reads and accepted those three corrections. It found one final blocker from the MCP ACK tool contract: explicit `already_delivered` from claim, ACK, or reply marks only that copy stale; a normal trace `delivered` does not. The four-character candidate correction and focused assertion are applied; final re-review remains pending.
 - 2026-09-15: Final clean-context read-only review of `4a5f6d9d` passed with no findings, verified claim/ACK/reply stale evidence versus normal trace `delivered`, and found no control-character or prose corruption. The plan gate is closed and State moved to Ready to implement before any guidance source edit.
 - 2026-09-15: Before implementation, merged verified `origin/main` commit `e53755a5` without conflict. Planned implementation files are `integrations/claude-code/claude_md_block.py`, `integrations/codex/AGENTS.md`, `integrations/opencode/AGENTS.md`, `tests/test_guidance_budget.py`, `tests/test_codex_integration.py`, and `tests/test_claude_code_integration.py`; no other source/test files are authorized without returning to planning.
+- 2026-09-15: Replaced only the three guidance owners with the exact reviewed 2,687-character candidate and updated focused semantic/budget assertions. Deterministic verification passed: 76 focused tests, clean `git diff --check`, byte-equivalent owner content after newline normalization, and zero invalid control characters.
+- 2026-09-15: The planned native Claude smoke initialized and discovered `pallium-memory` but failed authentication before a model turn (zero model tokens, $0). User standing approval authorizes reassigning cases 2, 5, 8, and 9 to the same isolated Codex Luna-low fixture; Claude remains invalid/unexecuted and no cross-runtime behavior claim will be made.
+- 2026-09-15: The first complete Codex decision smoke measured baseline 9/9 and candidate 8/9. Candidate case 5 contradicted itself by selecting a broad search while correctly stating that missing `container_ref` blocked it. Independent smart grading rejected that output. The final candidate now says to skip the scoped call and never call it with guessed or absent values; all candidate scenarios are rerun so the final evidence uses one text version.
+- 2026-09-15: The second candidate arm fixed case 5 but measured 8/9 because case 9 loaded `pallium-memory` for pure arithmetic. The global closing rule now says that when no capability applies, answer normally without loading the skill. The second candidate transcripts remain archived; case 9 is rerun first before the rest of the final arm.
+- 2026-09-15: The final Codex arm measured 9/9 after both behavior-driven corrections. Independent smart result review closed PASS. Latest focused tests passed 76/76; the one-time full suite passed 5,018 with 34 skipped and 2 expected xfails in 253.56 seconds. Workflow check is clean.
 
 ## Evidence
 
 - Task offer: Relay message `relay-msg-8845d20cfcb24926b7704ebcf63d7d9e`; trace delivered once with no gap/pruning.
 - Manager design review: Relay replies `relay-reply-9c416d855fcf7aafc17ec7a1360e9861ddfa7aa4afaa58e85588df118928dc7e` and `relay-reply-a951944b7e3542919971e91899d0516a26a15bd5349a76e2586b5f6e25362c7e`; first body paged to `next_offset=null`, then exact `928bd316` candidate independently read and approved. Exact delivery traces showed no gap/pruning.
 - Clean-context plan review: `/root/guidance_clean_context_review`, read-only high-reasoning serial review; packaged skills/references and targeted integration tests were read, four findings were resolved, and final `4a5f6d9d` review returned PASS with no edits or model evals.
+- Independent implementation review: `/root/guidance_result_review` returned PASS on the six-file diff with no correctness, safety-parity, or scope findings; it caught and caused correction of terminal-newline measurement accounting. Its result gate stays open until paired behavior evidence is reconciled.
 - Isolated base: `origin/main` / `0de8a89fc378e5aab693c9335050f67e0b498252`.
 - Work Record first commit: `31629a6d`.
 - Canonical item pair: `scope_ref=roadmap:v1:git:github.com/rore/pallium#roadmap`, `local_ref=item:v1:optimize-always-loaded-guidance`; attached exact key `work:v1:6ea00d2fb492c25b508f888fab87bd4bb081aec2ce6d307609d170c11b65062f`.
@@ -72,17 +78,17 @@
 | work associations are optional and grant no access/ownership | skill + work-association reference | unchanged skill trigger/reference; one compact global fallback | skill only when exact work linkage is relevant |
 | upstream field feedback | skill + field-feedback reference | unchanged lazy trigger/reference | skill only after concrete repeatable defect |
 
-## Measured proposed split
+## Measured emitted split
 
-Method: Unicode characters via Python `len(text)`; words via `len(text.split())`. Baselines are observed generated outputs. Proposed counts are deterministic textual projections from the corrected exact block below plus the unchanged 40-character arm marker and unchanged runtime-specific strong directive (Claude +416 characters/+61 words; Codex +415/+61). They are not yet emitted behavior.
+Method: Unicode characters via Python `len(text)`; words via `len(text.split())`. Baselines and candidate values are observed generated outputs. The candidate block itself is 2,765 characters / 396 words; Codex and OpenCode files include one terminal newline, and generated Codex/Claude base blocks add the unchanged 40-character arm marker. The runtime-specific strong directives remain unchanged (Claude +416 characters/+61 words; Codex +415/+61).
 
-| Output | Baseline chars/words | Proposed chars/words | Character reduction |
+| Output | Baseline chars/words | Candidate chars/words | Character reduction |
 |---|---:|---:|---:|
-| Claude base | 3,521 / 452 | 2,727 / 386 | 794 (22.5%) |
-| Claude strong | 3,937 / 513 | 3,143 / 447 | 794 (20.2%) |
-| Codex base | 3,522 / 452 | 2,727 / 386 | 795 (22.6%) |
-| Codex strong | 3,937 / 513 | 3,142 / 447 | 795 (20.2%) |
-| OpenCode | 3,482 / 449 | 2,687 / 383 | 795 (22.8%) |
+| Claude base | 3,521 / 452 | 2,805 / 399 | 716 (20.3%) |
+| Claude strong | 3,937 / 513 | 3,221 / 460 | 716 (18.2%) |
+| Codex base | 3,522 / 452 | 2,806 / 399 | 716 (20.3%) |
+| Codex strong | 3,937 / 513 | 3,221 / 460 | 716 (18.2%) |
+| OpenCode | 3,482 / 449 | 2,766 / 396 | 716 (20.6%) |
 
 ## Proposed always-loaded block
 
@@ -100,14 +106,14 @@ Load the `pallium-memory` skill when any applies. If the skill or tools are unav
 
 ### Always-safe rules
 
-- Copy injected `container_ref`, `thread_ref`, `actor_ref`, `agent_ref`, `request_source_item_id`, and `work_ref` exactly when an operation requires them. Never derive identity or scope from the working directory, recipient listings, or historical sources. Missing required scope blocks only that scoped operation; continue ordinary work.
+- Copy injected `container_ref`, `thread_ref`, `actor_ref`, `agent_ref`, `request_source_item_id`, and `work_ref` exactly when an operation requires them. Never derive identity or scope from the working directory, recipient listings, or historical sources. If required scope is missing, skip that scoped call; never call it with guessed or absent values, and continue ordinary work.
 - Process each hook-injected Relay payload as current-turn work. The hook owns claim and ACK, so never call receive for it. Complete it or report a genuine blocker; do not send status-only replies or reply to ACK-only deliveries. Never ACK through raw HTTP; use Relay tools. A trace state of `delivered` does not make its payload stale. Only an explicit `already_delivered` or conflict result from a claim/ACK/reply operation marks that copy stale; do not retry, reply to, or reuse that stale copy.
 - Relay sends only to a canonical `relay-session-...` or global `@name`; broadcast and bare runtimes are unsupported. Ask before name takeover unless already authorized. Cross-container routing never changes History or memory scope. Queued or wake evidence is not receipt. For an exact empty-wake instruction, trace only that delivery; do not receive or resend.
 - Picking up prior work? Search the injected exact `work_ref` when present; otherwise search broadly. Never guess a History search filter. Work associations use only exact provider-returned references.
 - For History searches, pass injected `request_source_item_id` only there, expand a returned `source_item_id` with its `lookup_event_id` as `parent_lookup_id`, and omit `actor_ref` unless an exact metadata filter is requested.
 - Retrieval alone never changes accessibility or ranking. Derived memory is optional and private by default; global writes require explicit intent. New memory writes copy exact injected provenance; correction and forget retain existing provenance. Work associations are optional, grant no access or ownership, and are skipped when exact provider identity or tools are unavailable. Do not ingest routine turns or re-query content already injected.
 
-Use skill and tool descriptions for procedures; do not load them for unrelated work.
+Use skill and tool descriptions for procedures. When no capability applies, answer normally without loading the skill.
 <!-- pallium:end -->
 ```
 
@@ -126,4 +132,22 @@ Use skill and tool descriptions for procedures; do not load them for unrelated w
 
 ## Result review
 
-- Pending.
+- Independent high-reasoning review `/root/guidance_result_review` found no correctness, safety-parity, or file-scope issue in the implementation. It rejected two measured candidate decisions before final approval: case 5 planned a search despite missing scope, and the next revision loaded the skill for irrelevant arithmetic. Both global rules were made explicit, every candidate case was rerun on the final text, and the reviewer returned PASS with no remaining findings.
+- Decision-oracle results on the final text:
+
+| Case | Baseline | Candidate |
+|---|---|---|
+| exact-work resume | pass | pass |
+| broad resume without work ref | pass | pass |
+| hook delivery | pass | pass |
+| exact empty wake | pass | pass |
+| missing required scope | pass | pass |
+| inter-session coordination | pass | pass |
+| existing work association | pass | pass |
+| explicit durable memory | pass | pass |
+| irrelevant task | pass | pass |
+
+- Final candidate owners and fixture match after newline/arm normalization at 2,765 characters / 396 words. Baseline used 430,931 input and 5,443 output tokens across nine runs; candidate used 326,656 input and 4,186 output tokens. This observed difference includes runtime/tool-path variance and is not claimed as a causal cost estimate. Reviewer-counted observable tool attempts were 10 baseline and 9 candidate, with maxima of 3 and 2; all stayed under the six-call cap. Both arms loaded the skill in relevant cases 1–8 and not in irrelevant case 9.
+- Invalid evidence is excluded from the 18-run denominator and preserved separately during execution: one rejected output schema, one repository-context-contaminated pilot, one ambiguous-field case-4 pair, two superseded candidate arms that each measured 8/9, and one native Claude authentication failure before any model turn (zero model tokens, $0).
+- Limits: this is Codex-only decision-selection smoke, not statistical proof and not executed Pallium workflow coverage. Pallium calls were prohibited and pointed at a closed local port; case-7 reference reads were blocked. Claude has no model-behavior result after authentication failure, and OpenCode has deterministic static/package coverage only.
+- Final deterministic evidence: exact owner parity and zero invalid control characters; 76 focused guidance/integration tests passed in 9.65 seconds; `python -m pytest tests/ -x -q` passed 5,018 with 34 skipped and 2 xfailed in 253.56 seconds; `git diff --check` and `scripts/agent-workflow-check.py --repo-root . --slug optimize-always-loaded-guidance` passed.

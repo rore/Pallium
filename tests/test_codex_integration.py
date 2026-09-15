@@ -360,25 +360,26 @@ def test_codex_agents_block_keeps_manual_memory_tools_optional() -> None:
     assert "MANDATORY" not in agents_block
     assert "MUST call `pallium_rate_memory` for EACH injected memory block" not in agents_block
     assert "If an injected card has `[+source]` and you rated it relevant" not in agents_block
-    assert "`pallium_query`" in agents_block
-    assert "`pallium_expand`" in agents_block
-
+    assert "Load the `pallium-memory` skill when any applies" in agents_block
+    assert "Derived memory is optional and private by default" in agents_block
+    assert "`pallium_query`" not in agents_block
+    assert "`pallium_expand`" not in agents_block
 
 def test_codex_agents_block_permits_deliberate_historical_pull() -> None:
     agents_block = Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")
 
-    # Permit/encourage line for a deliberate historical pull, and the P1 tools
-    # are exposed.
     assert "Picking up prior work?" in agents_block
-    assert "`pallium_search_history`" in agents_block
-    assert "`pallium_expand_source`" in agents_block
+    assert "Search the injected exact `work_ref` when present; otherwise search broadly" in agents_block
+    assert "Never guess a History search filter" in agents_block
     assert "`request_source_item_id`" in agents_block
+    assert all(token in agents_block for token in (
+        "`source_item_id`",
+        "`lookup_event_id`",
+        "`parent_lookup_id`",
+    ))
 
-    # The blanket "Query every turn" discouragement is gone, but the anti-dup
-    # clause is retained.
     assert "Query every turn" not in agents_block
-    assert "re-query for something already in the injected block" in agents_block
-
+    assert "re-query content already injected" in agents_block
 
 def test_codex_mcp_json_has_no_stdio_noop() -> None:
     mcp_json = json.loads(Path("integrations/codex/.mcp.json").read_text(encoding="utf-8"))
@@ -406,23 +407,22 @@ def test_codex_guidance_strength_selects_block_variant() -> None:
     base = setup_codex._build_agents_md_block("base")
     strong = setup_codex._build_agents_md_block("strong")
 
-    # Arm marker recorded inside each installed block.
+    assert len(base) <= 2806
+    assert len(strong) <= 3221
     assert "<!-- pallium:guidance-strength=base -->" in base
     assert "<!-- pallium:guidance-strength=strong -->" in strong
 
-    # The strong variant appends the resume directive; base does not.
     assert "## Resuming prior work" in strong
     assert "## Resuming prior work" not in base
     assert "`pallium_search_history_by_work_ref` first when a valid structural work ref" in strong
     assert "`pallium_search_history` first —" not in strong
     assert strong != base
 
-    # Both variants preserve the Codex block invariants.
     for variant in (base, strong):
         assert "MANDATORY" not in variant
-        assert "`pallium_query`" in variant
-        assert "`pallium_expand`" in variant
-
+        assert "Load the `pallium-memory` skill when any applies" in variant
+        assert "`pallium_query`" not in variant
+        assert "`pallium_expand`" not in variant
 
 def test_codex_tool_only_alias_normalizes_to_base(capsys: pytest.CaptureFixture) -> None:
     # The deprecated `tool-only` alias resolves to `base` (non-breaking for

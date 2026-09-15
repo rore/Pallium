@@ -6,7 +6,6 @@
 - investigate-history-navigation-and-on-demand-compression
 
 # Parallel · Agent Relay
-- optimize-always-loaded-guidance
 - validate-relay-dependency-workflows
 
 # Later · Runtime Expansion
@@ -47,6 +46,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- optimize-always-loaded-guidance
 - add-relay-delivery-trace
 - add-relay-activation-capability-contract
 - add-relay-session-work-associations
