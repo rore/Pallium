@@ -23,13 +23,13 @@
 
 **Verification plan:** Exact managed-block equality → normalized installed marker text equals merged emitted text and complete final raw files equal staged helper output. Preservation → raw prefix and suffix bytes outside each marker span equal their durable backups. No hook/trust/settings mutation → every frozen path hash and bounded readiness/trust state equals its immediate pre-write manifest. Recovery → inject no failure, but on any observed mismatch restore and hash-check both backups before reporting. No service restart → perform no service operation. Installed sizes → measure final managed blocks directly.
 
-**Plan review:** Clean-context high-reasoning reviewer `/root/rollout_plan_review` found three recovery/evidence blockers; the plan now adds durable backups, post-write rollback, raw-byte equality, immediate drift checks, a complete frozen-file manifest, and exact source provenance. Re-review pending; see `## Plan review`.
+**Plan review:** Clean-context high-reasoning reviewer `/root/rollout_plan_review` returned PASS after the durable recovery, byte-equality, immediate drift-check, complete manifest, and bounded trust-state corrections; see `## Plan review`.
 
 **Approvals:** Not required at this risk level; user explicitly requested local rollout.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -40,7 +40,7 @@
 ## Plan review
 
 - `/root/rollout_plan_review` confirmed the private tested helpers are the narrowest existing updater path but blocked execution on three gaps: recovery covered exceptions rather than verification failures, helper newline reconstruction was not proven byte-preserving, and the snapshot/provenance manifest was underspecified.
-- Plan amended to stage through the actual helpers, preserve durable original bytes before either write, compare raw prefix/suffix and complete expected bytes, recheck all hashes immediately before writing, roll back both targets on write or verification failure, verify restoration, retain failed recovery artifacts, and record exact source/frozen-file provenance. Re-review pending.
+- Plan amended to stage through the actual helpers, preserve durable original bytes before either write, compare raw prefix/suffix and complete expected bytes, recheck all hashes immediately before writing, roll back both targets on write or verification failure, verify restoration, retain failed recovery artifacts, and record exact source/frozen-file provenance. Re-review returned PASS with no remaining blocker.
 
 ## Evidence
 
