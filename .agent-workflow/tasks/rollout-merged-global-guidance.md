@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -37,6 +37,7 @@
 - 2026-09-15: Created isolated branch `feat/rollout-merged-global-guidance` from merged `origin/main` commit `c419981b`. Applicability is non-exempt because global agent instructions and a Work Record are outside the documentation-only allowlist. Clean-context pre-edit redline returned GRAY with no boundary, checkpoint, or contract finding.
 - 2026-09-15: Discovery rejected the full setup commands because they mutate surfaces explicitly frozen during relay wake investigation. The existing tested marker replacement helpers are guidance-only; a no-write preview confirmed unique markers, base arms, exact stable-source blocks, CRLF-only inputs, and preservation of all text outside each managed block.
 - 2026-09-15: The first guarded staging attempt stopped before target writes because the builder output includes one terminal newline after the end marker while marker-span extraction ends at the marker. Both installed hashes remained unchanged. Independent re-review approved comparing the span to builder output with only that terminal newline removed, while retaining whole-file staged byte equality; the first recovery directory is preserved and attempt 2 will use a new directory.
+- 2026-09-15: Attempt 2 used only the two reviewed `_append_*_block("base")` helpers. Durable backups and the complete manifest were written before either target update. Both installed files exactly matched their staged helper outputs; raw prefix/suffix bytes were preserved; all frozen hook, config, settings, readiness, and trust files remained byte-identical; bounded Codex readiness remained `verified` with hook trust and MCP exposure `unknown`. No setup command, service/host restart, hook change, settings change, task contact, or behavior test occurred.
 
 ## Plan review
 
@@ -45,7 +46,9 @@
 
 ## Evidence
 
-- Pre-rollout Codex readiness is `verified`; Codex-owned hook trust and MCP exposure remain `unknown` by the bounded public readiness API. Exact pre-rollout hashes are captured for both guidance files, Codex hooks/config/readiness, Claude settings, and Claude trust registry.
+- Pre-rollout Codex readiness was `verified`; Codex-owned hook trust and MCP exposure were and remain `unknown` by the bounded public readiness API. Attempt-2 manifest and raw backups: `.local/rollout-merged-global-guidance-attempt2/`. The stopped pre-write attempt remains at `.local/rollout-merged-global-guidance/`.
+- Codex global guidance changed SHA-256 `2f21342f353c2050644a82909304957e1d7dd2ae65d3424be9126843e2891be9` → `35f4d932e784ee59e354fe8723a1344c153af02a3c05e3edf6a8f4799d8da144`; final file 5,986 bytes. Claude changed `f183b3f0e59fab65a3a50dd0d5d2f3268f2d021ba3477c036c6f4631bd2d3f0d` → `aa5884988d8107adb0837d18a058db72cdb5d70445fe29714957dfa4ed49a272`; final file 6,689 bytes.
+- Actual installed marker spans are 2,858 characters / 404 words for both runtimes. Merged emitted base sizes are Codex 2,859 / 404 (one terminal newline after the end marker) and Claude 2,858 / 404. Independent reconciliation returned `all_pass=true`: whole files equal staged helper output, marker text equals merged output, raw user/unrelated prefix and suffix bytes are unchanged, and all five frozen non-guidance files plus readiness state are unchanged.
 
 ## Result review
 
