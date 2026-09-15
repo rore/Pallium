@@ -46,6 +46,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- optimize-always-loaded-guidance
 - add-relay-delivery-trace
 - add-relay-activation-capability-contract
 - add-relay-session-work-associations

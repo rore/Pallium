@@ -7,9 +7,10 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     spec = importlib.util.spec_from_file_location("claude_block", "integrations/claude-code/claude_md_block.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert len(module.get_claude_md_block("base")) <= 3736
-    assert len(module.get_claude_md_block("strong")) <= 3962
-    assert len(Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")) <= 3620
+    assert len(module.get_claude_md_block("base")) <= 2805
+    assert len(module.get_claude_md_block("strong")) <= 3221
+    assert len(Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")) <= 2766
+    assert len(Path("integrations/opencode/AGENTS.md").read_text(encoding="utf-8")) <= 2766
     assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
     assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
     assert len(Path("integrations/opencode/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
@@ -22,48 +23,91 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names)
     assert combined <= 1300
 
-
 def test_all_guidance_surfaces_present_pallium_capabilities() -> None:
     spec = importlib.util.spec_from_file_location(
         "claude_block_capabilities", "integrations/claude-code/claude_md_block.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    surfaces = (
+    global_surfaces = (
         module.get_claude_md_block("base"),
         Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8"),
         Path("integrations/opencode/AGENTS.md").read_text(encoding="utf-8"),
+    )
+    detail_surfaces = (
         Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8"),
         Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8"),
         Path("integrations/opencode/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8"),
         Path("integrations/opencode/.opencode/command/pallium-memory.md").read_text(encoding="utf-8"),
     )
-    for rendered in surfaces[:3]:
-        assert "two primary capabilities" in rendered
-        assert "three separate uses" not in rendered
-    for rendered in surfaces:
+    for rendered in global_surfaces:
+        assert "Pallium provides:" in rendered
+        assert "**Relay:** coordinate independent agent sessions" in rendered
+        assert "**Session History:** resume earlier work" in rendered
+        assert "**Derived memory:** optional compact context" in rendered
+        assert "Load the `pallium-memory` skill when any applies" in rendered
+        assert "When no capability applies, answer normally without loading the skill" in rendered
+    for rendered in (*global_surfaces, *detail_surfaces):
         assert "Relay" in rendered
         assert "Session History" in rendered
         assert "Derived memory" in rendered or "derived memory" in rendered
         assert "Pallium Memory Workflow" not in rendered
 
-
 def test_all_guidance_surfaces_preserve_search_to_expansion_telemetry_link() -> None:
     spec = importlib.util.spec_from_file_location("claude_block_linkage", "integrations/claude-code/claude_md_block.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    linkage = ("After a promising search hit, call `pallium_expand_source` with its "
-               "`source_item_id` and pass the search result's `lookup_event_id` as "
-               "`parent_lookup_id`.")
-    surfaces = (
+    global_surfaces = (
         module.get_claude_md_block("base"),
         module.get_claude_md_block("strong"),
         Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8"),
+        Path("integrations/opencode/AGENTS.md").read_text(encoding="utf-8"),
+    )
+    skill_surfaces = (
         Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8"),
         Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8"),
     )
-    assert all(linkage in rendered for rendered in surfaces)
-    assert all("never derive, guess, or normalize" in rendered for rendered in surfaces)
+    for rendered in global_surfaces:
+        assert all(token in rendered for token in (
+            "`source_item_id`",
+            "`lookup_event_id`",
+            "`parent_lookup_id`",
+        ))
+        assert "Never derive identity or scope" in rendered
+    linkage = ("After a promising search hit, call `pallium_expand_source` with its "
+               "`source_item_id` and pass the search result's `lookup_event_id` as "
+               "`parent_lookup_id`.")
+    assert all(linkage in rendered for rendered in skill_surfaces)
+    assert all("never derive, guess, or normalize" in rendered for rendered in skill_surfaces)
+
+
+def test_global_guidance_surfaces_preserve_compact_safeguards() -> None:
+    spec = importlib.util.spec_from_file_location("claude_block_safeguards", "integrations/claude-code/claude_md_block.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    surfaces = (
+        module.get_claude_md_block("base"),
+        Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8"),
+        Path("integrations/opencode/AGENTS.md").read_text(encoding="utf-8"),
+    )
+    required = (
+        "If required scope is missing, skip that scoped call",
+        "never call it with guessed or absent values",
+        "The hook owns claim and ACK, so never call receive for it",
+        "Never ACK through raw HTTP",
+        "A trace state of `delivered` does not make its payload stale",
+        "claim/ACK/reply operation marks that copy stale",
+        "Queued or wake evidence is not receipt",
+        "trace only that delivery; do not receive or resend",
+        "Never guess a History search filter",
+        "omit `actor_ref` unless an exact metadata filter is requested",
+        "Retrieval alone never changes accessibility or ranking",
+        "New memory writes copy exact injected provenance",
+        "correction and forget retain existing provenance",
+        "Work associations are optional, grant no access or ownership",
+    )
+    for rendered in surfaces:
+        assert all(rule in rendered for rule in required)
 
 def test_relay_guidance_covers_stale_delivery_and_recipient_identity() -> None:
     skills = (

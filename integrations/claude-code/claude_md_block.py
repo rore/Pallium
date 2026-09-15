@@ -2,48 +2,26 @@
 
 CLAUDE_MD_BLOCK = """\
 <!-- pallium:start -->
-
 ## Pallium
 
-Pallium has two primary capabilities: Relay and Session History.
-It also has optional derived memory:
+Pallium provides:
 
-- **Relay** sends useful context to another agent session when its work should change.
-- **Session History** finds relevant work from earlier sessions.
-- **Derived memory** is optional compact context that may be injected or queried.
+- **Relay:** coordinate independent agent sessions when another agent's work should change.
+- **Session History:** resume earlier work from relevant prior sessions.
+- **Derived memory:** optional compact context that may be injected or queried.
 
-### Relay
+Load the `pallium-memory` skill when any applies. If the skill or tools are unavailable, continue ordinary work; never invent identity, scope, work references, or successful calls.
 
-- Discover recipients with `pallium_relay_recipients`; name a session with `pallium_relay_name`.
-- Send to canonical `relay-session-<32 lowercase hex>` or global `@name`; bare runtimes and broadcast are unsupported. Legacy `runtime:session` may be ambiguous; if `runtime:@name` mismatches, use `@name`.
-- Names: try without takeover; on conflict ask the user before `replace_existing=true`, unless they already explicitly requested takeover. Relay routes across containers; memory/history scope is unchanged.
-- Treat delivered messages as current-turn work. Complete actionable payloads now; reply with `pallium_relay_reply` after completion or a genuine blocker, not with a status-only acknowledgment.
-- Injected `agent_ref` and `thread_ref` identify this session; never infer self from recipient lists.
-- Do not reply to terminal ACK-only deliveries. If a delivery is already delivered or conflicting, only that copy is stale: do not retry, reply, or use its payload; continue independently established work.
+### Always-safe rules
 
-### Session History
+- Copy injected `container_ref`, `thread_ref`, `actor_ref`, `agent_ref`, `request_source_item_id`, and `work_ref` exactly when an operation requires them. Never derive identity or scope from the working directory, recipient listings, or historical sources. If required scope is missing, skip that scoped call; never call it with guessed or absent values, and continue ordinary work.
+- Process each hook-injected Relay payload as current-turn work. The hook owns claim and ACK, so never call receive for it. Complete it or report a genuine blocker; do not send status-only replies or reply to ACK-only deliveries. Never ACK through raw HTTP; use Relay tools. A trace state of `delivered` does not make its payload stale. Only an explicit `already_delivered` or conflict result from a claim/ACK/reply operation marks that copy stale; do not retry, reply to, or reuse that stale copy.
+- Relay sends only to a canonical `relay-session-...` or global `@name`; broadcast and bare runtimes are unsupported. Ask before name takeover unless already authorized. Cross-container routing never changes History or memory scope. Queued or wake evidence is not receipt. For an exact empty-wake instruction, trace only that delivery; do not receive or resend.
+- Picking up prior work? Search the injected exact `work_ref` when present; otherwise search broadly. Never guess a History search filter. Work associations use only exact provider-returned references.
+- For History searches, pass injected `request_source_item_id` only there, expand a returned `source_item_id` with its `lookup_event_id` as `parent_lookup_id`, and omit `actor_ref` unless an exact metadata filter is requested.
+- Retrieval alone never changes accessibility or ranking. Derived memory is optional and private by default; global writes require explicit intent. New memory writes copy exact injected provenance; correction and forget retain existing provenance. Work associations are optional, grant no access or ownership, and are skipped when exact provider identity or tools are unavailable. Do not ingest routine turns or re-query content already injected.
 
-Picking up prior work? Choose the narrow or broad search below.
-
-`pallium_search_history_by_work_ref`
-Current-work search. Copy injected `work_ref`; if absent, use broad search—never guess. Blank `query` resumes newest state; otherwise ask the question.
-
-`pallium_search_history`
-Broad topic search across eligible history/work items. Its `work_refs` filter is compatibility-only. Omit `actor_ref` normally; pass it only when the user asks for an exact actor metadata filter.
-
-`pallium_expand_source`
-After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`.
-
-Copy the injected `container_ref` exactly—never derive, guess, or normalize it. Pass the active `thread_ref` to search and expansion for telemetry. Pass an injected `request_source_item_id` only to either history search. These values are not authorization or the historical source identity.
-
-### Derived memory
-
-- Search distilled memory with `pallium_query`; use `pallium_query_debug` to distinguish filtered, missing, and low-relevance results. Use `pallium_expand` when a memory card offers expansion.
-- Store a deliberate note with `pallium_ingest`, `artifact_kind="note"`, `visibility: "private"`, and the injected `container_ref`. Use global visibility only when explicitly requested, with `actor_ref`.
-- Flag incorrect or obsolete memory with `pallium_flag_memory`. `pallium_rate_memory` is optional feedback.
-- `pallium_remember` stores a durable fact; `pallium_correct` fixes it; `pallium_supersede` replaces it; `pallium_forget` hides it; `pallium_record_outcome` records a procedure result.
-- Remember, supersede, and record-outcome writes copy exact `container_ref`, `thread_ref`, `actor_ref`, `agent_ref`, and `visibility`. Never use cwd. Default private; correction and forget retain provenance.
-- Retrieval alone never updates accessibility or ranking. Do not ingest routine turns, re-query for something already in the injected block, or use forget as vote suppression.
+Use skill and tool descriptions for procedures. When no capability applies, answer normally without loading the skill.
 <!-- pallium:end -->"""
 
 # Appended to the base block for the "strong" guidance-strength arm. Authored

@@ -46,18 +46,18 @@ def test_claude_mcp_registration_is_session_bound_stdio(
 def test_claude_block_permits_deliberate_historical_pull() -> None:
     block = _base_block()
 
-    # Permit/encourage line for a deliberate historical pull, and the P1 tools
-    # are exposed.
     assert "Picking up prior work?" in block
-    assert "`pallium_search_history`" in block
-    assert "`pallium_expand_source`" in block
+    assert "Search the injected exact `work_ref` when present; otherwise search broadly" in block
+    assert "Never guess a History search filter" in block
     assert "`request_source_item_id`" in block
+    assert all(token in block for token in (
+        "`source_item_id`",
+        "`lookup_event_id`",
+        "`parent_lookup_id`",
+    ))
 
-    # The blanket "Query every turn" discouragement is gone, but the anti-dup
-    # clause is retained.
     assert "Query every turn" not in block
-    assert "re-query for something already in the injected block" in block
-
+    assert "re-query content already injected" in block
 
 def test_claude_guidance_strength_selects_block_variant() -> None:
     base = setup_claude_code._get_claude_md_block("base")
@@ -72,11 +72,10 @@ def test_claude_guidance_strength_selects_block_variant() -> None:
     assert "`pallium_search_history` first —" not in strong
     assert strong != base
 
-    # `pallium_query`/`pallium_expand` remain present in both variants.
     for variant in (base, strong):
-        assert "`pallium_query`" in variant
-        assert "`pallium_expand`" in variant
-
+        assert "Load the `pallium-memory` skill when any applies" in variant
+        assert "`pallium_query`" not in variant
+        assert "`pallium_expand`" not in variant
 
 def test_claude_tool_only_alias_normalizes_to_base(capsys: pytest.CaptureFixture) -> None:
     # The deprecated `tool-only` alias resolves to `base` (non-breaking for
