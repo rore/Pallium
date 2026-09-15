@@ -1,6 +1,6 @@
 ---
 name: agent-workflow
-description: Use when starting, advancing, pausing, or resuming an engineering task. Maintains the Work Record, validates readiness gates between checkpoints, and routes risk classification to agent-redline (bundled, required by default).
+description: Use for implementation plans or repository changes, explicit Agent Workflow requests, and existing workflow task actions. Skip standalone read-only review, explanation, diagnosis, comparison, or inspection.
 ---
 
 # agent-workflow
@@ -17,7 +17,7 @@ Read only the file for the mode that applies.
 
 ## Principles
 
-- **Gate applicability first.** Unless it exempts the whole change, write the Work Record before touching code.
+- **Gate request scope, then applicability.** Standalone read-only analysis stays out; implementation plans, repository changes, explicit use, and existing-task actions enter. For in-scope work, only a whole-change applicability exemption skips the Work Record.
 - **Shape is derived from `(Risk, Complexity)`.** `(Routine, Simple)` → compact. Anything else → expanded. Checker enforces via `workrecord.shape_matches_classification`.
 - **Stay within recorded scope.** Material scope expansion returns the task to planning.
 - **Update State at transitions.** `Ready to implement` → `Ready for review` only when verification passes.

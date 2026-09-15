@@ -29,6 +29,8 @@ Review identity: Routine may use normal PR review; Elevated requires a non-imple
 
 If evidence is insufficient, run or request the smallest behavioral check that resolves it; prefer the relevant end-to-end transition to rerunning a passing suite. Record authoritative result references; if unavailable, leave the gate unsatisfied.
 
+Ready for review is not merged or released; verify delivery state in its owning system.
+
 ## Satisfy-by paths in practice
 
 **CODEOWNER approval.** With "Require Code Owner review" enabled, GitHub enforces owning-team approval. CI passes Redline the APPROVED reviewers that intersect `CODEOWNERS`.

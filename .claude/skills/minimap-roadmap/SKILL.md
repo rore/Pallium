@@ -44,7 +44,7 @@ For metadata-first roadmaps, keep classification in item metadata and the single
 
 For ownership rules, item shape, board rules, and edit constraints, read [references/roadmap-contract.md](references/roadmap-contract.md).
 
-When explicitly taking or leaving a known roadmap item, and only when Pallium MCP work-reference tools are available, follow [references/pallium-participants.md](references/pallium-participants.md). Pallium is optional: never install it, shell out to it, or block ordinary Minimap work when those tools are absent.
+When explicitly implementing or substantively reviewing a known roadmap item, and only when Pallium MCP work-reference tools are available, follow [references/pallium-participants.md](references/pallium-participants.md). Pallium is optional: never install it, shell out to it, or block ordinary Minimap work when those tools are absent.
 
 ## Composing With Spec Review
 
@@ -57,5 +57,5 @@ If only this skill is installed, the user can still drive the conversation throu
 - Do not create parallel roadmap trackers.
 - Do not treat chat as the source of truth when roadmap files exist.
 - Always pass the absolute repo path in the URL hash; do not assume the running server is rooted in your repo.
-- Do not curl the server, send signals, or edit `$MINIMAP_HOME/server.json` by hand. Use the bundled scripts only.
+- Do not curl the server, send signals, or edit `$MINIMAP_HOME/server.json` or its participant preference by hand. Use the bundled scripts only.
 - If Minimap's documentation, CLI, HTTP API, server, UI, or lifecycle scripts fail or contradict documented behavior, load [`references/upstream-feedback.md`](references/upstream-feedback.md); otherwise do not load it.

@@ -18,12 +18,15 @@ import tempfile
 from pathlib import Path, PurePath
 
 SEED = (
-    "Project rule: invoke the agent-workflow skill before planning or editing. "
-    "It first evaluates any configured applicability policy. Only an explicit "
-    "whole-change exemption may skip the Work Record; otherwise every engineering "
-    "task is recorded. Any implementation plan for a non-exempt task must include, "
-    "as its FIRST implementation step, invoking /agent-workflow to create the Work "
-    "Record and classify risk before any code edit."
+    "Project rule: standalone read-only review, explanation, diagnosis, comparison, "
+    "or inspection is outside Agent Workflow if the request as a whole asks for "
+    "neither an implementation plan nor repository mutation; do not create or update "
+    "a Work Record. If it later expands to either, invoke agent-workflow before that "
+    "work. Explicit Agent Workflow requests and actions that resume, advance, or pause "
+    "an existing workflow task remain in scope. For in-scope work, evaluate configured "
+    "applicability first. Only an explicit whole-change exemption may skip the Work "
+    "Record. Any non-exempt implementation plan must start by invoking /agent-workflow "
+    "to create the Work Record and classify risk before code edits."
 )
 _PREFIXES = ("slice/", "feat/", "feature/", "fix/", "bug/", "chore/", "demo/")
 _MUTATION_TOOLS = {"write", "edit", "multiedit", "notebookedit", "apply_patch"}

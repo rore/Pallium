@@ -2,6 +2,8 @@
 
 Routine path. Five fields, each one line where possible: **Outcome**, **Target**, **Scope**, **Constraints**, **Completion criteria**. Write all five before you read code.
 
+If the task arrived from an authoritative source item, link it in surrounding prose and record only task-local context; do not copy it into a competing local specification.
+
 The point of this checkpoint is to write down what you would otherwise *infer*. Agents fill gaps confidently and silently; the marker block makes the gap-filling visible to a reviewer.
 
 ## Field-by-field

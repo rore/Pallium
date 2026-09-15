@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 // Keep this text byte-identical to SEED in scripts/agent-workflow-runtime.py
 // and CTX in hooks/seed-workflow.sh.
-const SEED = "Project rule: invoke the agent-workflow skill before planning or editing. It first evaluates any configured applicability policy. Only an explicit whole-change exemption may skip the Work Record; otherwise every engineering task is recorded. Any implementation plan for a non-exempt task must include, as its FIRST implementation step, invoking /agent-workflow to create the Work Record and classify risk before any code edit.";
+const SEED = "Project rule: standalone read-only review, explanation, diagnosis, comparison, or inspection is outside Agent Workflow if the request as a whole asks for neither an implementation plan nor repository mutation; do not create or update a Work Record. If it later expands to either, invoke agent-workflow before that work. Explicit Agent Workflow requests and actions that resume, advance, or pause an existing workflow task remain in scope. For in-scope work, evaluate configured applicability first. Only an explicit whole-change exemption may skip the Work Record. Any non-exempt implementation plan must start by invoking /agent-workflow to create the Work Record and classify risk before code edits.";
 const MUTATION_TOOLS = new Set(["write", "edit", "apply_patch"]);
 
 class GuardDenied extends Error {}

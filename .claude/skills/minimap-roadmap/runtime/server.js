@@ -34,9 +34,10 @@ import {
 import { writeServerRegistry, deleteServerRegistry } from "./src/server-registry.js";
 import { matchRoute } from "./src/router.js";
 import {
-  isTrustedParticipantRequest,
+  isTrustedLocalRequest,
   lookupPalliumParticipants,
-  parsePalliumEndpoint,
+  parsePalliumConfig,
+  palliumConfigId,
   resolveRoadmapItemReference,
 } from "./src/pallium.js";
 
@@ -51,7 +52,11 @@ const staticRoot = path.join(__dirname, "ui");
 const cwdFallback = process.cwd();
 const requestedPort = Number(process.env.PORT || 4312);
 const maxPortAttempts = 20;
-const palliumConfig = parsePalliumEndpoint(process.env.MINIMAP_PALLIUM_ENDPOINT);
+const LOCAL_SERVER_HOST = "127.0.0.1";
+const palliumConfig = parsePalliumConfig(
+  process.env.MINIMAP_PALLIUM_ENDPOINT,
+  process.env.MINIMAP_PALLIUM_DASHBOARD_ENDPOINT,
+);
 
 const packageJsonPath = path.join(__dirname, "package.json");
 const serverVersion = JSON.parse(await fs.readFile(packageJsonPath, "utf8")).version || "0.0.0";
@@ -195,7 +200,11 @@ async function buildSpecSessionsByItemId(repoRoot, workspace) {
 // ---------------------------------------------------------------------------
 
 async function handleHealth(request, response) {
-  sendJson(response, 200, { ok: true });
+  sendJson(response, 200, { ok: true, participants: {
+    mode: palliumConfig.endpoint ? "enabled" : "disabled",
+    links: palliumConfig.dashboardEndpoint ? "enabled" : "disabled",
+    configId: palliumConfigId(palliumConfig),
+  } });
 }
 
 async function handleShutdown(request, response) {
@@ -373,9 +382,6 @@ async function handleScope(request, response) {
 }
 
 async function handleItemParticipants(request, response, ctx) {
-  if (!isTrustedParticipantRequest(request)) {
-    throw new AppError("Participant lookup is available only from this local Minimap origin.", 403, "forbidden");
-  }
   if (!palliumConfig.configured) {
     sendJson(response, 200, await lookupPalliumParticipants(palliumConfig, null));
     return;
@@ -456,12 +462,15 @@ const routes = [
 async function handleApi(request, response, requestUrl) {
   const match = matchRoute(routes, request.method, requestUrl.pathname);
   if (!match) return false;
+  if (!isTrustedLocalRequest(request)) {
+    throw new AppError("Minimap API is available only from this local origin.", 403, "forbidden");
+  }
   await match.handler(request, response, { url: requestUrl, params: match.params });
   return true;
 }
 
 async function requestListener(request, response) {
-  const requestUrl = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+  const requestUrl = new URL(request.url || "/", "http://localhost");
   const pathname = requestUrl.pathname;
 
   try {
@@ -534,7 +543,7 @@ function listenOnce(server, port) {
 
     server.once("listening", onListening);
     server.once("error", onError);
-    server.listen(port);
+    server.listen(port, LOCAL_SERVER_HOST);
   });
 }
 
@@ -577,6 +586,8 @@ async function startServer() {
       port: boundPort,
       startedAt: new Date().toISOString(),
       version: serverVersion,
+      participantMode: palliumConfig.endpoint ? "enabled" : "disabled",
+      participantConfigId: palliumConfigId(palliumConfig),
     });
     process.stdout.write(`Minimap running at http://localhost:${boundPort}${fallbackNote}\n`);
   } catch (error) {

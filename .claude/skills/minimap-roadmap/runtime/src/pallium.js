@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -140,6 +141,16 @@ export function isLoopbackHost(hostname) {
   return normalized === "localhost" || normalized === "::1" || isIpv4Loopback(normalized);
 }
 
+export function palliumConfigId(config) {
+  if (!config?.configured && !config?.dashboardConfigured) return "disabled";
+  if (!config?.endpoint || (config.dashboardConfigured && !config.dashboardEndpoint)) return null;
+  const identity = JSON.stringify({
+    endpoint: config.endpoint,
+    dashboardEndpoint: config.dashboardEndpoint || null,
+  });
+  return `sha256:${createHash("sha256").update(identity).digest("hex")}`;
+}
+
 export function parsePalliumEndpoint(rawValue) {
   if (typeof rawValue !== "string" || !rawValue.trim()) {
     return { configured: false, endpoint: null };
@@ -163,11 +174,21 @@ export function parsePalliumEndpoint(rawValue) {
   }
 }
 
+export function parsePalliumConfig(rawEndpoint, rawDashboardEndpoint) {
+  const endpoint = parsePalliumEndpoint(rawEndpoint);
+  const dashboard = parsePalliumEndpoint(rawDashboardEndpoint);
+  return {
+    ...endpoint,
+    dashboardConfigured: dashboard.configured,
+    dashboardEndpoint: dashboard.endpoint,
+  };
+}
+
 function normalizeRemoteAddress(value) {
   return String(value || "").toLowerCase().replace(/^::ffff:/, "");
 }
 
-export function isTrustedParticipantRequest(request) {
+export function isTrustedLocalRequest(request) {
   if (!isLoopbackHost(normalizeRemoteAddress(request?.socket?.remoteAddress))) return false;
   const host = request?.headers?.host;
   if (typeof host !== "string" || !host) return false;
@@ -187,6 +208,8 @@ export function isTrustedParticipantRequest(request) {
     return false;
   }
 }
+
+export const isTrustedParticipantRequest = isTrustedLocalRequest;
 
 async function runGit(args, cwd) {
   const result = await execFileAsync("git", args, {
@@ -252,6 +275,7 @@ function timestamp(value, optional = false) {
 
 function validateParticipant(row, reference) {
   if (!row || typeof row !== "object" || Array.isArray(row)) throw new LookupError("invalid-response");
+  const endpointId = boundedString(row.endpoint_id, 128);
   const state = boundedString(row.state, 32);
   const lifecycle = boundedString(row.lifecycle, 32);
   const health = row.destination_health === null ? null : boundedString(row.destination_health, 32, true);
@@ -274,7 +298,7 @@ function validateParticipant(row, reference) {
   }
 
   return {
-    endpoint_id: boundedString(row.endpoint_id, 128),
+    endpoint_id: endpointId,
     runtime: boundedString(row.runtime, 64),
     session_ref: boundedString(row.session_ref, 255),
     container_ref: boundedString(row.container_ref, 512),
@@ -406,7 +430,13 @@ export async function lookupPalliumParticipants(config, reference, options = {})
       }
 
       canonicalWorkRef ||= page.work_ref;
-      const rows = page.participants.map((row) => validateParticipant(row, reference));
+      const rows = page.participants.map((row) => {
+        const participant = validateParticipant(row, reference);
+        if (!config.dashboardEndpoint || !/^relay-session-[0-9a-f]{32}$/.test(participant.endpoint_id)) return participant;
+        const sessionUrl = new URL("/dashboard", config.dashboardEndpoint);
+        sessionUrl.hash = `relay?session=${encodeURIComponent(participant.endpoint_id)}`;
+        return { ...participant, session_url: sessionUrl.href };
+      });
       if (rows.some((row) => row.association.work_ref !== canonicalWorkRef)) {
         throw new LookupError("invalid-response");
       }
