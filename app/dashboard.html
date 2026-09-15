@@ -1657,17 +1657,22 @@ function renderRelaySummary(data) {
     : awaiting.status === 'actionable'
     ? fmtNum(awaiting.failure_count || 0) + ' of ' + fmtNum(awaiting.count || 0) + ' awaiting Codex deliveries have explicit failed wake evidence and no later exact-recipient check-in.'
     : awaiting.status === 'neutral'
-    ? fmtNum(awaiting.count || 0) + ' Codex deliveries are awaiting exact-recipient check-in; this can be normal while a task is busy and is not delivery failure evidence.'
+    ? fmtNum(awaiting.count || 0) + ' Codex deliveries are awaiting exact-recipient check-in; this can be normal while a task is busy or unloaded and is not delivery failure evidence.'
     : awaiting.status === 'unknown'
     ? 'Codex recipient check-in evidence is incomplete; current delivery state remains authoritative.'
     : '';
+  const awaitingEvidence = awaiting.status === 'clear' ? '' : [
+    awaiting.oldest_age_seconds == null ? '' : 'Oldest check-in wait: ' + formatUptime(awaiting.oldest_age_seconds) + '.',
+    (awaiting.unknown_count || 0) > 0 ? fmtNum(awaiting.unknown_count) + (awaiting.count ? ' additional' : '') + ' pending Codex ' + (awaiting.unknown_count === 1 ? 'delivery has' : 'deliveries have') + ' incomplete trace evidence.' : '',
+    (awaiting.count || awaiting.unknown_count) ? 'If the wait is unexpected, open the Relay message detail and inspect the exact delivery trace; do not resend solely because wake evidence is uncertain.' : '',
+  ].filter(Boolean).join(' ');
   const collisionNote = collisionCount
     ? fmtNum(collisionCount) + ' claimable deliveries are on endpoints that share a runtime/session identity. This may be intentional; inspect the affected endpoints before repair.'
     : '';
   const normalNote = (deliveries.pending_now || 0) > 0
     ? 'Waiting is usually expected until the recipient takes another turn.'
     : 'No delivery is currently waiting for a recipient turn.';
-  const waitingNote = [readinessNote, awaitingNote, collisionNote, awaitingNote || collisionNote ? '' : normalNote].filter(Boolean).join(' ');
+  const waitingNote = [readinessNote, awaitingNote, awaitingEvidence, collisionNote, awaitingNote || collisionNote ? '' : normalNote].filter(Boolean).join(' ');
   const guidance = document.getElementById('relay-waiting-guidance');
   if (guidance) guidance.textContent = readinessState === 'review_required'
     ? 'cross-agent delivery - Codex hook review and restart required'
