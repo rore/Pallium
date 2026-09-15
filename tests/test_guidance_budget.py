@@ -7,10 +7,10 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     spec = importlib.util.spec_from_file_location("claude_block", "integrations/claude-code/claude_md_block.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert len(module.get_claude_md_block("base")) <= 2805
-    assert len(module.get_claude_md_block("strong")) <= 3221
-    assert len(Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")) <= 2766
-    assert len(Path("integrations/opencode/AGENTS.md").read_text(encoding="utf-8")) <= 2766
+    assert len(module.get_claude_md_block("base")) <= 2858
+    assert len(module.get_claude_md_block("strong")) <= 3274
+    assert len(Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")) <= 2819
+    assert len(Path("integrations/opencode/AGENTS.md").read_text(encoding="utf-8")) <= 2819
     assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
     assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
     assert len(Path("integrations/opencode/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
@@ -98,7 +98,7 @@ def test_global_guidance_surfaces_preserve_compact_safeguards() -> None:
         "A trace state of `delivered` does not make its payload stale",
         "claim/ACK/reply operation marks that copy stale",
         "Queued or wake evidence is not receipt",
-        "trace only that delivery; do not receive or resend",
+        "pass its supplied `relay-delivery-*` identifier as Relay trace's `message_id`; do not receive or resend",
         "Never guess a History search filter",
         "omit `actor_ref` unless an exact metadata filter is requested",
         "Retrieval alone never changes accessibility or ranking",
