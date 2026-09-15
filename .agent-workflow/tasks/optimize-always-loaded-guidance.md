@@ -48,9 +48,10 @@
 - 2026-09-15: Before implementation, merged verified `origin/main` commit `e53755a5` without conflict. Planned implementation files are `integrations/claude-code/claude_md_block.py`, `integrations/codex/AGENTS.md`, `integrations/opencode/AGENTS.md`, `tests/test_guidance_budget.py`, `tests/test_codex_integration.py`, and `tests/test_claude_code_integration.py`; no other source/test files are authorized without returning to planning.
 - 2026-09-15: Replaced only the three guidance owners with the exact reviewed 2,687-character candidate and updated focused semantic/budget assertions. Deterministic verification passed: 76 focused tests, clean `git diff --check`, byte-equivalent owner content after newline normalization, and zero invalid control characters.
 - 2026-09-15: The planned native Claude smoke initialized and discovered `pallium-memory` but failed authentication before a model turn (zero model tokens, $0). User standing approval authorizes reassigning cases 2, 5, 8, and 9 to the same isolated Codex Luna-low fixture; Claude remains invalid/unexecuted and no cross-runtime behavior claim will be made.
-- 2026-09-15: The first complete Codex decision smoke measured baseline 9/9 and candidate 8/9. Candidate case 5 contradicted itself by selecting a broad search while correctly stating that missing `container_ref` blocked it. Independent smart grading rejected that output. The final candidate now says to skip the scoped call and never call it with guessed or absent values; all candidate scenarios are rerun so the final evidence uses one text version.
-- 2026-09-15: The second candidate arm fixed case 5 but measured 8/9 because case 9 loaded `pallium-memory` for pure arithmetic. The global closing rule now says that when no capability applies, answer normally without loading the skill. The second candidate transcripts remain archived; case 9 is rerun first before the rest of the final arm.
-- 2026-09-15: The final Codex arm measured 9/9 after both behavior-driven corrections. Independent smart result review closed PASS. Latest focused tests passed 76/76; the one-time full suite passed 5,018 with 34 skipped and 2 expected xfails in 253.56 seconds. Workflow check is clean.
+- 2026-09-15: After the original case-4 outputs were moved aside and replaced by a relabeled rerun, the first complete relabeled corpus scored baseline 9/9 and candidate 8/9. Reconstructing that arm with the original-prompt outputs gives baseline 8/9 and first candidate 7/9 (case 4 plus case 5). The error was excluding and replacing valid original case-4 failures, not grading those responses as passes. Candidate case 5 also selected a broad search while stating that missing `container_ref` blocked it; independent smart grading rejected that output. The candidate was revised and rerun.
+- 2026-09-15: The second candidate arm used the relabeled case-4 prompt, fixed case 5, and measured 8/9 because case 9 loaded `pallium-memory` for pure arithmetic. The global closing rule now says that when no capability applies, answer normally without loading the skill. The second candidate transcripts remain archived; case 9 is rerun first before the rest of the final arm.
+- 2026-09-15: The final Codex arm on the relabeled case-4 corpus measured 9/9 after both behavior-driven corrections. Independent smart result review closed PASS. Latest focused tests passed 76/76; the one-time full suite passed 5,018 with 34 skipped and 2 expected xfails in 253.56 seconds. Workflow check was clean.
+- 2026-09-15: A delayed post-merge architect delivery exposed that the original case-4 fixture was valid: Relay trace accepts the supplied exact `relay-delivery-*` identifier as its `message_id` value. Original baseline and compact-candidate runs both failed to select trace; relabeling the identifier as `message_id=...` made both pass and incorrectly hid that failure. Follow-up task `fix-empty-wake-trace-id-guidance` added the explicit mapping and one fresh original-prompt candidate decision selected trace. The reconciled smoke comparison is baseline 8/9 versus corrected candidate 9/9.
 
 ## Evidence
 
@@ -80,15 +81,15 @@
 
 ## Measured emitted split
 
-Method: Unicode characters via Python `len(text)`; words via `len(text.split())`. Baselines and candidate values are observed generated outputs. The candidate block itself is 2,765 characters / 396 words; Codex and OpenCode files include one terminal newline, and generated Codex/Claude base blocks add the unchanged 40-character arm marker. The runtime-specific strong directives remain unchanged (Claude +416 characters/+61 words; Codex +415/+61).
+Method: Unicode characters via Python `len(text)`; words via `len(text.split())`. Baselines and final follow-up-corrected values are observed generated outputs. The corrected block itself is 2,818 characters / 401 words; Codex and OpenCode files include one terminal newline, and generated Codex/Claude base blocks add the unchanged 40-character arm marker. The runtime-specific strong directives remain unchanged (Claude +416 characters/+61 words; Codex +415/+61).
 
 | Output | Baseline chars/words | Candidate chars/words | Character reduction |
 |---|---:|---:|---:|
-| Claude base | 3,521 / 452 | 2,805 / 399 | 716 (20.3%) |
-| Claude strong | 3,937 / 513 | 3,221 / 460 | 716 (18.2%) |
-| Codex base | 3,522 / 452 | 2,806 / 399 | 716 (20.3%) |
-| Codex strong | 3,937 / 513 | 3,221 / 460 | 716 (18.2%) |
-| OpenCode | 3,482 / 449 | 2,766 / 396 | 716 (20.6%) |
+| Claude base | 3,521 / 452 | 2,858 / 404 | 663 (18.8%) |
+| Claude strong | 3,937 / 513 | 3,274 / 465 | 663 (16.8%) |
+| Codex base | 3,522 / 452 | 2,859 / 404 | 663 (18.8%) |
+| Codex strong | 3,937 / 513 | 3,274 / 465 | 663 (16.8%) |
+| OpenCode | 3,482 / 449 | 2,819 / 401 | 663 (19.0%) |
 
 ## Proposed always-loaded block
 
@@ -108,7 +109,7 @@ Load the `pallium-memory` skill when any applies. If the skill or tools are unav
 
 - Copy injected `container_ref`, `thread_ref`, `actor_ref`, `agent_ref`, `request_source_item_id`, and `work_ref` exactly when an operation requires them. Never derive identity or scope from the working directory, recipient listings, or historical sources. If required scope is missing, skip that scoped call; never call it with guessed or absent values, and continue ordinary work.
 - Process each hook-injected Relay payload as current-turn work. The hook owns claim and ACK, so never call receive for it. Complete it or report a genuine blocker; do not send status-only replies or reply to ACK-only deliveries. Never ACK through raw HTTP; use Relay tools. A trace state of `delivered` does not make its payload stale. Only an explicit `already_delivered` or conflict result from a claim/ACK/reply operation marks that copy stale; do not retry, reply to, or reuse that stale copy.
-- Relay sends only to a canonical `relay-session-...` or global `@name`; broadcast and bare runtimes are unsupported. Ask before name takeover unless already authorized. Cross-container routing never changes History or memory scope. Queued or wake evidence is not receipt. For an exact empty-wake instruction, trace only that delivery; do not receive or resend.
+- Relay sends only to a canonical `relay-session-...` or global `@name`; broadcast and bare runtimes are unsupported. Ask before name takeover unless already authorized. Cross-container routing never changes History or memory scope. Queued or wake evidence is not receipt. For an exact empty-wake instruction, pass its supplied `relay-delivery-*` identifier as Relay trace's `message_id`; do not receive or resend.
 - Picking up prior work? Search the injected exact `work_ref` when present; otherwise search broadly. Never guess a History search filter. Work associations use only exact provider-returned references.
 - For History searches, pass injected `request_source_item_id` only there, expand a returned `source_item_id` with its `lookup_event_id` as `parent_lookup_id`, and omit `actor_ref` unless an exact metadata filter is requested.
 - Retrieval alone never changes accessibility or ranking. Derived memory is optional and private by default; global writes require explicit intent. New memory writes copy exact injected provenance; correction and forget retain existing provenance. Work associations are optional, grant no access or ownership, and are skipped when exact provider identity or tools are unavailable. Do not ingest routine turns or re-query content already injected.
@@ -132,22 +133,22 @@ Use skill and tool descriptions for procedures. When no capability applies, answ
 
 ## Result review
 
-- Independent high-reasoning review `/root/guidance_result_review` found no correctness, safety-parity, or file-scope issue in the implementation. It rejected two measured candidate decisions before final approval: case 5 planned a search despite missing scope, and the next revision loaded the skill for irrelevant arithmetic. Both global rules were made explicit, every candidate case was rerun on the final text, and the reviewer returned PASS with no remaining findings.
-- Decision-oracle results on the final text:
+- Historical pre-follow-up review: independent high-reasoning reviewer `/root/guidance_result_review` found no correctness, safety-parity, or file-scope issue in the implementation. It rejected two measured candidate decisions before final approval: case 5 planned a search despite missing scope, and the next revision loaded the skill for irrelevant arithmetic. Both global rules were made explicit and every relabeled-corpus candidate case was rerun on that text. The reviewer returned PASS before the delayed case-4 audit exposed the evidence error.
+- Reconciled decision-oracle results using the original case-4 prompt and the follow-up corrected candidate:
 
 | Case | Baseline | Candidate |
 |---|---|---|
 | exact-work resume | pass | pass |
 | broad resume without work ref | pass | pass |
 | hook delivery | pass | pass |
-| exact empty wake | pass | pass |
+| exact empty wake | fail | pass |
 | missing required scope | pass | pass |
 | inter-session coordination | pass | pass |
 | existing work association | pass | pass |
 | explicit durable memory | pass | pass |
 | irrelevant task | pass | pass |
 
-- Final candidate owners and fixture match after newline/arm normalization at 2,765 characters / 396 words. Baseline used 430,931 input and 5,443 output tokens across nine runs; candidate used 326,656 input and 4,186 output tokens. This observed difference includes runtime/tool-path variance and is not claimed as a causal cost estimate. Reviewer-counted observable tool attempts were 10 baseline and 9 candidate, with maxima of 3 and 2; all stayed under the six-call cap. Both arms loaded the skill in relevant cases 1–8 and not in irrelevant case 9.
-- Invalid evidence is excluded from the 18-run denominator and preserved separately during execution: one rejected output schema, one repository-context-contaminated pilot, one ambiguous-field case-4 pair, two superseded candidate arms that each measured 8/9, and one native Claude authentication failure before any model turn (zero model tokens, $0).
-- Limits: this is Codex-only decision-selection smoke, not statistical proof and not executed Pallium workflow coverage. Pallium calls were prohibited and pointed at a closed local port; case-7 reference reads were blocked. Claude has no model-behavior result after authentication failure, and OpenCode has deterministic static/package coverage only.
+- Follow-up-corrected candidate owners match after newline/arm normalization at 2,818 characters / 401 words. Reconciled original-prompt totals are 414,613 baseline input / 5,449 output tokens and 327,164 candidate input / 4,269 output tokens across nine decisions. This combines unchanged preserved runs with the one affected candidate rerun and is not a causal cost estimate. Reviewer-counted observable tool attempts remain 10 baseline and 9 candidate, with maxima of 3 and 2; all stayed under the six-call cap. Both arms loaded the skill in relevant cases 1–8 and not in irrelevant case 9.
+- Invalid evidence remains excluded and preserved separately: one rejected output schema, one repository-context-contaminated pilot, and one native Claude authentication failure before any model turn (zero model tokens, $0). Valid failure evidence is separate: the original case-4 pair, the first candidate at corrected 7/9, and the second relabeled-corpus candidate at 8/9. The original pair remains valid despite its legacy `invalid-fixture` filenames; the later relabeled pair is preserved as an easier non-primary setup.
+- Limits: this is Codex-only decision-selection smoke, not statistical proof, reliable causal improvement evidence, or executed Pallium workflow coverage. The follow-up changed and reran only case 4 after the delayed audit; unaffected cases were reused. Pallium calls were prohibited and pointed at a closed local port; case-7 reference reads were blocked. Claude has no model-behavior result after authentication failure, and OpenCode has deterministic static/package coverage only.
 - Final deterministic evidence: exact owner parity and zero invalid control characters; 76 focused guidance/integration tests passed in 9.65 seconds; `python -m pytest tests/ -x -q` passed 5,018 with 34 skipped and 2 xfailed in 253.56 seconds; `git diff --check` and `scripts/agent-workflow-check.py --repo-root . --slug optimize-always-loaded-guidance` passed.

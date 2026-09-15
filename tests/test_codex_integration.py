@@ -407,8 +407,8 @@ def test_codex_guidance_strength_selects_block_variant() -> None:
     base = setup_codex._build_agents_md_block("base")
     strong = setup_codex._build_agents_md_block("strong")
 
-    assert len(base) <= 2806
-    assert len(strong) <= 3221
+    assert len(base) <= 2859
+    assert len(strong) <= 3274
     assert "<!-- pallium:guidance-strength=base -->" in base
     assert "<!-- pallium:guidance-strength=strong -->" in strong
 
@@ -421,6 +421,7 @@ def test_codex_guidance_strength_selects_block_variant() -> None:
     for variant in (base, strong):
         assert "MANDATORY" not in variant
         assert "Load the `pallium-memory` skill when any applies" in variant
+        assert "pass its supplied `relay-delivery-*` identifier as Relay trace's `message_id`; do not receive or resend" in variant
         assert "`pallium_query`" not in variant
         assert "`pallium_expand`" not in variant
 

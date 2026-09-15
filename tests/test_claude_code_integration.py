@@ -74,6 +74,7 @@ def test_claude_guidance_strength_selects_block_variant() -> None:
 
     for variant in (base, strong):
         assert "Load the `pallium-memory` skill when any applies" in variant
+        assert "pass its supplied `relay-delivery-*` identifier as Relay trace's `message_id`; do not receive or resend" in variant
         assert "`pallium_query`" not in variant
         assert "`pallium_expand`" not in variant
 

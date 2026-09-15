@@ -75,15 +75,17 @@ and the behavior rationale from
 ## Outcome
 
 Completed with one reviewed compact block shared by Codex, Claude Code, and
-OpenCode. The final always-loaded candidate is 2,765 characters / 396 words,
-reducing emitted base guidance by 20.3% for Codex and Claude and 20.6% for
-OpenCode while keeping safety-critical rules visible.
+OpenCode. A follow-up evidence correction made exact empty-wake delivery-ID
+mapping explicit. The final block is 2,818 characters / 401 words, reducing
+emitted base guidance by 18.8% for Codex and Claude and 19.0% for OpenCode.
 
-Paired read-only Codex decision smoke passed 9/9 for both baseline and candidate
-after two candidate findings were corrected. This is single-runtime
-decision-selection evidence, not executed Pallium workflow or statistical proof:
-Claude authentication failed before a model turn, and OpenCode has deterministic
-static/package coverage only. See
+The original valid case-4 prompt was initially relabeled and its failures were
+wrongly excluded. After restoring that prompt and changing only the affected
+candidate, paired read-only Codex decision smoke reconciles to baseline 8/9 and
+corrected candidate 9/9. This is single-runtime decision-selection smoke, not
+executed Pallium workflow, statistical proof, or reliable causal improvement
+evidence. Claude authentication failed before a model turn, and OpenCode has
+deterministic static/package coverage only. See
 [the Work Record](../../.agent-workflow/tasks/optimize-always-loaded-guidance.md)
 for the directive inventory, failed revisions, full oracle table, costs, limits,
 reviews, and verification.
