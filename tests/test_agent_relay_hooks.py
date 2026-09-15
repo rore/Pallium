@@ -189,17 +189,18 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
 
     with pytest.raises(SystemExit):
         hook.main()
-    assert turn_calls[0][1:] == (
-        "/relay/turn",
-        {
-            "runtime": "codex" if codex else "claude-code",
-            "session_ref": "target-session",
-            "container_ref": "git:example/repo",
-            "max_chars": 2360,
-            "structural_work_refs": [],
-        },
-        0.75,
-    )
+    assert turn_calls[0][1] == "/relay/turn"
+    expected_body = {
+        "runtime": "codex" if codex else "claude-code",
+        "session_ref": "target-session",
+        "container_ref": "git:example/repo",
+        "max_chars": 2360,
+        "structural_work_refs": [],
+    }
+    if codex:
+        expected_body["wake_delivery_id"] = embedded_delivery_id
+    assert turn_calls[0][2] == expected_body
+    assert turn_calls[0][3] == 0.75
     assert output and output[0][0].startswith("[Pallium Relay message")
     relay_text, scope_line = output[0][0].rsplit("\n\n", 1)
     assert "Review the migration before editing." in relay_text

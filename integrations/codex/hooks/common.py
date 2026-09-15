@@ -2275,6 +2275,7 @@ def relay_turn(
     timeout: float = 0.75,
     title: str | None = None,
     structural_work_refs: object = None,
+    wake_delivery_id: str | None = None,
     register_session: bool = True,
     deadline: HookDeadline | None = None,
     request: Callable[..., dict[str, Any] | None] | None = None,
@@ -2284,6 +2285,12 @@ def relay_turn(
     if sid is None or not isinstance(runtime, str) or not runtime:
         return None
     if not isinstance(container_ref, str) or not container_ref or _safe_scope_value(container_ref) is None:
+        return None
+    if wake_delivery_id is not None and (
+        runtime != "codex"
+        or not isinstance(wake_delivery_id, str)
+        or re.fullmatch(r"relay-delivery-[0-9a-f]{32}", wake_delivery_id) is None
+    ):
         return None
     lock_file = _acquire_session_lock(sid)
     if lock_file is None:
@@ -2425,6 +2432,8 @@ def relay_turn(
                 payload["title"] = title
             if structural_work_refs is not None and not intermediate:
                 payload["structural_work_refs"] = structural_work_refs
+            if wake_delivery_id is not None and not intermediate:
+                payload["wake_delivery_id"] = wake_delivery_id
             if register_session is not True:
                 payload["register_session"] = register_session
             source = turn_intent.get("source_container_ref")

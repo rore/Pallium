@@ -136,14 +136,24 @@ write does not mean the payload entered model context. Missing, stale, closed, o
 conflicting evidence is reported as unknown rather than inferred optimistically.
 
 Claude Code and Codex keep one bounded current reservation per stable Relay
-endpoint. An accepted or uncertain native submission remains fenced across worker
-completion, restart, clock changes, registration, close, and delivery-status
-reads. Only successful ACK, MCP ACK, or atomic reply for that exact delivery
-releases it. A positively pre-submit failure becomes retryable only after the
-safe reset durably commits. If a reservation cannot be resolved, later messages
-still arrive on the next natural hook turn; Pallium does not blindly resubmit.
-The trusted-local reservation files assume one Pallium service process; atomic
-replacement provides crash recovery, not multi-process coordination.
+endpoint. An accepted or uncertain native submission normally remains fenced
+across worker completion, restart, clock changes, registration, close, and
+delivery-status reads. Successful ACK, MCP ACK, or atomic reply for that exact
+delivery releases it. A delivery-specific Codex wake adds one recovery case: when
+its successful `/relay/turn` result durably correlates the exact current
+reservation and claim attempt, reconciliation enters the same immediate database
+write boundary as Relay claims after the lease expires. Only a currently active
+Codex recipient remains eligible; recovery derives its current session and
+container from that boundary, atomically replaces the reservation with a fresh
+uncorrelated generation, clears old-scope scheduling keys, and schedules one
+replacement before claims resume. Normal turns, mismatches, active claims, and
+legacy uncorrelated reservations remain fenced. A delivery-specific turn selects only its exact delivery, while `has_more` and `remaining_count` still describe all unclaimed inbox work. A positively pre-submit failure becomes retryable
+only after the safe reset durably commits. If a reservation cannot be resolved,
+later messages still arrive on the next natural hook turn; Pallium does not
+blindly resubmit. The Relay claim and trusted-local reservation update are
+separate commits, so a service crash or callback failure between them remains
+conservatively fenced. Reservation files assume one Pallium service process;
+atomic replacement provides crash recovery, not multi-process coordination.
 
 ## Inspecting a delivery trace
 

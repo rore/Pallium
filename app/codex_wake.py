@@ -77,6 +77,27 @@ def _log_fingerprint(value: str) -> str:
     return f"sha256:{digest}"
 
 
+def _reservation_state_is_stale(
+    reservation: CodexWakeReservation, state: object
+) -> bool:
+    if not (
+        isinstance(state, dict)
+        and state.get("delivery_id") == reservation.delivery_id
+        and state.get("recipient_endpoint_id") == reservation.recipient_endpoint_id
+        and isinstance(state.get("state"), str)
+    ):
+        return False
+    if state["state"] in {"delivered", "expired", "suppressed"}:
+        return True
+    return (
+        reservation.correlated_claim_attempts is not None
+        and state["state"] == "pending"
+        and state.get("stored_state") == "claimed"
+        and type(state.get("attempts")) is int
+        and state["attempts"] == reservation.correlated_claim_attempts
+    )
+
+
 def _reservation_is_stale(
     relay_service: Any,
     reservation: CodexWakeReservation,
@@ -89,13 +110,7 @@ def _reservation_is_stale(
         return True
     except Exception:
         return False
-    return (
-        isinstance(state, dict)
-        and state.get("delivery_id") == reservation.delivery_id
-        and state.get("recipient_endpoint_id") == reservation.recipient_endpoint_id
-        and isinstance(state.get("state"), str)
-        and state["state"] in {"delivered", "expired", "suppressed"}
-    )
+    return _reservation_state_is_stale(reservation, state)
 
 
 def reconcile_codex_relay_wake_reservations(
@@ -103,22 +118,68 @@ def reconcile_codex_relay_wake_reservations(
     *,
     registry: CodexWakeRegistry | None = None,
     reservations: tuple[CodexWakeReservation, ...] | None = None,
+    trace_callback: Callable[[dict[str, object]], object] | None = None,
 ) -> int:
-    """Release only exact terminal or missing durable wake fences."""
+    """Remove terminal fences and atomically replace expired wake claims."""
     registry = registry or get_codex_wake_registry()
     candidates = registry.reservations() if reservations is None else reservations
-    stale = tuple(
-        item for item in candidates if _reservation_is_stale(relay_service, item)
-    )
-    released = registry.release_generations(stale)
+    stale = []
+    replaced = 0
+    for reservation in candidates:
+        if reservation.correlated_claim_attempts is None:
+            if _reservation_is_stale(relay_service, reservation):
+                stale.append(reservation)
+            continue
+
+        def replace_if_stale(state: dict[str, object]) -> bool:
+            if not _reservation_state_is_stale(reservation, state):
+                return False
+            if state["state"] in {"delivered", "expired", "suppressed"}:
+                released = registry.release_generation(reservation)
+                if released:
+                    _clear_schedule(reservation)
+                return released
+            wake_target = state.get("wake_target")
+            if not (
+                isinstance(wake_target, dict)
+                and wake_target.get("runtime") == "codex"
+                and isinstance(wake_target.get("session_ref"), str)
+                and isinstance(wake_target.get("container_ref"), str)
+            ):
+                return False
+            replacement = registry.replace_generation(
+                reservation,
+                session_ref=wake_target["session_ref"],
+                container_ref=wake_target["container_ref"],
+            )
+            if replacement is None:
+                return False
+            _clear_schedule(reservation)
+            _schedule_reserved_codex_relay_wake(
+                replacement, registry, trace_callback=trace_callback
+            )
+            return True
+
+        try:
+            if relay_service.reconcile_codex_wake_reservation(
+                delivery_id=reservation.delivery_id,
+                decision=replace_if_stale,
+            ):
+                replaced += 1
+        except RelayNotFoundError:
+            stale.append(reservation)
+        except Exception:
+            continue
+
+    released = registry.release_generations(tuple(stale))
     for reservation in released:
         _clear_schedule(reservation)
-    if released:
+    reconciled = len(released) + replaced
+    if reconciled:
         logger.info(
-            "codex_relay_wake reconciled_stale_reservations=%d", len(released)
+            "codex_relay_wake reconciled_stale_reservations=%d", reconciled
         )
-    return len(released)
-
+    return reconciled
 
 def _emit_trace(
     callback: Callable[[dict[str, object]], object] | None,
@@ -150,6 +211,44 @@ def _emit_trace(
     except Exception:
         logger.exception("codex relay trace callback failed")
 
+def _schedule_reserved_codex_relay_wake(
+    reservation: CodexWakeReservation,
+    registry: CodexWakeRegistry,
+    *,
+    trace_callback: Callable[[dict[str, object]], object] | None = None,
+) -> threading.Thread | None:
+    wake_key = (reservation.session_ref, reservation.container_ref)
+    attempt_id = f"relay-activation-{uuid.uuid4().hex}"
+    with _scheduled_lock:
+        _scheduled_delivery_ids.add(reservation.delivery_id)
+        _scheduled_session_delivery_ids[wake_key] = reservation.delivery_id
+        _scheduled_session_generations[wake_key] = reservation.generation
+        _scheduled_session_attempt_ids[wake_key] = attempt_id
+    _emit_trace(
+        trace_callback, attempt_id, reservation.delivery_id,
+        reservation.recipient_endpoint_id, "prepared",
+    )
+    worker = threading.Thread(
+        target=_wake_after_debounce,
+        args=(reservation, registry, attempt_id, trace_callback),
+        daemon=True,
+    )
+    try:
+        worker.start()
+    except RuntimeError:
+        if registry.release_generation(reservation):
+            _clear_schedule(reservation)
+        _emit_trace(
+            trace_callback, attempt_id, reservation.delivery_id,
+            reservation.recipient_endpoint_id, "completed",
+            ActivationAttemptResult(
+                "deferred", "worker_start_failed", native_retry_safe=True
+            ),
+        )
+        return None
+    return worker
+
+
 def schedule_codex_relay_wake(
     result: object,
     scope: object,
@@ -176,7 +275,9 @@ def schedule_codex_relay_wake(
     delivery_id = delivery.get("delivery_id")
     endpoint_id = delivery.get("recipient_endpoint_id")
     session_ref = delivery.get("recipient_session_ref")
-    container_ref = delivery.get("recipient_container_ref") or scope.get("container_ref")
+    container_ref = delivery.get("recipient_container_ref") or scope.get(
+        "container_ref"
+    )
     recipient = result.get("recipient")
     selector = recipient.removeprefix("codex:") if isinstance(recipient, str) else ""
     valid_selector = selector == session_ref or bool(
@@ -226,6 +327,7 @@ def schedule_codex_relay_wake(
                 relay_service,
                 registry=registry,
                 reservations=(existing,),
+                trace_callback=trace_callback,
             )
             if registry.snapshot(endpoint_id) is None:
                 reservation = registry.reserve(
@@ -239,33 +341,15 @@ def schedule_codex_relay_wake(
         with _scheduled_lock:
             attempt_id = _scheduled_session_attempt_ids.get(wake_key)
         if attempt_id is not None:
-            _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "associated")
+            _emit_trace(
+                trace_callback, attempt_id, delivery_id, endpoint_id,
+                "associated",
+            )
         return None
 
-    attempt_id = f"relay-activation-{uuid.uuid4().hex}"
-    with _scheduled_lock:
-        _scheduled_delivery_ids.add(delivery_id)
-        _scheduled_session_delivery_ids[wake_key] = delivery_id
-        _scheduled_session_generations[wake_key] = reservation.generation
-        _scheduled_session_attempt_ids[wake_key] = attempt_id
-    _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "prepared")
-    worker = threading.Thread(
-        target=_wake_after_debounce,
-        args=(reservation, registry, attempt_id, trace_callback),
-        daemon=True,
+    return _schedule_reserved_codex_relay_wake(
+        reservation, registry, trace_callback=trace_callback
     )
-    try:
-        worker.start()
-    except RuntimeError:
-        if registry.release_generation(reservation):
-            _clear_schedule(reservation)
-        _emit_trace(
-            trace_callback, attempt_id, delivery_id, endpoint_id, "completed",
-            ActivationAttemptResult("deferred", "worker_start_failed", native_retry_safe=True),
-        )
-        return None
-    return worker
-
 
 def _clear_schedule(reservation: CodexWakeReservation) -> None:
     wake_key = (reservation.session_ref, reservation.container_ref)
@@ -340,6 +424,57 @@ def release_codex_relay_wake(
         return False
     _clear_schedule(released)
     return True
+
+
+def correlate_codex_relay_wake_claim(
+    wake_delivery_id: str,
+    session_ref: str,
+    container_ref: str,
+    turn_result: object,
+    *,
+    registry: CodexWakeRegistry | None = None,
+) -> bool:
+    """Correlate only the exact claimed delivery from a Codex wake turn."""
+    if (
+        re.fullmatch(r"relay-delivery-[0-9a-f]{32}", wake_delivery_id) is None
+        or not isinstance(turn_result, dict)
+    ):
+        return False
+    session = turn_result.get("session")
+    deliveries = turn_result.get("deliveries")
+    if not isinstance(session, dict) or not isinstance(deliveries, list):
+        return False
+    endpoint_id = session.get("endpoint_id")
+    if not (
+        session.get("runtime") == "codex"
+        and session.get("session_ref") == session_ref
+        and session.get("container_ref") == container_ref
+        and isinstance(endpoint_id, str)
+    ):
+        return False
+    matches = [
+        delivery
+        for delivery in deliveries
+        if isinstance(delivery, dict)
+        and delivery.get("delivery_id") == wake_delivery_id
+        and delivery.get("state") == "claimed"
+        and delivery.get("recipient_runtime") == "codex"
+        and delivery.get("recipient_session_ref") == session_ref
+        and delivery.get("recipient_endpoint_id") == endpoint_id
+        and delivery.get("recipient_container_ref") == container_ref
+        and type(delivery.get("attempts")) is int
+        and delivery["attempts"] > 0
+    ]
+    if len(matches) != 1:
+        return False
+    registry = registry or get_codex_wake_registry()
+    return registry.correlate_claim(
+        delivery_id=wake_delivery_id,
+        recipient_endpoint_id=endpoint_id,
+        session_ref=session_ref,
+        container_ref=container_ref,
+        attempts=matches[0]["attempts"],
+    )
 
 
 def mark_codex_relay_wake_admitted(

@@ -5,7 +5,7 @@ import re
 import unicodedata
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from core.container_ref import validate_explicit_container_ref
 from core.work_ref import readable_work_ref, validate_work_ref_key
@@ -146,6 +146,7 @@ class RelayService:
         max_messages: int = RELAY_TURN_MAX_MESSAGES,
         register_session: bool = True,
         structural_work_refs: Any = None,
+        exact_delivery_id: str | None = None,
         previous_container_ref: str | None = None,
         previous_endpoint_id: str | None = None,
         previous_scope_generation: int | None = None,
@@ -160,6 +161,18 @@ class RelayService:
             raise ValueError("max_messages must be >= 0 (0 = no limit)")
         runtime = validate_runtime(runtime)
         session_ref = _opaque(session_ref, "session_ref")
+        if exact_delivery_id is not None:
+            exact_delivery_id = _opaque(
+                exact_delivery_id, "exact_delivery_id", maximum=128
+            )
+            if (
+                runtime != "codex"
+                or re.fullmatch(r"relay-delivery-[0-9a-f]{32}", exact_delivery_id)
+                is None
+            ):
+                raise ValueError(
+                    "exact_delivery_id requires a canonical Codex delivery ID"
+                )
         transition = (
             previous_container_ref,
             previous_endpoint_id,
@@ -181,6 +194,7 @@ class RelayService:
             max_response_chars=max_response_chars,
             max_messages=max_messages,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
+            **({"exact_delivery_id": exact_delivery_id} if exact_delivery_id is not None else {}),
             register_session=register_session,
             previous_container_ref=previous_container_ref,
             previous_endpoint_id=previous_endpoint_id,
@@ -579,6 +593,25 @@ class RelayService:
             )
         return query(
             delivery_id=_opaque(delivery_id, "delivery_id", maximum=128)
+        )
+
+    def reconcile_codex_wake_reservation(
+        self,
+        *,
+        delivery_id: str,
+        decision: Callable[[dict[str, Any]], bool],
+    ) -> bool:
+        """Evaluate one wake fence while serializing Relay claim writes."""
+        operation = getattr(
+            self._store, "relay_reconcile_codex_wake_reservation", None
+        )
+        if not callable(operation):
+            raise RelayUnavailableError(
+                "atomic Relay Codex wake reconciliation is not supported"
+            )
+        return operation(
+            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
+            decision=decision,
         )
 
     def wake_candidates(

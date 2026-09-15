@@ -600,7 +600,7 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     relay = RelayService(client.app.state.pallium_service._storage)
     app = FastAPI()
     app.include_router(create_router(client.app.state.pallium_service, relay_service=relay, claude_wake_registry=registry,
-        relay_turn_callback=lambda req: registry.mark_busy(
+        relay_turn_callback=lambda req, _result: registry.mark_busy(
             runtime=req["runtime"], session_ref=req["session_ref"],
             container_ref=req["container_ref"])))
     client = TestClient(app, client=("127.0.0.1", 50000))

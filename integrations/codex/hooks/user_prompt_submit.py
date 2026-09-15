@@ -55,7 +55,7 @@ RELAY_WAKE_PROMPT = (
     "The installed UserPromptSubmit hook will claim and inject it for this turn."
 )
 _RELAY_WAKE_RE = re.compile(
-    r"^Pallium Relay wake for relay-delivery-[0-9a-f]{32}\. "
+    r"^Pallium Relay wake for (?P<delivery_id>relay-delivery-[0-9a-f]{32})\. "
     r"If no \[Pallium Relay message \.\.\.\] block accompanies this turn, "
     r"do not conclude the inbox is empty and do not call pallium_relay_receive "
     r"or resend\. Inspect this exact delivery with pallium_relay_trace by "
@@ -82,9 +82,8 @@ def main() -> None:
         content = _strip_ide_context(prompt)
         if not content:
             return
-        internal_wake = (
-            prompt == RELAY_WAKE_PROMPT or bool(_RELAY_WAKE_RE.fullmatch(prompt))
-        )
+        wake_match = _RELAY_WAKE_RE.fullmatch(prompt)
+        internal_wake = prompt == RELAY_WAKE_PROMPT or wake_match is not None
 
         discovery = discover_work_refs(cwd)
         current_work_ref = injected_work_ref(discovery)
@@ -104,7 +103,19 @@ def main() -> None:
             work_refs_status = "unavailable"
             relay_outcome = "unavailable"
             try:
-                relay_response = relay_turn("codex", session_id, container_ref, max_chars=RELAY_TURN_BUDGET, structural_work_refs=structural_work_refs_payload(container_ref, discovery, cwd), timeout=0.75, request=relay_request)
+                relay_response = relay_turn(
+                    "codex", session_id, container_ref,
+                    max_chars=RELAY_TURN_BUDGET,
+                    structural_work_refs=structural_work_refs_payload(
+                        container_ref, discovery, cwd
+                    ),
+                    wake_delivery_id=(
+                        wake_match.group("delivery_id")
+                        if wake_match is not None else None
+                    ),
+                    timeout=0.75,
+                    request=relay_request,
+                )
                 if isinstance(relay_response, dict):
                     confirmed_refs = confirmed_registry_work_refs(relay_response)
                     candidate_status = relay_response.get(
