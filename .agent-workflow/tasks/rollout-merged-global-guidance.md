@@ -38,6 +38,7 @@
 - 2026-09-15: Discovery rejected the full setup commands because they mutate surfaces explicitly frozen during relay wake investigation. The existing tested marker replacement helpers are guidance-only; a no-write preview confirmed unique markers, base arms, exact stable-source blocks, CRLF-only inputs, and preservation of all text outside each managed block.
 - 2026-09-15: The first guarded staging attempt stopped before target writes because the builder output includes one terminal newline after the end marker while marker-span extraction ends at the marker. Both installed hashes remained unchanged. Independent re-review approved comparing the span to builder output with only that terminal newline removed, while retaining whole-file staged byte equality; the first recovery directory is preserved and attempt 2 will use a new directory.
 - 2026-09-15: Attempt 2 used only the two reviewed `_append_*_block("base")` helpers. Durable backups and the complete manifest were written before either target update. Both installed files exactly matched their staged helper outputs; raw prefix/suffix bytes were preserved; all frozen hook, config, settings, readiness, and trust files remained byte-identical; bounded Codex readiness remained `verified` with hook trust and MCP exposure `unknown`. No setup command, service/host restart, hook change, settings change, task contact, or behavior test occurred.
+- 2026-09-15: Fresh import-boundary, redline, agent-workflow, repository-scope, and whitespace checks passed. The final repository diff is only this Work Record. Independent high-reasoning result review returned PASS with no remaining finding.
 
 ## Plan review
 
@@ -52,4 +53,4 @@
 
 ## Result review
 
-- Pending.
+- Independent high-reasoning reviewer `/root/rollout_result_review` returned PASS. It reconciled both installed base blocks to merged `c419981b`, verified all sizes and hashes, confirmed raw preservation of user/unrelated text including cost/model/Relay bullets, confirmed all five frozen files unchanged, and found the stopped attempt consistent with no target writes. It also confirmed no full-installer or restart claim.
