@@ -17,6 +17,7 @@ from core.vector_index_holder import VectorIndexHolder
 from providers.embedding.base import EmbeddingProvider
 from retrieval.vector import VectorRetrievalProvider, VECTOR_STAGE_NAME
 from storage.base import StorageProvider
+from storage.sqlite import SQLiteStorageProvider
 from storage.vector_index import VectorIndex
 
 
@@ -975,6 +976,7 @@ class TestSourceOnlyExpansion:
         assert index.search_calls == [8, 16]
         assert all("source-low" not in call.args[0] for call in storage.get_source_items.call_args_list)
         assert storage.get_source_items.call_args_list[1].args[0] == []
+        assert "source-low" not in index.removed_ids
 
     def test_add_remove_between_searches_stays_bounded_and_duplicate_free(self) -> None:
         entries: dict[str, IndexEntry] = {}
@@ -1164,3 +1166,95 @@ class TestSourceOnlyExpansion:
             "right-1",
         ]
         assert index.search_calls == [16, 22]
+
+
+def test_source_projection_defers_full_hydration_until_final_revalidation() -> None:
+    entry = _make_index_entry(entry_id="idx-projection", target_kind="source_item", target_id="si-projection")
+    projection = _make_source_item(si_id="si-projection", content="")
+    full = _make_source_item(si_id="si-projection", content="hydrated source content")
+    storage = MagicMock(spec=StorageProvider)
+    storage.get_source_item_projections.return_value = {entry.id: (entry, projection)}
+    storage.get_source_items.return_value = {full.id: full}
+    provider = VectorRetrievalProvider(
+        storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(FakeVectorIndex([(entry.id, 0.9)]))
+    )
+
+    result = provider.query("source", limit=1, target_kind="source_item")
+
+    assert result.results[0].excerpt == "hydrated source content"
+    storage.get_source_item_projections.assert_called_once_with([entry.id])
+    storage.get_source_items.assert_called_once_with([entry.target_id])
+    storage.get_source_item.assert_not_called()
+
+def test_sqlite_source_projection_is_narrow_and_chunked(test_db_url: str) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    source = _make_source_item(si_id="projection-source", source_id="external-source", content="wide content")
+    entry = _make_index_entry(entry_id="projection-entry", target_kind="source_item", target_id=source.id)
+    storage.create_source_item(source)
+    storage.create_index_entry(entry)
+
+    projections = storage.get_source_item_projections([entry.id] + [f"missing-{i}" for i in range(1000)])
+
+    projected_entry, projected_source = projections[entry.id]
+    assert projected_entry.text_view == ""
+    assert projected_source.id == source.id
+    assert projected_source.source_id == "external-source"
+    assert projected_source.metadata == (source.metadata or {})
+    assert not hasattr(projected_source, "content")
+    assert not hasattr(projected_source, "processing_status")
+    assert not hasattr(projected_source, "created_at")
+    assert "missing-999" not in projections
+    missing_source_entry = _make_index_entry(entry_id="missing-source-entry", target_kind="source_item", target_id="missing-source")
+    storage.create_index_entry(missing_source_entry)
+    missing_projection = storage.get_source_item_projections([missing_source_entry.id])
+    assert missing_projection[missing_source_entry.id] is None
+
+def test_final_revalidation_reapplies_filters_and_visibility() -> None:
+    entry = _make_index_entry(entry_id="idx-race", target_kind="source_item", target_id="si-race")
+    projected = _make_source_item(si_id="si-race", role="user", visibility="public")
+    changed = _make_source_item(si_id="si-race", role="assistant", visibility="private")
+    storage = MagicMock(spec=StorageProvider)
+    storage.get_source_item_projections.return_value = {entry.id: (entry, projected)}
+    storage.get_source_items.return_value = {changed.id: changed}
+    provider = VectorRetrievalProvider(
+        storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(FakeVectorIndex([(entry.id, 0.9)]))
+    )
+
+    result = provider.query(
+        "source", limit=1, target_kind="source_item",
+        filters=QueryFilters(role="user"), visibility="public",
+    )
+
+    assert result.results == []
+
+
+def test_real_projection_path_keeps_below_floor_trace_candidate() -> None:
+    entry = _make_index_entry(entry_id="idx-below-floor", target_kind="source_item", target_id="si-below-floor")
+    source = _make_source_item(si_id="si-below-floor")
+    storage = MagicMock(spec=StorageProvider)
+    storage.get_source_item_projections.return_value = {entry.id: (entry, source)}
+    storage.get_source_items.return_value = {}
+    index = FakeVectorIndex([(entry.id, 0.2)])
+    provider = VectorRetrievalProvider(storage, FakeEmbeddingProvider(), min_similarity=0.3, index_holder=VectorIndexHolder(index))
+
+    result = provider.query("source", limit=1, target_kind="source_item", include_trace=True)
+
+    assert result.results == []
+    assert [hit.index_entry_id for hit in result.trace.stages[0].candidate_hits] == [entry.id]
+    assert index.removed_ids == []
+    storage.get_source_item_projections.assert_called_once_with([entry.id])
+
+def test_vector_falls_back_for_storage_without_projection_contract() -> None:
+    entry = _make_index_entry(entry_id="idx-fallback", target_kind="source_item", target_id="si-fallback")
+    source = _make_source_item(si_id="si-fallback")
+    storage = MagicMock(spec=StorageProvider)
+    storage.get_source_item_projections.side_effect = NotImplementedError
+    storage.get_index_entries.return_value = {entry.id: entry}
+    storage.get_source_items.return_value = {source.id: source}
+    provider = VectorRetrievalProvider(storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(FakeVectorIndex([(entry.id, 0.9)])))
+
+    result = provider.query("source", limit=1, target_kind="source_item")
+
+    assert [item.source_item_id for item in result.results] == [source.id]
+    storage.get_source_item_projections.assert_called_once_with([entry.id])
+    storage.get_index_entries.assert_called_once_with([entry.id])

@@ -131,6 +131,7 @@ class VectorRetrievalProvider(RetrievalProvider):
         # 2. Search vector index. Default retrieval intentionally remains one
         # fixed overfetch; target-kind retrieval expands in bounded batches.
         results: list[QueryResultItem] = []
+        pending_source_hits: list[tuple[IndexEntry, int, RetrievalTraceHit]] = []
         all_candidate_trace_hits: list[RetrievalTraceHit] = []
         selected_trace_hits: list[RetrievalTraceHit] = []
         seen: set[tuple[str, str]] = set()
@@ -138,46 +139,82 @@ class VectorRetrievalProvider(RetrievalProvider):
         hits_after_visibility = 0
 
         for raw_hits in _iter_vector_hit_batches(index, query_vector, limit, target_kind=target_kind):
-            # 3. Resolve each newly exposed batch in one storage call.
+            # 3. Resolve each newly exposed batch without materializing source content.
             resolved_hits: list[tuple[IndexEntry, float]] = []
-            index_entries = self._storage.get_index_entries([entry_id for entry_id, _similarity in raw_hits])
-            if not isinstance(index_entries, dict):
-                index_entries = {}
-            for entry_id, similarity in raw_hits:
-                index_entry = index_entries.get(entry_id)
-                if index_entry is None:
-                    try:
-                        index_entry = self._storage.get_index_entry(entry_id)
-                    except KeyError:
-                        logger.debug("Stale vector index entry %s; scheduling lazy removal", entry_id)
-                        try:
-                            index.remove(entry_id)
-                        except KeyError:
-                            pass
-                        continue
-                resolved_hits.append((index_entry, similarity))
-
-            source_items = self._storage.get_source_items(
-                [
-                    index_entry.target_id
-                    for index_entry, _similarity in resolved_hits
-                    if (
-                        index_entry.target_kind == "source_item"
-                        and (target_kind is None or index_entry.target_kind == target_kind)
-                        and _similarity >= self._min_similarity
-                    )
-                ]
-            )
-            if not isinstance(source_items, dict):
+            if target_kind == "source_item":
+                eligible_ids = [entry_id for entry_id, _similarity in raw_hits]
+                try:
+                    projections = self._storage.get_source_item_projections(eligible_ids)
+                except NotImplementedError:
+                    projections = None
                 source_items = {}
-            # Stale entry removal is in-memory only; reconcile persists it.
-            matching_below_floor = any(
-                target_kind is not None
-                and index_entry.target_kind == target_kind
-                and similarity < self._min_similarity
-                for index_entry, similarity in resolved_hits
-            )
-
+                if isinstance(projections, dict):
+                    for entry_id, similarity in raw_hits:
+                        if entry_id not in projections:
+                            logger.debug("Stale vector index entry %s; scheduling lazy removal", entry_id)
+                            try:
+                                index.remove(entry_id)
+                            except KeyError:
+                                pass
+                            continue
+                        projection = projections[entry_id]
+                        if projection is None:
+                            continue
+                        index_entry, source_item = projection
+                        resolved_hits.append((index_entry, similarity))
+                        source_items[index_entry.target_id] = source_item
+                else:
+                    index_entries = self._storage.get_index_entries([entry_id for entry_id, _similarity in raw_hits])
+                    if not isinstance(index_entries, dict):
+                        index_entries = {}
+                    for entry_id, similarity in raw_hits:
+                        index_entry = index_entries.get(entry_id)
+                        if index_entry is None:
+                            try:
+                                index_entry = self._storage.get_index_entry(entry_id)
+                            except KeyError:
+                                try:
+                                    index.remove(entry_id)
+                                except KeyError:
+                                    pass
+                                continue
+                        resolved_hits.append((index_entry, similarity))
+                    source_items = self._storage.get_source_items([entry.target_id for entry, similarity in resolved_hits if similarity >= self._min_similarity])
+                    if not isinstance(source_items, dict):
+                        source_items = {}
+                matching_below_floor = any(similarity < self._min_similarity for _entry_id, similarity in raw_hits)
+            else:
+                index_entries = self._storage.get_index_entries([entry_id for entry_id, _similarity in raw_hits])
+                if not isinstance(index_entries, dict):
+                    index_entries = {}
+                for entry_id, similarity in raw_hits:
+                    index_entry = index_entries.get(entry_id)
+                    if index_entry is None:
+                        try:
+                            index_entry = self._storage.get_index_entry(entry_id)
+                        except KeyError:
+                            logger.debug("Stale vector index entry %s; scheduling lazy removal", entry_id)
+                            try:
+                                index.remove(entry_id)
+                            except KeyError:
+                                pass
+                            continue
+                    resolved_hits.append((index_entry, similarity))
+                source_items = self._storage.get_source_items(
+                    [
+                        index_entry.target_id
+                        for index_entry, _similarity in resolved_hits
+                        if index_entry.target_kind == "source_item" and _similarity >= self._min_similarity
+                    ]
+                )
+                if not isinstance(source_items, dict):
+                    source_items = {}
+                matching_below_floor = any(
+                    target_kind is not None
+                    and index_entry.target_kind == target_kind
+                    and similarity < self._min_similarity
+                    for index_entry, similarity in resolved_hits
+                )
             for index_entry, similarity in resolved_hits:
                 score = int(similarity * 1000)
 
@@ -260,6 +297,8 @@ class VectorRetrievalProvider(RetrievalProvider):
                             visibility=memory_object.visibility,
                         )
                     )
+                elif index_entry.target_kind == "source_item" and target_kind == "source_item":
+                    pending_source_hits.append((index_entry, score, trace_hit))
                 elif index_entry.target_kind == "source_item":
                     try:
                         source_item = get_source_item(index_entry.target_id)
@@ -273,9 +312,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                             source_type=source_item.source_type,
                             source_id=source_item.source_id,
                             excerpt=build_excerpt(source_item.content, query=text),
-                            source_content_fingerprint=build_source_content_fingerprint(
-                                source_item.content
-                            ),
+                            source_content_fingerprint=build_source_content_fingerprint(source_item.content),
                             occurred_at=source_item.occurred_at,
                             actor_ref=source_item.actor_ref,
                             agent_ref=source_item.agent_ref,
@@ -296,32 +333,94 @@ class VectorRetrievalProvider(RetrievalProvider):
                 if include_trace:
                     selected_trace_hits.append(trace_hit)
 
-                if len(results) >= limit:
+                if len(results) + len(pending_source_hits) >= limit:
                     break
 
-            if len(results) >= limit or matching_below_floor:
+            if len(results) + len(pending_source_hits) >= limit or matching_below_floor:
                 break
-        emitted_source_ids = [
-            item.source_item_id for item in results if item.result_kind == "source_hit"
-        ]
-        if emitted_source_ids:
+        if target_kind == "source_item" and pending_source_hits:
+            emitted_source_ids = [entry.target_id for entry, _score, _trace in pending_source_hits]
             revalidated = self._storage.get_source_items(emitted_source_ids)
-            dropped = {
-                source_id
-                for source_id in emitted_source_ids
-                if source_id not in revalidated or revalidated[source_id].forgotten
-            }
-            if dropped:
-                results = [
-                    item
-                    for item in results
-                    if item.result_kind != "source_hit" or item.source_item_id not in dropped
-                ]
-                selected_trace_hits = [
-                    hit
-                    for hit in selected_trace_hits
-                    if not (hit.target_kind == "source_item" and hit.target_id in dropped)
-                ]
+            results = []
+            valid_source_ids: set[str] = set()
+            for index_entry, score, _trace in pending_source_hits:
+                source_item = revalidated.get(index_entry.target_id)
+                if (
+                    source_item is None
+                    or source_item.forgotten
+                    or not matches_filters(
+                        self._storage.get_memory_object,
+                        revalidated.get,
+                        self._storage.get_evidence_for_memory_object,
+                        "source_item",
+                        index_entry.target_id,
+                        filters,
+                    )
+                ):
+                    continue
+                candidate_visibility, candidate_container_ref, candidate_actor_ref = target_visibility_and_container(
+                    revalidated.get,
+                    self._storage.get_memory_object,
+                    "source_item",
+                    index_entry.target_id,
+                )
+                if not is_visible(
+                    candidate_visibility,
+                    candidate_container_ref,
+                    query_container_ref,
+                    candidate_actor_ref,
+                    query_visibility=visibility,
+                    query_actor_ref=query_actor_ref,
+                ):
+                    continue
+                valid_source_ids.add(source_item.id)
+                results.append(
+                    QueryResultItem(
+                        result_kind="source_hit",
+                        source_item_id=source_item.id,
+                        source_type=source_item.source_type,
+                        source_id=source_item.source_id,
+                        excerpt=build_excerpt(source_item.content, query=text),
+                        source_content_fingerprint=build_source_content_fingerprint(source_item.content),
+                        occurred_at=source_item.occurred_at,
+                        actor_ref=source_item.actor_ref,
+                        agent_ref=source_item.agent_ref,
+                        role=source_item.role,
+                        container_ref=source_item.container_ref,
+                        thread_ref=source_item.thread_ref,
+                        source_ref=source_item.source_ref,
+                        artifact_kind=source_item.artifact_kind,
+                        score=score,
+                        evidence=[build_evidence(source_item)],
+                        visibility=source_item.visibility,
+                        work_refs=work_refs_from_metadata(source_item.metadata),
+                    )
+                )
+            selected_trace_hits = [
+                trace for (entry, _score, trace) in pending_source_hits if entry.target_id in valid_source_ids
+            ]
+        else:
+            emitted_source_ids = [
+                item.source_item_id for item in results if item.result_kind == "source_hit"
+            ]
+            if emitted_source_ids:
+                revalidated = self._storage.get_source_items(emitted_source_ids)
+                dropped = {
+                    source_id
+                    for source_id in emitted_source_ids
+                    if source_id not in revalidated or revalidated[source_id].forgotten
+                }
+                if dropped:
+                    results = [
+                        item
+                        for item in results
+                        if item.result_kind != "source_hit" or item.source_item_id not in dropped
+                    ]
+                    selected_trace_hits = [
+                        hit
+                        for hit in selected_trace_hits
+                        if not (hit.target_kind == "source_item" and hit.target_id in dropped)
+                    ]
         # 7. Build trace
         trace = None
         if include_trace:
