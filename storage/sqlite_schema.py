@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Session, declarative_base
+
+from core.work_ref import work_refs_from_metadata
 
 
 Base = declarative_base()
@@ -54,6 +57,13 @@ class SourceItemRecord(Base):
     forgotten_by = Column(String, nullable=True)
     forgotten_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class SourceItemWorkRefRecord(Base):
+    __tablename__ = "source_item_work_refs"
+
+    source_item_id = Column(String, primary_key=True)
+    work_ref = Column(String, primary_key=True)
 
 
 class MemoryObjectRecord(Base):
@@ -860,6 +870,10 @@ class SQLiteSchemaMixin:
             "CREATE INDEX IF NOT EXISTS idx_source_items_thread_stats "
             "ON source_items(thread_ref, created_at DESC, id)"
         ),
+        "idx_source_item_work_refs_lookup": (
+            "CREATE INDEX IF NOT EXISTS idx_source_item_work_refs_lookup "
+            "ON source_item_work_refs(work_ref, source_item_id)"
+        ),
         "idx_source_items_claim_queue": (
             "CREATE INDEX IF NOT EXISTS idx_source_items_claim_queue "
             "ON source_items(processing_status, processing_next_attempt_at, processing_lease_expires_at, created_at, id) "
@@ -1057,6 +1071,7 @@ class SQLiteSchemaMixin:
             self._ensure_package_processing_columns()
             self._ensure_unique_indexes()
             self._ensure_indexes(include_relay=include_relay)
+            self._backfill_source_item_work_refs()
             self._ensure_query_audit_log_indexes()
             self._ensure_query_audit_log_columns()
             self._ensure_memory_flag_indexes()
@@ -1231,6 +1246,54 @@ class SQLiteSchemaMixin:
             for column_name, migration_sql in self._SOURCE_ITEM_MIGRATIONS.items():
                 if column_name not in existing_columns:
                     connection.execute(text(migration_sql))
+
+    def _backfill_source_item_work_refs(self) -> None:
+        """Rebuild the derived work-reference index from authoritative metadata."""
+        with self._engine.begin() as connection:
+            connection.execute(text("DELETE FROM source_item_work_refs"))
+            columns = {
+                row[1] for row in connection.execute(text("PRAGMA table_info(source_items)"))
+            }
+            if "metadata_json" not in columns:
+                return
+            rows = []
+            for source_item_id, metadata_json in connection.execute(
+                text("SELECT id, metadata_json FROM source_items")
+            ):
+                try:
+                    metadata = json.loads(metadata_json) if metadata_json else None
+                except (TypeError, ValueError):
+                    metadata = None
+                rows.extend(
+                    {"source_item_id": source_item_id, "work_ref": work_ref}
+                    for work_ref in work_refs_from_metadata(metadata)
+                )
+            if rows:
+                connection.execute(
+                    text(
+                        "INSERT INTO source_item_work_refs(source_item_id, work_ref) "
+                        "VALUES (:source_item_id, :work_ref)"
+                    ),
+                    rows,
+                )
+
+    @staticmethod
+    def _sync_source_item_work_refs_in_session(
+        session: Session, source_item_id: str, metadata: object
+    ) -> None:
+        refs = work_refs_from_metadata(metadata)
+        session.execute(
+            text("DELETE FROM source_item_work_refs WHERE source_item_id = :source_item_id"),
+            {"source_item_id": source_item_id},
+        )
+        if refs:
+            session.execute(
+                text(
+                    "INSERT INTO source_item_work_refs(source_item_id, work_ref) "
+                    "VALUES (:source_item_id, :work_ref)"
+                ),
+                [{"source_item_id": source_item_id, "work_ref": ref} for ref in refs],
+            )
 
     def _ensure_memory_object_columns(self) -> None:
         with self._engine.begin() as connection:

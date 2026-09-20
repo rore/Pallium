@@ -80,6 +80,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
+from core.work_ref import work_refs_from_metadata
 from redaction import redact_sensitive
 
 logger = logging.getLogger(__name__)
@@ -316,6 +317,37 @@ def build_plan(sqlite_path: Path) -> PurgePlan:
 # --------------------------------------------------------------------------- #
 
 
+def _has_source_item_work_ref_index(cur: sqlite3.Cursor) -> bool:
+    return cur.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'source_item_work_refs'"
+    ).fetchone() is not None
+
+
+def _sync_source_item_work_refs_in_txn(
+    cur: sqlite3.Cursor,
+    source_item_id: str,
+    metadata_json: str | None,
+    *,
+    index_available: bool,
+    source_exists: bool,
+) -> None:
+    if not index_available:
+        return
+    try:
+        metadata = json.loads(metadata_json) if metadata_json else None
+    except (json.JSONDecodeError, TypeError):
+        metadata = None
+    cur.execute(
+        "DELETE FROM source_item_work_refs WHERE source_item_id = ?",
+        (source_item_id,),
+    )
+    refs = work_refs_from_metadata(metadata) if source_exists else ()
+    cur.executemany(
+        "INSERT INTO source_item_work_refs(source_item_id, work_ref) VALUES (?, ?)",
+        [(source_item_id, ref) for ref in refs],
+    )
+
+
 def apply_plan(sqlite_path: Path, db_url: str, plan: PurgePlan) -> dict[str, int]:
     """Apply the redaction plan to the DB. Returns per-bucket rowcounts.
 
@@ -340,6 +372,7 @@ def apply_plan(sqlite_path: Path, db_url: str, plan: PurgePlan) -> dict[str, int
         cur = conn.cursor()
         cur.execute("BEGIN IMMEDIATE")  # exclusive write lock
         try:
+            work_ref_index_available = _has_source_item_work_ref_index(cur)
             # 1. Memory rewrites (narrative types).
             for row in plan.memory_rows:
                 res = cur.execute(
@@ -369,6 +402,11 @@ def apply_plan(sqlite_path: Path, db_url: str, plan: PurgePlan) -> dict[str, int
                     (item.redacted_content, item.redacted_metadata_json, item.source_item_id),
                 )
                 modified["source_item_rewrites"] += res.rowcount
+                _sync_source_item_work_refs_in_txn(
+                    cur, item.source_item_id, item.redacted_metadata_json,
+                    index_available=work_ref_index_available,
+                    source_exists=res.rowcount > 0,
+                )
 
             # 4. Index entries + lexical_fts — in the SAME transaction
             #    via raw SQL so FTS5 DELETE+INSERT stays atomic with
@@ -485,6 +523,7 @@ def undo_plan(sqlite_path: Path, db_url: str, manifest: dict) -> dict[str, int]:
         cur = conn.cursor()
         cur.execute("BEGIN IMMEDIATE")
         try:
+            work_ref_index_available = _has_source_item_work_ref_index(cur)
             for snap in memory_snaps:
                 res = cur.execute(
                     "UPDATE memory_objects SET subject = ?, payload_json = ? "
@@ -507,6 +546,11 @@ def undo_plan(sqlite_path: Path, db_url: str, manifest: dict) -> dict[str, int]:
                     (snap["content"], snap["metadata_json"], snap["source_item_id"]),
                 )
                 modified["source_item_rewrites_undone"] += res.rowcount
+                _sync_source_item_work_refs_in_txn(
+                    cur, snap["source_item_id"], snap["metadata_json"],
+                    index_available=work_ref_index_available,
+                    source_exists=res.rowcount > 0,
+                )
 
             # Index entries + FTS — same atomicity as apply_plan.
             for snap in index_entry_snaps:

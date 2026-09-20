@@ -307,6 +307,7 @@ class SQLiteQueueMixin:
                 existing_metadata = self._loads(record.metadata_json)
                 existing_metadata.update(metadata_updates)
                 record.metadata_json = self._dumps(existing_metadata)
+                self._sync_source_item_work_refs_in_session(session, source_item_id, existing_metadata)
             record.processing_status = "failed" if final else "pending"
             record.processing_error = error
             record.processing_claimed_by = None
@@ -1394,6 +1395,7 @@ class SQLiteQueueMixin:
                 else:
                     existing_metadata[key] = value
             record.metadata_json = self._dumps(existing_metadata)
+            self._sync_source_item_work_refs_in_session(session, source_item_id, existing_metadata)
 
     def update_source_item_metadata(self, source_item_id: str, metadata_patch: dict[str, object]) -> None:
         self._with_retry(lambda session: self._apply_source_item_metadata_updates_in_session(session, {source_item_id: metadata_patch}))

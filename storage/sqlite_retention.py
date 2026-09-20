@@ -719,6 +719,7 @@ class SQLiteRetentionMixin:
             session.delete(relation)
         for index_entry in source_index_records:
             self._delete_index_entry_in_session(session, index_entry)
+        self._sync_source_item_work_refs_in_session(session, source_item_id, None)
         session.delete(source_record)
         stats = RetentionRunStats(
             deleted_source_items=1,

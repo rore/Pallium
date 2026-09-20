@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
@@ -8,11 +9,12 @@ import pytest
 
 from sqlalchemy import event, text as sa_text
 
-from core.models import QueryFilters, QueryResultItem
+from core.models import IndexEntry, QueryFilters, QueryResultItem, SourceItem
 from core.query import QueryExecutor
 from core.work_ref import work_refs_from_metadata
 from retrieval.base import RetrievalQueryResult
 from retrieval.vector import VectorRetrievalProvider
+from storage.sqlite import SQLiteStorageProvider
 
 
 def _add(
@@ -51,7 +53,7 @@ def _add(
 def _exact(
     client,
     query: str,
-    ref: str = "proj-1",
+    ref: str | list[str] = "proj-1",
     limit: int = 3,
     *,
     container: str = "room",
@@ -62,7 +64,7 @@ def _exact(
         "limit": limit,
         "source_only": True,
         "trigger_origin": "agent_pull_work",
-        "work_refs": [ref],
+        "work_refs": [ref] if isinstance(ref, str) else ref,
         "container_ref": container,
         "thread_ref": "thread",
         "visibility": "private",
@@ -76,6 +78,17 @@ def _exact(
 
 def _session(client):
     return client.app.state.pallium_service._storage._session_factory()
+
+
+def _indexed_work_refs(client, source_item_id: str) -> list[str]:
+    with _session(client) as session:
+        return session.execute(
+            sa_text(
+                "SELECT work_ref FROM source_item_work_refs "
+                "WHERE source_item_id = :source_item_id ORDER BY work_ref"
+            ),
+            {"source_item_id": source_item_id},
+        ).scalars().all()
 
 
 def test_blank_exact_ref_is_recent_normalized_and_similar_ref_is_excluded(
@@ -179,7 +192,7 @@ def test_exact_ref_refills_past_deterministic_forgotten_first_page(
     def capture_exact_statement(
         _connection, _cursor, statement, _parameters, _context, _executemany,
     ) -> None:
-        if "pallium_normalize_work_ref" in statement:
+        if "source_item_work_refs" in statement:
             exact_statements.append(statement)
 
     event.listen(engine, "before_cursor_execute", capture_exact_statement)
@@ -281,6 +294,7 @@ def test_exact_ref_combines_actor_container_and_legacy_safety(
                 {"id": source_id, "metadata": json.dumps(metadata)},
             )
         session.commit()
+    client.app.state.pallium_service._storage._backfill_source_item_work_refs()
 
     rows = _exact(client, "", actor_ref="actor-a")
     assert [row["source_item_id"] for row in rows] == [keep]
@@ -340,6 +354,152 @@ def test_legacy_projection_filters_each_unsafe_or_malformed_value() -> None:
         {"pallium_work_refs": ["PROJ 1", secret, "[REDACTED_TOKEN]", 42]}
     ) == ("proj-1",)
 
+
+def test_existing_db_without_work_ref_index_backfills_on_open(tmp_path) -> None:
+    db_path = tmp_path / "pre-index.db"
+    db_url = f"sqlite:///{db_path}"
+    first = SQLiteStorageProvider(db_url)
+    source = SourceItem(
+        source_type="chat",
+        source_id="upgrade-source",
+        content_type="text/plain",
+        content="upgrade",
+        metadata={"pallium_work_refs": ["placeholder"]},
+        created_at=datetime.now(timezone.utc),
+    )
+    first.create_source_item(source)
+    first.create_index_entry(
+        IndexEntry(
+            id="upgrade-vector",
+            target_kind="source_item",
+            target_id=source.id,
+            index_type="vector",
+            text_view="",
+        )
+    )
+    first.close()
+    raw_metadata = {
+        "pallium_work_refs": [
+            "PROJ 1", "proj-1", "Straße", "STRASSE", 42,
+            {"nested": "bad"}, "ghp_" + ("A" * 36),
+        ]
+    }
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP TABLE source_item_work_refs")
+        conn.execute(
+            "UPDATE source_items SET metadata_json = ? WHERE id = ?",
+            (json.dumps(raw_metadata, ensure_ascii=False), source.id),
+        )
+        conn.commit()
+
+    upgraded = SQLiteStorageProvider(db_url)
+    with upgraded._engine.connect() as conn:
+        refs = conn.execute(
+            sa_text(
+                "SELECT work_ref FROM source_item_work_refs "
+                "WHERE source_item_id = :source_id ORDER BY work_ref"
+            ),
+            {"source_id": source.id},
+        ).scalars().all()
+    assert refs == ["proj-1", "strasse"]
+    assert [entry.id for entry, _projection in upgraded.get_source_item_vector_candidates(("STRASSE",))] == [
+        "upgrade-vector"
+    ]
+    upgraded.close()
+
+def test_exact_work_ref_query_plans_capture_production_statements(client) -> None:
+    storage = client.app.state.pallium_service._storage
+    engine = storage._engine
+
+    def capture(call):
+        statements = []
+
+        def listener(_connection, _cursor, statement, parameters, _context, _executemany):
+            if "source_item_work_refs" in statement:
+                statements.append((statement, parameters))
+
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            call()
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+        assert len(statements) == 1
+        statement, parameters = statements[0]
+        with engine.connect() as connection:
+            return connection.exec_driver_sql(
+                "EXPLAIN QUERY PLAN " + statement, parameters
+            ).all()
+
+    structural = capture(
+        lambda: storage.search_index_entries(
+            [], 10, QueryFilters(work_refs=("proj-1",)), target_kind="source_item"
+        )
+    )
+    lexical = capture(
+        lambda: storage.search_index_entries(
+            ["alpha"], 10, QueryFilters(work_refs=("proj-1",)), target_kind="source_item"
+        )
+    )
+    vector = capture(
+        lambda: storage.get_source_item_vector_candidates(("proj-1",))
+    )
+
+    structural_details = [row[-1] for row in structural]
+    lexical_details = [row[-1] for row in lexical]
+    vector_details = [row[-1] for row in vector]
+    assert any("idx_source_item_work_refs_lookup" in detail for detail in structural_details)
+    assert all("SCAN source_items" not in detail for detail in structural_details)
+    assert any("sqlite_autoindex_source_item_work_refs_1" in detail for detail in lexical_details)
+    assert any("idx_source_item_work_refs_lookup" in detail for detail in vector_details)
+    assert any("idx_index_entries_target_lookup" in detail for detail in vector_details)
+    assert all("idx_index_entries_type_lookup" not in detail for detail in vector_details)
+
+def test_work_ref_index_syncs_metadata_mutations_and_retention_delete(client, drain_queue) -> None:
+    source_id = _add(client, "index-lifecycle", "proj-1")
+    drain_queue(client)
+    storage = client.app.state.pallium_service._storage
+    assert _indexed_work_refs(client, source_id) == ["proj-1"]
+
+    storage.update_source_item_metadata(
+        source_id, {"pallium_work_refs": ["Next Ref", "next-ref"]}
+    )
+    assert _indexed_work_refs(client, source_id) == ["next-ref"]
+
+    assert storage.fail_source_item_processing(
+        source_id,
+        error="retry",
+        next_attempt_at=None,
+        final=False,
+        metadata_updates={"pallium_work_refs": ["Retry Ref"]},
+    ) is True
+    assert _indexed_work_refs(client, source_id) == ["retry-ref"]
+    storage.complete_source_item_processing(source_id)
+
+    stats = storage.run_retention_pass(
+        now=datetime.now(timezone.utc) + timedelta(days=365),
+        batch_size=10,
+    )
+    assert stats.deleted_source_items >= 1
+    assert _indexed_work_refs(client, source_id) == []
+
+
+def test_multi_ref_exact_query_deduplicates_and_preserves_order(client, drain_queue) -> None:
+    now = datetime.now(timezone.utc)
+    older = _add(
+        client, "multi-ref-older", ["proj-1", "other-2"],
+        occurred_at=now - timedelta(minutes=1),
+    )
+    newer = _add(client, "multi-ref-newer", "other-2", occurred_at=now)
+    drain_queue(client)
+
+    result = client.app.state.pallium_service._storage.search_index_entries(
+        [],
+        10,
+        QueryFilters(work_refs=("proj-1", "other-2")),
+        target_kind="source_item",
+    )
+    assert [hit.target_id for hit in result.hits] == [newer, older]
+    assert len({hit.target_id for hit in result.hits}) == len(result.hits)
 
 def test_blank_exact_ref_never_embeds_vector_query() -> None:
     embedding = MagicMock()
