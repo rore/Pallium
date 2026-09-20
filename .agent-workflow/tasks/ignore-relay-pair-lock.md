@@ -9,17 +9,32 @@
 
 **Constraints:** No runtime behavior change and no broader database-file pattern.
 
-**Completion criteria:** `git check-ignore` recognizes `pallium.db.relay-pair-init.lock`; existing ignore behavior remains intact.
+**Completion criteria:** `git check-ignore` recognizes `pallium.db.relay-pair-init.lock`; existing ignore behavior remains intact; workflow and CI pass.
 
-**Risk:** Routine
+**Risk:** Elevated
 
 **Complexity:** Simple
 
-**Reason:** One additive ignore rule for an intentional generated lock sidecar; no runtime or guarded-path change.
+**Reason:** Redline classifies `.gitignore` as a gray-zone file even though this is one additive generated-sidecar rule.
 
-**Approach:** Add the narrow suffix pattern already used by `SQLiteStorageProvider` and verify it with Git.
+**Discovery:** `SQLiteStorageProvider._relay_pair_initialization_lock` intentionally persists `<database>.relay-pair-init.lock`. Existing rules ignore the database and `*.schema.lock`, but not this pair lock, leaving the installed checkout dirty.
 
-**Verification:** `git check-ignore -v pallium.db.relay-pair-init.lock`; agent-workflow/redline; CI.
+**Material assumptions:** The suffix is specific to generated Pallium lock sidecars. Disproved if a tracked source file legitimately uses the same suffix.
 
-**State:** Ready to implement
+**Plan:** Add only `*.relay-pair-init.lock` beside the existing schema-lock rule; do not change runtime code or delete active lock files.
+
+**Verification plan:** Generated pair-lock sidecar is ignored -> run `git check-ignore -v --no-index pallium.db.relay-pair-init.lock`; workflow compliance -> run redline/workflow and CI.
+
+**Plan review:** Clean-context gpt-5.6-sol high review approved the exact suffix pattern and verification; no blocking findings.
+
+**Approvals:** Not required for Elevated risk; clean-context plan review required.
+
+**Exceptions:** —
+
+**State:** Ready for review
 <!-- agent-workflow:end -->
+
+## Evidence
+
+- `git check-ignore -v --no-index pallium.db.relay-pair-init.lock` resolves to the new narrow rule.
+- Clean-context review confirmed .gitignore:49 exactly matches the generated suffix, hides no tracked file, and needs no runtime or test change.

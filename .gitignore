@@ -46,6 +46,7 @@ evals/query_ambiguity/output/
 evals/conversational_knowledge/output/
 pallium.db.schema.lock
 *.schema.lock
+*.relay-pair-init.lock
 
 .local/
 .playwright-mcp/
