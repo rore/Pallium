@@ -49,6 +49,11 @@ class FakeIndex:
     def remove(self, key: int) -> None:
         self._vectors.pop(key, None)
 
+    def get(self, keys):
+        if isinstance(keys, int):
+            return self._vectors.get(keys)
+        return [self._vectors.get(key) for key in keys]
+
     def search(self, query_vector, k: int, exact: bool = False) -> FakeResults:
         """Brute-force cosine distance search over stored vectors."""
         import math
@@ -161,6 +166,77 @@ def test_add_and_search(mock_usearch, tmp_path: Path):
     assert len(results) == 2
     assert results[0][0] == "entry-1"
     assert results[0][1] == pytest.approx(1.0, abs=0.01)
+
+
+def test_score_subset_uses_keyed_vectors_and_deterministic_cosine(mock_usearch, tmp_path: Path):
+    from storage.vector_index import VectorIndex
+
+    idx = VectorIndex(tmp_path / "test.index", dimensions=2, model_name="test-model")
+    idx.add("b", [1.0, 0.0])
+    idx.add("a", [1.0, 0.0])
+    idx.add("zero", [0.0, 0.0])
+    assert idx.score_subset([1.0, 0.0], ["missing", "zero", "b", "a"]) == [
+        ("a", pytest.approx(1.0)),
+        ("b", pytest.approx(1.0)),
+        ("zero", pytest.approx(0.0)),
+    ]
+
+    assert idx.score_subset([0.0, 0.0], ["b", "zero"]) == [
+        ("zero", pytest.approx(1.0)),
+        ("b", pytest.approx(0.0)),
+    ]
+
+
+def test_score_subset_handles_negative_missing_duplicates_and_dimension_errors(mock_usearch, tmp_path: Path):
+    from storage.vector_index import VectorIndex
+
+    idx = VectorIndex(tmp_path / "test.index", dimensions=2, model_name="test-model")
+    idx.add("positive", [2.0, 0.0])
+    idx.add("negative", [-3.0, 0.0])
+    assert idx.score_subset([1.0, 0.0], ["missing", "negative", "positive", "positive"]) == [
+        ("positive", pytest.approx(1.0)),
+        ("negative", pytest.approx(-1.0)),
+    ]
+    with pytest.raises(ValueError):
+        idx.score_subset([1.0], ["positive"])
+
+
+def test_score_subset_matches_real_usearch_zero_and_cosine_semantics(tmp_path: Path):
+    from storage.vector_index import VectorIndex
+
+    idx = VectorIndex(tmp_path / "real.index", dimensions=2, model_name="real-usearch")
+    idx.add("both-zero", [0.0, 0.0])
+    idx.add("one-zero", [1.0, 0.0])
+    idx.add("opposite", [-2.0, 0.0])
+    idx.add("non-unit", [3.0, 4.0])
+    idx.add("tie-b", [0.6, 0.8])
+    idx.add("tie-a", [0.6, 0.8])
+
+    assert idx.score_subset([0.0, 0.0], [
+        "missing", "both-zero", "one-zero", "opposite", "non-unit", "tie-b", "tie-a"
+    ]) == [
+        ("both-zero", pytest.approx(1.0)),
+        ("non-unit", pytest.approx(0.0)),
+        ("one-zero", pytest.approx(0.0)),
+        ("opposite", pytest.approx(0.0)),
+        ("tie-a", pytest.approx(0.0)),
+        ("tie-b", pytest.approx(0.0)),
+    ]
+    assert idx.score_subset([1.0, 0.0], [
+        "missing", "both-zero", "one-zero", "opposite", "non-unit", "tie-b", "tie-a"
+    ]) == [
+        ("one-zero", pytest.approx(1.0)),
+        ("non-unit", pytest.approx(0.6)),
+        ("tie-a", pytest.approx(0.6)),
+        ("tie-b", pytest.approx(0.6)),
+        ("both-zero", pytest.approx(0.0)),
+        ("opposite", pytest.approx(-1.0)),
+    ]
+    query = [1.0, 0.0]
+    entry_ids = ["both-zero", "one-zero", "opposite", "non-unit", "tie-b", "tie-a"]
+    subset_scores = dict(idx.score_subset(query, entry_ids))
+    native_scores = dict(idx.search(query, idx.entry_count()))
+    assert subset_scores == pytest.approx(native_scores, abs=1e-6)
 
 
 def test_add_replaces_existing(mock_usearch, tmp_path: Path):

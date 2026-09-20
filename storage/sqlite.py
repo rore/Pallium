@@ -19,6 +19,7 @@ from core.errors import SupersessionConflictError, is_transient_error
 from core.contracts import ProcessResult
 from core.models import EvidenceReference, IndexEntry, MemoryFeedback, MemoryFlag, MemoryObject, Relation, SourceItem, utc_now
 from core.turn_inference import ThreadStats
+from core.work_ref import _normalize_work_ref
 from storage.base import SourceItemVectorProjection, StorageProvider
 from storage.sqlite_codec import SQLiteCodecMixin
 from storage.sqlite_codec import extract_memory_subject
@@ -1360,6 +1361,71 @@ class SQLiteStorageProvider(
                     ),
                 )
         return result
+
+    def get_source_item_vector_candidates(
+        self, work_refs: tuple[str, ...]
+    ) -> list[tuple[IndexEntry, SourceItemVectorProjection]]:
+        if not work_refs:
+            return []
+        params = {
+            f"work_ref_{i}": _normalize_work_ref(ref)
+            for i, ref in enumerate(work_refs)
+        }
+        names = ", ".join(f":work_ref_{i}" for i in range(len(work_refs)))
+        with self._session_factory() as session:
+            session.connection().connection.create_function(
+                "pallium_normalize_work_ref",
+                1,
+                lambda value: _normalize_work_ref(value) if isinstance(value, str) else None,
+            )
+            rows = session.execute(
+                text(
+                    "SELECT ie.id AS index_entry_id, ie.target_kind, ie.target_id, "
+                    "ie.index_type, ie.text_view_name, ie.provider_name, ie.provider_version, "
+                    "si.id AS source_item_id, si.source_type, si.source_id AS source_external_id, "
+                    "si.metadata_json, si.occurred_at, si.actor_ref, si.role, si.container_ref, "
+                    "si.thread_ref, si.source_ref, si.artifact_kind, si.visibility, si.forgotten_at "
+                    "FROM index_entries ie JOIN source_items si ON si.id = ie.target_id "
+                    "WHERE ie.target_kind = 'source_item' AND ie.index_type = 'vector' "
+                    "AND json_valid(si.metadata_json) AND EXISTS ("
+                    "SELECT 1 FROM json_each(si.metadata_json, '$.pallium_work_refs') "
+                    f"WHERE pallium_normalize_work_ref(json_each.value) IN ({names})) "
+                    "ORDER BY ie.id"
+                ),
+                params,
+            ).all()
+        candidates: list[tuple[IndexEntry, SourceItemVectorProjection]] = []
+        for row in rows:
+            mapping = row._mapping
+            candidates.append((
+                IndexEntry(
+                    id=mapping["index_entry_id"],
+                    target_kind=mapping["target_kind"],
+                    target_id=mapping["target_id"],
+                    index_type=mapping["index_type"],
+                    text_view="",
+                    text_view_name=mapping["text_view_name"] or "default",
+                    provider_name=mapping["provider_name"],
+                    provider_version=mapping["provider_version"],
+                ),
+                SourceItemVectorProjection(
+                    id=mapping["source_item_id"],
+                    source_type=mapping["source_type"],
+                    source_id=mapping["source_external_id"],
+                    metadata=self._loads(mapping["metadata_json"]),
+                    occurred_at=self._normalize_datetime(mapping["occurred_at"]),
+                    actor_ref=mapping["actor_ref"],
+                    role=mapping["role"],
+                    container_ref=mapping["container_ref"],
+                    thread_ref=mapping["thread_ref"],
+                    source_ref=mapping["source_ref"],
+                    artifact_kind=mapping["artifact_kind"],
+                    visibility=mapping["visibility"] or "private",
+                    forgotten_at=self._normalize_datetime(mapping["forgotten_at"]),
+                ),
+            ))
+        return candidates
+
     def get_index_entry(self, index_entry_id: str) -> IndexEntry:
         with self._session_factory() as session:
             record = session.get(IndexEntryRecord, index_entry_id)

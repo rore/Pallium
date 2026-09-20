@@ -1244,6 +1244,72 @@ def test_real_projection_path_keeps_below_floor_trace_candidate() -> None:
     assert index.removed_ids == []
     storage.get_source_item_projections.assert_called_once_with([entry.id])
 
+@pytest.mark.parametrize("mutation", ["work_refs", "forgotten", "visibility"])
+def test_fast_path_final_revalidation_fail_closes_races(mutation: str) -> None:
+    entry = _make_index_entry(entry_id="idx-fast-race", target_kind="source_item", target_id="si-fast-race")
+    projected = replace(
+        _make_source_item(si_id=entry.target_id, visibility="public"),
+        metadata={"pallium_work_refs": ["PROJ 1"]},
+    )
+    changed = projected
+    if mutation == "work_refs":
+        changed = replace(projected, metadata={"pallium_work_refs": ["OTHER 2"]})
+    elif mutation == "forgotten":
+        changed = replace(projected, forgotten_at=utc_now())
+    else:
+        changed = replace(projected, visibility="container", container_ref="chat:other")
+    storage = MagicMock(spec=StorageProvider)
+    storage.get_source_item_vector_candidates.return_value = [(entry, projected)]
+    storage.get_source_items.return_value = {changed.id: changed}
+
+    class ScopedIndex(FakeVectorIndex):
+        def score_subset(self, _query_vector, _entry_ids):
+            return [(entry.id, 0.9)]
+
+    provider = VectorRetrievalProvider(
+        storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(ScopedIndex())
+    )
+    result = provider.query(
+        "source", limit=1, target_kind="source_item",
+        filters=QueryFilters(work_refs=("proj-1",)),
+        visibility="container", query_container_ref="chat:test", include_trace=True,
+    )
+
+    assert result.results == []
+    assert result.trace.stages[0].candidate_hits[0].index_entry_id == entry.id
+    assert result.trace.stages[0].selected_hits == ()
+    storage.get_source_item_vector_candidates.assert_called_once_with(("proj-1",))
+    storage.get_source_items.assert_called_once_with([entry.target_id])
+
+
+def test_fast_path_trace_includes_below_floor_candidate() -> None:
+    entry = _make_index_entry(entry_id="idx-fast-below", target_kind="source_item", target_id="si-fast-below")
+    projected = replace(
+        _make_source_item(si_id=entry.target_id),
+        metadata={"pallium_work_refs": ["PROJ 1"]},
+    )
+    storage = MagicMock(spec=StorageProvider)
+    storage.get_source_item_vector_candidates.return_value = [(entry, projected)]
+
+    class ScopedIndex(FakeVectorIndex):
+        def score_subset(self, _query_vector, _entry_ids):
+            return [(entry.id, 0.2)]
+
+    provider = VectorRetrievalProvider(
+        storage, FakeEmbeddingProvider(), min_similarity=0.3,
+        index_holder=VectorIndexHolder(ScopedIndex()),
+    )
+    result = provider.query(
+        "source", limit=1, target_kind="source_item",
+        filters=QueryFilters(work_refs=("proj-1",)), include_trace=True,
+    )
+
+    assert result.results == []
+    assert [hit.index_entry_id for hit in result.trace.stages[0].candidate_hits] == [entry.id]
+    assert result.trace.stages[0].selected_hits == ()
+    storage.get_source_items.assert_not_called()
+
+
 def test_vector_falls_back_for_storage_without_projection_contract() -> None:
     entry = _make_index_entry(entry_id="idx-fallback", target_kind="source_item", target_id="si-fallback")
     source = _make_source_item(si_id="si-fallback")

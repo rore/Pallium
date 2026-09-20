@@ -138,10 +138,48 @@ class VectorRetrievalProvider(RetrievalProvider):
         hits_before_visibility = 0
         hits_after_visibility = 0
 
-        for raw_hits in _iter_vector_hit_batches(index, query_vector, limit, target_kind=target_kind):
+        # Exact source work-ref queries can score the scoped vector universe
+        # without invoking global ANN search when both optional capabilities exist.
+        fast_source_scope = None
+        if target_kind == "source_item" and filters and filters.work_refs and text.strip():
+            candidate_loader = getattr(self._storage, "get_source_item_vector_candidates", None)
+            subset_scorer = getattr(index, "score_subset", None)
+            if callable(candidate_loader) and callable(subset_scorer):
+                try:
+                    candidates = candidate_loader(tuple(filters.work_refs))
+                    candidate_by_id = {entry.id: (entry, projection) for entry, projection in candidates}
+                    scored = subset_scorer(query_vector, list(candidate_by_id))
+                except NotImplementedError:
+                    pass
+                else:
+                    if isinstance(scored, list):
+                        fast_source_scope = (
+                            scored,
+                            candidate_by_id,
+                        )
+
+        raw_hit_batches = (
+            [fast_source_scope[0]]
+            if fast_source_scope is not None
+            else _iter_vector_hit_batches(index, query_vector, limit, target_kind=target_kind)
+        )
+        for raw_hits in raw_hit_batches:
             # 3. Resolve each newly exposed batch without materializing source content.
             resolved_hits: list[tuple[IndexEntry, float]] = []
-            if target_kind == "source_item":
+            if fast_source_scope is not None:
+                candidate_by_id = fast_source_scope[1]
+                source_items = {}
+                for entry_id, similarity in raw_hits:
+                    candidate = candidate_by_id.get(entry_id)
+                    if candidate is None:
+                        continue
+                    index_entry, source_item = candidate
+                    resolved_hits.append((index_entry, similarity))
+                    source_items[index_entry.target_id] = source_item
+                matching_below_floor = any(
+                    similarity < self._min_similarity for _entry_id, similarity in raw_hits
+                )
+            elif target_kind == "source_item":
                 eligible_ids = [entry_id for entry_id, _similarity in raw_hits]
                 try:
                     projections = self._storage.get_source_item_projections(eligible_ids)

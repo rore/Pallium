@@ -126,6 +126,44 @@ class VectorIndex:
         hits.sort(key=lambda x: x[1], reverse=True)
         return hits
 
+    def score_subset(
+        self, query_vector: list[float], entry_ids: list[str]
+    ) -> list[tuple[str, float]]:
+        import math
+        import numpy as np
+
+        get = getattr(self._index, "get", None)
+        if get is None:
+            raise NotImplementedError("native vector index does not support keyed reads")
+        unique_ids = list(dict.fromkeys(entry_ids))
+        keys = [self._id_to_key.get(entry_id) for entry_id in unique_ids]
+        present = [(entry_id, key) for entry_id, key in zip(unique_ids, keys) if key is not None]
+        if not present:
+            return []
+        vectors = get([key for _entry_id, key in present])
+        if vectors is None:
+            return []
+        if isinstance(vectors, tuple):
+            vectors = vectors if len(vectors) == len(present) else vectors[0]
+        query = np.asarray(query_vector, dtype=np.float32)
+        query_norm = math.sqrt(float(np.dot(query, query)))
+        hits: list[tuple[str, float]] = []
+        for (entry_id, _key), vector in zip(present, vectors):
+            if vector is None:
+                continue
+            vector = np.asarray(vector, dtype=np.float32)
+            vector_norm = math.sqrt(float(np.dot(vector, vector)))
+            similarity = (
+                1.0
+                if query_norm == 0.0 and vector_norm == 0.0
+                else 0.0
+                if query_norm == 0.0 or vector_norm == 0.0
+                else float(np.dot(query, vector) / (query_norm * vector_norm))
+            )
+            hits.append((entry_id, similarity))
+        hits.sort(key=lambda item: (-item[1], item[0]))
+        return hits
+
     def save(self) -> None:
         """Persist the index, ID map, and metadata to disk.
 
