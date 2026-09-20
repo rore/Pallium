@@ -6,7 +6,6 @@ from core.filters import matches_filters, target_visibility_and_container
 from core.models import QueryFilters
 from core.text import tokenize_text
 from core.visibility import VisibilityExclusion, is_visible
-from core.work_ref import _normalize_work_ref
 from storage.base import IndexSearchHit, IndexSearchResult
 
 LEXICAL_BM25_FLOOR = 0.0
@@ -44,10 +43,8 @@ class SQLiteSearchMixin:
                 work_ref_params[name] = ref
             work_ref_clause = (
                 "AND target_kind = 'source_item' AND EXISTS ("
-                "SELECT 1 FROM source_items si WHERE si.id = target_id "
-                "AND json_valid(si.metadata_json) AND EXISTS ("
-                "SELECT 1 FROM json_each(si.metadata_json, '$.pallium_work_refs') "
-                "WHERE pallium_normalize_work_ref(json_each.value) IN (" + ", ".join(names) + "))) "
+                "SELECT 1 FROM source_item_work_refs swr WHERE swr.source_item_id = target_id "
+                "AND swr.work_ref IN (" + ", ".join(names) + ")) "
             )
 
         select_fts = (
@@ -70,24 +67,14 @@ class SQLiteSearchMixin:
         if exact_source_work_query:
             def exact_pages():
                 with self._session_factory() as session:
-                    session.connection().connection.create_function(
-                        "pallium_normalize_work_ref",
-                        1,
-                        lambda value: (
-                            _normalize_work_ref(value)
-                            if isinstance(value, str)
-                            else None
-                        ),
-                    )
                     if structural_work_ref_query:
                         result = session.execute(
                             sa_text(
-                                "SELECT si.id AS index_entry_id, 'source_item' AS target_kind, "
+                                "SELECT DISTINCT si.id AS index_entry_id, 'source_item' AS target_kind, "
                                 "si.id AS target_id, 'structural_work_ref' AS text_view_name, "
-                                "'' AS text_view, 0.0 AS score FROM source_items si "
-                                "WHERE json_valid(si.metadata_json) AND EXISTS ("
-                                "SELECT 1 FROM json_each(si.metadata_json, '$.pallium_work_refs') "
-                                "WHERE pallium_normalize_work_ref(json_each.value) IN (" + ", ".join(f":work_ref_{i}" for i, _ in enumerate(filters.work_refs)) + ")) "
+                                "'' AS text_view, 0.0 AS score FROM source_item_work_refs swr "
+                                "JOIN source_items si ON si.id = swr.source_item_id "
+                                "WHERE swr.work_ref IN (" + ", ".join(f":work_ref_{i}" for i, _ in enumerate(filters.work_refs)) + ") "
                                 "ORDER BY COALESCE(si.occurred_at, si.created_at) DESC, si.id DESC "
                                 "LIMIT :limit OFFSET :offset"
                             ),

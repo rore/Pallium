@@ -411,6 +411,7 @@ class SQLiteStorageProvider(
                 record.thread_position = 1
             session.add(record)
             session.flush()
+            self._sync_source_item_work_refs_in_session(session, source_item.id, source_item.metadata)
 
     def create_source_item_with_packages(
         self,
@@ -462,6 +463,7 @@ class SQLiteStorageProvider(
                 record.thread_position = 1
             session.add(record)
             session.flush()
+            self._sync_source_item_work_refs_in_session(session, source_item.id, source_item.metadata)
             source_item_created_at = self._normalize_datetime(record.created_at) or record.created_at
             for pkg in package_names:
                 status = "skipped" if pkg in skip_set else "pending"
@@ -1373,23 +1375,21 @@ class SQLiteStorageProvider(
         }
         names = ", ".join(f":work_ref_{i}" for i in range(len(work_refs)))
         with self._session_factory() as session:
-            session.connection().connection.create_function(
-                "pallium_normalize_work_ref",
-                1,
-                lambda value: _normalize_work_ref(value) if isinstance(value, str) else None,
-            )
             rows = session.execute(
                 text(
-                    "SELECT ie.id AS index_entry_id, ie.target_kind, ie.target_id, "
+                    "WITH matching_source_ids AS ("
+                    "SELECT DISTINCT source_item_id FROM source_item_work_refs "
+                    f"WHERE work_ref IN ({names})) "
+                    "SELECT DISTINCT ie.id AS index_entry_id, ie.target_kind, ie.target_id, "
                     "ie.index_type, ie.text_view_name, ie.provider_name, ie.provider_version, "
                     "si.id AS source_item_id, si.source_type, si.source_id AS source_external_id, "
                     "si.metadata_json, si.occurred_at, si.actor_ref, si.role, si.container_ref, "
                     "si.thread_ref, si.source_ref, si.artifact_kind, si.visibility, si.forgotten_at "
-                    "FROM index_entries ie JOIN source_items si ON si.id = ie.target_id "
-                    "WHERE ie.target_kind = 'source_item' AND ie.index_type = 'vector' "
-                    "AND json_valid(si.metadata_json) AND EXISTS ("
-                    "SELECT 1 FROM json_each(si.metadata_json, '$.pallium_work_refs') "
-                    f"WHERE pallium_normalize_work_ref(json_each.value) IN ({names})) "
+                    "FROM matching_source_ids swr "
+                    "JOIN source_items si ON si.id = swr.source_item_id "
+                    "CROSS JOIN index_entries AS ie INDEXED BY idx_index_entries_target_lookup "
+                    "WHERE ie.target_kind = 'source_item' AND ie.target_id = si.id "
+                    "AND ie.index_type = 'vector' "
                     "ORDER BY ie.id"
                 ),
                 params,
