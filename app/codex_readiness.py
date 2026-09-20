@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import time
 from contextlib import contextmanager
@@ -15,6 +16,22 @@ _MAX_BYTES = 32 * 1024
 _STATES = {"unknown", "review_required", "verified"}
 _LOCK_WAIT_SECONDS = 2.0
 _HOOK_LOCK_WAIT_SECONDS = 0.15
+_MAX_WAKE_EVENTS = 128
+_DELIVERY_RE = re.compile(r"^relay-delivery-[0-9a-f]{32}$")
+_WAKE_STAGES = frozenset(
+    {"hook_started", "payload_emitted", "delivery_acked", "hook_failed"}
+)
+_WAKE_FAILURE_REASONS = frozenset(
+    {
+        "invalid_scope",
+        "relay_unavailable",
+        "malformed_response",
+        "empty",
+        "emit_failed",
+        "ack_failed",
+        "unexpected_error",
+    }
+)
 
 
 def marker_path(home: Path | None = None) -> Path:
@@ -130,7 +147,55 @@ def _public(value: dict[str, Any] | None) -> dict[str, Any]:
         for key in ("updated_at", "observed_at"):
             if isinstance(value.get(key), str):
                 result[key] = value[key]
+        events = _wake_events(value)
+        if events:
+            result["relay_wake_evidence"] = events
     return result
+
+
+def _wake_events(value: dict[str, Any]) -> list[dict[str, str | None]]:
+    raw = value.get("relay_wake_evidence")
+    if not isinstance(raw, list):
+        return []
+    events: list[dict[str, str | None]] = []
+    for item in reversed(raw):
+        if not isinstance(item, dict) or set(item) != {
+            "delivery_id", "stage", "reason", "recorded_at",
+        }:
+            continue
+        delivery_id = item["delivery_id"]
+        stage = item["stage"]
+        reason = item["reason"]
+        recorded_at = item["recorded_at"]
+        if (
+            not isinstance(delivery_id, str)
+            or _DELIVERY_RE.fullmatch(delivery_id) is None
+            or not isinstance(stage, str)
+            or stage not in _WAKE_STAGES
+            or not isinstance(recorded_at, str)
+            or not 0 < len(recorded_at) <= 64
+            or "\n" in recorded_at
+            or (
+                stage == "hook_failed"
+                and (
+                    not isinstance(reason, str)
+                    or reason not in _WAKE_FAILURE_REASONS
+                )
+            )
+            or (stage != "hook_failed" and reason is not None)
+        ):
+            continue
+        events.append(
+            {
+                "delivery_id": delivery_id,
+                "stage": stage,
+                "reason": reason,
+                "recorded_at": recorded_at,
+            }
+        )
+        if len(events) == _MAX_WAKE_EVENTS:
+            break
+    return list(reversed(events))
 
 
 def read(home: Path | None = None) -> dict[str, Any]:
@@ -282,6 +347,58 @@ def observe_execution(
                     "definition": definition,
                     "observed_at": now,
                     "updated_at": now,
+                    **(
+                        {"relay_wake_evidence": events}
+                        if (events := _wake_events(current))
+                        else {}
+                    ),
+                },
+                home,
+            )
+        return True
+    except Exception:
+        return False
+
+
+def record_wake_event(
+    *,
+    python: str,
+    script: str,
+    delivery_id: str,
+    stage: str,
+    reason: str | None = None,
+    home: Path | None = None,
+) -> bool:
+    """Append one bounded delivery-only hook observation."""
+    if (
+        not isinstance(delivery_id, str)
+        or _DELIVERY_RE.fullmatch(delivery_id) is None
+        or not isinstance(stage, str)
+        or stage not in _WAKE_STAGES
+        or (reason is not None and not isinstance(reason, str))
+        or (stage == "hook_failed" and reason not in _WAKE_FAILURE_REASONS)
+        or (stage != "hook_failed" and reason is not None)
+    ):
+        return False
+    try:
+        definition = expected(python, script)
+        with _marker_lock(home, wait_seconds=_HOOK_LOCK_WAIT_SECONDS):
+            current = _read(marker_path(home))
+            if current is None or current.get("definition") != definition:
+                return False
+            events = _wake_events(current)
+            events.append(
+                {
+                    "delivery_id": delivery_id,
+                    "stage": stage,
+                    "reason": reason,
+                    "recorded_at": _now(),
+                }
+            )
+            _write(
+                {
+                    **current,
+                    "relay_wake_evidence": events[-_MAX_WAKE_EVENTS:],
                 },
                 home,
             )

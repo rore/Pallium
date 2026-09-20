@@ -58,16 +58,24 @@ Not required at this risk level.
 —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Discovery and clean-context review complete. No production code changed before approval.
+- Extended the existing locked Codex readiness marker with a bounded, validated, delivery-only evidence list. Marker failures remain best-effort unknown.
+- The current hook records only proven stages: exact wake recognition, successful output, strict matching ACK, or one fixed failure reason. The wake prompt and current-scope Relay request path remain unchanged.
+- Codex ACK handling now returns only responses proving the exact delivery is delivered; ordinary callers continue to ignore the list.
+- A concrete later-send incident was traced to the existing uncertain native-exit fence: a nonzero exit retains the earlier endpoint reservation and associates later deliveries without a new native submission. This is conservative exact-once behavior, not a missing recovery sweep, and remains unchanged.
 
 ## Evidence
 
-- Native queue help has no hook correlation field beyond the message text.
-- Existing exact prompt remains the only delivery identifier visible to frozen and current hooks.
-- Clean-context review approved delivery-only advisory evidence and rejected attempt attribution.
+- Clean-context security review approved delivery-only advisory evidence after rejecting native-attempt attribution.
+- Focused evidence and ACK matrix: 16 passed; after the final defensive fixes, both affected files passed: 144 passed.
+- Affected files tests/test_agent_relay_hooks.py, tests/test_codex_wake.py, and tests/test_codex_integration.py passed with no last-failed tests.
+- Full suite: 5023 passed, 34 skipped, 215 deselected, 2 xfailed in 657.73s.
+- Native queue help exposes no hook correlation field beyond message text. Durable activation trace retains `nonzero_exit` but not numeric exit code or stderr. The numeric code is readable only while the `codex_relay_wake ... exit_code=...` line remains in `$PALLIUM_HOME/logs/pallium.log` (default `~/.pallium/logs/pallium.log`); `_finish_launch` discards captured stderr.
 
+## Result review
+
+Clean-context diff review approved after two findings were fixed: isolate per-delivery ACK transport failures while preserving earlier confirmed ACKs, and reject malformed unhashable reasons fail-soft. Remaining product limitation: an uncertain native exit suppresses later native wakes to the same endpoint until the correlated delivery becomes terminal, claimed, or expires. No blanket retry is safe without stronger native acceptance evidence.
