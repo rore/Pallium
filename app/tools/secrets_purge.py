@@ -329,6 +329,7 @@ def _sync_source_item_work_refs_in_txn(
     metadata_json: str | None,
     *,
     index_available: bool,
+    source_exists: bool,
 ) -> None:
     if not index_available:
         return
@@ -336,11 +337,11 @@ def _sync_source_item_work_refs_in_txn(
         metadata = json.loads(metadata_json) if metadata_json else None
     except (json.JSONDecodeError, TypeError):
         metadata = None
-    refs = work_refs_from_metadata(metadata)
     cur.execute(
         "DELETE FROM source_item_work_refs WHERE source_item_id = ?",
         (source_item_id,),
     )
+    refs = work_refs_from_metadata(metadata) if source_exists else ()
     cur.executemany(
         "INSERT INTO source_item_work_refs(source_item_id, work_ref) VALUES (?, ?)",
         [(source_item_id, ref) for ref in refs],
@@ -404,6 +405,7 @@ def apply_plan(sqlite_path: Path, db_url: str, plan: PurgePlan) -> dict[str, int
                 _sync_source_item_work_refs_in_txn(
                     cur, item.source_item_id, item.redacted_metadata_json,
                     index_available=work_ref_index_available,
+                    source_exists=res.rowcount > 0,
                 )
 
             # 4. Index entries + lexical_fts — in the SAME transaction
@@ -547,6 +549,7 @@ def undo_plan(sqlite_path: Path, db_url: str, manifest: dict) -> dict[str, int]:
                 _sync_source_item_work_refs_in_txn(
                     cur, snap["source_item_id"], snap["metadata_json"],
                     index_available=work_ref_index_available,
+                    source_exists=res.rowcount > 0,
                 )
 
             # Index entries + FTS — same atomicity as apply_plan.

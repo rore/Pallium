@@ -346,6 +346,44 @@ class TestCommit:
             ).fetchall()
         assert refs_after_undo == [("before-ref",)]
 
+    def test_undo_does_not_recreate_work_refs_for_deleted_source(
+        self, storage, test_db_url, sqlite_path, manifest_path,
+    ):
+        gh = "ghp_" + ("A" * 36)
+        source_id = _seed_source_item(
+            storage,
+            artifact_kind="assistant_output",
+            content="leaked " + gh,
+            metadata={"pallium_work_refs": ["Deleted Ref"], "token": gh},
+        )
+        with sqlite3.connect(sqlite_path) as conn:
+            conn.execute(
+                "INSERT INTO source_item_work_refs(source_item_id, work_ref) VALUES (?, ?)",
+                (source_id, "stale-ref"),
+            )
+            conn.commit()
+
+        assert sp.main([
+            "--dry-run", "--db-url", test_db_url, "--manifest", str(manifest_path),
+        ]) == 0
+        assert sp.main([
+            "--commit", "--yes-i-checked-the-dry-run", "--db-url", test_db_url,
+            "--manifest", str(manifest_path),
+        ]) == 0
+        with sqlite3.connect(sqlite_path) as conn:
+            conn.execute("DELETE FROM source_items WHERE id = ?", (source_id,))
+            conn.commit()
+
+        assert sp.main([
+            "--undo", "--yes-i-checked-the-dry-run", "--allow-mtime-drift",
+            "--db-url", test_db_url, "--manifest", str(manifest_path),
+        ]) == 0
+        with sqlite3.connect(sqlite_path) as conn:
+            assert conn.execute(
+                "SELECT work_ref FROM source_item_work_refs WHERE source_item_id = ?",
+                (source_id,),
+            ).fetchall() == []
+
     def test_commit_is_compatible_without_source_work_ref_table(
         self, storage, test_db_url, sqlite_path, manifest_path,
     ):

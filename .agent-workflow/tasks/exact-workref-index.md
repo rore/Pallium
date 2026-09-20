@@ -39,12 +39,14 @@
 - Discovery and pre-edit redline classification completed.
 - Added the derived `source_item_work_refs` table and `(work_ref, source_item_id)` index; startup performs a locked transactional full replacement from `core.work_ref.work_refs_from_metadata`; source creates, both metadata mutation paths, and retention deletion use one shared sync helper; structural, lexical, and vector exact reads use indexed association membership with deduplication.
 - Smart-review follow-ups: planner regressions now EXPLAIN statements captured from production calls; added a true pre-index upgrade/backfill test; `secrets_purge` atomically recomputes only affected associations on apply/undo and skips cleanly when the table is absent.
+- PR review follow-up: purge synchronization always removes stale derived rows but does not recreate associations when the source row disappeared before undo; it reuses the preceding UPDATE rowcount rather than issuing another SELECT.
 
 ## Evidence
 
 - Files changed: `storage/sqlite_schema.py`, `storage/sqlite.py`, `storage/sqlite_search.py`, `storage/sqlite_queue.py`, `storage/sqlite_retention.py`, `app/tools/secrets_purge.py`, `tests/test_exact_work_ref_search.py`, and `tests/test_secrets_purge.py`.
 - Focused verification: final exact/vector/secrets-purge/snapshot run — 114 passed; independent smart-review rerun — 30 passed; `git diff --check` clean.
 - Full verification: `5044 passed, 34 skipped, 2 xfailed in 194.87s`.
+- PR integrity follow-up: focused purge/exact suite — 54 passed; independent smart review approved the orphan-row regression and fix.
 - Windows fallback: `apply_patch` failed with CreateProcessWithLogonW error 1327; edits used the narrowly scoped deterministic fallback required by AGENTS.md.
 - Live py-spy profile: 87% of request wall time in the candidate SQL execute/fetch path.
 - Read-only live corpus benchmark: current query 255–300 ms fresh; source-first 87–116 ms; indexed association 7–159 microseconds after a 134 ms build over 11,614 associations.
