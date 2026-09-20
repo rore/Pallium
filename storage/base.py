@@ -33,6 +33,27 @@ class IndexSearchResult:
 
 
 @dataclass(frozen=True)
+class SourceItemVectorProjection:
+    id: str
+    source_type: str
+    source_id: str
+    metadata: dict[str, Any]
+    occurred_at: datetime | None = None
+    actor_ref: str | None = None
+    role: str | None = None
+    container_ref: str | None = None
+    thread_ref: str | None = None
+    source_ref: str | None = None
+    artifact_kind: str | None = None
+    visibility: str = "private"
+    forgotten_at: datetime | None = None
+
+    @property
+    def forgotten(self) -> bool:
+        return self.forgotten_at is not None
+
+
+@dataclass(frozen=True)
 class ThreadProcessingScope:
     scope_key: str
     use_case: str
@@ -223,6 +244,10 @@ class StorageProvider(ABC):
         each id, but collapses the per-id round-trips into one; used to remove
         the per-candidate N+1 on the shared retrieval path.
         """
+        raise NotImplementedError
+
+    def get_source_item_projections(self, index_entry_ids: list[str]) -> dict[str, tuple[IndexEntry, SourceItemVectorProjection] | None]:
+        """Return lightweight joined vector projections keyed by index-entry ID."""
         raise NotImplementedError
 
     @abstractmethod
