@@ -250,6 +250,11 @@ class StorageProvider(ABC):
         """Return lightweight joined vector projections keyed by index-entry ID."""
         raise NotImplementedError
 
+    def get_source_item_vector_candidates(
+        self, work_refs: tuple[str, ...]
+    ) -> list[tuple[IndexEntry, SourceItemVectorProjection]]:
+        raise NotImplementedError
+
     @abstractmethod
     def claim_next_source_item(
         self,

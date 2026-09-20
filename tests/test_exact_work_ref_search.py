@@ -583,9 +583,28 @@ def test_exact_work_ref_search_through_enabled_vector_http(
             entry.id,
             [0.8, 0.2, 0.0, 0.0] if is_right else [1.0, 0.0, 0.0, 0.0],
         )
+        if i == 20:
+            duplicate = IndexEntry(
+                target_kind="source_item",
+                target_id=source.id,
+                index_type="vector",
+                text_view="duplicate vector",
+                provider_name="exact-work-e2e",
+            )
+            service._storage.create_index_entry(duplicate)
+            service._vector_index.add(duplicate.id, [0.7, 0.3, 0.0, 0.0])
         if is_right:
             right_ids.append(source.id)
 
+    candidates = service._storage.get_source_item_vector_candidates(("proj-1", "OTHER-2"))
+    assert len(candidates) == 23
+    assert {projection.metadata["pallium_work_refs"][0] for _entry, projection in candidates} == {"PROJ 1", "other-2"}
+    assert sum(entry.target_id == right_ids[0] for entry, _projection in candidates) == 2
+
+    def unexpected_global_search(*_args, **_kwargs):
+        raise AssertionError("exact-work subset path must not invoke global ANN search")
+
+    monkeypatch.setattr(service._vector_index, "search", unexpected_global_search)
     response = TestClient(app).post(
         "/query",
         json={
