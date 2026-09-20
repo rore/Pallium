@@ -6,6 +6,7 @@ streamable-http (production, remote access) transports.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from functools import wraps
@@ -28,6 +29,25 @@ _MCP_EXPANSION_MIN_CHARS = 256
 _MCP_RELAY_MAX_CHARS = 2000
 _MCP_RELAY_MIN_CHARS = 256
 _MCP_RELAY_WORK_REFS_MAX_CHARS = 12000
+_MCP_HISTORY_DEADLINE_SECONDS = 25.0
+
+def _history_timeout_payload() -> dict:
+    return {
+        "error": "transport_timeout",
+        "error_kind": "transport_timeout",
+        "retryable": True,
+        "action": "check service health and retry once",
+    }
+
+
+def _history_finalization_timeout_payload(delivery_attempt_id: str) -> dict:
+    return {
+        "error": "delivery_finalization_timeout",
+        "error_kind": "delivery_finalization_timeout",
+        "retryable": False,
+        "delivery_attempt_id": delivery_attempt_id,
+        "action": "check delivery status before retrying",
+    }
 
 
 def _mask_invalid_work_ref(value: object) -> object:
@@ -852,24 +872,38 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         client = PalliumMcpClient(ctx)
-        result = await client.search_history_by_work_ref(
-            requested_work_ref, query, limit=limit,
-            actor_ref=actor_ref,
-            request_source_item_id=request_source_item_id, defer_delivery=True,
-        )
-        compact = _compact_history(
-            result, query or "", limit, ctx.container_ref, ctx.thread_ref,
-            search_mode="exact_work_ref", requested_work_ref=requested_work_ref,
-        )
-        if "error" not in compact and result.get("delivery_attempt_id"):
-            receipt = await client.finalize_historical_delivery(
-                result["delivery_attempt_id"],
-                items=[{"source_item_id": item["source_item_id"], "role": "search_match"} for item in compact.get("results", [])],
+        stage = "search"
+        delivery_attempt_id: str | None = None
+
+        async def search_and_finalize() -> str:
+            nonlocal stage, delivery_attempt_id
+            result = await client.search_history_by_work_ref(
+                requested_work_ref, query, limit=limit,
+                actor_ref=actor_ref,
+                request_source_item_id=request_source_item_id, defer_delivery=True,
             )
-            if receipt.get("error"):
-                return _json_text(receipt)
-            compact["lookup_event_id"] = receipt.get("lookup_event_id")
-        return _json_text(compact)
+            compact = _compact_history(
+                result, query or "", limit, ctx.container_ref, ctx.thread_ref,
+                search_mode="exact_work_ref", requested_work_ref=requested_work_ref,
+            )
+            if "error" not in compact and result.get("delivery_attempt_id"):
+                stage = "finalization"
+                delivery_attempt_id = result["delivery_attempt_id"]
+                receipt = await client.finalize_historical_delivery(
+                    result["delivery_attempt_id"],
+                    items=[{"source_item_id": item["source_item_id"], "role": "search_match"} for item in compact.get("results", [])],
+                )
+                if receipt.get("error"):
+                    return _json_text(receipt)
+                compact["lookup_event_id"] = receipt.get("lookup_event_id")
+            return _json_text(compact)
+
+        try:
+            return await asyncio.wait_for(search_and_finalize(), _MCP_HISTORY_DEADLINE_SECONDS)
+        except asyncio.TimeoutError:
+            if stage == "finalization" and delivery_attempt_id:
+                return _json_text(_history_finalization_timeout_payload(delivery_attempt_id))
+            return _json_text(_history_timeout_payload())
 
     @server.tool()
     async def pallium_search_history(
@@ -895,33 +929,47 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
         client = PalliumMcpClient(ctx)
-        result = await client.search_history(
-            query,
-            limit=limit,
-            source_type=source_type,
-            role=role,
-            artifact_kind=artifact_kind,
-            actor_ref=actor_ref,
-            work_refs=work_refs,
-            request_source_item_id=request_source_item_id,
-            defer_delivery=True,
-        )
-        compact = _compact_history(result, query, limit, ctx.container_ref, ctx.thread_ref)
-        if "error" not in compact and result.get("delivery_attempt_id"):
-            receipt = await client.finalize_historical_delivery(
-                result["delivery_attempt_id"],
-                items=[
-                    {
-                        "source_item_id": item["source_item_id"],
-                        "role": "search_match",
-                    }
-                    for item in compact.get("results", [])
-                ],
+        stage = "search"
+        delivery_attempt_id: str | None = None
+
+        async def search_and_finalize() -> str:
+            nonlocal stage, delivery_attempt_id
+            result = await client.search_history(
+                query,
+                limit=limit,
+                source_type=source_type,
+                role=role,
+                artifact_kind=artifact_kind,
+                actor_ref=actor_ref,
+                work_refs=work_refs,
+                request_source_item_id=request_source_item_id,
+                defer_delivery=True,
             )
-            if receipt.get("error"):
-                return _json_text(receipt)
-            compact["lookup_event_id"] = receipt.get("lookup_event_id")
-        return _json_text(compact)
+            compact = _compact_history(result, query, limit, ctx.container_ref, ctx.thread_ref)
+            if "error" not in compact and result.get("delivery_attempt_id"):
+                stage = "finalization"
+                delivery_attempt_id = result["delivery_attempt_id"]
+                receipt = await client.finalize_historical_delivery(
+                    result["delivery_attempt_id"],
+                    items=[
+                        {
+                            "source_item_id": item["source_item_id"],
+                            "role": "search_match",
+                        }
+                        for item in compact.get("results", [])
+                    ],
+                )
+                if receipt.get("error"):
+                    return _json_text(receipt)
+                compact["lookup_event_id"] = receipt.get("lookup_event_id")
+            return _json_text(compact)
+
+        try:
+            return await asyncio.wait_for(search_and_finalize(), _MCP_HISTORY_DEADLINE_SECONDS)
+        except asyncio.TimeoutError:
+            if stage == "finalization" and delivery_attempt_id:
+                return _json_text(_history_finalization_timeout_payload(delivery_attempt_id))
+            return _json_text(_history_timeout_payload())
 
     @server.tool()
     async def pallium_query_debug(

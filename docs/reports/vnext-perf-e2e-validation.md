@@ -13,6 +13,13 @@ correctness (see §4 for the precise live-service scope), and it does **not**
 change product behavior; any fix implied by a finding below is a separate change
 with its own Work Record.
 
+> Status update (2026-09-20): the counts below are the historical pre-fix
+> measurements. PR #25 fixed the lexical request-path N+1 (182 -> 5 queries,
+> flat across tested limits). A later production timeout exposed the same
+> per-candidate reads in vector source retrieval; that residual is tracked in
+> roadmap/ideas/idea-retrieval-source-fetch-batching.md. The offline loader
+> finding remains deferred.
+
 Re-run commands are at the bottom. All harnesses are read-only against product
 code (timing/counting via external SQLAlchemy + `sqlite3` trace seams).
 
