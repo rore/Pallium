@@ -29,18 +29,25 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Diagnose: reproduced the exact incident and isolated the delay to text-bearing vector retrieval rather than lexical SQLite search.
 - Assess risk: clean-context redline verdict GRAY, no boundary/checkpoint finding; declared Elevated/Moderate.
+- Implement vector batching: one `get_source_items` map per ANN expansion batch feeds source filtering, visibility, and hydration; final emitted-ID revalidation drops forgotten/deleted rows and synchronizes selected trace hits. Added focused call-shape and lifecycle tests.
+- Smart-review follow-up: batch source IDs now exclude wrong-kind and below-floor candidates before DB fetch; below-floor early-stop behavior is unchanged and covered by call-shape assertion.
+- Implemented a 25-second aggregate asyncio deadline for both MCP history tools, with structured transport timeouts and FastMCP coverage for search and finalization stalls.
+- Refined finalization expiry to a non-retryable delivery_finalization_timeout carrying delivery_attempt_id and status-check guidance; regression models commit-on-cancellation.
 
 ## Evidence
 
 - Affected request source: `1bae2bf2-8a31-451f-b8a0-ecc49e3fbcc3`; deferred attempt `e5b5afbd-f55d-4dfe-9880-0fe9f3aebe4a` persisted after the host timeout.
 - Reproduction: exact HTTP query 29.589 s; blank exact-work query 0.970 s; bounded/unbounded lexical SQL 0.110/0.136 s.
+- Patched production-shaped replay on a coherent disposable main/Relay/vector snapshot: 1.558 s with the same 5 eligible results (candidate-recovery latency; no injection or downstream-task claim).
+- Focused retrieval/exact-work/MCP regression suite: 134 passed. Full suite: 5026 passed, 34 skipped, 215 deselected, 2 xfailed in 691.17 s.
+- Fresh redline verdict: GRAY/watch, no boundary violations or triggered checkpoints. Agent Workflow gate: clean (exit 0).
 
 ## Plan review
 
@@ -48,4 +55,4 @@ Clean-context gpt-5.6-sol review verdict was "Revise before implementation." It 
 
 ## Result review
 
-Pending.
+Independent gpt-5.6-sol high-effort review found two implementation defects: below-floor ANN tail rows were included in source batches, and finalization expiry was incorrectly retryable despite commit ambiguity. Both were fixed. Follow-up found one regression assertion targeted the wrong expansion batch; that test was corrected. Final verdict: Approved, no further findings.

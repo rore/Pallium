@@ -46,6 +46,19 @@ justifies it — both are cheap at current local-first scale.
 2. The offline loader no longer full-scans at volume.
 3. Governance/visibility semantics unchanged (e2e invariants still pass).
 
+## Progress
+
+- PR #25 batched the lexical request path and reduced the deterministic
+  source-only database query count from 182 to 5, flat across tested limits.
+- On 2026-09-20, an exact work-reference query exposed the unfixed vector
+  sibling: the caller timed out at 30 seconds, the same HTTP query took 29.589
+  seconds, a blank query that bypassed vectors took 0.970 seconds, and the exact
+  lexical SQL took 0.110-0.136 seconds. Vector retrieval still reread source
+  candidates during filtering, visibility, and hydration.
+- The current slice applies the existing batch + emission-revalidation pattern
+  to vector retrieval and adds an aggregate MCP deadline. The offline
+  measurement-loader N+1 remains volume-gated and out of scope.
+
 ## Notes
 
 From the vNext architect review (findings C1, C2) and the perf/e2e validation

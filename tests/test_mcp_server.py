@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -363,6 +364,72 @@ async def test_history_transport_failure_is_distinct_from_valid_empty(
     assert empty["decision_reason"] == "source_only_search"
     assert "error" not in empty
     assert len(_json_text(unavailable)) <= 2000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["pallium_search_history", "pallium_search_history_by_work_ref"])
+async def test_history_search_deadline_returns_structured_timeout(
+    monkeypatch: pytest.MonkeyPatch, tool_name: str,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    monkeypatch.setattr(mcp_server, "_MCP_HISTORY_DEADLINE_SECONDS", 0.001)
+    method = "search_history" if tool_name == "pallium_search_history" else "search_history_by_work_ref"
+
+    async def stalled(*args, **kwargs):
+        await asyncio.sleep(1)
+
+    with patch("app.mcp.client.PalliumMcpClient." + method, new=stalled):
+        arguments = {"query": "prior work", "container_ref": "git:example/repo", "visibility": "private"}
+        if tool_name.endswith("by_work_ref"):
+            arguments["work_ref"] = "feature:history-gate"
+        content, _ = await create_server().call_tool(tool_name, arguments)
+
+    payload = json.loads(content[0].text)
+    assert payload == {
+        "error": "transport_timeout",
+        "error_kind": "transport_timeout",
+        "retryable": True,
+        "action": "check service health and retry once",
+    }
+    assert "TimeoutError" not in content[0].text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["pallium_search_history", "pallium_search_history_by_work_ref"])
+async def test_history_finalization_deadline_returns_structured_timeout(
+    monkeypatch: pytest.MonkeyPatch, tool_name: str,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    monkeypatch.setattr(mcp_server, "_MCP_HISTORY_DEADLINE_SECONDS", 0.001)
+    method = "search_history" if tool_name == "pallium_search_history" else "search_history_by_work_ref"
+    result = {"results": [{"source_item_id": "s-1", "excerpt": "match"}], "delivery_attempt_id": "attempt-1"}
+
+    finalized = False
+
+    async def stalled(*args, **kwargs):
+        nonlocal finalized
+        try:
+            await asyncio.sleep(1)
+        finally:
+            finalized = True
+
+    with patch("app.mcp.client.PalliumMcpClient." + method, new=AsyncMock(return_value=result)), \
+         patch("app.mcp.client.PalliumMcpClient.finalize_historical_delivery", new=stalled):
+        arguments = {"query": "match", "container_ref": "git:example/repo", "visibility": "private"}
+        if tool_name.endswith("by_work_ref"):
+            arguments["work_ref"] = "feature:history-gate"
+        content, _ = await create_server().call_tool(tool_name, arguments)
+
+    payload = json.loads(content[0].text)
+    assert payload == {
+        "error": "delivery_finalization_timeout",
+        "error_kind": "delivery_finalization_timeout",
+        "retryable": False,
+        "delivery_attempt_id": "attempt-1",
+        "action": "check delivery status before retrying",
+    }
+    assert "TimeoutError" not in content[0].text
+    assert finalized is True
 
 @pytest.mark.asyncio
 async def test_historical_tools_project_bounded_payloads(monkeypatch: pytest.MonkeyPatch) -> None:

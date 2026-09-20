@@ -157,6 +157,19 @@ class VectorRetrievalProvider(RetrievalProvider):
                         continue
                 resolved_hits.append((index_entry, similarity))
 
+            source_items = self._storage.get_source_items(
+                [
+                    index_entry.target_id
+                    for index_entry, _similarity in resolved_hits
+                    if (
+                        index_entry.target_kind == "source_item"
+                        and (target_kind is None or index_entry.target_kind == target_kind)
+                        and _similarity >= self._min_similarity
+                    )
+                ]
+            )
+            if not isinstance(source_items, dict):
+                source_items = {}
             # Stale entry removal is in-memory only; reconcile persists it.
             matching_below_floor = any(
                 target_kind is not None
@@ -192,6 +205,9 @@ class VectorRetrievalProvider(RetrievalProvider):
                 if include_trace:
                     all_candidate_trace_hits.append(trace_hit)
 
+                if index_entry.target_kind == "source_item" and index_entry.target_id not in source_items:
+                    continue
+                get_source_item = source_items.get
                 # Apply min_similarity threshold
                 if similarity < self._min_similarity:
                     continue
@@ -199,7 +215,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                 # Apply filters (lifecycle check for memory_objects + field matching)
                 if not matches_filters(
                     self._storage.get_memory_object,
-                    self._storage.get_source_item,
+                    get_source_item,
                     self._storage.get_evidence_for_memory_object,
                     index_entry.target_kind, index_entry.target_id, filters,
                 ):
@@ -209,7 +225,7 @@ class VectorRetrievalProvider(RetrievalProvider):
 
                 # Apply visibility using new is_visible()
                 candidate_visibility, candidate_container_ref, candidate_actor_ref = target_visibility_and_container(
-                    self._storage.get_source_item, self._storage.get_memory_object,
+                    get_source_item, self._storage.get_memory_object,
                     index_entry.target_kind, index_entry.target_id,
                 )
                 if not is_visible(candidate_visibility, candidate_container_ref, query_container_ref, candidate_actor_ref, query_visibility=visibility, query_actor_ref=query_actor_ref):
@@ -246,7 +262,7 @@ class VectorRetrievalProvider(RetrievalProvider):
                     )
                 elif index_entry.target_kind == "source_item":
                     try:
-                        source_item = self._storage.get_source_item(index_entry.target_id)
+                        source_item = get_source_item(index_entry.target_id)
                     except KeyError:
                         logger.debug("Skipping deleted source_item %s during hydration", index_entry.target_id)
                         continue
@@ -285,6 +301,27 @@ class VectorRetrievalProvider(RetrievalProvider):
 
             if len(results) >= limit or matching_below_floor:
                 break
+        emitted_source_ids = [
+            item.source_item_id for item in results if item.result_kind == "source_hit"
+        ]
+        if emitted_source_ids:
+            revalidated = self._storage.get_source_items(emitted_source_ids)
+            dropped = {
+                source_id
+                for source_id in emitted_source_ids
+                if source_id not in revalidated or revalidated[source_id].forgotten
+            }
+            if dropped:
+                results = [
+                    item
+                    for item in results
+                    if item.result_kind != "source_hit" or item.source_item_id not in dropped
+                ]
+                selected_trace_hits = [
+                    hit
+                    for hit in selected_trace_hits
+                    if not (hit.target_kind == "source_item" and hit.target_id in dropped)
+                ]
         # 7. Build trace
         trace = None
         if include_trace:

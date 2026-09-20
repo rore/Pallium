@@ -201,6 +201,7 @@ class TestVectorRetrievalBasic:
         storage = MagicMock(spec=StorageProvider)
         storage.get_index_entry.return_value = index_entry
         storage.get_source_item.return_value = source_item
+        storage.get_source_items.return_value = {source_item.id: source_item}
 
         vector_index = FakeVectorIndex(hits=[("idx-2", 0.72)])
         embedding = FakeEmbeddingProvider()
@@ -720,6 +721,7 @@ class TestFilterMatching:
         storage = MagicMock(spec=StorageProvider)
         storage.get_index_entry.return_value = index_entry
         storage.get_source_item.return_value = source_item
+        storage.get_source_items.return_value = {source_item.id: source_item}
 
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.9)])
         embedding = FakeEmbeddingProvider()
@@ -737,6 +739,7 @@ class TestFilterMatching:
         storage = MagicMock(spec=StorageProvider)
         storage.get_index_entry.return_value = index_entry
         storage.get_source_item.return_value = source_item
+        storage.get_source_items.return_value = {source_item.id: source_item}
 
         vector_index = FakeVectorIndex(hits=[("idx-1", 0.9)])
         embedding = FakeEmbeddingProvider()
@@ -815,6 +818,7 @@ class TestSourceOnlyExpansion:
         storage.get_index_entries.side_effect = lambda ids: {entry_id: entries[entry_id] for entry_id in ids if entry_id in entries}
         storage.get_index_entry.side_effect = lambda entry_id: entries[entry_id]
         storage.get_source_item.side_effect = lambda source_id: sources[source_id]
+        storage.get_source_items.side_effect = lambda ids: {source_id: sources[source_id] for source_id in ids if source_id in sources}
         index = FakeVectorIndex(hits=hits)
         provider = VectorRetrievalProvider(
             storage, FakeEmbeddingProvider(), min_similarity=minimum,
@@ -969,6 +973,8 @@ class TestSourceOnlyExpansion:
 
         assert result.results == []
         assert index.search_calls == [8, 16]
+        assert all("source-low" not in call.args[0] for call in storage.get_source_items.call_args_list)
+        assert storage.get_source_items.call_args_list[1].args[0] == []
 
     def test_add_remove_between_searches_stays_bounded_and_duplicate_free(self) -> None:
         entries: dict[str, IndexEntry] = {}
@@ -1009,6 +1015,7 @@ class TestSourceOnlyExpansion:
             entry_id: entries[entry_id] for entry_id in ids
         }
         storage.get_source_item.side_effect = lambda source_id: sources[source_id]
+        storage.get_source_items.side_effect = lambda ids: {source_id: sources[source_id] for source_id in ids if source_id in sources}
         provider = VectorRetrievalProvider(
             storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(index),
         )
@@ -1057,6 +1064,55 @@ class TestSourceOnlyExpansion:
         assert result.results == []
         assert index.search_calls == [16, 32]
 
+    def test_source_batching_has_no_per_candidate_reads_and_final_revalidation(self) -> None:
+        entries = {
+            f"source-{i}": _make_index_entry(
+                entry_id=f"source-{i}", target_kind="source_item", target_id=f"source-{i}"
+            )
+            for i in range(3)
+        }
+        sources = {
+            entry.target_id: _make_source_item(si_id=entry.target_id)
+            for entry in entries.values()
+        }
+        storage = MagicMock(spec=StorageProvider)
+        storage.get_index_entries.side_effect = lambda ids: {entry_id: entries[entry_id] for entry_id in ids}
+        storage.get_source_items.side_effect = [sources, sources]
+        index = FakeVectorIndex([(entry_id, 0.9 - i * 0.01) for i, entry_id in enumerate(entries)])
+        provider = VectorRetrievalProvider(
+            storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(index)
+        )
+
+        result = provider.query("test", limit=2, target_kind="source_item", include_trace=True)
+
+        assert [item.source_item_id for item in result.results] == ["source-0", "source-1"]
+        assert storage.get_source_item.call_count == 0
+        assert [call.args[0] for call in storage.get_source_items.call_args_list] == [
+            ["source-0", "source-1", "source-2"], ["source-0", "source-1"]
+        ]
+        assert [hit.target_id for hit in result.trace.stages[0].selected_hits] == [
+            "source-0", "source-1"
+        ]
+
+    @pytest.mark.parametrize("forgotten", [True, False])
+    def test_final_batch_revalidation_excludes_forgotten_or_deleted_source(self, forgotten: bool) -> None:
+        entry = _make_index_entry(entry_id="source-1", target_kind="source_item", target_id="source-1")
+        source = _make_source_item(si_id="source-1")
+        storage = MagicMock(spec=StorageProvider)
+        storage.get_index_entries.return_value = {entry.id: entry}
+        storage.get_source_items.side_effect = [
+            {source.id: source},
+            {source.id: replace(source, forgotten_at=utc_now())} if forgotten else {},
+        ]
+        provider = VectorRetrievalProvider(
+            storage, FakeEmbeddingProvider(), index_holder=VectorIndexHolder(FakeVectorIndex([(entry.id, 0.9)]))
+        )
+
+        result = provider.query("test", limit=1, target_kind="source_item", include_trace=True)
+
+        assert result.results == []
+        assert result.trace.stages[0].selected_hits == ()
+        assert storage.get_source_item.call_count == 0
     def test_default_query_keeps_one_search(self) -> None:
         entry = _make_index_entry()
         storage = MagicMock(spec=StorageProvider)
