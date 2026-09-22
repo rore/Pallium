@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -52,4 +52,4 @@ Initial clean-context review rejected the first precedence sketch: any-delivered
 
 ## Result review
 
-- Pending.
+- Independent review returned the task to implementation: neutralize expired prior-claim hook wording, treat any legacy fan-out recipient as an evidence gap, and cover every explanation fallback/aggregate branch.

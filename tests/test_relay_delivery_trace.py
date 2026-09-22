@@ -928,8 +928,13 @@ def test_mcp_compacts_long_snapshot_without_losing_the_only_event():
     assert page["events"] == [event]
     assert "recipient_container_ref" in page["snapshot_fields_omitted"]
 
-@pytest.mark.parametrize("runtime,session", [("codex", "uncertain-codex"), ("claude-code", "uncertain-claude")])
-def test_pending_uncertain_trace_gives_safe_ordinary_turn_guidance(relay, runtime, session):
+@pytest.mark.parametrize(
+    ("runtime", "session"),
+    [("codex", "uncertain-codex"), ("claude-code", "uncertain-claude")],
+)
+def test_pending_uncertain_trace_gives_safe_ordinary_turn_guidance(
+    relay, runtime, session
+):
     storage, service, _ = relay
     service.turn(runtime=runtime, session_ref=session, container_ref="git:test")
     message = _message(service, recipient=f"{runtime}:{session}")
@@ -938,9 +943,15 @@ def test_pending_uncertain_trace_gives_safe_ordinary_turn_guidance(relay, runtim
         message,
         "relay-activation-" + "e" * 32,
         "completed",
-        **_completion(outcome="uncertain", reason="nonzero_exit", evidence=["submission_attempted"]),
+        **_completion(
+            outcome="uncertain",
+            reason="nonzero_exit",
+            evidence=["submission_attempted"],
+        ),
     )
-    explanation = service.trace_message(message_id=message["message_id"])["explanation"]
+    explanation = service.trace_message(message_id=message["message_id"])[
+        "explanation"
+    ]
     assert explanation.startswith("Needs intervention:")
     assert "ordinary turn" in explanation
     assert "do not resend" in explanation
@@ -949,67 +960,273 @@ def test_pending_uncertain_trace_gives_safe_ordinary_turn_guidance(relay, runtim
 def test_pending_accepted_trace_is_queued_until_a_safe_turn(relay):
     storage, service, _ = relay
     message = _message(service)
-    _event(storage, message, "relay-activation-" + "a" * 32, "completed", **_completion())
-    explanation = service.trace_message(message_id=message["message_id"])["explanation"]
+    _event(
+        storage,
+        message,
+        "relay-activation-" + "a" * 32,
+        "completed",
+        **_completion(),
+    )
+    explanation = service.trace_message(message_id=message["message_id"])[
+        "explanation"
+    ]
     assert explanation.startswith("Queued:")
     assert "safe turn" in explanation
     assert "payload admission" in explanation
+
+
+@pytest.mark.parametrize("outcome", [None, "deferred", "failed"])
+def test_pending_trace_fallbacks_remain_queued(relay, outcome):
+    storage, service, _ = relay
+    message = _message(service)
+    if outcome is not None:
+        _event(
+            storage,
+            message,
+            "relay-activation-" + "f" * 32,
+            "completed",
+            **_completion(
+                outcome=outcome,
+                reason="worker_error",
+                evidence=[],
+                native_retry_safe=True,
+            ),
+        )
+    explanation = service.trace_message(message_id=message["message_id"])[
+        "explanation"
+    ]
+    assert explanation.startswith("Queued:")
+    assert "pending" in explanation.lower()
+
+
+def test_pending_unreachable_trace_needs_intervention(relay):
+    storage, service, _ = relay
+    message = _message(service)
+    assert storage.relay_mark_unreachable(
+        runtime="codex",
+        session_ref="receiver",
+        container_ref="git:test",
+        attempt_started_at=datetime.now(timezone.utc) + timedelta(seconds=1),
+    )
+    explanation = service.trace_message(message_id=message["message_id"])[
+        "explanation"
+    ]
+    assert explanation.startswith("Needs intervention:")
+    assert "unavailable" in explanation
+    assert "ordinary turn" in explanation
+
+
+def test_active_claim_trace_is_not_reported_as_queued(relay):
+    _storage, service, _ = relay
+    message = _message(service)
+    service.turn(runtime="codex", session_ref="receiver", container_ref="git:test")
+    explanation = service.trace_message(message_id=message["message_id"])[
+        "explanation"
+    ]
+    assert explanation.startswith("Claimed:")
+    assert "ACK has not been recorded" in explanation
 
 
 def test_expired_trace_distinguishes_never_claimed_from_prior_claim(relay):
     storage, service, _ = relay
     created = datetime(2030, 1, 1, tzinfo=timezone.utc)
     never_claimed = service.send(
-        sender_runtime="codex", sender_session_ref="sender", recipient="codex:receiver",
-        payload="expires", container_ref="git:test", expires_in_seconds=60, now=created,
+        sender_runtime="codex",
+        sender_session_ref="sender",
+        recipient="codex:receiver",
+        payload="expires",
+        container_ref="git:test",
+        expires_in_seconds=60,
+        now=created,
     )
-    expired = storage.relay_trace_message(message_id=never_claimed["message_id"], now=created + timedelta(seconds=61))
+    expired = storage.relay_trace_message(
+        message_id=never_claimed["message_id"],
+        now=created + timedelta(seconds=61),
+    )
     assert expired["delivery_snapshots"][0]["state"] == "expired"
     assert expired["delivery_snapshots"][0]["attempts"] == 0
     assert "before any recipient claimed it" in expired["explanation"]
 
     claimed_message = service.send(
-        sender_runtime="codex", sender_session_ref="sender", recipient="codex:receiver",
-        payload="claimed then expires", container_ref="git:test", expires_in_seconds=60, now=created,
+        sender_runtime="codex",
+        sender_session_ref="sender",
+        recipient="codex:receiver",
+        payload="claimed then expires",
+        container_ref="git:test",
+        expires_in_seconds=60,
+        now=created,
     )
     claimed = service.turn(
-        runtime="codex", session_ref="receiver", container_ref="git:test",
-        exact_delivery_id=claimed_message["deliveries"][0]["delivery_id"], now=created,
+        runtime="codex",
+        session_ref="receiver",
+        container_ref="git:test",
+        exact_delivery_id=claimed_message["deliveries"][0]["delivery_id"],
+        now=created,
     )["deliveries"][0]
     assert claimed["delivery_id"] == claimed_message["deliveries"][0]["delivery_id"]
-    expired_after_claim = storage.relay_trace_message(message_id=claimed_message["message_id"], now=created + timedelta(seconds=61))
+    expired_after_claim = storage.relay_trace_message(
+        message_id=claimed_message["message_id"],
+        now=created + timedelta(seconds=61),
+    )
     assert expired_after_claim["delivery_snapshots"][0]["attempts"] == 1
-    assert "Prior claim or activation evidence" in expired_after_claim["explanation"]
+    assert "hook outcome remain unknown" in expired_after_claim["explanation"]
+    assert "not evidence of hook failure" not in expired_after_claim["explanation"]
 
 
 def test_delivered_trace_overrides_old_uncertain_activation(relay):
     storage, service, _ = relay
     message = _message(service)
-    _event(storage, message, "relay-activation-" + "b" * 32, "completed", **_completion(outcome="uncertain", reason="nonzero_exit", evidence=["submission_attempted"]))
-    claimed = service.turn(runtime="codex", session_ref="receiver", container_ref="git:test")["deliveries"][0]
-    service.acknowledge(delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"], container_ref="git:test")
-    explanation = service.trace_message(message_id=message["message_id"])["explanation"]
+    _event(
+        storage,
+        message,
+        "relay-activation-" + "b" * 32,
+        "completed",
+        **_completion(
+            outcome="uncertain",
+            reason="nonzero_exit",
+            evidence=["submission_attempted"],
+        ),
+    )
+    claimed = service.turn(
+        runtime="codex", session_ref="receiver", container_ref="git:test"
+    )["deliveries"][0]
+    service.acknowledge(
+        delivery_id=claimed["delivery_id"],
+        claim_token=claimed["claim_token"],
+        container_ref="git:test",
+    )
+    explanation = service.trace_message(message_id=message["message_id"])[
+        "explanation"
+    ]
     assert explanation.startswith("Delivered:")
     assert "Needs intervention" not in explanation
 
 
-def test_mixed_fanout_trace_counts_states_and_discloses_gap(relay):
+def test_terminal_trace_states_disclose_evidence_gaps(relay):
+    storage, service, _ = relay
+    delivered = _message(service)
+    claimed = service.turn(
+        runtime="codex", session_ref="receiver", container_ref="git:test"
+    )["deliveries"][0]
+    service.acknowledge(
+        delivery_id=claimed["delivery_id"],
+        claim_token=claimed["claim_token"],
+        container_ref="git:test",
+    )
+    with storage._relay_session_factory.begin() as db:
+        db.get(RelayDeliveryRecord, claimed["delivery_id"]).trace_pruned = 1
+    delivered_trace = service.trace_message(message_id=delivered["message_id"])
+    assert delivered_trace["explanation"].startswith("Delivered:")
+    assert "Activation evidence is incomplete" in delivered_trace["explanation"]
+
+    created = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    expired = service.send(
+        sender_runtime="codex",
+        sender_session_ref="sender",
+        recipient="codex:receiver",
+        payload="expired gap",
+        container_ref="git:test",
+        expires_in_seconds=60,
+        now=created,
+    )
+    with storage._relay_session_factory.begin() as db:
+        db.get(
+            RelayDeliveryRecord, expired["deliveries"][0]["delivery_id"]
+        ).trace_truncated = 1
+    expired_trace = storage.relay_trace_message(
+        message_id=expired["message_id"],
+        now=created + timedelta(seconds=61),
+    )
+    assert expired_trace["explanation"].startswith("Expired:")
+    assert "Activation evidence is incomplete" in expired_trace["explanation"]
+
+
+def test_mixed_fanout_trace_counts_three_states(relay):
     storage, service, _ = relay
     message = _message(service)
-    claimed = service.turn(runtime="codex", session_ref="receiver", container_ref="git:test")["deliveries"][0]
-    service.acknowledge(delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"], container_ref="git:test")
-    second = service.turn(runtime="claude-code", session_ref="mixed-recipient", container_ref="git:test")["session"]
-    second_id = "relay-delivery-" + "c" * 32
+    claimed = service.turn(
+        runtime="codex", session_ref="receiver", container_ref="git:test"
+    )["deliveries"][0]
+    service.acknowledge(
+        delivery_id=claimed["delivery_id"],
+        claim_token=claimed["claim_token"],
+        container_ref="git:test",
+    )
+    pending_endpoint = service.turn(
+        runtime="claude-code",
+        session_ref="pending-recipient",
+        container_ref="git:test",
+    )["session"]["endpoint_id"]
+    claimed_endpoint = service.turn(
+        runtime="claude-code",
+        session_ref="claimed-recipient",
+        container_ref="git:test",
+    )["session"]["endpoint_id"]
+    current = datetime.now(timezone.utc)
     with storage._relay_session_factory.begin() as db:
-        db.add(RelayDeliveryRecord(
-            id=second_id, message_id=message["message_id"], recipient_runtime="claude-code",
-            recipient_session_ref="mixed-recipient", recipient_endpoint_id=second["endpoint_id"],
-            recipient_container_ref="git:test", state="pending", attempts=0,
-            trace_truncated=1,
-        ))
+        db.add_all(
+            [
+                RelayDeliveryRecord(
+                    id="relay-delivery-" + "c" * 32,
+                    message_id=message["message_id"],
+                    recipient_runtime="claude-code",
+                    recipient_session_ref="pending-recipient",
+                    recipient_endpoint_id=pending_endpoint,
+                    recipient_container_ref="git:test",
+                    state="pending",
+                    attempts=0,
+                    trace_version=1,
+                ),
+                RelayDeliveryRecord(
+                    id="relay-delivery-" + "d" * 32,
+                    message_id=message["message_id"],
+                    recipient_runtime="claude-code",
+                    recipient_session_ref="claimed-recipient",
+                    recipient_endpoint_id=claimed_endpoint,
+                    recipient_container_ref="git:test",
+                    state="claimed",
+                    claim_token="relay-claim-" + "d" * 32,
+                    claimed_at=current,
+                    lease_expires_at=current + timedelta(minutes=1),
+                    attempts=1,
+                    trace_version=1,
+                ),
+            ]
+        )
+    explanation = service.trace_message(message_id=message["message_id"])[
+        "explanation"
+    ]
+    assert "claimed=1" in explanation
+    assert "delivered=1" in explanation
+    assert "pending=1" in explanation
+
+
+def test_mixed_legacy_current_fanout_is_an_evidence_gap(relay):
+    storage, service, _ = relay
+    message = _message(service)
+    endpoint = service.turn(
+        runtime="claude-code",
+        session_ref="legacy-recipient",
+        container_ref="git:test",
+    )["session"]["endpoint_id"]
+    with storage._relay_session_factory.begin() as db:
+        db.add(
+            RelayDeliveryRecord(
+                id="relay-delivery-" + "e" * 32,
+                message_id=message["message_id"],
+                recipient_runtime="claude-code",
+                recipient_session_ref="legacy-recipient",
+                recipient_endpoint_id=endpoint,
+                recipient_container_ref="git:test",
+                state="pending",
+                attempts=0,
+                trace_version=None,
+            )
+        )
     trace = service.trace_message(message_id=message["message_id"])
-    assert "delivered=1" in trace["explanation"] and "pending=1" in trace["explanation"]
-    assert "Activation evidence is incomplete or unavailable" in trace["explanation"]
+    assert trace["legacy"] is False
+    assert trace["gap"] is True
+    assert trace["explanation"].startswith("Unknown:")
 
 
 @pytest.mark.parametrize("marker", ["legacy", "truncated", "pruned"])

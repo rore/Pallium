@@ -2103,6 +2103,7 @@ class SQLiteRelayMixin:
                 )
             truncated = any(bool(row.trace_truncated) for row in deliveries)
             pruned = any(bool(row.trace_pruned) for row in deliveries)
+            has_legacy = any(row.trace_version is None for row in deliveries)
             legacy = bool(deliveries) and all(
                 row.trace_version is None for row in deliveries
             )
@@ -2116,7 +2117,7 @@ class SQLiteRelayMixin:
             }
             gap_suffix = (
                 " Activation evidence is incomplete or unavailable."
-                if legacy or truncated or pruned
+                if has_legacy or truncated or pruned
                 else ""
             )
             if states == {"delivered"}:
@@ -2144,15 +2145,15 @@ class SQLiteRelayMixin:
                     "valid payload was delivered before expiry."
                     if never_claimed
                     else "Expired: No recipient delivery was acknowledged before expiry. "
-                    "Prior claim or activation evidence does not prove payload processing "
-                    "and is not evidence of hook failure."
+                    "Payload processing and hook outcome remain unknown despite prior claim "
+                    "or activation evidence."
                 ) + gap_suffix
             elif legacy:
                 explanation = (
                     "Unknown: This delivery predates trace support; activation evidence "
                     "is unavailable. Use the current delivery state as authoritative."
                 )
-            elif truncated or pruned:
+            elif has_legacy or truncated or pruned:
                 explanation = (
                     "Unknown: Trace evidence has a known gap. Use the current delivery "
                     "state as authoritative; recorded activation events may be incomplete."
@@ -2218,6 +2219,6 @@ class SQLiteRelayMixin:
                 "absent": not events,
                 "truncated": truncated,
                 "pruned": pruned,
-                "gap": legacy or truncated or pruned,
+                "gap": has_legacy or truncated or pruned,
                 "explanation": explanation,
             }
