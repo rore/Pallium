@@ -248,3 +248,33 @@ def test_field_feedback_guidance_is_lazy_aligned_and_safe() -> None:
         "Do not add telemetry, service APIs, or feedback storage",
     ):
         assert required in detail
+
+
+def test_history_guidance_preserves_replay_ledger_and_live_verification_contract() -> None:
+    spec = importlib.util.spec_from_file_location("claude_block_replay", "integrations/claude-code/claude_md_block.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    surfaces = (
+        module.get_claude_md_block("base"),
+        module.get_claude_md_block("strong"),
+        Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8"),
+        Path("integrations/opencode/AGENTS.md").read_text(encoding="utf-8"),
+        *(Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")
+          for runtime in ("claude-code", "codex", "opencode")),
+        Path("integrations/opencode/.opencode/command/pallium-memory.md").read_text(encoding="utf-8"),
+        Path("docs/claude-code-integration.md").read_text(encoding="utf-8"),
+        Path("docs/codex-integration.md").read_text(encoding="utf-8"),
+    )
+    required = (
+        "delivered-page ledger",
+        "query repair",
+        "retry the same failed page",
+        "unread pages",
+        "bounded retries",
+        "page-specific lookup lineage",
+        "content revision",
+        "historical recap",
+        "verify current state live",
+    )
+    for rendered in surfaces:
+        assert all(term.lower() in rendered.lower() for term in required)
