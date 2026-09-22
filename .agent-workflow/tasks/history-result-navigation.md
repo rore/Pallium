@@ -88,8 +88,8 @@ Implemented MCP-local, revision-checked result paging in the shared History form
 
 ## Evidence
 
-Red baseline: tests/test_history_presentation.py -> 6 failed, 13 passed for the intended missing paging inputs, metadata, and preview_unavailable contract. Green focused evidence: presentation 21 passed; MCP work-history contract 38 passed; real broad/exact 50-result MCP-to-HTTP paging E2E 2 passed. Affected History/MCP subsystem run passed 206 tests; the two later request-binding/retry tests passed in the 38-test contract run. One required full suite ran once: 5,148 passed, 34 skipped, 215 deselected, 2 xfailed, with one guidance-budget failure (1,301 vs 1,300 characters). The description was shortened without semantic change and the failing node plus schema-description test then passed 2/2.
+Red baseline: tests/test_history_presentation.py -> 6 failed, 13 passed for the intended missing paging inputs, metadata, and preview_unavailable contract. Green focused evidence: presentation 21 passed; MCP work-history contract 38 passed; real broad/exact 50-result MCP-to-HTTP paging E2E 2 passed. Affected History/MCP subsystem run passed 206 tests; the two later request-binding/retry tests passed in the 38-test contract run. One required full suite ran once: 5,148 passed, 34 skipped, 215 deselected, 2 xfailed, with one guidance-budget failure (1,301 vs 1,300 characters). The description was shortened without semantic change and the failing node plus schema-description test then passed 2/2. Post-review gap checks for pressure fallback, equal-length visible changes, request/filter/scope staleness, and rejected-page audit absence passed 5/5.
 
 ## Result review
 
-Pending.
+Clean-context review found no implementation correctness or security defect. It raised two P2 acceptance-coverage gaps: the replacement-status navigation test did not force fitting pressure, and caller-surface stale coverage did not include request/filter/scope or equal-length visible changes. Both gaps were addressed with focused and real MCP-to-HTTP assertions; follow-up verification is pending.

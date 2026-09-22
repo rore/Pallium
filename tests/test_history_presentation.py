@@ -366,7 +366,7 @@ def test_empty_backend_excerpt_is_navigation_only() -> None:
     assert "lookup_event_id" in page["historical_reminder"]
 
 
-def test_navigation_only_keeps_replacement_guidance_and_status() -> None:
+def test_navigation_only_under_pressure_keeps_replacement_guidance_and_status() -> None:
     page = _compact_history(
         {
             "results": [{
@@ -375,7 +375,7 @@ def test_navigation_only_keeps_replacement_guidance_and_status() -> None:
                 "historical_updates": [{
                     "status": "outdated",
                     "replacement_status": "current",
-                    "current_text": "replacement",
+                    "current_text": "replacement " * 1000,
                 }],
             }],
             "lookup_event_id": "l" * 36,
@@ -390,6 +390,8 @@ def test_navigation_only_keeps_replacement_guidance_and_status() -> None:
     update = hit["historical_updates"][0]
     assert update["status"] == "outdated"
     assert update["replacement_status"] == "current"
+    assert len(update.get("current_text", "")) < len("replacement " * 1000)
+    assert len(_json_text(page)) <= _MCP_SEARCH_MAX_CHARS
 
 
 def test_terminal_offsets_and_equal_length_revision_changes_are_explicit() -> None:

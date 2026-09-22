@@ -1301,6 +1301,31 @@ async def test_mcp_history_result_pages_cover_fifty_hits_with_fresh_audit_lineag
             "SELECT COUNT(*) FROM historical_lookup_reuse_event "
             "WHERE session_id = :session_id AND event_type = 'lookup'"
         ), {"session_id": active_thread}).scalar_one()
+    changed_request = {
+        **arguments,
+        "result_offset": 0,
+        "result_revision": revision,
+    }
+    if exact_work:
+        changed_request["query"] = query.upper()
+    else:
+        changed_request["role"] = "user"
+    changed_content, _ = await server.call_tool(tool_name, changed_request)
+    assert json.loads(changed_content[0].text)["error_kind"] == "stale_result_revision"
+
+    changed_scope_content, _ = await server.call_tool(tool_name, {
+        **arguments,
+        "container_ref": f"{container}-other",
+        "result_offset": 0,
+        "result_revision": revision,
+    })
+    assert json.loads(changed_scope_content[0].text)["error_kind"] == "stale_result_revision"
+    with storage._engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT COUNT(*) FROM historical_lookup_reuse_event "
+            "WHERE session_id = :session_id AND event_type = 'lookup'"
+        ), {"session_id": active_thread}).scalar_one() == lookups_before_stale
+
     async with real_async_client(
         transport=transport, base_url="http://testserver", timeout=30.0,
     ) as http:

@@ -611,3 +611,43 @@ async def test_history_later_page_retry_is_stable_with_fresh_lookup_ids(
     retry.pop("lookup_event_id")
     assert later == retry
     assert finalize.await_args_list[1].kwargs["items"] == finalize.await_args_list[2].kwargs["items"]
+
+
+@pytest.mark.asyncio
+async def test_equal_length_visible_change_stales_without_finalizing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    search = AsyncMock(side_effect=[
+        {
+            "results": [{"source_item_id": "same", "excerpt": "alpha"}],
+            "delivery_attempt_id": "attempt-first",
+        },
+        {
+            "results": [{"source_item_id": "same", "excerpt": "bravo"}],
+            "delivery_attempt_id": "attempt-changed",
+        },
+    ])
+    finalize = AsyncMock(return_value={"lookup_event_id": "lookup-first"})
+    with (
+        patch.object(PalliumMcpClient, "search_history", new=search),
+        patch.object(PalliumMcpClient, "finalize_historical_delivery", new=finalize),
+    ):
+        server = _create_server()
+        first_content, _ = await server.call_tool(
+            "pallium_search_history",
+            {"query": "evidence", "container_ref": "c", "visibility": "private"},
+        )
+        first = json.loads(first_content[0].text)
+        stale_content, _ = await server.call_tool(
+            "pallium_search_history",
+            {
+                "query": "evidence",
+                "result_revision": first["result_revision"],
+                "container_ref": "c",
+                "visibility": "private",
+            },
+        )
+
+    assert json.loads(stale_content[0].text)["error_kind"] == "stale_result_revision"
+    assert finalize.await_count == 1
