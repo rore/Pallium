@@ -1404,3 +1404,74 @@ async def test_mcp_history_diagnostic_create_reread_forget_reread(pallium_asgi_a
             text("SELECT COUNT(*) FROM historical_lookup_reuse_event")
         ).scalar_one()
     assert lookup_count_after == lookup_count_before
+
+@pytest.mark.asyncio
+async def test_mcp_history_diagnostic_packaging_matches_exact_work_search(
+    pallium_asgi_app, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    container = "git:example/history-packaging-parity"
+    active_session = "history:packaging-reader"
+    query = "bounded packaging parity marker"
+    work_ref = "exact-work-" + ("a" * 117)
+    transport = httpx.ASGITransport(app=pallium_asgi_app)
+    real_async_client = httpx.AsyncClient
+    async with real_async_client(transport=transport, base_url="http://testserver") as http:
+        created = await http.post("/items", json=[
+            {
+                "source_type": "chat_message",
+                "source_id": f"packaging-parity-{index}",
+                "content_type": "text/plain",
+                "content": f"{query} candidate {index} " + ("long evidence detail " * 120),
+                "artifact_kind": "message",
+                "role": "user",
+                "actor_ref": "packaging-source",
+                "container_ref": container,
+                "thread_ref": "history:packaging-source",
+                "visibility": "private",
+                "metadata": {"pallium_work_refs": [work_ref]},
+            }
+            for index in range(5)
+        ])
+        assert created.status_code == 200, created.text
+
+    pallium_asgi_app.state.pallium_service.drain_processing_queue(
+        worker_id="history-packaging-parity"
+    )
+
+    def asgi_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        kwargs["base_url"] = "http://testserver"
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr("app.mcp.client.httpx.AsyncClient", asgi_client)
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
+    server = create_server()
+    arguments = {
+        "query": query,
+        "work_ref": work_ref,
+        "limit": 5,
+        "container_ref": container,
+        "thread_ref": active_session,
+        "visibility": "private",
+    }
+
+    search_content, _ = await server.call_tool(
+        "pallium_search_history_by_work_ref", arguments
+    )
+    search = json.loads(search_content[0].text)
+    assert search["total_count"] == 5
+    assert 0 < len(search["results"]) < search["total_count"]
+
+    diagnostic_content, _ = await server.call_tool(
+        "pallium_create_history_diagnostic",
+        {
+            **{key: value for key, value in arguments.items() if key != "work_ref"},
+            "work_refs": [work_ref],
+            "idempotency_key": "packaging-parity",
+        },
+    )
+    diagnostic = json.loads(diagnostic_content[0].text)
+    packaging = diagnostic["trace"]["packaging"]
+    assert len(packaging["retained_final_ranks"]) == len(search["results"])
+    assert packaging["omitted_count"] == search["total_count"] - len(search["results"])
+    assert packaging["omitted_count"] > 0

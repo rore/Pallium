@@ -746,7 +746,6 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    @abstractmethod
     def create_history_diagnostic(self, row: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -763,6 +762,8 @@ class StorageProvider(ABC):
         visibility: str, idempotency_key: str,
     ) -> dict[str, Any] | None:
         raise NotImplementedError
+
+    @abstractmethod
     def write_historical_lookup_label_row(self, row: dict[str, Any]) -> None:
         """Append one per-rater rung label for a reuse event (append-only)."""
         raise NotImplementedError

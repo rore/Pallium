@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 
 import pytest
@@ -73,6 +74,39 @@ def test_diagnostic_reread_sanitizes_real_source_after_forget(client, drain_queu
     assert source_id not in json.dumps(retry.json())
 
 
+def test_create_sanitizes_forget_between_save_and_public_response(
+    client, drain_queue, monkeypatch,
+):
+    ingested = client.post("/items", json=[{
+        "source_type": "chat_thread",
+        "source_id": "diagnostic-save-race",
+        "content_type": "text/plain",
+        "content": "save race evidence",
+        "container_ref": "git:example/history",
+        "thread_ref": "source-thread",
+        "artifact_kind": "message",
+        "role": "user",
+        "visibility": "private",
+    }])
+    assert ingested.status_code == 200
+    source_id = ingested.json()[0]["source_item_id"]
+    drain_queue(client)
+    service = client.app.state.pallium_service
+    save = service.save_history_diagnostic
+
+    def save_then_forget(row):
+        stored = save(row)
+        service.forget_source(source_item_id=source_id, reason="lifecycle race")
+        return stored
+
+    monkeypatch.setattr(service, "save_history_diagnostic", save_then_forget)
+    response = _create(client, key="save-race", text="save race evidence")
+
+    assert response.status_code == 201
+    assert source_id not in json.dumps(response.json())
+
+
+
 def test_same_key_changed_request_is_conflict_and_identical_retry_is_stable(client):
     first = _create(client, key="same-key", text="first query", limit=3)
     assert first.status_code == 201
@@ -83,7 +117,33 @@ def test_same_key_changed_request_is_conflict_and_identical_retry_is_stable(clie
     assert retry.status_code == 200 and retry.json()["diagnostic_id"] == diagnostic_id
 
 
-def test_diagnostic_create_does_not_mutate_lookup_usage_or_query_state(client):
+def test_concurrent_identical_http_creates_converge_on_one_diagnostic(client):
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(
+            lambda _: _create(client, key="concurrent-http", text="same request"),
+            range(2),
+        ))
+
+    assert sorted(response.status_code for response in responses) == [200, 201]
+    assert len({response.json()["diagnostic_id"] for response in responses}) == 1
+
+
+
+def test_diagnostic_create_does_not_mutate_lookup_usage_or_query_state(client, drain_queue):
+    ingested = client.post("/items", json=[{
+        "source_type": "chat_thread",
+        "source_id": "diagnostic-state-source",
+        "content_type": "text/plain",
+        "content": "nonempty diagnostic state evidence",
+        "container_ref": "git:example/history",
+        "thread_ref": "source-thread",
+        "artifact_kind": "message",
+        "role": "user",
+        "visibility": "private",
+    }])
+    assert ingested.status_code == 200
+    source_id = ingested.json()[0]["source_item_id"]
+    drain_queue(client)
     service = client.app.state.pallium_service
     storage = service._storage
     tables = (
@@ -98,9 +158,10 @@ def test_diagnostic_create_does_not_mutate_lookup_usage_or_query_state(client):
         }
     stats_before = service._query_stats.snapshot()
 
-    created = _create(client, key="no-state-mutation")
+    created = _create(client, key="no-state-mutation", text="nonempty state evidence")
 
     assert created.status_code == 201
+    assert source_id in json.dumps(created.json())
     with storage._engine.connect() as conn:
         after = {
             table: conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
@@ -109,6 +170,68 @@ def test_diagnostic_create_does_not_mutate_lookup_usage_or_query_state(client):
     assert after == before
     assert service._query_stats.snapshot() == stats_before
 
+
+def test_post_save_reread_runtime_is_typed_and_privacy_safe(client, monkeypatch):
+    service = client.app.state.pallium_service
+    monkeypatch.setattr(
+        service,
+        "read_history_diagnostic",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("private reread failure")),
+    )
+    safe_client = client.__class__(client.app, raise_server_exceptions=False)
+
+    response = _create(safe_client, key="post-save-reread-failure")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "diagnostic_persistence_failed"
+    assert "private reread failure" not in response.text
+    assert "diagnostic_id" not in response.text
+
+
+def test_explicit_reread_runtime_is_typed_and_privacy_safe(client, monkeypatch):
+    created = _create(client, key="explicit-reread-failure")
+    assert created.status_code == 201
+    service = client.app.state.pallium_service
+    monkeypatch.setattr(
+        service,
+        "read_history_diagnostic",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("private reread failure")),
+    )
+    safe_client = client.__class__(client.app, raise_server_exceptions=False)
+
+    response = _read(safe_client, created.json()["diagnostic_id"])
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "diagnostic_persistence_failed"
+    assert "private reread failure" not in response.text
+    assert "diagnostic_id" not in response.text
+
+def test_diagnostic_preserves_omission_counts_after_limit_transformation(client, drain_queue):
+    ingested = client.post("/items", json=[{
+        "source_type": "chat_thread",
+        "source_id": f"diagnostic-omission-{index}",
+        "content_type": "text/plain",
+        "content": f"four-source omission evidence {index}",
+        "container_ref": "git:example/history",
+        "thread_ref": "diagnostic-omission-source",
+        "artifact_kind": "message",
+        "role": "user",
+        "visibility": "private",
+    } for index in range(4)])
+    assert ingested.status_code == 200
+    drain_queue(client)
+
+    response = _create(
+        client,
+        key="four-source-omission",
+        text="four-source omission evidence",
+        limit=1,
+    )
+
+    assert response.status_code == 201
+    trace = response.json()["trace"]
+    assert trace["ranking"]["omitted_count"] > 0
+    assert trace["query_limit"]["omitted_count"] > 0
 
 def test_persistence_failure_does_not_expose_diagnostic_id(client, monkeypatch):
     monkeypatch.setattr("storage.sqlite.SQLiteStorageProvider.create_history_diagnostic", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("storage unavailable")), raising=False)
@@ -124,6 +247,70 @@ def test_authorized_corrupt_snapshot_is_distinct_from_unavailable(client, monkey
     response = _read(client, diagnostic_id)
     assert response.status_code == 500 and response.json()["detail"]["code"] == "diagnostic_corrupt"
 
+
+@pytest.mark.parametrize("corruption", [
+    "stages_null",
+    "duplicate_retained_ranks",
+    "inconsistent_packaging_omitted_count",
+    "invisible_malformed_candidate",
+])
+def test_authorized_corrupt_snapshot_variants_fail_closed(client, drain_queue, monkeypatch, corruption):
+    if corruption == "invisible_malformed_candidate":
+        ingested = client.post("/items", json=[{
+            "source_type": "chat_thread",
+            "source_id": "diagnostic-invisible-corrupt",
+            "content_type": "text/plain",
+            "content": "invisible corruption evidence",
+            "container_ref": "git:example/history",
+            "thread_ref": "diagnostic-corrupt-source",
+            "artifact_kind": "message",
+            "role": "user",
+            "visibility": "private",
+        }])
+        assert ingested.status_code == 200
+        drain_queue(client)
+        created = _create(client, key=f"corrupt-{corruption}", text="invisible corruption evidence")
+    else:
+        created = _create(client, key=f"corrupt-{corruption}")
+    assert created.status_code == 201
+    diagnostic_id = created.json()["diagnostic_id"]
+    storage = client.app.state.pallium_service._storage
+    row = storage.get_history_diagnostic(
+        diagnostic_id,
+        container_ref="git:example/history",
+        active_session_ref="session-diagnostic-caller",
+        visibility="private",
+    )
+    snapshot = json.loads(row["snapshot_json"])
+    if corruption == "stages_null":
+        snapshot["trace"]["stages"] = None
+    elif corruption == "duplicate_retained_ranks":
+        snapshot["trace"]["packaging"]["retained_final_ranks"] = [1, 1]
+    elif corruption == "inconsistent_packaging_omitted_count":
+        snapshot["trace"]["packaging"]["omitted_count"] = 1
+    else:
+        source_id = next(
+            candidate["source_item_id"]
+            for section in snapshot["trace"]["stages"]
+            for candidate in section["candidates"]
+        )
+        forgotten = client.post("/source/forget", json={
+            "source_item_id": source_id,
+            "reason": "corruption test",
+        })
+        assert forgotten.status_code == 200
+        for section in snapshot["trace"]["stages"]:
+            for candidate in section["candidates"]:
+                if candidate["source_item_id"] == source_id:
+                    candidate["rank"] = "not-an-integer"
+                    candidate["score"] = float("nan")
+    corrupt = {**row, "snapshot_json": json.dumps(snapshot)}
+    monkeypatch.setattr(storage, "get_history_diagnostic", lambda *a, **k: corrupt)
+
+    response = _read(client, diagnostic_id)
+
+    assert response.status_code == 500
+    assert response.json()["detail"]["code"] == "diagnostic_corrupt"
 
 @pytest.mark.parametrize("path", ["/query", "/query/debug"])
 def test_ordinary_query_shapes_remain_unchanged(client, path):

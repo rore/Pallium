@@ -160,4 +160,4 @@ Focused affected-subsystem gate: 398 passed. Additional diagnostic HTTP E2E: 25 
 
 ## Result review
 
-Pending.
+Clean-context result review at db788fa6 requested four changes: preserve diagnostic-only counters through frozen dataclass copies, reject malformed/cross-field-inconsistent snapshots before live filtering, include the exact-work MCP envelope in packaging observations, and type backend read failures. All four were reproduced and fixed. Follow-up coverage also closes the previously claimed but missing nonempty telemetry-isolation, save-to-response forgetting race, concurrent HTTP create, vector/fusion, and real exact-work MCP packaging journeys. Focused post-fix gate: 298 passed; diagnostic HTTP/vector gate: 36 passed; exact-work MCP parity node: 1 passed. Exact-HEAD re-review is pending.

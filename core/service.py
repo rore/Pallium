@@ -1287,7 +1287,7 @@ class PalliumService:
         exact_fields(trace, allowed_trace, "trace")
 
         candidate_sections: list[list[dict[str, object]]] = []
-        stages = trace.get("stages") or []
+        stages = trace.get("stages")
         if not isinstance(stages, list):
             raise HistoryDiagnosticCorruptError("invalid diagnostic stages")
         stage_fields = {
@@ -1352,8 +1352,6 @@ class PalliumService:
             ):
                 raise HistoryDiagnosticCorruptError("invalid diagnostic candidate")
             source_id = candidate["source_item_id"]
-            if source_id not in visible_ids:
-                return None
             rank = candidate.get("rank")
             if type(rank) is not int or not 1 <= rank <= 200:
                 raise HistoryDiagnosticCorruptError("invalid diagnostic rank")
@@ -1368,6 +1366,8 @@ class PalliumService:
                 if channel not in {"lexical", "vector", "both"}:
                     raise HistoryDiagnosticCorruptError("invalid diagnostic channel")
                 safe["match_channel"] = channel
+            if source_id not in visible_ids:
+                return None
             return safe
 
         safe_stages: list[dict[str, object]] = []
@@ -1382,6 +1382,8 @@ class PalliumService:
                 sanitized for candidate in raw_candidates
                 if (sanitized := safe_candidate(candidate)) is not None
             ]
+            if len({candidate["rank"] for candidate in raw_candidates}) != len(raw_candidates):
+                raise HistoryDiagnosticCorruptError("duplicate diagnostic stage rank")
             candidate_count = bounded_int(stage["candidate_count"])
             selected_count = bounded_int(stage["selected_count"])
             omitted_count = bounded_int(stage["omitted_count"])
@@ -1405,6 +1407,8 @@ class PalliumService:
             sanitized for candidate in fusion.get("candidates", [])
             if (sanitized := safe_candidate(candidate)) is not None
         ]
+        if len({candidate["rank"] for candidate in fusion["candidates"]}) != len(fusion["candidates"]):
+            raise HistoryDiagnosticCorruptError("duplicate diagnostic fusion rank")
         raw_ranked_results = ranking["results"]
         if len(fusion["candidates"]) > 200 or len(raw_ranked_results) > 50:
             raise HistoryDiagnosticCorruptError("diagnostic candidate bound exceeded")
@@ -1420,6 +1424,8 @@ class PalliumService:
             sanitized for candidate in raw_ranked_results
             if (sanitized := safe_candidate(candidate)) is not None
         ]
+        if len({candidate["rank"] for candidate in raw_ranked_results}) != len(raw_ranked_results):
+            raise HistoryDiagnosticCorruptError("duplicate diagnostic ranking rank")
         visible_ranks = {item["rank"] for item in ranked_results}
 
         packaging = exact_fields(
@@ -1429,17 +1435,26 @@ class PalliumService:
         )
         if packaging["observed_at"] != "creation":
             raise HistoryDiagnosticCorruptError("invalid diagnostic packaging observation")
-        retained_ranks = packaging.get("retained_final_ranks") or []
+        retained_ranks = packaging.get("retained_final_ranks")
         if not isinstance(retained_ranks, list) or any(
             type(rank) is not int or not 1 <= rank <= 50 for rank in retained_ranks
         ):
             raise HistoryDiagnosticCorruptError("invalid diagnostic packaging ranks")
+        if len(set(retained_ranks)) != len(retained_ranks):
+            raise HistoryDiagnosticCorruptError("duplicate diagnostic packaging rank")
         fit_status = packaging["fit_status"]
-        if fit_status not in {"fit", "truncated", "empty", "unrepresentable"}:
+        if fit_status not in {"fit", "truncated"}:
             raise HistoryDiagnosticCorruptError("invalid diagnostic packaging status")
-        raw_ranks = {candidate["rank"] for candidate in raw_ranked_results}
-        if any(rank not in raw_ranks for rank in retained_ranks):
+        raw_rank_order = [candidate["rank"] for candidate in raw_ranked_results]
+        if retained_ranks != raw_rank_order[:len(retained_ranks)]:
             raise HistoryDiagnosticCorruptError("invalid diagnostic packaging rank")
+        packaging_budget = bounded_int(packaging["budget"], maximum=65_536)
+        packaging_omitted = bounded_int(packaging["omitted_count"], maximum=50)
+        if (
+            len(retained_ranks) + packaging_omitted != len(raw_ranked_results)
+            or (fit_status == "fit") != (packaging_omitted == 0)
+        ):
+            raise HistoryDiagnosticCorruptError("impossible diagnostic packaging counts")
 
         scope = exact_fields(
             trace.get("scope"), {"requested", "effective"}, "scope"
@@ -1498,10 +1513,13 @@ class PalliumService:
         requested_limit = bounded_int(query_limit["requested"], maximum=50)
         returned_count = bounded_int(query_limit["returned"], maximum=50)
         limit_omitted = bounded_int(query_limit["omitted_count"], maximum=200)
+        ranking_omitted = bounded_int(ranking["omitted_count"], maximum=200)
         if (
             requested_limit < 1
             or returned_count > requested_limit
             or len(raw_ranked_results) != returned_count
+            or ranking_omitted != limit_omitted
+            or (snapshot["outcome"] == "valid_empty") != (returned_count == 0)
         ):
             raise HistoryDiagnosticCorruptError("impossible diagnostic query-limit counts")
         safe_trace = {
@@ -1531,16 +1549,16 @@ class PalliumService:
             "exclusions": safe_exclusions,
             "ranking": {
                 "results": ranked_results,
-                "omitted_count": bounded_int(ranking.get("omitted_count", 0)),
+                "omitted_count": ranking_omitted,
                 "read_excluded_count": len(ranking.get("results", [])) - len(ranked_results),
             },
             "packaging": {
                 "observed_at": "creation",
-                "budget": bounded_int(packaging.get("budget", 0), maximum=65_536),
+                "budget": packaging_budget,
                 "retained_final_ranks": [
                     rank for rank in retained_ranks if rank in visible_ranks
                 ],
-                "omitted_count": bounded_int(packaging.get("omitted_count", 0)),
+                "omitted_count": packaging_omitted,
                 "fit_status": fit_status,
                 "read_excluded_count": len(retained_ranks)
                 - len([rank for rank in retained_ranks if rank in visible_ranks]),

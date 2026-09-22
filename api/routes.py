@@ -456,7 +456,7 @@ def _build_history_diagnostic_snapshot(
             {"reason": item.reason[:64], "count": item.count}
             for item in trace.visibility.excluded_candidates
         ]
-    routing = getattr(result, "_source_only_diagnostics", {})
+    routing = result._source_only_diagnostics
     requested_limit = request.limit
     returned = len(ranked_results)
     scope = {
@@ -1299,6 +1299,8 @@ def create_router(
                 request.limit,
                 container_ref,
                 requester.active_session_ref,
+                search_mode="exact_work_ref" if len(work_refs) == 1 else None,
+                requested_work_ref=work_refs[0] if len(work_refs) == 1 else None,
                 include_packaging_observation=True,
             )
             packaging = packed.get("packaging_observation")
@@ -1378,6 +1380,12 @@ def create_router(
                 status_code=500,
                 detail={"code": "diagnostic_corrupt"},
             ) from None
+        except Exception:
+            logger.exception("history diagnostic read failed")
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "diagnostic_persistence_failed"},
+            ) from None
         if safe is None:
             raise HTTPException(
                 status_code=500,
@@ -1422,6 +1430,12 @@ def create_router(
             raise HTTPException(
                 status_code=500,
                 detail={"code": "diagnostic_corrupt"},
+            ) from None
+        except Exception:
+            logger.exception("history diagnostic read failed")
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "diagnostic_persistence_failed"},
             ) from None
         if safe is None:
             raise HTTPException(

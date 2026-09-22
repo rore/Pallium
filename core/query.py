@@ -231,14 +231,14 @@ class QueryExecutor:
                 should_inject=False,
                 decision_reason="source_only_search",
                 injectable_blocks=[],
+                _source_only_diagnostics={
+                    "retrieved_count": retrieved_count,
+                    "request_identity_excluded_count": request_identity_excluded_count,
+                    "duplicate_count": max(0, len(results) - len(distinct)),
+                    "final_limit_omitted": max(0, len(distinct) - limit),
+                    "final_count": len(ranked),
+                },
             )
-            object.__setattr__(result, "_source_only_diagnostics", {
-                "retrieved_count": retrieved_count,
-                "request_identity_excluded_count": request_identity_excluded_count,
-                "duplicate_count": max(0, len(results) - len(distinct)),
-                "final_limit_omitted": max(0, len(distinct) - limit),
-                "final_count": len(ranked),
-            })
             if self._query_stats is not None:
                 self._query_stats.record_query(result, source_only=source_only)
             return result
