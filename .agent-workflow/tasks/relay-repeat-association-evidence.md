@@ -31,10 +31,16 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Evidence
 
 - Live installed trace was complete and exact: one prepared event, one uncertain `nonzero_exit` completion with `native_retry_safe=false`, then one same-attempt `associated` event. Recovery logs showed the later zero-attempt delivery was enumerated, but its trace remained absent and explained as Queued.
 - `apply_patch` had already failed in this session with Windows process-launch error 1327; this Work Record used the permitted deterministic narrow fallback.
+- The interrupted Luna implementation changed only the production guard and left malformed tests; its test-file delta was discarded by exact Git-backed replacement, then the approved regressions were rebuilt deterministically.
+- Implemented activation-versus-diagnostic selection in `_restart_trace_attempt_id`: exact prepare/completion requirements remain, with zero or one trailing same-attempt association allowed and every other trailing fact rejected.
+- Focused guard and restart caller-surface regressions -> `30 passed in 2.17s`.
+- Affected suites -> `117 passed in 29.48s` and `83 passed in 32.72s`.
+- Independent result review `/root/review_repeat_association_result` found no correctness issue and confirmed the association-only return path cannot launch, claim, ACK, or retry.
+- Full suite -> `5096 passed, 34 skipped, 2 xfailed in 218.47s`.
