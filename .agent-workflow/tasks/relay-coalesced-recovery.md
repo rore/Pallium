@@ -23,13 +23,17 @@
 
 **Verification plan:** Default wake-candidate reads remain one-per-endpoint while opt-in recovery reads all same-endpoint candidates in order, and exact-ID lookup remains unchanged -> storage/service regression. A real caller-surface restart with a retained uncertain fence and a later already-pending delivery shall run recovery, perform no second native submission, preserve attempts=0, and expose Needs intervention -> HTTP/integration regression. Moved or incomplete evidence shall remain queued without association -> fail-closed regression. Existing repeated busy-sweep tests shall still prove one native submission -> affected suite.
 
-**Plan review:** Pending clean-context review `/root/coalesced_recovery_review`; bounded read-only analysis `/root/coalesced_recovery_plan` found the opt-in query to be the smallest shared-path change.
+**Plan review:** Clean-context reviewer `/root/coalesced_recovery_review` approved the opt-in query plan at Elevated/Moderate with no checkpoint. It requires updating recovery test doubles for the new keyword and proving default/opt-in ordering, exact-ID behavior, one native submission, actionable later trace, and moved/missing/partial fail-closed behavior. Bounded read-only analysis `/root/coalesced_recovery_plan` independently found the same smallest shared-path change.
 
 **Approvals:** Not required unless reclassification reaches High.
 
 **Exceptions:** —
 
-**State:** Planned
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 Authoritative request source: `ff5d1534-0191-47f6-b586-95dd3c980476`.
+
+## Evidence
+
+- `apply_patch` failed once with Windows `CreateProcessWithLogonW failed: 1327`; the permitted deterministic narrow fallback was used.
