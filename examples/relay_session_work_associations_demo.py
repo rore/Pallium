@@ -316,7 +316,7 @@ def seed_demo(client: TestClient) -> dict[str, Any]:
             "trigger_origin": "agent_pull_work",
             "work_refs": [feature_key],
             "container_ref": SOURCE_CONTAINER,
-            "thread_ref": "relaydev",
+            "active_session_ref": "relaydev",
             "visibility": "private",
         },
     )
