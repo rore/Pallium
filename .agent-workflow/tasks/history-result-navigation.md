@@ -84,11 +84,11 @@ Clean-context reviewer /root/result_navigation_plan_review rejected the initial 
 
 ## Implementation
 
-Discovery, classification, and clean-context plan review complete. The first plan was rejected, corrected twice, and approved at commit 45d1327d. State transitioned to Ready to implement; no production or test files changed. The sandboxed patch helper later failed with the documented Windows CreateProcessWithLogonW 1327 condition, so this exact-file deterministic replacement was used.
+Discovery, classification, and clean-context plan review complete. The first plan was rejected, corrected twice, and approved at commit 45d1327d. State transitioned to Ready to implement; no production or test files changed. The sandboxed patch helper later failed with the documented Windows CreateProcessWithLogonW 1327 condition, so this exact-file deterministic replacement was used. Red baseline added in tests/test_history_presentation.py for paging pressure, 50-candidate traversal, navigation-only previews, replacement metadata, terminal/stale revisions, and Unicode serialization.
 
 ## Evidence
 
-Pending tests-first baseline.
+Red baseline: C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest tests/test_history_presentation.py -q -n 0 -> 6 failed, 13 passed. Failures are the intended missing result_offset/result_revision inputs, paging metadata, and explicit preview_unavailable contract; existing presentation cases remain green.
 
 ## Result review
 

@@ -260,3 +260,155 @@ def test_ten_hit_grouping_never_drops_origin_main_baseline_ids(
 
     assert [hit["source_item_id"] for hit in candidate["results"]] == baseline_ids
     assert len(_json_text(candidate)) <= _MCP_SEARCH_MAX_CHARS
+
+
+def test_ten_hit_pressure_pages_all_retained_ids_with_nonempty_previews() -> None:
+    ids = [f"hit-{index:02d}" for index in range(10)]
+    result = {"results": [
+        {"source_item_id": source_item_id, "excerpt": f"evidence {index}"}
+        for index, source_item_id in enumerate(ids)
+    ], "lookup_event_id": "l" * 36}
+
+    seen: list[str] = []
+    offset = 0
+    revision = None
+    while True:
+        page = _compact_history(
+            result,
+            "evidence",
+            limit=10,
+            result_offset=offset,
+            result_revision=revision,
+        )
+        revision = page["result_revision"]
+        seen.extend(hit["source_item_id"] for hit in page["results"])
+        assert all(hit.get("excerpt") for hit in page["results"])
+        if page["next_offset"] is None:
+            break
+        offset = page["next_offset"]
+
+    assert seen == ids
+
+
+def test_fifty_candidates_remain_reachable_across_bounded_pages() -> None:
+    ids = [f"candidate-{index:02d}" for index in range(50)]
+    result = {"results": [
+        {"source_item_id": source_item_id, "excerpt": f"evidence {index}"}
+        for index, source_item_id in enumerate(ids)
+    ], "lookup_event_id": "l" * 36}
+
+    seen: list[str] = []
+    offset = 0
+    revision = None
+    for _ in range(50):
+        page = _compact_history(
+            result,
+            "evidence",
+            limit=50,
+            result_offset=offset,
+            result_revision=revision,
+        )
+        revision = page["result_revision"]
+        seen.extend(hit["source_item_id"] for hit in page["results"])
+        if page["next_offset"] is None:
+            break
+        offset = page["next_offset"]
+    else:
+        pytest.fail("bounded paging did not terminate")
+
+    assert seen == ids
+    assert page["total_count"] == 50
+
+
+def test_empty_backend_excerpt_is_navigation_only() -> None:
+    page = _compact_history(
+        {
+            "results": [{"source_item_id": "empty", "excerpt": "   "}],
+            "lookup_event_id": "l" * 36,
+        },
+        "missing",
+        limit=1,
+    )
+
+    hit = page["results"][0]
+    assert hit["preview_unavailable"] is True
+    assert "excerpt" not in hit
+    assert page["lookup_event_id"] == "l" * 36
+    assert "lookup_event_id" in page["historical_reminder"]
+
+
+def test_navigation_only_keeps_replacement_guidance_and_status() -> None:
+    page = _compact_history(
+        {
+            "results": [{
+                "source_item_id": "outdated",
+                "excerpt": "",
+                "historical_updates": [{
+                    "status": "outdated",
+                    "replacement_status": "current",
+                    "current_text": "replacement",
+                }],
+            }],
+            "lookup_event_id": "l" * 36,
+        },
+        "missing",
+        limit=1,
+    )
+
+    hit = page["results"][0]
+    assert hit["preview_unavailable"] is True
+    assert hit["replacement_guidance"]
+    update = hit["historical_updates"][0]
+    assert update["status"] == "outdated"
+    assert update["replacement_status"] == "current"
+
+
+def test_terminal_offsets_and_equal_length_revision_changes_are_explicit() -> None:
+    result = {
+        "results": [
+            {"source_item_id": "a", "excerpt": "alpha"},
+            {"source_item_id": "b", "excerpt": "bravo"},
+        ],
+        "lookup_event_id": "l" * 36,
+    }
+    first = _compact_history(result, "", limit=2)
+    terminal = _compact_history(
+        result,
+        "",
+        limit=2,
+        result_offset=first["total_count"],
+        result_revision=first["result_revision"],
+    )
+    over_end = _compact_history(
+        result,
+        "",
+        limit=2,
+        result_offset=first["total_count"] + 1,
+        result_revision=first["result_revision"],
+    )
+    assert terminal["results"] == over_end["results"] == []
+    assert terminal["next_offset"] is over_end["next_offset"] is None
+
+    changed = {**result, "results": [result["results"][1], result["results"][0]]}
+    stale = _compact_history(
+        changed,
+        "",
+        limit=2,
+        result_offset=1,
+        result_revision=first["result_revision"],
+    )
+    assert stale["error"] == "history_result_revision_stale"
+
+
+def test_serialized_unicode_and_escaped_pages_stay_within_budget() -> None:
+    result = {
+        "results": [{
+            "source_item_id": f"unicode-{index}",
+            "excerpt": ('quoted \\"漢字😀\\" evidence ' * 300),
+        } for index in range(10)],
+        "lookup_event_id": "l" * 36,
+    }
+    page = _compact_history(result, "漢字", limit=10)
+
+    assert len(_json_text(page)) <= _MCP_SEARCH_MAX_CHARS
+    assert page["effective_max_chars"] <= _MCP_SEARCH_MAX_CHARS
