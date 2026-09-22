@@ -220,16 +220,31 @@ def test_grouped_history_preserves_feasible_ids_order_and_unicode_under_budget()
         requested_work_ref=work_ref,
     )
 
-    assert [hit["source_item_id"] for hit in result["results"]] == expected_ids
-    assert result["requested_work_ref"] == work_ref
-    assert all("thread_ref" not in hit for hit in result["results"])
-    assert "query" not in result
-    assert len(result["historical_reminder"]) <= 240
-    assert "source_item_id" in result["historical_reminder"]
-    assert "lookup_event_id" in result["historical_reminder"]
-    assert result["results"][0]["recorded_at_source"] == "ingest"
-    assert result["results"][0]["historical_updates"][0]["replacement_status"] == "current"
-    assert len(_json_text(result)) <= _MCP_SEARCH_MAX_CHARS
+    first_page = result
+    seen = [hit["source_item_id"] for hit in result["results"]]
+    while result["next_offset"] is not None:
+        result = _compact_history(
+            {"results": results, "lookup_event_id": "lookup-1"},
+            "漢字",
+            limit=3,
+            thread_ref="current",
+            search_mode="exact_work_ref",
+            requested_work_ref=work_ref,
+            result_offset=result["next_offset"],
+            result_revision=result["result_revision"],
+        )
+        seen.extend(hit["source_item_id"] for hit in result["results"])
+
+    assert seen == expected_ids
+    assert first_page["requested_work_ref"] == work_ref
+    assert all("thread_ref" not in hit for hit in first_page["results"])
+    assert "query" not in first_page
+    assert len(first_page["historical_reminder"]) <= 240
+    assert "source_item_id" in first_page["historical_reminder"]
+    assert "lookup_event_id" in first_page["historical_reminder"]
+    assert first_page["results"][0]["recorded_at_source"] == "ingest"
+    assert first_page["results"][0]["historical_updates"][0]["replacement_status"] == "current"
+    assert len(_json_text(first_page)) <= _MCP_SEARCH_MAX_CHARS
 
 
 @pytest.mark.parametrize("requested_work_ref", [None, "work-" + ("w" * 60)])
@@ -258,8 +273,22 @@ def test_ten_hit_grouping_never_drops_origin_main_baseline_ids(
         requested_work_ref=requested_work_ref,
     )
 
-    assert [hit["source_item_id"] for hit in candidate["results"]] == baseline_ids
-    assert len(_json_text(candidate)) <= _MCP_SEARCH_MAX_CHARS
+    seen = [hit["source_item_id"] for hit in candidate["results"]]
+    while candidate["next_offset"] is not None:
+        candidate = _compact_history(
+            {"results": results, "lookup_event_id": "l" * 36},
+            "evidence",
+            limit=10,
+            thread_ref="current-session",
+            search_mode="exact_work_ref",
+            requested_work_ref=requested_work_ref,
+            result_offset=candidate["next_offset"],
+            result_revision=candidate["result_revision"],
+        )
+        seen.extend(hit["source_item_id"] for hit in candidate["results"])
+        assert len(_json_text(candidate)) <= _MCP_SEARCH_MAX_CHARS
+
+    assert seen == baseline_ids
 
 
 def test_ten_hit_pressure_pages_all_retained_ids_with_nonempty_previews() -> None:
@@ -412,3 +441,43 @@ def test_serialized_unicode_and_escaped_pages_stay_within_budget() -> None:
 
     assert len(_json_text(page)) <= _MCP_SEARCH_MAX_CHARS
     assert page["effective_max_chars"] <= _MCP_SEARCH_MAX_CHARS
+
+
+
+def test_revision_binds_request_even_when_candidates_are_identical() -> None:
+    result = {
+        "results": [{"source_item_id": "same", "excerpt": "same evidence"}],
+        "lookup_event_id": "l" * 36,
+    }
+    first = _compact_history(
+        result,
+        "same",
+        limit=1,
+        revision_context={"mode": "broad", "query": "first"},
+    )
+
+    stale = _compact_history(
+        result,
+        "same",
+        limit=1,
+        result_offset=0,
+        result_revision=first["result_revision"],
+        revision_context={"mode": "broad", "query": "second"},
+    )
+
+    assert stale["error"] == "history_result_revision_stale"
+
+
+def test_impossible_singleton_fails_without_skipping_candidate() -> None:
+    page = _compact_history(
+        {
+            "results": [{"source_item_id": "x" * 2200, "excerpt": "evidence"}],
+            "lookup_event_id": "l" * 36,
+        },
+        "evidence",
+        limit=1,
+    )
+
+    assert page["error"] == "history_result_exceeds_response_budget"
+    assert page["result_offset"] == 0
+    assert page["retryable"] is False

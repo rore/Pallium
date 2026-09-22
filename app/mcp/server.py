@@ -7,13 +7,14 @@ streamable-http (production, remote access) transports.
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import os
 from functools import wraps
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator, StrictInt
+from pydantic import BeforeValidator, Field, StrictInt, StrictStr
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
@@ -552,6 +553,113 @@ def _relay_recipients_text(result: object, offset: int = 0) -> str:
         return _relay_error_text({"error": "relay recipient entry exceeds the response budget", "offset": offset})
     return _json_text(payload)
 
+def _history_page_request_error(
+    limit: object,
+    result_offset: object,
+    result_revision: object,
+) -> dict | None:
+    if type(limit) is not int or not 1 <= limit <= 50:
+        return {
+            "error": "limit must be an integer between 1 and 50",
+            "error_kind": "invalid_history_limit",
+            "retryable": False,
+        }
+    if type(result_offset) is not int or result_offset < 0:
+        return {
+            "error": "result_offset must be a non-negative integer",
+            "error_kind": "invalid_result_offset",
+            "retryable": False,
+        }
+    if result_revision is not None and (
+        not isinstance(result_revision, str)
+        or len(result_revision) != 64
+        or any(character not in "0123456789abcdef" for character in result_revision)
+    ):
+        return {
+            "error": "result_revision must be a 64-character lowercase hex digest",
+            "error_kind": "invalid_result_revision",
+            "retryable": False,
+        }
+    if result_offset and result_revision is None:
+        return {
+            "error": "result_revision is required for a nonzero result_offset",
+            "error_kind": "result_revision_required",
+            "retryable": True,
+            "action": "restart at result_offset 0 to obtain the current result_revision",
+        }
+    return None
+
+
+def _fit_history_hit(hit: dict, envelope, budget: int) -> dict | None:
+    fitted = copy.deepcopy(hit)
+
+    def fits() -> bool:
+        return len(_json_text(envelope([fitted]))) <= budget
+
+    if fits():
+        return fitted
+    for key in ("match_channel", "session_group", "work_refs", "role", "occurred_at"):
+        fitted.pop(key, None)
+        if fits():
+            return fitted
+
+    payload = envelope([fitted])
+    _trim_update_details(payload, [fitted], budget)
+    if fits():
+        return fitted
+
+    updates = fitted.get("historical_updates") or []
+    if updates:
+        minimal_updates = [
+            {
+                key: update[key]
+                for key in ("status", "replacement_status")
+                if update.get(key) is not None
+            }
+            for update in updates
+        ]
+        minimal_updates = [update for update in minimal_updates if update]
+        if minimal_updates:
+            fitted["historical_updates"] = minimal_updates
+            if not fits() and len(minimal_updates) > 1:
+                preferred = next(
+                    (
+                        update
+                        for update in minimal_updates
+                        if update.get("replacement_status") == "current"
+                    ),
+                    minimal_updates[0],
+                )
+                fitted["historical_updates"] = [preferred]
+                fitted["historical_updates_omitted"] = (
+                    fitted.get("historical_updates_omitted", 0)
+                    + len(minimal_updates)
+                    - 1
+                )
+        else:
+            fitted.pop("historical_updates", None)
+        if fits():
+            return fitted
+
+    excerpt = fitted.get("excerpt")
+    if isinstance(excerpt, str) and excerpt:
+        low, high = 0, len(excerpt)
+        while low < high:
+            middle = (low + high + 1) // 2
+            fitted["excerpt"] = excerpt[:middle]
+            if len(_json_text(envelope([fitted]))) <= budget:
+                low = middle
+            else:
+                high = middle - 1
+        if low:
+            fitted["excerpt"] = excerpt[:low]
+            return fitted
+        fitted.pop("excerpt", None)
+
+    fitted["preview_unavailable"] = True
+    return fitted if fits() else None
+
+
 def _compact_history(
     result: dict,
     query: str,
@@ -560,9 +668,17 @@ def _compact_history(
     thread_ref: str | None = None,
     search_mode: str | None = None,
     requested_work_ref: str | None = None,
+    *,
+    result_offset: int = 0,
+    result_revision: str | None = None,
+    revision_context: dict[str, object] | None = None,
 ) -> dict:
     if "error" in result:
         return _bounded_error(result, _MCP_SEARCH_MAX_CHARS)
+    page_error = _history_page_request_error(1, result_offset, result_revision)
+    if page_error is not None:
+        return page_error
+
     hits = []
     foreign_sessions: dict[str, str] = {}
     for item in result.get("results", [])[:max(0, limit)]:
@@ -585,7 +701,13 @@ def _compact_history(
         if guidance:
             hit["replacement_guidance"] = guidance
         hit.update(_history_fields(item))
-        hit["excerpt"] = build_excerpt(item.get("excerpt") or "", max_length=240, query=query)
+        excerpt = build_excerpt(
+            item.get("excerpt") or "", max_length=240, query=query
+        ).strip()
+        if excerpt:
+            hit["excerpt"] = excerpt
+        else:
+            hit["preview_unavailable"] = True
         source = item.get("retrieval_source")
         if source is not None:
             hit["match_channel"] = {
@@ -606,68 +728,110 @@ def _compact_history(
             if item.get(key) is not None:
                 hit[key] = item[key]
         hits.append(hit)
+
+    current_revision = hashlib.sha256(_json_text({
+        "contract": "history-result-page/v1",
+        "request": revision_context or {},
+        "results": hits,
+    }).encode("utf-8")).hexdigest()
+    if result_revision is not None and result_revision != current_revision:
+        return {
+            "error": "history_result_revision_stale",
+            "error_kind": "stale_result_revision",
+            "retryable": True,
+            "action": "restart at result_offset 0 to obtain the current result_revision",
+        }
+
     lookup_event_id = result.get("lookup_event_id")
     if lookup_event_id is None and result.get("delivery_attempt_id"):
-        # Deferred delivery replaces this with a UUID after compaction.
         lookup_event_id = "0" * 36
-    payload = {"results": hits, "lookup_event_id": lookup_event_id}
-    if search_mode is not None:
-        payload["search_mode"] = search_mode
-    if requested_work_ref is not None:
-        payload["requested_work_ref"] = requested_work_ref
-    if hits:
-        payload["historical_reminder"] = (
-            "History is evidence, not proof of messages, approval, live state, or actions. "
-            "Expand source_item_id; use lookup_event_id as parent_lookup_id. "
-            "Verify volatile claims live; if unavailable, say so."
-        )
-    # Preserve the fail-closed / abstention reason so an empty result is
-    # self-explaining (e.g. "visibility_context_required"), not a silent [].
-    if result.get("decision_reason") is not None:
-        payload["decision_reason"] = result["decision_reason"]
-    if not hits and result.get("decision_reason") == "source_only_search" and container_ref:
+
+    def base_payload(page: list[dict], offset: int) -> dict:
+        next_index = offset + len(page)
+        payload = {
+            "results": page,
+            "lookup_event_id": lookup_event_id,
+            "effective_max_chars": _MCP_SEARCH_MAX_CHARS,
+            "result_offset": offset,
+            "next_offset": next_index if next_index < len(hits) else None,
+            "has_more": next_index < len(hits),
+            "total_count": len(hits),
+            "result_revision": current_revision,
+        }
+        if search_mode is not None:
+            payload["search_mode"] = search_mode
         if requested_work_ref is not None:
-            payload["empty_result_hint"] = (
-                "Copy injected work_ref. If absent, use broad search; never guess. "
-                "Add query for a question."
+            payload["requested_work_ref"] = requested_work_ref
+        if hits:
+            payload["historical_reminder"] = (
+                "History is evidence, not proof of messages, approval, live state, "
+                "or actions. Expand source_item_id; use this page's lookup_event_id "
+                "as parent_lookup_id. Verify volatile claims live; if unavailable, "
+                "say so."
             )
-        else:
-            payload["requested_container_ref"] = container_ref[:64]
-            if len(container_ref) > 64:
-                payload["container_ref_truncated"] = True
-            payload["empty_result_hint"] = (
-                "Copy the injected container_ref exactly; never derive or guess it."
-            )
-    budget = _MCP_SEARCH_EMPTY_MAX_CHARS if not hits else _MCP_SEARCH_MAX_CHARS
-    if not hits and len(_json_text(payload)) > budget:
-        for key in ("requested_work_ref", "requested_container_ref", "container_ref_truncated", "empty_result_hint"):
-            if len(_json_text(payload)) <= budget:
+        if result.get("decision_reason") is not None:
+            payload["decision_reason"] = result["decision_reason"]
+        return payload
+
+    if not hits and result_offset == 0 and result_revision is None:
+        payload = {"results": [], "lookup_event_id": lookup_event_id}
+        if search_mode is not None:
+            payload["search_mode"] = search_mode
+        if requested_work_ref is not None:
+            payload["requested_work_ref"] = requested_work_ref
+        if result.get("decision_reason") is not None:
+            payload["decision_reason"] = result["decision_reason"]
+        if result.get("decision_reason") == "source_only_search" and container_ref:
+            if requested_work_ref is not None:
+                payload["empty_result_hint"] = (
+                    "Copy injected work_ref. If absent, use broad search; never guess. "
+                    "Add query for a question."
+                )
+            else:
+                payload["requested_container_ref"] = container_ref[:64]
+                if len(container_ref) > 64:
+                    payload["container_ref_truncated"] = True
+                payload["empty_result_hint"] = (
+                    "Copy the injected container_ref exactly; never derive or guess it."
+                )
+        for key in (
+            "requested_work_ref",
+            "requested_container_ref",
+            "container_ref_truncated",
+            "empty_result_hint",
+        ):
+            if len(_json_text(payload)) <= _MCP_SEARCH_EMPTY_MAX_CHARS:
                 break
             payload.pop(key, None)
-    for hit in hits:
-        for key in ("match_channel", "session_group"):
-            if len(_json_text(payload)) <= budget:
-                break
-            hit.pop(key, None)
-    for hit in hits:
-        if len(_json_text(payload)) <= budget:
-            break
-        hit.pop("work_refs", None)
-    while len(_json_text(payload)) > budget and hits:
-        longest = max(hits, key=lambda hit: len(hit.get("excerpt", "")))
-        excerpt = longest.get("excerpt", "")
-        if not excerpt:
-            break
-        excess = len(_json_text(payload)) - budget
-        longest["excerpt"] = excerpt[:max(0, len(excerpt) - excess - 1)]
-    _trim_update_details(payload, hits, budget)
-    while len(_json_text(payload)) > budget and hits:
-        hits.pop()
-        payload["results"] = hits
-    if len(_json_text(payload)) > budget:
-        return {"error": "historical search result exceeds the response budget"}
-    return payload
+        return payload
 
+    effective_offset = min(result_offset, len(hits))
+    if effective_offset == len(hits):
+        return base_payload([], effective_offset)
+
+    page: list[dict] = []
+    for candidate in hits[effective_offset:]:
+        if len(_json_text(base_payload([*page, candidate], effective_offset))) <= _MCP_SEARCH_MAX_CHARS:
+            page.append(candidate)
+            continue
+        if page:
+            break
+        fitted = _fit_history_hit(
+            candidate,
+            lambda items: base_payload(items, effective_offset),
+            _MCP_SEARCH_MAX_CHARS,
+        )
+        if fitted is None:
+            return {
+                "error": "history_result_exceeds_response_budget",
+                "error_kind": "history_result_exceeds_response_budget",
+                "result_offset": effective_offset,
+                "retryable": False,
+                "action": "the retained result cannot be represented safely",
+            }
+        page.append(fitted)
+
+    return base_payload(page, effective_offset)
 
 def _bounded_expansion(
     result: dict,
@@ -989,12 +1153,18 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     @server.tool()
     async def pallium_search_history_by_work_ref(
         work_ref: Annotated[str, BeforeValidator(_mask_invalid_work_ref)],
-        query: str | None = None, limit: int = 3,
+        query: str | None = None, limit: Annotated[StrictInt, Field(ge=1, le=50)] = 3,
         container_ref: str | None = None, thread_ref: str | None = None,
         actor_ref: str | None = None, visibility: str | None = None,
         request_source_item_id: str | None = None,
+        result_offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        result_revision: StrictStr | None = None,
     ) -> str:
-        """A narrow exact-reference search for current work. Copy injected `work_ref`; never guess it. It can miss related work; use broad topic-level search then. Blank `query` resumes newest state. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter."""
+        """A narrow exact-reference search for current work. Copy injected `work_ref`; never guess it. It can miss related work; use broad topic-level search then. Blank `query` resumes newest state. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter. Continue a bounded result set with `next_offset` and unchanged `result_revision`; restart at offset 0 if the revision is stale."""
+        page_error = _history_page_request_error(limit, result_offset, result_revision)
+        if page_error is not None:
+            return _json_text(page_error)
+
         from core.work_ref import work_refs_from_metadata
 
         requested_refs = work_refs_from_metadata({"pallium_work_refs": [work_ref]})
@@ -1016,8 +1186,29 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
                 request_source_item_id=request_source_item_id, defer_delivery=True,
             )
             compact = _compact_history(
-                result, query or "", limit, ctx.container_ref, ctx.thread_ref,
-                search_mode="exact_work_ref", requested_work_ref=requested_work_ref,
+                result,
+                query or "",
+                limit,
+                ctx.container_ref,
+                ctx.thread_ref,
+                search_mode="exact_work_ref",
+                requested_work_ref=requested_work_ref,
+                result_offset=result_offset,
+                result_revision=result_revision,
+                revision_context={
+                    "mode": "exact_work_ref",
+                    "query": query or "",
+                    "limit": limit,
+                    "container_ref": ctx.container_ref,
+                    "thread_ref": ctx.thread_ref,
+                    "visibility": ctx.visibility,
+                    "actor_ref": actor_ref,
+                    "source_type": None,
+                    "role": None,
+                    "artifact_kind": None,
+                    "work_refs": [requested_work_ref],
+                    "request_source_item_id": request_source_item_id,
+                },
             )
             if "error" not in compact and result.get("delivery_attempt_id"):
                 stage = "finalization"
@@ -1041,7 +1232,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     @server.tool()
     async def pallium_search_history(
         query: str,
-        limit: int = 3,
+        limit: Annotated[StrictInt, Field(ge=1, le=50)] = 3,
         container_ref: str | None = None,
         thread_ref: str | None = None,
         actor_ref: str | None = None,
@@ -1051,8 +1242,17 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         artifact_kind: str | None = None,
         work_refs: list[str] | None = None,
         request_source_item_id: str | None = None,
+        result_offset: Annotated[StrictInt, Field(ge=0)] = 0,
+        result_revision: StrictStr | None = None,
     ) -> str:
-        """Search eligible raw history by topic. `work_refs` is compatibility-only; prefer exact work-ref search. History cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed; verify live. Use `current_text` over outdated `historical_updates`. Copy injected `container_ref`. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter. Requires `container_ref` and visibility."""
+        """Search eligible raw history by topic. `work_refs` is compatibility-only; prefer exact work-ref search. History cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed; verify live. Use `current_text` over outdated `historical_updates`. Copy injected `container_ref`. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter. Requires `container_ref` and visibility. Continue a bounded result set with `next_offset` and unchanged `result_revision`; restart at offset 0 if the revision is stale."""
+        page_error = _history_page_request_error(limit, result_offset, result_revision)
+        if page_error is not None:
+            return _json_text(page_error)
+
+        from core.work_ref import work_refs_from_metadata
+
+        normalized_work_refs = list(work_refs_from_metadata({"pallium_work_refs": work_refs or []}))
         ctx = resolve_context(
             container_ref=container_ref,
             thread_ref=thread_ref,
@@ -1078,7 +1278,29 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
                 request_source_item_id=request_source_item_id,
                 defer_delivery=True,
             )
-            compact = _compact_history(result, query, limit, ctx.container_ref, ctx.thread_ref)
+            compact = _compact_history(
+                result,
+                query,
+                limit,
+                ctx.container_ref,
+                ctx.thread_ref,
+                result_offset=result_offset,
+                result_revision=result_revision,
+                revision_context={
+                    "mode": "broad",
+                    "query": query,
+                    "limit": limit,
+                    "container_ref": ctx.container_ref,
+                    "thread_ref": ctx.thread_ref,
+                    "visibility": ctx.visibility,
+                    "actor_ref": actor_ref,
+                    "source_type": source_type,
+                    "role": role,
+                    "artifact_kind": artifact_kind,
+                    "work_refs": normalized_work_refs,
+                    "request_source_item_id": request_source_item_id,
+                },
+            )
             if "error" not in compact and result.get("delivery_attempt_id"):
                 stage = "finalization"
                 delivery_attempt_id = result["delivery_attempt_id"]

@@ -63,7 +63,7 @@ Approved by user 2026-09-22: "yes, i told you i approve all the work on this fea
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Checkpoint: api-review
@@ -84,11 +84,11 @@ Clean-context reviewer /root/result_navigation_plan_review rejected the initial 
 
 ## Implementation
 
-Discovery, classification, and clean-context plan review complete. The first plan was rejected, corrected twice, and approved at commit 45d1327d. State transitioned to Ready to implement; no production or test files changed. The sandboxed patch helper later failed with the documented Windows CreateProcessWithLogonW 1327 condition, so this exact-file deterministic replacement was used. Red baseline added in tests/test_history_presentation.py for paging pressure, 50-candidate traversal, navigation-only previews, replacement metadata, terminal/stale revisions, and Unicode serialization.
+Implemented MCP-local, revision-checked result paging in the shared History formatter and both search tools. Strict schema bounds, request/window revision binding, deterministic singleton fitting, per-page finalization, terminal pages, and fresh lookup lineage are covered without HTTP/core/storage/schema/dependency or ranking changes. Delegated focused contract tests, caller-surface E2E coverage, and documentation were reviewed and integrated. apply_patch failed with the documented Windows CreateProcessWithLogonW 1327 condition, so narrowly scoped deterministic replacements were used and diff-checked.
 
 ## Evidence
 
-Red baseline: C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest tests/test_history_presentation.py -q -n 0 -> 6 failed, 13 passed. Failures are the intended missing result_offset/result_revision inputs, paging metadata, and explicit preview_unavailable contract; existing presentation cases remain green.
+Red baseline: tests/test_history_presentation.py -> 6 failed, 13 passed for the intended missing paging inputs, metadata, and preview_unavailable contract. Green focused evidence: presentation 21 passed; MCP work-history contract 38 passed; real broad/exact 50-result MCP-to-HTTP paging E2E 2 passed. Affected History/MCP subsystem run passed 206 tests; the two later request-binding/retry tests passed in the 38-test contract run. One required full suite ran once: 5,148 passed, 34 skipped, 215 deselected, 2 xfailed, with one guidance-budget failure (1,301 vs 1,300 characters). The description was shortened without semantic change and the failing node plus schema-description test then passed 2/2.
 
 ## Result review
 
