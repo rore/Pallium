@@ -228,10 +228,32 @@ def _restart_trace_attempt_id(
     ):
         return None
     try:
+        sessions = relay_service.list_sessions(
+            container_ref=retained.container_ref,
+            runtime="codex",
+            session_ref=retained.session_ref,
+            include_inactive=True,
+        )
         trace = relay_service.trace_message(
             message_id=retained.delivery_id, limit=100
         )
     except Exception:
+        return None
+    if (
+        not isinstance(sessions, list)
+        or len(sessions) != 1
+        or not isinstance(sessions[0], dict)
+    ):
+        return None
+    current = sessions[0]
+    if (
+        current.get("endpoint_id") != retained.recipient_endpoint_id
+        or current.get("runtime") != "codex"
+        or current.get("session_ref") != retained.session_ref
+        or current.get("container_ref") != retained.container_ref
+        or type(current.get("scope_generation")) is not int
+        or current["scope_generation"] != 0
+    ):
         return None
     if (
         not isinstance(trace, dict)

@@ -3278,6 +3278,7 @@ def test_pending_and_expired_codex_work_rewakes_after_real_app_restart(
         "pruned",
         "has_more",
         "missing_flag",
+        "scope_generation",
         "accepted",
         "reserved",
         "retry_safe",
@@ -3404,6 +3405,21 @@ def test_restart_trace_association_rejects_ambiguous_evidence(
         })
 
     class Relay:
+        def list_sessions(self, **kwargs):
+            assert kwargs == {
+                "container_ref": retained.container_ref,
+                "runtime": "codex",
+                "session_ref": retained.session_ref,
+                "include_inactive": True,
+            }
+            return [{
+                "endpoint_id": retained.recipient_endpoint_id,
+                "runtime": "codex",
+                "session_ref": retained.session_ref,
+                "container_ref": retained.container_ref,
+                "scope_generation": 1 if rejection == "scope_generation" else 0,
+            }]
+
         def trace_message(self, **kwargs):
             assert kwargs == {"message_id": retained.delivery_id, "limit": 100}
             return trace
@@ -3413,10 +3429,12 @@ def test_restart_trace_association_rejects_ambiguous_evidence(
     ) is None
 
 
+@pytest.mark.parametrize("round_trip_scope", (False, True))
 def test_restart_trace_association_is_http_visible_without_second_native_submission(
     client,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
+    round_trip_scope: bool,
 ) -> None:
     service = client.app.state.pallium_service
     storage = service._storage
@@ -3490,6 +3508,30 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
         codex_wake_registry=registry_b,
     ))
     route_b = TestClient(app_b)
+    if round_trip_scope:
+        moved_scope = {"container_ref": "git:example.test/restart-link-moved"}
+        moved = route_b.post("/relay/turn", json={
+            "runtime": "codex",
+            "session_ref": "target",
+            "max_chars": 1,
+            "max_messages": 1,
+            "previous_container_ref": scope["container_ref"],
+            "previous_endpoint_id": retained.recipient_endpoint_id,
+            "previous_scope_generation": 0,
+            **moved_scope,
+        })
+        assert moved.status_code == 200 and moved.json()["deliveries"] == []
+        returned = route_b.post("/relay/turn", json={
+            "runtime": "codex",
+            "session_ref": "target",
+            "max_chars": 1,
+            "max_messages": 1,
+            "previous_container_ref": moved_scope["container_ref"],
+            "previous_endpoint_id": retained.recipient_endpoint_id,
+            "previous_scope_generation": 1,
+            **scope,
+        })
+        assert returned.status_code == 200 and returned.json()["deliveries"] == []
 
     second = route_b.post("/relay/messages", json={
         "sender_runtime": "claude-code",
@@ -3511,16 +3553,20 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
     ).json()
 
     assert status["attempts"] == 0 and status["state"] == "pending"
-    assert trace["explanation"].startswith("Needs intervention:")
-    assert [event["stage"] for event in trace["events"]] == [
-        "prepared",
-        "completed",
-        "associated",
-    ]
-    assert len({event["attempt_id"] for event in trace["events"]}) == 1
-    associated = trace["events"][-1]
-    assert associated["delivery_id"] == second_delivery["delivery_id"]
-    assert associated["shared"] is False
+    if round_trip_scope:
+        assert trace["explanation"].startswith("Queued:")
+        assert trace["events"] == []
+    else:
+        assert trace["explanation"].startswith("Needs intervention:")
+        assert [event["stage"] for event in trace["events"]] == [
+            "prepared",
+            "completed",
+            "associated",
+        ]
+        assert len({event["attempt_id"] for event in trace["events"]}) == 1
+        associated = trace["events"][-1]
+        assert associated["delivery_id"] == second_delivery["delivery_id"]
+        assert associated["shared"] is False
 
 
 def test_relay_profile_parses_to_exact_read_only_tools(monkeypatch, tmp_path) -> None:
