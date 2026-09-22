@@ -190,6 +190,7 @@ The main operations are:
 
 | Need | Tools |
 |---|---|
+| Get this session's Relay address | `pallium_relay_address` (identity is resolved by the integration) |
 | Send or reply through Relay | `pallium_relay_recipients`, `pallium_relay_name`, `pallium_relay_send`, `pallium_relay_reply`, `pallium_relay_status` |
 | Search earlier sessions | `pallium_search_history`, then `pallium_expand_source` for surrounding turns |
 | Use optional derived memory | `pallium_query`, `pallium_expand`, `pallium_flag_memory`, `pallium_rate_memory`, `pallium_ingest`, and the explicit memory-write tools |

@@ -978,6 +978,7 @@ async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> No
     server = create_server()
     names = {tool.name for tool in await server.list_tools()}
     assert {
+        "pallium_relay_address",
         "pallium_relay_recipients",
         "pallium_relay_name",
         "pallium_relay_send",
@@ -986,6 +987,8 @@ async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> No
     } <= names
 
     tools = {tool.name: tool for tool in await server.list_tools()}
+    assert "Identity comes from the integration" in tools["pallium_relay_address"].description
+    assert set(tools["pallium_relay_address"].inputSchema.get("properties", {})) == {"container_ref"}
     assert "next_offset" in tools["pallium_relay_recipients"].description
     assert "alias_selector" in tools["pallium_relay_recipients"].description
     assert "replace_existing=true" in tools["pallium_relay_name"].description

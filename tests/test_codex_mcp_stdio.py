@@ -8,6 +8,7 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -23,6 +24,27 @@ class _RelayHandler(BaseHTTPRequestHandler):
         "任务-α": ("d-unicode", "r-unicode"),
     }
     acked: set[str] = set()
+
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+        self.calls.append((parsed.path, query))
+        if parsed.path == "/relay/sessions":
+            session_ref = query.get("session_ref", [""])[0]
+            body = [{
+                "endpoint_id": "relay-session-" + ("a" * 32),
+                "runtime": query.get("runtime", [""])[0],
+                "session_ref": session_ref,
+                "alias": "relay-dev" if session_ref == "thread-session" else None,
+            }]
+        else:
+            body = {"error": "unexpected path"}
+        raw = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
 
     def do_POST(self) -> None:  # noqa: N802
         size = int(self.headers.get("content-length", "0"))
@@ -94,6 +116,24 @@ async def _exercise_child(
                 "session_ref",
                 "request_ctx",
             } & set(properties)
+            address_schema = next(
+                tool
+                for tool in tools.tools
+                if tool.name == "pallium_relay_address"
+            ).inputSchema
+            assert set(address_schema.get("properties", {})) == {"container_ref"}
+
+            address = await session.call_tool(
+                "pallium_relay_address",
+                {},
+                meta={"threadId": "thread-session"},
+            )
+            assert json.loads(address.content[0].text) == {
+                "runtime": "codex",
+                "session_ref": "thread-session",
+                "exact_selector": "relay-session-" + ("a" * 32),
+                "alias_selector": "@relay-dev",
+            }
 
             cases = [
                 (
@@ -173,6 +213,12 @@ async def _exercise_child(
                 )
                 for meta in invalid
             ]
+            errors.extend([
+                await session.call_tool(
+                    "pallium_relay_address", {}, meta=meta
+                )
+                for meta in invalid[:2]
+            ])
             assert len(_RelayHandler.calls) == calls_before_errors
             return errors, max_session
 
@@ -227,6 +273,17 @@ def test_codex_stdio_metadata_identity() -> None:
         "wrong-outer-thread",
         "wrong-outer-session",
     } & {payload["session_ref"] for payload in turns}
+    address_calls = [
+        query
+        for path, query in _RelayHandler.calls
+        if path == "/relay/sessions"
+    ]
+    assert address_calls == [{
+        "container_ref": ["git:test/codex-mcp"],
+        "runtime": ["codex"],
+        "session_ref": ["thread-session"],
+        "include_inactive": ["true"],
+    }]
     assert (
         len(
             [
