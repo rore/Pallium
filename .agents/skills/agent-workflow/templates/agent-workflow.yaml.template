@@ -58,15 +58,3 @@ redlineVerdictPath: build/redline-verdict.json
 hooks:
   guardedPaths:
     - "src/"
-
-# Additional fields are optional and only act when their consuming
-# work item lands. Examples (commented out — uncomment what applies):
-#
-# verification:
-#   commands:
-#     - ./gradlew test
-#     - ./gradlew spotlessApply
-#
-# reviewers:
-#   high:
-#     - "@team-architects"

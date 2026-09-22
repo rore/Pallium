@@ -58,6 +58,16 @@ zones:
 # security: { paths: [...] }
 # runtimeConfig: { paths: [...] }
 
+# Optional authoritative behavior contracts. Bootstrap emits one compatible
+# set only after explicit selection and live required-CI, CODEOWNERS, and
+# required-Code-Owner-review evidence. These paths override excludes and blue
+# zones; the checkpoint must be CODEOWNER-only.
+# behaviorContracts:
+#   paths:
+#     - "tests/contracts/**"
+#   verification: behavior-contracts
+#   checkpoint: behavior-review
+
 prRules:
   maxChangedFiles:
     warn: 50
@@ -74,6 +84,10 @@ checkpoints:
       - label: architecture-reviewed
   # Add others as needed:
   # api-review, persistence-review, security-review, ops-review
+  # behavior-review:
+  #   description: Review authoritative behavior-contract changes
+  #   satisfiedBy:
+  #     - codeownerApproval
 
 modes:
   default: shadow

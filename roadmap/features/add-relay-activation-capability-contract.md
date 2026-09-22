@@ -39,7 +39,8 @@ Codex, and OpenCode behavior must remain truthful and compatible.
   consume this contract; protocol research can proceed independently.
 - Define the outcome vocabulary before `add-relay-delivery-trace` persists and
   displays it. Trace design can proceed in parallel.
-- Existing `validate-relay-dependency-workflows` journeys need not wait.
+- The paused `validate-relay-dependency-workflows` documentation/examples item does
+  not gate this contract.
 
 ## Discovery Required Before Implementation
 

@@ -23,7 +23,8 @@ call a Copilot model as a generic inference provider.
 Do not start this item until the three primary runtime integrations satisfy
 `add-wake-first-relay-delivery`. Copilot must adopt that proven contract rather
 than changing it. Reuse the dependency, decision-round-trip, and cross-model
-review journeys from `validate-relay-dependency-workflows` when judging value.
+review catalog from `validate-relay-dependency-workflows` when writing examples;
+do not require a separate synthetic proof campaign before implementing the adapter.
 
 Before implementing the Copilot adapter, consume
 `add-relay-activation-capability-contract` and `add-relay-delivery-trace`: register

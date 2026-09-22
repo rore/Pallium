@@ -19,14 +19,8 @@ This repository uses [agent-workflow](https://github.com/rore/agent-workflow) wi
 
 **Plan mode:** for every non-exempt task, the plan's **first implementation step must be** *"Invoke the `/agent-workflow` skill to create the Work Record and classify risk, before any code edit."* Do that first on approval. The hook checks plans that touch configured `hooks.guardedPaths` (default `src/`) as supplemental enforcement; it is a nudge, not the applicability decision or CI gate.
 
-**Local check before pushing:**
+**Local check before pushing:** POSIX: `bash scripts/agent-workflow-runtime.sh codex check --repo-root . --slug <slug>`. PowerShell: `& scripts/agent-workflow-runtime.ps1 codex check --repo-root . --slug <slug>`.
 
-```bash
-python scripts/agent-workflow-check.py --repo-root . --slug <slug>
-```
-
-If `python` is unavailable, use repository/runtime-provided Python and record the complete invocation.
-
-Exit codes: `0` clean, `1` advisory, `2` blocking. CI runs the same check on PR open and posts a sticky verdict comment.
+The adapter tries `PYTHON`, `.venv`, then platform fallbacks. Missing prerequisites block with guidance. Exit codes: `0` clean, `1` advisory, `2` blocking. CI posts it.
 
 Native mutation coverage is version/surface/tool-specific: verified requires a denied operation with unchanged target; installation, trust, or a direct evaluator pass is insufficient. Record every other combination as degraded. Shell mutations bypass the guard; CI validates final artifacts/applicability, not pre-edit ordering or direct pushes. Evaluator failure returns deny; native prevention requires that evidence.

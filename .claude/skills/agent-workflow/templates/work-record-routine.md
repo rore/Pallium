@@ -18,6 +18,10 @@
 **Completion criteria:**
 <!-- observable outcomes that demonstrate success; one line is fine for routine -->
 
+**Requirement baseline:**
+<!-- Before discovery, copy exact Task Context values into this JSON object. Use an authoritative source reference when available. -->
+{"source":"work-record-initial","outcome":"...","scope":"...","constraints":"...","completion_criteria":"..."}
+
 **Risk:** Routine
 <!-- Routine | Elevated | High. Routine is required for this compact shape; anything else demands the expanded shape. -->
 

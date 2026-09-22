@@ -34,8 +34,8 @@ Remaining work:
   integration and claim-timeout fix do not establish automatic wake support.
 
 OpenCode wake remains a dependency of Copilot expansion. These residual gates do
-not block activation capabilities, traces, work associations, or Claude/Codex
-workflow validation. A new correctness incident takes priority if one is found.
+not block activation capabilities, traces, work associations, or future
+Claude/Codex workflow examples. A new correctness incident takes priority if one is found.
 The milestone and incident history below preserves evidence; it is not a list of
 new implementation tasks.
 
@@ -331,7 +331,8 @@ The following related work stays separate to keep ownership clear:
 - `idea-agent-relay.md` retains the optional default-off `notify_on_turn_end`
   proposal. Turn end is not task completion and is not a prerequisite for delivery
   correctness.
-- `validate-relay-dependency-workflows` starts only after S2/S3 are stable.
+- `validate-relay-dependency-workflows` is a paused documentation/examples follow-up;
+  it does not gate reliability work or runtime expansion.
 - `feat/clarify-relay-activation-snapshot` remains separate unmerged API-contract work: its evidence-scope and exact-trace-source fields complement this explanation slice but are not required for actionable failure guidance.
 - The local wake-test pollution repair is complete and reversible: the exact 23
   synthetic source items are forgotten and 89 derived memories are soft-deleted

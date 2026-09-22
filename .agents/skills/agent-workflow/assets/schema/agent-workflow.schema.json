@@ -67,6 +67,10 @@
       "minLength": 1,
       "description": "Path the CI checker reads to find redline's verdict artifact. Repo-relative or absolute. Default when omitted: 'build/redline-verdict.json'."
     },
+    "behaviorContracts": {
+      "not": {},
+      "description": "Invalid legacy field. Configure behaviorContracts in agent-redline-policy.yaml so paths, CODEOWNERS authority, and review routing have one source."
+    },
     "hooks": {
       "type": "object",
       "description": "Options for the Claude Code accelerator hooks bootstrap installs (a non-normative, harness-specific nudge; CI remains the enforcement floor).",

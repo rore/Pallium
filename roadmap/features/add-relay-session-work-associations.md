@@ -37,7 +37,8 @@ the activation-capability feature nor delivery traces are prerequisites for
 attaching, querying, or displaying associations. Preserve unknown availability
 honestly and consume richer facts later when shipped; do not implement those
 features inside this one. Confirmed delivery correctness incidents still take
-priority. Existing workflow validation remains independently executable.
+priority. The paused workflow-example catalog remains available for future public
+documentation and does not gate this work.
 
 Minimap's companion feature is `add-pallium-work-item-participants` in the
 [Minimap roadmap](https://github.com/rore/minimap/tree/main/roadmap/features).

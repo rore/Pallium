@@ -300,7 +300,12 @@ def _restart_trace_attempt_id(
         or len(sequences) != len(set(sequences))
     ):
         return None
-    latest = max(direct, key=lambda event: event["sequence"])
+    activations = [
+        event for event in direct if event.get("stage") in {"prepared", "completed"}
+    ]
+    if not activations:
+        return None
+    latest = max(activations, key=lambda event: event["sequence"])
     attempt_id = latest.get("attempt_id")
     prepared = [
         event
@@ -322,6 +327,18 @@ def _restart_trace_attempt_id(
             for event in direct
         )
         != 1
+        or any(
+            event.get("stage") == "associated"
+            and event["sequence"] < latest["sequence"]
+            for event in direct
+        )
+        or len([event for event in direct if event["sequence"] > latest["sequence"]]) > 1
+        or any(
+            event.get("stage") != "associated"
+            or event.get("attempt_id") != attempt_id
+            for event in direct
+            if event["sequence"] > latest["sequence"]
+        )
     ):
         return None
     return attempt_id
