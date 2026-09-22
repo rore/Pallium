@@ -55,7 +55,7 @@ Both History MCP tools build payloads through `PalliumMcpClient._scope_params()`
 - Before review, focused nodes, affected History/MCP/API files, `pytest --lf --lfnf=none -q -n 0`, one full `pytest tests/ -x -q`, import-linter, redline, workflow checker, and `git diff --check` shall pass.
 
 **Plan review:**
-Clean-context review of commit 165606f2 rejected the initial plan. It found that source-only filter resolution would still relax explicit thread scope through runtime-context policy, and identified benchmark/live-smoke callers plus HTTP documentation that require migration. This revision adds an unconditional source-only runtime-context bypass, proactive unchanged checks, caller migration, `/query/debug`, and compatibility documentation. Follow-up review is pending.
+Clean-context reviewer /root/session_scope_plan_review rejected commit 165606f2 because runtime-context policy could still relax explicit source scope and requester-only benchmark/smoke callers were omitted. The corrected plan in f6bcf6c9 adds an unconditional source-only runtime-context bypass, proactive compatibility checks, both HTTP routes, caller migrations, and HTTP documentation. The same reviewer approved f6bcf6c9 with no remaining blockers.
 
 **Approvals:**
 Approved by user 2026-09-22: "yes, i told you i approve all the work on this feature. i'm not here all the time so don't wait for me. continue with all the issues we need to fix"
@@ -92,7 +92,7 @@ Verification plan: tool-schema/payload tests, strict scope/lifecycle tests, and 
 
 ## Implementation
 
-Discovery and pre-edit redline classification complete. No production or test edits have been made.
+Discovery, refreshed pre-edit classification, and clean-context plan review are complete. Planned edits are limited to `app/mcp/client.py`, `app/mcp/server.py`, `api/schemas.py`, `api/routes.py`, `core/service.py`, `core/query.py`, the two identified eval/smoke callers, focused History/MCP tests, `docs/http-api.md`, `docs/session-history.md`, this Work Record, and roadmap slice 4. Red/API checkpoints apply through the schema, route, and service files; core query and MCP surfaces are gray/watch; no boundary dependency changes are planned. Two bounded workers are adding non-overlapping red tests only; production editing waits for their failing evidence.
 
 ## Evidence
 
