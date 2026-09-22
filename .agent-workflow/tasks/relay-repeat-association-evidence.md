@@ -1,0 +1,40 @@
+# Relay repeat-association evidence
+
+<!-- agent-workflow:start -->
+**Outcome:** Make complete retained uncertain wake evidence actionable when its only trailing fact is a same-attempt association, without enabling another native submission.
+
+**Target:** Pallium Relay Codex wake diagnostic association.
+
+**Scope:** The restart evidence guard in `app/codex_wake.py`, focused guard and caller-surface regressions, and Relay roadmap wording if the shipped claim changes.
+
+**Constraints:** Preserve the retained reservation as the native-write gate. Accept only a complete exact-scope generation-zero trace whose latest activation completion is uncertain and retry-unsafe, with exactly one matching prepare and completion. Any later direct fact must be `associated` for that same attempt. Keep retry, claim, ACK, TTL, workspace, scope, model, and effort behavior unchanged.
+
+**Completion criteria:** A restart recovery sweep associates a later pending delivery when the retained source has prepare -> uncertain completion -> same-attempt association, while attempts stay zero and native submissions stay one. A different-attempt or otherwise ambiguous trailing fact remains queued.
+
+**Risk:** Elevated
+
+**Complexity:** Moderate
+
+**Reason:** The change is small but touches watched native-wake evidence logic and changes which historical traces qualify for actionable guidance.
+
+**Discovery:** Installed PR #218 recovery enumerated the historical later delivery every sweep, but its source trace ended with a same-attempt `associated` fact after the one uncertain retry-unsafe completion. `_restart_trace_attempt_id` required the latest direct fact itself to be `completed`, so it rejected the complete retained evidence and left the later delivery generically queued.
+
+**Material assumptions:** `associated` is a diagnostic-only fact recorded under the same attempt identifier and does not represent a new native submission. The unique trace-fact constraint bounds one association fact per attempt and delivery.
+
+**Plan:** Select the latest direct activation fact from `prepared` and `completed` stages. Require it to be the existing exact uncertain retry-unsafe completion with one earlier prepare and one completion. Permit later direct facts only when every one is `associated` with that same attempt; reject any newer attempt or other later stage. Add focused guard rejection coverage and extend the restart caller-surface regression to include a pre-existing same-attempt association before process restart. Stop if this requires retry, reservation, schema, or public API changes.
+
+**Verification plan:** Exact trailing same-attempt association qualifies -> focused guard unit test. Different-attempt or other ambiguous trailing evidence remains rejected -> fail-closed parameterized regression. Restart with an already-pending later delivery performs one native submission total, preserves attempts=0, and exposes Needs intervention after recovery -> HTTP caller-surface regression. Existing repeated busy-sweep and affected wake suites remain green -> regression suite.
+
+**Plan review:** Pending clean-context review.
+
+**Approvals:** Not required unless reclassification reaches High.
+
+**Exceptions:** —
+
+**State:** Draft
+<!-- agent-workflow:end -->
+
+## Evidence
+
+- Live installed trace was complete and exact: one prepared event, one uncertain `nonzero_exit` completion with `native_retry_safe=false`, then one same-attempt `associated` event. Recovery logs showed the later zero-attempt delivery was enumerated, but its trace remained absent and explained as Queued.
+- `apply_patch` had already failed in this session with Windows process-launch error 1327; this Work Record used the permitted deterministic narrow fallback.
