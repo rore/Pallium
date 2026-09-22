@@ -7,7 +7,7 @@
 - improve-session-history-search-quality
 - investigate-history-navigation-and-on-demand-compression
 
-# Parallel · Agent Relay
+# Later · Relay Documentation and Examples
 - validate-relay-dependency-workflows
 
 # Later · Runtime Expansion

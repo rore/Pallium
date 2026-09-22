@@ -90,4 +90,4 @@ The name lifecycle E2E matrix must drive the public naming, send, receive/list, 
 
 ## Dependencies and order
 
-Start only after the current Relay correctness bugs RW-012, RW-013, and RW-014 are fixed. Reuse `add-wake-first-relay-delivery`, `add-relay-retention-and-lifecycle-hardening`, and `validate-relay-dependency-workflows`; do not reopen their transport or workflow boundaries.
+Start only after the current Relay correctness bugs RW-012, RW-013, and RW-014 are fixed. Reuse `add-wake-first-relay-delivery` and `add-relay-retention-and-lifecycle-hardening`; do not reopen their transport boundaries. The scenario catalog in `validate-relay-dependency-workflows` may inform later documentation but is not a dependency.

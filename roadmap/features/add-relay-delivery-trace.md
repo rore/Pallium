@@ -47,7 +47,8 @@ copy product-specific transcripts or secrets into fixtures.
   retention; this item owns bounded trace retention and diagnostic completeness.
   Do not create two cleaners or require broad payload-archive work.
 - Place before Copilot expansion so new integrations can emit the same evidence.
-  Existing dependency-workflow validation remains independently executable.
+  The paused workflow-example catalog remains available for future public
+  documentation and does not gate trace work.
 
 ## Discovery Required Before Implementation
 
