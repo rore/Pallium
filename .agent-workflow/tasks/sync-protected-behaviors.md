@@ -58,6 +58,7 @@ Not required at this risk level.
 - Clean-context plan review approved after the enforcement model, explicit file mapping, idempotence commands, and staged activation gates were corrected.
 - Synced pinned Agent Workflow `b239a80` into both skill trees and all explicit consumer mappings; upstream helpers changed only the owned AGENTS marker and preserved Claude/Codex settings. Refined the protected-behavior roadmap around a dedicated contract directory and requirements-first selection.
 - Trigger 1 dropped: repeated `apply_patch` failure `1327` is the documented machine/runtime constraint, not an Agent Workflow defect; deterministic replacements were limited to the Work Record and roadmap file.
+- `workrecord.commit_order` is advisory because the Work Record and code were first committed together; the record was created, classified, and independently plan-reviewed before implementation, so recovery state was not authored retroactively.
 
 
 ## Plan review
