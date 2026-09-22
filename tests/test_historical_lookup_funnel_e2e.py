@@ -59,7 +59,8 @@ def _build_client(monkeypatch, test_db_url: str) -> TestClient:
 def _ingest(client: TestClient, *, source_id: str, content: str, role: str,
             artifact_kind: str, container_ref: str = CONTAINER,
             thread_ref: str = THREAD, visibility: str = "private",
-            actor_ref: str | None = None) -> str:
+            actor_ref: str | None = None,
+            metadata: dict | None = None) -> str:
     source_type = "chat_message" if role == "user" else "assistant_artifact"
     resp = client.post("/items", json=[{
         "source_type": source_type,
@@ -72,6 +73,7 @@ def _ingest(client: TestClient, *, source_id: str, content: str, role: str,
         "thread_ref": thread_ref,
         "actor_ref": actor_ref,
         "visibility": visibility,
+        "metadata": metadata or {},
     }])
     assert resp.status_code == 200, resp.text
     client.app.state.pallium_service.drain_processing_queue(worker_id="funnel-test")
@@ -79,14 +81,16 @@ def _ingest(client: TestClient, *, source_id: str, content: str, role: str,
 
 
 def _search_history(client: TestClient, *, container_ref: str = CONTAINER,
-                    thread_ref: str = THREAD, visibility: str = "private",
+                    thread_ref: str | None = THREAD,
+                    active_session_ref: str | None = None,
+                    visibility: str = "private",
                     actor_ref: str | None = None,
                     request_source_item_id: str | None = None,
+                    work_refs: list[str] | None = None,
                     defer_delivery: bool = False) -> dict:
-    resp = client.post("/query", json={
+    payload = {
         "text": "reservation ordering duplicate holds",
         "container_ref": container_ref,
-        "thread_ref": thread_ref,
         "actor_ref": actor_ref,
         "visibility": visibility,
         "request_source_item_id": request_source_item_id,
@@ -94,7 +98,14 @@ def _search_history(client: TestClient, *, container_ref: str = CONTAINER,
         "source_only": True,
         "trigger_origin": "agent_pull",
         "defer_delivery": defer_delivery,
-    })
+    }
+    if thread_ref is not None:
+        payload["thread_ref"] = thread_ref
+    if active_session_ref is not None:
+        payload["active_session_ref"] = active_session_ref
+    if work_refs is not None:
+        payload["work_refs"] = work_refs
+    resp = client.post("/query", json=payload)
     assert resp.status_code == 200, resp.text
     return resp.json()
 
@@ -514,6 +525,52 @@ def _events_attr(client: TestClient, event_type: str) -> list[dict]:
         ).mappings().all()
     return [dict(r) for r in rows]
 
+
+def test_source_filter_is_exact_and_audit_uses_active_requester(monkeypatch, test_db_url: str) -> None:
+    """A historical source filter must not be inferred from requester context.
+
+    The requester can be session B while filtering source session A; the
+    request lineage follows B, and an explicit nonexistent source stays empty.
+    """
+    with _build_client(monkeypatch, test_db_url) as client:
+        request_id = _ingest(
+            client, source_id="request-b", content=_USER, role="user",
+            artifact_kind="message", thread_ref=_SESSION_B,
+        )
+        source_id = _ingest(
+            client, source_id="source-a", content=_USER, role="user",
+            artifact_kind="message", thread_ref=_SESSION_A,
+            metadata={"pallium_work_refs": ["feature-session-scope"]},
+        )
+        _ingest(
+            client, source_id="source-b", content=_USER, role="user",
+            artifact_kind="message", thread_ref=_SESSION_B,
+            metadata={"pallium_work_refs": ["other-work"]},
+        )
+
+        broad = _search_history(
+            client, thread_ref=None,
+        )
+        broad_ids = {row["source_item_id"] for row in broad["results"]}
+        assert source_id in broad_ids
+        assert len(broad_ids) >= 2
+
+        exact = _search_history(
+            client, thread_ref=_SESSION_A, active_session_ref=_SESSION_B,
+            request_source_item_id=request_id,
+            work_refs=["feature-session-scope"],
+        )
+        assert {row["source_item_id"] for row in exact["results"]} == {source_id}
+
+        lookup = _events_attr(client, "lookup")[-1]
+        assert lookup["session_id"] == _SESSION_B
+        assert lookup["request_source_item_id"] == request_id
+
+        missing = _search_history(
+            client, thread_ref="chat:funnel:missing", active_session_ref=_SESSION_B,
+            request_source_item_id=request_id,
+        )
+        assert missing["results"] == []
 
 def test_expansion_attributed_to_requesting_session_not_anchor(monkeypatch, test_db_url: str) -> None:
     """Source ingested in session A, searched + expanded from session B: the
