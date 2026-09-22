@@ -33,7 +33,8 @@ Open `agent-workflow.yaml` and read:
 
 - `workRecord.backend` — `local` (supported) or `jira` (not yet — stop).
 - `workRecord.local.taskPath` — the per-task path template.
-- `applicability.documentationOnly`, when present — load [`applicability.md`](templates/checkpoints/applicability.md) and evaluate it before deriving a slug. If exempt, follow that file's branch decision and return without a Work Record.
+- applicability.documentationOnly, when present — load [`applicability.md`](templates/checkpoints/applicability.md); if exempt, return without a Work Record.
+- `behaviorContracts` in `agent-redline-policy.yaml`, when present — load [`behavioral-integrity.md`](templates/checkpoints/behavioral-integrity.md).
 
 ## Step 2 — Resolve the identity
 
@@ -43,10 +44,7 @@ Otherwise run `git rev-parse --abbrev-ref HEAD`, strip the first matching prefix
 
 ## Step 3 — Classify, then read or initialise the Work Record
 
-Decide classification before writing the file. Read [`templates/checkpoints/assess-risk.md`](templates/checkpoints/assess-risk.md) NOW — it carries the redline-verdict-to-Risk translation table and the engineering-judgment escape. The summary:
-
-- **Risk** — `Routine` / `Elevated` / `High`. Derived from redline's pre-edit classification of the intended scope; may be raised by judgment, not lowered.
-- **Complexity** — `Simple` / `Moderate` / `Large`.
+Read [`templates/checkpoints/assess-risk.md`](templates/checkpoints/assess-risk.md) before writing: Redline sets the Risk floor; Complexity is independent.
 
 | `(Risk, Complexity)` | Shape |
 |---|---|
@@ -63,7 +61,7 @@ Write each field first, then act on it. Only when planning fields are populated 
 
 | Field(s) on compact | Field(s) on expanded | Checkpoint | Reference |
 |---|---|---|---|
-| Outcome, Target, Scope, Constraints, Completion criteria | same | Establish Task Context | [`establish-context.md`](templates/checkpoints/establish-context.md) |
+| Outcome, Target, Scope, Constraints, Completion criteria, Requirement baseline | same | Establish Task Context | [`establish-context.md`](templates/checkpoints/establish-context.md) |
 | (implicit) | Discovery | Discover | [`discover.md`](templates/checkpoints/discover.md) |
 | Risk, Complexity, Reason | same | Assess Risk and Complexity | [`assess-risk.md`](templates/checkpoints/assess-risk.md) |
 | Approach, Verification | Plan, Verification plan, Plan review, Approvals | Plan and Review | [`plan-and-review.md`](templates/checkpoints/plan-and-review.md) |

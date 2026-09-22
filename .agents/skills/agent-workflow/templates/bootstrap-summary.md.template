@@ -48,10 +48,11 @@ Installation, trust, and direct checks do not verify coverage.
 
 ## Backend reachability probe
 
-Bootstrap ran a probe to confirm the configured Work Record backend is reachable. Result:
+Bootstrap probed the Work Record backend:
 
 - **Backend:** local
-- **Probe:** wrote a sample Work Record at `.agent-workflow/tasks/_probe.md` and ran `python scripts/agent-workflow-check.py --repo-root . --slug _probe`
+- **Interpreter:** <selected executable>
+- **Probe:** ran adapter `codex check --repo-root . --slug _probe` on temporary `_probe.md`
 - **Outcome:** <pass / fail with reason>
 - **Cleanup:** `_probe.md` removed after the probe
 

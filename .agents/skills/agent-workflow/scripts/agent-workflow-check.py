@@ -18,10 +18,23 @@ import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Literal, Protocol, TypedDict, runtime_checkable
+from typing import Any, Iterable, Literal, NotRequired, Protocol, TypedDict, runtime_checkable
 
-import jsonschema
-import yaml
+try:
+    import jsonschema
+    import yaml
+except ModuleNotFoundError as exc:
+    dependency = {"yaml": "PyYAML", "jsonschema": "jsonschema"}.get(
+        exc.name or "", exc.name or "unknown"
+    )
+    sys.stderr.write(
+        f"agent-workflow: missing Python dependency {dependency} for {sys.executable}. "
+        "Create a repository .venv if absent. Install with "
+        '".venv/bin/python" -m pip install pyyaml jsonschema (POSIX) or '
+        '& ".venv/Scripts/python.exe" -m pip install pyyaml jsonschema (PowerShell); '
+        "set PYTHON to that executable, and retry.\n"
+    )
+    raise SystemExit(2)
 
 # Inlined from core/schema/agent-workflow.schema.json at build time.
 _INLINED_SCHEMA = { '$schema': 'https://json-schema.org/draft/2020-12/schema',
@@ -150,6 +163,12 @@ _INLINED_SCHEMA = { '$schema': 'https://json-schema.org/draft/2020-12/schema',
                                                          "redline's verdict artifact. "
                                                          'Repo-relative or absolute. Default when '
                                                          "omitted: 'build/redline-verdict.json'."},
+                  'behaviorContracts': { 'not': {},
+                                         'description': 'Invalid legacy field. Configure '
+                                                        'behaviorContracts in '
+                                                        'agent-redline-policy.yaml so paths, '
+                                                        'CODEOWNERS authority, and review routing '
+                                                        'have one source.'},
                   'hooks': { 'type': 'object',
                              'description': 'Options for the Claude Code accelerator hooks '
                                             'bootstrap installs (a non-normative, harness-specific '
@@ -238,6 +257,54 @@ ALLOWED_COMPLEXITY: frozenset[str] = frozenset({"Simple", "Moderate", "Large"})
 _COMPACT_ALLOWED: frozenset[tuple[str, str]] = frozenset({("Routine", "Simple")})
 
 
+@dataclass(frozen=True)
+class RequirementBaseline:
+    """The immutable Task Context captured before discovery."""
+
+    source: str | None
+    outcome: str
+    scope: str
+    constraints: str
+    completion_criteria: str
+
+
+@dataclass(frozen=True)
+class BehaviorChangeAuthority:
+    """BehaviorChangeAuthority domain and name recorded for a requirement change."""
+
+    scope: Literal["task", "repository"]
+    name: str
+
+
+@dataclass(frozen=True)
+class BehaviorChangeApproval:
+    """BehaviorChangeApproval-shaped evidence bound to one exact behavior change."""
+
+    by: str
+    reference: str
+    verbatim: str
+
+
+@dataclass(frozen=True)
+class BehaviorChange:
+    """One structured Task Context or repository-contract change."""
+
+    target: str
+    classification: Literal["equivalent", "coverage-only", "requirement-change"]
+    before: str
+    after: str
+    reason: str
+    path: str | None = None
+    impact: str | None = None
+    alternatives: str | None = None
+    authority: BehaviorChangeAuthority | None = None
+    approval: BehaviorChangeApproval | None = None
+
+
+
+
+
+
 class WorkRecord(TypedDict):
     """Typed routine (compact) Work Record.
 
@@ -260,6 +327,8 @@ class WorkRecord(TypedDict):
     approach: str
     verification: str
     state: str
+    requirement_baseline: NotRequired[RequirementBaseline]
+    behavior_changes: NotRequired[list[BehaviorChange]]
 
 
 class ExpandedWorkRecord(TypedDict):
@@ -300,6 +369,8 @@ class ExpandedWorkRecord(TypedDict):
     approvals: str
     exceptions: str
     state: str
+    requirement_baseline: NotRequired[RequirementBaseline]
+    behavior_changes: NotRequired[list[BehaviorChange]]
 
 
 Shape = Literal["routine", "expanded"]
@@ -381,16 +452,17 @@ _EXPANDED_FIELD_SCHEMA: tuple[tuple[str, str], ...] = (
     ("State", "state"),
 )
 
-# Optional expanded fields not in ``_EXPANDED_FIELD_SCHEMA`` —
-# recognised by the parser when present, ignored when absent. Slice F
-# adds ``Exceptions``: an optional list of per-task rule waivers per
-# SPEC §11. Keeping it outside the required-schema means existing
-# expanded records (which were written before the slice) parse
-# unchanged. When present, the field's free-text content is decoded by
-# :func:`parse_exceptions` for the checker.
+# Optional fields are accepted on both shapes so legacy records remain
+# parseable and routine records do not migrate merely to carry integrity data.
+_OPTIONAL_JSON_FIELDS: dict[str, str] = {
+    "Requirement baseline": "requirement_baseline",
+    "Behavior changes": "behavior_changes",
+}
 _EXPANDED_OPTIONAL_EXTRA_FIELDS: dict[str, str] = {
+    **_OPTIONAL_JSON_FIELDS,
     "Exceptions": "exceptions",
 }
+_ROUTINE_OPTIONAL_EXTRA_FIELDS: dict[str, str] = dict(_OPTIONAL_JSON_FIELDS)
 
 # Fields whose value is allowed to be empty on each shape. Everything
 # else is rejected as malformed when its value is blank. On the routine
@@ -581,7 +653,8 @@ def _validate_against_schema(
 def _validate_routine_fields(found: dict[str, str]) -> WorkRecord:
     """Validate the routine-path field set. See :func:`_validate_against_schema`."""
     return _validate_against_schema(  # type: ignore[return-value]
-        found, _FIELD_SCHEMA, _OPTIONAL_FIELDS, shape_name="routine"
+        found, _FIELD_SCHEMA, _OPTIONAL_FIELDS, shape_name="routine",
+        optional_extra_fields=_ROUTINE_OPTIONAL_EXTRA_FIELDS,
     )
 
 
@@ -634,6 +707,233 @@ def _decide_shape(found: dict[str, str]) -> Shape:
     if (risk, complexity) in _COMPACT_ALLOWED:
         return "routine"
     return "expanded"
+
+
+# ---------------------------------------------------------------------------
+# Requirement-integrity JSON
+# ---------------------------------------------------------------------------
+
+_BASELINE_KEYS = frozenset({
+    "source",
+    "outcome",
+    "scope",
+    "constraints",
+    "completion_criteria",
+})
+_BEHAVIOR_CORE_KEYS = frozenset({
+    "target",
+    "classification",
+    "before",
+    "after",
+    "reason",
+})
+_BEHAVIOR_CHANGE_KEYS = frozenset({
+    "impact",
+    "alternatives",
+    "authority",
+    "approval",
+})
+_AUTHORITY_KEYS = frozenset({"scope", "name"})
+_APPROVAL_KEYS = frozenset({"by", "reference", "verbatim"})
+_TASK_CONTEXT_TARGETS = frozenset(
+    {
+        "task-context.outcome",
+        "task-context.scope",
+        "task-context.constraints",
+        "task-context.completion_criteria",
+    }
+)
+_BEHAVIOR_CLASSIFICATIONS = frozenset(
+    {"equivalent", "coverage-only", "requirement-change"}
+)
+
+
+def _json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject duplicate object keys instead of silently keeping the last one."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def _load_integrity_json(text: str, label: str) -> object:
+    try:
+        return json.loads(
+            text,
+            object_pairs_hook=_json_object,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-standard JSON constant {value!r}")
+            ),
+        )
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise WorkRecordParseError(f"{label} must be valid canonical JSON: {exc}") from exc
+
+
+def _required_json_string(value: object, field: str) -> str:
+    if not isinstance(value, str):
+        raise WorkRecordParseError(f"{field} must be a JSON string")
+    if not value.strip():
+        raise WorkRecordParseError(f"{field} must be a non-empty string")
+    return value
+
+
+def _exact_keys(value: object, expected: frozenset[str], label: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise WorkRecordParseError(f"{label} must be a JSON object")
+    actual = set(value)
+    missing = expected - actual
+    unknown = actual - expected
+    if missing:
+        raise WorkRecordParseError(
+            f"{label} is missing required key(s): {', '.join(sorted(missing))}"
+        )
+    if unknown:
+        raise WorkRecordParseError(
+            f"{label} contains unknown key(s): {', '.join(sorted(unknown))}"
+        )
+    return value
+
+
+def parse_requirement_baseline(text: str) -> RequirementBaseline:
+    """Parse and validate a canonical Requirement baseline JSON object."""
+    value = _exact_keys(
+        _load_integrity_json(text, "Requirement baseline"),
+        _BASELINE_KEYS,
+        "Requirement baseline",
+    )
+    source = value["source"]
+    if source is not None:
+        source = _required_json_string(source, "Requirement baseline.source")
+    return RequirementBaseline(
+        source=source,
+        outcome=_required_json_string(value["outcome"], "Requirement baseline.outcome"),
+        scope=_required_json_string(value["scope"], "Requirement baseline.scope"),
+        constraints=_required_json_string(value["constraints"], "Requirement baseline.constraints"),
+        completion_criteria=_required_json_string(
+            value["completion_criteria"], "Requirement baseline.completion_criteria"
+        ),
+    )
+
+
+def _parse_behavior_entry(value: object, index: int) -> BehaviorChange:
+    label = f"Behavior changes entry #{index}"
+    if not isinstance(value, dict):
+        raise WorkRecordParseError(f"{label} must be a JSON object")
+    target_value = value.get("target")
+    target = _required_json_string(target_value, f"{label}.target")
+    classification = _required_json_string(
+        value.get("classification"), f"{label}.classification"
+    )
+    if classification not in _BEHAVIOR_CLASSIFICATIONS:
+        raise WorkRecordParseError(
+            f"{label}.classification must be one of "
+            + ", ".join(sorted(_BEHAVIOR_CLASSIFICATIONS))
+        )
+    expected = _BEHAVIOR_CORE_KEYS | {"path"}
+    required = set(_BEHAVIOR_CORE_KEYS)
+    if classification == "requirement-change":
+        expected |= _BEHAVIOR_CHANGE_KEYS
+        required |= {"impact", "alternatives", "authority"}
+    missing = required - set(value)
+    unknown = set(value) - expected
+    if missing:
+        raise WorkRecordParseError(
+            f"{label} is missing required key(s): {', '.join(sorted(missing))}"
+        )
+    if unknown:
+        raise WorkRecordParseError(
+            f"{label} contains unknown key(s): {', '.join(sorted(unknown))}"
+        )
+    if target not in _TASK_CONTEXT_TARGETS and target != "repository-contract":
+        raise WorkRecordParseError(f"{label}.target has an invalid shape: {target!r}")
+    has_path = "path" in value
+    path: str | None = None
+    if target == "repository-contract":
+        if not has_path:
+            raise WorkRecordParseError(f"{label}.path is required for repository-contract")
+        path = _required_json_string(value["path"], f"{label}.path")
+    elif has_path:
+        raise WorkRecordParseError(f"{label}.path is only valid for repository-contract")
+
+    before = _required_json_string(value["before"], f"{label}.before")
+    after = _required_json_string(value["after"], f"{label}.after")
+    if before == after:
+        raise WorkRecordParseError(f"{label} before and after must differ")
+    reason = _required_json_string(value["reason"], f"{label}.reason")
+
+    impact: str | None = None
+    alternatives: str | None = None
+    authority: BehaviorChangeAuthority | None = None
+    approval: BehaviorChangeApproval | None = None
+    if classification == "requirement-change":
+        impact = _required_json_string(value["impact"], f"{label}.impact")
+        alternatives = _required_json_string(value["alternatives"], f"{label}.alternatives")
+        authority_value = _exact_keys(value["authority"], _AUTHORITY_KEYS, f"{label}.authority")
+        authority_scope = _required_json_string(
+            authority_value["scope"], f"{label}.authority.scope"
+        )
+        if authority_scope not in {"task", "repository"}:
+            raise WorkRecordParseError(
+                f"{label}.authority.scope must be 'task' or 'repository'"
+            )
+        authority = BehaviorChangeAuthority(
+            scope=authority_scope,  # type: ignore[arg-type]
+            name=_required_json_string(authority_value["name"], f"{label}.authority.name"),
+        )
+        if "approval" in value and value["approval"] is not None:
+            approval_value = _exact_keys(
+                value["approval"], _APPROVAL_KEYS, f"{label}.approval"
+            )
+            approval = BehaviorChangeApproval(
+                by=_required_json_string(approval_value["by"], f"{label}.approval.by"),
+                reference=_required_json_string(
+                    approval_value["reference"], f"{label}.approval.reference"
+                ),
+                verbatim=_required_json_string(
+                    approval_value["verbatim"], f"{label}.approval.verbatim"
+                ),
+            )
+    return BehaviorChange(
+        target=target,
+        classification=classification,  # type: ignore[arg-type]
+        before=before,
+        after=after,
+        reason=reason,
+        path=path,
+        impact=impact,
+        alternatives=alternatives,
+        authority=authority,
+        approval=approval,
+    )
+
+
+def parse_behavior_changes(text: str) -> list[BehaviorChange]:
+    """Parse and validate the canonical Behavior changes JSON array."""
+    value = _load_integrity_json(text, "Behavior changes")
+    if not isinstance(value, list):
+        raise WorkRecordParseError("Behavior changes must be a JSON array")
+    out = [_parse_behavior_entry(entry, index) for index, entry in enumerate(value, 1)]
+    repository_paths = [entry.path for entry in out if entry.target == "repository-contract"]
+    duplicates = {path for path in repository_paths if repository_paths.count(path) > 1}
+    if duplicates:
+        raise WorkRecordParseError(
+            "Behavior changes contains duplicate repository-contract path(s): "
+            + ", ".join(sorted(duplicates))
+        )
+    return out
+
+
+def _parse_optional_integrity_fields(
+    found: dict[str, str], record: dict[str, object]
+) -> None:
+    if "Requirement baseline" in found:
+        record["requirement_baseline"] = parse_requirement_baseline(
+            found["Requirement baseline"]
+        )
+    if "Behavior changes" in found:
+        record["behavior_changes"] = parse_behavior_changes(found["Behavior changes"])
 
 
 # ---------------------------------------------------------------------------
@@ -800,8 +1100,12 @@ def parse_record(text: str) -> ParsedRecord:
     found = _extract_fields(block)
     shape = _decide_shape(found)
     if shape == "routine":
-        return ParsedRecord(shape="routine", record=_validate_routine_fields(found))
-    return ParsedRecord(shape="expanded", record=_validate_expanded_fields(found))
+        record = _validate_routine_fields(found)
+        _parse_optional_integrity_fields(found, record)
+        return ParsedRecord(shape="routine", record=record)
+    record = _validate_expanded_fields(found)
+    _parse_optional_integrity_fields(found, record)
+    return ParsedRecord(shape="expanded", record=record)
 
 
 def parse(text: str) -> WorkRecord:
@@ -836,7 +1140,9 @@ def render(record: WorkRecord) -> str:
     content can be embedded into a Markdown file without joining
     artifacts.
     """
-    return _render_against(record, _FIELD_SCHEMA)
+    return _render_against(
+        record, _FIELD_SCHEMA, optional_extra_fields=_ROUTINE_OPTIONAL_EXTRA_FIELDS
+    )
 
 
 def render_expanded(record: ExpandedWorkRecord) -> str:
@@ -868,6 +1174,63 @@ def render_record(parsed: ParsedRecord) -> str:
     return render_expanded(parsed.record)  # type: ignore[arg-type]
 
 
+def _integrity_json_value(key: str, value: object) -> str:
+    if key == "requirement_baseline":
+        if not isinstance(value, RequirementBaseline):
+            raise WorkRecordParseError("requirement_baseline must be a RequirementBaseline")
+        data: object = {
+            "source": value.source,
+            "outcome": value.outcome,
+            "scope": value.scope,
+            "constraints": value.constraints,
+            "completion_criteria": value.completion_criteria,
+        }
+    elif key == "behavior_changes":
+        if not isinstance(value, list) or not all(
+            isinstance(entry, BehaviorChange) for entry in value
+        ):
+            raise WorkRecordParseError(
+                "behavior_changes must be a list of BehaviorChange entries"
+            )
+        entries: list[dict[str, object]] = []
+        for entry in value:
+            item: dict[str, object] = {
+                "target": entry.target,
+                "classification": entry.classification,
+                "before": entry.before,
+                "after": entry.after,
+                "reason": entry.reason,
+            }
+            if entry.path is not None:
+                item["path"] = entry.path
+            if entry.classification == "requirement-change":
+                item.update(
+                    {
+                        "impact": entry.impact,
+                        "alternatives": entry.alternatives,
+                        "authority": (
+                            None
+                            if entry.authority is None
+                            else {
+                                "scope": entry.authority.scope,
+                                "name": entry.authority.name,
+                            }
+                        ),
+                    }
+                )
+                if entry.approval is not None:
+                    item["approval"] = {
+                        "by": entry.approval.by,
+                        "reference": entry.approval.reference,
+                        "verbatim": entry.approval.verbatim,
+                    }
+            entries.append(item)
+        data = entries
+    else:
+        raise WorkRecordParseError(f"unknown integrity JSON field {key!r}")
+    return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def _render_against(
     record: WorkRecord | ExpandedWorkRecord,
     schema: tuple[tuple[str, str], ...],
@@ -880,10 +1243,8 @@ def _render_against(
     placeholder lines for fields that weren't set.
     """
     parts = [_START_MARKER]
-    schema_keys: set[str] = set()
     for label, key in schema:
         parts.append(f"**{label}:** {record[key]}")  # type: ignore[literal-required]
-        schema_keys.add(key)
     extra = optional_extra_fields or {}
     # Render optional-extras after the State field would conflict —
     # State is the last schema entry in expanded, and Exceptions should
@@ -897,11 +1258,26 @@ def _render_against(
         state_line = body_parts[-1]
         body_parts = body_parts[:-1]
         for label, key in extra.items():
-            # ``record.get(key)`` works because TypedDicts are dicts at
-            # runtime; emit the field only when present.
+            # ``record.get`` works because TypedDicts are dicts at runtime;
+            # emit the field only when present.
             value = record.get(key)  # type: ignore[misc]
-            if value is not None and value != "":
-                body_parts.append(f"**{label}:** {value}")
+            if value is None or (key not in _OPTIONAL_JSON_FIELDS.values() and value == ""):
+                continue
+            rendered = (
+                _integrity_json_value(key, value)
+                if key in _OPTIONAL_JSON_FIELDS.values()
+                else str(value)
+            )
+            line = f"**{label}:** {rendered}"
+            if label == "Requirement baseline":
+                completion = next(
+                    i
+                    for i, part in enumerate(body_parts)
+                    if part.startswith("**Completion criteria:**")
+                )
+                body_parts.insert(completion + 1, line)
+            else:
+                body_parts.append(line)
         body_parts.append(state_line)
         parts = [parts[0]] + body_parts
     parts.append(_END_MARKER)
@@ -1249,7 +1625,7 @@ class ApplicabilityDecision:
     reason_codes: tuple[str, ...]
 
 
-def _valid_repo_path(path: object, *, allow_prefix: bool) -> bool:
+def valid_repository_path(path: object, *, allow_prefix: bool = False) -> bool:
     if not isinstance(path, str) or not path or "\x00" in path:
         return False
     if path.startswith("/") or re.match(r"^[A-Za-z]:", path):
@@ -1294,7 +1670,7 @@ def approve_documentation_only(
         not discovered_valid
         or not approved_valid
         or not discovered
-        or any(not _valid_repo_path(path, allow_prefix=True) for path in discovered + approved)
+        or any(not valid_repository_path(path, allow_prefix=True) for path in discovered + approved)
         or not isinstance(direct_default_branch_approved, bool)
         or protection_status not in {"unprotected", "protected", "unavailable"}
     ):
@@ -1331,7 +1707,7 @@ def evaluate_applicability(
         and isinstance(config.paths, tuple)
         and bool(config.paths)
         and len(set(config.paths)) == len(config.paths)
-        and all(_valid_repo_path(path, allow_prefix=True) for path in config.paths)
+        and all(valid_repository_path(path, allow_prefix=True) for path in config.paths)
     )
     if config is None:
         reasons.append("no_applicability_config")
@@ -1341,11 +1717,11 @@ def evaluate_applicability(
     if not paths:
         reasons.append("empty_changed_paths")
     if not paths_shape_valid or any(
-        not _valid_repo_path(path, allow_prefix=False) for path in paths
+        not valid_repository_path(path, allow_prefix=False) for path in paths
     ):
         reasons.append("invalid_changed_path")
     if not protected_shape_valid or any(
-        not _valid_repo_path(path, allow_prefix=True) for path in protected
+        not valid_repository_path(path, allow_prefix=True) for path in protected
     ):
         reasons.append("invalid_protected_path")
 
@@ -1844,6 +2220,7 @@ class RedlineVerdict:
     schema_changed: bool
     security_changed: bool
     runtime_config_changed: bool
+    behavior_contract_changes: dict[str, Any] | None = None
     """Disambiguators for red-zone → High vs Elevated. Pulled from
     ``apiChanges.detected``, ``schemaChanges.detected``,
     ``securityChanges.detected``, ``runtimeConfigChanges.detected`` —
@@ -1902,7 +2279,15 @@ class RedlineVerdict:
         # Step 1: High signals — contract/schema/security changes,
         # plus High-class checkpoint ids. Wins over any zone-based
         # baseline.
-        if self.api_changed or self.schema_changed or self.security_changed:
+        if (
+            self.api_changed
+            or self.schema_changed
+            or self.security_changed
+            or bool(
+                self.behavior_contract_changes
+                and self.behavior_contract_changes["detected"]
+            )
+        ):
             return "High"
         if self._has_high_checkpoint():
             return "High"
@@ -2088,6 +2473,66 @@ def load_redline_verdict(path: Path) -> RedlineVerdict | None:
     return _from_mapping(data)
 
 
+def _behavior_contract_changes(data: dict[str, Any]) -> dict[str, Any] | None:
+    raw = data.get("behaviorContractChanges")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise RedlineVerdictError("behaviorContractChanges must be an object")
+    required = {"version", "detected", "paths", "verification", "checkpoint"}
+    if set(raw) != required or raw.get("version") != 1:
+        raise RedlineVerdictError(
+            "behaviorContractChanges has an unsupported or malformed shape"
+        )
+    if not isinstance(raw["detected"], bool):
+        raise RedlineVerdictError("behaviorContractChanges.detected must be boolean")
+    if not isinstance(raw["verification"], str) or not raw["verification"].strip():
+        raise RedlineVerdictError(
+            "behaviorContractChanges.verification must contain text"
+        )
+    if not isinstance(raw["checkpoint"], str) or not raw["checkpoint"].strip():
+        raise RedlineVerdictError(
+            "behaviorContractChanges.checkpoint must contain text"
+        )
+    entries = raw["paths"]
+    if not isinstance(entries, list):
+        raise RedlineVerdictError("behaviorContractChanges.paths must be an array")
+    seen: set[str] = set()
+    normalized: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"path", "owners"}:
+            raise RedlineVerdictError(
+                "behaviorContractChanges path entries require path and owners"
+            )
+        path = entry["path"]
+        owners = entry["owners"]
+        if not isinstance(path, str) or not path or path in seen:
+            raise RedlineVerdictError(
+                "behaviorContractChanges paths must be unique non-empty strings"
+            )
+        if (
+            not isinstance(owners, list)
+            or any(not isinstance(owner, str) or not owner for owner in owners)
+            or len(owners) != len(set(owners))
+        ):
+            raise RedlineVerdictError(
+                "behaviorContractChanges owners must be unique non-empty strings"
+            )
+        seen.add(path)
+        normalized.append({"path": path, "owners": list(owners)})
+    if raw["detected"] != bool(normalized):
+        raise RedlineVerdictError(
+            "behaviorContractChanges.detected must match affected paths"
+        )
+    return {
+        "version": 1,
+        "detected": raw["detected"],
+        "paths": normalized,
+        "verification": raw["verification"],
+        "checkpoint": raw["checkpoint"],
+    }
+
+
 def _from_mapping(data: dict[str, Any]) -> RedlineVerdict:
     """Build the typed view, defaulting missing keys to safe values.
 
@@ -2115,6 +2560,7 @@ def _from_mapping(data: dict[str, Any]) -> RedlineVerdict:
         runtime_config_changed=bool(
             (data.get("runtimeConfigChanges") or {}).get("detected", False)
         ),
+        behavior_contract_changes=_behavior_contract_changes(data),
         modes=dict(data.get("modes") or {}),
         raw=data,
     )
@@ -2767,6 +3213,146 @@ def review_checkpoints_satisfied(ctx: CheckerContext) -> PredicateResult:
 
 
 # ---------------------------------------------------------------------------
+# Behavioral requirement integrity predicates
+# ---------------------------------------------------------------------------
+
+_TASK_CONTEXT_FIELDS = {
+    "task-context.outcome": "outcome",
+    "task-context.scope": "scope",
+    "task-context.constraints": "constraints",
+    "task-context.completion_criteria": "completion_criteria",
+}
+
+
+def _integrity_error(ctx: CheckerContext) -> str | None:
+    if ctx.record is None:
+        if ctx.parse_error is not None:
+            return f"Work Record integrity fields could not be parsed: {ctx.parse_error}"
+        return "Work Record integrity fields are unavailable because the record is missing."
+    return None
+
+
+def requirements_baseline_present(ctx: CheckerContext) -> PredicateResult:
+    """Require the task-local baseline before any record can advance."""
+    name = "requirements.baseline_present"
+    error = _integrity_error(ctx)
+    if error is not None:
+        return PredicateResult(name, False, error, True)
+    baseline = ctx.record.get("requirement_baseline")  # type: ignore[union-attr]
+    if baseline is None:
+        return PredicateResult(
+            name,
+            False,
+            "Requirement baseline is missing; legacy records remain readable "
+            "but cannot advance.",
+            True,
+        )
+    return PredicateResult(name, True, "Requirement baseline is present.", True)
+
+
+def behavior_changes_well_formed(ctx: CheckerContext) -> PredicateResult:
+    """Surface malformed optional integrity JSON as a named blocking rule."""
+    name = "requirements.behavior_changes_well_formed"
+    error = _integrity_error(ctx)
+    if error is not None:
+        return PredicateResult(name, False, error, True)
+    return PredicateResult(
+        name, True, "Behavior changes are absent or parser-validated.", True
+    )
+
+
+def task_context_traceable(ctx: CheckerContext) -> PredicateResult:
+    """Require an ordered, lossless baseline-to-current Task Context chain."""
+    name = "requirements.task_context_traceable"
+    error = _integrity_error(ctx)
+    if error is not None:
+        return PredicateResult(name, False, error, True)
+    baseline = ctx.record.get("requirement_baseline")  # type: ignore[union-attr]
+    if baseline is None:
+        return PredicateResult(
+            name, False, "Task Context cannot be traced without a baseline.", True
+        )
+    values = {
+        field: getattr(baseline, field) for field in _TASK_CONTEXT_FIELDS.values()
+    }
+    for index, change in enumerate(
+        ctx.record.get("behavior_changes", []), 1  # type: ignore[union-attr]
+    ):
+        field = _TASK_CONTEXT_FIELDS.get(change.target)
+        if field is None:
+            continue
+        if change.before != values[field]:
+            return PredicateResult(
+                name,
+                False,
+                f"Task Context chain entry #{index} for {change.target!r} starts "
+                f"at {change.before!r}, expected {values[field]!r}.",
+                True,
+            )
+        values[field] = change.after
+    mismatches = [
+        target
+        for target, field in _TASK_CONTEXT_FIELDS.items()
+        if values[field] != ctx.record[field]  # type: ignore[index]
+    ]
+    if mismatches:
+        return PredicateResult(
+            name,
+            False,
+            "Task Context chain does not end at the current record fields: "
+            + ", ".join(mismatches),
+            True,
+        )
+    return PredicateResult(
+        name,
+        True,
+        "Task Context changes form an ordered baseline-to-current chain.",
+        True,
+    )
+
+
+def requirement_changes_authorized(ctx: CheckerContext) -> PredicateResult:
+    """Require exact task-owner/user approval for task requirement changes."""
+    name = "requirements.requirement_changes_authorized"
+    error = _integrity_error(ctx)
+    if error is not None:
+        return PredicateResult(name, False, error, True)
+    for index, change in enumerate(
+        ctx.record.get("behavior_changes", []), 1  # type: ignore[union-attr]
+    ):
+        if (
+            change.classification != "requirement-change"
+            or change.target == "repository-contract"
+        ):
+            continue
+        if (
+            change.authority is None
+            or change.authority.scope != "task"
+            or change.authority.name != "task-owner"
+        ):
+            return PredicateResult(
+                name,
+                False,
+                f"Task requirement change entry #{index} must use authority "
+                "scope 'task' and name 'task-owner'.",
+                True,
+            )
+        if change.approval is None or change.approval.by != "user":
+            return PredicateResult(
+                name,
+                False,
+                f"Task requirement change entry #{index} requires approval.by "
+                "== 'user'; an unapproved proposal remains blocked.",
+                True,
+            )
+    return PredicateResult(
+        name,
+        True,
+        "Task requirement changes have exact task-owner/user authority.",
+        True,
+    )
+
+# ---------------------------------------------------------------------------
 # Exceptions predicates (slice F)
 # ---------------------------------------------------------------------------
 #
@@ -2793,6 +3379,15 @@ _NON_WAIVABLE_PREDICATES: frozenset[str] = frozenset({
     "complexity.declared",
     "workrecord.shape_matches_classification",
     "workrecord.implementation_ready",
+    "requirements.baseline_present",
+    "requirements.behavior_changes_well_formed",
+    "requirements.task_context_traceable",
+    "requirements.requirement_changes_authorized",
+    "behavior_contracts.redline_evidence_complete",
+    "behavior_contracts.changed_paths_complete",
+    "behavior_contracts.changed_paths_classified",
+    "behavior_contracts.requirement_changes_authorized",
+    "behavior_contracts.verification_linked",
     # The exception predicates themselves — circular waivers are not
     # honoured. An exception waiving exceptions.well_formed would be
     # the harness telling itself to ignore its own content checks.
@@ -3427,6 +4022,15 @@ PREDICATE_SOURCE: dict[str, str] = {
     "evidence.criteria_have_methods": "core",
     "evidence.failure_not_claimed_as_success": "core",
     "workrecord.commit_order": "core",
+    "requirements.baseline_present": "core",
+    "requirements.behavior_changes_well_formed": "core",
+    "requirements.task_context_traceable": "core",
+    "requirements.requirement_changes_authorized": "core",
+    "behavior_contracts.redline_evidence_complete": "repo",
+    "behavior_contracts.changed_paths_complete": "repo",
+    "behavior_contracts.changed_paths_classified": "repo",
+    "behavior_contracts.requirement_changes_authorized": "repo",
+    "behavior_contracts.verification_linked": "repo",
     # default — redline-derived risk controls
     "risk.redline_findings_available": "default",
     "risk.boundary_violation_absent": "default",
@@ -3676,6 +4280,11 @@ PREDICATES: tuple = (
     # — no double-implementation of redline's satisfy-by logic. Appended
     # here so the three redline-derived predicates stay grouped.
     review_checkpoints_satisfied,
+    # --- behavioral requirement integrity ---------------------------
+    requirements_baseline_present,
+    behavior_changes_well_formed,
+    task_context_traceable,
+    requirement_changes_authorized,
     # --- exceptions predicates (slice F) ----------------------------
     exceptions_well_formed,
     exceptions_not_against_boundary,
@@ -3745,6 +4354,7 @@ import os
 import stat
 import subprocess
 from pathlib import Path, PurePosixPath
+
 from urllib.parse import quote
 
 
@@ -4233,6 +4843,273 @@ def _github_default_branch_protection(repo_root: Path) -> str:
         return "unavailable"
     return "protected" if branch_info["protected"] or rules else "unprotected"
 
+def _load_behavior_contract_policy(
+    repo_root: Path,
+) -> tuple[dict[str, object] | None, str | None]:
+    path = repo_root / "agent-redline-policy.yaml"
+    if not path.is_file():
+        return None, None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        return None, f"could not read Redline behavior-contract policy: {exc}"
+    if not isinstance(data, dict) or "behaviorContracts" not in data:
+        return None, None
+    block = data.get("behaviorContracts")
+    if not isinstance(block, dict):
+        return None, "Redline behaviorContracts must be an object"
+    paths = block.get("paths")
+    verification = block.get("verification")
+    checkpoint = block.get("checkpoint")
+    if (
+        not isinstance(paths, list)
+        or not paths
+        or len(paths) != len(set(paths))
+        or not all(isinstance(pattern, str) for pattern in paths)
+        or not isinstance(verification, str)
+        or not verification.strip()
+        or not isinstance(checkpoint, str)
+        or not checkpoint.strip()
+    ):
+        return None, "Redline behaviorContracts is malformed"
+    for pattern in paths:
+        exact = pattern[:-3] if pattern.endswith("/**") else pattern
+        if (
+            not exact
+            or any(char in exact for char in "*?[]{}")
+            or not valid_repository_path(exact, allow_prefix=False)
+        ):
+            return None, f"Redline behaviorContracts contains unsafe path {pattern!r}"
+    return {
+        "paths": paths,
+        "verification": verification,
+        "checkpoint": checkpoint,
+    }, None
+
+
+def _behavior_contract_policy_matches(path: str, pattern: str) -> bool:
+    if pattern.endswith("/**"):
+        return path.startswith(pattern[:-2])
+    return path == pattern
+
+
+def _behavior_contract_evidence_record(detail: str) -> RecordVerdict:
+    result = PredicateResult(
+        name="behavior_contracts.redline_evidence_complete",
+        passed=False,
+        detail=detail,
+        blocking=True,
+    )
+    record = aggregate_record("<behavior-contracts>", [result])
+    return dataclasses.replace(
+        record,
+        effective_rules=[{"name": result.name, "source": "repo"}],
+    )
+
+
+def _contract_changed_path_valid(repo_root: Path, path: str) -> bool:
+    return valid_repository_path(path) and not _unsafe_applicability_path(repo_root, path)
+
+
+def _verification_reference_present(text: str, identifier: str) -> bool:
+    token = r"[A-Za-z0-9_.-]"
+    return re.search(rf"(?<!{token}){re.escape(identifier)}(?!{token})", text) is not None
+
+
+def _behavior_contract_record(
+    repo_root: Path,
+    redline: RedlineVerdict,
+    slugs: list[str],
+    paths: list[str],
+    *,
+    paths_complete: bool,
+    redline_verdict_path: Path | None,
+    base_ref: str | None,
+    head_ref: str | None,
+) -> RecordVerdict:
+    """Check Redline-reported repository contracts against the trusted PR paths."""
+    detail = redline.behavior_contract_changes
+    assert detail is not None and detail["detected"]
+    affected_entries = detail["paths"]
+    affected = [entry["path"] for entry in affected_entries]
+    owners_by_path = {
+        entry["path"]: set(entry["owners"])
+        for entry in affected_entries
+    }
+
+    paths_safe = all(_contract_changed_path_valid(repo_root, path) for path in paths)
+    paths_unique = len(paths) == len(set(paths))
+    affected_safe = all(
+        _contract_changed_path_valid(repo_root, path)
+        for path in affected
+    )
+    affected_current = set(affected).issubset(paths)
+    affected_red = set(affected).issubset(redline.zones.get("red", []))
+    complete = (
+        paths_complete
+        and paths_safe
+        and paths_unique
+        and affected_safe
+        and affected_current
+        and affected_red
+    )
+
+    owner_sets = {
+        tuple(sorted(owners))
+        for owners in owners_by_path.values()
+    }
+    owners_compatible = (
+        bool(affected)
+        and all(owners_by_path.values())
+        and len(owner_sets) == 1
+    )
+    checkpoint = detail["checkpoint"]
+    checkpoint_reported = any(
+        item.get("id") == checkpoint
+        for item in redline.checkpoints
+    )
+    authority_configured = owners_compatible and checkpoint_reported
+
+    contexts: list[CheckerContext] = []
+    if complete:
+        for slug in slugs:
+            try:
+                contexts.append(_build_context(
+                    repo_root,
+                    slug,
+                    redline_verdict_path,
+                    base_ref=base_ref,
+                    head_ref=head_ref,
+                ))
+            except (InvalidSlugError, UnsafeWorkRecordPathError):
+                continue
+
+    entries: dict[str, list[tuple[object, CheckerContext]]] = {
+        path: [] for path in affected
+    }
+    for ctx in contexts:
+        if ctx.record is None:
+            continue
+        for change in ctx.record.get("behavior_changes", []):  # type: ignore[union-attr]
+            if change.target == "repository-contract" and change.path in entries:
+                entries[change.path].append((change, ctx))
+
+    classified = complete and all(len(entries[path]) == 1 for path in affected)
+    authorized = classified and authority_configured
+    classification_detail: list[str] = []
+    authorization_detail: list[str] = []
+    affected_contexts: dict[str, CheckerContext] = {}
+    if not owners_compatible:
+        authorization_detail.append(
+            "affected paths need one compatible non-empty CODEOWNERS authority set"
+        )
+    if not checkpoint_reported:
+        authorization_detail.append(
+            f"Redline did not report configured checkpoint {checkpoint!r}"
+        )
+    for path in affected:
+        matches = entries[path]
+        if len(matches) != 1:
+            classification_detail.append(
+                f"{path!r} has {len(matches)} repository-contract entries; expected exactly one"
+            )
+            continue
+        change, ctx = matches[0]
+        affected_contexts[ctx.slug] = ctx
+        classification_detail.append(f"{path!r} classified as {change.classification}")
+        if change.classification != "requirement-change":
+            continue
+        authority = change.authority
+        approval = change.approval
+        owners = owners_by_path[path]
+        if (
+            authority is None
+            or authority.scope != "repository"
+            or authority.name not in owners
+            or approval is None
+            or approval.by != authority.name
+        ):
+            authorized = False
+            authorization_detail.append(
+                f"{path!r} requires repository authority and approval.by "
+                f"from one of {sorted(owners)!r}"
+            )
+
+    verification = detail["verification"]
+    verification_linked = classified and any(
+        _verification_reference_present(
+            str(ctx.record.get("verification", ""))
+            + "\n"
+            + str(ctx.record.get("verification_plan", "")),
+            verification,
+        )
+        for ctx in affected_contexts.values()
+        if ctx.record is not None
+    )
+    if not paths_complete:
+        complete_detail = "trusted NUL changed-path evidence is missing or incomplete."
+    elif not paths_safe or not affected_safe:
+        complete_detail = "changed-path evidence contains an unsafe or non-normalized path."
+    elif not paths_unique:
+        complete_detail = "changed-path evidence contains duplicate paths."
+    elif not affected_current:
+        complete_detail = "Redline reported a behavior-contract path outside the current diff."
+    elif not affected_red:
+        complete_detail = "Redline reported a behavior-contract path that is not classified red."
+    else:
+        complete_detail = "trusted NUL paths and Redline behavior-contract evidence agree."
+
+    results = [
+        PredicateResult(
+            name="behavior_contracts.changed_paths_complete",
+            passed=complete,
+            detail=complete_detail,
+            blocking=True,
+        ),
+        PredicateResult(
+            name="behavior_contracts.changed_paths_classified",
+            passed=classified,
+            detail=(
+                "all affected repository contracts have exactly one classification."
+                if classified
+                else "; ".join(classification_detail)
+                or "contract path classification is unavailable."
+            ),
+            blocking=True,
+        ),
+        PredicateResult(
+            name="behavior_contracts.requirement_changes_authorized",
+            passed=authorized,
+            detail=(
+                "repository requirement changes reference canonical CODEOWNERS authority."
+                if authorized
+                else "; ".join(authorization_detail)
+                or "repository contract classifications are not authorized."
+            ),
+            blocking=True,
+        ),
+        PredicateResult(
+            name="behavior_contracts.verification_linked",
+            passed=verification_linked,
+            detail=(
+                f"an affected Work Record references reported verification "
+                f"{verification!r}."
+                if verification_linked
+                else f"no affected Work Record references reported verification "
+                f"{verification!r}."
+            ),
+            blocking=True,
+        ),
+    ]
+    record = aggregate_record("<behavior-contracts>", results)
+    return dataclasses.replace(
+        record,
+        effective_rules=[{"name": result.name, "source": "repo"} for result in results],
+    )
+
+def _append_record(verdict: Verdict, record: RecordVerdict) -> Verdict:
+    return aggregate([*verdict.records, record])
+
 def _synthetic_verdict(
     slug: str,
     results: list[PredicateResult],
@@ -4376,9 +5253,7 @@ def _resolve_work_record(
             record_path=record_path,
         )
 
-    record_state = parsed.record["state"].strip()
-    if record_state.endswith("."):
-        record_state = record_state[:-1].rstrip()
+    record_state = parsed.record["state"].rstrip(".").strip()
     if record_state not in _ALLOWED_STATES:
         return _resolver_error(
             "invalid_record_state",
@@ -4512,6 +5387,7 @@ def main(argv: list[str] | None = None) -> int:
 
     paths: list[str] = []
     slugs: list[str] = []
+    changed_record_slugs: list[str] = []
     discovery_succeeded = False
     if changed_path is not None:
         try:
@@ -4528,6 +5404,7 @@ def main(argv: list[str] | None = None) -> int:
                 changed_paths=paths,
                 nul_delimited=trusted_paths,
             )
+            changed_record_slugs = list(slugs)
             discovery_succeeded = True
         except (OSError, UnicodeError, ValueError) as exc:
             print(
@@ -4583,7 +5460,7 @@ def main(argv: list[str] | None = None) -> int:
     redline = None
     redline_error: str | None = None
     risk_status = "unavailable"
-    if trusted_paths and discovery_succeeded and cfg is not None:
+    if cfg is not None:
         verdict_path = args.redline_verdict or Path(cfg.redline.verdict_path)
         if not verdict_path.is_absolute():
             verdict_path = repo_root / verdict_path
@@ -4591,7 +5468,7 @@ def main(argv: list[str] | None = None) -> int:
             redline = load_redline_verdict(verdict_path)
         except RedlineVerdictError as exc:
             redline_error = str(exc)
-        if redline is not None:
+        if redline is not None and trusted_paths and discovery_succeeded:
             risk_status = redline.applicability_risk_status(paths)
             if any(_unsafe_applicability_path(repo_root, path) for path in paths):
                 risk_status = "risky"
@@ -4609,6 +5486,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if trusted_paths and discovery_succeeded and cfg is not None and not verdict.records:
         protected_paths = list(_PROTECTED_APPLICABILITY_PATHS)
+
         protected_paths.extend(
             path
             for path in paths
@@ -4710,6 +5588,58 @@ def main(argv: list[str] | None = None) -> int:
                 ))
             verdict = _synthetic_verdict(args.slug or "<branch slug>", results, source="core")
 
+    behavior_policy, behavior_policy_error = _load_behavior_contract_policy(repo_root)
+    behavior_detail = redline.behavior_contract_changes if redline is not None else None
+    behavior_evidence_error = behavior_policy_error
+    if behavior_evidence_error is None and behavior_policy is None and behavior_detail is not None:
+        behavior_evidence_error = (
+            "Redline reported behavior contracts but the current policy has no behaviorContracts block"
+        )
+    elif behavior_evidence_error is None and behavior_policy is not None:
+        if behavior_detail is None:
+            behavior_evidence_error = (
+                "current Redline behaviorContracts policy has no matching versioned verdict detail"
+            )
+        else:
+            expected = {
+                path
+                for path in paths
+                if any(
+                    _behavior_contract_policy_matches(path, pattern)
+                    for pattern in behavior_policy["paths"]
+                )
+            }
+            reported = {entry["path"] for entry in behavior_detail["paths"]}
+            if expected != reported:
+                behavior_evidence_error = (
+                    "current Redline policy and verdict disagree on affected behavior-contract paths"
+                )
+            elif (
+                behavior_detail["verification"] != behavior_policy["verification"]
+                or behavior_detail["checkpoint"] != behavior_policy["checkpoint"]
+            ):
+                behavior_evidence_error = (
+                    "current Redline policy and verdict disagree on behavior-contract controls"
+                )
+    if behavior_evidence_error is not None:
+        verdict = _append_record(
+            verdict,
+            _behavior_contract_evidence_record(behavior_evidence_error),
+        )
+    elif behavior_detail is not None and behavior_detail["detected"]:
+        verdict = _append_record(
+            verdict,
+            _behavior_contract_record(
+                repo_root,
+                redline,
+                changed_record_slugs,
+                paths,
+                paths_complete=trusted_paths and discovery_succeeded,
+                redline_verdict_path=args.redline_verdict,
+                base_ref=args.base_ref,
+                head_ref=args.head_ref,
+            ),
+        )
     payload = json.dumps(verdict.to_dict(), indent=2, ensure_ascii=False) + "\n"
     sys.stdout.buffer.write(payload.encode("utf-8"))
     return verdict.exit_code

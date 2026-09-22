@@ -5,7 +5,6 @@ Reporter core. Pure logic; no I/O at the top level except in main().
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import json
 import re
 import sys
@@ -79,6 +78,7 @@ class Verdict:
     pr_size: dict[str, Any]
     exit_code: int
     recommended_action: str
+    behavior_contract_changes: dict[str, Any] | None = None
     modes: dict[str, Any] = field(default_factory=dict)
     suppressions: list["SuppressionMatch"] = field(default_factory=list)
 
@@ -98,6 +98,11 @@ class Verdict:
             "recommendedAction": self.recommended_action,
             "modes": self.modes,
             "suppressions": [asdict(s) for s in self.suppressions],
+            **(
+                {"behaviorContractChanges": self.behavior_contract_changes}
+                if self.behavior_contract_changes is not None
+                else {}
+            ),
         }
 
 
@@ -117,6 +122,10 @@ def _glob_to_regex(pattern: str) -> re.Pattern:
     out = ["^"]
     while i < len(pattern):
         c = pattern[i]
+        if c == "?":
+            out.append("[^/]")
+            i += 1
+            continue
         if c == "*":
             if i + 1 < len(pattern) and pattern[i + 1] == "*":
                 # `**` — zero or more components.
@@ -242,6 +251,7 @@ def classify_files(
     blue = _zone_paths(zones.get("blue"))
     watch = _zone_paths(zones.get("watch"))
     excludes = _effective_excludes(policy)
+    behavior_contracts = (policy.get("behaviorContracts") or {}).get("paths") or []
 
     classified: dict[str, list[str]] = {
         "red": [],
@@ -252,6 +262,11 @@ def classify_files(
     }
 
     for path in files:
+        if matches_any(path, behavior_contracts):
+            classified["red"].append(path)
+            if matches_any(path, watch):
+                classified["watch"].append(path)
+            continue
         if matches_any(path, excludes):
             classified["excluded"].append(path)
             continue
@@ -823,6 +838,7 @@ def _required_checkpoints(
     security_changed: bool,
     runtime_config_changed: bool,
     architecture_test_modified: bool,
+    behavior_contract_paths: list[str],
     suppression_matches: list["SuppressionMatch"] | None = None,
 ) -> dict[str, str]:
     """Return {checkpoint_id: reason} for each required checkpoint."""
@@ -855,6 +871,12 @@ def _required_checkpoints(
         required.setdefault(
             "architecture-review",
             "Architecture-test files modified",
+        )
+    if behavior_contract_paths:
+        cp = policy["behaviorContracts"]["checkpoint"]
+        required.setdefault(
+            cp,
+            f"Behavior contract changed: {behavior_contract_paths[0]}",
         )
 
     # Spec §2.3 (cmt_000010): a suppression match on a non-exempt path always
@@ -917,10 +939,9 @@ def load_codeowners(repo_root: Path) -> list[_CodeOwnersRule]:
     approval" — caller decides whether that's tolerable).
 
     Lines starting with '#' and blank lines are skipped. Each remaining
-    line is split on whitespace; the first token is the path pattern,
-    the rest are owner tokens. Malformed lines (no owners) are skipped
-    silently — CODEOWNERS is GitHub's authoritative parser, ours is
-    best-effort and conservative.
+    line is split on whitespace; the first token is the path pattern and
+    the rest are owner tokens. Preserve ownerless rules: under GitHub's
+    last-match semantics they intentionally clear ownership for matching paths.
     """
     for rel in _CODEOWNERS_SEARCH_PATHS:
         p = repo_root / rel
@@ -932,15 +953,19 @@ def load_codeowners(repo_root: Path) -> list[_CodeOwnersRule]:
 def _parse_codeowners_text(text: str) -> list[_CodeOwnersRule]:
     rules: list[_CodeOwnersRule] = []
     for raw in text.splitlines():
+        if raw.lstrip().startswith(r"\#"):
+            continue
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
-        parts = line.split()
-        if len(parts) < 2:
-            # Pattern with no owners; CODEOWNERS treats this as
-            # "no required reviewer." Skip — we can't intersect.
+        pattern, *owners = line.split()
+        if (
+            pattern.startswith("!")
+            or pattern.startswith(r"\#")
+            or "[" in pattern
+            or "]" in pattern
+        ):
             continue
-        pattern, *owners = parts
         rules.append(_CodeOwnersRule(pattern=pattern, owners=tuple(owners)))
     return rules
 
@@ -949,21 +974,19 @@ def owners_for_paths(
     rules: list[_CodeOwnersRule],
     paths: Iterable[str],
 ) -> set[str]:
-    """Return the union of owner tokens whose pattern matches any path.
+    """Return canonical owner tokens for paths using CODEOWNERS precedence.
 
-    GitHub's CODEOWNERS pattern semantics are gitignore-shaped: later
-    rules override earlier ones. For the satisfaction check we want
-    "who could approve this," so we take the union — a more
-    conservative interpretation than GitHub's last-match-wins. The
-    cost: if the team intends a narrow override to limit who counts,
-    we'd over-attribute. The benefit: missing approvers never sneak
-    past us due to ordering surprises.
+    GitHub uses the last matching rule for a path. Multiple owners on that
+    rule are alternatives; any one may approve. The result unions those
+    canonical per-path owner sets across the requested paths.
     """
     matched: set[str] = set()
     for path in paths:
+        owners: tuple[str, ...] = ()
         for rule in rules:
             if _codeowners_match(rule.pattern, path):
-                matched.update(rule.owners)
+                owners = rule.owners
+        matched.update(owners)
     return matched
 
 
@@ -992,6 +1015,10 @@ def _codeowners_glob_to_regex(pattern: str) -> str:
     out: list[str] = []
     while i < n:
         c = pattern[i]
+        if c == "?":
+            out.append("[^/]")
+            i += 1
+            continue
         if c == "*":
             if i + 1 < n and pattern[i + 1] == "*":
                 # Whole-segment globstar requires a LEFT boundary (start of
@@ -1037,43 +1064,27 @@ def _codeowners_match(pattern: str, path: str) -> bool:
     - '*' matches any single segment substring (no slash).
     - Bare patterns match anywhere in the tree.
 
-    Not supported (rare in real CODEOWNERS): negation '!', character
-    classes '[...]'. Patterns using those fall through to fnmatch's
-    plain semantics, which is conservative — over-matches rather than
-    under-matches.
+    CODEOWNERS does not support negation or character ranges; those characters
+    are treated literally by the translator.
     """
     pat = pattern
     # Trailing slash → directory; anything below matches.
     if pat.endswith("/"):
         pat = pat + "**"
-    # Leading slash → anchored to root. Strip it for fnmatch.
+    # Leading slash → anchored to root.
     if pat.startswith("/"):
         pat = pat[1:]
         anchored = True
     else:
         anchored = False
 
-    if "**" in pat:
-        # fnmatch handles '*' but not '**'; translate via an explicit
-        # converter so '**' can cross slash boundaries AND collapse to
-        # zero segments (`foo/**/bar` ⊇ `foo/bar`). Terminate with \Z so
-        # a match runs to the end of the path; re.match anchors the
-        # start for anchored patterns, re.search leaves it free for bare
-        # ones — same split the fnmatch path below preserves.
-        regex_pat = _codeowners_glob_to_regex(pat) + r"\Z"
-        if anchored:
-            return re.match(regex_pat, path) is not None
-        return re.search(regex_pat, path) is not None
-
+    final_segment = pat.rsplit("/", 1)[-1]
+    suffix = r"(?:/.*)?\Z" if not any(c in final_segment for c in "*?") else r"\Z"
+    regex_pat = _codeowners_glob_to_regex(pat) + suffix
     if anchored:
-        return fnmatch.fnmatchcase(path, pat)
-    # Bare patterns match anywhere — try matching against the path
-    # and every trailing segment.
-    return fnmatch.fnmatchcase(path, pat) or any(
-        fnmatch.fnmatchcase(path[i:], pat)
-        for i in range(len(path))
-        if path[i - 1:i] == "/"
-    )
+        return re.match(regex_pat, path) is not None
+    # Bare patterns may start at the root or a later path-segment boundary.
+    return re.search(r"(?:^|/)" + regex_pat, path) is not None
 
 
 def _codeowner_satisfaction(
@@ -1084,13 +1095,11 @@ def _codeowner_satisfaction(
 
     Returns ``(satisfied, verification_complete)``.
 
-    - ``satisfied=True`` when at least one approver matches at least
-      one ``@user`` owner. Team tokens (``@org/team``) can't be resolved
-      locally — they don't contribute to the user-level match.
-    - ``verification_complete=False`` when the effective_owners contains
-      team tokens we couldn't resolve. Reviewers should know that
-      branch protection's "Require Code Owner review" is the only
-      remaining enforcement layer in that case.
+    - User owners are matched locally against approving logins.
+    - Team membership cannot be resolved locally. With at least one approval,
+      return satisfied but incomplete: required Code Owner review in GitHub is
+      the authority gate that authenticates team membership. With no approval,
+      the checkpoint remains unsatisfied.
     """
     user_owners = {
         o.lstrip("@") for o in effective_owners
@@ -1103,10 +1112,9 @@ def _codeowner_satisfaction(
     # Approvers come in as bare logins (no @ prefix).
     if user_owners & approver_logins:
         return True, True
-    # No user-level match. If only teams were configured, mark
-    # verification incomplete; otherwise the user owners were present
-    # but didn't approve.
-    return False, len(team_owners) == 0
+    if team_owners:
+        return bool(approver_logins), False
+    return False, True
 
 
 def _is_satisfied(
@@ -1119,9 +1127,9 @@ def _is_satisfied(
     """OR-semantics over satisfiedBy entries. Returns (satisfied, satisfy_by_human).
 
     For ``codeownerApproval``:
-    - When ``effective_owners`` is provided (the path-aware path):
-      satisfied only when at least one approver intersects with the
-      user-level owners of the changed paths (F2 fix).
+    - When ``effective_owners`` is provided (the path-aware path), user owners
+      are intersected locally. Team owners rely on GitHub's separately required
+      Code Owner review to authenticate membership.
     - When ``effective_owners`` is ``None`` (legacy callers that
       don't pass paths): falls back to "any non-empty approver list"
       with a note in ``satisfy_by_human`` so reviewers see the path
@@ -1305,6 +1313,16 @@ def classify(
     schema_changed = detect_schema_change(files, policy)
     security_changed = detect_security_change(files, policy)
     runtime_changed = detect_runtime_config_change(files, policy)
+    behavior_config = policy.get("behaviorContracts")
+    behavior_contract_paths = (
+        [
+            path
+            for path in files
+            if matches_any(path, behavior_config["paths"])
+        ]
+        if behavior_config
+        else []
+    )
 
     boundary_violations: list[BoundaryViolation] = []
     # Resolve which boundary report to parse, and in which format.
@@ -1325,23 +1343,27 @@ def classify(
     required = _required_checkpoints(
         classification, policy,
         api_changed, schema_changed, security_changed, runtime_changed,
-        arch_test_modified,
+        arch_test_modified, behavior_contract_paths,
         suppression_matches=suppression_matches,
     )
 
     checkpoints_defs = policy.get("checkpoints", {}) or {}
-    # Pre-compute the effective-owner set from CODEOWNERS rules over
-    # all changed files. Per-checkpoint owner narrowing (using only
-    # the paths that triggered THIS checkpoint) is a future
-    # refinement; today's set is "owners of anything in this PR's
-    # diff," which is the right conservative cut for the satisfaction
-    # test.
-    effective_owners: set[str] | None = None
-    if codeowners_rules:
-        effective_owners = owners_for_paths(codeowners_rules, files)
+    behavior_checkpoint = (
+        behavior_config["checkpoint"]
+        if behavior_contract_paths
+        else None
+    )
     checkpoint_statuses: list[CheckpointStatus] = []
     for cp_id, reason in required.items():
         cp_def = checkpoints_defs.get(cp_id, {})
+        if cp_id == behavior_checkpoint:
+            effective_owners = owners_for_paths(
+                codeowners_rules or [], behavior_contract_paths
+            )
+        elif codeowners_rules:
+            effective_owners = owners_for_paths(codeowners_rules, files)
+        else:
+            effective_owners = None
         satisfied, satisfy_by = _is_satisfied(
             cp_def, pr_labels, codeowner_approvals,
             effective_owners=effective_owners,
@@ -1352,6 +1374,24 @@ def classify(
                 satisfy_by=satisfy_by,
             )
         )
+
+    behavior_contract_changes = None
+    if behavior_config:
+        behavior_contract_changes = {
+            "version": 1,
+            "detected": bool(behavior_contract_paths),
+            "paths": [
+                {
+                    "path": path,
+                    "owners": sorted(
+                        owners_for_paths(codeowners_rules or [], [path])
+                    ),
+                }
+                for path in behavior_contract_paths
+            ],
+            "verification": behavior_config["verification"],
+            "checkpoint": behavior_config["checkpoint"],
+        }
 
     pr_size = _pr_size_status(diff, policy)
 
@@ -1456,6 +1496,7 @@ def classify(
         pr_size=pr_size,
         exit_code=exit_code,
         recommended_action=recommended,
+        behavior_contract_changes=behavior_contract_changes,
         modes=_normalise_modes(modes),
         suppressions=suppression_matches,
     )
@@ -1545,6 +1586,19 @@ def render_markdown(verdict: Verdict, flow_mode: str = "pr") -> str:
         lines.append("| Zone | Files |")
         lines.append("|---|---|")
         lines.extend(rows)
+        lines.append("")
+
+    behavior = verdict.behavior_contract_changes
+    if behavior and behavior.get("detected"):
+        paths = [entry["path"] for entry in behavior["paths"]]
+        shown = ", ".join(f"`{path}`" for path in paths[:5])
+        if len(paths) > 5:
+            shown += f" (+{len(paths) - 5} more)"
+        lines.append(f"**Behavior contracts:** {shown}")
+        lines.append(
+            f"Verification: `{behavior['verification']}`; "
+            f"checkpoint: `{behavior['checkpoint']}`."
+        )
         lines.append("")
 
     # Checkpoints
@@ -1665,6 +1719,44 @@ def _find_policy_schema() -> Path | None:
     return None
 
 
+def _validate_behavior_contract_policy(
+    data: dict[str, Any],
+    path: Path,
+) -> None:
+    behavior = data.get("behaviorContracts")
+    if not behavior:
+        return
+    checkpoint = behavior["checkpoint"]
+    definition = (data.get("checkpoints") or {}).get(checkpoint)
+    if not isinstance(definition, dict):
+        raise SystemExit(
+            f"error: policy at {path} behaviorContracts.checkpoint "
+            f"{checkpoint!r} is not defined"
+        )
+    if definition.get("satisfiedBy") != ["codeownerApproval"]:
+        raise SystemExit(
+            f"error: policy at {path} behaviorContracts.checkpoint "
+            "must be satisfied only by codeownerApproval"
+        )
+    routed_elsewhere = {"architecture-review"}
+    for section, default in (
+        ("api", "api-review"),
+        ("persistence", "persistence-review"),
+        ("security", "security-review"),
+        ("runtimeConfig", "ops-review"),
+    ):
+        routed_elsewhere.add((data.get(section) or {}).get("checkpoint", default))
+    routed_elsewhere.update(
+        entry.get("checkpoint", "architecture-review")
+        for entry in ((data.get("zones") or {}).get("red") or [])
+    )
+    if checkpoint in routed_elsewhere:
+        raise SystemExit(
+            f"error: policy at {path} behaviorContracts.checkpoint "
+            "must be dedicated to behavior contracts"
+        )
+
+
 def load_policy(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as f:
         data = yaml.safe_load(f)
@@ -1689,6 +1781,7 @@ def load_policy(path: Path) -> dict[str, Any]:
             "warning: jsonschema not installed; skipping policy schema "
             "validation. Install jsonschema to validate agent-redline-policy.yaml.\n"
         )
+        _validate_behavior_contract_policy(data, path)
         return data
 
     schema_path = _find_policy_schema()
@@ -1697,6 +1790,7 @@ def load_policy(path: Path) -> dict[str, Any]:
             "warning: could not locate agent-policy.schema.json next to the "
             "reporter; skipping policy schema validation.\n"
         )
+        _validate_behavior_contract_policy(data, path)
         return data
 
     with schema_path.open(encoding="utf-8") as f:
@@ -1710,6 +1804,7 @@ def load_policy(path: Path) -> dict[str, Any]:
             f"  at: {loc}\n"
             f"  {e.message}"
         )
+    _validate_behavior_contract_policy(data, path)
     return data
 
 
@@ -1864,6 +1959,11 @@ def _load_api_spec_diff(base: Path | None, head: Path | None) -> dict[str, Any] 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="agent-redline reporter")
     p.add_argument("--policy", required=True, type=Path, help="Path to agent-redline-policy.yaml")
+    p.add_argument(
+        "--codeowners-file",
+        type=Path,
+        help="CODEOWNERS snapshot from the PR base revision; defaults to the current checkout",
+    )
     changed = p.add_mutually_exclusive_group()
     changed.add_argument("--changed-files", type=Path,
                          help="Legacy newline-separated changed paths")
@@ -1981,11 +2081,13 @@ def main(argv: list[str] | None = None) -> int:
     pr_labels = [s.strip() for s in args.pr_labels.split(",") if s.strip()]
     codeowner_approvals = [s.strip() for s in args.codeowner_approvals.split(",") if s.strip()]
 
-    # Load CODEOWNERS (F2). Empty list when no file exists — the
-    # checkpoint then degrades to "any approver satisfies," with a
-    # note in satisfy_by_human so reviewers see the path check
-    # wasn't performed.
-    codeowners_rules = load_codeowners(Path("."))
+    # CI passes the PR base revision's CODEOWNERS snapshot, matching GitHub's
+    # authority evaluation. Local callers fall back to the current checkout.
+    codeowners_rules = (
+        _parse_codeowners_text(args.codeowners_file.read_text(encoding="utf-8"))
+        if args.codeowners_file is not None
+        else load_codeowners(Path("."))
+    )
 
     verdict = classify(
         policy, diff,
