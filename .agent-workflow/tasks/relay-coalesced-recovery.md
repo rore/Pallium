@@ -19,17 +19,17 @@
 
 **Material assumptions:** Coalesced enumeration is internal to recovery and still orders oldest first. The existing durable reservation and scheduler remain the sole native-submission gate. Any need to change public API/schema, reservation semantics, or retry policy returns this task to planning.
 
-**Plan:** Pending clean-context review of the smallest safe internal enumeration shape.
+**Plan:** Add `include_coalesced=False` to the internal Relay wake-candidate query. Preserve current one-per-endpoint behavior by default; when recovery opts in, keep the same filters and oldest-first ordering but return every eligible pending/expired delivery. Retain the exact per-delivery recheck and route every candidate through the unchanged scheduler so the durable reservation remains the sole native-submission gate and later deliveries receive only diagnostic association. Update the roadmap claim. Stop and re-plan if this requires a public API/schema change or any retry/fence mutation.
 
-**Verification plan:** Pending plan review; must include real app-restart caller-surface coverage proving one native submission and later pending needs-intervention guidance, plus moved/ambiguous fail-closed cases and existing busy-sweep regressions.
+**Verification plan:** Default wake-candidate reads remain one-per-endpoint while opt-in recovery reads all same-endpoint candidates in order, and exact-ID lookup remains unchanged -> storage/service regression. A real caller-surface restart with a retained uncertain fence and a later already-pending delivery shall run recovery, perform no second native submission, preserve attempts=0, and expose Needs intervention -> HTTP/integration regression. Moved or incomplete evidence shall remain queued without association -> fail-closed regression. Existing repeated busy-sweep tests shall still prove one native submission -> affected suite.
 
-**Plan review:** Pending.
+**Plan review:** Pending clean-context review `/root/coalesced_recovery_review`; bounded read-only analysis `/root/coalesced_recovery_plan` found the opt-in query to be the smallest shared-path change.
 
 **Approvals:** Not required unless reclassification reaches High.
 
 **Exceptions:** —
 
-**State:** Draft
+**State:** Planned
 <!-- agent-workflow:end -->
 
 Authoritative request source: `ff5d1534-0191-47f6-b586-95dd3c980476`.
