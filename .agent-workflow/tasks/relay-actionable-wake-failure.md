@@ -56,3 +56,4 @@ Initial clean-context review rejected the first precedence sketch: any-delivered
 
 - Independent review returned the task to implementation: neutralize expired prior-claim hook wording, treat any legacy fan-out recipient as an evidence gap, and cover every explanation fallback/aggregate branch.
 - Targeted non-implementer re-review confirmed all three findings resolved, completion criteria and evidence adequate, and no remaining actionable correctness findings.
+- PR review found one roadmap-state drift: actionable reporting still appeared in RW-031 next action. The row now marks reporting shipped and leaves only safe automatic recovery/upstream limitation work.
