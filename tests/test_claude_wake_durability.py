@@ -883,8 +883,9 @@ def test_expired_claim_recovery_rechecks_and_isolates_candidate_errors(
     broken, stale, current = (candidate(name) for name in ("broken", "stale", "current"))
 
     class Relay:
-        def wake_candidates(self, *, delivery_id=None):
+        def wake_candidates(self, *, delivery_id=None, include_coalesced=False):
             if delivery_id is None:
+                assert include_coalesced is True
                 return [broken, stale, current]
             if delivery_id == "broken":
                 raise RuntimeError("candidate changed during recheck")

@@ -615,9 +615,9 @@ class RelayService:
         )
 
     def wake_candidates(
-        self, *, delivery_id: str | None = None
+        self, *, delivery_id: str | None = None, include_coalesced: bool = False
     ) -> list[dict[str, Any]]:
-        """Read pending or expired-claimed wake candidates without mutation."""
+        """Read wake candidates; optionally retain same-endpoint coalesced rows."""
         query = getattr(self._store, "relay_wake_candidates", None)
         if not callable(query):
             raise RelayUnavailableError(
@@ -626,7 +626,8 @@ class RelayService:
         return query(
             delivery_id=None
             if delivery_id is None
-            else _opaque(delivery_id, "delivery_id", maximum=128)
+            else _opaque(delivery_id, "delivery_id", maximum=128),
+            include_coalesced=include_coalesced,
         )
 
     def expired_claim_candidates(
