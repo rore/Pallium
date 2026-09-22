@@ -91,7 +91,7 @@ Production: new `core/history_presentation.py`; `core/models.py`, `core/query.py
 - Before PR, all focused and repository gates shall pass and be recorded → exact nodes, affected subsystem files, `pytest --lf --lfnf=none -q -n 0`, full `pytest tests/ -x -q`, Import Linter, Redline, Workflow, diff checks, and CI.
 
 **Plan review:**
-Rejected 2026-09-22 by clean-context high-reasoning reviewer `/root/history_diagnostics_plan_review`: first review found diagnostic/lookup telemetry contamination, unsupported causal claims, underspecified requester/filter authorization, insufficient bounds/redaction, contradictory error handling, and missing target files; second review cleared those and found only genuine MCP packaging capture plus idempotency-key conflict semantics underspecified. The plan above now binds creation-time observations to the shared normal compactor and defines private request-fingerprint/409/concurrency behavior. Revised-plan approval is pending from the same reviewer.
+Approved 2026-09-22 by clean-context high-reasoning reviewer `/root/history_diagnostics_plan_review` at commit `b17a8a15` after two correction rounds; all prior P1/P2 findings were resolved and no actionable plan gaps remain.
 
 **Approvals:**
 Approved by user 2026-09-22: "yes, i told you i approve all the work on this feature. i'm not here all the time so don't wait for me. continue with all the issues we need to fix"
@@ -99,7 +99,7 @@ Approved by user 2026-09-22: "yes, i told you i approve all the work on this fea
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Checkpoint: architecture-review
@@ -152,11 +152,11 @@ Verification plan: wrong/missing requester tuple, container canonicalization, ac
 
 ## Implementation
 
-Established task context, completed trace/persistence discovery and pre-edit Redline, and received a rejected clean-context plan review. Revised the plan to separate diagnostics from lookup telemetry, enumerate observable signals and bounds, define requester/filter/error/idempotency contracts, and name exact implementation/test files. No test or production code has been edited; implementation remains blocked pending revised-plan approval.
+Established task context, completed trace/persistence discovery and pre-edit Redline, and received a rejected clean-context plan review. Revised the plan to separate diagnostics from lookup telemetry, enumerate observable signals and bounds, define requester/filter/error/idempotency contracts, and name exact implementation/test files. No test or production code has been edited. The revised plan is approved and the task is ready for the red-test phase.
 
 ## Evidence
 
-Pre-edit classification: RED with architecture/API/persistence checkpoints and security-sensitive behavior; no intended boundary violation. Clean-context plan review rejection is preserved above with its corrections incorporated.
+Pre-edit classification: RED with architecture/API/persistence checkpoints and security-sensitive behavior; no intended boundary violation. Clean-context plan review approval at `b17a8a15` followed two recorded correction rounds; all findings are incorporated.
 
 ## Result review
 
