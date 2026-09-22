@@ -29,7 +29,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -37,13 +37,18 @@
 - Planning opened from `a1b7a79c38d3394922422305834cffaf0c0eeb03`; no code edits made.
 - Discovery confirmed one shared storage projection and no required API/schema change. The clarification branch remains separate because its evidence-scope fields are complementary API work, not required for actionable trace guidance.
 - Added focused trace/MCP regressions for actionable uncertain, queued, expiry, delivery precedence, mixed fan-out, evidence gaps, and caller projections; initial delegated run lacked pytest, so Sol owns executable verification.
+- Reverified the running Desktop binary as `codex-cli 0.155.0-alpha.9.2`; its public queue surface still has no caller idempotency key or authoritative queue readback, so automatic uncertain-failure recovery remains an upstream blocker rather than part of this slice.
 
 ## Plan review
 
 Initial clean-context review rejected the first precedence sketch: any-delivered could hide pending fan-out; accepted/uncertain outcomes could overstate incomplete evidence; expiry needed never-claimed versus prior-claim wording; accepted-pending needed retained-delivery guidance. The revised plan adds explicit aggregate-state, evidence-gap, expiry, runtime, and caller-surface coverage. First re-review required gap disclosure on mixed states and a terminal all-expired prior-claim branch; both are now explicit. Final clean-context re-review approved with no remaining blocker.
 ## Evidence
 
-- Pre-edit agent-redline verdict: GRAY (`app/**` watch/gray; tests, roadmap, dashboard, and Work Record blue); no checkpoint required.
+- Revision `36171a54` carries the implementation reviewed here.
+- `uv run --extra dev --extra mcp python -m pytest tests/test_relay_delivery_trace.py tests/test_relay_mcp_tools.py -q -n 0` → 135 passed.
+- `uv run --all-extras python -m pytest tests/ -x -q` → 5059 passed, 34 skipped, 2 xfailed.
+- Import-boundary backend passed; final redline verdict is GRAY for `storage/sqlite_relay.py`, with no boundary, API, schema, security, config, or checkpoint findings.
+- `uv run --with jsonschema --with pyyaml python scripts/agent-workflow-check.py --repo-root . --slug relay-actionable-wake-failure` → clean.
 
 ## Result review
 
