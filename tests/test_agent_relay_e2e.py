@@ -868,6 +868,7 @@ def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage
 
     register("codex", "recover-pending")
     pending = send("codex:recover-pending", "pending", "recover-pending")
+    pending_later = send("codex:recover-pending", "pending-later", "recover-pending-later")
     register("codex", "recover-delivered")
     delivered = send("codex:recover-delivered", "delivered", "recover-delivered")
     delivered_claim = claim("codex", "recover-delivered")[0]
@@ -911,6 +912,16 @@ def test_expired_claim_candidates_are_strict_ordered_and_read_only(relay_storage
         claude_claim["delivery_id"],
         excluded["mismatch"][1]["delivery_id"],
         pending["deliveries"][0]["delivery_id"],
+    ]
+    assert [item["delivery_id"] for item in relay.wake_candidates(
+        include_coalesced=True
+    )] == [
+        first_claim["delivery_id"],
+        second_claim["delivery_id"],
+        claude_claim["delivery_id"],
+        excluded["mismatch"][1]["delivery_id"],
+        pending["deliveries"][0]["delivery_id"],
+        pending_later["deliveries"][0]["delivery_id"],
     ]
     assert relay.wake_candidates(
         delivery_id=pending["deliveries"][0]["delivery_id"]

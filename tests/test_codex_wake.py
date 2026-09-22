@@ -1480,7 +1480,9 @@ def test_recovery_log_correlates_without_free_form_identifiers(
     scheduled = []
 
     class Relay:
-        def wake_candidates(self, delivery_id=None):
+        def wake_candidates(self, delivery_id=None, include_coalesced=False):
+            if delivery_id is None:
+                assert include_coalesced is True
             return [candidate] if delivery_id in (None, candidate["delivery_id"]) else []
 
         def mark_unreachable(self, **_kwargs):
@@ -1525,7 +1527,9 @@ def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> 
     }
 
     class Relay:
-        def wake_candidates(self, delivery_id=None):
+        def wake_candidates(self, delivery_id=None, include_coalesced=False):
+            if delivery_id is None:
+                assert include_coalesced is True
             return [candidate] if delivery_id in (None, "delivery-1") else []
 
         def mark_unreachable(self, **_kwargs):
@@ -3503,6 +3507,17 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
     first_delivery = first.json()["deliveries"][0]
     retained = registry_a.snapshot(first_delivery["recipient_endpoint_id"])
     assert retained is not None and retained.outcome == "uncertain"
+    with patch("app.dependencies.schedule_codex_relay_wake", return_value=None):
+        second = route_a.post("/relay/messages", json={
+            "sender_runtime": "claude-code",
+            "sender_session_ref": "sender",
+            "recipient": "codex:target",
+            "payload": "later request already pending before restart",
+            **scope,
+        })
+    assert second.status_code == 200 and len(workers) == 1
+    second_message = second.json()
+    second_delivery = second_message["deliveries"][0]
 
     with codex_wake._scheduled_lock:
         codex_wake._scheduled_delivery_ids.clear()
@@ -3542,18 +3557,20 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
         })
         assert returned.status_code == 200 and returned.json()["deliveries"] == []
 
-    second = route_b.post("/relay/messages", json={
-        "sender_runtime": "claude-code",
-        "sender_session_ref": "sender",
-        "recipient": "codex:target",
-        "payload": "later request behind retained fence",
-        **scope,
-    })
-    assert second.status_code == 200
-    assert len(workers) == 2 and workers[1] is None
+    from app.dependencies import recover_expired_relay_wakes
+    from core.claude_wake import ClaudeWakeRegistry
+
+    relay = RelayService(storage)
+    recover_expired_relay_wakes(
+        relay,
+        ClaudeWakeRegistry(),
+        codex_registry=registry_b,
+        trace_callback=lambda event: service.enqueue_relay_trace_event(
+            relay.record_trace_event, event
+        ),
+    )
+    assert len(workers) == 3 and workers[1:] == [None, None]
     assert len(native_calls) == 1
-    second_message = second.json()
-    second_delivery = second_message["deliveries"][0]
     status = route_b.get(
         f"/relay/messages/{second_message['message_id']}", params=scope
     ).json()["deliveries"][0]

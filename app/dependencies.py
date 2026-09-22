@@ -630,7 +630,7 @@ def recover_expired_relay_wakes(
     reconcile_codex_relay_wake_reservations(
         relay_service, registry=codex_registry, trace_callback=trace_callback
     )
-    for candidate in relay_service.wake_candidates():
+    for candidate in relay_service.wake_candidates(include_coalesced=True):
         try:
             current = relay_service.wake_candidates(
                 delivery_id=candidate["delivery_id"]

@@ -1542,8 +1542,9 @@ class SQLiteRelayMixin:
         delivery_id: str | None = None,
         now: datetime | None = None,
         include_pending: bool = True,
+        include_coalesced: bool = False,
     ) -> list[dict[str, Any]]:
-        """Return one safe wake candidate per active exact session without mutation."""
+        """Return safe wake candidates, coalesced per endpoint by default."""
         current = _now(now)
         with self._relay_session_factory() as db:
             statement = (
@@ -1586,7 +1587,7 @@ class SQLiteRelayMixin:
                 if not _render_safe(message.payload):
                     continue
                 key = session.id
-                if key in seen:
+                if not include_coalesced and key in seen:
                     continue
                 seen.add(key)
                 candidates.append(

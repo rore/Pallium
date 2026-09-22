@@ -29,6 +29,8 @@
 
 **Exceptions:** —
 
+**Implementation evidence:** Added the internal opt-in enumeration flag and recovery call, updated recovery doubles, storage/service ordering coverage, an authentic pre-existing-pending restart recovery regression, and roadmap wording. The scheduler/reservation path is unchanged.
+
 **State:** Ready to implement
 <!-- agent-workflow:end -->
 
@@ -37,3 +39,5 @@ Authoritative request source: `ff5d1534-0191-47f6-b586-95dd3c980476`.
 ## Evidence
 
 - `apply_patch` failed once with Windows `CreateProcessWithLogonW failed: 1327`; the permitted deterministic narrow fallback was used.
+- Focused storage, restart, recovery-double, and concurrency nodes: `C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest ... -q -n 0` -> `6 passed in 2.02s`.
+- Six-sweep busy-recipient deduplication regression -> `1 passed in 1.38s`.
