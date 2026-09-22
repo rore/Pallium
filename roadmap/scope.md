@@ -213,8 +213,8 @@ detail, HTTP, and MCP.
 Copilot is later runtime expansion, still blocked on delivery tracing and OpenCode
 wake qualification. Existing lifecycle hardening retains ownership of
 delivery/session state and retention; trace recording never becomes delivery
-authority. Dependency-workflow validation remains parallel and drives public
-positioning and usage guidance. Add only further extensions repeatedly
+authority. The paused Relay workflow-example catalog is reserved for future public
+positioning and usage guidance; it is not a product gate. Add only further extensions repeatedly
 demanded by real use. See `roadmap/ideas/idea-agent-relay.md`.
 
 Paused or parked work is listed explicitly in `roadmap/board.md`; completed

@@ -21,8 +21,8 @@ a general job scheduler.
 ## Sequencing
 
 Keep this as the final queued Relay idea. Do not start it until wake delivery,
-dependency-workflow validation, the planned integration work, and Relay retention
-are stable. A scheduled message is useful only after ordinary Relay can activate
+the planned integration work, and Relay retention are stable. Future workflow
+examples and public documentation are not dependencies. A scheduled message is useful only after ordinary Relay can activate
 the addressed session reliably and explain failures.
 
 ## Product Surface

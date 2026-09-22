@@ -49,8 +49,8 @@ cleanup and concrete windows remain deferred until measured database growth or a
 specific dashboard diagnosis need justifies them. Record that evidence and choose
 a bounded cleanup slice before resuming. Age alone still cannot invalidate a
 resumable session or durable pending delivery. This deferred work does not block
-activation capabilities, delivery traces, work associations, or workflow validation;
-trace retention remains part of the trace feature.
+activation capabilities, delivery traces, work associations, or future workflow
+examples; trace retention remains part of the trace feature.
 
 ## In Scope
 

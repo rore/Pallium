@@ -78,8 +78,9 @@ integration or external system; Pallium must not infer one semantically.
 
 The dated R0/R1 results below preserve historical decisions. Their runtime-wide
 addressing references are superseded by the current contract above. Current next
-work is activation capabilities, delivery traces, and parallel dependency-workflow
-validation. Associations and agent guidance shipped in PRs #157/#158.
+work is wake-first reliability and protected behavioral requirements. The workflow
+example catalog is paused until public documentation is prioritized. Associations
+and agent guidance shipped in PRs #157/#158.
 
 ### R0 — Contract
 
@@ -335,20 +336,19 @@ path, successful correlation, duplicate Stop/idle events, failed admission,
 bounded output, exact scope/session isolation, and notification-loop prevention
 across each supported runtime.
 
-### R1.6 — Dependency-workflow validation and positioning — ready in parallel
+### R1.6 — Relay workflow examples and positioning — paused
 
-Turn the strongest observed Relay uses into durable E2E journeys: an unexpected
-cross-workstream dependency, a blocked decision round trip, and a cross-model
-review handoff. Use deterministic public-surface scenarios for regression and
-budgeted live Claude Code and Codex runs first; add OpenCode after its wake adapter
-is qualified. The
-passing scenarios, not a generic multi-agent story, become the source for public
-docs, quickstarts, and guidance about when agents should and should not send.
+Keep the strongest observed Relay uses as a catalog for future outward-facing
+documentation: an unexpected cross-workstream dependency, a blocked decision round
+trip, and a bounded cross-model review handoff. Routine dogfood already establishes
+that these workflows occur, so do not build a separate synthetic validation suite
+or paid-model campaign merely to prove they exist. Transport failures still become
+focused regressions in their owning reliability items.
 
-Track the complete research, evidence limits, scenario contracts, runtime coverage,
-metrics, documentation outputs, and non-goals in
-`validate-relay-dependency-workflows`. The qualified Claude/Codex foundation permits
-these scenarios now; add OpenCode only after its activation is qualified.
+Resume `validate-relay-dependency-workflows` when public examples or positioning
+are prioritized, using real anonymized evidence and only the smallest extra check
+needed for a specific claim. Add OpenCode examples only after its activation is
+qualified. This item is not a Relay product gate.
 
 ### R2 — Future-recipient addressing investigation
 
