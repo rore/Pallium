@@ -50,6 +50,8 @@ If you cannot name an observable outcome, you do not yet know what success looks
 - It is not an exhaustive context dump. Five lines (one per field) is the typical shape.
 - It is not a place to record reasoning. The reasoning lives in surrounding prose, not in the marker block.
 
-## When to revise
+## Baseline and revision
 
-The Task Context can be refined during discovery — the spec allows this. If you revise it after starting implementation, ask whether the change is material. A material change (different outcome, different scope, different completion criteria) means re-planning, not in-place editing.
+Before discovery, copy Outcome, Scope, Constraints, and Completion criteria into the Requirement baseline JSON. See [behavioral-integrity.md](behavioral-integrity.md). Equivalent clarification uses a change entry; a material refinement blocks for task-owner approval. Never rewrite the baseline.
+
+Planning and implementation cannot begin while context is unclear or the baseline is missing.

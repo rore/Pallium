@@ -31,7 +31,7 @@ If a decision is structural (future readers benefit), put it in code AND Impleme
 
 5. **Delegate test runs to a sub-agent or separate invocation** that returns only STATUS / SUMMARY / FAILURES. Do not let full compiler or test-runner output accumulate in the implementing agent's context — it crowds out task state and degrades decision quality on long sessions.
 
-6. **Record material decisions in Implementation prose in-line.** Things the planner didn't anticipate: pivoted approaches, discovered constraints, deferred refinements. Routine details (file names, signatures) belong in code review, not prose.
+6. **Record material decisions in Implementation prose in-line.** Things the planner didn't anticipate: pivoted approaches, discovered constraints, deferred refinements. Routine details (including signatures and file names outside the required target-file or class list) belong in code review, not prose.
 
 7. **Pause on assumption failure.** Stop coding → update Material assumptions with the disproving evidence → decide next step per the recorded action → record the pivot in Implementation prose. The harness can't enforce this; it's a discipline.
 

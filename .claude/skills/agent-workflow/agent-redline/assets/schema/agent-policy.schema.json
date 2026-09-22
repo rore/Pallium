@@ -216,6 +216,35 @@
         "paths"
       ]
     },
+    "behaviorContracts": {
+      "type": "object",
+      "description": "Optional authoritative behavior-contract paths. Redline owns path classification, CODEOWNERS authority, verification identity, and review routing.",
+      "required": ["paths", "verification", "checkpoint"],
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!.*[\\u0000-\\u001F\\u007F])(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/*?\\[\\]{}]+(?:/[^/*?\\[\\]{}]+)*(?:/\\*\\*)?$"
+          }
+        },
+        "verification": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*",
+          "description": "Identifier of an existing required CI check that runs the configured contracts."
+        },
+        "checkpoint": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "CODEOWNER-only checkpoint required when a configured contract path changes."
+        }
+      }
+    },
     "prRules": {
       "type": "object",
       "additionalProperties": false,

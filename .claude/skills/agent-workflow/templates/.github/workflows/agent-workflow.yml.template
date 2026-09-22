@@ -26,6 +26,8 @@ on:
     branches: [main]
 
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]
 
 permissions:
   contents: read
@@ -76,6 +78,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           # Labels: comma-separated list of PR label names. Empty if
           # the PR has no labels.
@@ -83,40 +86,31 @@ jobs:
           echo "labels=${LABELS}" >> "$GITHUB_OUTPUT"
           echo "PR labels: ${LABELS}"
 
-          # CODEOWNER approvals: read the PR's APPROVED reviewers and
-          # pass the login list to redline. The intersection with
-          # CODEOWNERS is implicitly enforced by GitHub's branch-
-          # protection "Require Code Owner review" rule — when enabled,
-          # GitHub only counts approvals from codeowners against the
-          # required-reviewer count, so any APPROVED state we see at
-          # PR check time is at least branch-protection-compatible.
-          # Repos that don't enable Code Owner enforcement get weaker
-          # signal here — the predicate still surfaces unsatisfied
-          # checkpoints, but cannot tell non-codeowner approval from
-          # codeowner approval.
-          APPROVERS=""
-          if [[ -f .github/CODEOWNERS || -f CODEOWNERS || -f docs/CODEOWNERS ]]; then
-            APPROVED_LOGINS=$(gh api \
-              "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
-              --jq '[.[] | select(.state == "APPROVED") | .user.login] | unique | join(",")' \
-              2>/dev/null || echo "")
-            # Defensive: gh api can return a JSON error body (401, 403,
-            # etc.) that bypasses --jq and lands as literal JSON in
-            # stdout, which then poisons $GITHUB_OUTPUT (newlines +
-            # braces break bash multi-line var assignment). Accept only
-            # comma-separated GitHub login chars; anything else is
-            # treated as "no approvers available" and the predicate
-            # surfaces as unsatisfied — the label path still works.
-            if [[ "$APPROVED_LOGINS" =~ ^[A-Za-z0-9_,-]*$ ]]; then
-              APPROVERS="$APPROVED_LOGINS"
-            else
-              echo "::warning::gh api returned non-login output (likely 401/403); proceeding with empty approver list. Label-based satisfaction still applies."
-              APPROVERS=""
+          # GitHub evaluates CODEOWNERS from the PR base branch. Snapshot the
+          # first file in GitHub's search order so a PR cannot change its own
+          # apparent authority. An empty snapshot keeps owner checks unsatisfied.
+          : > base-CODEOWNERS
+          for path in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
+            if git cat-file -e "${BASE_SHA}:${path}" 2>/dev/null; then
+              git show "${BASE_SHA}:${path}" > base-CODEOWNERS
+              echo "Using base CODEOWNERS: ${path}"
+              break
             fi
-            echo "CODEOWNER approvers: ${APPROVERS}"
+          done
+
+          APPROVED_LOGINS=$(gh api \
+            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
+            --jq '[.[] | select(.state == "APPROVED") | .user.login] | unique | join(",")' \
+            2>/dev/null || echo "")
+          # Accept only comma-separated GitHub login characters; an API error
+          # becomes no approvers and therefore cannot satisfy the checkpoint.
+          if [[ "$APPROVED_LOGINS" =~ ^[A-Za-z0-9_,-]*$ ]]; then
+            APPROVERS="$APPROVED_LOGINS"
           else
-            echo "::warning::No CODEOWNERS file found; redline checkpoints requiring codeownerApproval will surface as unsatisfied. Label-based satisfaction still applies."
+            echo "::warning::gh api returned non-login output; proceeding with no approvers."
+            APPROVERS=""
           fi
+          echo "CODEOWNER approvers: ${APPROVERS}"
           echo "codeowner_approvals=${APPROVERS}" >> "$GITHUB_OUTPUT"
 
       - name: Validate agent-redline-policy.yaml against schema
@@ -158,6 +152,7 @@ jobs:
           python scripts/agent-redline-report.py \
             --policy agent-redline-policy.yaml \
             --changed-files-z changed-files.z \
+            --codeowners-file base-CODEOWNERS \
             --pr-labels "${{ steps.review_inputs.outputs.labels }}" \
             --codeowner-approvals "${{ steps.review_inputs.outputs.codeowner_approvals }}" \
             $BOUNDARY_ARG \
