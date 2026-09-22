@@ -211,6 +211,99 @@ def _emit_trace(
     except Exception:
         logger.exception("codex relay trace callback failed")
 
+
+def _restart_trace_attempt_id(
+    relay_service: Any,
+    retained: CodexWakeReservation,
+    delivery: dict[str, object],
+) -> str | None:
+    """Return one retained uncertain attempt from complete exact-scope evidence."""
+    if (
+        retained.outcome != "uncertain"
+        or retained.delivery_id == delivery.get("delivery_id")
+        or delivery.get("recipient_runtime") != "codex"
+        or delivery.get("recipient_endpoint_id") != retained.recipient_endpoint_id
+        or delivery.get("recipient_session_ref") != retained.session_ref
+        or delivery.get("recipient_container_ref") != retained.container_ref
+    ):
+        return None
+    try:
+        trace = relay_service.trace_message(
+            message_id=retained.delivery_id, limit=100
+        )
+    except Exception:
+        return None
+    if (
+        not isinstance(trace, dict)
+        or trace.get("contract") != "relay-delivery-trace/v1"
+        or any(
+            trace.get(flag) is not False
+            for flag in (
+                "legacy", "absent", "gap", "truncated", "pruned", "has_more"
+            )
+        )
+    ):
+        return None
+    snapshots = trace.get("delivery_snapshots")
+    events = trace.get("events")
+    if (
+        not isinstance(snapshots, list)
+        or len(snapshots) != 1
+        or not isinstance(events, list)
+    ):
+        return None
+    snapshot = snapshots[0]
+    if (
+        not isinstance(snapshot, dict)
+        or snapshot.get("delivery_id") != retained.delivery_id
+        or snapshot.get("recipient_runtime") != "codex"
+        or snapshot.get("recipient_endpoint_id") != retained.recipient_endpoint_id
+        or snapshot.get("recipient_session_ref") != retained.session_ref
+        or snapshot.get("recipient_container_ref") != retained.container_ref
+        or snapshot.get("state") not in {"pending", "claimed"}
+    ):
+        return None
+
+    direct = [
+        event
+        for event in events
+        if isinstance(event, dict)
+        and event.get("delivery_id") == retained.delivery_id
+        and event.get("shared") is False
+    ]
+    sequences = [event.get("sequence") for event in direct]
+    if (
+        not direct
+        or any(type(sequence) is not int for sequence in sequences)
+        or len(sequences) != len(set(sequences))
+    ):
+        return None
+    completed = [event for event in direct if event.get("stage") == "completed"]
+    if not completed:
+        return None
+    latest = max(completed, key=lambda event: event["sequence"])
+    attempt_id = latest.get("attempt_id")
+    if (
+        not isinstance(attempt_id, str)
+        or re.fullmatch(r"relay-activation-[0-9a-f]{32}", attempt_id) is None
+        or latest.get("outcome") != "uncertain"
+        or latest.get("native_retry_safe") is not False
+        or sum(
+            event.get("stage") == "prepared"
+            and event.get("attempt_id") == attempt_id
+            for event in direct
+        )
+        != 1
+        or sum(
+            event.get("stage") == "completed"
+            and event.get("attempt_id") == attempt_id
+            for event in direct
+        )
+        != 1
+    ):
+        return None
+    return attempt_id
+
 def _schedule_reserved_codex_relay_wake(
     reservation: CodexWakeReservation,
     registry: CodexWakeRegistry,
@@ -345,6 +438,19 @@ def schedule_codex_relay_wake(
                 trace_callback, attempt_id, delivery_id, endpoint_id,
                 "associated",
             )
+        elif relay_service is not None:
+            retained = registry.snapshot(endpoint_id)
+            if retained is not None:
+                attempt_id = _restart_trace_attempt_id(
+                    relay_service,
+                    retained,
+                    {**delivery, "recipient_container_ref": container_ref},
+                )
+                if attempt_id is not None:
+                    _emit_trace(
+                        trace_callback, attempt_id, delivery_id, endpoint_id,
+                        "associated",
+                    )
         return None
 
     return _schedule_reserved_codex_relay_wake(

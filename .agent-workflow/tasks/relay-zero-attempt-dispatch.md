@@ -39,15 +39,18 @@ Authoritative request source: `ff5d1534-0191-47f6-b586-95dd3c980476`.
 - Work Record initialized before code inspection or edits. Pre-edit redline verdict: GRAY; no required checkpoint and no boundary risk in the intended scope.
 - Discovery established a post-restart diagnostic-linkage gap, not a safe-retry opportunity: the exact durable uncertain fence matches the later delivery scope, while only the process-local attempt map was lost.
 - Clean-context code-path review: `/root/trace_zero_attempt_path`; independent incident inspection: `/root/inspect_incident_state` (its runtime-DB uncertainty was resolved by the exact durable reservation file plus installed trace surface).
+- Implemented an uncertain-only restart fallback in `app/codex_wake.py`. Review found the delegated first HTTP test did not recreate registry/process state and the matcher lacked strict runtime/direct-event checks; both were corrected before acceptance.
+- Added one real HTTP restart regression and parameterized fail-closed evidence cases in `tests/test_codex_wake.py`; no retry, reservation, delivery, scope, model, or effort behavior changed.
 
 ## Evidence
 
-- Pending discovery.
+- Strict helper and HTTP restart nodes: `uv run --all-extras python -m pytest tests/test_codex_wake.py::test_restart_trace_association_rejects_ambiguous_evidence tests/test_codex_wake.py::test_restart_trace_association_is_http_visible_without_second_native_submission -q -n 0` → `22 passed`.
+- Full Codex wake file: `uv run --all-extras python -m pytest tests/test_codex_wake.py -q -n 0` → `109 passed in 27.97s`.
+- `apply_patch` failed with Windows `CreateProcessWithLogonW failed: 1327`; the permitted deterministic narrow fallback was used. Repository formatter `ruff` was unavailable; `git diff --check` is clean.
 
 ## Result review
 
-- Pending.
-
+- Pending independent result review after affected and full-suite verification.
 ## Plan review
 
 Clean-context reviewer `/root/plan_review_trace_link` blocked generic latest-attempt lookup because shared trace rows and absent scope generation could misassociate an older or cross-scope attempt. The revised plan limits fallback linkage to exact-scope retained `uncertain` reservations with complete direct prepared/completed evidence and `native_retry_safe=false`. All ambiguity fails closed: no association, no retry, and no fence mutation. No blocking finding remains after incorporating those constraints.
