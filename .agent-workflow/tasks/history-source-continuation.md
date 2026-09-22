@@ -67,7 +67,7 @@ Approved by user 2026-09-22T17:26:21+03:00: "&#x20;i approve all the work that i
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Checkpoint: api-review
@@ -84,24 +84,34 @@ Verification plan: focused budget/offset/revision tests, real MCP-to-HTTP contin
 
 ## Implementation
 
-Planning only. No production or test files have been edited. Discovery disproved source immutability: the plan now requires a visible-content revision, positive page progress, explicit terminal semantics, and real-client MCP-to-HTTP edge coverage. User approval is recorded verbatim above. Implementation may begin on the recorded files only.
+Implemented in app/mcp/server.py without HTTP, core, schema, storage, or dependency changes. pallium_expand_source now accepts a strict integer content_offset and optional content_revision; every page refetches the freshly authorized/redacted source, validates a SHA-256 revision of visible anchor content, and serializes the largest Unicode-code-point slice that fits the complete response envelope. Terminal pages are tested before truncated candidates because terminal metadata can be smaller. Continuations omit neighbors, preserve the anchor and lookup lineage, normalize over-end offsets, and finalize delivery only for successful pages.
 
+Tests were written red first. The final caller-surface journey uses real FastMCP validation, the real PalliumMcpClient, and ASGI HTTP. It reconstructs redacted Unicode/escaped content across multiple pages; covers strict malformed/negative/missing-revision inputs, minimum/maximum/capped budgets, empty/exact/over-end terminals, equal- and unequal-length rewrites, stable retries, missing/wrong-scope/wrong-actor/invalid-visibility/forgotten sources, and exact delivery finalization. A populated supersession fixture proves historical warnings remain on every page and that retrieval leaves existing memory state unchanged. Existing neighbor ordering/support omission regressions were retained at budgets that fit the additive metadata.
 
-Tests-first baseline added in `tests/test_mcp_server.py`: formatter metadata/progress, terminal normalization, and continuation tool inputs. The repository venv confirmed all three tests red before production edits: missing `effective_max_chars` / `content_revision` metadata and unsupported continuation inputs. Focused command: `C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest tests/test_mcp_server.py::test_bounded_expansion_reports_explicit_continuation_budget_and_progress tests/test_mcp_server.py::test_bounded_expansion_normalizes_over_end_to_terminal_page tests/test_mcp_server.py::test_expand_source_accepts_continuation_inputs_and_preserves_lineage -q -n 0` → `3 failed`.
+Documentation names the continuation fields, restart and Unicode-offset rules, effective cap, and per-page scope revalidation. The owning roadmap records only delivery slice 2 as implemented; the broader feature remains queued. Integration skill guidance remains deferred to roadmap slice 6.
 
+apply_patch failed once with the documented Windows CreateProcessWithLogonW failed: 1327 machine constraint and was not retried. Narrow exact-file PowerShell replacements and Git-native commits were used instead.
 
-Additional focused regressions cover malformed, missing, and stale revisions (including equal-length rewrites), effective 256/4,000/over-max behavior, and finalization failure. The two legacy 256-budget assertions now verify the reviewed deterministic insufficient-budget error. `tests/test_mcp_server.py -q -n 0` passes with 70 tests; the real MCP-to-HTTP lifecycle journey remains open.
+Trigger 1 dropped: confirmed Windows sandbox/runtime issue, not agent-workflow upstream.
 
-MCP implementation is confined to `app/mcp/server.py`: a stdlib SHA-256 revision over freshly authorized redacted anchor content, Unicode-code-point offsets, complete-envelope binary-search budgeting, positive-progress enforcement, and unchanged HTTP/core/storage paths. The real ASGI journey reconstructs a multi-page Unicode/escaped source, preserves lineage, proves stable retries and terminal pages, rejects equal-length stale rewrites, and rechecks wrong-container and forgotten sources. `tests/test_mcp_server.py tests/test_mcp_integration.py -q -n 0` passes with 89 tests.
-Documentation now names the exact continuation fields, stale-revision restart rule, Unicode offset semantics, effective cap, and per-page scope revalidation. The owning roadmap records delivery slice 2 as implemented while keeping the broader feature queued and its later slices explicit.
 ## Plan review
 
 Clean-context reviewer `/root/continuation_plan_review` rejected the initial bare-offset plan after finding supported in-place source-content rewrites in `app/tools/secrets_purge.py`. The reviewer approved MCP-local paging as the smallest correct layer once four blockers were addressed: require a caller-carried digest of freshly authorized redacted anchor content; guarantee positive progress within the complete serialized envelope; define terminal, retry, truncation, and delivery semantics; and exercise boundary/lifecycle/security behavior through the real MCP-to-HTTP path instead of the existing incomplete adapter. The plan and verification matrix above incorporate those findings. No HTTP/core/schema/storage expansion is needed.
 
 ## Evidence
 
-Pending implementation.
+Commit under test: 2c9abcfb (Harden history source continuation), following the tests-first and contract commits on feat/history-source-continuation.
+
+- Red baseline: the three initial continuation tests failed before production edits because paging metadata and inputs did not exist.
+- Exact corrected MCP suites: python -m pytest tests/test_mcp_server.py tests/test_mcp_integration.py -q -n 0 -> 95 passed.
+- Affected Session History/MCP set: 159 passed, 45 deselected.
+- Full non-slow repository suite on the corrected production code: 5110 passed, 34 skipped, 2 xfailed. The later assertion-only strengthening was then verified by its exact lifecycle test and the complete 95-test MCP rerun.
+- pytest --lf --lfnf=none -q -n 0 found no stored failures (5361 deselected; pytest exit 1 because no tests were selected).
+- Import-linter boundary report: no violations. Static redline report: GRAY for the watched app/mcp/server.py path, with no boundary violation; manual Python-extension classification remains High / api-review because the MCP signature is caller-facing.
+- git diff --check is clean.
 
 ## Result review
 
-Pending implementation.
+Clean-context reviewer /root/continuation_result_review initially found four P2 issues: non-monotonic terminal-envelope budgeting, Pydantic integer coercion, incomplete real-MCP lifecycle assertions, and lost neighbor-budget regressions. Each was reproduced and fixed. Follow-up review confirmed all four resolved, with a populated memory-state baseline, historical warnings on every page, and exact successful-delivery counts; no actionable correctness or complexity findings remain.
+
+This engineering approval does not replace the workflow's separate-human High-risk API/result approval, which must be recorded on the PR before merge.
