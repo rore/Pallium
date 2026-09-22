@@ -84,7 +84,7 @@ async def test_exact_client_uses_existing_source_only_query_funnel() -> None:
             "defer_delivery": True,
             "work_refs": ["proj-42"],
             "container_ref": "git:example/repo",
-            "thread_ref": "session-1",
+            "active_session_ref": "session-1",
             "visibility": "private",
             "request_source_item_id": "request-1",
         },
@@ -494,6 +494,55 @@ async def test_history_page_finalizes_only_subset_and_terminal_page_is_empty(
     ]
     assert finalize.await_args_list[1].kwargs["items"] == []
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("changed_scope", "initial_scope"),
+    [
+        ("thread_ref", "active-session-a"),
+        ("source_thread_ref", "historical-session-a"),
+    ],
+)
+async def test_history_scope_change_stales_unchanged_page_without_finalizing(
+    monkeypatch: pytest.MonkeyPatch, changed_scope: str, initial_scope: str,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    search = AsyncMock(return_value={
+        "results": [
+            {"source_item_id": f"item-{index}", "excerpt": "evidence " * 80}
+            for index in range(50)
+        ],
+        "delivery_attempt_id": "attempt",
+    })
+    finalize = AsyncMock(return_value={"lookup_event_id": "lookup-first"})
+    with (
+        patch.object(PalliumMcpClient, "search_history", new=search),
+        patch.object(PalliumMcpClient, "finalize_historical_delivery", new=finalize),
+    ):
+        server = _create_server()
+        first_args = {
+            "query": "evidence",
+            "limit": 50,
+            "container_ref": "c",
+            "visibility": "private",
+            changed_scope: initial_scope,
+        }
+        first_content, _ = await server.call_tool("pallium_search_history", first_args)
+        first = json.loads(first_content[0].text)
+
+        continuation = {
+            **first_args,
+            "result_offset": first["next_offset"],
+            "result_revision": first["result_revision"],
+            changed_scope: f"{initial_scope}-changed",
+        }
+        stale_content, _ = await server.call_tool(
+            "pallium_search_history", continuation,
+        )
+
+    assert json.loads(stale_content[0].text)["error"] == (
+        "history_result_revision_stale"
+    )
+    assert finalize.await_count == 1
 
 @pytest.mark.asyncio
 async def test_history_retry_mints_fresh_lookup_id_without_changing_page(
@@ -651,3 +700,54 @@ async def test_equal_length_visible_change_stales_without_finalizing(
 
     assert json.loads(stale_content[0].text)["error_kind"] == "stale_result_revision"
     assert finalize.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_exact_client_separates_requester_and_source_scope() -> None:
+    client = PalliumMcpClient(
+        PalliumContext(
+            base_url="http://testserver",
+            container_ref="git:example/repo",
+            thread_ref="active-session",
+            visibility="private",
+        )
+    )
+    captured: dict = {}
+
+    async def capture(path, payload):
+        captured["payload"] = payload
+        return {"results": []}
+
+    client._post = capture
+    await client.search_history_by_work_ref(
+        "proj-42", "evidence", source_thread_ref="historical-session",
+    )
+    assert captured["payload"]["active_session_ref"] == "active-session"
+    assert captured["payload"]["thread_ref"] == "historical-session"
+    assert captured["payload"]["work_refs"] == ["proj-42"]
+
+
+@pytest.mark.asyncio
+async def test_history_tool_schema_and_forwarding_expose_source_thread_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    server = _create_server()
+    tools = await server.list_tools()
+    for name in ("pallium_search_history", "pallium_search_history_by_work_ref"):
+        assert "source_thread_ref" in next(t for t in tools if t.name == name).inputSchema["properties"]
+
+    with patch(
+        "app.mcp.client.PalliumMcpClient.search_history",
+        new=AsyncMock(return_value={"results": [], "delivery_attempt_id": "attempt"}),
+    ) as search:
+        await server.call_tool(
+            "pallium_search_history",
+            {
+                "query": "evidence",
+                "source_thread_ref": "historical-session",
+                "container_ref": "c",
+                "visibility": "private",
+            },
+        )
+    assert search.await_args.kwargs["source_thread_ref"] == "historical-session"

@@ -66,6 +66,7 @@ def _query_payload(**overrides) -> dict:
         "text": "What framework should the project use?",
         "container_ref": "test:container:lookup",
         "thread_ref": "test:thread:lookup",
+        "active_session_ref": "test:thread:lookup",
         "visibility": "private",
     }
     base.update(overrides)
@@ -264,7 +265,7 @@ class TestSourceOnlyLookupEventId:
         assert row is not None and row[0] == "lookup", (
             "a historical_lookup_reuse_event 'lookup' row must be persisted"
         )
-        assert row[1] == "test:thread:lookup"  # session_id == thread_ref
+        assert row[1] == "test:thread:lookup"  # session_id == active_session_ref
 
     def test_source_only_fail_closed_has_no_stats_or_audit(self, test_db_url):
         client = _make_client(test_db_url, audit_log_enabled=True)

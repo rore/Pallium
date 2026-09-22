@@ -452,7 +452,7 @@ def run_smoke(
                 {
                     "text": query_text,
                     "container_ref": container_ref,
-                    "thread_ref": thread_ref,
+                    "active_session_ref": thread_ref,
                     "visibility": visibility,
                     "limit": 5,
                     "source_only": True,

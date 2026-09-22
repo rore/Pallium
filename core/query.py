@@ -123,7 +123,7 @@ class QueryExecutor:
             thread_ref=thread_ref,
             actor_ref=actor_ref,
             work_refs=work_refs,
-            runtime_context=runtime_context,
+            runtime_context=None if source_only else runtime_context,
         )
         requested_filters = filter_resolution.requested_filters
         effective_filters = filter_resolution.effective_filters

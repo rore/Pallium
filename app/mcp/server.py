@@ -1155,12 +1155,13 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         work_ref: Annotated[str, BeforeValidator(_mask_invalid_work_ref)],
         query: str | None = None, limit: Annotated[StrictInt, Field(ge=1, le=50)] = 3,
         container_ref: str | None = None, thread_ref: str | None = None,
+        source_thread_ref: str | None = None,
         actor_ref: str | None = None, visibility: str | None = None,
         request_source_item_id: str | None = None,
         result_offset: Annotated[StrictInt, Field(ge=0)] = 0,
         result_revision: StrictStr | None = None,
     ) -> str:
-        """A narrow exact-reference search for current work. Copy injected `work_ref`; never guess it. It can miss related work; use broad topic-level search then. Blank `query` resumes newest state. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter. Continue a bounded result set with `next_offset` and unchanged `result_revision`; restart at offset 0 if the revision is stale."""
+        """A narrow exact-reference search for current work. Copy injected `work_ref`; never guess it. It can miss related work; use broad topic-level search then. Blank query returns newest state. `source_thread_ref` is an exact source filter; omit it for all sessions. `actor_ref` is an exact metadata filter; omit it for all actors. Continue with `next_offset` and unchanged `result_revision`; restart at 0 when stale."""
         page_error = _history_page_request_error(limit, result_offset, result_revision)
         if page_error is not None:
             return _json_text(page_error)
@@ -1183,6 +1184,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             result = await client.search_history_by_work_ref(
                 requested_work_ref, query, limit=limit,
                 actor_ref=actor_ref,
+                source_thread_ref=source_thread_ref,
                 request_source_item_id=request_source_item_id, defer_delivery=True,
             )
             compact = _compact_history(
@@ -1200,7 +1202,8 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
                     "query": query or "",
                     "limit": limit,
                     "container_ref": ctx.container_ref,
-                    "thread_ref": ctx.thread_ref,
+                    "active_session_ref": ctx.thread_ref,
+                    "source_thread_ref": source_thread_ref,
                     "visibility": ctx.visibility,
                     "actor_ref": actor_ref,
                     "source_type": None,
@@ -1235,6 +1238,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         limit: Annotated[StrictInt, Field(ge=1, le=50)] = 3,
         container_ref: str | None = None,
         thread_ref: str | None = None,
+        source_thread_ref: str | None = None,
         actor_ref: str | None = None,
         visibility: str | None = None,
         source_type: str | None = None,
@@ -1245,7 +1249,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         result_offset: Annotated[StrictInt, Field(ge=0)] = 0,
         result_revision: StrictStr | None = None,
     ) -> str:
-        """Search eligible raw history by topic. `work_refs` is compatibility-only; prefer exact work-ref search. History cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed; verify live. Use `current_text` over outdated `historical_updates`. Copy injected `container_ref`. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter. Requires `container_ref` and visibility. Continue a bounded result set with `next_offset` and unchanged `result_revision`; restart at offset 0 if the revision is stale."""
+        """Search eligible raw history by topic. `work_refs` is compatibility-only; prefer exact work-ref search. History cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed; verify live. Use `current_text` over `historical_updates`. Copy injected `container_ref`. `source_thread_ref` is an exact source filter; omit it for all sessions. `actor_ref` is an exact metadata filter; omit it for all actors. Requires `container_ref` and visibility. Continue with `next_offset` and unchanged `result_revision`; restart at 0 when stale."""
         page_error = _history_page_request_error(limit, result_offset, result_revision)
         if page_error is not None:
             return _json_text(page_error)
@@ -1274,6 +1278,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
                 role=role,
                 artifact_kind=artifact_kind,
                 actor_ref=actor_ref,
+                source_thread_ref=source_thread_ref,
                 work_refs=work_refs,
                 request_source_item_id=request_source_item_id,
                 defer_delivery=True,
@@ -1291,7 +1296,8 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
                     "query": query,
                     "limit": limit,
                     "container_ref": ctx.container_ref,
-                    "thread_ref": ctx.thread_ref,
+                    "active_session_ref": ctx.thread_ref,
+                    "source_thread_ref": source_thread_ref,
                     "visibility": ctx.visibility,
                     "actor_ref": actor_ref,
                     "source_type": source_type,

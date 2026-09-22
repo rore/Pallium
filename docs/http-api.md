@@ -203,7 +203,11 @@ Recommended fields:
 
 - `container_ref` — scope the query to this container
 - `visibility` — visibility boundary for the query
-- `thread_ref` — current thread within the container
+- `thread_ref` — current thread for a normal derived-memory query; for
+  `source_only=true`, an optional exact historical source-thread filter (omit
+  it for broad History)
+- `active_session_ref` — requesting session attribution for
+  `source_only=true`; used for lookup telemetry and request lineage, never candidate filtering
 
 > **Required for visibility-enforcing packages.** With a package that enforces
 > visibility (the conversation packages), a query missing **either**
@@ -223,9 +227,10 @@ Additional filters:
   (casefold, separator-canonical). "PROJ-123", "PROJ 123", "proj_123" all match.
 - `request_source_item_id` — optional measurement link for a
   `source_only=true` historical lookup. It must reference a live user source
-  item with the same container, thread, and visibility as the request. Actor
-  attribution is metadata, not part of lookup linkage. Invalid links return HTTP
-  422 on both `/query` and `/query/debug`; omission
+  item with the same container, `active_session_ref`, and visibility as the
+  request. The optional historical `thread_ref` filter and actor attribution
+  are not part of lookup linkage. Invalid links return HTTP 422 on both
+  `/query` and `/query/debug`; omission
   remains supported. This field is telemetry, not authorization.
 - `actor_ref` — optional actor metadata filter. For `source_only=true` Session
   History queries, omission searches every otherwise-eligible actor and a supplied
@@ -250,6 +255,24 @@ Recommended example:
   "container_ref": "channel:C04ABC123",
   "visibility": "container",
   "thread_ref": "thread:1700000001"
+}
+```
+
+For source-only Session History, `active_session_ref` and `thread_ref` are
+deliberately independent. Existing callers that used `thread_ref` only to
+identify the requester must move that value to `active_session_ref`; keeping it
+as `thread_ref` now requests an exact historical source thread.
+
+Source-only broad example:
+
+```json
+{
+  "text": "Why did we choose event timestamps?",
+  "container_ref": "channel:C04ABC123",
+  "visibility": "container",
+  "active_session_ref": "thread:current",
+  "source_only": true,
+  "trigger_origin": "agent_pull"
 }
 ```
 
