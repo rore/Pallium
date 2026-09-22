@@ -165,7 +165,7 @@ class InProcessService:
             json={
                 "text": query,
                 "container_ref": container_ref,
-                "thread_ref": thread_ref,
+                "active_session_ref": thread_ref,
                 "visibility": _VISIBILITY,
                 "limit": limit,
                 "source_only": True,
