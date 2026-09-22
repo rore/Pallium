@@ -21,17 +21,17 @@
 
 **Material assumptions:** `associated` is a diagnostic-only fact recorded under the same attempt identifier and does not represent a new native submission. The unique trace-fact constraint bounds one association fact per attempt and delivery.
 
-**Plan:** Select the latest direct activation fact from `prepared` and `completed` stages. Require it to be the existing exact uncertain retry-unsafe completion with one earlier prepare and one completion. Permit later direct facts only when every one is `associated` with that same attempt; reject any newer attempt or other later stage. Add focused guard rejection coverage and extend the restart caller-surface regression to include a pre-existing same-attempt association before process restart. Stop if this requires retry, reservation, schema, or public API changes.
+**Plan:** Select the latest direct activation fact from `prepared` and `completed` stages. Require it to be the existing exact uncertain retry-unsafe completion with one earlier prepare and one completion. Permit zero trailing direct facts, or exactly one `associated` fact for that same retained delivery and attempt after completion; reject any different attempt, duplicate association, other later stage, or pre-completion association. Add focused guard rejection coverage and extend the restart caller-surface regression to include a pre-existing same-attempt association before process restart. Stop if this requires retry, reservation, schema, or public API changes.
 
 **Verification plan:** Exact trailing same-attempt association qualifies -> focused guard unit test. Different-attempt or other ambiguous trailing evidence remains rejected -> fail-closed parameterized regression. Restart with an already-pending later delivery performs one native submission total, preserves attempts=0, and exposes Needs intervention after recovery -> HTTP caller-surface regression. Existing repeated busy-sweep and affected wake suites remain green -> regression suite.
 
-**Plan review:** Pending clean-context review.
+**Plan review:** Clean-context reviewer `/root/review_repeat_association_plan` approved Elevated/Moderate with no checkpoint after correcting its initial interpretation against the exact live trace. Approval requires zero or one trailing direct `associated` fact for the same retained delivery and attempt, exact prepare/completion cardinality, and fail-closed coverage for wrong attempt, duplicate association, other later stage, and pre-completion association. Read-only analysis `/root/analyze_repeat_association` independently identified the same minimal activation-versus-diagnostic distinction.
 
 **Approvals:** Not required unless reclassification reaches High.
 
 **Exceptions:** —
 
-**State:** Draft
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Evidence
