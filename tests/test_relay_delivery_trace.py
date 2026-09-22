@@ -109,7 +109,7 @@ def test_trace_full_delivery_lifecycle_is_nonmutating_and_payload_free(relay):
     assert trace["delivery_snapshots"][0]["trace_version"] == 1
     assert trace["legacy"] is False
     assert trace["delivery_snapshots"][0]["attempts"] == 1
-    assert trace["explanation"].startswith("Delivered to the recipient session")
+    assert trace["explanation"].startswith("Delivered: All recipient deliveries")
     assert "שלום" not in str(trace) and "supersecret" not in str(trace)
 
 
@@ -680,6 +680,7 @@ def test_api_and_dashboard_share_projection_and_unknown_is_404(client):
         api.status_code == delivery_api.status_code == dashboard.status_code == 200
     )
     assert api.json() == delivery_api.json() == dashboard.json()
+    assert api.json()["explanation"].startswith("Queued:")
     assert "incomplete page: more events are available" in client.get("/dashboard").text
     unknown = "relay-msg-" + "0" * 32
     assert client.get(f"/relay/messages/{unknown}/trace").status_code == 404
@@ -926,3 +927,102 @@ def test_mcp_compacts_long_snapshot_without_losing_the_only_event():
     assert len(rendered) <= _MCP_RELAY_MAX_CHARS
     assert page["events"] == [event]
     assert "recipient_container_ref" in page["snapshot_fields_omitted"]
+
+@pytest.mark.parametrize("runtime,session", [("codex", "uncertain-codex"), ("claude-code", "uncertain-claude")])
+def test_pending_uncertain_trace_gives_safe_ordinary_turn_guidance(relay, runtime, session):
+    storage, service, _ = relay
+    service.turn(runtime=runtime, session_ref=session, container_ref="git:test")
+    message = _message(service, recipient=f"{runtime}:{session}")
+    _event(
+        storage,
+        message,
+        "relay-activation-" + "e" * 32,
+        "completed",
+        **_completion(outcome="uncertain", reason="nonzero_exit", evidence=["submission_attempted"]),
+    )
+    explanation = service.trace_message(message_id=message["message_id"])["explanation"]
+    assert explanation.startswith("Needs intervention:")
+    assert "ordinary turn" in explanation
+    assert "do not resend" in explanation
+
+
+def test_pending_accepted_trace_is_queued_until_a_safe_turn(relay):
+    storage, service, _ = relay
+    message = _message(service)
+    _event(storage, message, "relay-activation-" + "a" * 32, "completed", **_completion())
+    explanation = service.trace_message(message_id=message["message_id"])["explanation"]
+    assert explanation.startswith("Queued:")
+    assert "safe turn" in explanation
+    assert "payload admission" in explanation
+
+
+def test_expired_trace_distinguishes_never_claimed_from_prior_claim(relay):
+    storage, service, _ = relay
+    created = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    never_claimed = service.send(
+        sender_runtime="codex", sender_session_ref="sender", recipient="codex:receiver",
+        payload="expires", container_ref="git:test", expires_in_seconds=60, now=created,
+    )
+    expired = storage.relay_trace_message(message_id=never_claimed["message_id"], now=created + timedelta(seconds=61))
+    assert expired["delivery_snapshots"][0]["state"] == "expired"
+    assert expired["delivery_snapshots"][0]["attempts"] == 0
+    assert "before any recipient claimed it" in expired["explanation"]
+
+    claimed_message = service.send(
+        sender_runtime="codex", sender_session_ref="sender", recipient="codex:receiver",
+        payload="claimed then expires", container_ref="git:test", expires_in_seconds=60, now=created,
+    )
+    claimed = service.turn(
+        runtime="codex", session_ref="receiver", container_ref="git:test",
+        exact_delivery_id=claimed_message["deliveries"][0]["delivery_id"], now=created,
+    )["deliveries"][0]
+    assert claimed["delivery_id"] == claimed_message["deliveries"][0]["delivery_id"]
+    expired_after_claim = storage.relay_trace_message(message_id=claimed_message["message_id"], now=created + timedelta(seconds=61))
+    assert expired_after_claim["delivery_snapshots"][0]["attempts"] == 1
+    assert "Prior claim or activation evidence" in expired_after_claim["explanation"]
+
+
+def test_delivered_trace_overrides_old_uncertain_activation(relay):
+    storage, service, _ = relay
+    message = _message(service)
+    _event(storage, message, "relay-activation-" + "b" * 32, "completed", **_completion(outcome="uncertain", reason="nonzero_exit", evidence=["submission_attempted"]))
+    claimed = service.turn(runtime="codex", session_ref="receiver", container_ref="git:test")["deliveries"][0]
+    service.acknowledge(delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"], container_ref="git:test")
+    explanation = service.trace_message(message_id=message["message_id"])["explanation"]
+    assert explanation.startswith("Delivered:")
+    assert "Needs intervention" not in explanation
+
+
+def test_mixed_fanout_trace_counts_states_and_discloses_gap(relay):
+    storage, service, _ = relay
+    message = _message(service)
+    claimed = service.turn(runtime="codex", session_ref="receiver", container_ref="git:test")["deliveries"][0]
+    service.acknowledge(delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"], container_ref="git:test")
+    second = service.turn(runtime="claude-code", session_ref="mixed-recipient", container_ref="git:test")["session"]
+    second_id = "relay-delivery-" + "c" * 32
+    with storage._relay_session_factory.begin() as db:
+        db.add(RelayDeliveryRecord(
+            id=second_id, message_id=message["message_id"], recipient_runtime="claude-code",
+            recipient_session_ref="mixed-recipient", recipient_endpoint_id=second["endpoint_id"],
+            recipient_container_ref="git:test", state="pending", attempts=0,
+            trace_truncated=1,
+        ))
+    trace = service.trace_message(message_id=message["message_id"])
+    assert "delivered=1" in trace["explanation"] and "pending=1" in trace["explanation"]
+    assert "Activation evidence is incomplete or unavailable" in trace["explanation"]
+
+
+@pytest.mark.parametrize("marker", ["legacy", "truncated", "pruned"])
+def test_pending_incomplete_trace_evidence_remains_unknown(relay, marker):
+    storage, service, _ = relay
+    message = _message(service)
+    delivery_id = message["deliveries"][0]["delivery_id"]
+    with storage._relay_session_factory.begin() as db:
+        row = db.get(RelayDeliveryRecord, delivery_id)
+        if marker == "legacy":
+            row.trace_version = None
+        else:
+            setattr(row, f"trace_{marker}", 1)
+    trace = service.trace_message(message_id=message["message_id"])
+    assert trace["explanation"].startswith("Unknown:")
+    assert trace["gap"] is True

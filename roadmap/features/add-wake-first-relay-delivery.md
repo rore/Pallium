@@ -8,17 +8,24 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-09-15)
+## Current execution status (reconciled 2026-09-22)
 
 The Windows/Linux Claude wake foundation, loaded-task Codex wake, Codex first-run
 setup, MCP recovery integration, and live no-manual-turn reply/remediation journey
 are shipped. RW-024 removed unsafe unattended Codex cold resume: unloaded tasks
-retain Pallium's pending next-turn delivery instead. This umbrella remains
-queued for residual qualification, not active reimplementation of those milestones.
-Relay reliability remains first. RW-031 reopens Codex native activation reliability;
-session-to-work associations are complete, and the remaining readiness work is tracked below.
+retain Pallium's pending next-turn delivery instead. PR #209 added exact-delivery
+hook-start, payload-emission, ACK, and bounded-failure evidence. An installed
+busy-to-idle witness then delivered and ACKed once after one native submission;
+that proves the normal safe-turn path, not recovery from uncertain native failure.
+This umbrella remains queued for residual qualification. RW-031 keeps safe automatic
+recovery open; session-to-work associations are complete, and the remaining
+readiness work is tracked below.
 
 Remaining work:
+- Establish a supported idempotent Codex admission/readback mechanism, or record the
+  precise upstream limitation. Until then, an uncertain native submission retains its
+  reservation and requires an ordinary recipient turn; do not resend or call this
+  automatic recovery.
 - Qualify still-unproven interrupted/restart combinations with a bounded matrix
   of runtime, platform, interruption, existing evidence, and missing witness.
   Reuse passed recovery tests and live witnesses; do not repeat them without cause.
@@ -40,7 +47,7 @@ new implementation tasks.
 | `RW-028` Codex MCP exposure | host recovery follow-up | Same-host/project tasks expose different tool catalogs, including zero Pallium tools after successful hook delivery. Treat this as a Codex host registry/rehydration blocker; do not infer MCP health from hook/service health or add a speculative Pallium workaround. |
 | `RW-029` stranded split identity | guarded Relay operations | Use the offline repair manifest for reviewed per-delivery dispositions. Version 2 can explicitly suppress a finite expired claim; it still refuses adoption, active or ambiguous claims, and automatic cleanup. |
 | `RW-030` Claude install drift | installed integration lifecycle | Repoint the user-scoped Claude MCP and hooks from the development checkout to the stable installed checkout in the coordinated post-merge install window. Existing hosts retain old subprocesses until their normal restart. |
-| `RW-031` Codex native activation reliability | wake-first Relay reliability | Compare the known successful idle witness with the two preserved fresh incidents and the runtime's supported activation paths. Establish whether native queue persistence guarantees enqueue only or an actual turn before changing wake behavior; do not implement an inferred active-owner fix. |
+| `RW-031` Codex native activation reliability | wake-first Relay reliability | Ship actionable trace guidance for retained uncertain, accepted-pending, expired-unclaimed, delivered, and incomplete evidence. Keep automatic recovery open until Codex exposes supported idempotent admission/correlation or the upstream limitation is recorded precisely; do not blindly resubmit a held native wake. |
 
 The dashboard diagnostic is shipped as read-only evidence, not repair. Do not bulk-repair stranded deliveries. The real installed witness gate remains required for send -> next-turn hook claim/injection/ACK -> reply and work-reference attach/detach qualification.
 ## Summary
@@ -182,7 +189,7 @@ complete; only installed UDS qualification on macOS remains for that adapter.
    separate fail-closed recovery path and must not be mixed with hook delivery.
    Qualification on another runtime/platform requires its own evidence.
 
-### Next execution order (updated 2026-09-11)
+### Next execution order (updated 2026-09-22)
 
 RW-017 durable-by-default delivery, RW-016 installed-service metadata repair,
 RW-018 taskkill race recovery, RW-019 Relay load resilience, and RW-020
@@ -308,7 +315,7 @@ where the runtime exists locally, an installed witness close it.
 | `RW-024` | Codex wake launched `codex exec resume` without an explicit cwd, so the child inherited the Pallium service checkout. A resumed task then adopted that workspace, derived the wrong Relay container scope, and sender lookup correctly failed closed with 404. | **Fixed in this slice.** The adapter no longer cold-resumes or reads private Codex workspace state. It writes one exact-thread native queue item from a validated neutral Codex home; loaded tasks wake through their owner, while unloaded-task correctness relies only on Pallium's pending delivery and a later hook turn. Caller-surface regressions pin explicit cwd, fail-closed unsafe paths, pending-before-hook, exact delivery, and single-flight behavior. |
 | `RW-025` | A substantive hook-delivered assignment outlived its claim lease during investigation, so receiptless atomic reply returned the expected 409 even though the work completed. | **Tracked operational fallback.** The Relay error was surfaced and completion was sent as a new direct Relay message. Existing expired-claim recovery protects the original delivery; no automatic completion-message fallback is added unless this recurs as a product failure. |
 | `RW-026` | Near-simultaneous Codex sends produced anonymous `failed` and `queued` wake logs. Durable state and task JSONL proved one hook delivery and one pending delivery followed by a direct app-message fallback, but the wake outcomes could not be assigned to a delivery or safely explained. | **Fixed as a diagnosis gap only.** Every attempted Codex wake now logs the canonical delivery ID, bounded SHA-256 fingerprints for session and container scope, a fixed safe reason category, and an optional numeric exit code; recovery candidates use the same correlation values. Hostile-reference and full launch-outcome regressions prove prompts, stderr, exception text, environment values, secrets, and local paths are not logged. Delivery routing, queueing, retry, claim, ACK, and app-message hook behavior are unchanged; this does not claim the observed failed wake was repaired. |
-| `RW-031` | Two fresh Codex wake incidents diverged: delivery `relay-delivery-97f5bc2bcd794a799605f488520c6f20` had one native queue row at 11:07:24 UTC but no observed target turn, while delivery `relay-delivery-f432aa391eea49d8925f0bbbb70fe356` returned `nonzero_exit` with no native queue row. The first incident therefore proves enqueue without observed activation. The second cause remains unknown because stderr was discarded and a later activation refactor stopped carrying the numeric exit code into the correlated log; active-owner rejection is retracted because the preserved evidence does not establish it. | **No safe Desktop-equivalent activation/ownership route proven; diagnosis regression fixed locally.** An isolated `0.154.0-alpha.6.2` proof created and read a disposable task in server A, but identical threadId-only resume returned `-32600` both while A lived and after its clean exit; queue/add returned `-32603`, and the isolated home remained temporarily locked after the parent app-server processes exited. Metadata preservation, dispatch, terminal-turn, and duplicate checks were not reached. The fixture was removed after handles released, four known OpenAI/Codex auth variables were removed and no model turn occurred, and no user task was touched. These failed positive controls justify leaving production cold activation unchanged until a safe Desktop-equivalent owner/lifecycle route is independently demonstrated. The existing loaded-task queue path and unloaded natural-turn fallback remain. Correlated local logging again retains the sanitized category plus numeric exit code; raw stderr remains excluded. |
+| `RW-031` | A Codex native queue call can persist a fresh queue row before its response is lost, while the public CLI returns nonzero and creates a new client message ID on every retry. Retaining an uncertain reservation prevents duplicate native turns but can leave a pending delivery without actionable recovery guidance. | **Diagnostics shipped; actionable reporting ships in this slice; safe automatic recovery remains open.** PR #209 records exact-delivery hook start, payload emission, ACK, and bounded failure evidence. An installed busy-to-idle witness proved one accepted submission, one later safe turn, one injection, and one ACK; it did not exercise uncertain failure. Trace explanations now distinguish queued, delivered, expired-before-claim, needs-intervention, mixed, and incomplete evidence, and direct operators to an ordinary recipient turn without resending. Repeating the current public CLI command is not safe automatic recovery because it has neither a caller idempotency key nor authoritative queue readback. |
 
 The Windows Claude regression floor remains: idle text and zero-tool turns, empty
 Stop rearm, busy delivery, ordered bursts, Unicode, recursive-Stop loop prevention,
@@ -325,6 +332,7 @@ The following related work stays separate to keep ownership clear:
   proposal. Turn end is not task completion and is not a prerequisite for delivery
   correctness.
 - `validate-relay-dependency-workflows` starts only after S2/S3 are stable.
+- `feat/clarify-relay-activation-snapshot` remains separate unmerged API-contract work: its evidence-scope and exact-trace-source fields complement this explanation slice but are not required for actionable failure guidance.
 - The local wake-test pollution repair is complete and reversible: the exact 23
   synthetic source items are forgotten and 89 derived memories are soft-deleted
   under one audit reason; the default dashboard read path exposes none of them.

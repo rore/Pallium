@@ -1497,3 +1497,45 @@ async def test_relay_transport_diagnostic_survives_tool_error():
     with patch.object(PalliumMcpClient, "relay_recipients", new=AsyncMock(return_value=diagnostic)):
         text = await assert_tool_error(create_server(), "pallium_relay_recipients", _SCOPE)
     assert tool_error_payload(text) == diagnostic
+@pytest.mark.asyncio
+async def test_registered_trace_preserves_actionable_uncertain_guidance(
+    monkeypatch: pytest.MonkeyPatch, relay_app, asgi_post, asgi_get
+) -> None:
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+    await asgi_post(
+        "/relay/turn",
+        {"runtime": "codex", "session_ref": "trace-sender", **_SCOPE},
+    )
+    await asgi_post(
+        "/relay/turn",
+        {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE},
+    )
+    from core.relay import RelayService
+
+    service = RelayService(relay_app.state.pallium_service._storage)
+    sent = service.send(
+        sender_runtime="codex",
+        sender_session_ref="trace-sender",
+        recipient=f"{_RUNTIME}:{_SESSION}",
+        payload="trace guidance",
+        **_SCOPE,
+    )
+    storage = service._store
+    assert storage.relay_record_trace_event(
+        {
+            "attempt_id": "relay-activation-" + "d" * 32,
+            "delivery_id": sent["deliveries"][0]["delivery_id"],
+            "stage": "completed",
+            "outcome": "uncertain",
+            "reason": "nonzero_exit",
+            "evidence": ["submission_attempted"],
+            "native_retry_safe": False,
+        }
+    )
+    content, _ = await create_server().call_tool(
+        "pallium_relay_trace", {"message_id": sent["message_id"]}
+    )
+    trace = json.loads(content[0].text)
+    assert trace["explanation"].startswith("Needs intervention:")
+    assert "ordinary turn" in trace["explanation"]
+    assert "do not resend" in trace["explanation"]

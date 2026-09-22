@@ -2107,54 +2107,101 @@ class SQLiteRelayMixin:
                 row.trace_version is None for row in deliveries
             )
             states = {item["state"] for item in snapshots}
+            state_counts = {
+                state: sum(item["state"] == state for item in snapshots)
+                for state in states
+            }
             endpoint_states = {
                 item["recipient_endpoint_state"] for item in snapshots
             }
-            if "delivered" in states:
+            gap_suffix = (
+                " Activation evidence is incomplete or unavailable."
+                if legacy or truncated or pruned
+                else ""
+            )
+            if states == {"delivered"}:
                 explanation = (
-                    "Delivered to the recipient session; no reply or action is implied."
+                    "Delivered: All recipient deliveries were acknowledged; no reply "
+                    "or action is implied."
+                    + gap_suffix
                 )
-            elif "expired" in states:
+            elif len(states) > 1:
+                counts = ", ".join(
+                    f"{state}={state_counts[state]}" for state in sorted(states)
+                )
                 explanation = (
-                    "Expired without current delivery; missing diagnostics cannot "
-                    "prove whether activation ran."
+                    f"Mixed delivery states: {counts}. Review each recipient snapshot; "
+                    "current delivery state is authoritative."
+                    + gap_suffix
                 )
-            elif latest_completion is not None and latest_completion.outcome == "uncertain":
+            elif states == {"expired"}:
+                never_claimed = all(
+                    item["attempts"] == 0 and item["claimed_at"] is None
+                    for item in snapshots
+                )
                 explanation = (
-                    "Native activation outcome is uncertain. The stored delivery "
-                    "remains authoritative; do not resend it."
-                )
-            elif "unreachable" in endpoint_states:
-                explanation = (
-                    "The target is currently unavailable. A pending delivery remains "
-                    "stored and must not be resent."
-                )
-            elif latest_completion is not None and latest_completion.outcome == "accepted":
-                explanation = (
-                    "Native activation was accepted, but that alone does not prove "
-                    "payload admission."
-                )
-            elif latest_completion is not None and latest_completion.outcome in {
-                "deferred", "failed",
-            }:
-                explanation = (
-                    "Native activation did not complete. A pending delivery remains "
-                    "stored for a natural eligible turn."
-                )
+                    "Expired: The message expired before any recipient claimed it; no "
+                    "valid payload was delivered before expiry."
+                    if never_claimed
+                    else "Expired: No recipient delivery was acknowledged before expiry. "
+                    "Prior claim or activation evidence does not prove payload processing "
+                    "and is not evidence of hook failure."
+                ) + gap_suffix
             elif legacy:
                 explanation = (
-                    "This delivery predates trace support; activation evidence is "
-                    "unavailable."
+                    "Unknown: This delivery predates trace support; activation evidence "
+                    "is unavailable. Use the current delivery state as authoritative."
                 )
             elif truncated or pruned:
                 explanation = (
-                    "Trace evidence has a known gap; use the current delivery state "
-                    "as authoritative."
+                    "Unknown: Trace evidence has a known gap. Use the current delivery "
+                    "state as authoritative; recorded activation events may be incomplete."
+                )
+            elif (
+                states == {"pending"}
+                and latest_completion is not None
+                and latest_completion.outcome == "uncertain"
+            ):
+                explanation = (
+                    "Needs intervention: Native activation is uncertain, so automatic "
+                    "retry is held because the submission may already have succeeded. "
+                    "Start an ordinary turn in the recipient task to process the retained "
+                    "message; do not resend it."
+                )
+            elif states == {"pending"} and "unreachable" in endpoint_states:
+                explanation = (
+                    "Needs intervention: The target is currently unavailable. The pending "
+                    "delivery remains stored; restore the recipient and start an ordinary "
+                    "turn instead of resending it."
+                )
+            elif (
+                states == {"pending"}
+                and latest_completion is not None
+                and latest_completion.outcome == "accepted"
+            ):
+                explanation = (
+                    "Queued: Native activation was accepted and the Relay delivery remains "
+                    "pending. It may wait for the recipient's current turn to finish before "
+                    "a safe turn begins; acceptance does not prove payload admission."
+                )
+            elif (
+                states == {"pending"}
+                and latest_completion is not None
+                and latest_completion.outcome in {"deferred", "failed"}
+            ):
+                explanation = (
+                    "Queued: Native activation did not complete. The Relay delivery remains "
+                    "pending for an ordinary eligible recipient turn."
+                )
+            elif states == {"claimed"}:
+                explanation = (
+                    "Claimed: The recipient holds an active delivery lease, but ACK has not "
+                    "been recorded. Current delivery state is authoritative."
                 )
             else:
                 explanation = (
-                    "No activation outcome is recorded. A pending delivery remains "
-                    "stored for a natural eligible turn."
+                    "Queued: No activation outcome is recorded. The pending delivery remains "
+                    "stored for an ordinary eligible recipient turn."
                 )
             return {
                 "contract": "relay-delivery-trace/v1",

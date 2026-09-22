@@ -36,6 +36,7 @@
 
 - Planning opened from `a1b7a79c38d3394922422305834cffaf0c0eeb03`; no code edits made.
 - Discovery confirmed one shared storage projection and no required API/schema change. The clarification branch remains separate because its evidence-scope fields are complementary API work, not required for actionable trace guidance.
+- Added focused trace/MCP regressions for actionable uncertain, queued, expiry, delivery precedence, mixed fan-out, evidence gaps, and caller projections; initial delegated run lacked pytest, so Sol owns executable verification.
 
 ## Plan review
 
