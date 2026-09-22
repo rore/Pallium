@@ -1223,6 +1223,7 @@ class PalliumService:
         if (
             not isinstance(snapshot, dict)
             or set(snapshot) - {"outcome", "trace"}
+            or not isinstance(snapshot.get("outcome"), str)
             or snapshot.get("outcome") not in {"ok", "valid_empty"}
             or not isinstance(snapshot.get("trace"), dict)
             or not isinstance(saved, dict)
@@ -1247,7 +1248,10 @@ class PalliumService:
                 not isinstance(value, str) or not value or len(value) > 512
             ):
                 raise HistoryDiagnosticCorruptError("invalid saved diagnostic filter")
-        if saved.get("artifact_kind") not in artifact_kinds | {None}:
+        artifact_kind = saved.get("artifact_kind")
+        if artifact_kind is not None and (
+            not isinstance(artifact_kind, str) or artifact_kind not in artifact_kinds
+        ):
             raise HistoryDiagnosticCorruptError("invalid saved diagnostic artifact kind")
         if canonicalize_container_ref(saved.get("container_ref")) != canonical_container:
             raise HistoryDiagnosticCorruptError("invalid saved diagnostic container")
@@ -1363,7 +1367,7 @@ class PalliumService:
                 safe["score"] = score
             channel = candidate.get("match_channel")
             if channel is not None:
-                if channel not in {"lexical", "vector", "both"}:
+                if not isinstance(channel, str) or channel not in {"lexical", "vector", "both"}:
                     raise HistoryDiagnosticCorruptError("invalid diagnostic channel")
                 safe["match_channel"] = channel
             if source_id not in visible_ids:
@@ -1373,7 +1377,7 @@ class PalliumService:
         safe_stages: list[dict[str, object]] = []
         for stage in stages:
             name = stage.get("name")
-            if name not in {"lexical", "vector", "vector_unavailable"}:
+            if not isinstance(name, str) or name not in {"lexical", "vector", "vector_unavailable"}:
                 raise HistoryDiagnosticCorruptError("invalid diagnostic stage name")
             if type(stage["available"]) is not bool:
                 raise HistoryDiagnosticCorruptError("invalid diagnostic stage availability")
@@ -1443,7 +1447,7 @@ class PalliumService:
         if len(set(retained_ranks)) != len(retained_ranks):
             raise HistoryDiagnosticCorruptError("duplicate diagnostic packaging rank")
         fit_status = packaging["fit_status"]
-        if fit_status not in {"fit", "truncated"}:
+        if not isinstance(fit_status, str) or fit_status not in {"fit", "truncated"}:
             raise HistoryDiagnosticCorruptError("invalid diagnostic packaging status")
         raw_rank_order = [candidate["rank"] for candidate in raw_ranked_results]
         if retained_ranks != raw_rank_order[:len(retained_ranks)]:
@@ -1474,6 +1478,7 @@ class PalliumService:
             raise HistoryDiagnosticCorruptError("invalid diagnostic exclusions")
         if (
             capture_index["bounded"] is not True
+            or not isinstance(capture_index["status"], str)
             or capture_index["status"] not in {"observed", "not_observed", "unknown"}
             or type(capture_index["lexical_available"]) is not bool
             or type(capture_index["vector_available"]) is not bool
@@ -1484,6 +1489,7 @@ class PalliumService:
             if (
                 not isinstance(exclusion, dict)
                 or set(exclusion) != {"reason", "count"}
+                or not isinstance(exclusion.get("reason"), str)
                 or exclusion.get("reason") not in {
                     "candidate_visibility_missing",
                     "query_visibility_excludes_candidate",

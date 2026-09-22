@@ -253,14 +253,27 @@ def test_authorized_corrupt_snapshot_is_distinct_from_unavailable(client, monkey
     "duplicate_retained_ranks",
     "inconsistent_packaging_omitted_count",
     "invisible_malformed_candidate",
+    "outcome_unhashable",
+    "saved_artifact_kind_unhashable",
+    "stage_name_unhashable",
+    "candidate_channel_unhashable",
+    "fit_status_unhashable",
+    "capture_status_unhashable",
+    "exclusion_reason_unhashable",
 ])
-def test_authorized_corrupt_snapshot_variants_fail_closed(client, drain_queue, monkeypatch, corruption):
-    if corruption == "invisible_malformed_candidate":
+def test_authorized_corrupt_snapshot_variants_fail_closed(
+    client, drain_queue, monkeypatch, corruption,
+):
+    needs_candidate = corruption in {
+        "invisible_malformed_candidate",
+        "candidate_channel_unhashable",
+    }
+    if needs_candidate:
         ingested = client.post("/items", json=[{
             "source_type": "chat_thread",
-            "source_id": "diagnostic-invisible-corrupt",
+            "source_id": f"diagnostic-corrupt-{corruption}",
             "content_type": "text/plain",
-            "content": "invisible corruption evidence",
+            "content": "corruption candidate evidence",
             "container_ref": "git:example/history",
             "thread_ref": "diagnostic-corrupt-source",
             "artifact_kind": "message",
@@ -269,7 +282,11 @@ def test_authorized_corrupt_snapshot_variants_fail_closed(client, drain_queue, m
         }])
         assert ingested.status_code == 200
         drain_queue(client)
-        created = _create(client, key=f"corrupt-{corruption}", text="invisible corruption evidence")
+        created = _create(
+            client,
+            key=f"corrupt-{corruption}",
+            text="corruption candidate evidence",
+        )
     else:
         created = _create(client, key=f"corrupt-{corruption}")
     assert created.status_code == 201
@@ -282,36 +299,54 @@ def test_authorized_corrupt_snapshot_variants_fail_closed(client, drain_queue, m
         visibility="private",
     )
     snapshot = json.loads(row["snapshot_json"])
+    saved_filters = json.loads(row["saved_filters_json"])
+
     if corruption == "stages_null":
         snapshot["trace"]["stages"] = None
     elif corruption == "duplicate_retained_ranks":
         snapshot["trace"]["packaging"]["retained_final_ranks"] = [1, 1]
     elif corruption == "inconsistent_packaging_omitted_count":
         snapshot["trace"]["packaging"]["omitted_count"] = 1
+    elif corruption == "outcome_unhashable":
+        snapshot["outcome"] = []
+    elif corruption == "saved_artifact_kind_unhashable":
+        saved_filters["artifact_kind"] = []
+    elif corruption == "stage_name_unhashable":
+        snapshot["trace"]["stages"][0]["name"] = {}
+    elif corruption == "fit_status_unhashable":
+        snapshot["trace"]["packaging"]["fit_status"] = []
+    elif corruption == "capture_status_unhashable":
+        snapshot["trace"]["capture_index"]["status"] = {}
+    elif corruption == "exclusion_reason_unhashable":
+        snapshot["trace"]["exclusions"][0]["reason"] = []
     else:
-        source_id = next(
-            candidate["source_item_id"]
+        candidate = next(
+            candidate
             for section in snapshot["trace"]["stages"]
             for candidate in section["candidates"]
         )
-        forgotten = client.post("/source/forget", json={
-            "source_item_id": source_id,
-            "reason": "corruption test",
-        })
-        assert forgotten.status_code == 200
-        for section in snapshot["trace"]["stages"]:
-            for candidate in section["candidates"]:
-                if candidate["source_item_id"] == source_id:
-                    candidate["rank"] = "not-an-integer"
-                    candidate["score"] = float("nan")
-    corrupt = {**row, "snapshot_json": json.dumps(snapshot)}
+        if corruption == "candidate_channel_unhashable":
+            candidate["match_channel"] = []
+        else:
+            forgotten = client.post("/source/forget", json={
+                "source_item_id": candidate["source_item_id"],
+                "reason": "corruption test",
+            })
+            assert forgotten.status_code == 200
+            candidate["rank"] = "not-an-integer"
+            candidate["score"] = float("nan")
+
+    corrupt = {
+        **row,
+        "snapshot_json": json.dumps(snapshot),
+        "saved_filters_json": json.dumps(saved_filters),
+    }
     monkeypatch.setattr(storage, "get_history_diagnostic", lambda *a, **k: corrupt)
 
     response = _read(client, diagnostic_id)
 
     assert response.status_code == 500
     assert response.json()["detail"]["code"] == "diagnostic_corrupt"
-
 @pytest.mark.parametrize("path", ["/query", "/query/debug"])
 def test_ordinary_query_shapes_remain_unchanged(client, path):
     response = client.post(path, json={"text": "ordinary query", "limit": 1, "container_ref": "git:example/history", "active_session_ref": "session-diagnostic-caller", "visibility": "private"})
